@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { CanvasLibraryEntry } from '../../shared/canvas'
+import type { CanvasLibraryEntry, ResumableRow } from '../../shared/canvas'
 import { useSessionStore } from './sessionStore'
 
 /**
@@ -50,6 +50,17 @@ export interface CanvasTotals {
   queueOnActive: number
   /** The owed canvases, one row each, newest first. */
   queueRows: CanvasQueueRow[]
+  /**
+   * OWNERLESS in-flight canvases on this project that any session here may
+   * pick up (M4). Distinct from `queue` in kind, not just in number: the queue
+   * is work this session OWNS and owes an answer on, this is work nobody
+   * currently holds. Never mixed into `queue` — the button says "Review
+   * needed" for one and shows a quiet dot for the other.
+   */
+  resumables: number
+  /** Those canvases, one row each, as main ordered them. The count is derived
+   *  from this list so the dot and the popover can never disagree. */
+  resumableRows: ResumableRow[]
 }
 
 /** One owing canvas in the queue list. */
@@ -76,7 +87,7 @@ interface Actions {
 
 const defaultTotals = (): CanvasTotals => ({
   loaded: false, canvases: 0, openReviews: 0, withOpenReviews: 0, unknown: 0, onActive: 0,
-  queue: 0, queueOnActive: 0, queueRows: [],
+  queue: 0, queueOnActive: 0, queueRows: [], resumables: 0, resumableRows: [],
 })
 
 /** Fold a library listing into the session's totals. Exported for tests. */
@@ -127,25 +138,76 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
   return t
 }
 
+/**
+ * The ownerless work on this project, or the last known answer.
+ *
+ * `openTileSessionIds` rides along for the same reason the old reclaim list
+ * carried it: main cannot tell that a session whose PTY exited still has a
+ * tile on screen, and the renderer is the only party that knows. The hint can
+ * only EXTEND liveness (a live owner keeps its canvas private), never shorten
+ * another session's.
+ */
+async function readResumables(
+  sessionId: string,
+  openTileSessionIds: string[],
+  prev: CanvasTotals | undefined,
+): Promise<Pick<CanvasTotals, 'resumables' | 'resumableRows'>> {
+  try {
+    const rows = await window.electronAPI.canvas.listResumables({ sessionId, openTileSessionIds })
+    const list = Array.isArray(rows) ? rows : []
+    return { resumables: list.length, resumableRows: list }
+  } catch {
+    return { resumables: prev?.resumables ?? 0, resumableRows: prev?.resumableRows ?? [] }
+  }
+}
+
+/** The library listing, or `null` when it could not be read. `null` and `[]`
+ *  are different answers and the caller must be able to tell them apart —
+ *  "could not tell" is never rendered as "nothing owed". */
+async function readEntries(
+  sessionId: string,
+  openTileSessionIds: string[],
+): Promise<CanvasLibraryEntry[] | null> {
+  try {
+    const list = await window.electronAPI.canvas.listAll({ openTileSessionIds, sessionId })
+    return Array.isArray(list) ? list : []
+  } catch {
+    return null
+  }
+}
+
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
 export const useCanvasTotalsStore = create<State & Actions>((set, get) => ({
   bySessionId: {},
 
   refresh: async (sessionId) => {
-    let entries: CanvasLibraryEntry[]
-    try {
-      const openTileSessionIds = useSessionStore.getState().sessions.map((s) => s.id)
-      const list = await window.electronAPI.canvas.listAll({ openTileSessionIds, sessionId })
-      entries = Array.isArray(list) ? list : []
-    } catch {
-      // Could not read. Keep whatever was known; never zero it — a broken read
-      // must not render as "nothing owed".
-      const prev = get().bySessionId[sessionId]
-      if (!prev) set((s) => ({ bySessionId: { ...s.bySessionId, [sessionId]: { ...defaultTotals(), loaded: true } } }))
+    const openTileSessionIds = useSessionStore.getState().sessions.map((s) => s.id)
+    // The two reads answer different questions (what this session OWES vs what
+    // is going spare on this project), so they go out TOGETHER — one round trip
+    // of latency, not two, on a path that runs behind a 150ms debounce on every
+    // canvas push.
+    //
+    // Each swallows its own failure before Promise.all ever sees it, so this is
+    // an `allSettled` in effect: neither read can reject the pair, and a broken
+    // resumables read cannot blank the queue (or the reverse). Both then follow
+    // the store's standing rule — a read that fails keeps the last known
+    // answer rather than presenting "could not tell" as "nothing".
+    const prev = get().bySessionId[sessionId]
+    const [resumables, entries] = await Promise.all([
+      readResumables(sessionId, openTileSessionIds, prev),
+      readEntries(sessionId, openTileSessionIds),
+    ])
+
+    if (entries === null) {
+      // Could not read the listing. Keep whatever was known; never zero it.
+      const base = get().bySessionId[sessionId] ?? { ...defaultTotals(), loaded: true }
+      set((s) => ({ bySessionId: { ...s.bySessionId, [sessionId]: { ...base, ...resumables } } }))
       return
     }
-    set((s) => ({ bySessionId: { ...s.bySessionId, [sessionId]: totalsFromEntries(entries) } }))
+    set((s) => ({
+      bySessionId: { ...s.bySessionId, [sessionId]: { ...totalsFromEntries(entries), ...resumables } },
+    }))
   },
 
   scheduleRefresh: (sessionId) => {

@@ -1,20 +1,20 @@
 // @vitest-environment jsdom
 //
-// The canvas library's row actions, after the settled machine removed the
-// per-row "Close notes" bulk (W6).
+// The canvas library's DESTRUCTIVE row action, after the v2 rewrite (M4).
 //
-// What is left on a row is DELETE, and delete is the one destructive canvas
-// operation there is — so the whole surface of this file is the two-step arm
-// and its double-click proofing (#456). Bulk-clearing a canvas's rounds from a
-// list, where none of the notes are on screen and nothing states what will be
-// closed, was the shape that let "settled" mean six different things; the one
-// exit that remains is Mark complete in the pane, which names each closure
-// before the user commits.
+// Delete is the one destructive canvas operation there is, so the whole surface
+// of this file is the two-step arm and its double-click proofing (#456). What
+// changed in v2 is the SUBJECT: a row is an artefact run, not a canvas, so the
+// row's delete removes that run. A canvas's last artefact is a different
+// operation with its own path discipline in main (`deleteArtifact` refuses it
+// as 'only-artifact'), and the Library is where that operation lives — so the
+// refusal is a hand-off inside the same armed confirm, not an error the user
+// has to understand.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
-import type { CanvasLibraryEntry } from '../../../src/shared/canvas'
+import type { CanvasLibraryRow } from '../../../src/shared/canvas'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -22,30 +22,41 @@ const { CanvasLibrary } = await import('../../../src/renderer/components/CanvasL
 
 const SID = 'session-1'
 
-function entry(over: Partial<CanvasLibraryEntry> = {}): CanvasLibraryEntry {
+function row(over: Partial<CanvasLibraryRow> = {}): CanvasLibraryRow {
   return {
     canvasId: 'canvas-a',
-    versionCount: 3,
-    createdAt: '2026-08-22T09:00:00Z',
-    lastRenderedAt: '2026-08-22T11:00:00Z',
+    anchorVersionId: 'v3',
+    kind: 'mockup',
     title: 'Checkout flow',
-    cwd: 'F:/work/project',
-    latestMode: 'design',
+    verdict: 'OPEN',
+    archived: false,
+    completed: false,
+    audit: { when: '2026-08-29T09:00:00Z' },
+    versionLabel: 'v3',
+    noteCount: 0,
+    ownedByThisSession: true,
+    readOnly: false,
+    updatedAt: '2026-08-29T09:00:00Z',
     ...over,
   }
 }
 
 let container: HTMLDivElement
 let root: Root
-let entries: CanvasLibraryEntry[]
+let rows: CanvasLibraryRow[]
+let artifactDelete: { ok: boolean; reason?: string }
 
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   canvas: {
     ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
-    listAll: vi.fn(async () => entries),
+    libraryList: vi.fn(async () => ({ rows, truncated: false })),
+    deleteArtifact: vi.fn(async () => artifactDelete),
     deleteCanvas: vi.fn(async () => ({ ok: true })),
+    archiveArtifact: vi.fn(async () => ({ ok: true, state: null })),
     reclaim: vi.fn(async () => ({ ok: true, state: null })),
+    completeReopen: vi.fn(async () => ({ ok: true })),
+    evidenceRead: vi.fn(async () => null),
   },
 }
 
@@ -63,7 +74,10 @@ async function click(el: Element | null): Promise<void> {
 }
 
 beforeEach(() => {
-  entries = [entry({ liveRoundCount: 1, openReviewCount: 1, phase: 'with-agent' })]
+  rows = [row({ owed: '1 note with the agent' })]
+  artifactDelete = { ok: true }
+  const api = (window as any).electronAPI.canvas
+  for (const fn of Object.values(api)) if (typeof fn === 'function' && 'mockClear' in (fn as any)) (fn as any).mockClear()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -98,22 +112,51 @@ describe('the row no longer offers a bulk close-out', () => {
 describe('delete is two-step and double-click-proof (#456)', () => {
   it('a double-click cannot arm and fire delete in one gesture', async () => {
     await render()
-    const deleteCanvas = (window as any).electronAPI.canvas.deleteCanvas
-    deleteCanvas.mockClear()
+    const deleteArtifactFn = (window as any).electronAPI.canvas.deleteArtifact
+    deleteArtifactFn.mockClear()
     await click(byTestId('canvas-library-delete'))
     await click(byTestId('canvas-library-confirm-delete'))
-    expect(deleteCanvas).not.toHaveBeenCalled()
+    expect(deleteArtifactFn).not.toHaveBeenCalled()
     // Still armed — the delete waits for a deliberate second decision.
     expect(byTestId('canvas-library-confirm-delete')).toBeTruthy()
 
     passGuard()
     await click(byTestId('canvas-library-confirm-delete'))
-    expect(deleteCanvas).toHaveBeenCalledTimes(1)
+    expect(deleteArtifactFn).toHaveBeenCalledTimes(1)
+    expect(deleteArtifactFn).toHaveBeenCalledWith({ sessionId: SID, canvasId: 'canvas-a', versionId: 'v3', openTileSessionIds: [] })
   })
 
   it('arming moves focus onto the confirm', async () => {
     await render()
     await click(byTestId('canvas-library-delete'))
     expect(document.activeElement).toBe(byTestId('canvas-library-confirm-delete'))
+  })
+
+  it("names what goes, so the confirm is not a bare 'are you sure'", async () => {
+    await render()
+    await click(byTestId('canvas-library-delete'))
+    expect(byTestId('canvas-library-confirm-delete')?.textContent).toContain('v3')
+    expect(byTestId('canvas-library-confirm-delete')?.textContent).toContain('notes')
+  })
+
+  it("hands off to deleting the CANVAS when the run is its only artefact", async () => {
+    artifactDelete = { ok: false, reason: 'only-artifact' }
+    await render()
+    await click(byTestId('canvas-library-delete'))
+    passGuard()
+    await click(byTestId('canvas-library-confirm-delete'))
+    expect((window as any).electronAPI.canvas.deleteArtifact).toHaveBeenCalledTimes(1)
+    expect((window as any).electronAPI.canvas.deleteCanvas).toHaveBeenCalledWith({ sessionId: SID, canvasId: 'canvas-a', openTileSessionIds: [] })
+    expect(byTestId('canvas-library-error')).toBeNull()
+  })
+
+  it('says so, in plain words, when main refuses the delete outright', async () => {
+    artifactDelete = { ok: false, reason: 'not-found' }
+    await render()
+    await click(byTestId('canvas-library-delete'))
+    passGuard()
+    await click(byTestId('canvas-library-confirm-delete'))
+    expect((window as any).electronAPI.canvas.deleteCanvas).not.toHaveBeenCalled()
+    expect(byTestId('canvas-library-error')?.textContent).toContain('could not be deleted')
   })
 })

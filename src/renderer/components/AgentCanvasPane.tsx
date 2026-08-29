@@ -3,7 +3,7 @@ import { Excalidraw, restoreElements } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import CanvasEmptyState from './CanvasEmptyState'
-import { CanvasLibrary } from './CanvasLibrary'
+import { CanvasLibrary, clearCanvasReadonlyView, useCanvasReadonlyRequest } from './CanvasLibrary'
 import CanvasFiledStrip from './CanvasFiledStrip'
 import CanvasNotesPanel from './CanvasNotesPanel'
 import CanvasCompleteButton from './CanvasCompleteButton'
@@ -28,6 +28,7 @@ import {
   type AnchorRef,
   type CanvasHoverReportingResult,
   type CanvasSnapshotResult,
+  type CanvasState,
   type EvidenceCaptureRefusal,
   type StampTarget,
 } from '../../shared/canvas'
@@ -250,6 +251,35 @@ function ToolIcon({ kind }: { kind: 'inspect' | 'sketch' | 'region' | 'tools' })
   )
 }
 
+/**
+ * READ-ONLY (M4) — the one thing that must be legible about a foreign canvas.
+ *
+ * Worded as a fact about whose work it is, not as a permission error: the user
+ * has not been refused anything, they are looking at a finished artefact that
+ * belongs to another session. A padlock is drawn rather than typed — the repo
+ * takes no emoji in JSX.
+ */
+function ReadOnlyChip(): React.JSX.Element {
+  return (
+    <span
+      className="shrink-0 inline-flex items-center gap-1 text-[9px] font-bold tracking-[0.06em] rounded px-1.5 py-[3px]"
+      style={{
+        color: 'var(--text-secondary)',
+        background: 'var(--surface-sunken)',
+        border: '1px solid var(--border-subtle)',
+      }}
+      title="Another session made this and signed it off. You can look through it; only its own session can reopen it."
+      data-testid="canvas-readonly-chip"
+    >
+      <svg width="9" height="11" viewBox="0 0 10 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <rect x="1.5" y="5" width="7" height="6" rx="1.2" />
+        <path d="M3.2 5V3.4a1.8 1.8 0 0 1 3.6 0V5" />
+      </svg>
+      READ-ONLY · another session&apos;s work
+    </span>
+  )
+}
+
 interface Props {
   sessionId: string
   /**
@@ -310,6 +340,120 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
   // Only drafts so far: nothing is ready for review, and the empty state alone
   // would read as "no canvas at all" — say what is actually happening.
   const draftPending = !!canvasState?.versions.some((v) => v.draft)
+
+  /**
+   * READ-ONLY VIEW (M4) — a completed canvas this session does not own.
+   *
+   * Memorialised work is shared to the project Library, so any session on the
+   * project may LOOK at it; nothing about ownership moves, and Reopen (which
+   * restores obligations) stays the owner's. The request arrives from the
+   * Library, which is mounted both here and inside the front page — see the
+   * note on `requestCanvasReadonlyView` for why it is published rather than
+   * passed as a prop.
+   *
+   * The state comes from `canvas:getReadonly`, which is completed-only and
+   * project-scoped in main. This branch is the BELT: main refuses every
+   * mutating channel for a caller that does not own the canvas, and the surface
+   * below additionally offers none of them.
+   */
+  const readonlyCanvasId = useCanvasReadonlyRequest(sessionId)
+  const [readonlyState, setReadonlyState] = useState<CanvasState | null>(null)
+  const [readonlyVersionId, setReadonlyVersionId] = useState<string | null>(null)
+  const [readonlyFailed, setReadonlyFailed] = useState(false)
+
+  useEffect(() => {
+    setReadonlyState(null)
+    setReadonlyVersionId(null)
+    setReadonlyFailed(false)
+    if (!readonlyCanvasId) return
+    let live = true
+    void (async () => {
+      try {
+        const state = await window.electronAPI.canvas.getReadonly({ sessionId, canvasId: readonlyCanvasId })
+        if (!live) return
+        if (!state) {
+          setReadonlyFailed(true)
+          return
+        }
+        setReadonlyState(state)
+        // The version main points at, else the newest ready one — a read-only
+        // viewer has no active-version of its own to move.
+        const ready = [...state.versions].reverse().find((v: CanvasVersion) => !v.draft) ?? null
+        const active = state.versions.find((v: CanvasVersion) => v.id === state.activeVersionId && !v.draft) ?? null
+        setReadonlyVersionId((active ?? ready)?.id ?? null)
+      } catch {
+        if (live) setReadonlyFailed(true)
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [readonlyCanvasId, sessionId])
+
+  const readonlyVersion = useMemo(
+    () => readonlyState?.versions.find((v) => v.id === readonlyVersionId) ?? null,
+    [readonlyState, readonlyVersionId],
+  )
+
+  const leaveReadonly = useCallback(() => {
+    clearCanvasReadonlyView(sessionId)
+    setLibraryOpen(true)
+  }, [sessionId])
+
+  /**
+   * The read-only view dies with the pane.
+   *
+   * It is a VIEW, not session state: the request slot outlives this component
+   * (it is module state, so the Library can raise it from either of its two
+   * mount points), and App unmounts the pane on close. Without this, closing
+   * the pane while looking at somebody else's finished canvas left the slot
+   * set, and the next time the user opened their canvas they got the foreign
+   * one back instead of their own work — with no obvious way to tell why.
+   * `‹ Library` clears it too, but that is the deliberate exit; this covers
+   * every other way out.
+   */
+  useEffect(() => () => clearCanvasReadonlyView(sessionId), [sessionId])
+
+  if (readonlyCanvasId) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0 relative pane-fade-in" data-testid="canvas-pane-root">
+        {readonlyState && readonlyVersion ? (
+          <CanvasSurface
+            // Keyed by the FOREIGN canvas, so stepping from one read-only
+            // canvas to another remounts every per-version mechanism (the
+            // sketch stash, the version-stamp maps) exactly as a Library
+            // "open here" does.
+            key={`readonly:${readonlyCanvasId}`}
+            readOnly
+            sessionId={sessionId}
+            canvasId={readonlyCanvasId}
+            title={readonlyState.title}
+            version={readonlyVersion}
+            versions={readonlyState.versions}
+            // The displayed version is LOCAL here: `setActiveVersion` would
+            // move the session's own canvas, which is not the one on screen.
+            onSelectVersion={setReadonlyVersionId}
+            onOpenLibrary={leaveReadonly}
+            isActive={isActive}
+          />
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center" data-testid="canvas-readonly-unavailable">
+            <p className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              {readonlyFailed
+                ? 'That canvas is not readable from this session — it may have been deleted, or it belongs to another project.'
+                : 'Opening…'}
+            </p>
+            <button
+              onClick={leaveReadonly}
+              className="text-[11.5px] rounded px-2 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-ring"
+            >
+              Back to the Library
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   // The library lives HERE, above the empty-state branch, not inside the
   // surface. Deleting the canvas you are looking at empties the pane, which
@@ -380,6 +524,19 @@ interface SurfaceProps {
   onOpenLibrary: () => void
   /** Straight through to the notes panel — see AgentCanvasPane's Props. */
   isActive: boolean
+  /**
+   * READ-ONLY (M4): this canvas is a COMPLETED one the session does not own.
+   *
+   * A security-relevant UI contract, so it is a prop threaded through the one
+   * surface rather than a fork: every mutating affordance is absent (not
+   * disabled — a disabled control still reads as "this could apply"), and the
+   * whole set is enumerated where each is suppressed. Main refuses each of
+   * these channels for a foreign caller as well; this is the belt.
+   */
+  readOnly?: boolean
+  /** READ-ONLY only: which version is displayed is the pane's local state here,
+   *  because `setActiveVersion` would move the session's OWN canvas. */
+  onSelectVersion?: (versionId: string) => void
 }
 
 interface HoverState {
@@ -421,16 +578,51 @@ const MAX_RESTORED_SKETCH_ELEMENTS = 2000
 /** The belt's way of saying "the user cleared the glass" out loud. */
 const EMPTY_SKETCH_SCENE: CanvasSketchScene = { scene: '[]', versions: {} }
 
-function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versions, onOpenLibrary, isActive }: SurfaceProps) {
+function CanvasSurface({
+  sessionId,
+  canvasId,
+  title: canvasTitle,
+  version,
+  versions,
+  onOpenLibrary,
+  isActive,
+  readOnly = false,
+  onSelectVersion,
+}: SurfaceProps) {
   const togglePane = useExcalidrawStore((s) => s.togglePane)
+  /**
+   * Closing the pane, from wherever the gesture came.
+   *
+   * A read-only view must not survive the close: the request slot is module
+   * state that outlives this tree, so leaving it set would show the user
+   * somebody else's canvas the next time they opened their own. The pane's
+   * unmount effect covers the same ground; this makes the deliberate gesture
+   * self-contained rather than dependent on App still unmounting the pane.
+   */
+  const closePane = useCallback(() => {
+    if (readOnly) clearCanvasReadonlyView(sessionId)
+    togglePane(sessionId)
+  }, [readOnly, sessionId, togglePane])
   // #478: the submit hand-back in flight — the close control disables so the
   // submit-triggered transition is the only driver of pane state.
   const returning = useExcalidrawStore((s) => !!s.submitReturnBySession[sessionId])
   // #476: viewing a canvas already signed off. The review panel (and its rail)
   // stay away — nothing is owed on it by invariant, and note-taking on a
   // completed subject is off until the user Reopens it.
-  const viewingCompleted = useCanvasStore((s) => !!s.bySessionId[sessionId]?.completed)
-  const mode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
+  const viewingCompletedOwn = useCanvasStore((s) => !!s.bySessionId[sessionId]?.completed)
+  /**
+   * ANNOTATION IS OFF — the union of "signed off" and "someone else's".
+   *
+   * The two arrive by different routes and mean different things (one is undone
+   * by Reopen, the other never transfers), but they suppress the same set, so
+   * the chips and the panel test this rather than either flag on its own.
+   */
+  const viewingCompleted = viewingCompletedOwn || readOnly
+  const sessionMode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
+  // A read-only surface is always BROWSE. The interaction mode is per-SESSION
+  // state, so it belongs to the session's own canvas — a foreign document must
+  // neither read it nor move it.
+  const mode = readOnly ? 'browse' : sessionMode
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
   const setActiveVersion = useCanvasStore((s) => s.setActiveVersion)
 
@@ -443,21 +635,34 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const settingsXrayMode = resolveCanvasXrayMode(useSettingsStore((s) => s.settings.canvasXrayMode))
   const xrayMode: CanvasXrayMode = version.mode === 'plan' ? 'stealth' : settingsXrayMode
 
-  const focus = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.focus ?? null)
-  const marqueeArmed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.marqueeArmed ?? false)
-  const panelHighlight = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.panelHighlight ?? null)
-  const reviewSession = useCanvasReviewStore((s) => s.bySessionId[sessionId])
+  // The review mirror is keyed by SESSION, so everything it holds describes the
+  // session's OWN canvas. On a read-only surface that is a different canvas
+  // entirely, and its focus box, its highlight and its armed region would be
+  // painted over someone else's document — so they are dropped here rather than
+  // at each use site.
+  const ownFocus = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.focus ?? null)
+  const focus = readOnly ? null : ownFocus
+  const ownMarqueeArmed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.marqueeArmed ?? false)
+  const marqueeArmed = readOnly ? false : ownMarqueeArmed
+  const ownPanelHighlight = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.panelHighlight ?? null)
+  const panelHighlight = readOnly ? null : ownPanelHighlight
+  const ownReviewSession = useCanvasReviewStore((s) => s.bySessionId[sessionId])
+  const reviewSession = readOnly ? undefined : ownReviewSession
   const setMarqueeArmed = useCanvasReviewStore((s) => s.setMarqueeArmed)
 
   // #476: the MODES go with the chips. interactionMode/marqueeArmed are
   // per-session renderer state that survives the detach and the adopt, so
   // without this a pane opened onto a completed canvas could arrive with the
   // glass live in Sketch and no panel to receive the strokes.
+  //
+  // READ-ONLY never runs it: `mode` is already forced to browse locally, and
+  // writing the session's own interaction state while looking at somebody
+  // else's canvas would silently change the mode of the canvas underneath.
   useEffect(() => {
-    if (!viewingCompleted) return
+    if (readOnly || !viewingCompleted) return
     setInteractionMode(sessionId, 'browse')
     setMarqueeArmed(sessionId, false)
-  }, [viewingCompleted, sessionId, setInteractionMode, setMarqueeArmed])
+  }, [readOnly, viewingCompleted, sessionId, setInteractionMode, setMarqueeArmed])
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   /** The pane's root element — the scope of the HOST-side zoom gesture (#368):
@@ -2028,7 +2233,27 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // A zero-note PASS files no review at all — just the version's verdict — so
   // the verdict is the second door into recall rather than an alternative test.
   const userDecided = version.verdict?.state === 'approved' || version.verdict?.state === 'rejected'
-  const showRecall = isTesting && (!!submittedRound || userDecided)
+  /**
+   * READ-ONLY NEVER RECALLS (M4 seam, deliberate).
+   *
+   * Recall IS the run's notes, and no channel hands a non-owner another
+   * session's annotations — `canvas:reviewGetState` is keyed by session, so it
+   * answers about the CALLER's canvas, and `canvas:getReadonly` answers a
+   * `CanvasState`, which carries versions and not reviews. Rendering the recall
+   * with the empty note list that produces would print "this run was submitted
+   * with no notes" over somebody else's pack, which is a claim about their work
+   * that we cannot make. So a read-only pack says what is true instead, and
+   * points at the Library, where its evidence images ARE readable
+   * (`canvas:evidenceRead` is owner-or-project) and the row expands to show
+   * them. When main starts returning the run's notes with the state, this
+   * branch goes and `showRecall` covers it.
+   *
+   * ANY uat version, decided or not. The undecided case is not an exception:
+   * the run's dist root is the OTHER session's build, so there is no live site
+   * to serve either — the pack view is the only honest answer for both.
+   */
+  const readonlyPack = readOnly && isTesting
+  const showRecall = !readOnly && isTesting && (!!submittedRound || userDecided)
   const recallNotes = useMemo(() => {
     if (!submittedRound || !reviewSession) return []
     const byId = new Map(reviewSession.annotations.map((a) => [a.id, a]))
@@ -2054,6 +2279,35 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     return [...versions].reverse().find((v) => !v.draft && v.id !== version.id && !decidedTest(v)) ?? null
   }, [versions, version.id])
 
+  if (readonlyPack) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]" data-testid="canvas-readonly-pack">
+        <div
+          className="h-[42px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)]"
+          style={{ borderBottom: '1px solid var(--border-subtle)' }}
+        >
+          <button
+            onClick={onOpenLibrary}
+            className="shrink-0 flex items-center gap-1 text-[11.5px] rounded px-1.5 py-0.5 text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring"
+            data-testid="canvas-readonly-pack-back"
+          >
+            <span aria-hidden className="text-[13px] leading-none">&lsaquo;</span> Library
+          </button>
+          <span className="min-w-0 truncate text-[12.5px] font-semibold text-[var(--text-primary)]">{packName}</span>
+          <ReadOnlyChip />
+          <div className="flex-1" />
+          <DismissButton onClick={closePane} label="Close Agent Canvas" size={11} data-testid="canvas-readonly-pack-close" />
+        </div>
+        <div className="flex-1 flex items-center justify-center px-8 text-center">
+          <p className="max-w-[420px] text-[12px] leading-[1.6]" style={{ color: 'var(--text-secondary)' }}>
+            This test pack belongs to another session, so its notes stay with it. Its screenshots are in the Library —
+            expand the row to look through them.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   if (showRecall) {
     return (
       <CanvasEvidenceRecall
@@ -2069,7 +2323,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         observations={recallObservations}
         backLabel={liveEscapeVersion ? 'Canvas' : 'Library'}
         onBack={liveEscapeVersion ? () => void setActiveVersion(sessionId, liveEscapeVersion.id) : onOpenLibrary}
-        onClose={() => togglePane(sessionId)}
+        onClose={closePane}
       />
     )
   }
@@ -2118,11 +2372,22 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             {canvasTitle}
           </span>
         )}
+        {/* READ-ONLY (M4): what the user is looking at, and why nothing here
+            can be touched. Placed with the title rather than in a corner —
+            "another session's work" is a fact about the SUBJECT. */}
+        {readOnly && <ReadOnlyChip />}
         {/* The TEST PACK, named (M3). A run's evidence is a thing the user will
             come back to weeks later from the Library, and "v7" is not a name
             anybody recognises then. Click to rename in place; empty restores
-            the derived default. */}
-        {isTesting &&
+            the derived default.
+            MUTATION 1 of 8 suppressed by read-only: pack rename. The name still
+            shows — it is what the pack is called — but as text. */}
+        {isTesting && readOnly && (
+          <span className="shrink-0 max-w-[280px] truncate text-[11.5px]" style={{ color: 'var(--text-secondary)' }} data-testid="canvas-pack-name-readonly">
+            {packName}
+          </span>
+        )}
+        {isTesting && !readOnly &&
           (renamingPack ? (
             <input
               autoFocus
@@ -2192,19 +2457,27 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           title={canvasTitle}
           // The same two inputs the pane's own pack name is derived from, in
           // the same order — one pack, one name, wherever it is written.
-          configName={packConfigName}
-          observationsByVersion={observationsByVersion}
-          onSelectVersion={(id) => void setActiveVersion(sessionId, id)}
-          onArchive={(artifact) => {
+          configName={readOnly ? undefined : packConfigName}
+          // Observations are counted off the session's OWN review mirror, so on
+          // a foreign canvas the number would belong to a different run. Absent
+          // reads as "none known" and History shows a plain PASSED.
+          observationsByVersion={readOnly ? undefined : observationsByVersion}
+          onSelectVersion={(id) => (readOnly ? onSelectVersion?.(id) : void setActiveVersion(sessionId, id))}
+          // MUTATIONS 2 and 3 of 8 suppressed by read-only: artifact archive
+          // and artifact delete. Both props are optional, so omitting them
+          // removes the controls from the History dropdown entirely.
+          onArchive={readOnly ? undefined : (artifact) => {
             // Reversible: the store returns the new state and pushes a change,
             // but refresh here makes the picker update without the round-trip.
+            // `sessionId` is who is ASKING — main's owner guard (M4), not a
+            // claim the renderer gets to make.
             void window.electronAPI.canvas
-              .archiveArtifact({ canvasId, versionId: artifact.key, archived: !artifact.archived })
+              .archiveArtifact({ sessionId, canvasId, versionId: artifact.key, archived: !artifact.archived })
               .then(() => useCanvasStore.getState().refresh(sessionId))
           }}
-          onDelete={(artifact) => {
+          onDelete={readOnly ? undefined : (artifact) => {
             void window.electronAPI.canvas
-              .deleteArtifact({ canvasId, versionId: artifact.key })
+              .deleteArtifact({ sessionId, canvasId, versionId: artifact.key })
               .then(() => useCanvasStore.getState().refresh(sessionId))
           }}
         />
@@ -2216,9 +2489,9 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             long and interruptible: this closes the pane and leaves the run
             exactly as it stands, notes and all. The Pass/Fail buttons in the
             panel are the only things that end a run. */}
-        {isTesting && versionOpen && (
+        {isTesting && versionOpen && !readOnly && (
           <button
-            onClick={() => togglePane(sessionId)}
+            onClick={closePane}
             disabled={returning}
             className="shrink-0 text-[11.5px] rounded px-2 py-0.5 border transition-colors focus-ring disabled:opacity-40 disabled:cursor-default"
             style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--surface-panel)' }}
@@ -2231,7 +2504,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         {/* The ONE dismiss control (M2). Still disabled while the submit
             hand-back is in flight (#478): that transition owns the pane. */}
         <DismissButton
-          onClick={() => togglePane(sessionId)}
+          onClick={closePane}
           disabled={returning}
           size={11}
           label="Close Agent Canvas"
@@ -2309,6 +2582,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               )}
             </div>
           </div>
+          {/* MUTATIONS 4, 5 and 6 of 8 suppressed by read-only: Sketch, Tools
+              and Region. The whole ANNOTATE group goes, label and all — a
+              disabled chip still says "you could annotate this", and on
+              somebody else's finished work that is not true. X-Ray stays: it
+              only reads the page. */}
+          {!readOnly && (
+          <>
           <span aria-hidden className="w-px h-[16px] shrink-0" style={{ background: 'var(--border-subtle)' }} />
           <span className="text-[9px] font-bold tracking-[0.08em] shrink-0" style={{ color: 'var(--text-secondary)' }} aria-hidden>
             ANNOTATE
@@ -2380,6 +2660,8 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             <ToolIcon kind="region" />
             Region
           </button>
+          </>
+          )}
         {/* The contextual hint, inline where the old full-width mode strip
             was — the strip row itself is gone (C3). */}
         <span className={`font-semibold uppercase tracking-wide shrink-0 ${modeStrip.color}`}>{modeStrip.label}</span>
@@ -2388,8 +2670,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         {/* Subject-level sign-off (#476) — far right of the tools row (C3). */}
         {/* The version ON SCREEN, so the button asks "is this artefact still
             open?" of the run the user is actually looking at — a canvas holds
-            several, and the newest is not necessarily the displayed one. */}
-        <CanvasCompleteButton sessionId={sessionId} canvasId={canvasId} title={canvasTitle} displayedVersionId={version.id} />
+            several, and the newest is not necessarily the displayed one.
+            MUTATION 7 of 8 suppressed by read-only: Mark complete. Signing off
+            somebody else's canvas is theirs to do, and it is already complete
+            by the time it is visible here at all. */}
+        {!readOnly && (
+          <CanvasCompleteButton sessionId={sessionId} canvasId={canvasId} title={canvasTitle} displayedVersionId={version.id} />
+        )}
       </div>
 
       <div className="relative flex-1 flex min-h-0">
@@ -2740,6 +3027,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             the review, and keeping it out means the panel's own file is
             untouched by this change. The panel keeps its own width and left
             border; this column just stacks the two. */}
+        {/* MUTATION 8 of 8 suppressed by read-only: the whole review panel —
+            composer, decision bar, per-note controls, reopen, evidence capture
+            and the draft persistence behind them. `viewingCompleted` is the
+            union (see its definition), so this one condition removes them all
+            rather than eight separate guards that could drift apart. */}
         {viewingCompleted ? null : panelHidden ? (
           /* Collapsed rail (item C): the panel is away, the page has the width,
              and this keeps the outstanding count and the way back. */
@@ -2788,7 +3080,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 markSketchElementsAttached={markSketchElementsAttached}
                 getSketchSceneForPersist={getSketchSceneForPersist}
                 restoreSketchScene={restoreSketchScene}
-                onReturnToTerminal={() => togglePane(sessionId)}
+                onReturnToTerminal={closePane}
                 isActive={isActive}
                 onHide={() => setPanelHidden(true)}
                 // Testing mode's evidence seam (M3). Absent in every other

@@ -13,7 +13,13 @@ import type {
   CanvasReviewState,
   CanvasSketchExport,
   CanvasSnapshotReply,
-  ReclaimableCanvas,
+  CanvasDismissRefusal,
+  CanvasDismissResult,
+  CanvasLibraryFilter,
+  CanvasLibraryResult,
+  CanvasLibraryTab,
+  CanvasResumeResult,
+  ResumableRow,
   CanvasLibraryEntry,
   CanvasSnapshotRequestEvent,
   CanvasState,
@@ -289,23 +295,76 @@ export interface ElectronAPI {
      *  answers exactly once per requestId via sendSnapshotResult. */
     onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
     sendSnapshotResult: (reply: CanvasSnapshotReply) => void
-    /** Canvases from earlier sessions this one could reclaim (read-only).
-     *  `openTileSessionIds` are the tiles the user has on screen; main uses
-     *  them only to EXCLUDE candidates whose own tile is still live. */
-    listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
-    /** The canvases for this session's PROJECT, for the library. Pure read:
-     *  listing a canvas never binds it to a session. sessionId scopes the
-     *  list to that project; main resolves the directory itself. */
+    /** THE PROJECT LIBRARY (M4), one row per ARTEFACT RUN. Search, tab, chip
+     *  and the cap are applied in MAIN, so `truncated` is honest and another
+     *  live session's in-flight work never crosses the boundary at all. */
+    libraryList: (args: {
+      sessionId: string
+      openTileSessionIds?: string[]
+      query?: string
+      tab?: CanvasLibraryTab
+      filter?: CanvasLibraryFilter
+      sort?: 'recent'
+    }) => Promise<CanvasLibraryResult>
+    /** OWNERLESS IN-FLIGHT canvases on this project. Pure read; nothing moves
+     *  until the user picks one. Each row carries the owner it was listed
+     *  with — pass it straight back to `resume`. */
+    listResumables: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ResumableRow[]>
+    /** RESUME one, first-wins. `expectedOwnerSessionId` is the row's own
+     *  `expectedOwnerSessionId`: main compares and sets in one synchronous
+     *  step, so a second session racing you is told 'changed'. */
+    resume: (args: {
+      sessionId: string
+      canvasId: string
+      expectedOwnerSessionId: string
+      openTileSessionIds?: string[]
+    }) => Promise<CanvasResumeResult>
+    /** DISCARD an in-flight canvas and its evidence. Owner, or a same-project
+     *  caller when it is ownerless; never while another session is live-owner. */
+    dismiss: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<CanvasDismissResult>
+    /** READ a COMPLETED canvas owned by another session in this project, for
+     *  the read-only view. Never transfers ownership and grants no write. */
+    getReadonly: (args: { sessionId: string; canvasId: string }) => Promise<CanvasState | null>
+    /** The canvases for this session's PROJECT, for the totals sweep. Pure
+     *  read: listing a canvas never binds it to a session. sessionId scopes the
+     *  list to that project AND names the caller for the privacy rule; main
+     *  resolves the directory itself. */
     listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
-    /** The user deletes a canvas and its files. The only destructive canvas call. */
-    deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
-    /** Archive/unarchive one artifact (item C): reversible, returns the state. */
-    archiveArtifact: (args: { canvasId: string; versionId: string; archived: boolean }) => Promise<{ ok: boolean; state: CanvasState | null }>
-    /** Permanently delete one artifact, its versions and their review notes. */
-    deleteArtifact: (args: { canvasId: string; versionId: string }) => Promise<
-      { ok: true; deletedVersions: number; notesDeleted: number } | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' }
+    /** The user deletes a canvas and its files. The only destructive canvas
+     *  call, and OWNER-GUARDED since M4: `sessionId` says who is asking, and a
+     *  canvas a live other session owns — or somebody else's signed-off one —
+     *  is refused with a reason. */
+    deleteCanvas: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; reason?: CanvasDismissRefusal }>
+    /** Archive/unarchive one artifact (item C): reversible, returns the state.
+     *  Owner-guarded since M4, same rule as delete. */
+    archiveArtifact: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      archived: boolean
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; state: CanvasState | null; reason?: CanvasDismissRefusal }>
+    /** Permanently delete one artifact, its versions and their review notes.
+     *  Owner-guarded since M4, same rule as delete. */
+    deleteArtifact: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      openTileSessionIds?: string[]
+    }) => Promise<
+      | { ok: true; deletedVersions: number; notesDeleted: number }
+      | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' | CanvasDismissRefusal }
     >
-    /** The user reclaims a named canvas — the only path that moves ownership. */
+    /** OPEN HERE: point this session at a canvas IT ALREADY OWNS. Transfers
+     *  nothing; a foreign canvas is refused (taking one is `resume`). */
     reclaim: (args: {
       sessionId: string
       canvasId: string
@@ -961,16 +1020,31 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.CANVAS_SNAPSHOT_REQUEST, handler)
     },
     sendSnapshotResult: (reply: CanvasSnapshotReply) => ipcRenderer.send(IPC.CANVAS_SNAPSHOT_RESULT, reply),
-    listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
-      ipcRenderer.invoke(IPC.CANVAS_LIST_RECLAIMABLE, args),
+    libraryList: (args: {
+      sessionId: string
+      openTileSessionIds?: string[]
+      query?: string
+      tab?: CanvasLibraryTab
+      filter?: CanvasLibraryFilter
+      sort?: 'recent'
+    }) => ipcRenderer.invoke(IPC.CANVAS_LIBRARY_LIST, args),
+    listResumables: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_LIST_RESUMABLES, args),
+    resume: (args: { sessionId: string; canvasId: string; expectedOwnerSessionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_RESUME, args),
+    dismiss: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DISMISS, args),
+    getReadonly: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_GET_READONLY, args),
     reclaim: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_RECLAIM, args),
     listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_LIST_ALL, args ?? {}),
-    deleteCanvas: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_DELETE, args),
-    archiveArtifact: (args: { canvasId: string; versionId: string; archived: boolean }) =>
+    deleteCanvas: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DELETE, args),
+    archiveArtifact: (args: { sessionId: string; canvasId: string; versionId: string; archived: boolean; openTileSessionIds?: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_ARCHIVE_ARTIFACT, args),
-    deleteArtifact: (args: { canvasId: string; versionId: string }) => ipcRenderer.invoke(IPC.CANVAS_DELETE_ARTIFACT, args),
+    deleteArtifact: (args: { sessionId: string; canvasId: string; versionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DELETE_ARTIFACT, args),
     reviewGetState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_GET_STATE, args),
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_UPSERT, args),

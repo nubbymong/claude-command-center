@@ -53,16 +53,14 @@ afterAll(() => {
 })
 
 describe('listAllCanvases', () => {
-  it('lists EVERY canvas, not just what the asking session could reclaim', () => {
+  it('lists EVERY canvas, not just what the asking session could resume', () => {
     renderDesign(SID_A, 'one')
     renderDesign(SID_B, 'two')
-    // listOrphanCandidateCanvases returns nothing for a session that already
-    // owns one; the library is not an ownership question and shows both.
-    expect(store.listOrphanCandidateCanvases(SID_A, {
-      cwd: CWD,
-      conversationUuid: CONV_1,
-      isSessionCurrent: () => false,
-    })).toHaveLength(0)
+    // The resume list excludes the caller's OWN canvases (resuming your own is
+    // Open here, not a transfer), so it is a strictly different question from
+    // the library's — which is not an ownership question at all and shows both.
+    expect(store.listResumableCanvases(SID_A, { isSessionLive: () => false }).map((r) => r.canvasId))
+      .not.toContain(store.getCanvasStateForSession(SID_A)?.canvasId)
     expect(store.listAllCanvases()).toHaveLength(2)
   })
 
@@ -80,7 +78,24 @@ describe('listAllCanvases', () => {
   it('marks rows whose owning session is on screen right now', () => {
     renderDesign(SID_A, 'one')
     expect(store.listAllCanvases([])[0].ownedByOpenSession).toBeUndefined()
-    expect(store.listAllCanvases([SID_A])[0].ownedByOpenSession).toBe(true)
+    // Asked AS the owner: the privacy rule withholds another live session's
+    // in-flight canvas, so a caller that is not SID_A would see nothing here —
+    // which is the point of the next test rather than of this one.
+    expect(store.listAllCanvases([SID_A], undefined, SID_A)[0].ownedByOpenSession).toBe(true)
+  })
+
+  it('WITHHOLDS another live session\u2019s in-flight canvas (the M4 privacy rule)', () => {
+    // In flight is private to the live session holding it. Enforced in MAIN on
+    // this channel as well as on the Library, because the totals sweep reads
+    // this list — a row returned here would put somebody else's private work
+    // into a count on the button.
+    const { canvasId } = renderDesign(SID_A, 'one')
+    const ids = (tiles: string[], asking: string) =>
+      store.listAllCanvases(tiles, undefined, asking).map((e) => e.canvasId)
+
+    expect(ids([SID_A], SID_B)).not.toContain(canvasId)
+    // ...and it comes back the moment its owner is no longer live.
+    expect(ids([], SID_B)).toContain(canvasId)
   })
 
   it('survives a restart — the library is what is on DISK', () => {

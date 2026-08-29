@@ -117,18 +117,18 @@ describe('a tile that switches account keeps the canvas it drew', () => {
       .toEqual({ canvasId, versionId: 'v2', superseded: ['v1'] })
   })
 
-  it('is not offered its own canvas back as a reclaim candidate', () => {
+  it('is not offered its own canvas back as a resume candidate', () => {
     store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>mine</p>' })
     tearDownForSwitch()
     respawnAfterSwitch()
 
     // NOT a binding assertion, and labelled so rather than left to look like
-    // one: `isReclaimCandidate` excludes own-session records independently of
+    // one: `isResumeCandidate` excludes own-session records independently of
     // `sessionIndex`, so this stays green under the `sessionIndex.delete`
     // mutation the other three tests are pinned by. It is here because
-    // offering the user their own live canvas to "reclaim" is the visible
+    // offering the user their own live canvas to "resume" is the visible
     // symptom of the ADR-017 lockout, not because it guards the index.
-    expect(store.listOrphanCandidateCanvases(SID, { isSessionCurrent: () => true })).toEqual([])
+    expect(store.listResumableCanvases(SID, { isSessionLive: () => true })).toEqual([])
   })
 })
 
@@ -167,8 +167,7 @@ describe('the account decides nothing (ADR-017), and cannot start deciding by ac
     const { canvasId } = store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>mine</p>' })
     store._resetCanvasStoreForTest()
 
-    expect(store.adoptCanvasForSession(SID, canvasId, { isSessionCurrent: () => false }))
-      .toEqual({ canvasId, activeVersionId: 'v1' })
+    expect(store.openOwnCanvasForSession(SID, canvasId)).toEqual({ canvasId, activeVersionId: 'v1' })
   })
 
   it('and none of that loosens the guard that stops ANOTHER session taking it', () => {
@@ -177,8 +176,10 @@ describe('the account decides nothing (ADR-017), and cannot start deciding by ac
     const { canvasId } = store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>mine</p>' })
     store._resetCanvasStoreForTest()
 
-    expect(store.adoptCanvasForSession(OTHER, canvasId, { isSessionCurrent: () => true })).toBeNull()
-    expect(store.listOrphanCandidateCanvases(OTHER, { isSessionCurrent: () => true })).toEqual([])
+    expect(store.openOwnCanvasForSession(OTHER, canvasId)).toBeNull()
+    expect(store.resumeCanvasForSession(OTHER, canvasId, SID, { isSessionLive: () => true }))
+      .toEqual({ ok: false, reason: 'owner-live' })
+    expect(store.listResumableCanvases(OTHER, { isSessionLive: () => true })).toEqual([])
   })
 })
 

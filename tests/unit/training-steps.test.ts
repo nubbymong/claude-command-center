@@ -8,7 +8,7 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 20 steps', () => {
+    it('has exactly 21 steps', () => {
       // v1.5.12 added dynamic-workflows; permission-tray step removed with the
       // feature; v2-readiness added multi-account + sentinel steps (16 -> 18);
       // v2.0.0 added the ai-usage-meter step (18 -> 19); the Agent Canvas got
@@ -16,15 +16,19 @@ describe('training-steps', () => {
       // "explains every feature", and it was the one shipped feature missing.
       // Ask Conductor was the next one missing (20 -> 21): it shipped in 2.0 as
       // "Ask Command Center" and was renamed, but never got a card (#372).
-      // #443 deprecated the Agent Hub, so its card left (21 -> 20).
-      expect(trainingSteps).toHaveLength(20)
+      // #443 deprecated the Agent Hub, so its card left (21 -> 20). The 2.1
+      // canvas rework's Canvas Explained page got a card (20 -> 21).
+      expect(trainingSteps).toHaveLength(21)
     })
 
     it('every step has required fields', () => {
       for (const step of trainingSteps) {
         expect(step.id).toBeTruthy()
         expect(step.title).toBeTruthy()
-        expect(step.sinceVersion).toMatch(/^\d+\.\d+\.\d+$/)
+        // Prerelease suffixes are legal since canvas-explained shipped on the
+        // rc.10 line; compareVersions ignores the suffix, so '2.1.0-rc.10'
+        // ranks as 2.1.0 for tour-resurfacing purposes.
+        expect(step.sinceVersion).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/)
         expect(step.bullets.length).toBeGreaterThan(0)
         expect(step.screenshotFilename).toMatch(/\.jpg$/)
       }

@@ -53,9 +53,17 @@ vi.mock('../../../src/main/canvas/canvas-snapshot-broker', () => ({
 
 const sessionLink = vi.hoisted(() => ({
   canvasCwdForSession: vi.fn<(sid: string) => string | undefined>(() => undefined),
+  canvasConfigNameForSession: vi.fn<(sid: string) => string | undefined>(() => undefined),
   installCanvasSessionLink: vi.fn(),
-  listReclaimableCanvases: vi.fn(() => []),
-  reclaimCanvasForSession: vi.fn(() => false),
+  // M4 — the ownership lease. Stubbed to the inert answer: this file is about
+  // the settled machine, and a real liveness oracle here would only add a
+  // second reason for its assertions to move.
+  canvasLivenessQuery: vi.fn(() => ({ isSessionLive: () => false })),
+  canvasMutationAllowed: vi.fn(() => ({ ok: true as const })),
+  dismissCanvasForSession: vi.fn(() => ({ ok: false as const, reason: 'not-eligible' as const })),
+  listResumableRows: vi.fn(() => []),
+  openOwnCanvasForSessionLink: vi.fn(() => false),
+  resumeCanvasFromSession: vi.fn(() => ({ ok: false as const, reason: 'gone' as const })),
 }))
 vi.mock('../../../src/main/canvas/canvas-session-link', () => sessionLink)
 

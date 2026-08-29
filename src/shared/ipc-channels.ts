@@ -398,12 +398,22 @@ export const IPC = {
   CANVAS_CHANGED: 'canvas:changed',                    // push: main -> renderer (a render/switch happened)
   CANVAS_SNAPSHOT_REQUEST: 'canvas:snapshotRequest',   // push: main -> renderer: capture the live frame (id-correlated)
   CANVAS_SNAPSHOT_RESULT: 'canvas:snapshotResult',     // renderer -> main: the reply to one snapshotRequest
-  CANVAS_LIST_RECLAIMABLE: 'canvas:listReclaimable',   // renderer -> main: { sessionId, openTileSessionIds? } -> ReclaimableCanvas[] (read-only)
-  CANVAS_RECLAIM: 'canvas:reclaim',                    // renderer -> main: the USER moves a named canvas to this session
-  CANVAS_LIST_ALL: 'canvas:listAll',                   // renderer -> main: { openTileSessionIds?, sessionId? } -> CanvasLibraryEntry[] (the library, scoped to that session's project; read-only)
-  CANVAS_DELETE: 'canvas:delete',                      // renderer -> main: the USER deletes a canvas and its files
-  CANVAS_ARCHIVE_ARTIFACT: 'canvas:archiveArtifact',   // renderer -> main: { canvasId, versionId, archived } -> tuck an artifact into (or out of) the Archived history group (reversible)
-  CANVAS_DELETE_ARTIFACT: 'canvas:deleteArtifact',     // renderer -> main: { canvasId, versionId } -> permanently delete an artifact, its versions and their review notes
+  CANVAS_RECLAIM: 'canvas:reclaim',                    // renderer -> main: OPEN HERE — point this session at a canvas IT ALREADY OWNS. Transfers nothing; a foreign canvas is refused (M4: the transfer path is canvas:resume)
+  CANVAS_LIST_ALL: 'canvas:listAll',                   // renderer -> main: { openTileSessionIds?, sessionId? } -> CanvasLibraryEntry[] (the totals sweep, scoped to that session's project; read-only, and subject to the SAME privacy rule as libraryList)
+  CANVAS_DELETE: 'canvas:delete',                      // renderer -> main: the USER deletes a canvas and its files (refused when a LIVE other session owns it; a completed canvas is its owner's alone)
+  CANVAS_ARCHIVE_ARTIFACT: 'canvas:archiveArtifact',   // renderer -> main: { sessionId, canvasId, versionId, archived } -> tuck an artifact into (or out of) the Archived history group (reversible; owner-scoped)
+  CANVAS_DELETE_ARTIFACT: 'canvas:deleteArtifact',     // renderer -> main: { sessionId, canvasId, versionId } -> permanently delete an artifact, its versions and their review notes (owner-scoped)
+
+  // Agent Canvas M4 — the ownership lease: the project Library, resume/dismiss
+  // of ownerless in-flight work, and the read-only view of somebody else's
+  // memorialised canvas. The PRIVACY RULE — an in-flight canvas whose owner is
+  // LIVE and is not the caller is invisible — is enforced in MAIN, on both
+  // listing channels, never left to the renderer.
+  CANVAS_LIBRARY_LIST: 'canvas:libraryList',           // renderer -> main: { sessionId, openTileSessionIds, query?, tab?, filter?, sort? } -> { rows: CanvasLibraryRow[]; truncated }
+  CANVAS_LIST_RESUMABLES: 'canvas:listResumables',     // renderer -> main: { sessionId, openTileSessionIds } -> ResumableRow[] (ownerless in-flight, same project; independent of what the caller already owns)
+  CANVAS_RESUME: 'canvas:resume',                      // renderer -> main: { sessionId, canvasId, expectedOwnerSessionId, openTileSessionIds } -> compare-and-set adoption; first wins, everyone else gets 'changed'
+  CANVAS_DISMISS: 'canvas:dismiss',                    // renderer -> main: { sessionId, canvasId, openTileSessionIds } -> DISCARD an ownerless (or own) in-flight canvas and its evidence
+  CANVAS_GET_READONLY: 'canvas:getReadonly',           // renderer -> main: { sessionId, canvasId } -> CanvasState | null; COMPLETED canvases only for a non-owner, same project
 
   // Agent Canvas P3 — reviews & annotations (the review loop, spec §6)
   CANVAS_REVIEW_GET_STATE: 'canvas:reviewGetState',    // renderer -> main: { sessionId } -> CanvasReviewState | null

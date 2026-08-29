@@ -225,17 +225,18 @@ describe('what completion does', () => {
 
 describe('adversarial — reclaim, review-writes, cap, fork', () => {
   it('a completed canvas is never offered to, or adopted by, another session', () => {
-    // isReclaimCandidate must exclude completed: completion detaches the owner,
+    // isResumeCandidate must exclude completed: completion detaches the owner,
     // so without the check a signed-off canvas looks like an orphan — offered
-    // in the reclaim card and adoptable, handing over its notes AND the right
-    // to Reopen a sign-off the adopter never made.
+    // on the front page and resumable, handing over its notes AND the right to
+    // Reopen a sign-off the resumer never made.
     const done = finishedCycle()
     completion.completeCanvasGuarded(done.canvasId, 'user', SID)
     const OTHER = 'bbbbbbbbbbbbbbbbbbbbbbbb'
-    const offered = canvasStore.listOrphanCandidateCanvases(OTHER, { isSessionCurrent: () => false })
+    const offered = canvasStore.listResumableCanvases(OTHER, { isSessionLive: () => false })
     expect(offered.some((c) => c.canvasId === done.canvasId)).toBe(false)
-    const adopted = canvasStore.adoptCanvasForSession(OTHER, done.canvasId, { isSessionCurrent: () => false })
-    expect(adopted).toBeNull()
+    expect(canvasStore.resumeCanvasForSession(OTHER, done.canvasId, SID, { isSessionLive: () => false }))
+      .toEqual({ ok: false, reason: 'completed' })
+    expect(canvasStore.openOwnCanvasForSession(OTHER, done.canvasId)).toBeNull()
   })
 
   it('a completed canvas refuses EVERY note-writing mutation over the store (terminal, main-side)', () => {
@@ -245,7 +246,7 @@ describe('adversarial — reclaim, review-writes, cap, fork', () => {
     // stays open so history is still viewable.
     const done = finishedCycle()
     completion.completeCanvasGuarded(done.canvasId, 'user', SID)
-    canvasStore.adoptCanvasForSession(SID, done.canvasId, { isSessionCurrent: () => false })
+    canvasStore.openOwnCanvasForSession(SID, done.canvasId)
     const v = canvasStore.getCanvasStateForSession(SID)!.versions[0].id
     expect(() => reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'x', versionId: v })).toThrow(/signed off/)
     expect(() => reviewStore.markAnnotationsAddressed(SID, 'R1', ['a1'])).toThrow(/signed off/)
@@ -360,7 +361,7 @@ describe('survival and viewing', () => {
     // escape) and must not resume — fresh canvas, viewing record untouched.
     const done = finishedCycle()
     completion.completeCanvasGuarded(done.canvasId, 'user', SID)
-    const adopted = canvasStore.adoptCanvasForSession(SID, done.canvasId, { isSessionCurrent: () => false })
+    const adopted = canvasStore.openOwnCanvasForSession(SID, done.canvasId)
     expect(adopted?.canvasId).toBe(done.canvasId)
     expect(canvasStore.getCanvasStateForSession(SID)?.canvasId).toBe(done.canvasId)
     const next = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>new</p>', title: done.title })

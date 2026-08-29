@@ -2,7 +2,7 @@
 // bug): a canvas is keyed to the session id, but that id changes on a fresh
 // tile / non-restored relaunch while the WORK (project dir, conversation)
 // stays the same. renderVersion stamps the work's identity onto the record;
-// adoptCanvasForSession moves an orphaned canvas to the new session; the
+// resumeCanvasForSession moves an ownerless canvas to the new session; the
 // review store follows (rebind + load-time self-heal).
 //
 // Observed failure being locked out: same conversation resumed the next day →
@@ -121,33 +121,46 @@ describe('renderVersion stamps the work identity', () => {
     expect(second.versionId).toBe('v2')
   })
 })
-describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
+describe('resume candidates + resumeCanvasForSession (user-chosen, compare-and-set)', () => {
+  // MIGRATED (M4). This block used to drive `listOrphanCandidateCanvases` and
+  // `adoptCanvasForSession`, which are gone: the lister returned [] the moment
+  // the asking session owned anything, and the adopt had no compare-and-set, so
+  // two sessions racing on one stranded canvas both "succeeded" and the second
+  // silently took work the first had started. The rules the old block pinned
+  // are all still rules, so the assertions moved rather than being deleted.
+  //
   // Two rounds of adversarial review established that NO identity the main
   // process can infer is safe to move a canvas on: the project directory is
   // ambiguous (two tiles on one repo), the conversation uuid comes from the
   // transcript binder and is heuristic AND agent-writable, and "is the owner
-  // still current" has no reliable oracle. A canvas carries the user's private
+  // still around" has no reliable oracle. A canvas carries the user's private
   // review notes, so the move is an authorization decision — the user makes it.
+
+  const live = { isSessionLive: allCurrent }
+  const dead = { isSessionLive: notCurrent }
 
   it('offers a candidate, and moves it only when the user names it by id', () => {
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
     restart()
 
-    const offered = store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent })
+    const offered = store.listResumableCanvases(SID_B, dead)
     expect(offered).toEqual([
       {
         canvasId,
-        versionCount: 1,
+        // No subject was named, so the row falls back to the CONVERSATION —
+        // the one thing that actually differs between two canvases from one
+        // project, and the mis-click this row exists to prevent.
+        title: `conversation ${CONV_1.slice(0, 8)}`,
+        kind: 'mockup',
+        noteCount: 0,
         lastRenderedAt: expect.any(String),
-        cwd: CWD,
-        // The disambiguator: two canvases from one project are otherwise
-        // identical on the reclaim card.
-        conversationShortId: CONV_1.slice(0, 8),
+        // The compare-and-set token: the owner the user SAW on this row.
+        expectedOwnerSessionId: SID_A,
       },
     ])
 
-    const adopted = store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
-    expect(adopted).toEqual({ canvasId, activeVersionId: 'v1' })
+    const resumed = store.resumeCanvasForSession(SID_B, canvasId, SID_A, dead)
+    expect(resumed).toEqual({ ok: true, canvasId, activeVersionId: 'v1' })
     expect(store.getCanvasStateForSession(SID_B)?.canvasId).toBe(canvasId)
     expect(store.getCanvasStateForSession(SID_A)).toBeNull()
     expect(canvasJson(canvasId).sessionId).toBe(SID_B)
@@ -158,14 +171,60 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     expect(next).toEqual({ canvasId, versionId: 'v2', superseded: ['v1'] })
   })
 
-  it('strips every format control out of the cwd the card displays', () => {
-    // The card's text AND its `title` tooltip render this string, so anything
-    // that reorders or hides its neighbours makes one directory read as
-    // another. The hand-written ranges this replaced jumped 007F straight to
-    // 200B, so all five of these walked through (measured, 2026-08-16):
-    // U+061C ARABIC LETTER MARK is a real Bidi_Control, U+00AD SOFT HYPHEN and
-    // U+2028/U+2029 break the line, U+0085 is a C1 control. Built from code
-    // points — a literal control character never goes into a tracked file.
+  it('TWO RACERS: the first resume wins and the second is told the owner changed', () => {
+    // The hole the compare-and-set closes, and the reason it must be
+    // synchronous end to end. Both sessions listed the row while nobody was
+    // live, so both hold `expectedOwnerSessionId: SID_A` and both pass the
+    // liveness floor. Nothing awaits between the store reading the current
+    // owner and persisting the new one, so the second call cannot interleave —
+    // it observes SID_B and refuses instead of taking a canvas SID_B has
+    // already started working in.
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'contended')
+    restart()
+
+    const rowsForB = store.listResumableCanvases(SID_B, dead)
+    const rowsForC = store.listResumableCanvases(SID_C, dead)
+    expect(rowsForB[0].expectedOwnerSessionId).toBe(SID_A)
+    expect(rowsForC[0].expectedOwnerSessionId).toBe(SID_A)
+
+    const first = store.resumeCanvasForSession(SID_B, canvasId, rowsForB[0].expectedOwnerSessionId, dead)
+    const second = store.resumeCanvasForSession(SID_C, canvasId, rowsForC[0].expectedOwnerSessionId, dead)
+
+    expect(first).toEqual({ ok: true, canvasId, activeVersionId: 'v1' })
+    expect(second).toEqual({ ok: false, reason: 'changed' })
+    expect(canvasJson(canvasId).sessionId).toBe(SID_B)
+    expect(store.getCanvasStateForSession(SID_C)).toBeNull()
+    // ...and on the loser's next refresh the row carries a NEW token. SID_B is
+    // not live in this harness, so the canvas is legitimately ownerless again
+    // and legitimately offered again — what has changed is who it says the
+    // owner is, which is precisely what makes the stale token above refuse
+    // instead of silently taking work SID_B has started.
+    expect(store.listResumableCanvases(SID_C, dead).map((r) => r.expectedOwnerSessionId)).toEqual([SID_B])
+    // In the real app SID_B is live the moment it holds the canvas, so the row
+    // is not offered at all — the liveness floor, tested on its own below.
+    expect(store.listResumableCanvases(SID_C, { isSessionLive: (sid) => sid === SID_B })).toEqual([])
+  })
+
+  it('refuses a stale token even when nothing else has changed', () => {
+    // A row listed before some other session took and released the canvas
+    // carries an owner that is no longer on the record. Refusing is what makes
+    // "first wins" a promise rather than a coincidence of timing.
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
+    restart()
+    expect(store.resumeCanvasForSession(SID_B, canvasId, SID_C, dead)).toEqual({ ok: false, reason: 'changed' })
+    expect(canvasJson(canvasId).sessionId).toBe(SID_A)
+  })
+
+  it('strips every format control out of the cwd the LIBRARY displays', () => {
+    // The resume row carries no directory at all now — a card that named one
+    // was the surface this test guarded. The library row still shows the cwd,
+    // its text AND its `title` tooltip, so anything that reorders or hides its
+    // neighbours makes one directory read as another. The hand-written ranges
+    // this replaced jumped 007F straight to 200B, so all five of these walked
+    // through (measured, 2026-08-16): U+061C ARABIC LETTER MARK is a real
+    // Bidi_Control, U+00AD SOFT HYPHEN and U+2028/U+2029 break the line, U+0085
+    // is a C1 control. Built from code points — a literal control character
+    // never goes into a tracked file.
     const ALM = String.fromCodePoint(0x061c)
     const SHY = String.fromCodePoint(0x00ad)
     const LS = String.fromCodePoint(0x2028)
@@ -175,41 +234,45 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     renderAs(SID_A, `C:\\work\\${ALM}a${SHY}b${LS}c${PS}d${NEL}e${RLO}f`, CONV_1, 'one')
     restart()
 
-    const [offered] = store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent })
-    expect(offered.cwd).toBe('C:\\work\\abcdef')
+    const [row] = store.listAllCanvases([], undefined, SID_A)
+    expect(row.cwd).toBe('C:\\work\\abcdef')
     for (const control of [ALM, SHY, LS, PS, NEL, RLO]) {
-      expect(offered.cwd, `survived: U+${control.codePointAt(0)!.toString(16)}`).not.toContain(control)
+      expect(row.cwd, `survived: U+${control.codePointAt(0)!.toString(16)}`).not.toContain(control)
     }
+    // ...and the resume row simply has no directory to poison.
+    const [resumable] = store.listResumableCanvases(SID_B, dead)
+    expect(resumable).not.toHaveProperty('cwd')
   })
 
-  it('moves NOTHING on its own — spawning a session in the same project adopts nothing', () => {
+  it('moves NOTHING on its own — spawning a session in the same project resumes nothing', () => {
     // The theft scenario: tile A renders, the user writes private notes, A's
     // PTY exits, a second tile opens on the same repo. Nothing may move.
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'private work')
     restart()
     // A candidate may be OFFERED...
-    expect(store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent })).toHaveLength(1)
+    expect(store.listResumableCanvases(SID_B, dead)).toHaveLength(1)
     // ...but ownership has not moved, and B has no canvas.
     expect(canvasJson(canvasId).sessionId).toBe(SID_A)
     expect(store.getCanvasStateForSession(SID_B)).toBeNull()
     expect(store.getCanvasStateForSession(SID_A)?.canvasId).toBe(canvasId)
   })
 
-  it('refuses an id that is not a candidate: owner still current', () => {
+  it('refuses an id that is not a candidate: the owner is LIVE', () => {
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
     restart()
-    expect(store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: allCurrent })).toEqual([])
-    // Even named explicitly, a live owner's canvas is not takeable.
-    expect(store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: allCurrent })).toBeNull()
+    expect(store.listResumableCanvases(SID_B, live)).toEqual([])
+    // Even named explicitly, with the right token, a live owner's canvas is
+    // not takeable — in-flight work is private to the session holding it.
+    expect(store.resumeCanvasForSession(SID_B, canvasId, SID_A, live)).toEqual({ ok: false, reason: 'owner-live' })
     expect(canvasJson(canvasId).sessionId).toBe(SID_A)
   })
 
   it('refuses an unknown / malformed canvas id', () => {
     renderAs(SID_A, CWD, CONV_1, 'one')
     restart()
-    expect(store.adoptCanvasForSession(SID_B, 'deadbeefdeadbeefdeadbeef', { isSessionCurrent: notCurrent })).toBeNull()
-    expect(store.adoptCanvasForSession(SID_B, '../../etc/passwd', { isSessionCurrent: notCurrent })).toBeNull()
-    expect(store.adoptCanvasForSession(SID_B, '', { isSessionCurrent: notCurrent })).toBeNull()
+    expect(store.resumeCanvasForSession(SID_B, 'deadbeefdeadbeefdeadbeef', SID_A, dead)).toEqual({ ok: false, reason: 'gone' })
+    expect(store.resumeCanvasForSession(SID_B, '../../etc/passwd', SID_A, dead)).toEqual({ ok: false, reason: 'gone' })
+    expect(store.resumeCanvasForSession(SID_B, '', SID_A, dead)).toEqual({ ok: false, reason: 'gone' })
   })
 
   it('does not care which ACCOUNT a canvas was drawn under (ADR-017)', () => {
@@ -219,20 +282,17 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     // had drawn itself, which is an ordinary thing to want to do.
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'work account')
     restart()
-    expect(
-      store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent }).map((c) => c.canvasId),
-    ).toContain(canvasId)
-    const ok = store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
-    expect(ok?.canvasId).toBe(canvasId)
+    expect(store.listResumableCanvases(SID_B, dead).map((c) => c.canvasId)).toContain(canvasId)
+    expect(store.resumeCanvasForSession(SID_B, canvasId, SID_A, dead)).toMatchObject({ ok: true, canvasId })
     expect(canvasJson(canvasId).sessionId).toBe(SID_B)
   })
 
-  it('still refuses a canvas whose owner might come back — the one floor left', () => {
+  it('still refuses a canvas whose owner is live — the one floor left', () => {
     // Removing the account term must not weaken the guard that actually stops
     // one tile taking a live tile's canvas and its private notes.
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'still running')
     restart()
-    expect(store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: () => true })).toBeNull()
+    expect(store.resumeCanvasForSession(SID_B, canvasId, SID_A, live)).toEqual({ ok: false, reason: 'owner-live' })
     expect(canvasJson(canvasId).sessionId).toBe(SID_A)
   })
 
@@ -267,7 +327,7 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
   it('never offers a session a canvas it already owns', () => {
     // Reachable, though it looks shadowed: a session that owns two canvases is
     // in the index under one of them, and DELETING that one clears the index
-    // entry while leaving the other still stamped with the session. The reclaim
+    // entry while leaving the other still stamped with the session. The resume
     // list then runs for a session that still owns a canvas — which must not be
     // offered back to it as somebody else's stranded work.
     store.setCanvasSessionInfoResolver(() => ({ cwd: CWD, conversationUuid: CONV_1 }))
@@ -276,33 +336,43 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     expect(second.canvasId).not.toBe(first.canvasId)
     store.deleteCanvas(second.canvasId)
 
-    const offered = store.listOrphanCandidateCanvases(SID_A, { isSessionCurrent: notCurrent })
+    const offered = store.listResumableCanvases(SID_A, dead)
     expect(offered.map((c) => c.canvasId)).not.toContain(first.canvasId)
   })
 
-  it('never re-homes a session that already owns a canvas', () => {
-    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'theirs')
-    renderAs(SID_B, OTHER_CWD, CONV_2, 'mine')
+  it('DOES offer a stranded canvas to a session that already owns one (M4 fix)', () => {
+    // The old lister bailed on `sessionIndex.has(sessionId)`, so any session
+    // that had ever rendered was shown nothing — and the only route back to
+    // stranded work was the library, which is scoped to the project. Owning a
+    // canvas is not a reason to be unable to pick up another.
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'stranded')
     restart()
-    expect(store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent })).toEqual([])
-    expect(store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })).toBeNull()
+    renderAs(SID_B, CWD, CONV_2, 'my own work')
+
+    expect(store.listResumableCanvases(SID_B, dead).map((c) => c.canvasId)).toEqual([canvasId])
+    expect(store.resumeCanvasForSession(SID_B, canvasId, SID_A, dead)).toMatchObject({ ok: true, canvasId })
+    // The resumed canvas becomes CURRENT; the one B already had stays B's, it
+    // is simply no longer what the pane points at.
+    expect(store.getCanvasStateForSession(SID_B)?.canvasId).toBe(canvasId)
   })
 
-  it('fails SAFE when the currency check throws — uncertain means untouchable', () => {
+  it('fails SAFE when the liveness check throws — uncertain means untouchable', () => {
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
     restart()
-    const throwing = () => {
-      throw new Error('session registry unavailable')
+    const throwing = {
+      isSessionLive: () => {
+        throw new Error('session registry unavailable')
+      },
     }
-    expect(store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: throwing })).toEqual([])
-    expect(store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: throwing })).toBeNull()
+    expect(store.listResumableCanvases(SID_B, throwing)).toEqual([])
+    expect(store.resumeCanvasForSession(SID_B, canvasId, SID_A, throwing)).toEqual({ ok: false, reason: 'owner-live' })
     expect(canvasJson(canvasId).sessionId).toBe(SID_A)
   })
 
-  it('leaves the adopted record’s own stamps alone (the adopter does not redefine what the canvas is)', () => {
+  it('leaves the resumed record\u2019s own stamps alone (the resumer does not redefine what the canvas is)', () => {
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
     restart()
-    store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
+    store.resumeCanvasForSession(SID_B, canvasId, SID_A, dead)
     const record = canvasJson(canvasId)
     expect(record.sessionId).toBe(SID_B) // only the owner moves
     expect(record.cwd).toBe(CWD)
@@ -322,8 +392,8 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
       JSON.stringify({ ...record, mac: store._canvasRecordMacForTest(record) }, null, 2),
     )
     restart()
-    expect(store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent })).toEqual([])
-    expect(store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })).toBeNull()
+    expect(store.listResumableCanvases(SID_B, dead)).toEqual([])
+    expect(store.resumeCanvasForSession(SID_B, canvasId, SID_A, dead)).toEqual({ ok: false, reason: 'gone' })
   })
 
   it('announces the move so the pane can repaint', () => {
@@ -331,7 +401,7 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
     restart()
     const off = store.onCanvasChanged((e) => seen.push({ sessionId: e.sessionId, canvasId: e.canvasId }))
-    store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
+    store.resumeCanvasForSession(SID_B, canvasId, SID_A, dead)
     off()
     expect(seen).toEqual([{ sessionId: SID_B, canvasId }])
   })
@@ -346,12 +416,25 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     const saved = fs.readFileSync(jsonPath, 'utf8')
     fs.rmSync(jsonPath, { force: true })
     fs.mkdirSync(jsonPath)
-    expect(() => store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })).toThrow()
+    expect(() => store.resumeCanvasForSession(SID_B, canvasId, SID_A, dead)).toThrow()
     // Neither session's view moved.
     expect(store.getCanvasStateForSession(SID_B)).toBeNull()
     expect(store.getCanvasStateForSession(SID_A)?.canvasId).toBe(canvasId)
     fs.rmSync(jsonPath, { recursive: true, force: true })
     fs.writeFileSync(jsonPath, saved)
+  })
+
+  it('OPEN HERE is not a resume: a session re-opens its own canvas with no oracle at all', () => {
+    store.setCanvasSessionInfoResolver(() => ({ cwd: CWD, conversationUuid: CONV_1 }))
+    const first = store.renderVersion(SID_A, { mode: 'design', title: 'one', html: '<!doctype html><p>one</p>' })
+    store.renderVersion(SID_A, { mode: 'design', title: 'two', html: '<!doctype html><p>two</p>' })
+
+    expect(store.openOwnCanvasForSession(SID_A, first.canvasId)).toEqual({ canvasId: first.canvasId, activeVersionId: 'v1' })
+    expect(store.getCanvasStateForSession(SID_A)?.canvasId).toBe(first.canvasId)
+    // ...and it is emphatically NOT a way to take somebody else's.
+    const theirs = renderAs(SID_B, CWD, CONV_2, 'theirs')
+    expect(store.openOwnCanvasForSession(SID_A, theirs.canvasId)).toBeNull()
+    expect(canvasJson(theirs.canvasId).sessionId).toBe(SID_B)
   })
 })
 
@@ -412,8 +495,8 @@ describe('reviews follow the adoption', () => {
     const { reviewId } = submitOneReview(SID_A)
     restart()
 
-    const adopted = store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
-    expect(adopted?.canvasId).toBe(canvasId)
+    const resumed = store.resumeCanvasForSession(SID_B, canvasId, SID_A, { isSessionLive: notCurrent })
+    expect(resumed).toMatchObject({ ok: true, canvasId })
     reviews.rebindReviewsToSession(canvasId, SID_B)
 
     const onDisk = reviewsJson(canvasId)
@@ -432,7 +515,7 @@ describe('reviews follow the adoption', () => {
     restart()
 
     // Canvas re-binds, then the app dies before the review rebind runs.
-    store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
+    store.resumeCanvasForSession(SID_B, canvasId, SID_A, { isSessionLive: notCurrent })
     restart()
 
     // Next launch: the canvas record says SID_B, reviews.json still says SID_A.
@@ -460,7 +543,7 @@ describe('reviews follow the adoption', () => {
     )
     restart()
 
-    store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
+    store.resumeCanvasForSession(SID_B, canvasId, SID_A, { isSessionLive: notCurrent })
     reviews.rebindReviewsToSession(canvasId, SID_B)
     // Broken store: reads answer empty, mutations refuse, file untouched.
     expect(reviews.getReviewStateForSession(SID_B)?.reviews).toEqual([])

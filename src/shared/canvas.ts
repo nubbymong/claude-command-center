@@ -14,6 +14,109 @@ export interface CanvasHandle {
   canvasId: string
 }
 
+// ── Audit stamps (M4) ───────────────────────────────────────────────────────
+//
+// WHO did this, and WHEN — carried on the canvas record, on each version, and
+// on each note, so a shared project Library can say "cfg Checkout · Personal ·
+// 2 days ago" instead of an opaque row.
+//
+// `sessionLabel` and `account` are DISPLAY METADATA ONLY. They are never keys
+// and never gates: ownership is `CanvasState.sessionId`, liveness is main's own
+// session registry, and the project is `cwd`. Making an account name part of
+// any decision is exactly what ADR-017 removed. They exist so the user can tell
+// two rows apart, nothing more — which is also why they are cleaned and capped
+// here rather than trusted from whatever produced them.
+
+/** Longest display label an audit stamp keeps. A label names a thing; it is
+ *  not a description, and it shares one mono line with three other fields. */
+export const MAX_AUDIT_LABEL_CHARS = 80
+
+/** Longest stamp id/timestamp kept — the bound every other stored stamp in this
+ *  contract carries. */
+const MAX_AUDIT_ID_CHARS = 128
+const MAX_AUDIT_TIME_CHARS = 64
+
+/** Session ids are app-minted (randomId → 24 hex); the bound is defensive, and
+ *  matches the store's own SESSION_ID_RE so a stamp can never name a shape the
+ *  store would refuse. */
+const AUDIT_SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
+
+/**
+ * The config a session runs, by its STABLE id (M4).
+ *
+ * Recorded so the Library can resolve the config's CURRENT display name at read
+ * time — rename a config and every row follows, where a stored label would
+ * freeze the old name forever. NEVER used for serving or for authorizing
+ * anything: it is a lookup key into the user's own configs.json and nothing
+ * else, which is why the shape is pinned rather than merely bounded.
+ */
+export const CANVAS_CONFIG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+
+/** Characters that reorder or hide the text around them, plus every control.
+ *  Stripped from a display label before it is stored, so the value never exists
+ *  in a renderable form anywhere — the same rule the Library row's cwd follows. */
+const AUDIT_LABEL_STRIP_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
+
+/** One display label, cleaned and capped — or undefined when nothing readable
+ *  survives. Absent is always legal: absent means "unknown", never "none". */
+export function sanitizeAuditLabel(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const cleaned = raw.replace(AUDIT_LABEL_STRIP_RE, '').trim()
+  if (!cleaned) return undefined
+  return Array.from(cleaned).slice(0, MAX_AUDIT_LABEL_CHARS).join('')
+}
+
+/**
+ * WHO made a write, for the audit line.
+ *
+ * `at` is host-minted. `sessionLabel` and `account` are optional display text.
+ * Nothing here authorizes anything — see the block comment above.
+ */
+export interface AuditStamp {
+  sessionId: string
+  sessionLabel?: string
+  account?: string
+  at: string
+}
+
+/**
+ * A stamp read back from disk, healed to what this build understands — or
+ * undefined when it is not a stamp at all.
+ *
+ * NEVER FATAL, and rebuilt field by field rather than spread. A stamp describes
+ * provenance; a malformed one costs a row its audit line, not the canvas its
+ * history. Rebuilding by name is what stops an unknown key riding through the
+ * heal and back onto disk at the next persist — the same rule `sanitizeStamp`
+ * follows for the evidence state stamp, and for the same reason.
+ */
+export function sanitizeAuditStamp(value: unknown): AuditStamp | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const s = value as Partial<AuditStamp>
+  if (typeof s.sessionId !== 'string' || !AUDIT_SESSION_ID_RE.test(s.sessionId)) return undefined
+  if (typeof s.at !== 'string' || s.at.length === 0 || s.at.length > MAX_AUDIT_TIME_CHARS) return undefined
+  // The moment has to PARSE, not merely be a bounded string. Every reader
+  // treats it as a date — the Library sorts on it, picks the newest stamp with
+  // it, and renders it as an age — and an unparseable value silently wins or
+  // loses those comparisons depending on which side of a string compare it
+  // falls, which is exactly the class of bug the store's own sorts moved off
+  // lexical order to avoid. Unparseable is not a stamp.
+  if (!Number.isFinite(Date.parse(s.at))) return undefined
+  const sessionLabel = sanitizeAuditLabel(s.sessionLabel)
+  const account = sanitizeAuditLabel(s.account)
+  return {
+    sessionId: s.sessionId,
+    ...(sessionLabel ? { sessionLabel } : {}),
+    ...(account ? { account } : {}),
+    at: s.at,
+  }
+}
+
+/** A config id read back from disk: OUR shape or dropped. Never fatal. */
+export function sanitizeCanvasConfigId(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > MAX_AUDIT_ID_CHARS) return undefined
+  return CANVAS_CONFIG_ID_RE.test(value) ? value : undefined
+}
+
 export interface Rect {
   x: number
   y: number
@@ -124,6 +227,12 @@ export interface CanvasVersion {
    * MAX_PACK_NAME_CHARS.
    */
   packName?: string
+  /**
+   * WHO rendered this version (M4). Stamped at render from the spawn record;
+   * absent on every version written before stamps existed, and on a session
+   * main never saw spawn. Display metadata only — see `AuditStamp`.
+   */
+  renderedBy?: AuditStamp
 }
 
 /** The artifact's one OPEN version (C1): its latest ready version that is not
@@ -199,6 +308,21 @@ export interface CanvasState {
   /** Present once the subject is signed off (#476). Terminal: renders are
    *  refused while it stands; Reopen clears it. */
   completed?: CanvasCompletion
+  /**
+   * WHO first rendered this canvas (M4), stamped once at creation and never
+   * rewritten — an adoption moves the owner, it does not rewrite who made the
+   * work. Absent on canvases created before stamps existed.
+   */
+  createdBy?: AuditStamp
+  /**
+   * The CONFIG the creating session ran, by its stable id (M4).
+   *
+   * Stamped once at creation, when the spawn record knew it. Resolved to a
+   * display name AT READ against configs.json, so renaming a config renames
+   * every row rather than leaving a frozen label behind. Never a serving or
+   * authorization key — see CANVAS_CONFIG_ID_RE.
+   */
+  configId?: string
 }
 
 /** Longest canvas title kept. A title names a subject; it is not a description. */
@@ -648,6 +772,16 @@ export interface Annotation {
    * from becoming a file-read primitive.
    */
   evidence?: AnnotationEvidence
+  /**
+   * WHO wrote this note (M4), stamped once at create and never rewritten — a
+   * later edit is the same person's note, and a rebind moves the canvas rather
+   * than the authorship.
+   *
+   * Display metadata only (see `AuditStamp`): the close-out barrier reads
+   * `addressedBy` / `userSawAddressed`, never this. Absent on every note
+   * written before stamps existed.
+   */
+  author?: AuditStamp
 }
 
 /**
@@ -1920,47 +2054,147 @@ export interface SnapshotNode {
 // never trusts what comes back (see canvas-snapshot-sanitize.ts).
 
 /** main → renderer: take a snapshot of the live frame for this canvas. */
+
+// ── The ownership lease, and what the Library reads (M4) ────────────────────
+//
+// THE LEASE IS LIVENESS, NOT A STORED FIELD. A canvas in flight is PRIVATE to
+// the live session that rendered it: another live session sees no row, no
+// count, no review action. When that session stops being live — the app quit,
+// the tile closed, the PTY exited — the canvas becomes OWNERLESS IN FLIGHT: not
+// gone, not memorialised, and resumable by any session on the same project.
+//
+// Resume is EXPLICIT, ATOMIC and FIRST-WINS. Nothing auto-attaches, ever: two
+// rounds of adversarial review established that no identity main can infer is
+// trustworthy enough to move the user's private review notes on its own, and
+// that finding stands. What M4 adds is the compare-and-set — the caller names
+// the owner it SAW, and a resume that would land on a different owner is
+// refused rather than silently taking whatever is there now.
+//
+// A COMPLETED canvas is not adoptable at all. It is memorialised into the
+// shared project Library, read-only to everyone but its owner: View never
+// transfers ownership, and Reopen (which restores obligations) stays the
+// owner's.
+
+/** What KIND of artefact a Library row is, in the words the user reads.
+ *  Derived from the version's `mode` — design → mockup, plan → plan, uat →
+ *  pack — never stored, so a row can never disagree with its versions. */
+export type LibraryRowKind = 'mockup' | 'plan' | 'pack'
+
+export function libraryRowKindOf(mode: CanvasMode): LibraryRowKind {
+  return mode === 'uat' ? 'pack' : mode === 'plan' ? 'plan' : 'mockup'
+}
+
+/** Which typed tab a Library query is on. */
+export type CanvasLibraryTab = 'all' | LibraryRowKind
+
+/** Which chip a Library query has applied. */
+export type CanvasLibraryFilter = 'needs-you' | 'open' | 'signed-off' | 'archived'
+
 /**
- * One canvas from an earlier session that the user could reclaim, described
- * well enough for them to recognise it in the Canvas pane.
+ * One ARTEFACT RUN in the project Library.
  *
- * The user picks; nothing is matched automatically. Two rounds of adversarial
- * review established that no identity the main process can infer (project
- * directory, conversation uuid, "is the owner still alive") is trustworthy
- * enough to move the user's private review notes between sessions on its own.
+ * Artefact-level, not canvas-level: one canvas accumulates several artefacts
+ * (a mockup run, then a plan, then a test pack), and a row per canvas could
+ * only ever describe the newest of them while the others became invisible.
+ *
+ * Everything here is a LABEL, composed in main and sanitized there. None of it
+ * is a key: `canvasId` + `anchorVersionId` are what an action is addressed by,
+ * and every mutating channel re-checks ownership itself.
  */
-export interface ReclaimableCanvas {
+export interface CanvasLibraryRow {
   canvasId: string
-  versionCount: number
+  /** Latest version of the artefact run this row represents — the id every
+   *  row action (archive, delete, view) is addressed by. */
+  anchorVersionId: string
+  kind: LibraryRowKind
+  /** packName ?? canvas title ?? 'Untitled'. */
+  title: string
+  /** `verdictLabel(anchor, { observations })` — derived strictly from recorded
+   *  state, so the badge and the History row can never disagree. */
+  verdict: string
+  /** What is owed, in plain words ('v2 awaiting review', 'N notes with the
+   *  agent', 'N unsent notes'). ABSENT when nothing is owed — never the empty
+   *  string, so the renderer has nothing to special-case. */
+  owed?: string
+  archived: boolean
+  completed: boolean
+  /** The config's display name, resolved AT READ from `configId` against
+   *  configs.json (fallback: the label recorded at spawn). Absent when neither
+   *  is known — never a placeholder. */
+  configName?: string
+  /** The NEWEST activity stamp on the run. `when` is always present; the two
+   *  labels are display-only and absent when unknown. */
+  audit: { account?: string; sessionLabel?: string; when: string }
+  /** 'v8' for a mockup or plan, 'build 5' for a pack. */
+  versionLabel: string
+  noteCount: number
+  /** Pack rows only: up to six note summaries with their shot paths, so the
+   *  Library can lazily thumb the evidence without a second listing call. */
+  evidence?: Array<{ note: string; route?: string; at: string; shotPath?: string }>
+  ownedByThisSession: boolean
+  /** `completed && !ownedByThisSession` — the row offers View and nothing else.
+   *  Composed in main so the renderer never has to derive a permission. */
+  readOnly: boolean
+  updatedAt: string
+}
+
+/** What `canvas:libraryList` answers. `truncated` is honest: tabs, filters and
+ *  the query are all applied in MAIN, so it means "more matched than fit". */
+export interface CanvasLibraryResult {
+  rows: CanvasLibraryRow[]
+  truncated: boolean
+}
+
+/**
+ * One OWNERLESS IN-FLIGHT canvas this session could resume.
+ *
+ * `expectedOwnerSessionId` is the compare-and-set token: it is the owner the
+ * caller SAW when the row was listed, and `canvas:resume` refuses when the
+ * record no longer names it. That is what makes first-wins mean something — the
+ * loser of a race is told 'changed' instead of taking a canvas somebody else
+ * has already picked up and started working in.
+ */
+export interface ResumableRow {
+  canvasId: string
+  /** canvas title ?? packName ?? the conversation short id. */
+  title: string
+  kind: LibraryRowKind
+  noteCount: number
   lastRenderedAt: string
-  /** The project it was rendered in — a LABEL, never an authorization key.
-   *  Format/bidi control characters are stripped in main before it is sent. */
-  cwd?: string
-  /**
-   * First 8 characters of the Claude conversation this canvas was last
-   * rendered under — the thing that actually TELLS TWO CANVASES APART.
-   *
-   * Without it, two canvases from one project render identically on the card
-   * (constant title, version count, timestamp, cwd), and a mis-click re-binds
-   * another project's private review notes to this session — which the
-   * pre-allowed `canvas_review` tool can then read. Absent when the canvas was
-   * never rendered under a conversation the binder could name.
-   */
-  conversationShortId?: string
-  /** Whether it matches the asking session's project, for ordering only. */
-  sameProject?: boolean
+  configName?: string
+  expectedOwnerSessionId: string
+}
+
+/** Why a resume was refused. A CLOSED vocabulary: the renderer turns each into
+ *  one plain line, and nothing free-text crosses the boundary. */
+export type CanvasResumeRefusal = 'owner-live' | 'changed' | 'completed' | 'gone'
+
+export interface CanvasResumeResult {
+  ok: boolean
+  reason?: CanvasResumeRefusal
+  /** The caller's canvas state after a successful resume — the resumed canvas
+   *  is now their CURRENT one, so the pane can open it without a second read. */
+  state?: CanvasState
+}
+
+/** Why a dismiss was refused. Closed, for the same reason. */
+export type CanvasDismissRefusal = 'owner-live' | 'not-eligible'
+
+export interface CanvasDismissResult {
+  ok: boolean
+  reason?: CanvasDismissRefusal
 }
 
 /**
  * One row of the canvas LIBRARY — every canvas on this machine, not just the
- * ones the asking session could reclaim.
+ * ones the asking session could resume.
  *
  * The library exists because nothing was ever removable: `renderVersion` only
  * ever appends, and no code path deleted a canvas or a version, so every canvas
- * a user had ever rendered accumulated forever and surfaced in the reclaim list
+ * a user had ever rendered accumulated forever and surfaced in the resume list
  * of every new session. That is a housekeeping surface, NOT an authorization
  * one — listing a canvas here never binds it to a session (that is still
- * `adoptCanvasForSession`, which the user drives). Everything on this row is a
+ * `resumeCanvasForSession`, which the user drives). Everything on this row is a
  * LABEL, sanitized in main, and none of it may be used as a key for serving
  * content.
  */
@@ -1993,8 +2227,8 @@ export interface CanvasLibraryEntry {
   ownedByOpenSession?: boolean
   /** True when the ASKING session owns this canvas. DISPLAY ONLY — the in-pane
    *  switcher offers only your own canvases, while the library shows the whole
-   *  project. It grants nothing: ownership is decided by adoptCanvasForSession,
-   *  and delete takes an id with no ownership check at the IPC seam. */
+   *  project. It grants nothing: ownership is the record's own `sessionId`, and
+   *  every mutating channel re-checks it at the seam. */
   ownedByThisSession?: boolean
   /** True when this is the one canvas the asking session is currently showing.
    *  A session OWNS many and points at one, so this is a separate question. */

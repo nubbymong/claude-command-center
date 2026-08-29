@@ -40,6 +40,7 @@ import {
   isKeepableTrailEntry,
   isLiveNote,
   isSettledNote,
+  sanitizeAuditStamp,
   sanitizeEvidence,
   sanitizeTrail,
   type AddressedBy,
@@ -69,7 +70,13 @@ import {
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { logInfo } from '../debug-logger'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
-import { clearAwaitingReview, getCanvasStateById, getCanvasStateForSession, setVersionVerdict } from './canvas-store'
+import {
+  auditStampForSession,
+  clearAwaitingReview,
+  getCanvasStateById,
+  getCanvasStateForSession,
+  setVersionVerdict,
+} from './canvas-store'
 import {
   deleteEvidenceShot,
   discardPendingEvidence,
@@ -424,6 +431,12 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // out of shape means a writer inside this process produced something this
   // build does not define.
   if (a.evidence !== undefined && !isKeepableEvidence(a.evidence)) return false
+  // WHO wrote it (M4). Checked by ROUND-TRIP against the shared healer, the
+  // same rule the evidence record follows: `sanitizeLoadedRecord` has already
+  // dropped a malformed one, so a stamp reaching here out of shape means a
+  // writer inside this process produced something this build does not define.
+  // Display metadata only — nothing on the close-out barrier reads it.
+  if (a.author !== undefined && sanitizeAuditStamp(a.author) === undefined) return false
   return true
 }
 
@@ -510,6 +523,16 @@ function sanitizeLoadedRecord(value: unknown): void {
         const healed = sanitizeEvidence(a.evidence)
         if (healed) a.evidence = healed
         else delete a.evidence
+      }
+      // THE AUTHOR STAMP (M4): provenance, not content. Rebuilt to what this
+      // build understands and, failing that, DROPPED — absent means unknown,
+      // which every reader already handles, and losing a canvas's whole review
+      // history over an audit line would be the mistake this heal exists to
+      // prevent.
+      if (a.author !== undefined) {
+        const healedAuthor = sanitizeAuditStamp(a.author)
+        if (healedAuthor) a.author = healedAuthor
+        else delete a.author
       }
     }
   }
@@ -877,6 +900,7 @@ function cloneAnnotation(a: Annotation): Annotation {
     ...(a.sketch ? { sketch: { ...a.sketch, excalidrawElementIds: [...a.sketch.excalidrawElementIds], bboxPage: { ...a.sketch.bboxPage } } } : {}),
     ...(a.images ? { images: a.images.map((img) => ({ ...img })) } : {}),
     ...(a.evidence ? { evidence: cloneEvidence(a.evidence) } : {}),
+    ...(a.author ? { author: { ...a.author } } : {}),
   }
 }
 
@@ -1807,6 +1831,11 @@ export function upsertAnnotation(
       next.composer,
     )
     const landed = writePlannedImages(canvas.canvasId, plan)
+    // WHO wrote it (M4), stamped at CREATE and never on an edit: a later save
+    // of the same note is the same person's note, and re-stamping would move
+    // the moment every keystroke. The store mints it, so a caller cannot claim
+    // a session or a time of its choosing.
+    const author = auditStampForSession(sessionId)
     const annotation: Annotation = {
       id: annotationId,
       reviewId: review.id,
@@ -1817,6 +1846,7 @@ export function upsertAnnotation(
       ...(draft.scope !== 'general' && draft.focus ? { focus: draft.focus } : {}),
       ...(draft.sketch ? { sketch: { ...draft.sketch, pngPath: '' } } : {}),
       ...(landed.length > 0 ? { images: landed } : {}),
+      ...(author ? { author } : {}),
     }
     lockDraftEvidence(next, canvas.canvasId, annotation, draft)
     next.annotations.push(annotation)

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import PageFrame from './PageFrame'
+import CanvasExplainedPage from './CanvasExplainedPage'
 import { APP_KNOWLEDGE_SECTIONS } from '../../shared/app-knowledge'
 import { trainingSteps, SECTION_LABELS, type TrainingStep, type TrainingSection } from '../training-steps'
 import { launchAskConductor } from '../lib/askConductor'
@@ -66,6 +67,11 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
   const [query, setQuery] = useState('')
   const [question, setQuestion] = useState('')
   const [launching, setLaunching] = useState(false)
+  // The Canvas Explained page, embedded (owner request): the front-page card
+  // only exists inside an open session's canvas pane, so the guide — which
+  // works with zero sessions open — carries the alternate route. Local state,
+  // nothing session-scoped: CanvasExplainedPage is pure ({ onHome } only).
+  const [explainedOpen, setExplainedOpen] = useState(false)
   const askInputRef = useRef<HTMLInputElement | null>(null)
 
   const stepsBySection = useMemo(() => {
@@ -125,7 +131,9 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
           <button
             key={item.id}
             data-ux-id={`rail-${item.id}`}
-            onClick={() => { setQuery(''); setActive(item.id) }}
+            // Also closes the embedded Explained page — a rail that appears
+            // dead while another surface holds the content area is a trap.
+            onClick={() => { setQuery(''); setExplainedOpen(false); setActive(item.id) }}
             className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring flex items-center gap-2"
             style={{
               background: on ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent',
@@ -181,32 +189,53 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
       icon={<GuideIcon />}
       iconAccent="teal"
       title="Feature Guide"
-      context={q ? `Search: ${query}` : railItems.find((r) => r.id === active)?.label}
+      context={q ? `Search: ${query}` : explainedOpen ? 'Canvas Explained' : railItems.find((r) => r.id === active)?.label}
       actions={actions}
       onClose={onNavigateToSessions}
       leftRail={leftRail}
     >
-      <div className="fg-scope max-w-[1040px] mx-auto px-7 py-6" data-ux-id="content">
-        {q ? (
-          <SearchResults steps={matchedSteps} knowledge={matchedKnowledge} query={query} onClear={() => setQuery('')} />
-        ) : active === 'overview' ? (
-          <Overview
-            question={question}
-            setQuestion={setQuestion}
-            askInputRef={askInputRef}
-            onAsk={ask}
-            launching={launching}
-            onStartTour={onStartTour}
-            onGo={(id) => setActive(id)}
-          />
-        ) : active === 'whatsnew' ? (
-          <WhatsNewSection />
-        ) : active === 'reference' ? (
-          <Reference />
-        ) : (
-          <SectionView section={active} steps={stepsBySection.get(active) ?? []} />
-        )}
-      </div>
+      {/* Search outranks the embedded Explained page, exactly as it outranks
+          the active section: typing must always show results. Clearing the
+          query returns to whatever held the content area before. */}
+      {explainedOpen && !q ? (
+        // Full-bleed, outside the fg-scope gutter wrapper: the Explained page
+        // brings its own header, background and gutters, and double-padding it
+        // would break the pixel-tight layout it was built to keep. The rail
+        // stays; ‹ Home restores the card list.
+        <CanvasExplainedPage onHome={() => setExplainedOpen(false)} />
+      ) : (
+        <div className="fg-scope max-w-[1040px] mx-auto px-7 py-6" data-ux-id="content">
+          {q ? (
+            <SearchResults
+              steps={matchedSteps}
+              knowledge={matchedKnowledge}
+              query={query}
+              onClear={() => setQuery('')}
+              onOpenExplained={() => setExplainedOpen(true)}
+            />
+          ) : active === 'overview' ? (
+            <Overview
+              question={question}
+              setQuestion={setQuestion}
+              askInputRef={askInputRef}
+              onAsk={ask}
+              launching={launching}
+              onStartTour={onStartTour}
+              onGo={(id) => setActive(id)}
+            />
+          ) : active === 'whatsnew' ? (
+            <WhatsNewSection />
+          ) : active === 'reference' ? (
+            <Reference />
+          ) : (
+            <SectionView
+              section={active}
+              steps={stepsBySection.get(active) ?? []}
+              onOpenExplained={() => setExplainedOpen(true)}
+            />
+          )}
+        </div>
+      )}
 
       {/* Page-scoped styles: the code chip + card primitives, kept local so the
           guide reads consistently without leaning on utility classes that vary. */}
@@ -227,7 +256,7 @@ function GuideIcon() {
 }
 
 // ── The feature card ─────────────────────────────────────────────────────────
-function FeatureCard({ step }: { step: TrainingStep }) {
+function FeatureCard({ step, onOpenExplained }: { step: TrainingStep; onOpenExplained?: () => void }) {
   const shot = getScreenshot(step.screenshotFilename)
   const highlights = step.highlights ?? step.bullets ?? []
   return (
@@ -247,6 +276,21 @@ function FeatureCard({ step }: { step: TrainingStep }) {
         <div className="flex items-center gap-2.5 mb-2">
           <h3 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>{step.title}</h3>
           <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--brand) 16%, transparent)', color: '#9fd0ff' }}>since {shortVersion(step.sinceVersion)}</span>
+          {/* The Explained page is a real surface, not just a described one, so
+              its card carries the door (owner request): the other route lives
+              inside a session's canvas pane, and the guide must offer one that
+              works with zero sessions open. */}
+          {step.id === 'canvas-explained' && onOpenExplained && (
+            <button
+              data-ux-id="view-canvas-explained"
+              onClick={onOpenExplained}
+              className="ml-auto shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-md transition-colors focus-ring"
+              style={{ background: 'color-mix(in srgb, var(--brand) 16%, transparent)', border: '1px solid color-mix(in srgb, var(--brand) 45%, transparent)', color: 'var(--brand)' }}
+              title="Open the Canvas Explained page here, inside the guide"
+            >
+              View Canvas Explained
+            </button>
+          )}
         </div>
         {step.summary && <p className="text-[13px] mb-3.5 max-w-[80ch]" style={{ color: 'var(--text-secondary)' }}>{step.summary}</p>}
         <div className="grid gap-6" style={{ gridTemplateColumns: '1fr 240px' }}>
@@ -299,12 +343,12 @@ const SECTION_BLURB: Record<TrainingSection, { title: string; blurb: string }> =
   tips: { title: 'Power moves and shortcuts', blurb: 'Small things you will start using on day two.' },
 }
 
-function SectionView({ section, steps }: { section: TrainingSection; steps: TrainingStep[] }) {
+function SectionView({ section, steps, onOpenExplained }: { section: TrainingSection; steps: TrainingStep[]; onOpenExplained?: () => void }) {
   const meta = SECTION_BLURB[section]
   return (
     <div>
       <SectionHero eyebrow={SECTION_LABELS[section]} title={meta.title} blurb={meta.blurb} />
-      {steps.map((s) => <FeatureCard key={s.id} step={s} />)}
+      {steps.map((s) => <FeatureCard key={s.id} step={s} onOpenExplained={onOpenExplained} />)}
     </div>
   )
 }
@@ -455,7 +499,7 @@ function Reference() {
 }
 
 // ── Search results ───────────────────────────────────────────────────────────
-function SearchResults({ steps, knowledge, query, onClear }: { steps: TrainingStep[]; knowledge: { id: string; title: string; body: string }[]; query: string; onClear: () => void }) {
+function SearchResults({ steps, knowledge, query, onClear, onOpenExplained }: { steps: TrainingStep[]; knowledge: { id: string; title: string; body: string }[]; query: string; onClear: () => void; onOpenExplained?: () => void }) {
   const empty = steps.length === 0 && knowledge.length === 0
   return (
     <div>
@@ -467,7 +511,7 @@ function SearchResults({ steps, knowledge, query, onClear }: { steps: TrainingSt
         <button onClick={onClear} className="text-[12px] px-3 py-1.5 rounded-lg focus-ring" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}>Clear</button>
       </div>
       {empty && <p className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>Nothing in the guide matches “{query}”. Try the Ask the Conductor box on the Overview.</p>}
-      {steps.map((s) => <FeatureCard key={s.id} step={s} />)}
+      {steps.map((s) => <FeatureCard key={s.id} step={s} onOpenExplained={onOpenExplained} />)}
       {knowledge.map((s) => (
         <article key={s.id} className="rounded-2xl p-5 mb-4" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
           <h3 className="text-[15px] font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>{s.title}</h3>

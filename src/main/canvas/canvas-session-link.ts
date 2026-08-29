@@ -1,4 +1,4 @@
-// Canvas ↔ session lifecycle glue: continuity across CCC session identities.
+// Canvas ↔ session lifecycle glue: THE OWNERSHIP LEASE.
 //
 // A canvas is keyed to the CCC session id (spec D2), but that id is more
 // ephemeral than the work it anchors: quit the app, open a fresh tile, resume
@@ -6,31 +6,49 @@
 // reviews) strands under the old one. Observed on the test VM 2026-08-13: same
 // conversation, two canvases both "v1", and the user typing "repush to canvas".
 //
-// This module resolves each session's identity for the canvas store (so every
-// record is stamped with the project and conversation it belongs to — the
-// account is deliberately not part of that, see ADR-017) and runs
-// ADOPTION: a session with no canvas reclaims the canvas of the same
-// conversation. Adoption is keyed on the CONVERSATION, never the project
-// directory — see the long note on adoptCanvasForSession for why a directory
-// match was a canvas-theft primitive (adversarial review, 2026-08-14).
+// THE LEASE IS LIVENESS, NOT A STORED FIELD (M4). A canvas in flight belongs to
+// the session that rendered it for exactly as long as that session is LIVE, and
+// while it does it is PRIVATE to that session: no other live session sees a
+// Library row, a front-page row, a review action or a count for it. When the
+// owner stops being live — the app quit, the tile closed, the PTY exited — the
+// canvas is OWNERLESS IN FLIGHT. Not gone, not memorialised: resumable.
 //
-// "Orphaned" is strict and fails safe: a session with a live PTY, or one still
-// listed in a saved-tile file we could actually read, is CURRENT — its canvas
-// stays reclaimable by id, and boot-time restore order can never lose it to a
-// faster-spawning sibling.
+// RESUME IS EXPLICIT, ATOMIC AND FIRST-WINS. Nothing auto-attaches, ever. Two
+// rounds of adversarial review (2026-08-14/15) established that no identity the
+// main process can infer is trustworthy enough to move the user's private
+// review notes on its own — the project directory is ambiguous (two tiles on
+// one repo), the conversation uuid is heuristic and agent-writable, and "is the
+// owner still around" had no oracle at all. That finding stands. What M4 adds
+// is the compare-and-set: the user picks a row, and the row carries the owner
+// they SAW, so a resume that would land on a different owner is refused rather
+// than taking a canvas somebody else has already picked up.
+//
+// This module owns the LIVENESS ORACLE and the spawn record; the store owns the
+// records and performs the transfer (canvas-store.resumeCanvasForSession).
 
 import * as path from 'path'
 import {
-  adoptCanvasForSession,
-  listOrphanCandidateCanvases,
+  canvasOwnershipOf,
+  deleteCanvas,
+  listResumableCanvases,
+  openOwnCanvasForSession,
+  resumeCanvasForSession,
+  sameProjectDir,
   setCanvasSessionInfoResolver,
-  type ReclaimableCanvas,
 } from './canvas-store'
-import { rebindReviewsToSession } from './canvas-review-store'
+import { dropReviewsForCanvas, getReviewCountsForCanvas, rebindReviewsToSession } from './canvas-review-store'
 import { getSessionMeta } from '../session-registry'
 import { getTranscriptBinder } from '../logging/logging-service'
-import { hasSavedSessionState, loadSessionState } from '../session-state'
+import { listProfiles } from '../account-profiles'
 import { logInfo } from '../debug-logger'
+import {
+  CANVAS_CONFIG_ID_RE,
+  sanitizeAuditLabel,
+  type AuditStamp,
+  type CanvasDismissResult,
+  type CanvasResumeResult,
+  type ResumableRow,
+} from '../../shared/canvas'
 
 /** Transcript basenames are the conversation's uuid; matching key only. */
 const CONVERSATION_UUID_RE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/
@@ -40,17 +58,58 @@ interface SpawnInfo {
   resumeUuid?: string
   /** The CONFIG this session runs, by its display name (M3).
    *
-   *  A pure LABEL, and it exists for one surface: the generated name of a test
-   *  pack reads "Checkout flow · build 5 · 29 Aug", and the first part is the
-   *  thing the user recognises. Recorded at spawn from the config the renderer
-   *  launched, exactly like `cwd` — and, exactly like `cwd`, it authorizes
-   *  nothing and a session we never saw spawn simply has none. */
+   *  A pure LABEL, and it exists for two surfaces: the generated name of a test
+   *  pack ("Checkout flow · build 5 · 29 Aug"), and the audit line's session
+   *  column. The renderer sends `customName || label || 'default'`, so it is
+   *  really the TILE's own name — which is why it becomes `sessionLabel` on an
+   *  audit stamp rather than the config name (that is resolved from `configId`
+   *  at read, so a rename follows). Recorded at spawn exactly like `cwd` — and,
+   *  exactly like `cwd`, it authorizes nothing and a session we never saw spawn
+   *  simply has none. */
   configLabel?: string
-  /** Cleared once this session owns a canvas, so the retry stops running. */
-  settled?: boolean
+  /** The CONFIG this session runs, by its STABLE id (M4).
+   *
+   *  Stamped onto the canvas record at creation so the Library can resolve the
+   *  config's CURRENT display name at read time. A lookup key into the user's
+   *  own configs.json and nothing else: never a serving key, never an
+   *  authorization key. */
+  configId?: string
+  /** The ACCOUNT this session runs, by its profile DISPLAY NAME (M4).
+   *
+   *  Resolved once at spawn from the profile id the renderer launched with.
+   *  Display metadata only, and deliberately never the email: the audit line is
+   *  read by whoever opens the project Library, and "Personal · work" is what
+   *  tells two rows apart without putting an address on screen. A
+   *  single-account (no profile) session has none — see the note on
+   *  `accountDisplayNameFor`. */
+  account?: string
 }
 
 const spawnInfo = new Map<string, SpawnInfo>()
+
+/**
+ * The account's DISPLAY NAME for a session, or undefined.
+ *
+ * Main does hold a per-session account identity — `claude-account-identity`
+ * captures the profile id and the email at spawn — but the only DISPLAY-NAME
+ * form of it is `AccountProfile.name` ("Personal · nick", user-renameable),
+ * which exists only for a multi-account (profile) session. A single-account
+ * session has just the email from the GLOBAL `~/.claude.json`, and that is not
+ * a per-session name: putting it on an audit line would be inventing a global
+ * identity for every row, which is exactly what ADR-017 removed. So those
+ * sessions stamp nothing, and `account` is absent — which every reader already
+ * handles, because absent means unknown everywhere in this contract.
+ *
+ * Never fatal: an unreadable profiles.json costs a label, not a spawn.
+ */
+function accountDisplayNameFor(profileId: string | undefined): string | undefined {
+  if (!profileId) return undefined
+  try {
+    return sanitizeAuditLabel(listProfiles().find((p) => p.id === profileId)?.name)
+  } catch {
+    return undefined
+  }
+}
 
 /** The conversation currently driving a session: the transcript the binder has
  *  bound (live truth — it follows an in-session `/resume` and is the ONLY
@@ -70,157 +129,289 @@ function conversationUuidFor(sessionId: string): string | undefined {
   return resume && CONVERSATION_UUID_RE.test(resume) ? resume : undefined
 }
 
+/** The display half of a session's spawn record, as an audit stamp's labels.
+ *  `at` is minted by whoever writes the stamp — main's own clock, never a
+ *  caller's — so this carries the labels and nothing else. */
+function auditLabelsFor(sessionId: string): Pick<AuditStamp, 'sessionLabel' | 'account'> {
+  const info = spawnInfo.get(sessionId)
+  const sessionLabel = sanitizeAuditLabel(info?.configLabel === 'default' ? undefined : info?.configLabel)
+  const account = sanitizeAuditLabel(info?.account)
+  return {
+    ...(sessionLabel ? { sessionLabel } : {}),
+    ...(account ? { account } : {}),
+  }
+}
+
 /** Arm the canvas store's session-info resolver. Idempotent; called once from
  *  canvas handler registration. */
 export function installCanvasSessionLink(): void {
-  setCanvasSessionInfoResolver((sessionId) => ({
-    cwd: spawnInfo.get(sessionId)?.cwd,
-    conversationUuid: conversationUuidFor(sessionId),
-  }))
-}
-
-/**
- * Who counts as still able to reclaim their canvas by id.
- *
- * The saved-tile half has to distinguish three states, and the first cut did
- * not: `loadSessionState()` never throws (it catches everything and returns
- * null), so the `catch` that was supposed to mean "cannot tell → untouchable"
- * was unreachable — and because the state file only exists between a graceful
- * "Save & Close" and the next restore, the common runtime answer was an EMPTY
- * set, i.e. "nobody is current" (adversarial review, 2026-08-14: a guard no
- * input can trip). Now: a file that exists but does not load means UNKNOWN and
- * everything is untouchable; no file at all means there are genuinely no saved
- * tiles, which is a real answer.
- */
-function savedTileIds(): Set<string> | null {
-  try {
-    const saved = loadSessionState()
-    if (saved && Array.isArray(saved.sessions)) {
-      return new Set(
-        saved.sessions.map((s) => (s as { id?: unknown })?.id).filter((id): id is string => typeof id === 'string'),
-      )
+  setCanvasSessionInfoResolver((sessionId) => {
+    const info = spawnInfo.get(sessionId)
+    return {
+      cwd: info?.cwd,
+      conversationUuid: conversationUuidFor(sessionId),
+      ...(info?.configId ? { configId: info.configId } : {}),
+      // Labels only: the store mints the moment from its own clock.
+      auditLabels: auditLabelsFor(sessionId),
     }
-    // Did not load. If the file is THERE, we cannot tell who was open.
-    return hasSavedSessionState() ? null : new Set()
-  } catch {
-    return null
-  }
+  })
 }
 
 /**
  * Record a LOCAL session's spawn. Registers the identity used to LABEL a
- * canvas; it does not move ownership of anything (see below).
+ * canvas; it does not move ownership of anything.
  */
 export function noteSessionSpawnForCanvas(
   sessionId: string,
-  opts: { cwd?: string; resumeUuid?: string; configLabel?: string },
+  opts: { cwd?: string; resumeUuid?: string; configLabel?: string; configId?: string; profileId?: string },
 ): void {
-  spawnInfo.set(sessionId, { cwd: opts.cwd, resumeUuid: opts.resumeUuid, configLabel: opts.configLabel })
+  // The config id is pinned to its shape HERE rather than trusted onward: it is
+  // stamped onto a durable record and later used as a lookup key into the
+  // user's own configs.json, so a value that is not a config id has no business
+  // being recorded even though nothing serves from it.
+  const configId =
+    typeof opts.configId === 'string' && CANVAS_CONFIG_ID_RE.test(opts.configId) ? opts.configId : undefined
+  spawnInfo.set(sessionId, {
+    cwd: opts.cwd,
+    resumeUuid: opts.resumeUuid,
+    configLabel: opts.configLabel,
+    ...(configId ? { configId } : {}),
+    ...(accountDisplayNameFor(opts.profileId) ? { account: accountDisplayNameFor(opts.profileId) } : {}),
+  })
 }
 
-/**
- * How many candidates the pane is ever offered.
- *
- * A reclaim card the user has to read is a card they can mis-click, and the
- * list is uncapped input to a component that renders every entry. The most
- * relevant survive (the sort runs first), which is what a user scanning for
- * their own work would have looked at anyway.
- */
-const MAX_RECLAIM_CANDIDATES = 12
-
-/** Bound on the open-tile hint below. It can only ever REMOVE candidates, so
- *  the cap is about work done, not about trust. */
+/** Bound on the open-tile hint below. It can only ever ADD live sessions — and
+ *  live means untouchable — so the cap is about work done, not about trust. */
 const MAX_OPEN_TILE_HINTS = 256
 
 /**
- * Canvases this session could reclaim, for the user to choose from.
+ * IS THIS SESSION LIVE?
  *
- * WHY THIS IS A LIST AND NOT AN AUTOMATIC MOVE — the finding that killed two
- * rounds of fixes. A canvas carries the user's private review notes, so moving
- * one between sessions is an authorization decision, and the main process has
- * nothing trustworthy to authorize it WITH:
+ * Two sources, and only two:
  *
- *   - the project directory is ambiguous (two tiles on one repo is ordinary
- *     usage, and the second would inherit the first's notes);
- *   - the conversation uuid comes from the transcript binder, which is a
- *     heuristic when the exact sources have not bound, and is writable by the
- *     agent through more than one route — round 2 demonstrated three;
- *   - "is the owner still current" has no reliable oracle either: the
- *     saved-tile file is empty for almost all of an app run, so a tile whose
- *     PTY merely exited looks abandoned.
+ *   - main's own `getSessionMeta` — a PTY running in THIS app run;
+ *   - `openTileSessionIds`, the tiles the renderer says are on screen. Only the
+ *     renderer knows which tiles are open, so it says. THE MISSING ORACLE
+ *     (adversarial review, 2026-08-15): a tile the user has open whose PTY has
+ *     exited (`/exit`, a crash, the Restart button) is still the user's own
+ *     work on their own screen, and was previously offered to a new session as
+ *     "an earlier session" while its own tile sat there showing it. This input
+ *     can only ADD sessions to the live set — and live means untouchable — so
+ *     it tightens the answer and can never widen it, which is why a
+ *     renderer-supplied hint is admissible here at all.
  *
- * Every automatic rule built on those was a canvas-theft primitive. The user,
- * however, knows exactly which work is theirs — so they pick, from a list that
- * says what each canvas is. That is one click, and it cannot be forged.
- *
- * The cwd is used here only to ORDER and LABEL candidates, never to authorize:
- * a wrong guess costs a less relevant list entry, not someone's notes.
- *
- * `openTileSessionIds` — THE MISSING ORACLE (adversarial review, 2026-08-15).
- * The two existing "is the owner still current" tests answer for a session with
- * a live PTY and for one in the saved-tile file; between them sits the ordinary
- * case they both miss — a tile the user has OPEN whose PTY has exited (`/exit`,
- * a crash, the Restart button) during a run in which no state file exists. Such
- * a canvas was offered to a new session as "an earlier session" while its own
- * tile sat on screen showing it. Only the renderer knows which tiles are open,
- * so it says. This input can only ADD sessions to the current set — a missing
- * or wrong id falls through to the checks that were already there — so it
- * tightens the answer and can never widen it, which is why a renderer-supplied
- * hint is admissible here at all.
+ * THE SAVED-TILE FILE IS DELIBERATELY GONE (M4). It was the third branch, and
+ * it answered a different question: "did this session exist when the app was
+ * last closed". A closed app's tiles cannot review anything, so treating them
+ * as live meant every canvas from a graceful Save & Close stayed untouchable
+ * for the rest of time — the exact stranding the resume path exists to end. The
+ * lease is liveness NOW.
  */
-/** The "can this session still come back for its canvas" test, built ONCE so
- *  the lister and the reclaim can never disagree — a list that refuses while
- *  the by-id reclaim allows is the hole, not the fix. */
-function currentSessionOracle(openTileSessionIds: string[]): (sid: string) => boolean {
-  const savedIds = savedTileIds()
-  const openIds = new Set(
+export function isSessionLive(sessionId: string, openTileHint: ReadonlySet<string>): boolean {
+  if (getSessionMeta(sessionId)) return true // live PTY this run
+  return openTileHint.has(sessionId) // tile still on screen, PTY or not
+}
+
+/** The open-tile hint, bounded and shape-checked once per call. */
+function openTileSet(openTileSessionIds: readonly string[] | undefined): Set<string> {
+  return new Set(
     (Array.isArray(openTileSessionIds) ? openTileSessionIds : [])
       .slice(0, MAX_OPEN_TILE_HINTS)
       .filter((id): id is string => typeof id === 'string'),
   )
-  return (sid) => {
-    if (getSessionMeta(sid)) return true // live PTY this run
-    if (openIds.has(sid)) return true // tile still on screen, PTY or not
-    if (!savedIds) return true // cannot tell → not offered
-    return savedIds.has(sid)
-  }
-}
-
-export function listReclaimableCanvases(sessionId: string, openTileSessionIds: string[] = []): ReclaimableCanvas[] {
-  const info = spawnInfo.get(sessionId)
-  const ownCwd = info?.cwd
-  return listOrphanCandidateCanvases(sessionId, {
-    isSessionCurrent: currentSessionOracle(openTileSessionIds),
-  })
-    .map((c) => ({ ...c, sameProject: !!ownCwd && !!c.cwd && c.cwd === ownCwd }))
-    .sort((a, b) => {
-      if (a.sameProject !== b.sameProject) return a.sameProject ? -1 : 1
-      return b.lastRenderedAt.localeCompare(a.lastRenderedAt)
-    })
-    .slice(0, MAX_RECLAIM_CANDIDATES)
 }
 
 /**
- * Move a canvas to this session because the USER asked for it, by id, from the
- * list above. This is the only path that transfers ownership.
+ * The liveness oracle the store's guards take — built ONCE per call so the
+ * lister, the resume and the delete guard can never disagree. A list that
+ * refuses while the by-id action allows is the hole, not the fix.
  */
-export function reclaimCanvasForSession(
+export function canvasLivenessQuery(openTileSessionIds: readonly string[] = []): {
+  isSessionLive: (sessionId: string) => boolean
+} {
+  const open = openTileSet(openTileSessionIds)
+  return { isSessionLive: (sid) => isSessionLive(sid, open) }
+}
+
+/** How many LIVE notes plus unsent drafts a canvas is carrying — the "N notes"
+ *  a resume row shows. An unreadable review store costs the number, never the
+ *  row: 0 here means "nothing to report", and the row still lists. */
+function liveNoteCount(canvasId: string): number {
+  const counts = getReviewCountsForCanvas(canvasId)
+  if (!counts) return 0
+  return counts.openNotes + counts.addressedNotes + counts.draftNotes
+}
+
+/**
+ * OWNERLESS IN-FLIGHT canvases this session could resume. Pure read.
+ *
+ * Scoped to the caller's PROJECT (relevance, never authorization — a canvas
+ * with no recorded project, or a caller we have no project for, is still
+ * offered), ordered with the caller's own config first and newest work above
+ * older.
+ *
+ * `configNameOf` comes from the IPC handler, which is the layer that may read
+ * config-manager. Passing it down rather than returning the raw id keeps the
+ * name resolved AT READ (a renamed config renames the row) without this module
+ * or the store ever holding a config id in a field named for a name.
+ */
+export function listResumableRows(
+  sessionId: string,
+  openTileSessionIds: readonly string[] = [],
+  configNameOf?: (configId: string) => string | undefined,
+): ResumableRow[] {
+  const info = spawnInfo.get(sessionId)
+  return listResumableCanvases(sessionId, canvasLivenessQuery(openTileSessionIds), {
+    ...(info?.cwd ? { projectCwd: info.cwd } : {}),
+    ...(info?.configId ? { configId: info.configId } : {}),
+    noteCountOf: liveNoteCount,
+    ...(configNameOf ? { configNameOf } : {}),
+  })
+}
+
+/**
+ * RESUME: move an ownerless in-flight canvas to this session, first-wins.
+ *
+ * The compare-and-set lives in the store and is synchronous end to end; this is
+ * the place that supplies the oracle and, on success, catches reviews.json up
+ * (it carries the owner session id too). The rebind runs AFTER the transfer has
+ * been persisted, exactly as the old reclaim path did — a rebind of a canvas
+ * that did not move would re-stamp another session's review file.
+ */
+export function resumeCanvasFromSession(
   sessionId: string,
   canvasId: string,
-  openTileSessionIds: string[] = [],
-): boolean {
-  const adopted = adoptCanvasForSession(sessionId, canvasId, {
-    // The SAME oracle the list used. Reclaim is addressed by id, so a canvas
-    // the list correctly refused to offer must not be takeable by naming it.
-    isSessionCurrent: currentSessionOracle(openTileSessionIds),
-  })
-  if (!adopted) return false
-  rebindReviewsToSession(adopted.canvasId, sessionId)
-  logInfo(
-    `[canvas] session ${sessionId} reclaimed canvas ${adopted.canvasId} at the user's request` +
-      ` (active ${adopted.activeVersionId ?? 'none'})`,
+  expectedOwnerSessionId: string,
+  openTileSessionIds: readonly string[] = [],
+): { ok: true; canvasId: string } | { ok: false; reason: NonNullable<CanvasResumeResult['reason']> } {
+  const result = resumeCanvasForSession(
+    sessionId,
+    canvasId,
+    expectedOwnerSessionId,
+    canvasLivenessQuery(openTileSessionIds),
   )
+  if (!result.ok) return { ok: false, reason: result.reason }
+  rebindReviewsToSession(result.canvasId, sessionId)
+  logInfo(
+    `[canvas] session ${sessionId} resumed canvas ${result.canvasId} at the user's request` +
+      ` (active ${result.activeVersionId ?? 'none'})`,
+  )
+  return { ok: true, canvasId: result.canvasId }
+}
+
+/**
+ * OPEN HERE: point this session at a canvas it ALREADY OWNS.
+ *
+ * Transfers nothing, so it needs no oracle and no compare-and-set — the record
+ * already says this session. A foreign canvas is refused: taking one is
+ * `resumeCanvasFromSession`, and it is the only path that moves ownership.
+ */
+export function openOwnCanvasForSessionLink(sessionId: string, canvasId: string): boolean {
+  const opened = openOwnCanvasForSession(sessionId, canvasId)
+  if (!opened) return false
+  logInfo(`[canvas] session ${sessionId} opened its own canvas ${opened.canvasId}`)
   return true
+}
+
+/**
+ * WHO MAY MUTATE THIS CANVAS — the one guard every destructive channel is built
+ * from (delete, dismiss, archive, delete-artifact).
+ *
+ * Three answers, in this order, and the order is the whole of it:
+ *
+ *   1. THE OWNER may. Always, including while it is completed — Reopen and
+ *      Delete of your own memorialised work stay yours;
+ *   2. a LIVE OTHER owner means NO. In-flight work is private to the live
+ *      session holding it, and a delete is the sharpest thing a stranger could
+ *      do to it;
+ *   3. a COMPLETED canvas is OWNER-ONLY. Memorialised work is shared history
+ *      that non-owners get to READ; archiving or deleting somebody else's
+ *      signed-off pack is not a housekeeping gesture, it is destroying their
+ *      record of it.
+ *
+ * What is left — an OWNERLESS IN-FLIGHT canvas — is allowed to a caller in the
+ * SAME PROJECT. That is the dismiss case: work whose session is gone, sitting
+ * in the project the caller is in, which somebody has to be able to clear.
+ *
+ * Fails closed: an unknown canvas, and a caller whose project we cannot
+ * establish against a canvas that records one, both refuse.
+ */
+export function canvasMutationAllowed(
+  sessionId: string,
+  canvasId: string,
+  openTileSessionIds: readonly string[] = [],
+): { ok: true } | { ok: false; reason: 'owner-live' | 'not-eligible' } {
+  const owner = canvasOwnershipOf(canvasId)
+  if (!owner) return { ok: false, reason: 'not-eligible' }
+  if (owner.sessionId === sessionId) return { ok: true }
+  if (isSessionLive(owner.sessionId, openTileSet(openTileSessionIds))) return { ok: false, reason: 'owner-live' }
+  if (owner.completed) return { ok: false, reason: 'not-eligible' }
+  // Ownerless and in flight: same project only.
+  const mine = spawnInfo.get(sessionId)?.cwd
+  if (!mine || !owner.cwd) return { ok: false, reason: 'not-eligible' }
+  return sameProjectDir(mine, owner.cwd) ? { ok: true } : { ok: false, reason: 'not-eligible' }
+}
+
+/**
+ * OWNER-ONLY, the stricter sibling of `canvasMutationAllowed` — the rule for
+ * ARCHIVING and DELETING one ARTEFACT.
+ *
+ * The difference from the dismiss/delete rule is deliberate and is the whole of
+ * it: that one admits a same-project caller against an OWNERLESS canvas,
+ * because somebody has to be able to clear work whose session is gone, and
+ * dismiss discards the canvas WHOLE with a confirm that says so. Reaching
+ * inside a canvas you do not own to archive or destroy ONE artefact of it is a
+ * different act: it is silent, it is partial, and the person who made the rest
+ * of that canvas gets no confirm and no trace. So it is the owner's alone,
+ * whether the canvas is in flight or memorialised.
+ *
+ * Same closed vocabulary, so the renderer has one set of words to say.
+ */
+export function canvasArtifactMutationAllowed(
+  sessionId: string,
+  canvasId: string,
+  openTileSessionIds: readonly string[] = [],
+): { ok: true } | { ok: false; reason: 'owner-live' | 'not-eligible' } {
+  const owner = canvasOwnershipOf(canvasId)
+  if (!owner) return { ok: false, reason: 'not-eligible' }
+  if (owner.sessionId === sessionId) return { ok: true }
+  // 'owner-live' when the owner is actually live, so the refusal says the more
+  // informative of the two true things; 'not-eligible' otherwise.
+  return isSessionLive(owner.sessionId, openTileSet(openTileSessionIds))
+    ? { ok: false, reason: 'owner-live' }
+    : { ok: false, reason: 'not-eligible' }
+}
+
+/**
+ * DISMISS: discard an in-flight canvas and everything it holds.
+ *
+ * A DISCARD, not an archive — the directory goes, the evidence pack with it,
+ * and the confirm that fronts this says so in those words. Allowed to the
+ * owner, or to a same-project caller when the canvas is ownerless; never while
+ * another session is live-owner.
+ *
+ * The review record is dropped here rather than inside `deleteCanvas` because
+ * the review store imports the canvas store — this module is one of the two
+ * places that already holds both (the other is the IPC handler, for the same
+ * reason).
+ */
+export function dismissCanvasForSession(
+  sessionId: string,
+  canvasId: string,
+  openTileSessionIds: readonly string[] = [],
+): CanvasDismissResult {
+  const allowed = canvasMutationAllowed(sessionId, canvasId, openTileSessionIds)
+  if (!allowed.ok) return { ok: false, reason: allowed.reason }
+  const owner = canvasOwnershipOf(canvasId)
+  // A memorialised canvas is not "in flight" and is not dismissed: the Library
+  // deletes it, with its own confirm, and only for its owner. Reached only when
+  // the caller IS the owner (the guard refuses everyone else), so this is the
+  // "you cannot dismiss your own history, you delete it" branch.
+  if (owner?.completed) return { ok: false, reason: 'not-eligible' }
+  if (!deleteCanvas(canvasId)) return { ok: false, reason: 'not-eligible' }
+  dropReviewsForCanvas(canvasId)
+  logInfo(`[canvas] session ${sessionId} dismissed canvas ${canvasId} (discarded with its evidence)`)
+  return { ok: true }
 }
 
 /**
@@ -229,8 +420,8 @@ export function reclaimCanvasForSession(
  *
  * Used to scope the canvas LIBRARY to the project you are in. Note this is a
  * relevance filter and nothing more — the cwd is not an authorization key here
- * any more than it is in `listReclaimableCanvases`, and a session we have no
- * cwd for is shown everything rather than nothing.
+ * any more than it is in the resume list, and a session we have no cwd for is
+ * shown everything rather than nothing.
  */
 export function canvasCwdForSession(sessionId: string): string | undefined {
   return spawnInfo.get(sessionId)?.cwd
@@ -256,7 +447,6 @@ export function canvasConfigNameForSession(sessionId: string): string | undefine
   // showed the subject.
   return label === 'default' ? undefined : label
 }
-
 
 /** Drop a session's link state when its PTY is gone for good. */
 export function forgetSessionForCanvas(sessionId: string): void {

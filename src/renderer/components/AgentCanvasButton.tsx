@@ -4,7 +4,7 @@ import { useCanvasStore } from '../stores/canvasStore'
 import { ReservedLabel } from './command-bar/chips'
 import { useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
-import { useCanvasQueue } from '../lib/canvasQueue'
+import { useCanvasQueue, useCanvasResumables } from '../lib/canvasQueue'
 import { trackUsage } from '../stores/tipsStore'
 import CanvasQueuePopover from './CanvasQueuePopover'
 
@@ -70,6 +70,15 @@ export default function AgentCanvasButton({ sessionId }: Props) {
   }, [sessionId, totalsLoaded, refreshTotals])
 
   const waiting = queue > 0
+  // Ownerless canvas work on this project (M4). A SEPARATE signal, never added
+  // to the queue: the queue is what this session owes an answer on, and this is
+  // work nobody currently holds that anyone here MAY pick up. Merging them
+  // would make one number mean two things, and the loud state's number has to
+  // mean exactly one. So the queue keeps the words and the colour; this gets a
+  // quiet dot, and only in the idle state — nothing may compete with an
+  // outstanding review for attention.
+  const resumables = useCanvasResumables(sessionId)
+  const idle = !isOpen && !waiting
 
   // OPEN state names the DESTINATION, not the current pane — the same rule the
   // Partner toggle already follows ("Partner" -> "Claude"). This pane REPLACES
@@ -108,7 +117,9 @@ export default function AgentCanvasButton({ sessionId }: Props) {
               ? 'Back to the terminal (closes the Agent Canvas)'
               : waiting
                 ? `${queue} canvas${queue === 1 ? '' : 'es'} waiting on your review — click the count for the list`
-                : 'Open Agent Canvas'
+                : resumables > 0
+                  ? 'Open Agent Canvas — unfinished canvas work can be resumed'
+                  : 'Open Agent Canvas'
         }
         data-testid="canvas-button"
         data-waiting={waiting ? 'true' : undefined}
@@ -132,6 +143,26 @@ export default function AgentCanvasButton({ sessionId }: Props) {
           current={label}
           states={waiting ? ['Terminal', { text: 'Review needed', bold: true }] : ['Canvas', 'Terminal']}
         />
+        {/* The resume dot. Its SLOT is reserved for the whole idle state, not
+            just when it is filled: the dot arrives from a background sweep, not
+            from a click, and a button that widened by 9px under the cursor
+            would shove every tool to its right. Same reasoning as
+            ReservedLabel, applied to a glyph. */}
+        {idle && (
+          <span
+            className="canvas-resume-dot"
+            data-empty={resumables > 0 ? undefined : 'true'}
+            data-testid="canvas-resume-dot"
+            title={resumables > 0 ? 'Unfinished canvas work can be resumed' : undefined}
+            aria-hidden={resumables > 0 ? undefined : true}
+          >
+            {resumables > 0 && (
+              <svg width="7" height="7" viewBox="0 0 7 7" aria-label="Unfinished canvas work can be resumed" role="img">
+                <circle cx="3.5" cy="3.5" r="3.5" fill="currentColor" />
+              </svg>
+            )}
+          </span>
+        )}
         {/* THE queue number (#364): ready-marked rounds + rounds awaiting your
             verdicts, across every canvas this session owns. Never decremented
             by merely opening anything — a round leaves when you submit on it,

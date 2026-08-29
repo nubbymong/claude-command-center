@@ -14,11 +14,17 @@ import { useCanvasTotalsStore } from './canvasTotalsStore'
 export type CanvasInteractionMode = 'draw' | 'browse'
 
 /** What the pane shows while NOTHING has been rendered: the Agent Canvas
- *  landing (what this is + how to start), or the classic sketchpad. The
- *  landing is the default — the old Draw behaviour is one click away, not
- *  the first thing a user meets (owner feedback 2026-08-13: the empty pane
- *  was indistinguishable from old Draw and taught nothing). */
-export type CanvasEmptyView = 'intro' | 'sketchpad'
+ *  landing (what is in flight, what is recent, what can be resumed), the
+ *  Canvas Explained page, or the classic sketchpad.
+ *
+ *  `sketchpad` has NO entry point on the v8 landing — the front page rewrite
+ *  dropped the "Open the sketchpad instead" button along with the rest of the
+ *  old teaching copy. The value stays in the union because it is still a
+ *  reachable STORE state (set programmatically, and remembered per session
+ *  within a run), and removing it would silently strand any session already
+ *  sitting on it. Restoring a user-facing way in is an owner decision, not a
+ *  builder's. */
+export type CanvasEmptyView = 'intro' | 'sketchpad' | 'explained'
 
 export interface CanvasSessionState {
   canvasId: string | null

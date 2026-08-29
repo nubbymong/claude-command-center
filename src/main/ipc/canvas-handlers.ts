@@ -28,6 +28,8 @@ import {
   setVersionVerdict,
   verdictTargetVersionId,
 } from '../canvas/canvas-store'
+import { buildLibraryRows } from '../canvas/canvas-library-rows'
+import { readConfig } from '../config-manager'
 import {
   claimCaptureSlot,
   clampCaptureRect,
@@ -78,17 +80,29 @@ import {
   MAX_TRAIL_ENTRIES_PER_RUN,
   artifactPhaseOf,
   artifactRuns,
+  sanitizeAuditLabel,
   sanitizeStamp,
   sanitizeTrail,
+  type CanvasDismissResult,
   type CanvasLibraryEntry,
+  type CanvasLibraryResult,
+  type CanvasResumeResult,
+  type CanvasState,
   type EvidenceCaptureResult,
+  type ResumableRow,
 } from '../../shared/canvas'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 import {
+  canvasArtifactMutationAllowed,
+  canvasConfigNameForSession,
   canvasCwdForSession,
+  canvasLivenessQuery,
+  canvasMutationAllowed,
+  dismissCanvasForSession,
   installCanvasSessionLink,
-  listReclaimableCanvases,
-  reclaimCanvasForSession,
+  listResumableRows,
+  openOwnCanvasForSessionLink,
+  resumeCanvasFromSession,
 } from '../canvas/canvas-session-link'
 
 // ---------------------------------------------------------------------------
@@ -174,6 +188,46 @@ const trailEntrySchema = z.discriminatedUnion('kind', [
     })
     .strict(),
 ])
+
+/**
+ * configId -> the config's CURRENT display name, read from configs.json.
+ *
+ * Built ONCE per call rather than per row: the file is small but the read is
+ * synchronous on the main thread, and a Library open touches every row.
+ *
+ * RESOLVED AT READ, which is the whole reason the canvas record stores an id
+ * and not a name — rename a config and every row that came from it follows,
+ * where a stored label would keep showing the name it had on the day of the
+ * render. A config that no longer exists resolves to NOTHING: a row with no
+ * config name renders without one, and a raw id in that slot is noise, not a
+ * name.
+ *
+ * Never fatal, and it decides nothing: this is a label lookup, and the id it
+ * takes has never been an authorization or a serving key.
+ */
+function configNameResolver(): (configId: string) => string | undefined {
+  let names: Map<string, string> | null = null
+  return (configId: string) => {
+    if (!names) {
+      const built = new Map<string, string>()
+      try {
+        const configs = readConfig<Array<{ id?: unknown; label?: unknown }>>('configs') ?? []
+        if (Array.isArray(configs)) {
+          for (const c of configs) {
+            if (typeof c?.id === 'string' && typeof c?.label === 'string') built.set(c.id, c.label)
+          }
+        }
+      } catch {
+        /* unreadable configs cost a label, never a row */
+      }
+      names = built
+    }
+    // Cleaned through the same healer the stored labels go through: this string
+    // lands on the row's mono audit line, and a control character in it would
+    // make one line read as two.
+    return sanitizeAuditLabel(names.get(configId))
+  }
+}
 
 /** How many canvases NOT belonging to the asking session get a review-count
  *  read per library open. Their own are always counted; the rest are a courtesy
@@ -282,69 +336,131 @@ const getStateSchema = z.object({ sessionId: sessionIdSchema }).strict()
  */
 const openTileSessionIdsSchema = z.array(sessionIdSchema).max(256).optional()
 
-const listReclaimableSchema = z
-  .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
-  .strict()
+/** The canvas a renderer call was composed against. App-minted ids only, so a
+ *  caller cannot name anything outside the canvas store even before the store
+ *  re-checks and realpath-confirms it. */
+const canvasIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/)
 
-/** The library is a pure read; listing never binds anything, so the session id
- *  here is not an ownership question. It scopes the list to the PROJECT the
- *  session is in, because a library mixing every project's mockups together is
- *  unreadable. openTileSessionIds only marks which rows are on screen right now
- *  so the UI can warn before deleting one. */
+/** The totals sweep. A pure read, and since M4 subject to the SAME privacy rule
+ *  as the Library: another live session's in-flight canvas is not returned, so a
+ *  count derived from this list can never reveal one. `sessionId` scopes it to
+ *  the PROJECT the session is in and names the caller for that rule. */
 const listAllSchema = z
   .object({ openTileSessionIds: openTileSessionIdsSchema, sessionId: sessionIdSchema.optional() })
   .strict()
 
-/** Delete takes an ID and nothing else — never a path. Same charset bound as
- *  reclaim: app-minted ids only, so a caller cannot name anything outside the
- *  canvas store even before the store re-checks and realpath-confirms it. */
-const deleteCanvasSchema = z
-  .object({ canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
-  .strict()
-
-/** Archive/unarchive one artifact (item C, phase 5): the canvas it is on, one
- *  of its version ids, and the target state. Reversible; the store re-checks
- *  everything and no-ops safely on a stranger id. */
-const artifactArchiveSchema = z
+/**
+ * THE LIBRARY QUERY (M4). Everything narrowing is applied in MAIN — the search,
+ * the tab and the chip — which is what makes `truncated` honest AND what keeps a
+ * withheld row from crossing the boundary to be filtered by the renderer.
+ */
+const libraryListSchema = z
   .object({
-    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
-    versionId: z.string().regex(/^v[0-9]{1,9}$/),
-    archived: z.boolean(),
+    sessionId: sessionIdSchema,
+    openTileSessionIds: openTileSessionIdsSchema,
+    /** Free text the user typed. Bounded, NOT charset-guarded: it is a search
+     *  term, it is only ever lowercased and `includes`-matched, and rejecting
+     *  metacharacters would break the feature for anyone searching for "$". */
+    query: z.string().max(200).optional(),
+    tab: z.enum(['all', 'mockup', 'plan', 'pack']).optional(),
+    filter: z.enum(['needs-you', 'open', 'signed-off', 'archived']).optional(),
+    /** One value today. Present so the renderer's control has something to send
+     *  and the seam does not change when a second ordering lands. */
+    sort: z.literal('recent').optional(),
   })
   .strict()
 
-/** Permanently delete one artifact (item C, phase 5). Same id shapes; the store
- *  applies the path discipline and refuses the canvas's only artifact. */
+const listResumablesSchema = z
+  .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
+  .strict()
+
+/**
+ * RESUME (M4) — and `expectedOwnerSessionId` is the whole point of the shape.
+ *
+ * It is the owner the caller SAW on the row it clicked, and the store refuses
+ * when the record no longer names it. REQUIRED, not optional: a resume that
+ * cannot say which owner it expected is exactly the one the compare-and-set
+ * exists to refuse.
+ */
+const resumeSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    expectedOwnerSessionId: sessionIdSchema,
+    openTileSessionIds: openTileSessionIdsSchema,
+  })
+  .strict()
+
+const dismissSchema = z
+  .object({ sessionId: sessionIdSchema, canvasId: canvasIdSchema, openTileSessionIds: openTileSessionIdsSchema })
+  .strict()
+
+const getReadonlySchema = z.object({ sessionId: sessionIdSchema, canvasId: canvasIdSchema }).strict()
+
+/**
+ * Delete takes an ID and nothing else — never a path — plus the CALLER (M4).
+ *
+ * `sessionId` is required because the guard needs to know who is asking: a
+ * canvas a LIVE other session owns is not this caller's to destroy, and a
+ * COMPLETED one is its owner's history. A delete that cannot say who it is is
+ * exactly the call those two rules exist to refuse.
+ */
+const deleteCanvasSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    openTileSessionIds: openTileSessionIdsSchema,
+  })
+  .strict()
+
+/** Archive/unarchive one artifact (item C, phase 5): the caller, the canvas it
+ *  is on, one of its version ids, and the target state. Reversible; the store
+ *  re-checks everything and no-ops safely on a stranger id. Owner-scoped since
+ *  M4 — archiving somebody else's memorialised pack is not housekeeping. */
+const artifactArchiveSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    versionId: z.string().regex(/^v[0-9]{1,9}$/),
+    archived: z.boolean(),
+    openTileSessionIds: openTileSessionIdsSchema,
+  })
+  .strict()
+
+/** Permanently delete one artifact (item C, phase 5). Same id shapes and the
+ *  same M4 guard; the store applies the path discipline and refuses the
+ *  canvas's only artifact. */
 const artifactDeleteSchema = z
   .object({
-    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
     versionId: z.string().regex(/^v[0-9]{1,9}$/),
+    openTileSessionIds: openTileSessionIdsSchema,
   })
   .strict()
 
 /** Sign the subject off (#476): the acting session and the canvas it owns.
  *  The guard module refuses while anything is owed; ownership is re-checked
  *  in the store against the record itself. */
-const canvasCompleteSchema = z
-  .object({
-    sessionId: sessionIdSchema,
-    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
-  })
-  .strict()
+const canvasCompleteSchema = z.object({ sessionId: sessionIdSchema, canvasId: canvasIdSchema }).strict()
 
 /** Reopen a completed canvas (#476). Same shapes; only ever restores work. */
-const canvasCompleteReopenSchema = z
-  .object({
-    sessionId: sessionIdSchema,
-    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
-  })
-  .strict()
+const canvasCompleteReopenSchema = z.object({ sessionId: sessionIdSchema, canvasId: canvasIdSchema }).strict()
 
-/** Canvas ids are app-minted (see CANVAS_ID_RE); bounded here at the seam. */
-const reclaimSchema = z
+/**
+ * OPEN HERE: point this session at a canvas IT ALREADY OWNS.
+ *
+ * `openTileSessionIds` is accepted and unused, and that is deliberate rather
+ * than left over. Callers already send it and the schema is `.strict()`, so
+ * refusing the field would break them for no gain — and there is nothing for it
+ * to decide here: this call transfers nothing, so no liveness question arises.
+ * Taking a canvas is `canvas:resume`, which does have an oracle and a
+ * compare-and-set.
+ */
+const openHereSchema = z
   .object({
     sessionId: sessionIdSchema,
-    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
+    canvasId: canvasIdSchema,
     openTileSessionIds: openTileSessionIdsSchema,
   })
   .strict()
@@ -544,11 +660,6 @@ const versionReopenSchema = z
   })
   .strict()
 
-/** The canvas a renderer call was composed against. Same charset bound as the
- *  library's close-out id. Required, not optional: a call that cannot say which
- *  canvas it meant is exactly the one the mismatch check exists to refuse. */
-const canvasIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/)
-
 /** The composer draft's own envelope. Names the canvas for the same reason
  *  mark-seen does — and here it is load-bearing rather than defensive: the
  *  payload is the user's unsent words, so answering (or accepting) one for a
@@ -657,18 +768,107 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     return getCanvasStateForSession(sessionId)
   })
 
-  // What this session could reclaim, for the user to choose from. Pure read.
-  ipcMain.handle(IPC.CANVAS_LIST_RECLAIMABLE, async (_e, args: unknown) => {
-    const { sessionId, openTileSessionIds } = listReclaimableSchema.parse(args)
-    return listReclaimableCanvases(sessionId, openTileSessionIds ?? [])
+  // OPEN HERE: point this session at a canvas IT ALREADY OWNS. Transfers
+  // nothing — the record already says this session — so there is no oracle and
+  // no compare-and-set here. A foreign canvas is refused; taking one is
+  // `canvas:resume`, below.
+  ipcMain.handle(IPC.CANVAS_RECLAIM, async (_e, args: unknown) => {
+    const { sessionId, canvasId } = openHereSchema.parse(args)
+    const ok = openOwnCanvasForSessionLink(sessionId, canvasId)
+    return { ok, state: getCanvasStateForSession(sessionId) }
   })
 
-  // The ONLY path that moves a canvas between sessions, and it exists because
-  // the user clicked the canvas they want back.
-  ipcMain.handle(IPC.CANVAS_RECLAIM, async (_e, args: unknown) => {
-    const { sessionId, canvasId, openTileSessionIds } = reclaimSchema.parse(args)
-    const ok = reclaimCanvasForSession(sessionId, canvasId, openTileSessionIds ?? [])
-    return { ok, state: getCanvasStateForSession(sessionId) }
+  // ---- M4: the ownership lease ------------------------------------------
+
+  /**
+   * THE PROJECT LIBRARY, one row per ARTEFACT RUN.
+   *
+   * Composed entirely in main. The privacy rule (another live session's
+   * in-flight canvas is invisible), the search over note text, the tab, the
+   * chip and the cap all live on this side of the boundary — the first because
+   * a filter the renderer applies is a filter that shipped the data first, and
+   * the rest because `truncated` is only honest when the narrowing happens
+   * where the cap does.
+   */
+  ipcMain.handle(IPC.CANVAS_LIBRARY_LIST, async (_e, args: unknown): Promise<CanvasLibraryResult> => {
+    const { sessionId, openTileSessionIds, query, tab, filter } = libraryListSchema.parse(args)
+    const tiles = openTileSessionIds ?? []
+    const configNameOf = configNameResolver()
+    // Resolved HERE from main's own spawn record, never accepted from the
+    // renderer, so a caller cannot ask to see another project by naming it.
+    const projectCwd = canvasCwdForSession(sessionId)
+    return buildLibraryRows({
+      askingSessionId: sessionId,
+      ...(projectCwd ? { projectCwd } : {}),
+      openTileSessionIds: tiles,
+      isSessionLive: canvasLivenessQuery(tiles).isSessionLive,
+      ...(query ? { query } : {}),
+      ...(tab ? { tab } : {}),
+      ...(filter ? { filter } : {}),
+      configNameOf,
+      spawnLabelOf: canvasConfigNameForSession,
+    })
+  })
+
+  /** OWNERLESS IN-FLIGHT canvases on this project. Pure read — nothing moves
+   *  until the user names one and the compare-and-set below runs. */
+  ipcMain.handle(IPC.CANVAS_LIST_RESUMABLES, async (_e, args: unknown): Promise<ResumableRow[]> => {
+    const { sessionId, openTileSessionIds } = listResumablesSchema.parse(args)
+    // The config name is resolved AT READ, here, because this is the layer that
+    // may read config-manager — so a renamed config renames the row, and no
+    // layer beneath ever holds a config id in a field named for a name.
+    return listResumableRows(sessionId, openTileSessionIds ?? [], configNameResolver())
+  })
+
+  /**
+   * RESUME: take an ownerless in-flight canvas. FIRST WINS.
+   *
+   * The compare-and-set is inside the store and is synchronous end to end — no
+   * await between reading the current owner and persisting the new one — so two
+   * sessions racing on one row cannot both succeed. The loser is told
+   * 'changed'; a refusal is one word from a closed set, so nothing free-text
+   * ever crosses this boundary.
+   */
+  ipcMain.handle(IPC.CANVAS_RESUME, async (_e, args: unknown): Promise<CanvasResumeResult> => {
+    const { sessionId, canvasId, expectedOwnerSessionId, openTileSessionIds } = resumeSchema.parse(args)
+    const result = resumeCanvasFromSession(sessionId, canvasId, expectedOwnerSessionId, openTileSessionIds ?? [])
+    if (!result.ok) return { ok: false, reason: result.reason }
+    const state = getCanvasStateForSession(sessionId)
+    return { ok: true, ...(state ? { state } : {}) }
+  })
+
+  /** DISMISS: discard an in-flight canvas and its evidence. The armed confirm
+   *  in front of this says the evidence goes; this is what makes that true. */
+  ipcMain.handle(IPC.CANVAS_DISMISS, async (_e, args: unknown): Promise<CanvasDismissResult> => {
+    const { sessionId, canvasId, openTileSessionIds } = dismissSchema.parse(args)
+    return dismissCanvasForSession(sessionId, canvasId, openTileSessionIds ?? [])
+  })
+
+  /**
+   * READ a completed canvas that belongs to somebody else.
+   *
+   * COMPLETED ONLY, and same-project only. Viewing never transfers ownership
+   * and never grants a write: every mutating channel on this store is keyed by
+   * the caller's own session (`getRecordForSession`) or guarded explicitly, so
+   * a read-only pane can display this state and nothing it does can change it
+   * — which `canvas-readonly-boundary.test.ts` proves channel by channel.
+   *
+   * SERVING IS ALREADY FINE (ADR-015). A design/plan version is servable by URL
+   * to any frame in the window: `ccc-ux://` keys on the CANVAS id, which is the
+   * URL host, so a read-only pane showing a completed design canvas is exactly
+   * the ordinary serving path with no new surface. A completed uat pack does
+   * not re-serve the build at all — it renders as the M3 recall view, whose
+   * images come through `canvas:evidenceRead`, which is already owner-or-same
+   * -project scoped and resolves only paths the record itself carries.
+   */
+  ipcMain.handle(IPC.CANVAS_GET_READONLY, async (_e, args: unknown): Promise<CanvasState | null> => {
+    const { sessionId, canvasId } = getReadonlySchema.parse(args)
+    const state = getCanvasStateById(canvasId)
+    if (!state) return null
+    if (state.sessionId === sessionId) return state // your own canvas: not a read-only view
+    if (!state.completed) return null // in flight is private to its owner
+    if (!isSameCanvasProject(canvasCwdForSession(sessionId), canvasProjectDirOf(canvasId))) return null
+    return state
   })
 
   // The library. Pure read over every canvas on disk; listing one never binds
@@ -679,7 +879,15 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     // record rather than accepted from the renderer, so the caller cannot ask to
     // see another project's list by naming its path.
     const cwd = sessionId ? canvasCwdForSession(sessionId) : undefined
-    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId)
+    // THE PRIVACY RULE, on this channel too (M4). The totals sweep reads this
+    // list, so a row withheld from the Library but returned here would put
+    // another live session's private in-flight work into a COUNT on the button.
+    const entries = listAllCanvases(
+      openTileSessionIds ?? [],
+      cwd,
+      sessionId,
+      canvasLivenessQuery(openTileSessionIds ?? []).isSessionLive,
+    )
     // What is outstanding on each, joined HERE: the review store imports the
     // canvas store, so the reverse import would be a cycle, and this handler
     // already holds both (same reason the delete handler drops reviews here).
@@ -714,8 +922,17 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
 
   // The only destructive canvas operation, and it exists because the user
   // clicked delete on a specific row.
+  //
+  // GUARDED SINCE M4. It used to take an id and nothing else, with no ownership
+  // check at the seam at all: any session could name any canvas on the machine
+  // and destroy it, including one another session had open and was working in.
+  // Now the same guard the dismiss path uses decides — owner yes, live other
+  // no, and a completed canvas is its owner's history rather than anyone's
+  // housekeeping.
   ipcMain.handle(IPC.CANVAS_DELETE, async (_e, args: unknown) => {
-    const { canvasId } = deleteCanvasSchema.parse(args)
+    const { sessionId, canvasId, openTileSessionIds } = deleteCanvasSchema.parse(args)
+    const allowed = canvasMutationAllowed(sessionId, canvasId, openTileSessionIds ?? [])
+    if (!allowed.ok) return { ok: false as const, reason: allowed.reason }
     const ok = deleteCanvas(canvasId)
     // The review store keys off canvasId and its reviews.json lived inside the
     // directory just removed, so its in-memory entry has to go too. Done here
@@ -778,7 +995,13 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   // the artifact into (or out of) the muted Archived history group. Returns the
   // updated state so the pane reflects it without waiting for the change push.
   ipcMain.handle(IPC.CANVAS_ARCHIVE_ARTIFACT, async (_e, args: unknown) => {
-    const { canvasId, versionId, archived } = artifactArchiveSchema.parse(args)
+    const { sessionId, canvasId, versionId, archived, openTileSessionIds } = artifactArchiveSchema.parse(args)
+    // OWNER-ONLY since M4 — the stricter guard, not the delete/dismiss one.
+    // Reversible or not, reaching inside a canvas you do not own to tuck ONE of
+    // its artefacts out of the Library is silent and partial, and the person
+    // who made the rest of it never sees a confirm.
+    const allowed = canvasArtifactMutationAllowed(sessionId, canvasId, openTileSessionIds ?? [])
+    if (!allowed.ok) return { ok: false as const, state: null, reason: allowed.reason }
     const state = setArtifactArchived(canvasId, versionId, archived)
     return { ok: state !== null, state }
   })
@@ -790,8 +1013,18 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   // only runs on a successful version delete, so a refused delete never clears a
   // note.
   ipcMain.handle(IPC.CANVAS_DELETE_ARTIFACT, async (_e, args: unknown) => {
-    const { canvasId, versionId } = artifactDeleteSchema.parse(args)
+    const { sessionId, canvasId, versionId, openTileSessionIds } = artifactDeleteSchema.parse(args)
+    // OWNER-ONLY, for the reason archive is: this destroys part of somebody
+    // else's canvas and leaves the rest, with no confirm they ever see.
+    const allowed = canvasArtifactMutationAllowed(sessionId, canvasId, openTileSessionIds ?? [])
+    if (!allowed.ok) return { ok: false as const, reason: allowed.reason }
     const result = deleteArtifact(canvasId, versionId)
+    // 'only-artifact' is the Library's FALL-THROUGH signal, not a plain error:
+    // the store refuses to empty a canvas to an id-less husk, so it fires
+    // exactly when this run holds every ready version the canvas has — i.e.
+    // when "delete this artefact" means "delete this canvas", which is a
+    // different operation with its own confirm and its own ownership guard.
+    // The Library re-issues it as `canvas:delete` when it sees this reason.
     if (!result.ok) return { ok: false as const, reason: result.reason }
     const notesDeleted = deleteAnnotationsForVersions(canvasId, result.deletedVersionIds)
     return { ok: true as const, deletedVersions: result.deletedVersionIds.length, notesDeleted: notesDeleted ?? 0 }

@@ -108,15 +108,16 @@ afterAll(() => {
 describe('a planted canvas.json', () => {
   const CANVAS = 'planted00000000000000001'
 
-  it('is not loaded, not offered for reclaim, and not served — even after a restart', async () => {
+  it('is not loaded, not offered for resume, and not served — even after a restart', async () => {
     writeRecord(CANVAS, plantedRecord(CANVAS, distDir))
     restart()
 
     // Not the victim session's canvas...
     expect(store.getCanvasStateForSession(VICTIM)).toBeNull()
     // ...not offered to anyone as "an earlier session"...
-    expect(store.listOrphanCandidateCanvases(OTHER, { isSessionCurrent: notCurrent })).toEqual([])
-    expect(store.adoptCanvasForSession(OTHER, CANVAS, { isSessionCurrent: notCurrent })).toBeNull()
+    expect(store.listResumableCanvases(OTHER, { isSessionLive: notCurrent })).toEqual([])
+    expect(store.resumeCanvasForSession(OTHER, CANVAS, VICTIM, { isSessionLive: notCurrent }))
+      .toEqual({ ok: false, reason: 'gone' })
     // ...and nothing about it is servable, whatever roots exist.
     expect(store.registerCanvasUatRoot(VICTIM, distDir)).toBe(true)
     expect(store.getServableVersion(CANVAS, 'v1')).toBeNull()
@@ -204,7 +205,7 @@ describe('a record CCC wrote', () => {
 })
 
 describe('lastRenderedAt is clamped to now', () => {
-  it('a future stamp cannot outrank real work in the reclaim list', () => {
+  it('a future stamp cannot outrank real work in the resume list', () => {
     // Signed, so this is not the planted case — it is a record whose clock ran
     // ahead. The list is sorted newest-first, so an unclamped year-3000 stamp
     // would sit above every genuine canvas.
@@ -226,7 +227,7 @@ describe('lastRenderedAt is clamped to now', () => {
     writeRecord(futureId, { ...future, mac: store._canvasRecordMacForTest(future) })
     restart()
 
-    const offered = store.listOrphanCandidateCanvases(OTHER, { isSessionCurrent: notCurrent })
+    const offered = store.listResumableCanvases(OTHER, { isSessionLive: notCurrent })
     expect(offered).toHaveLength(1)
     expect(Date.parse(offered[0].lastRenderedAt)).toBeLessThanOrEqual(Date.now())
   })
