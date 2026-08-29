@@ -41,11 +41,16 @@ function assertSafeSshField(name: 'username' | 'host', value: string): void {
  * Build the argument list passed to `ssh`/`ssh.exe`.
  *
  * @param ssh      connection target (user, host, port)
- * @param mcpPort  Conductor MCP reverse-tunnel port; when > 0 a `-R` forward is
- *                 added. The host-side target is 127.0.0.1, not `localhost`: the
- *                 MCP server binds IPv4-only, but Windows resolves `localhost`
- *                 IPv6-first (::1) -- a dead address that would ECONNREFUSED and
- *                 kill the channel.
+ * @param mcpPort  Conductor MCP reverse-tunnel LOCAL target port; when > 0 a
+ *                 `-R` forward is added. The host-side target is 127.0.0.1, not
+ *                 `localhost`: the MCP server binds IPv4-only, but Windows
+ *                 resolves `localhost` IPv6-first (::1) -- a dead address that
+ *                 would ECONNREFUSED and kill the channel.
+ * @param remoteMcpPort  #24: the REMOTE listen port sshd binds for the `-R`
+ *                 forward. Defaults to mcpPort (the pre-#24 shape, where the
+ *                 remote and local ports were the same). Passing a distinct
+ *                 per-session port lets multiple sessions share ONE host without
+ *                 the second colliding on the single fixed port.
  * @param platform host platform (os.platform()). On win32 only, ControlMaster and
  *                 ControlPath are forced off (#241): Windows OpenSSH has no
  *                 connection-multiplexing support, so if the user's global
@@ -54,7 +59,12 @@ function assertSafeSshField(name: 'username' | 'host', value: string): void {
  *                 fine, so this stays win32-only and leaves other platforms
  *                 untouched.
  */
-export function buildSshArgs(ssh: SshArgsTarget, mcpPort: number, platform: NodeJS.Platform): string[] {
+export function buildSshArgs(
+  ssh: SshArgsTarget,
+  mcpPort: number,
+  platform: NodeJS.Platform,
+  remoteMcpPort: number = mcpPort,
+): string[] {
   assertSafeSshField('username', ssh.username)
   assertSafeSshField('host', ssh.host)
 
@@ -81,7 +91,9 @@ export function buildSshArgs(ssh: SshArgsTarget, mcpPort: number, platform: Node
   }
 
   if (mcpPort > 0) {
-    args.push('-R', `${mcpPort}:127.0.0.1:${mcpPort}`)
+    // #24: remote listen port (per session) → the one shared local MCP server.
+    const listen = remoteMcpPort > 0 ? remoteMcpPort : mcpPort
+    args.push('-R', `${listen}:127.0.0.1:${mcpPort}`)
   }
 
   return args

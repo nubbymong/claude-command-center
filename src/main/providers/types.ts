@@ -131,7 +131,7 @@ export interface SshCapableProvider extends SessionProvider {
     sessionId: string,
     remotePath: string,
     hooksConfig: { port: number; secret: string } | null,
-    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
     nonce: string,
   ): string
 }
