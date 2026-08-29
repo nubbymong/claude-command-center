@@ -472,7 +472,15 @@ describe('THE SECOND FACTOR: same project AND same config to touch a peer\u2019s
     const canvasId = victimAt(FOO, 'cfg-shared')
     restart()
     link.noteSessionSpawnForCanvas(ASKER, { cwd: foo, configId: 'cfg-shared' })
-    expect(link.canvasMutationAllowed(ASKER, canvasId, [ASKER])).toEqual({ ok: true })
+    // The residual exists only where the filesystem folds case. On win32/darwin
+    // Foo and foo are the same directory, so both factors agree and it is
+    // allowed. On a case-SENSITIVE FS (Linux CI) they are genuinely different
+    // projects, so the project factor never matches and the destructive gate
+    // refuses — the secure side, and the whole reason the config factor was added.
+    const caseFolds = process.platform === 'win32' || process.platform === 'darwin'
+    expect(link.canvasMutationAllowed(ASKER, canvasId, [ASKER])).toEqual(
+      caseFolds ? { ok: true } : { ok: false, reason: 'not-eligible' },
+    )
   })
 
   it('falls back to the project alone when either side has no config id', () => {
@@ -633,6 +641,12 @@ describe('THE FALLBACK when a configId is unknown: exact-case project match', ()
     const ids = store
       .listAllCanvases([], foo, ASKER, link.canvasLivenessQuery().isSessionLive)
       .map((e) => e.canvasId)
-    expect(ids).toContain(canvasId)
+    // Where case folds (win32/darwin) the Library lists the Foo canvas under a
+    // foo cwd — not hiding your own work over a spelling. On a case-SENSITIVE FS
+    // foo and Foo are different projects, so it is correctly absent (a Linux
+    // user's own Foo session still sees it); read-only listing grants nothing.
+    const caseFolds = process.platform === 'win32' || process.platform === 'darwin'
+    if (caseFolds) expect(ids).toContain(canvasId)
+    else expect(ids).not.toContain(canvasId)
   })
 })
