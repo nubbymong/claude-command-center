@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CanvasVersion } from '../../shared/canvas'
+import { defaultPackName, verdictLabel } from '../../shared/canvas'
 import { CanvasArtifact, groupVersionsIntoArtifacts, locateVersion, splitArchived } from '../canvas/canvas-history'
 import { relativeTime } from '../utils/relativeTime'
 import { useArmedConfirm } from '../hooks/useArmedConfirm'
@@ -19,6 +20,16 @@ import { useArmedConfirm } from '../hooks/useArmedConfirm'
 interface Props {
   versions: CanvasVersion[]
   activeVersionId: string
+  /** The canvas's SUBJECT — only used to derive a default pack name for a test
+   *  run (M3), so a Testing artefact reads as the pack the Library will list. */
+  title?: string
+  /** The SESSION's config label, which the derived pack name prefers over the
+   *  title — the same first input main derives from (M3). */
+  configName?: string
+  /** How many observations ride each version's decided round, so a pass that
+   *  carried notes can say so (M3). Absent = none known, which reads as a plain
+   *  PASSED rather than as a claim there were none. */
+  observationsByVersion?: Record<string, number>
   onSelectVersion: (versionId: string) => void
   /** Phase 5 — tuck an artifact into ARCHIVED (recoverable). */
   onArchive?: (artifact: CanvasArtifact) => void
@@ -32,22 +43,56 @@ function kindBadge(kind: CanvasVersion['mode']): { label: string; color: string 
   return { label: 'MOCKUP', color: 'var(--color-blue)' }
 }
 
-/** C1/C3: a version's state badge for the History list — the audit trail,
- *  one glance per row. OPEN = no verdict on the artifact's latest ready
- *  version; everything else reads its verdict. */
-function versionBadge(v: CanvasVersion, isOpen: boolean): { label: string; color: string } {
+/**
+ * C1/C3: a version's state badge for the History list — the audit trail, one
+ * glance per row. OPEN = no verdict on the artifact's latest ready version;
+ * everything else reads its verdict.
+ *
+ * The WORD comes from the shared `verdictLabel` (M3), so a Testing build the
+ * user pressed *Fail* on reads FAILED here, in the recall header, in the
+ * Library and in what the agent is told — one gesture, one vocabulary. Only the
+ * colour is decided locally, because only this control paints one.
+ */
+function versionBadge(v: CanvasVersion, isOpen: boolean, observations: number): { label: string; color: string } {
   if (isOpen) return { label: 'OPEN', color: 'var(--color-peach)' }
   // A show-and-tell version is outside the review flow: never OPEN, and the
   // no-verdict fallback below must not mislabel it SUPERSEDED.
   if (v.show && !v.verdict) return { label: 'SHOWN', color: 'var(--text-muted)' }
-  switch (v.verdict?.state) {
-    case 'approved': return { label: 'APPROVED', color: 'var(--color-green)' }
-    case 'rejected': return { label: 'REJECTED', color: 'var(--color-red)' }
-    case 'withdrawn': return { label: 'WITHDRAWN', color: 'var(--color-red)' }
-    case 'dismissed': return { label: 'DISMISSED', color: 'var(--text-muted)' }
-    case 'superseded': return { label: 'SUPERSEDED', color: 'var(--text-muted)' }
-    default: return { label: 'SUPERSEDED', color: 'var(--text-muted)' }
+  // Reached only for a NON-open version, so a missing verdict is the healed
+  // legacy case the C1 load repairs — SUPERSEDED, not `verdictLabel`'s OPEN.
+  if (!v.verdict) return { label: 'SUPERSEDED', color: 'var(--text-muted)' }
+  // `observations` is what makes PASSED WITH OBSERVATIONS reachable at all.
+  // Without it a pass carrying notes the user wrote for the agent read as a
+  // plain pass — the row hiding the one thing on it that still wants reading.
+  const label = verdictLabel(v, { observations })
+  switch (v.verdict.state) {
+    case 'approved': return { label, color: 'var(--color-green)' }
+    case 'rejected': return { label, color: 'var(--color-red)' }
+    case 'withdrawn': return { label, color: 'var(--color-red)' }
+    default: return { label, color: 'var(--text-muted)' }
   }
+}
+
+/**
+ * What an ARTEFACT is called in the picker.
+ *
+ * For a test run that is its PACK NAME (M3) — the thing the user named, or the
+ * derived `<config> · build <label> · <date>` — because that is how they will
+ * ask for it later. Anything else keeps the projection's own label.
+ *
+ * `configName` FIRST and `title` second, which is the order main derives in for
+ * the MCP serializer and the Library. Deriving from a different input here would
+ * give one pack two names depending on where the user read it.
+ */
+function artifactLabel(a: CanvasArtifact, configName?: string, title?: string): string {
+  if (a.kind !== 'uat') return a.label
+  const latest = a.versions[a.versions.length - 1]
+  if (!latest) return a.label
+  const buildLabel = latest.source.mode === 'uat' ? latest.source.buildLabel : undefined
+  return (
+    latest.packName ??
+    defaultPackName({ configName, title, buildLabel, versionId: latest.id, at: latest.createdAt })
+  )
 }
 
 function updatedLabel(iso: string, now: number): string {
@@ -55,7 +100,7 @@ function updatedLabel(iso: string, now: number): string {
   return Number.isFinite(ms) ? `updated ${relativeTime(ms, now)}` : 'updated recently'
 }
 
-export default function CanvasHistoryControl({ versions, activeVersionId, onSelectVersion, onArchive, onDelete }: Props) {
+export default function CanvasHistoryControl({ versions, activeVersionId, title, configName, observationsByVersion, onSelectVersion, onArchive, onDelete }: Props) {
   const [open, setOpen] = useState(false)
   /** Withdrawn versions stay out of the default list (C1) — the audit trail
    *  keeps them; this reveals them for the session. */
@@ -115,6 +160,7 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
     const b = kindBadge(a.kind)
     const isCurrent = a.key === located.artifact.key
     const confirming = confirmDelete === a.key
+    const label = artifactLabel(a, configName, title)
     return (
       <div
         key={a.key}
@@ -127,7 +173,7 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
           type="button"
           onClick={() => pickArtifact(a)}
           className="min-w-0 flex-1 flex items-center gap-2 text-left focus-ring rounded"
-          title={`Open ${a.label} — ${a.versions.length} version${a.versions.length === 1 ? '' : 's'}`}
+          title={`Open ${label} — ${a.versions.length} version${a.versions.length === 1 ? '' : 's'}`}
         >
           <span
             className="shrink-0 text-[9.5px] font-bold tracking-[0.06em] rounded px-1.5 py-px"
@@ -137,8 +183,8 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
                 mockup keeps its KIND badge — it did not stop being a plan. */}
             {a.kind === 'uat' ? 'ARCHIVED' : b.label}
           </span>
-          <span className="min-w-0 truncate text-[12px]" style={{ color: 'var(--text-primary)' }}>
-            {a.label}
+          <span className="min-w-0 truncate text-[12px]" style={{ color: 'var(--text-primary)' }} data-testid="canvas-history-artifact-label">
+            {label}
           </span>
           <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             · {a.versions.length} version{a.versions.length === 1 ? '' : 's'}
@@ -216,7 +262,7 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
 
   const versionRow = (v: CanvasVersion) => {
     const isCurrent = v.id === activeVersionId
-    const vb = versionBadge(v, v.id === openVersionId)
+    const vb = versionBadge(v, v.id === openVersionId, observationsByVersion?.[v.id] ?? 0)
     const gist = v.verdict?.note ? v.verdict.note.split('\n')[0].slice(0, 42) : null
     // Provenance (adv FINDING 3): a verdict RECORDED FROM CHAT by the agent
     // must never read as the user's own click. The store stamps it

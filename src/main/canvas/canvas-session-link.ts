@@ -38,6 +38,14 @@ const CONVERSATION_UUID_RE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/
 interface SpawnInfo {
   cwd?: string
   resumeUuid?: string
+  /** The CONFIG this session runs, by its display name (M3).
+   *
+   *  A pure LABEL, and it exists for one surface: the generated name of a test
+   *  pack reads "Checkout flow · build 5 · 29 Aug", and the first part is the
+   *  thing the user recognises. Recorded at spawn from the config the renderer
+   *  launched, exactly like `cwd` — and, exactly like `cwd`, it authorizes
+   *  nothing and a session we never saw spawn simply has none. */
+  configLabel?: string
   /** Cleared once this session owns a canvas, so the retry stops running. */
   settled?: boolean
 }
@@ -105,9 +113,9 @@ function savedTileIds(): Set<string> | null {
  */
 export function noteSessionSpawnForCanvas(
   sessionId: string,
-  opts: { cwd?: string; resumeUuid?: string },
+  opts: { cwd?: string; resumeUuid?: string; configLabel?: string },
 ): void {
-  spawnInfo.set(sessionId, { cwd: opts.cwd, resumeUuid: opts.resumeUuid })
+  spawnInfo.set(sessionId, { cwd: opts.cwd, resumeUuid: opts.resumeUuid, configLabel: opts.configLabel })
 }
 
 /**
@@ -226,6 +234,27 @@ export function reclaimCanvasForSession(
  */
 export function canvasCwdForSession(sessionId: string): string | undefined {
   return spawnInfo.get(sessionId)?.cwd
+}
+
+/**
+ * The config display name this session runs, for the generated TEST PACK name
+ * (M3) — "Checkout flow · build 5 · 29 Aug".
+ *
+ * Read from the spawn record the same way `canvasCwdForSession` reads the
+ * project directory, and with the same standing: a label, never a key. A session
+ * restored from a previous run has none, and the pack name falls back to the
+ * canvas title (see `defaultPackName`).
+ */
+export function canvasConfigNameForSession(sessionId: string): string | undefined {
+  const label = spawnInfo.get(sessionId)?.configLabel?.trim()
+  if (!label) return undefined
+  // The renderer sends `customName || label || 'default'` (TerminalView), so the
+  // literal 'default' is its way of saying "this session has no config name" —
+  // not the name of a config. Treated as ABSENT here so both surfaces fall
+  // through to the canvas title and derive the same pack name; carrying it
+  // would put "default · build 5 · 29 Aug" in the agent's reply while the pane
+  // showed the subject.
+  return label === 'default' ? undefined : label
 }
 
 

@@ -765,3 +765,23 @@ input[type="range"] {
 @media (prefers-reduced-motion: reduce) {
   .pane-fade-in { animation: none; }
 }
+
+/* ── Agent Canvas, Testing mode: the pause shield (M3) ────────────────────
+   A note in Testing mode locks a screenshot, the page state and the action
+   trail, so the site is FROZEN while it is written — the shield is what says
+   so, and what makes it true. It fades in rather than snapping, because it
+   appears the instant the caret lands in the composer and a hard cut there
+   reads as the page having broken.
+
+   Opacity only, and inside the project's 150-300ms window. Reduced motion
+   nulls it: the shield is still there, it simply arrives whole. */
+.canvas-shield-fade {
+  animation: canvas-shield-fade 160ms ease-out;
+}
+@keyframes canvas-shield-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-shield-fade { animation: none; }
+}

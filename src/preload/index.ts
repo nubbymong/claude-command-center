@@ -18,7 +18,11 @@ import type {
   CanvasSnapshotRequestEvent,
   CanvasState,
   ComposerDraftInput,
+  EvidenceCaptureResult,
+  EvidenceStateStamp,
   ForceClosures,
+  Rect,
+  TrailEntry,
 } from '../shared/canvas'
 
 /** Mirrors src/main/watchdog/session-watchdog.ts's WatchdogPublicState — kept
@@ -348,6 +352,39 @@ export interface ElectronAPI {
     /** The one-click undo: clear a canvas's completed stamp. */
     completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
+    /** TESTING MODE (M3) — a note is a locked evidence record.
+     *  Screenshot the framed page and hold it, with the state stamp and the
+     *  trail slice taken at the same instant, until a note locks it. The rect is
+     *  clamped in main against the window's content box; the refusal is one word
+     *  from a closed set. */
+    evidenceCapture: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      rect: Rect
+      stamp: EvidenceStateStamp
+      trail: TrailEntry[]
+    }) => Promise<EvidenceCaptureResult>
+    /** The user cancelled the note: the pending capture is thrown away. */
+    evidenceDiscard: (args: { sessionId: string; canvasId: string; evidenceId: string }) => Promise<{ ok: boolean }>
+    /** Read back one image this canvas RECORDS — a note's evidence shot, a
+     *  pasted image, a sketch export, a composer image. The path must be one on
+     *  the record; anything else answers null. Owner session, or one in the same
+     *  project (the Library opens memorialised packs). */
+    evidenceRead: (args: { sessionId: string; canvasId: string; path: string }) => Promise<{ dataUrl: string } | null>
+    /** Name the test pack (the inline rename in the Testing header). `null`
+     *  clears it back to the generated default. Owner-only; a refused rename
+     *  answers with the state main kept, so the header snaps back to the truth. */
+    setPackName: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      name: string | null
+    }) => Promise<CanvasState | null>
+    /** A full-document navigation inside the canvas frame, for the action trail.
+     *  The session is resolved in main from the canvas record — never from the
+     *  page. */
+    onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -960,6 +997,26 @@ const electronAPI: ElectronAPI = {
     describeForceClosures: (args: { sessionId: string; canvasId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_DESCRIBE_FORCE_CLOSURES, args),
     completeReopen: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_REOPEN, args),
+    // TESTING MODE (M3) — the evidence channels.
+    evidenceCapture: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      rect: Rect
+      stamp: EvidenceStateStamp
+      trail: TrailEntry[]
+    }) => ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_CAPTURE, args),
+    evidenceDiscard: (args: { sessionId: string; canvasId: string; evidenceId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_DISCARD, args),
+    evidenceRead: (args: { sessionId: string; canvasId: string; path: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_READ, args),
+    setPackName: (args: { sessionId: string; canvasId: string; versionId: string; name: string | null }) =>
+      ipcRenderer.invoke(IPC.CANVAS_SET_PACK_NAME, args),
+    onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => {
+      const handler = (_e: unknown, e: { sessionId: string; canvasId: string; route: string }) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_FRAME_NAVIGATED, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_FRAME_NAVIGATED, handler)
+    },
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
       const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)
       ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)

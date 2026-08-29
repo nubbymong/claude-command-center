@@ -72,9 +72,16 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
     getReviewPayload: () => ({
       payload: payload(),
       attachmentFiles: [{ annotationId: 'a1', absPath: 'C:/fixture/reviews/R2/a1.png', kind: 'sketch' as const }],
+      // Testing-mode evidence (M3): this fixture is a MOCKUP round, so it has
+      // none. Present as an empty list rather than absent — the shape is part of
+      // the contract the tool reads.
+      evidenceFiles: [],
       submittedReviewIds: ['R1', 'R2'],
     }),
     readAttachment: () => PNG_BYTES,
+    // Testing evidence shots go through the disciplined reader (M3). This
+    // fixture is a mockup round and has none, so it is never called.
+    readEvidenceShot: () => null,
     readDesignFile: () => {
       throw new Error('no design files in this fixture')
     },

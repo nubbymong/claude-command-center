@@ -443,6 +443,20 @@ interface Budget {
   strMemo: WeakMap<object, Map<string, string>>
   /** False for an unscoped capture — see SanitizeContext.scoped. */
   allowStyles: boolean
+  /**
+   * The ref the FRAME used for the focused node, and the ref WE assigned to it
+   * (M3).
+   *
+   * Two fields rather than one passthrough, because refs are assigned here and
+   * never accepted — and the assignment does not agree with the frame's: the
+   * bridge numbers its root `e0` and starts its children at `e1`, while this
+   * walk numbers the root `e1`. So `focusedRef: 'e12'` copied straight across
+   * would point at the node BEFORE the focused one, every time. The frame's ref
+   * is matched during the walk and the ref we minted for that same node is what
+   * leaves here.
+   */
+  focusedSourceRef: string
+  focusedRef?: string
 }
 
 /**
@@ -544,6 +558,14 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
     box: rect(value.box),
     children: [],
   }
+  // Which node the frame said had focus (M3) — matched on the frame's OWN ref
+  // and answered with ours. Bounded before the comparison: `value.ref` is
+  // page-supplied and unbounded, and a comparison is the one thing a megabyte
+  // string is still cheap enough to be worth handing us.
+  if (budget.focusedSourceRef.length > 0 && budget.focusedRef === undefined) {
+    const raw = value.ref
+    if (typeof raw === 'string' && raw.length <= 32 && raw === budget.focusedSourceRef) budget.focusedRef = out.ref
+  }
   const uxId = field(value, 'uxId', 128, budget)
   if (uxId) out.uxId = uxId
   const nodeStyles = styles(value.styles, budget, limits)
@@ -622,6 +644,10 @@ export function sanitizeSnapshotResult(
     styleMemo: new WeakMap(),
     strMemo: new WeakMap(),
     allowStyles: context.scoped === true,
+    // Read before the walk so the walk can match it; capped like every other
+    // page-supplied string, and normalised the same way, so a lookalike cannot
+    // be smuggled past the comparison.
+    focusedSourceRef: str(source.focusedRef, 32),
   }
   const root = node(source.root, 0, budget, limits) ?? emptyRoot()
 
@@ -639,6 +665,25 @@ export function sanitizeSnapshotResult(
     root,
   }
 
+  // WHERE the page says it is, and what it calls itself (M3). Page-authored, so
+  // it goes through the same `str` the node names do: normalised, control- and
+  // format-characters scrubbed, capped. Emitted only when something survives —
+  // an all-empty `page` would put three empty fields on every wire format that
+  // renders it and say nothing.
+  const pageRaw = isRecord(source.page) ? source.page : null
+  if (pageRaw) {
+    const page = {
+      pathname: field(pageRaw, 'pathname', 512, budget),
+      hash: field(pageRaw, 'hash', 512, budget),
+      title: field(pageRaw, 'title', 200, budget),
+    }
+    if (page.pathname.length > 0 || page.hash.length > 0 || page.title.length > 0) out.page = page
+  }
+  // Assigned during the walk from the frame's own ref, never copied. Absent when
+  // the frame named a node this walk did not emit (or named nothing) — which is
+  // the honest answer: a ref that resolves to no node in the tree is worse than
+  // no ref at all.
+  if (budget.focusedRef !== undefined) out.focusedRef = budget.focusedRef
   if (Array.isArray(source.unmatchedScope)) {
     const unmatched = source.unmatchedScope
       .slice(0, 50)

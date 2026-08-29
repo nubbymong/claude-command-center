@@ -1,7 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { exportToBlob } from '@excalidraw/excalidraw'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
-import type { Annotation, CanvasSketchExport, CanvasSketchScene, CanvasVersion, FocusObject, Rect } from '../../shared/canvas'
+import type {
+  Annotation,
+  CanvasSketchExport,
+  CanvasSketchScene,
+  CanvasVersion,
+  FocusObject,
+  Rect,
+  TrailEntry,
+} from '../../shared/canvas'
 import {
   MAX_NOTE_IMAGES,
   MAX_SKETCH_SCENE_BYTES,
@@ -10,6 +18,7 @@ import {
   artifactRunContaining,
   artifactRuns,
 } from '../../shared/canvas'
+import { trailClockTime } from '../../shared/canvas-review-serialize'
 import {
   draftAnnotationsOf,
   draftReviewOf,
@@ -23,6 +32,41 @@ import { useCanvasStore } from '../stores/canvasStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { imageFileFromClipboard, pastedImageToPng } from '../utils/canvasPasteImage'
 import { DismissButton } from './ui/DismissButton'
+
+/**
+ * Testing mode's evidence seam (M3) — the pane's half, as the panel sees it.
+ *
+ * The split is not arbitrary. The PANE owns the frame, the screenshot, the pause
+ * shield and the action trail, because all four are facts about the page under
+ * review. The PANEL owns the composer, its persistence and the note record. This
+ * interface is the whole of what passes between them, and it is `undefined`
+ * outside Testing mode — so "a mockup never captures anything" is enforced by
+ * the shape of the props rather than by a condition somebody has to remember at
+ * five call sites.
+ */
+export interface CanvasEvidenceSeam {
+  /** The capture waiting to be locked to the note being written, or null when
+   *  the site is live. Its presence IS the paused state. */
+  pending: { evidenceId: string; previewDataUrl?: string } | null
+  /** Why the last capture did not happen, in plain words. */
+  notice: string | null
+  /** A note is starting — freeze the site and take the shot. Idempotent: the
+   *  four things that start a note can all happen in one breath. */
+  begin: () => void
+  /** The note was abandoned: delete the pending shot and unpause. */
+  discard: () => void
+  /** The note took it — main has moved the file onto `annotationId`. */
+  lock: (annotationId: string) => void
+  /** A capture that survived a pane switch, named by the restored draft. */
+  adopt: (evidenceId: string) => void
+  /** Hand the pane a way to cancel the note, so Escape on the shield does
+   *  exactly what the composer's Cancel does. Pass null on unmount. */
+  registerCancel: (fn: (() => void) | null) => void
+  /** The WHOLE run's trail, for the submit. */
+  runTrail: () => TrailEntry[]
+  /** The run is over — the trail starts again from nothing. */
+  endRun: () => void
+}
 
 interface Props {
   sessionId: string
@@ -62,6 +106,9 @@ interface Props {
    *  keeps the way back. Owned by the pane, since the panel does not control
    *  its own column; optional so other mounts need not wire it. */
   onHide?: () => void
+  /** Testing mode only (M3) — see CanvasEvidenceSeam. Absent everywhere else,
+   *  and every evidence path in this file is gated on its presence. */
+  evidence?: CanvasEvidenceSeam
 
   // ── The glass, as the pane exposes it (M2 shared contract) ────────────────
   // Drawings RIDE THE NOTE now (W16): there is no "attach selected sketch"
@@ -516,6 +563,7 @@ export default function CanvasNotesPanel({
   getSketchSceneForPersist,
   restoreSketchScene,
   sketchRevision,
+  evidence,
 }: Props) {
   const state = useCanvasReviewStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasReviewStore((s) => s.refresh)
@@ -680,6 +728,73 @@ export default function CanvasNotesPanel({
    */
   const submittingRef = useRef(false)
 
+  // ── Testing mode: the evidence a note locks (M3) ──────────────────────────
+  //
+  // Everything here is gated on the seam being present, which the pane passes
+  // only for a `uat` version. Read through a ref as well as a prop because the
+  // save paths fire from event handlers and unmount cleanups, where the render
+  // that closed over the prop may be several commits old.
+  const evidenceRef = useRef(evidence)
+  evidenceRef.current = evidence
+  const testing = !!evidence
+  /**
+   * The thumbnail for each note in this run.
+   *
+   * Two sources, and the distinction is worth keeping: a note saved in THIS
+   * session already has a preview data URL (the capture reply minted one, at
+   * 40 KiB), so it costs nothing; a note restored from disk has to be read back
+   * through `canvas:evidenceRead`, which returns the full shot. Preferring the
+   * preview is what keeps a run of twenty notes from pulling twenty full-size
+   * screenshots into the renderer to draw twenty 34px thumbnails.
+   */
+  const [evidencePreviews, setEvidencePreviews] = useState<Record<string, string>>({})
+  /** Paths already asked for, so a failed read is not retried on every render. */
+  const previewAskedRef = useRef(new Set<string>())
+
+  /**
+   * A note is starting — freeze the site and capture it.
+   *
+   * Called from the two triggers the PANEL can see (the composer taking focus,
+   * a paste); the pane raises the other two (a target selection, a first
+   * stroke). An EDIT never starts one: the note being re-worded already carries
+   * its own evidence, and re-capturing would swap the screen under words
+   * written about the old one.
+   */
+  const beginNoteEvidence = useCallback(() => {
+    if (editingRef.current || submittingRef.current) return
+    if (!versionOpenRef.current || !mirrorMatchesRef.current) return
+    evidenceRef.current?.begin()
+  }, [])
+
+  /** Fill in the thumbnails for notes this session did not capture — a run
+   *  reopened after a pane switch, or restored from disk. Asked once per note:
+   *  a thumbnail that could not be read is a blank tile, never a retry loop. */
+  useEffect(() => {
+    if (!testing || !mirrorMatches) return
+    const wanted = draftNotes.filter(
+      (note) => note.evidence && !evidencePreviews[note.id] && !previewAskedRef.current.has(note.id),
+    )
+    if (wanted.length === 0) return
+    for (const note of wanted) previewAskedRef.current.add(note.id)
+    let cancelled = false
+    void (async () => {
+      for (const note of wanted) {
+        const path = note.evidence?.shotPath
+        if (!path) continue
+        try {
+          const out = await window.electronAPI.canvas.evidenceRead({ sessionId, canvasId, path })
+          if (cancelled || !out?.dataUrl) continue
+          setEvidencePreviews((prev) => ({ ...prev, [note.id]: out.dataUrl }))
+        } catch {
+          /* a thumbnail is worth no failure state — the row still reads */
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [testing, mirrorMatches, draftNotes, evidencePreviews, sessionId, canvasId])
+
   /** Serialise the saves: one in flight, and the LATEST queued behind it. Two
    *  saves racing is how the renderer and main came to disagree about which
    *  images exist. */
@@ -720,6 +835,12 @@ export default function CanvasNotesPanel({
       // Neither: main has forgotten it and this session has no bytes for it, so
       // there is nothing honest to send. Dropped rather than guessed at.
     }
+    // The PENDING capture rides the draft too (M3), so a pane switch mid-note
+    // does not orphan a screenshot main is holding — and the note the user
+    // comes back to still locks the screen it was started against. Read from
+    // the seam at send time rather than mirrored into composerRef: the pane
+    // owns this fact, and a second copy is a second thing to keep in step.
+    const evidenceId = evidenceRef.current?.pending?.evidenceId
     const saved = await saveComposerDraft(sessionId, cid, {
       versionId: versionIdRef.current,
       ...(cur.decision ? { decision: cur.decision } : {}),
@@ -727,6 +848,7 @@ export default function CanvasNotesPanel({
       ...(cur.focus ? { focus: cur.focus } : {}),
       images: entries,
       ...(sketch ? { sketch } : {}),
+      ...(evidenceId ? { evidenceId } : {}),
     })
     if (!saved) return
     // Main now holds exactly the images we sent, in that order. Recording their
@@ -881,6 +1003,11 @@ export default function CanvasNotesPanel({
     // its own. Restored only onto its own version; otherwise the note simply
     // starts untargeted, which is honest.
     if (composer.focus && composer.versionId === version.id) restoreFocus(sessionId, composer.focus)
+    // The capture the half-written note had already locked (M3). Adopted only
+    // onto its OWN version, for the same reason the target is: a screenshot of
+    // v7 is not evidence about v8, and the run the note belongs to ended when
+    // the version changed.
+    if (composer.evidenceId && composer.versionId === version.id) evidenceRef.current?.adopt(composer.evidenceId)
     if (composer.sketch) {
       // Armed ONLY when the glass actually moved. A no-op restore (the scene was
       // already there — a quick pane toggle restoring from the in-memory stash)
@@ -970,6 +1097,10 @@ export default function CanvasNotesPanel({
       setImages(nextImages)
       setNoteText(out.text)
       dirtyRef.current = true
+      // A paste is one of the four things that START a note (M3), so the site
+      // freezes here too — the pasted screenshot is usually of the very screen
+      // the note is about, and it must not move underneath the comparison.
+      beginNoteEvidence()
       // Immediately, not on the debounce: this one cost the user a screenshot.
       cancelPendingSave()
       persistRef.current()
@@ -977,7 +1108,7 @@ export default function CanvasNotesPanel({
     // Put the caret after the marker, so the user keeps typing where they were
     // rather than at the top of the box.
     if (el) requestAnimationFrame(() => el.setSelectionRange(out.caret, out.caret))
-  }, [cancelPendingSave])
+  }, [cancelPendingSave, beginNoteEvidence])
 
   useEffect(() => {
     // Only the ACTIVE session's pane handles a paste. Every session mounts its
@@ -1083,6 +1214,10 @@ export default function CanvasNotesPanel({
     activeText.trim().length > 0 ||
     activeImages.length > 0 ||
     (!editingNote && unattachedStrokeCount > 0) ||
+    // In Testing a captured screen is itself a note (M3) — "this is what it
+    // looked like" is a complete piece of evidence, and refusing to save it
+    // would make the pause a thing the user could only escape by typing.
+    (!editingNote && !!evidence?.pending) ||
     !!editingNote?.sketch
 
   const saveNote = useCallback(async () => {
@@ -1108,7 +1243,13 @@ export default function CanvasNotesPanel({
       : chosen.length > 0
         ? { excalidrawElementIds: chosen.map((el) => el.id), bboxPage: sceneBBox(chosen) }
         : null
-    if (!text && noteImages.length === 0 && !sketch) return
+    // The capture this note LOCKS (M3). An edit never takes one: the note it is
+    // re-wording already carries its own, and `evidenceId` is absent from the
+    // draft so main leaves that evidence exactly where it is.
+    const evidenceId = editing ? undefined : evidenceRef.current?.pending?.evidenceId
+    // In Testing mode the screen IS a note. Words, a picture, a drawing — or
+    // just "this is what it looked like".
+    if (!text && noteImages.length === 0 && !sketch && !evidenceId) return
     const confirmed = confirmedImageKeysRef.current
     const saved = await upsertNote(sessionId, {
       ...(editing ? { annotationId: editing.id } : {}),
@@ -1134,11 +1275,20 @@ export default function CanvasNotesPanel({
           }
         : {}),
       versionId: version.id,
+      ...(evidenceId ? { evidenceId } : {}),
     })
     if (saved === null) return
     // Only a FRESH take is reported: on an edit the ids were already claimed
     // when the note first took them, and claiming them twice would say nothing.
     if (!editing && sketch) markSketchElementsAttached(sketch.excalidrawElementIds)
+    if (evidenceId) {
+      // Main has moved the pending file onto this note. The shield comes down
+      // here — the site is live again the moment the evidence is locked — and
+      // the trail is cut, so the next note's slice starts from this one.
+      const preview = evidenceRef.current?.pending?.previewDataUrl
+      evidenceRef.current?.lock(saved)
+      if (preview) setEvidencePreviews((prev) => ({ ...prev, [saved]: preview }))
+    }
     setFiled(null)
     if (editing) {
       setEditing(sessionId, null)
@@ -1166,6 +1316,34 @@ export default function CanvasNotesPanel({
     getAllSketchElements,
     markSketchElementsAttached,
   ])
+
+  /**
+   * Cancel the note being written (Testing mode's Cancel, and the shield's
+   * Escape).
+   *
+   * The capture is DISCARDED rather than left pending: it is a picture of a
+   * screen nobody is going to describe, and leaving it would have the next note
+   * lock a screenshot taken before the user changed their mind. The decision and
+   * the drawing survive, exactly as they do after a note is added — the same
+   * clearing path, so the two cannot drift.
+   */
+  const cancelComposerNote = useCallback(() => {
+    evidenceRef.current?.discard()
+    clearFocus(sessionId)
+    clearComposerAfterNote()
+    setPasteError(null)
+  }, [sessionId, clearFocus, clearComposerAfterNote])
+
+  // Handed to the pane so Escape on the pause shield does exactly this. Cleared
+  // on unmount, or the pane would hold a callback into a dead composer.
+  useEffect(() => {
+    const seam = evidenceRef.current
+    if (!seam) return
+    seam.registerCancel(cancelComposerNote)
+    return () => {
+      evidenceRef.current?.registerCancel(null)
+    }
+  }, [cancelComposerNote, testing])
 
   /** Cancel an edit: the note is untouched, and the composer never saw it. */
   const cancelEdit = useCallback(() => {
@@ -1296,6 +1474,16 @@ export default function CanvasNotesPanel({
     setNoteText('')
     setImages([])
     submittingRef.current = false
+    // The run is over (M3): a capture still pending belonged to a note that was
+    // never written, and the action trail belongs to the round that just went
+    // out. Deliberately here rather than in `closeComposerForSubmit` — a
+    // REFUSED submit puts the user's words back, and it should put them back
+    // beside the screen they were written about.
+    const seam = evidenceRef.current
+    if (seam) {
+      seam.discard()
+      seam.endRun()
+    }
   }, [cancelPendingSave])
 
   const doSubmit = useCallback(async () => {
@@ -1363,7 +1551,12 @@ export default function CanvasNotesPanel({
         })
         sketches.push({ annotationId: note.id, pngBase64: await blobToBase64(blob) })
       }
-      const review = await submitReview(sessionId, draftReview.id, sketches, decision)
+      // The whole run's trail rides the round (M3): the per-note slices are
+      // already locked to their notes, and this is the continuous record the
+      // agent reads once at the top. Read at submit time, not earlier — the
+      // sketch export above takes real time, and anything the user did while it
+      // ran is still part of the run.
+      const review = await submitReview(sessionId, draftReview.id, sketches, decision, evidenceRef.current?.runTrail())
       if (!review) {
         restoreComposerAfterRefusal.current?.()
         setSubmitError('The review could not be submitted. Check the note list and try again.')
@@ -1847,11 +2040,102 @@ export default function CanvasNotesPanel({
 
         {liveGroups.map(roundCard)}
 
+        {/* ── This run (M3, Testing mode) ──
+            The same unsent notes as below, drawn as EVIDENCE: the screen each
+            one locked, what was said about it, and where on the site it
+            happened. A test run is a sequence of moments, and a list of
+            sentences with no pictures is the wrong shape for reading one
+            back. */}
+        {testing && draftNotes.length > 0 && (
+          <div className="rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }} data-testid="canvas-run-notes">
+            <div
+              className="px-3 py-2 text-[10px] font-extrabold tracking-[0.13em] uppercase"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              This run · {draftNotes.length} {draftNotes.length === 1 ? 'note' : 'notes'}
+            </div>
+            {draftNotes.map((note) => {
+              const stamp = note.evidence?.stamp
+              const preview = evidencePreviews[note.id]
+              // ONE clock in the product (M3): the shared formatter the MCP
+              // serializer and the recall view both use, trimmed to HH:MM
+              // because a row this dense does not need the seconds. A second
+              // implementation here is exactly how the pane and the agent come
+              // to print different times for the same moment.
+              const time = stamp ? trailClockTime(stamp.capturedAt).slice(0, 5) : ''
+              return (
+                <div
+                  key={note.id}
+                  className="flex items-center gap-2.5 px-3 py-2"
+                  style={{
+                    borderTop: '1px solid var(--border-subtle)',
+                    background: editingId === note.id ? 'var(--surface-raised)' : undefined,
+                  }}
+                  data-testid="draft-note"
+                  onMouseEnter={() => note.focus && setPanelHighlight(sessionId, { rect: note.focus.bboxPage, kind: 'anchored' })}
+                  onMouseLeave={() => setPanelHighlight(sessionId, null)}
+                >
+                  <span
+                    className="shrink-0 w-[34px] h-[24px] rounded-[5px] overflow-hidden inline-flex items-center justify-center"
+                    style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+                    data-testid="run-note-thumb"
+                  >
+                    {preview ? (
+                      <img src={preview} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden style={{ color: 'var(--text-muted)' }}>
+                        <rect x="3" y="6" width="18" height="13" rx="2" />
+                        <circle cx="12" cy="12.5" r="3.5" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="flex-1 min-w-0 truncate text-[11.5px]" style={{ color: 'var(--text-primary)' }}>
+                    {note.note.trim().length > 0 ? note.note : 'the screen, as it was'}
+                  </span>
+                  {(stamp?.route || time) && (
+                    // The route is the PAGE's word for where this happened, so
+                    // it is attributed exactly like every other page-reported
+                    // string in the pane; the clock is the host's own.
+                    <span
+                      className="shrink-0 text-[9.5px]"
+                      style={{ color: 'var(--text-muted)' }}
+                      title={stamp?.route ? PAGE_REPORTED_TITLE : undefined}
+                      data-testid="run-note-meta"
+                    >
+                      {stamp?.route ? `${PAGE_REPORTED_MARK} ${stamp.route}` : ''}
+                      {stamp?.route && time ? ' · ' : ''}
+                      {time}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => setEditing(sessionId, note.id)}
+                    className="shrink-0 text-[10px] focus-ring rounded px-1"
+                    style={{ color: 'var(--text-secondary)' }}
+                    title="Edit this note"
+                    data-testid="draft-note-edit"
+                  >
+                    edit
+                  </button>
+                  <button
+                    onClick={() => void deleteNote(sessionId, note.id)}
+                    className="shrink-0 text-[10px] focus-ring rounded px-1"
+                    style={{ color: 'var(--text-secondary)' }}
+                    title="Delete this note — its screenshot goes with it"
+                    data-testid="draft-note-delete"
+                  >
+                    delete
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
         {/* ── Your notes ──
             Written, not sent. They are the user's own and stay editable until
             the round goes out, which is why they sit apart from the round above
             rather than inside it. */}
-        {draftNotes.length > 0 && (
+        {!testing && draftNotes.length > 0 && (
           <div className="rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }} data-testid="your-notes">
             <div className="px-3 py-2 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
               Your notes
@@ -1992,9 +2276,49 @@ export default function CanvasNotesPanel({
                 </>
               )}
             </div>
+            {/* What this note will LOCK (M3). The chip is the visible half of
+                the pause: the shield says the site is frozen, this says what
+                the freeze bought. Said in four words — the promise itself lives
+                on the shield, once. */}
+            {testing && evidence?.pending && !editingNote && (
+              <div
+                className="flex items-center gap-2 rounded-[8px] px-2.5 py-1.5 text-[11px] font-semibold"
+                style={{
+                  color: 'var(--color-green)',
+                  background: 'color-mix(in srgb, var(--color-green) 10%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--color-green) 40%, transparent)',
+                }}
+                data-testid="composer-evidence"
+              >
+                {evidence.pending.previewDataUrl ? (
+                  <img
+                    src={evidence.pending.previewDataUrl}
+                    alt=""
+                    className="h-[24px] w-[34px] rounded-[4px] object-cover shrink-0"
+                    style={{ border: '1px solid color-mix(in srgb, var(--color-green) 40%, transparent)' }}
+                  />
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden className="shrink-0">
+                    <rect x="3" y="6" width="18" height="13" rx="2" />
+                    <circle cx="12" cy="12.5" r="3.5" />
+                  </svg>
+                )}
+                captured with this note
+              </div>
+            )}
+            {testing && evidence?.notice && !editingNote && (
+              <div className="text-[10.5px]" style={{ color: 'var(--color-peach)' }} data-testid="composer-evidence-notice">
+                {evidence.notice}
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               value={activeText}
+              // Putting the caret in the box IS starting a note (M3). Focus
+              // rather than the first keystroke: the screen the user is about
+              // to describe is the one in front of them NOW, not the one that
+              // survives however long they take to find the first word.
+              onFocus={() => beginNoteEvidence()}
               onChange={(e) => {
                 // An EDIT writes to its own buffer and never to the composer:
                 // the note's words are not the half-written note, and letting
@@ -2047,14 +2371,36 @@ export default function CanvasNotesPanel({
                   Cancel
                 </button>
               )}
+              {/* Testing mode's Cancel (M3): the note is paused over a frozen
+                  site, so there has to be a way out that is not "save it
+                  anyway". Only while something is actually being written —
+                  a Cancel beside an empty composer cancels nothing. */}
+              {testing && !editingNote && (evidence?.pending || canAddNote) && (
+                <button
+                  onClick={cancelComposerNote}
+                  className="px-2.5 py-1 text-[11px] rounded-[8px] border focus-ring"
+                  style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+                  title="Throw this note away — the captured screen goes with it (Esc)"
+                  data-testid="composer-cancel-note"
+                >
+                  Cancel
+                </button>
+              )}
               <button
                 onClick={() => void saveNote()}
                 disabled={!canAddNote}
                 className="px-3.5 py-1.5 text-[12px] font-semibold rounded-[8px] border focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+                // In Testing the save is the ACTION on this screen — it locks
+                // the evidence and unfreezes the site — so it wears the accent
+                // the mock gives it rather than sitting quiet beside Cancel.
+                style={
+                  testing && !editingNote
+                    ? { borderColor: 'var(--color-peach)', background: 'var(--color-peach)', color: 'var(--surface-chrome)' }
+                    : { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
+                }
                 data-testid="composer-add-note"
               >
-                {editingNote ? 'Save' : 'Add note'}
+                {editingNote ? 'Save' : testing ? 'Save note' : 'Add note'}
               </button>
             </div>
             {pasteError && (

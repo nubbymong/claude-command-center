@@ -140,6 +140,9 @@ let activeVersionId = 'v1'
     getState: vi.fn(async () => ({ ...STATE, activeVersionId })),
     reviewGetState: vi.fn(async () => null),
     listReclaimable: vi.fn(async () => []),
+    // M3: the pane subscribes to main’s full-document navigation push for
+    // the action trail, so every mount of it needs the listener to exist.
+    onFrameNavigated: vi.fn(() => () => {}),
     onChanged: vi.fn(() => () => {}),
     onReviewChanged: vi.fn(() => () => {}),
     onSnapshotRequest: vi.fn(() => () => {}),

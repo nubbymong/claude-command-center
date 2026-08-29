@@ -29,6 +29,7 @@ import {
   CanvasState,
   CanvasVersion,
   MAX_CANVAS_TITLE_CHARS,
+  MAX_PACK_NAME_CHARS,
   MAX_PRIOR_VERDICTS,
   MAX_VERDICT_NOTE_CHARS,
   ReclaimableCanvas,
@@ -824,6 +825,13 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // also honoured, but reject an obviously-broken distRoot shape here too.
   if (!isSafeEntry(ver.source.entry)) return false
   if (ver.source.mode === 'uat' && (typeof ver.source.distRoot !== 'string' || ver.source.distRoot.length === 0)) return false
+  // The user's pack name (M3): OUR sanitised shape or absent. Checked by
+  // ROUND-TRIP rather than by a character class — the value is written through
+  // `sanitizePackName`, so a stored name that does not equal its own
+  // re-sanitisation was not written by this build, and a hand-edited one
+  // carrying bidi overrides or an over-long run is dropped with its version
+  // rather than rendered in the header the user reads.
+  if (ver.packName !== undefined && sanitizePackName(ver.packName) !== ver.packName) return false
   return true
 }
 
@@ -1152,7 +1160,7 @@ function nextVersionNumber(versions: CanvasVersion[]): number {
  * without one keeps the old behaviour of appending to whatever canvas the
  * session holds.
  */
-function sanitizeCanvasTitle(raw: unknown): string | undefined {
+function sanitizeLabelText(raw: unknown, maxChars: number): string | undefined {
   if (typeof raw !== 'string') return undefined
   // Strip → cap → strip again. The cap is in UTF-16 code units and can cut a
   // surrogate pair in half, and it can leave a trailing space that a re-clean
@@ -1163,9 +1171,26 @@ function sanitizeCanvasTitle(raw: unknown): string | undefined {
   const clean = (s: string) => s.replace(TITLE_STRIP_RE, '').replace(/\s+/g, ' ').trim()
   const cleaned = clean(raw)
   if (cleaned.length === 0) return undefined
-  const capped = Array.from(cleaned).slice(0, MAX_CANVAS_TITLE_CHARS).join('')
+  const capped = Array.from(cleaned).slice(0, maxChars).join('')
   const final = clean(capped)
   return final.length === 0 ? undefined : final
+}
+
+function sanitizeCanvasTitle(raw: unknown): string | undefined {
+  return sanitizeLabelText(raw, MAX_CANVAS_TITLE_CHARS)
+}
+
+/**
+ * The user's own name for a TEST PACK (M3).
+ *
+ * The title's rules, at the pack's cap: the pack name sits in the pane header
+ * and in the Library beside a delete button, so the question is the title's
+ * question — can this make one row read as another — and the answer is the same
+ * strip list. Idempotent for the same MAC reason: this string is inside the
+ * record the HMAC covers.
+ */
+function sanitizePackName(raw: unknown): string | undefined {
+  return sanitizeLabelText(raw, MAX_PACK_NAME_CHARS)
 }
 
 /**
@@ -1675,6 +1700,74 @@ export function setVersionVerdict(
 }
 
 /**
+ * Name the TEST PACK (M3) — the inline rename in the Testing header.
+ *
+ * OWNER-SCOPED, like every other renderer write on this store: the canvas named
+ * has to be the one this session actually holds. A pack name is a label the user
+ * reads in their own Library, and letting a session rename another's would be a
+ * way to make one row read as another.
+ *
+ * `null` clears it, which is how "empty the field and press Enter" gets back to
+ * the generated default — and the default is DERIVED, never written, so clearing
+ * is a delete rather than a write of today's default frozen forever.
+ *
+ * The version does not have to be `uat`: a pack name on a mockup version is
+ * harmless (nothing reads it there), and refusing here would mean the pane had
+ * to know the mode before it could offer the field. What it must be is a version
+ * on THIS canvas, and not a draft — a draft is invisible to the user, so a name
+ * on one names something they cannot see.
+ */
+export function setPackName(
+  sessionId: string,
+  canvasId: string,
+  versionId: string,
+  name: string | null,
+): CanvasState | { error: string } {
+  if (!SESSION_ID_RE.test(sessionId)) return { error: 'invalid session id' }
+  if (!CANVAS_ID_RE.test(canvasId)) return { error: 'invalid canvas id' }
+  if (!CANVAS_VERSION_ID_RE.test(versionId)) return { error: 'invalid version id' }
+  const record = getRecordForSession(sessionId)
+  if (!record) return { error: 'no canvas for this session' }
+  if (record.canvasId !== canvasId) return { error: 'that canvas is not this session’s' }
+  const target = record.versions.find((v) => v.id === versionId)
+  if (!target) return { error: `no version ${versionId} on this canvas` }
+  if (target.draft) return { error: 'that version is still a draft' }
+  const cleaned = name === null ? undefined : sanitizePackName(name)
+  const versions = record.versions.map((v) => {
+    if (v.id !== target.id) return v
+    const { packName: _old, ...rest } = v
+    return cleaned ? { ...rest, packName: cleaned } : rest
+  })
+  const next: CanvasRecord = { ...record, versions }
+  persist(next)
+  canvases.set(record.canvasId, next)
+  emitChanged(next)
+  return toState(next)
+}
+
+/**
+ * The project directory a canvas was rendered in, for SCOPING a read.
+ *
+ * A LABEL everywhere else in this store (ADR-017: the project organises, it
+ * never forecloses), and it stays one here — this answers "are these two things
+ * in the same project", which is a relevance question the evidence read channel
+ * turns into a scope. It is never an ownership key: ownership is
+ * `adoptCanvasForSession`, and the read channel checks that first.
+ */
+export function canvasProjectDirOf(canvasId: string): string | undefined {
+  if (!CANVAS_ID_RE.test(canvasId)) return undefined
+  ensureDiskScanned()
+  return canvases.get(canvasId)?.cwd
+}
+
+/** Whether two directories name the same project, by this store's own rule —
+ *  exported so the evidence read channel scopes exactly as the Library lists. */
+export function isSameCanvasProject(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false
+  return sameProjectDir(a, b)
+}
+
+/**
  * Reopen a version for review (C1 flexibility: "go back to v5, get rid of
  * v6"). The target's verdict is cleared — it becomes the artifact's one OPEN
  * version — and every LATER ready version in the same artifact is stamped
@@ -2139,6 +2232,12 @@ export function listAllCanvases(
       createdAt: clampToNow(record.createdAt),
       lastRenderedAt: clampToNow(latest?.createdAt ?? record.createdAt),
       ...(latest?.source.mode ? { latestMode: latest.source.mode } : {}),
+      // The TEST PACK's identity (M3), for uat rows. Only the user's own name is
+      // carried: the generated default is composed by whoever renders the row,
+      // from `defaultPackName`, so a row never shows a default frozen at the
+      // moment of capture. `buildLabel` is the agent's own label for the build.
+      ...(latest?.source.mode === 'uat' && latest.packName ? { packName: latest.packName } : {}),
+      ...(latest?.source.mode === 'uat' && latest.source.buildLabel ? { buildLabel: latest.source.buildLabel } : {}),
       ...(record.conversationUuid ? { conversationShortId: record.conversationUuid.slice(0, 8) } : {}),
       ...(cwd ? { cwd } : {}),
       ...(record.title ? { title: record.title } : {}),

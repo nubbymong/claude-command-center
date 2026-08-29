@@ -27,15 +27,24 @@ import {
   MAX_ANNOTATION_VARIANTS,
   artifactRunContaining,
   artifactRuns,
+  EVIDENCE_ID_RE,
+  EVIDENCE_SHOT_PATH_RE,
   MAX_ATTACHMENT_PNG_BYTES,
   MAX_NOTE_CHARS,
   MAX_NOTE_IMAGES,
   MAX_SKETCH_SCENE_BYTES,
   MAX_SKETCH_SCENE_ELEMENTS,
+  MAX_TRAIL_ENTRIES_PER_RUN,
   isCleanVariantLabel,
+  isKeepableEvidence,
+  isKeepableTrailEntry,
   isLiveNote,
   isSettledNote,
+  sanitizeEvidence,
+  sanitizeTrail,
   type AddressedBy,
+  type AnnotationEvidence,
+  type TrailEntry,
   type AgentCloseVerdict,
   type AnchorRef,
   type Annotation,
@@ -61,6 +70,16 @@ import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { logInfo } from '../debug-logger'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { clearAwaitingReview, getCanvasStateById, getCanvasStateForSession, setVersionVerdict } from './canvas-store'
+import {
+  deleteEvidenceShot,
+  discardPendingEvidence,
+  dropPendingEvidenceForCanvas,
+  lockEvidenceToNote,
+  pendingEvidenceCanvas,
+  readCanvasImageFile,
+  sweepOrphanEvidence,
+  type EvidenceImage,
+} from './canvas-evidence'
 
 // ── Bounds (shared intent with the IPC schemas; the store re-checks because it
 //    is the last line, and the MCP tool reads through it) ────────────────────
@@ -267,10 +286,11 @@ function isValidAnnotation(value: unknown): value is Annotation {
   if (typeof a.id !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.id)) return false
   if (typeof a.reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(a.reviewId)) return false
   if (typeof a.scope !== 'string' || !ANNOTATION_SCOPES.has(a.scope)) return false
-  // Empty text is legal when SOMETHING ELSE is the note — a pasted image or a
-  // drawing. Both count now: a note that is only a circle round a broken button
-  // is a real note, and the composer lets it be saved.
-  const hasAttachment = (Array.isArray(a.images) && a.images.length > 0) || a.sketch !== undefined
+  // Empty text is legal when SOMETHING ELSE is the note — a pasted image, a
+  // drawing, or (in Testing) the locked evidence. All three count: a note that
+  // is only a circle round a broken button is a real note, and so is one that is
+  // only "here is the screen when it happened".
+  const hasAttachment = (Array.isArray(a.images) && a.images.length > 0) || a.sketch !== undefined || a.evidence !== undefined
   if (!(hasAttachment ? isCleanNoteOrEmpty(a.note) : isCleanNote(a.note))) return false
   if (typeof a.versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(a.versionId)) return false
   if (typeof a.state !== 'string' || !ANNOTATION_STATES.has(a.state)) return false
@@ -396,6 +416,14 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // not readable from every validation site, and a deleted artefact must not
   // condemn the note that pointed at it).
   if (a.addressedIn !== undefined && (typeof a.addressedIn !== 'string' || !CANVAS_VERSION_ID_RE.test(a.addressedIn))) return false
+  // THE LOCKED EVIDENCE (M3). OUR shape or absent — and hardest of all on the
+  // shot PATH, because that string is what the read channel resolves against:
+  // if a hand-edited record could name a file of its choosing here, the read
+  // channel's "look it up on the record" rule would resolve straight to it.
+  // `sanitizeLoadedRecord` has already dropped a malformed one, so reaching here
+  // out of shape means a writer inside this process produced something this
+  // build does not define.
+  if (a.evidence !== undefined && !isKeepableEvidence(a.evidence)) return false
   return true
 }
 
@@ -471,6 +499,18 @@ function sanitizeLoadedRecord(value: unknown): void {
       if (a.addressedIn !== undefined && (typeof a.addressedIn !== 'string' || !CANVAS_VERSION_ID_RE.test(a.addressedIn))) {
         delete a.addressedIn
       }
+      // THE EVIDENCE HEAL (M3). A stamp is a description of a screen and a trail
+      // is a list of gestures; neither is the note. So a malformed one is
+      // truncated to what this build understands and, failing that, DROPPED —
+      // never fatal. Condemning a canvas's whole review history because one
+      // stamp gained a field a later build writes would lose the user's words to
+      // a migration, which is the mistake `sanitizeLoadedRecord` exists to
+      // prevent. Legacy uat notes carry no evidence at all and are untouched.
+      if (a.evidence !== undefined) {
+        const healed = sanitizeEvidence(a.evidence)
+        if (healed) a.evidence = healed
+        else delete a.evidence
+      }
     }
   }
   if (Array.isArray(rec.reviews)) {
@@ -478,6 +518,15 @@ function sanitizeLoadedRecord(value: unknown): void {
       if (typeof raw !== 'object' || raw === null) continue
       const r = raw as Record<string, unknown>
       if (r.decision !== undefined && (typeof r.decision !== 'string' || !REVIEW_DECISIONS.has(r.decision))) delete r.decision
+      // The run trail (M3): same posture as the per-note evidence. Truncated to
+      // the cap and stripped of lines this build does not understand; an empty
+      // result is dropped rather than stored as an empty array claiming the user
+      // did nothing.
+      if (r.trail !== undefined) {
+        const healed = sanitizeTrail(r.trail, MAX_TRAIL_ENTRIES_PER_RUN)
+        if (healed.length > 0) r.trail = healed
+        else delete r.trail
+      }
       if (r.settled !== undefined && !isValidReviewSettled(r.settled)) delete r.settled
       // `settled` describes a RESOLVED round; on anything else it is stale
       // bookkeeping from a build that moved status backwards.
@@ -524,6 +573,10 @@ function isValidComposerDraft(value: unknown): value is ComposerDraft {
       if (typeof versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(versionId)) return false
     }
   }
+  // The pending Testing capture the composer is holding (M3). An id of OUR
+  // minting or absent — never a path, so there is nothing here to point at a
+  // file even if a record were hand-edited.
+  if (d.evidenceId !== undefined && (typeof d.evidenceId !== 'string' || !EVIDENCE_ID_RE.test(d.evidenceId))) return false
   return isCleanString(d.updatedAt, 64)
 }
 
@@ -540,6 +593,14 @@ function isValidReview(value: unknown, canvasId: string, sessionId: string): val
   // absent — `sanitizeLoadedRecord` has already dropped anything malformed, so
   // reaching here with a bad one means a writer inside this process produced it.
   if (r.decision !== undefined && (typeof r.decision !== 'string' || !REVIEW_DECISIONS.has(r.decision))) return false
+  // The run's action trail (M3): bounded in COUNT here as well as in shape. The
+  // per-entry validator caps every string it carries, so the array length is the
+  // only unbounded dimension left, and a record holding a million lines would
+  // make every read of this canvas expensive.
+  if (r.trail !== undefined) {
+    if (!Array.isArray(r.trail) || r.trail.length > MAX_TRAIL_ENTRIES_PER_RUN) return false
+    if (!r.trail.every(isKeepableTrailEntry)) return false
+  }
   if (r.settled !== undefined && (!isValidReviewSettled(r.settled) || r.status !== 'resolved')) return false
   const canvas = r.canvas as Record<string, unknown> | undefined
   return !!canvas && canvas.canvasId === canvasId && canvas.sessionId === sessionId
@@ -690,6 +751,17 @@ function loadRecord(canvasId: string, sessionId: string): ReviewFileRecord | nul
       }
     }
     records.set(canvasId, record)
+    // THE EVIDENCE ORPHAN SWEEP (M3), last and only on a real load: a shot whose
+    // note was deleted while the app was closed, and every `pending-` file left
+    // by a previous run (the pending register is memory, so on a fresh load they
+    // are all stale by definition). Runs once per canvas per process, after the
+    // record is committed — so the set of referenced paths is the one the store
+    // will actually serve, and a throw here cannot cost the load.
+    try {
+      sweepOrphanEvidence(canvasId, new Set(record.annotations.map((a) => a.evidence?.shotPath).filter((p): p is string => !!p)))
+    } catch (err) {
+      logInfo(`[canvas-review] evidence sweep failed for ${canvasId}: ${err}`)
+    }
     return record
   } catch {
     broken.add(canvasId)
@@ -804,6 +876,25 @@ function cloneAnnotation(a: Annotation): Annotation {
       : {}),
     ...(a.sketch ? { sketch: { ...a.sketch, excalidrawElementIds: [...a.sketch.excalidrawElementIds], bboxPage: { ...a.sketch.bboxPage } } } : {}),
     ...(a.images ? { images: a.images.map((img) => ({ ...img })) } : {}),
+    ...(a.evidence ? { evidence: cloneEvidence(a.evidence) } : {}),
+  }
+}
+
+/** The evidence record, copied deeply enough that a caller cannot reach back
+ *  into the committed one — the same rule `cloneAnnotation` follows for the
+ *  focus and the sketch. The stamp's targets and the trail's entries are flat
+ *  records, so one level of spread per array is the whole of it. */
+function cloneEvidence(e: AnnotationEvidence): AnnotationEvidence {
+  return {
+    ...e,
+    stamp: {
+      ...e.stamp,
+      viewport: { ...e.stamp.viewport },
+      dialogs: e.stamp.dialogs.map((d) => ({ ...d })),
+      ...(e.stamp.focused ? { focused: { ...e.stamp.focused } } : {}),
+      fields: e.stamp.fields.map((f) => ({ ...f })),
+    },
+    trail: e.trail.map((t) => ({ ...t })),
   }
 }
 
@@ -1403,11 +1494,20 @@ export function settleReviewsForSupersededVersions(canvasId: string, versionIds:
 function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): void {
   if (typeof draft !== 'object' || draft === null) throw new Error('invalid draft')
   if (!ANNOTATION_SCOPES.has(draft.scope)) throw new Error('invalid draft scope')
-  // Empty text is allowed when the ATTACHMENT is the note — a pasted image or a
-  // drawing. Both, now: the composer saves a note that is only a circle round a
-  // broken button, and demanding words for it would be demanding a caption.
-  const hasAttachment = (draft.images !== undefined && draft.images.length > 0) || draft.sketch !== undefined
+  // Empty text is allowed when the ATTACHMENT is the note — a pasted image, a
+  // drawing, or (in Testing) the capture this save is locking. All three: the
+  // composer saves a note that is only a circle round a broken button, and
+  // demanding words for it would be demanding a caption.
+  const hasAttachment =
+    (draft.images !== undefined && draft.images.length > 0) || draft.sketch !== undefined || draft.evidenceId !== undefined
   if (!(hasAttachment ? isCleanNoteOrEmpty(draft.note) : isCleanNote(draft.note))) throw new Error('invalid draft note')
+  // An id of OUR minting, never a path. What it RESOLVES to is checked at the
+  // lock, against a register this process wrote — so an id naming another
+  // canvas's capture, or nothing at all, costs the note its picture and never
+  // reaches a file.
+  if (draft.evidenceId !== undefined && (typeof draft.evidenceId !== 'string' || !EVIDENCE_ID_RE.test(draft.evidenceId))) {
+    throw new Error('invalid evidence id')
+  }
   if (draft.images !== undefined) {
     if (!Array.isArray(draft.images)) throw new Error('invalid draft images')
     if (draft.images.length > MAX_NOTE_IMAGES) throw new Error('too many images on one note')
@@ -1583,6 +1683,34 @@ function readAttachmentFile(canvasId: string, relPath: string): Buffer {
 }
 
 /**
+ * Move the pending capture named by the draft onto this note, in place.
+ *
+ * FILES BEFORE THE RECORD, like every other write here: the rename happens now
+ * and the commit follows, so a persist that throws leaves an orphaned
+ * `<annotationId>.png` that the next load sweeps — never a committed note
+ * naming a picture that was never moved.
+ *
+ * Mutates `annotation` and clears the composer's own hold on the id in the same
+ * off-to-the-side record, because the file has moved and a composer still
+ * pointing at it would render a thumbnail for a picture that is now the note's.
+ */
+function lockDraftEvidence(
+  record: ReviewFileRecord,
+  canvasId: string,
+  annotation: Annotation,
+  draft: CanvasAnnotationDraft,
+): void {
+  if (draft.evidenceId === undefined) return
+  const locked = lockEvidenceToNote(canvasId, draft.versionId, annotation.id, draft.evidenceId)
+  if (!locked) return
+  annotation.evidence = locked
+  if (record.composer?.evidenceId === draft.evidenceId) {
+    const { evidenceId: _taken, ...rest } = cloneComposerDraft(record.composer)
+    record.composer = { ...rest, updatedAt: new Date().toISOString() }
+  }
+}
+
+/**
  * Create or update a note in the session's draft review, creating the draft
  * review itself on the first note. Returns the committed state plus the id of
  * the note touched (the renderer needs it to keep editing).
@@ -1637,6 +1765,12 @@ export function upsertAnnotation(
     const landed = writePlannedImages(canvas.canvasId, plan)
     if (landed.length > 0) existing.images = landed
     else delete existing.images
+    // THE LOCK (M3). The stamp and the trail come from the register main wrote
+    // when it took the picture, NOT from this call — so a save cannot dress a
+    // note in a description of some other screen. A capture that has expired or
+    // belongs elsewhere simply does not land: the note keeps its words and loses
+    // its picture, which is the right way round.
+    lockDraftEvidence(next, canvas.canvasId, existing, draft)
     const kept = new Set(landed.map((img) => img.pngPath))
     const toUnlink = [
       ...previous.filter((img) => !kept.has(img.pngPath)),
@@ -1684,6 +1818,7 @@ export function upsertAnnotation(
       ...(draft.sketch ? { sketch: { ...draft.sketch, pngPath: '' } } : {}),
       ...(landed.length > 0 ? { images: landed } : {}),
     }
+    lockDraftEvidence(next, canvas.canvasId, annotation, draft)
     next.annotations.push(annotation)
     review.annotationIds.push(annotationId)
     const consumed = consumeComposerImages(next, consumedComposerIndices)
@@ -1736,10 +1871,24 @@ export function setComposerDraft(sessionId: string, canvasId: string, input: Com
       ...(input.focus ? { focus: input.focus } : {}),
       images: landed,
       ...(input.sketch ? { sketch: { scene: input.sketch.scene, versions: { ...input.sketch.versions } } } : {}),
+      // The pending capture the composer is holding (M3), kept only while it
+      // still names a live capture on THIS canvas — an id whose file has expired
+      // or belongs elsewhere would restore a composer promising a screenshot
+      // that no longer exists.
+      ...(input.evidenceId && pendingEvidenceCanvas(input.evidenceId) === canvas.canvasId
+        ? { evidenceId: input.evidenceId }
+        : {}),
       updatedAt: new Date().toISOString(),
     },
   }
   commit(next)
+  // A capture the composer has STOPPED holding is discarded here — the user
+  // cancelled the note or started a fresh one, and an abandoned shot must not sit
+  // in the pack waiting for its half-hour to run out.
+  const heldNow = next.composer?.evidenceId
+  if (base.composer?.evidenceId && base.composer.evidenceId !== heldNow) {
+    discardPendingEvidence(canvas.canvasId, base.composer.evidenceId)
+  }
   for (const img of previous) if (!kept.has(img.pngPath)) unlinkPastedImage(canvas.canvasId, img)
   return toState(next)
 }
@@ -1755,6 +1904,7 @@ export function clearComposerDraft(sessionId: string, canvasId: string): CanvasR
   const base = recordFor(sessionId, canvas)
   if (!base.composer) return toState(base)
   const doomed = base.composer.images
+  const doomedEvidenceId = base.composer.evidenceId
   const next: ReviewFileRecord = {
     ...base,
     reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
@@ -1762,6 +1912,11 @@ export function clearComposerDraft(sessionId: string, canvasId: string): CanvasR
   }
   delete next.composer
   commit(next)
+  // Clearing the composer IS the cancel gesture, so the capture it was holding
+  // goes with it: the shot was taken for a note the user has decided not to
+  // write, and keeping it would leave a picture in the pack that nothing
+  // references and nobody asked for.
+  if (doomedEvidenceId) discardPendingEvidence(canvas.canvasId, doomedEvidenceId)
   for (const img of doomed) unlinkPastedImage(canvas.canvasId, img)
   return toState(next)
 }
@@ -1771,6 +1926,10 @@ export function clearComposerDraft(sessionId: string, canvasId: string): CanvasR
  *  files to unlink after that commit lands. */
 function dropComposerFrom(record: ReviewFileRecord): AnnotationImage[] {
   const doomed = record.composer?.images ?? []
+  // The capture goes with the composer, for the same reason its images do: the
+  // run has been submitted, so a shot still waiting to become a note is waiting
+  // for a note that will never be written.
+  if (record.composer?.evidenceId) discardPendingEvidence(record.canvasId, record.composer.evidenceId)
   delete record.composer
   return doomed
 }
@@ -1813,6 +1972,12 @@ function validateComposerInput(input: ComposerDraftInput, canvas: SessionCanvas)
       if (!isCleanString(id, SKETCH_ELEMENT_ID_MAX) || id.length === 0) throw new Error('invalid composer sketch')
       if (typeof versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(versionId)) throw new Error('invalid composer sketch')
     }
+  }
+  // An id of OUR minting or nothing. Whether it names a LIVE capture on this
+  // canvas is decided at the write, not here: a composer whose shot expired is
+  // still a composer worth persisting, it just stops claiming a picture.
+  if (input.evidenceId !== undefined && (typeof input.evidenceId !== 'string' || !EVIDENCE_ID_RE.test(input.evidenceId))) {
+    throw new Error('invalid composer evidence id')
   }
 }
 
@@ -1901,6 +2066,10 @@ export function deleteAnnotation(sessionId: string, annotationId: string): Canva
   // After the commit: a pasted image belongs to exactly this note, so EVERY one
   // of them goes with it. Best-effort — the record is already the truth.
   for (const img of noteImages(target)) unlinkPastedImage(canvas.canvasId, img)
+  // And its evidence, which belongs to the note by NAME (M3): deleting a note
+  // deletes the screenshot it locked, or the pack would keep growing with
+  // pictures of notes that no longer exist.
+  deleteEvidenceShot(canvas.canvasId, target.evidence?.shotPath)
   return toState(next)
 }
 
@@ -1939,6 +2108,17 @@ export function submitReview(
    * a note on one rather than trusting the composer to have gated it.
    */
   decision: 'approve' | 'reject',
+  /**
+   * The WHOLE RUN's action trail (M3), for a Testing submit.
+   *
+   * Re-capped and re-validated here rather than trusted: the renderer's ring
+   * already bounds it, but this store is the last line and the array is the one
+   * dimension of the trail that is not bounded by a per-entry validator. Lines
+   * this build does not understand are dropped, not fatal — a trail is
+   * provenance, and refusing a submit over one bad line would cost the user
+   * their round to protect a log.
+   */
+  trail?: TrailEntry[],
 ): CanvasReviewState {
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
@@ -2010,6 +2190,14 @@ export function submitReview(
   if (!frozenVersionId) throw new Error('no active version to submit against')
   nextReview.versionId = frozenVersionId
   nextReview.decision = decision
+  {
+    const runTrail = sanitizeTrail(trail, MAX_TRAIL_ENTRIES_PER_RUN)
+    // Absent rather than empty for a non-Testing round: an empty array would
+    // read as "the user did nothing", which is a claim, where absence is the
+    // truth ("this round records no trail").
+    if (runTrail.length > 0) nextReview.trail = runTrail
+    else delete nextReview.trail
+  }
 
   // APPROVE MEANS NOTHING OWED. Every note filed with an approval becomes an
   // OBSERVATION: recorded, shown to the agent, and closed at submit. The user
@@ -2124,6 +2312,16 @@ export interface ReviewPayloadResult {
    *  Resolved HERE from the validated relative paths so the tool never joins
    *  paths itself. */
   attachmentFiles: Array<{ annotationId: string; absPath: string; kind: 'sketch' | 'image'; imageIndex?: number }>
+  /**
+   * The Testing evidence SHOTS, kept apart from `attachmentFiles` (M3).
+   *
+   * Apart, because they are attached only on request: `canvas_review` returns
+   * the STRUCTURE by default — the stamp lines and the trail — and the pictures
+   * only when the agent asks (`includeShots`). A screenshot per note is the most
+   * expensive thing this tool can return, and the structure answers most
+   * questions about a run without one.
+   */
+  evidenceFiles: Array<{ annotationId: string; absPath: string }>
   /** Ids of every submitted (fetchable) review, for the tool's own messaging. */
   submittedReviewIds: string[]
 }
@@ -2199,8 +2397,44 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
       kind: att.kind,
       ...(att.imageIndex !== undefined ? { imageIndex: att.imageIndex } : {}),
     })),
+    // Resolved HERE from the validated relative path, like every other
+    // attachment, so the tool never joins a path itself.
+    evidenceFiles: all
+      .filter((a) => a.evidence !== undefined)
+      .map((a) => ({ annotationId: a.id, absPath: path.join(canvasDir(canvas.canvasId), a.evidence!.shotPath) })),
     submittedReviewIds,
   }
+}
+
+/**
+ * Read back ONE image this canvas actually records (M3 — `canvas:evidenceRead`).
+ *
+ * THE PATH IS NOT A PATH HERE. The caller hands a string; this function asks the
+ * RECORD whether that exact string is one of the paths it stores — a note's
+ * evidence shot, a note's pasted image, a note's exported sketch, or a composer
+ * image — and answers null when it is not. So the channel can only ever return a
+ * file the canvas already knows it owns, and a traversal string is not "cleaned"
+ * into something safe, it simply matches nothing.
+ *
+ * READ-ONLY, like `getReviewCountsForCanvas` and for the same reason: it is
+ * keyed by canvasId (the Library reads other sessions' memorialised packs), and
+ * `loadRecord` would re-stamp and PERSIST a record whose owner differs from the
+ * session asking. Ownership/project scoping is the CALLER's to apply — this
+ * function decides only "does this canvas record this file".
+ */
+export function readRecordedCanvasImage(canvasId: string, relPath: string): EvidenceImage | null {
+  if (typeof relPath !== 'string' || relPath.length === 0) return null
+  const record = readRecordNoRebind(canvasId)
+  if (!record) return null
+  const recorded = new Set<string>()
+  for (const a of record.annotations) {
+    if (a.evidence && EVIDENCE_SHOT_PATH_RE.test(a.evidence.shotPath)) recorded.add(a.evidence.shotPath)
+    for (const img of noteImages(a)) if (IMAGE_PNG_PATH_RE.test(img.pngPath)) recorded.add(img.pngPath)
+    if (a.sketch && PNG_PATH_RE.test(a.sketch.pngPath)) recorded.add(a.sketch.pngPath)
+  }
+  for (const img of record.composer?.images ?? []) if (COMPOSER_PNG_PATH_RE.test(img.pngPath)) recorded.add(img.pngPath)
+  if (!recorded.has(relPath)) return null
+  return readCanvasImageFile(canvasId, relPath)
 }
 
 /** One note this call would not touch, and WHY — operator-authored words built
@@ -3002,7 +3236,12 @@ export function forceCloseCanvasReviews(canvasId: string): ForceCloseReport | nu
   // read draft NOTES, live rounds and awaited versions) — so deleting it here
   // would throw away words the user never asked anyone to act on. Reopening the
   // canvas finds them where they left them.
-  for (const a of doomedDrafts) for (const img of noteImages(a)) unlinkPastedImage(canvasId, img)
+  for (const a of doomedDrafts) {
+    for (const img of noteImages(a)) unlinkPastedImage(canvasId, img)
+    // A force DELETES unsent notes, so their evidence goes too (M3): the shot
+    // was taken for a claim the user never filed.
+    deleteEvidenceShot(canvasId, a.evidence?.shotPath)
+  }
   return report
 }
 
@@ -3044,6 +3283,9 @@ export function deleteAnnotationsForVersions(canvasId: string, versionIds: reado
   // undo the commit above.
   for (const a of doomed) {
     for (const img of noteImages(a)) unlinkPastedImage(canvasId, img)
+    // The artefact is gone, so its evidence goes with it (M3) — the same rule
+    // the pasted images follow, and the reason the shot is keyed by note id.
+    deleteEvidenceShot(canvasId, a.evidence?.shotPath)
     // Re-validate the sketch path at unlink time, exactly as unlinkPastedImage
     // re-checks its own — the record is validated on load today, but this guard
     // keeps the unlink from becoming a delete-by-path primitive if any future
@@ -3072,6 +3314,9 @@ export function deleteAnnotationsForVersions(canvasId: string, versionIds: reado
 export function dropReviewsForCanvas(canvasId: string): void {
   records.delete(canvasId)
   broken.delete(canvasId)
+  // The pending-capture register is the third map that would outlive the
+  // directory (M3). Its files went with the canvas; these entries would not.
+  dropPendingEvidenceForCanvas(canvasId)
 }
 
 /** Test seam: drop all in-memory state so each test starts cold. */

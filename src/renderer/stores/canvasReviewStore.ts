@@ -29,6 +29,7 @@ import type {
   FocusObject,
   Rect,
   Review,
+  TrailEntry,
 } from '../../shared/canvas'
 
 /** The checklist's one re-anchor pass (D12): keyed by annotation id, valid for
@@ -136,9 +137,22 @@ interface CanvasReviewStoreState {
   setPanelHighlight: (sessionId: string, highlight: CanvasReviewSessionState['panelHighlight']) => void
   upsertNote: (sessionId: string, draft: CanvasAnnotationDraft) => Promise<string | null>
   deleteNote: (sessionId: string, annotationId: string) => Promise<void>
-  /** The decision is REQUIRED: notes have no verdicts of their own any more, so
-   *  the submit IS the user's word on the version. */
-  submitReview: (sessionId: string, reviewId: string, sketches: CanvasSketchExport[], decision: 'approve' | 'reject') => Promise<Review | null>
+  /**
+   * The decision is REQUIRED: notes have no verdicts of their own any more, so
+   * the submit IS the user's word on the version.
+   *
+   * `trail` is the WHOLE run's action trail (M3, Testing mode) — the per-note
+   * slices are already locked to their notes, and this is the continuous record
+   * the agent reads once at the top of the round. Optional because only Testing
+   * mode records one; main re-applies the cap.
+   */
+  submitReview: (
+    sessionId: string,
+    reviewId: string,
+    sketches: CanvasSketchExport[],
+    decision: 'approve' | 'reject',
+    trail?: TrailEntry[],
+  ) => Promise<Review | null>
   /** Put a closed note back in play. Returns nothing to decide — the mirror
    *  main returns is the answer, as with every other mutation here. */
   reopenNote: (sessionId: string, annotationId: string) => Promise<void>
@@ -315,9 +329,18 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
     }
   },
 
-  submitReview: async (sessionId, reviewId, sketches, decision) => {
+  submitReview: async (sessionId, reviewId, sketches, decision, trail) => {
     try {
-      const state = await window.electronAPI.canvas.reviewSubmit({ sessionId, reviewId, sketches, decision })
+      const state = await window.electronAPI.canvas.reviewSubmit({
+        sessionId,
+        reviewId,
+        sketches,
+        decision,
+        // Omitted rather than sent empty: a design or plan round has no trail,
+        // and an empty array on the record would read as "we watched and they
+        // did nothing".
+        ...(trail && trail.length > 0 ? { trail } : {}),
+      })
       set((s) => ({
         bySessionId: {
           ...s.bySessionId,

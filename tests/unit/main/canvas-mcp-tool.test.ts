@@ -362,7 +362,15 @@ describe('registration', () => {
     // The description has to carry the untrusted-data framing: the notes are
     // what the user wrote ABOUT the page, never instructions to follow blindly.
     expect(String(description)).toMatch(/untrusted|DATA/i)
-    expect(Object.keys(shape as object).sort()).toEqual(['canvasId', 'cccSessionId', 'format', 'reviewId'])
+    // `includeShots` (M3) is the Testing-mode opt-in for the screenshots: the
+    // structure comes back every time, the pixels only when asked.
+    expect(Object.keys(shape as object).sort()).toEqual([
+      'canvasId',
+      'cccSessionId',
+      'format',
+      'includeShots',
+      'reviewId',
+    ])
     expect(typeof handler).toBe('function')
   })
 

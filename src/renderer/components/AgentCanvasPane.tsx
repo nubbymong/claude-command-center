@@ -9,19 +9,38 @@ import CanvasNotesPanel from './CanvasNotesPanel'
 import CanvasCompleteButton from './CanvasCompleteButton'
 import CanvasHistoryControl from './CanvasHistoryControl'
 import CanvasXrayReadout from './CanvasXrayReadout'
+import CanvasPauseShield from './CanvasPauseShield'
+import CanvasEvidenceRecall from './CanvasEvidenceRecall'
 import { DismissButton } from './ui/DismissButton'
 import { useCanvasStore, type CanvasSketchScene } from '../stores/canvasStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useSessionStore } from '../stores/sessionStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import {
+  MAX_PACK_NAME_CHARS,
   MAX_RESOLVE_ANCHORS,
   CanvasHitInfo,
   CanvasViewportInfo,
   CanvasVersion,
   canvasContentUrl,
+  defaultPackName,
+  verdictLabel,
   type AnchorRef,
   type CanvasHoverReportingResult,
+  type CanvasSnapshotResult,
+  type EvidenceCaptureRefusal,
+  type StampTarget,
 } from '../../shared/canvas'
+import { sanitizeSnapshotResult } from '../../shared/canvas-snapshot-sanitize'
+import { baselineFromSnapshot, buildEvidenceStamp, type StampBaseline } from '../canvas/canvas-state-stamp'
+import {
+  markTrailNoteSaved,
+  recordTrailEvent,
+  recordTrailScroll,
+  resetTrail,
+  trailForRun,
+  trailSinceLastNote,
+} from '../canvas/canvas-trail'
 import { contentPageRectToStage, stageToContentPagePoint, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
 import { formatCanvasZoom, frameStyleForZoom, stepCanvasZoom } from '../utils/canvas-zoom'
 import { safeAnchorResolutions, safeInspectResult } from '../utils/canvas-geometry-guard'
@@ -89,6 +108,60 @@ const HOVER_REPORTING_SEND_WINDOW_MS = 1000
  *  class MAX_HOVER_REPORTING_ATTEMPTS exists for. A new intent (zoom, version,
  *  or note set changed) is a fresh budget. */
 const MAX_RESOLVE_ATTEMPTS = 3
+
+/**
+ * How long the frame gets to describe itself for an evidence STAMP (M3).
+ *
+ * Much shorter than a `canvas_snapshot`'s 25 s, because a person is waiting: the
+ * user has just started typing a note and the site is about to freeze under a
+ * shield. A frame that cannot answer in four seconds gives a stamp without a
+ * tree — the viewport, the zoom and the host's clock — which is less evidence,
+ * not none, and far better than a composer that hangs.
+ */
+const EVIDENCE_SNAPSHOT_TIMEOUT_MS = 4000
+
+/** Why a capture was refused, in the user's words. A closed vocabulary maps to
+ *  a closed set of sentences — nothing free-text from main reaches the UI. */
+function captureRefusalWords(reason: EvidenceCaptureRefusal | undefined): string {
+  switch (reason) {
+    case 'pack-full':
+      return 'Evidence limit reached — delete a note or end the run.'
+    case 'rate':
+      return 'That was too quick after the last capture — try again in a moment.'
+    case 'not-uat':
+    case 'not-owner':
+      return 'This run cannot take screenshots — write the note without one.'
+    default:
+      return 'Could not capture the page — try again.'
+  }
+}
+
+/** The page's own account of what was clicked, as the trail stores identity. */
+function stampTargetFromHit(hit: CanvasHitInfo | null): StampTarget | null {
+  if (!hit) return null
+  return { role: hit.role, name: hit.name, ...(hit.uxId ? { uxId: hit.uxId } : {}) }
+}
+
+/**
+ * The session's CONFIG LABEL, derived exactly as main derives it (M3).
+ *
+ * A test pack's default name is built from this and then from the canvas title,
+ * and it is built TWICE — once here for the pane and the History picker, once in
+ * main for the MCP serializer and the Library. Two derivations from different
+ * inputs is one pack wearing two names, so both rules main applies are repeated
+ * here: TerminalView sends `customName || label || 'default'` into the spawn
+ * record, and main reads the literal `'default'` as "this session has no config
+ * name" rather than as a name.
+ *
+ * Returns a primitive, so the selector cannot churn identities.
+ */
+function useSessionConfigLabel(sessionId: string): string | undefined {
+  return useSessionStore((s) => {
+    const session = s.sessions.find((x) => x.id === sessionId)
+    const label = session?.customName?.trim() || session?.label || 'default'
+    return label === 'default' ? undefined : label
+  })
+}
 
 /** Is the user TYPING here — an editable, or xterm's helper textarea? The
  *  zoom-chord scope test (N3): typing focus refuses the hover claim; any
@@ -550,6 +623,61 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    */
   const [sketchRevision, setSketchRevision] = useState(0)
 
+  // ── Testing mode: evidence, the pause, the trail (M3) ──────────────────────
+  //
+  // A note in Testing mode is a LOCKED EVIDENCE RECORD, so the pane has three
+  // extra jobs the other modes never ask of it: freeze the site while a note is
+  // written, screenshot the framed page as the note begins, and keep a running
+  // record of what the user did. All three are gated on the version's own MODE
+  // LABEL (`version.mode`), never on `source.mode` — a plan is served exactly as
+  // a mockup is, and a mockup must never sprout a shield.
+  const isTesting = version.mode === 'uat'
+  const versionOpen = !version.draft && !version.verdict
+  const isTestingRef = useRef(isTesting)
+  isTestingRef.current = isTesting
+  const versionOpenRef = useRef(versionOpen)
+  versionOpenRef.current = versionOpen
+  /** The framed stage — the rectangle `capturePage` is asked for. Not the
+   *  iframe: the frame's border and the layers over it are what the user sees
+   *  as "the page under review". */
+  const contentFrameRef = useRef<HTMLDivElement | null>(null)
+  /** The capture waiting to be locked to a note, or null when the site is live.
+   *  Its presence IS the paused state — one fact, so the shield and the
+   *  composer's chip can never disagree. */
+  const [pendingEvidence, setPendingEvidence] = useState<{ evidenceId: string; previewDataUrl?: string } | null>(null)
+  const pendingEvidenceRef = useRef(pendingEvidence)
+  pendingEvidenceRef.current = pendingEvidence
+  /** Why the last capture did not happen, in the user's words. The note can
+   *  still be written — an evidence pack with a gap beats a refused note. */
+  const [evidenceNotice, setEvidenceNotice] = useState<string | null>(null)
+  /** One capture at a time. A focus, a paste and a stroke can all arrive in the
+   *  same breath and each of them starts a note. */
+  const evidenceBusyRef = useRef(false)
+  /**
+   * Host layers are hidden for the shot.
+   *
+   * `capturePage` photographs the WINDOW, so everything the host paints over the
+   * frame lands in the picture: the hover box, the locked-selection label, the
+   * marquee — and the glass, whose strokes the recall view lays back over the
+   * shot from their own PNG and would otherwise draw twice.
+   */
+  const [capturingEvidence, setCapturingEvidence] = useState(false)
+  /**
+   * The run's BASELINE field lengths, taken when this version first reported in.
+   *
+   * This is what turns "there is text in this box" into "the user changed this
+   * box during the test" without either string ever existing outside the page.
+   */
+  const baselineRef = useRef<StampBaseline | null>(null)
+  const baselineForRef = useRef<string | null>(null)
+  /** The panel's "cancel this note", registered by the panel so Escape on the
+   *  shield does exactly what the composer's Cancel does. */
+  const cancelNoteRef = useRef<(() => void) | null>(null)
+  /** The pack-name chip, mid-rename. Pane-local like the zoom: a rename in
+   *  flight is not worth persisting, and abandoning it is the common case. */
+  const [renamingPack, setRenamingPack] = useState(false)
+  const [packDraft, setPackDraft] = useState('')
+
   const contentUrl = useMemo(
     () => canvasContentUrl(canvasId, version.id, version.source.entry),
     [canvasId, version],
@@ -868,6 +996,136 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     repinGlass()
   }, [zoom, repinGlass])
 
+  /** Ask the frame to describe itself, sanitised, or null when it will not or
+   *  cannot. Never throws: a stamp without a tree is still a stamp. */
+  const snapshotForEvidence = useCallback(async (): Promise<CanvasSnapshotResult | null> => {
+    const target = iframeRef.current?.contentWindow
+    if (!target || !bridgeReadyRef.current) return null
+    try {
+      const raw = await askCanvasFrame(target, canvasId, { type: 'snapshot', analysis: false }, EVIDENCE_SNAPSHOT_TIMEOUT_MS)
+      // Sanitised HERE, exactly as the snapshot host does before its own reply
+      // crosses IPC — this tree is assembled by the page under review.
+      return sanitizeSnapshotResult(raw, undefined, { scoped: false })
+    } catch {
+      return null
+    }
+  }, [canvasId])
+
+  /**
+   * Take the run's baseline once, on this version's first bridge `ready`.
+   *
+   * Guarded by version id rather than by a boolean: `ready` fires again on every
+   * in-frame navigation, and a baseline re-taken after the user has filled the
+   * form would report every changed field as untouched — the exact fact the
+   * stamp exists to carry.
+   */
+  const captureBaseline = useCallback(() => {
+    if (!isTestingRef.current) return
+    const versionId = versionIdRef.current
+    if (baselineForRef.current === versionId) return
+    baselineForRef.current = versionId
+    void snapshotForEvidence().then((snapshot) => {
+      if (versionIdRef.current !== versionId) return
+      baselineRef.current = snapshot ? baselineFromSnapshot(snapshot) : null
+    })
+  }, [snapshotForEvidence])
+
+  /**
+   * A note is starting: freeze the site and lock a picture of it.
+   *
+   * Order matters and every step of it is load-bearing. The host's own layers go
+   * first (they would be IN the photograph); a frame is allowed to pass so the
+   * removal has painted; the rectangle is measured from the live DOM rather than
+   * remembered, because the pane is resizable; the stamp is taken before the
+   * shot so the two describe the same instant; and the shield is mounted LAST —
+   * mounted first, it would be the thing the screenshot captured.
+   */
+  const beginEvidence = useCallback(() => {
+    if (!isTestingRef.current || !versionOpenRef.current) return
+    if (pendingEvidenceRef.current || evidenceBusyRef.current) return
+    evidenceBusyRef.current = true
+    setEvidenceNotice(null)
+    setCapturingEvidence(true)
+    setHover(null)
+    void (async () => {
+      try {
+        await new Promise<void>((resolve) => {
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve())
+          else setTimeout(resolve, 16)
+        })
+        const rect = contentFrameRef.current?.getBoundingClientRect()
+        if (!rect || rect.width < 1 || rect.height < 1) {
+          setEvidenceNotice(captureRefusalWords('capture-failed'))
+          return
+        }
+        const versionId = versionIdRef.current
+        const snapshot = await snapshotForEvidence()
+        const stamp = buildEvidenceStamp({
+          snapshot,
+          baseline: baselineRef.current,
+          viewport: viewportRef.current,
+          zoom: zoomRef.current,
+          at: new Date().toISOString(),
+        })
+        const result = await window.electronAPI.canvas.evidenceCapture({
+          sessionId,
+          canvasId,
+          versionId,
+          // Window CSS pixels; main clamps it to the window's own content
+          // bounds, so a stale measurement can never widen the shot.
+          rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+          // No `dpr` argument: the device pixel ratio is already on the stamp's
+          // viewport, and the stamp is the record. One number crossing the seam
+          // twice is one number that can disagree with itself.
+          stamp,
+          trail: trailSinceLastNote(canvasId, versionId),
+        })
+        if (result?.ok) setPendingEvidence({ evidenceId: result.evidenceId, previewDataUrl: result.previewDataUrl })
+        else setEvidenceNotice(captureRefusalWords(result?.reason))
+      } catch {
+        setEvidenceNotice(captureRefusalWords('capture-failed'))
+      } finally {
+        evidenceBusyRef.current = false
+        setCapturingEvidence(false)
+      }
+    })()
+  }, [canvasId, sessionId, snapshotForEvidence])
+
+  /** The note was abandoned: the pending shot is deleted and the site is live
+   *  again. Fire-and-forget — main sweeps unlocked pending files anyway, so a
+   *  failed discard costs disk, never correctness. */
+  const discardEvidence = useCallback(() => {
+    const pending = pendingEvidenceRef.current
+    pendingEvidenceRef.current = null
+    setPendingEvidence(null)
+    setEvidenceNotice(null)
+    if (!pending) return
+    void window.electronAPI.canvas
+      .evidenceDiscard({ sessionId, canvasId, evidenceId: pending.evidenceId })
+      .catch(() => {})
+  }, [canvasId, sessionId])
+
+  /** The note took it: main has moved the file onto the note, so the pane stops
+   *  holding it, the shield comes down, and the trail is cut here. */
+  const lockEvidence = useCallback(
+    (annotationId: string) => {
+      pendingEvidenceRef.current = null
+      setPendingEvidence(null)
+      setEvidenceNotice(null)
+      markTrailNoteSaved(canvasId, versionIdRef.current, annotationId)
+    },
+    [canvasId],
+  )
+
+  /** A capture that outlived a pane switch, handed back by the restored
+   *  composer draft. The preview data URL does not survive with it — only the
+   *  reply that minted it carried one — so the composer says the screen is held
+   *  without showing it. */
+  const adoptEvidence = useCallback((evidenceId: string) => {
+    if (!isTestingRef.current) return
+    setPendingEvidence((current) => (current?.evidenceId === evidenceId ? current : { evidenceId }))
+  }, [])
+
   /** A reported content click (browse mode) becomes a locked selection: ask
    *  the frame for the chain at that point, then lock its deepest entry. The
    *  page's own click behaviour already happened — the bridge only observed.
@@ -883,6 +1141,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         const { chain } = safeInspectResult(raw)
         if (chain.length > 0) {
           useCanvasReviewStore.getState().lockFocus(sessionId, chain, versionIdRef.current)
+          // Choosing a target IS starting a note (M3): in Testing mode the site
+          // freezes here, so the shot shows the screen the user was pointing at
+          // rather than whatever it became while they found their words.
+          beginEvidence()
         }
       } catch {
         /* frame busy or navigating — the hover chip still works */
@@ -890,7 +1152,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         inspectPendingRef.current = false
       }
     },
-    [canvasId, sessionId],
+    [canvasId, sessionId, beginEvidence],
   )
 
   /**
@@ -1077,12 +1339,18 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           frameGenerationRef.current += 1
           frameHoverReportingRef.current = true
           syncHoverReporting()
+          // The run's baseline, once per version — see captureBaseline.
+          captureBaseline()
         },
         onViewport: (vp) => {
           setViewport(vp)
           setHover(null)
           viewportRef.current = vp
           repinGlass()
+          // The trail's scroll entries come from here, coalesced to one per
+          // pause. Testing only: nothing else in the product reads a trail, and
+          // recording one for a mockup would be work nobody asked for.
+          if (isTestingRef.current) recordTrailScroll(canvasId, versionIdRef.current, vp.scrollY)
         },
         // X-ray Off is enforced HERE, not only by the request that asked the
         // bridge to go quiet (#367). The bridge shares a realm with the page it
@@ -1095,7 +1363,15 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           }
           setHover(hit ? { hit } : null)
         },
-        onContentClick: (pageX, pageY) => {
+        onContentClick: (pageX, pageY, hit) => {
+          // The TRAIL is recorded first and unconditionally (M3): it is a
+          // record of what the user did, and x-ray is a setting about what the
+          // pane DRAWS. Stopping the trail in x-ray Off would mean the mode a
+          // careful tester picks — the one that leaves the page alone — is the
+          // one that silently throws their reproduction away.
+          if (isTestingRef.current) {
+            recordTrailEvent(canvasId, versionIdRef.current, { kind: 'click', target: stampTargetFromHit(hit) })
+          }
           // Click-to-lock (spec §6 step 3) — browse mode only; in draw mode the
           // glass owns the pointer and a frame click cannot happen anyway.
           // Under x-ray Off a click selects nothing: the page was asked for as a
@@ -1104,19 +1380,80 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           if (!xrayClickSelects(xrayModeRef.current)) return
           if (modeRef.current === 'browse') void inspectAndLock(pageX, pageY)
         },
+        onTypedInto: (hit) => {
+          // WHICH field, once per focus session. The bridge is where the
+          // keylogger line is drawn; this is the host repeating that it only
+          // ever receives an identity.
+          if (!isTestingRef.current) return
+          const target = stampTargetFromHit(hit)
+          if (target) recordTrailEvent(canvasId, versionIdRef.current, { kind: 'typed', target })
+        },
+        onNavigated: (route) => {
+          if (!isTestingRef.current) return
+          recordTrailEvent(canvasId, versionIdRef.current, { kind: 'navigate', route })
+        },
         onContentKey: handleReportedKey,
         onContentZoom: applyZoom,
         onFlood: () => setBridgeFlooded(true),
       },
     })
-  }, [repinGlass, canvasId, inspectAndLock, handleReportedKey, applyZoom, syncHoverReporting])
+  }, [repinGlass, canvasId, inspectAndLock, handleReportedKey, applyZoom, syncHoverReporting, captureBaseline])
+
+  // A full-document navigation inside the frame, pushed by main from its own
+  // `will-frame-navigate` guard (M3). The bridge cannot report this one: the
+  // document carrying it is being replaced.
+  useEffect(() => {
+    return window.electronAPI.canvas.onFrameNavigated((event) => {
+      if (event.sessionId !== sessionId || event.canvasId !== canvasId) return
+      if (!isTestingRef.current) return
+      recordTrailEvent(canvasId, versionIdRef.current, { kind: 'navigate', route: event.route })
+    })
+  }, [sessionId, canvasId])
+
+  // A version change ends the run the trail was recording, and invalidates the
+  // baseline the field classification is measured against. Both are per-version
+  // facts, and carrying either across would make the next run's evidence
+  // describe the previous one's page.
+  const trailVersionRef = useRef(version.id)
+  useEffect(() => {
+    const previous = trailVersionRef.current
+    if (previous === version.id) return
+    trailVersionRef.current = version.id
+    resetTrail(canvasId, previous)
+    baselineRef.current = null
+    baselineForRef.current = null
+    // A capture belongs to the screen it was taken of. Stepping to another
+    // version while one is pending would let it lock onto a note about a
+    // different build.
+    discardEvidence()
+  }, [canvasId, version.id, discardEvidence])
 
   // The same two keys, host-side, for when the HOST document has keyboard
   // focus (after touching the panel or the chrome). Never while typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+      const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
+      // The shield's Escape wins, and it is decided HERE so the ordering against
+      // the focus/marquee Escape is in one place rather than split between two
+      // listeners racing on the same key. While a note is paused, Escape is what
+      // the composer's Cancel is: the capture goes, the words go, the site is
+      // live again.
+      //
+      // Deliberately ABOVE the typing guard, which everything else here obeys.
+      // The composer is exactly where the user's hands are while a note is
+      // paused, so an Escape that only worked when they were NOT writing would
+      // be an escape from the shield they could not reach — and the shield says
+      // out loud that Escape is the way out. A control that names its own key
+      // has to honour it from the place the key is pressed.
+      if (e.key === 'Escape' && pendingEvidenceRef.current) {
+        e.preventDefault()
+        const cancel = cancelNoteRef.current
+        if (cancel) cancel()
+        else discardEvidence()
+        return
+      }
+      if (typing) return
       if (e.key === 'Escape') {
         handleReportedKey('Escape')
       } else if (e.key === 'ArrowUp' && useCanvasReviewStore.getState().bySessionId[sessionId]?.focus) {
@@ -1126,7 +1463,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [sessionId, handleReportedKey])
+  }, [sessionId, handleReportedKey, discardEvidence])
 
   // ── Content zoom, host side (#368) ─────────────────────────────────────────
   // Ctrl+wheel anywhere over the pane's own chrome — the header, the glass in
@@ -1592,6 +1929,67 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
 
   const modeLockup = canvasModeLockup(version)
 
+  /**
+   * The test pack's name (M3).
+   *
+   * The user's own when they have set one, and otherwise DERIVED on every read
+   * rather than stored — see `defaultPackName`. A default written into the
+   * record at capture time would still say "build 4" after the build label
+   * moved on.
+   *
+   * The inputs have to be the SAME inputs main derives from, or one pack has two
+   * names: the MCP serializer builds this from the session's config label first
+   * and the canvas title second, so the pane does too. (Main reads the label off
+   * the spawn record; this reads it live, so a session renamed mid-run moves the
+   * pane's default a moment before the agent's. Both are derived, neither is
+   * stored, and a rename mid-run is the user's own gesture — the alternative is
+   * an IPC round trip for a label.)
+   */
+  const buildLabel = version.source.mode === 'uat' ? version.source.buildLabel : undefined
+  const packConfigName = useSessionConfigLabel(sessionId)
+  const derivedPackName = useMemo(
+    () => defaultPackName({ configName: packConfigName, title: canvasTitle, buildLabel, versionId: version.id, at: version.createdAt }),
+    [packConfigName, canvasTitle, buildLabel, version.id, version.createdAt],
+  )
+  const packName = version.packName ?? derivedPackName
+
+  const commitPackName = useCallback(() => {
+    const next = packDraft.trim()
+    setRenamingPack(false)
+    // An emptied box is not a name — it is "go back to the derived default",
+    // which is what null means to the store.
+    if (next === (version.packName ?? '')) return
+    // Nor is the derived default, typed back at us. The box is seeded with it,
+    // so Enter on an untouched name would PERSIST the derivation — freezing
+    // today's build label and today's date into the record for good, which is
+    // the one thing `defaultPackName` exists to avoid.
+    if (!version.packName && next === derivedPackName) return
+    void useCanvasStore.getState().setPackName(sessionId, version.id, next.length > 0 ? next : null)
+  }, [packDraft, sessionId, version.id, version.packName, derivedPackName])
+
+  /**
+   * How many OBSERVATIONS ride each version's decided round (M3).
+   *
+   * `verdictLabel` can say "PASSED WITH OBSERVATIONS", and without this it never
+   * would: a pass carrying notes reads as a plain pass, which hides that the
+   * user wrote something the agent was meant to read. Counted from the review
+   * mirror, per version, and handed to History as a lookup — the control has no
+   * business reaching into a store for it.
+   */
+  const observationsByVersion = useMemo(() => {
+    const out: Record<string, number> = {}
+    if (!reviewSession || reviewSession.canvasId !== canvasId) return out
+    const approvedRounds = new Set(
+      reviewSession.reviews.filter((r) => r.status !== 'draft' && r.decision === 'approve').map((r) => r.id),
+    )
+    for (const annotation of reviewSession.annotations) {
+      if (!approvedRounds.has(annotation.reviewId)) continue
+      if (annotation.state !== 'observation') continue
+      out[annotation.versionId] = (out[annotation.versionId] ?? 0) + 1
+    }
+    return out
+  }, [reviewSession, canvasId])
+
   // Which tool owns the pointer (item C): Inspect = browse, Sketch = draw,
   // Region = the marquee. These are the same three states the pointer layers
   // already switch on (pointerOwner); the chips are their presentation.
@@ -1615,6 +2013,66 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     active
       ? { background: 'color-mix(in srgb, var(--brand) 15%, transparent)', borderColor: 'color-mix(in srgb, var(--brand) 52%, transparent)' }
       : { background: 'color-mix(in srgb, var(--surface-panel) 60%, transparent)', borderColor: 'var(--border-subtle)' }
+
+  // ── Recall: a submitted run opens as EVIDENCE, never as the live site ──────
+  //
+  // Once a test run has been submitted, the build it ran against is history —
+  // its dist root may be revoked, its pages rebuilt, its bugs fixed. Re-serving
+  // it would show a different build wearing the same version number, which is
+  // worse than showing nothing. So a decided Testing version swaps the whole
+  // stage for the pack the run produced.
+  const submittedRound = useMemo(() => {
+    if (!reviewSession || reviewSession.canvasId !== canvasId) return null
+    return [...reviewSession.reviews].reverse().find((r) => r.versionId === version.id && r.status !== 'draft') ?? null
+  }, [reviewSession, canvasId, version.id])
+  // A zero-note PASS files no review at all — just the version's verdict — so
+  // the verdict is the second door into recall rather than an alternative test.
+  const userDecided = version.verdict?.state === 'approved' || version.verdict?.state === 'rejected'
+  const showRecall = isTesting && (!!submittedRound || userDecided)
+  const recallNotes = useMemo(() => {
+    if (!submittedRound || !reviewSession) return []
+    const byId = new Map(reviewSession.annotations.map((a) => [a.id, a]))
+    // The round's OWN order — the order the user wrote them in.
+    return submittedRound.annotationIds.map((id) => byId.get(id)).filter((a): a is NonNullable<typeof a> => !!a)
+  }, [submittedRound, reviewSession])
+  const recallObservations = submittedRound
+    ? submittedRound.decision === 'approve'
+    : version.verdict?.state === 'approved'
+  /**
+   * Where "back" goes from a pack.
+   *
+   * The Library is the answer when there is nothing else on this canvas — the
+   * mock's case, a run opened weeks later. But a canvas usually has more on it,
+   * and recall replaces the whole stage (History control included): without
+   * this, stepping onto a finished run would strand the user in it with the
+   * Library overlay as the only exit. So when the canvas can still SHOW
+   * something live, back is the canvas, and it goes there directly.
+   */
+  const liveEscapeVersion = useMemo(() => {
+    const decidedTest = (v: CanvasVersion): boolean =>
+      v.mode === 'uat' && (v.verdict?.state === 'approved' || v.verdict?.state === 'rejected')
+    return [...versions].reverse().find((v) => !v.draft && v.id !== version.id && !decidedTest(v)) ?? null
+  }, [versions, version.id])
+
+  if (showRecall) {
+    return (
+      <CanvasEvidenceRecall
+        sessionId={sessionId}
+        canvasId={canvasId}
+        version={version}
+        packName={packName}
+        // One function decides this word for the badge, History, the Library and
+        // the MCP serializer, so a build the user pressed Fail on cannot read
+        // back as APPROVED anywhere.
+        verdict={verdictLabel(version, { observations: recallObservations ? recallNotes.length : 0 })}
+        notes={recallNotes}
+        observations={recallObservations}
+        backLabel={liveEscapeVersion ? 'Canvas' : 'Library'}
+        onBack={liveEscapeVersion ? () => void setActiveVersion(sessionId, liveEscapeVersion.id) : onOpenLibrary}
+        onClose={() => togglePane(sessionId)}
+      />
+    )
+  }
 
   return (
     <div ref={paneRootRef} className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
@@ -1660,6 +2118,59 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             {canvasTitle}
           </span>
         )}
+        {/* The TEST PACK, named (M3). A run's evidence is a thing the user will
+            come back to weeks later from the Library, and "v7" is not a name
+            anybody recognises then. Click to rename in place; empty restores
+            the derived default. */}
+        {isTesting &&
+          (renamingPack ? (
+            <input
+              autoFocus
+              value={packDraft}
+              maxLength={MAX_PACK_NAME_CHARS}
+              onChange={(e) => setPackDraft(e.target.value)}
+              onBlur={commitPackName}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  commitPackName()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setRenamingPack(false)
+                }
+              }}
+              aria-label="Name this test pack"
+              className="shrink-0 w-[220px] text-[11.5px] rounded-lg px-2 py-[3px] outline-none focus-ring"
+              style={{
+                background: 'var(--surface-sunken)',
+                border: '1px solid var(--border-strong)',
+                color: 'var(--text-primary)',
+              }}
+              data-testid="canvas-pack-name-input"
+            />
+          ) : (
+            <button
+              onClick={() => {
+                setPackDraft(version.packName ?? packName)
+                setRenamingPack(true)
+              }}
+              className="shrink-0 inline-flex items-center gap-1.5 max-w-[280px] text-[11.5px] rounded-lg px-2.5 py-[3px] focus-ring transition-colors"
+              style={{
+                border: '1px dashed var(--border-subtle)',
+                background: 'var(--surface-sunken)',
+                color: 'var(--text-secondary)',
+              }}
+              title="Name this test pack — it is how you will find this run in the Library"
+              data-testid="canvas-pack-name"
+            >
+              <span className="truncate">{packName}</span>
+              {/* A drawn pencil: no emoji in JSX. */}
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ color: 'var(--text-muted)' }}>
+                <path d="M4 20l3.5-.8L19 7.7a2 2 0 0 0-2.8-2.8L4.8 16.4z" />
+              </svg>
+            </button>
+          ))}
         {/* Content zoom (#368) — shown only when it is not 1:1, click resets.
             The chip is the visibility the forged-zoom analysis leans on: a zoom
             the user did not ask for is never silent. */}
@@ -1678,6 +2189,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         <CanvasHistoryControl
           versions={versions}
           activeVersionId={version.id}
+          title={canvasTitle}
+          // The same two inputs the pane's own pack name is derived from, in
+          // the same order — one pack, one name, wherever it is written.
+          configName={packConfigName}
+          observationsByVersion={observationsByVersion}
           onSelectVersion={(id) => void setActiveVersion(sessionId, id)}
           onArchive={(artifact) => {
             // Reversible: the store returns the new state and pushes a change,
@@ -1696,6 +2212,22 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             gone — the count lives in exactly one place (the toolbar Canvas
             button), and History carries the pending pill. */}
         <div className="flex-1" />
+        {/* END TEST (M3) — the way out that is NOT a decision. Testing runs are
+            long and interruptible: this closes the pane and leaves the run
+            exactly as it stands, notes and all. The Pass/Fail buttons in the
+            panel are the only things that end a run. */}
+        {isTesting && versionOpen && (
+          <button
+            onClick={() => togglePane(sessionId)}
+            disabled={returning}
+            className="shrink-0 text-[11.5px] rounded px-2 py-0.5 border transition-colors focus-ring disabled:opacity-40 disabled:cursor-default"
+            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--surface-panel)' }}
+            title="Back to the terminal — the run stays open, with everything you have written so far"
+            data-testid="canvas-end-test"
+          >
+            End test
+          </button>
+        )}
         {/* The ONE dismiss control (M2). Still disabled while the submit
             hand-back is in flight (#478): that transition owns the pane. */}
         <DismissButton
@@ -1878,6 +2410,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             PAGE UNDER REVIEW
           </span>
           <div
+            ref={contentFrameRef}
             className="absolute inset-2.5 rounded-lg overflow-hidden"
             style={{ border: '2px solid var(--border-subtle)', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.28)' }}
             data-testid="canvas-content-frame"
@@ -1922,7 +2455,16 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               only in draw mode. A sibling overlay, never injected (D7). */}
           <div
             className="absolute inset-0"
-            style={{ pointerEvents: pointerOwner === 'glass' ? 'auto' : 'none' }}
+            style={{
+              pointerEvents: pointerOwner === 'glass' ? 'auto' : 'none',
+              // Out of the SHOT, not out of the scene (M3). `capturePage`
+              // photographs the window, and the recall view lays a note's
+              // drawing back over its screenshot from the sketch's own PNG —
+              // baking the strokes into the picture as well would draw every
+              // mark twice. `visibility` rather than a remount: the glass keeps
+              // its scene, its camera and its undo stack across the frame.
+              visibility: capturingEvidence ? 'hidden' : undefined,
+            }}
             data-canvas-layer="glass"
             // W24: `pointer-events: none` above is INHERITED, and Excalidraw's
             // own stylesheet re-declares the property on its islands — so the
@@ -1959,15 +2501,22 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               // Version-stamp every element the first time it appears (C1):
               // whatever version is on screen owns it from then on.
               onChange={(els) => {
+                let drewSomethingNew = false
                 for (const el of els) {
                   if (!el.isDeleted && !sketchVersionRef.current.has(el.id)) {
                     sketchVersionRef.current.set(el.id, versionIdRef.current)
+                    drewSomethingNew = true
                   }
                 }
                 const livingNow = els.filter((el) => !el.isDeleted)
                 lastSceneRef.current = livingNow
                 if (livingNow.length > 0) hadSketchElementsRef.current = true
                 noteGlassChanged(livingNow)
+                // A first stroke IS starting a note (M3). Gated on DRAW mode as
+                // well as on the element being new, because a restore (a pane
+                // toggle, a draft coming back) also puts elements the pane has
+                // never stamped onto the glass — and that is not a user drawing.
+                if (drewSomethingNew && modeRef.current === 'draw') beginEvidence()
               }}
               onScrollChange={handleGlassScrolled}
               // Outside draw mode the glass is inert: view mode drops every
@@ -1988,7 +2537,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               (D7): browse hover, the locked selection, panel-driven highlights.
               Clipped to the stage so a box for offscreen page coords cannot
               paint over the surrounding chrome. */}
-          <div className="absolute inset-0 pointer-events-none overflow-hidden" data-canvas-layer="overlay">
+          <div
+            className="absolute inset-0 pointer-events-none overflow-hidden"
+            data-canvas-layer="overlay"
+            // Hidden for the evidence shot — a hover box or a selection label
+            // baked into a screenshot is the app's chrome masquerading as the
+            // page's own (M3).
+            style={{ visibility: capturingEvidence ? 'hidden' : undefined }}
+          >
             {stageHoverRect && (
               <div
                 className="absolute border-2 border-blue rounded-sm"
@@ -2161,6 +2717,20 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               </div>
             )}
           </div>
+          {/* The PAUSE SHIELD, last child of the frame (M3): while a note is
+              being written the site underneath it is frozen, so the words the
+              user types are about the screen the note actually locked. Testing
+              only — a mockup and a plan never sprout one. */}
+          {isTesting && pendingEvidence && (
+            <CanvasPauseShield
+              onCancelHint="Esc cancels this note"
+              // In draw mode the glass already covers the page and owns the
+              // pointer, so the shield steps aside: a mark made while writing a
+              // note belongs to that note, and freezing the annotation tool
+              // along with the site would be the pause eating its own purpose.
+              passThrough={pointerOwner === 'glass'}
+            />
+          )}
           </div>
         </div>
 
@@ -2221,6 +2791,26 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 onReturnToTerminal={() => togglePane(sessionId)}
                 isActive={isActive}
                 onHide={() => setPanelHidden(true)}
+                // Testing mode's evidence seam (M3). Absent in every other
+                // mode, which is what makes "a mockup never captures anything"
+                // structural rather than a condition somebody has to remember.
+                evidence={
+                  isTesting
+                    ? {
+                        pending: pendingEvidence,
+                        notice: evidenceNotice,
+                        begin: beginEvidence,
+                        discard: discardEvidence,
+                        lock: lockEvidence,
+                        adopt: adoptEvidence,
+                        registerCancel: (fn) => {
+                          cancelNoteRef.current = fn
+                        },
+                        runTrail: () => trailForRun(canvasId, version.id),
+                        endRun: () => resetTrail(canvasId, version.id),
+                      }
+                    : undefined
+                }
               />
             </div>
             {xrayReadsOutInPanel(xrayMode) && (

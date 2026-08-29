@@ -6,6 +6,7 @@
 
 import { create } from 'zustand'
 import type { CanvasAwaitingReview, CanvasCompletion, CanvasSketchScene, CanvasState, CanvasVersion } from '../../shared/canvas'
+import { resetAllTrails, resetTrailsForCanvas } from '../canvas/canvas-trail'
 import { useExcalidrawStore } from './excalidrawStore'
 import { useCanvasReviewStore } from './canvasReviewStore'
 import { useCanvasTotalsStore } from './canvasTotalsStore'
@@ -103,6 +104,9 @@ interface CanvasStoreState {
   setInteractionMode: (sessionId: string, mode: CanvasInteractionMode) => void
   setEmptyView: (sessionId: string, view: CanvasEmptyView) => void
   setActiveVersion: (sessionId: string, versionId: string) => Promise<void>
+  /** Testing mode (M3): name (or un-name) the test pack for one uat version.
+   *  `null` clears the user's name and the derived default takes over. */
+  setPackName: (sessionId: string, versionId: string, name: string | null) => Promise<void>
   markUnseenRender: (sessionId: string) => void
   clearUnseenRender: (sessionId: string) => void
   /** The user is deliberately switching canvas — the next change under this
@@ -289,6 +293,21 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     }
   },
 
+  setPackName: async (sessionId: string, versionId: string, name: string | null) => {
+    const canvasId = get().bySessionId[sessionId]?.canvasId
+    if (!canvasId) return
+    try {
+      const state = await window.electronAPI.canvas.setPackName({ sessionId, canvasId, versionId, name })
+      set((s) => ({
+        bySessionId: { ...s.bySessionId, [sessionId]: fromMain(s.bySessionId[sessionId], state) },
+      }))
+    } catch (err) {
+      // A refused rename is cosmetic: the derived default still names the pack,
+      // and the header simply shows what main kept.
+      console.error('[canvasStore] setPackName failed:', err)
+    }
+  },
+
   markSketchAttached: (canvasId: string, ids: readonly string[]) => {
     if (ids.length === 0) return
     set((s) => {
@@ -315,11 +334,13 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     })
   },
 
-  // Resets the pending-switch counts too. They live outside the store object
-  // but they ARE store state, and a reset that left them behind meant an
-  // expectation could outlive everything it referred to.
+  // Resets the pending-switch counts too, and the action trails (M3). Both live
+  // outside the store object but they ARE store state, and a reset that left
+  // them behind meant an expectation — or a run's recorded actions — could
+  // outlive everything it referred to.
   reset: () => {
     expectedSwitches.clear()
+    resetAllTrails()
     set({ bySessionId: {}, sketchByCanvasId: {} })
   },
 }))
@@ -396,6 +417,11 @@ export function setupCanvasListener(): void {
       !event.reopened && prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId,
     )
     const userAsked = switched && consumeExpectedSwitch(event.sessionId)
+    // The session has left that canvas, so its runs are no longer being
+    // recorded. The trail is renderer-memory evidence of a LIVE run; anything
+    // already locked to a note is on disk, and keeping the rest would leave a
+    // ring per canvas the user ever passed through.
+    if (switched && prev?.canvasId) resetTrailsForCanvas(prev.canvasId)
     const filedCanvasId: string | null = switched && !prev!.completed ? prev!.canvasId : null
     if (!userAsked && filedCanvasId !== null) {
       // Counted from the review mirror as it stands NOW, before the refresh

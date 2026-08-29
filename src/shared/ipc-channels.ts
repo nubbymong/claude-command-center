@@ -423,6 +423,13 @@ export const IPC = {
   CANVAS_COMPLETE_REOPEN: 'canvas:completeReopen',     // renderer -> main: { sessionId, canvasId } -> clear a canvas's completed stamp (one-click Reopen; owner-only)
   CANVAS_REVIEW_CHANGED: 'canvas:reviewChanged',       // push: main -> renderer (a review/annotation mutation happened)
 
+  // Agent Canvas M3 — Testing mode evidence (a note is a locked evidence record)
+  CANVAS_EVIDENCE_CAPTURE: 'canvas:evidenceCapture',   // renderer -> main: { sessionId, canvasId, versionId, rect, dpr, stamp, trail } -> screenshot the framed page (owner + uat only; rect clamped in main) -> { ok, evidenceId, previewDataUrl, width, height } | { ok:false, reason }
+  CANVAS_EVIDENCE_DISCARD: 'canvas:evidenceDiscard',   // renderer -> main: { sessionId, canvasId, evidenceId } -> the user cancelled the note; delete the pending shot
+  CANVAS_EVIDENCE_READ: 'canvas:evidenceRead',         // renderer -> main: { sessionId, canvasId, path } -> { dataUrl } | null; the path must be one RECORDED on that canvas (owner, or same project)
+  CANVAS_SET_PACK_NAME: 'canvas:setPackName',          // renderer -> main: { sessionId, canvasId, versionId, name } -> rename the test pack inline (null clears; owner-only)
+  CANVAS_FRAME_NAVIGATED: 'canvas:frameNavigated',     // push: main -> renderer { sessionId, canvasId, route } -> a full-document navigation inside the canvas frame, for the action trail
+
   // Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard.
   // Default off. Push on every state change (main -> renderer); invoke to
   // hydrate a freshly-mounted renderer with whatever is currently running.

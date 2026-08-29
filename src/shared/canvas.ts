@@ -112,6 +112,18 @@ export interface CanvasVersion {
    *  pushed here rather than lost, so a rejection can never be silently
    *  overwritten and resurrected as approved. Newest last. */
   priorVerdicts?: CanvasVersionVerdict[]
+  /**
+   * What the user calls this TEST PACK (M3, testing mode).
+   *
+   * One build under test = one run = one round = one submission, and the pack IS
+   * that version plus its round — so the name lives on the version rather than
+   * on the round, which is created later and may not exist yet when the user
+   * renames. User-set only; absent means the pane shows the generated default
+   * (`defaultPackName`), which is never stored so it cannot go stale when the
+   * config or the build label changes. Cleaned like a title and capped at
+   * MAX_PACK_NAME_CHARS.
+   */
+  packName?: string
 }
 
 /** The artifact's one OPEN version (C1): its latest ready version that is not
@@ -621,6 +633,21 @@ export interface Annotation {
    * not seeing the new one.
    */
   userSawAddressed?: boolean
+  /**
+   * THE LOCKED EVIDENCE (M3, Testing mode only): the screenshot of the framed
+   * page as it stood when the user started this note, plus the state stamp and
+   * the action trail taken with it.
+   *
+   * Present only on notes written against a `uat` version, and absent on every
+   * note written before Testing captured anything — a legacy note is not
+   * malformed, it simply has no pack. A note carrying evidence may have EMPTY
+   * TEXT: the picture and the stamp are the note.
+   *
+   * The shot path is minted in main from this note's own id and re-validated on
+   * load; it is never taken from a caller, which is what keeps the read channel
+   * from becoming a file-read primitive.
+   */
+  evidence?: AnnotationEvidence
 }
 
 /**
@@ -667,6 +694,17 @@ export interface Review {
    *  submitted before decisions existed. */
   decision?: 'approve' | 'reject'
   settled?: ReviewSettled
+  /**
+   * THE WHOLE RUN's action trail (M3), stamped at submit — everything the user
+   * did between opening the build and sending the pack, capped at
+   * MAX_TRAIL_ENTRIES_PER_RUN.
+   *
+   * On the ROUND rather than on a note, because it describes the run and not any
+   * one observation: the per-note slices under `Annotation.evidence.trail` say
+   * what led to each note, and this says what the session as a whole looked
+   * like. Absent on every round submitted outside Testing.
+   */
+  trail?: TrailEntry[]
 }
 
 /** What `canvas_review` returns to the agent (the pull side of D10). */
@@ -881,6 +919,11 @@ export interface ComposerDraft {
   /** 'reviews/composer/img-<k>.png', in paste order. */
   images: AnnotationImage[]
   sketch?: CanvasSketchScene
+  /** The pending Testing capture this half-written note is holding (M3), so a
+   *  pane switch does not throw away the screenshot the shield was taken over.
+   *  Cleared when the note is saved (the capture moves onto it), when the user
+   *  cancels, and at submit. */
+  evidenceId?: string
   updatedAt: string
 }
 
@@ -905,6 +948,8 @@ export interface ComposerDraftInput {
   focus?: FocusObject
   images: Array<'keep' | { keepIndex: number } | { pngBase64: string }>
   sketch?: CanvasSketchScene
+  /** The pending Testing capture the composer is holding (M3). An id only. */
+  evidenceId?: string
 }
 
 /** What the renderer holds per session for reviews (IPC `canvas:reviewGetState`). */
@@ -953,6 +998,16 @@ export interface CanvasAnnotationDraft {
    */
   images?: Array<{ pngBase64: string } | { fromComposer: number } | { fromNote: number }>
   versionId: string
+  /**
+   * The PENDING capture this note locks (M3, Testing mode).
+   *
+   * An id, never a path and never a picture: main holds the shot it took —
+   * together with the stamp and trail slice it took at the same instant — under
+   * this id, and saving MOVES that file onto the note. So the record the note
+   * ends up carrying is the one the capture produced, and a caller cannot dress
+   * a note in a stamp that describes some other screen.
+   */
+  evidenceId?: string
 }
 
 /** Renderer → main at submit: one exported PNG per sketch-carrying note. */
@@ -960,6 +1015,481 @@ export interface CanvasSketchExport {
   annotationId: string
   /** Base64 PNG (no data: prefix). Capped by schema and re-checked in main. */
   pngBase64: string
+}
+
+// ── Testing mode: evidence, state stamp, action trail (M3) ──────────────────
+//
+// A note written in Testing is a LOCKED EVIDENCE RECORD. The moment the user
+// starts one the site is paused, the framed page is screenshotted, and two
+// structured records are taken beside the picture: the STATE STAMP (what the
+// screen WAS) and the ACTION TRAIL (what the user DID to get there). Saving the
+// note locks all three to it; cancelling throws the capture away.
+//
+// THE RULE THAT SHAPES EVERY TYPE BELOW: structure, never content. The stamp
+// says a field is filled and how the form judged it; it never says what was
+// typed. The trail says the user typed into a field; it never says what. That is
+// the same line `SnapshotNode.state.valueLength` draws and the same line the
+// bridge's key relay draws — relaying the values would be a keylogger wearing a
+// feature's name — and it is drawn here too because this record is the one that
+// gets WRITTEN TO DISK and handed to a model.
+
+/** Longest evidence screenshot kept, after the downscale ladder. A review shot
+ *  is a picture of a page, not a print master; past this the pack stops being
+ *  something a user can keep dozens of. */
+export const MAX_EVIDENCE_SHOT_BYTES = 300 * 1024
+
+/** Ceiling on ONE canvas's whole evidence pack. Capture is refused past it with
+ *  a plain reason rather than silently degrading — a run that has filled 30 MB
+ *  of screenshots is one the user should prune or finish. */
+export const MAX_EVIDENCE_PACK_BYTES = 30 * 1024 * 1024
+
+/** Trail entries kept for a whole run (the ring the renderer holds, and the cap
+ *  the submit seam re-applies). */
+export const MAX_TRAIL_ENTRIES_PER_RUN = 500
+
+/** Trail entries kept on ONE note — the slice since the previous note. */
+export const MAX_TRAIL_ENTRIES_PER_NOTE = 200
+
+/** Form fields one stamp may describe. A page with more than forty inputs on
+ *  screen is not a form the stamp can usefully summarise anyway. */
+export const MAX_STAMP_FIELDS = 40
+
+/** Open dialogs/modals one stamp may name. */
+export const MAX_STAMP_DIALOGS = 8
+
+/** Longest user-set pack name. A pack name labels a run; it is not a report. */
+export const MAX_PACK_NAME_CHARS = 80
+
+/** Longest page-reported role/name/ux-id in a stamp target — the same bound a
+ *  focus label already carries, for the same reason: it is the page's word. */
+export const MAX_STAMP_TARGET_CHARS = 120
+/** Longest page-reported document title in a stamp. */
+export const MAX_STAMP_TITLE_CHARS = 200
+/** Longest page-reported route (pathname + hash) anywhere in this contract. */
+export const MAX_STAMP_ROUTE_CHARS = 512
+
+/**
+ * How a form field stood when the note was written.
+ *
+ * Four states and not one of them is a value. `changed` is measured against the
+ * run's BASELINE snapshot (the first load of this version), which is what turns
+ * "this field has text in it" into the far more useful "the user changed this
+ * field during the test" — without ever recording either text.
+ */
+export type FieldFill = 'empty' | 'filled' | 'changed' | 'invalid'
+
+/**
+ * WHO an element is, as the page reports itself.
+ *
+ * Identity only — role, accessible name, and the authoring contract's
+ * `data-ux-id` when it has one. Page-authored text, so every surface that shows
+ * one marks it as such (PAGE_REPORTED_MARK), and every string is capped at
+ * MAX_STAMP_TARGET_CHARS at the trust boundary.
+ */
+export interface StampTarget {
+  role: string
+  name: string
+  uxId?: string
+}
+
+/** The screen, as STRUCTURE, at the moment a note was started. */
+export interface EvidenceStateStamp {
+  /** ISO. Host-minted, never the page's. */
+  capturedAt: string
+  /** Page-reported document title. */
+  title?: string
+  /** Page-reported pathname + hash. Never the query string: a query is where
+   *  applications put tokens, ids and search terms, i.e. content. */
+  route?: string
+  viewport: {
+    width: number
+    height: number
+    scrollX: number
+    scrollY: number
+    dpr: number
+    /** The PANE's zoom, host-owned — not a page-reported number. */
+    zoom: number
+  }
+  /** Open dialogs / modals, at most MAX_STAMP_DIALOGS. */
+  dialogs: StampTarget[]
+  /** The control holding keyboard focus, when the page reported one. */
+  focused?: StampTarget
+  /** Form controls and how they stood — NEVER what they held. At most
+   *  MAX_STAMP_FIELDS. */
+  fields: Array<StampTarget & { fill: FieldFill }>
+}
+
+/**
+ * One thing the user DID, and when.
+ *
+ * `at` is the ISO moment and `gapMs` the pause since the previous entry, so the
+ * agent reads a rhythm ("+3.1s") rather than a wall of timestamps. Every variant
+ * carries identity or a route and none of them carries a value: `typed` names
+ * the field, once per focus session, and says nothing about the keystrokes.
+ *
+ * There is deliberately NO `history` kind. A popstate is a route change and is
+ * recorded as `navigate`: the platform does not say whether Back or Forward
+ * produced it, so a separate kind could only ever render as the bare word
+ * "history", which tells a reader strictly less than the route does. A kind no
+ * producer can populate is a kind every validator and serializer still has to
+ * carry a branch for.
+ */
+export type TrailEntry =
+  | { at: string; gapMs: number; kind: 'click'; target: StampTarget | null }
+  | { at: string; gapMs: number; kind: 'typed'; target: StampTarget }
+  | { at: string; gapMs: number; kind: 'navigate'; route: string }
+  | { at: string; gapMs: number; kind: 'scroll'; scrollY: number }
+  | { at: string; gapMs: number; kind: 'note'; annotationId?: string }
+
+/** The trail kinds this build understands. A frozen list rather than a bare
+ *  union, because the check enforcing it runs at RUNTIME on a record read back
+ *  from disk. */
+export const TRAIL_KINDS = ['click', 'typed', 'navigate', 'scroll', 'note'] as const
+
+/** The fill states a stamp field may carry. Same reason as TRAIL_KINDS. */
+export const FIELD_FILLS = ['empty', 'filled', 'changed', 'invalid'] as const
+
+/** What a locked note carries beside the user's words. */
+export interface AnnotationEvidence {
+  /** 'reviews/evidence/<annotationId>.png' (or .jpg), relative to the canvas
+   *  directory — the SAME rule the sketch and pasted-image paths follow, so a
+   *  moved resources dir never orphans a pack. Minted in main from the note id;
+   *  the extension records which encoder the ladder ended on. */
+  shotPath: string
+  width: number
+  height: number
+  stamp: EvidenceStateStamp
+  /** The slice since the previous note, at most MAX_TRAIL_ENTRIES_PER_NOTE. */
+  trail: TrailEntry[]
+}
+
+/** The one shape a stored evidence shot path may have. Minted in main and
+ *  re-validated on load, exactly like PNG_PATH_RE — so a hand-edited record can
+ *  never point the read channel at a file of its choosing. */
+export const EVIDENCE_SHOT_PATH_RE = /^reviews\/evidence\/a[0-9]{1,9}\.(png|jpg)$/
+
+/** A pending (captured, not yet locked) shot. Minted from `randomId()`. */
+export const EVIDENCE_ID_RE = /^[0-9a-f]{24}$/
+
+/** Why a capture was refused. A closed vocabulary: the renderer turns each into
+ *  plain words, and nothing free-text ever reaches that message. */
+export type EvidenceCaptureRefusal = 'rate' | 'pack-full' | 'capture-failed' | 'not-owner' | 'not-uat'
+
+export type EvidenceCaptureResult =
+  | { ok: true; evidenceId: string; previewDataUrl: string; width: number; height: number }
+  | { ok: false; reason: EvidenceCaptureRefusal }
+
+/** ISO timestamps everywhere in this contract are host-minted; the bound is the
+ *  same one every other stored stamp carries. */
+const STAMP_TIME_MAX = 64
+
+// eslint-disable-next-line no-control-regex
+const EVIDENCE_CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/
+
+/** A page-reported string that is safe to store and show: bounded, and with no
+ *  control character that could make one line read as two. */
+function isCleanReportedString(value: unknown, max: number): value is string {
+  return typeof value === 'string' && value.length <= max && !EVIDENCE_CONTROL_CHARS.test(value)
+}
+
+/**
+ * Every key a record of this kind may carry, and nothing else.
+ *
+ * A CLOSED key set rather than a per-field check, because a per-field check
+ * answers "is what I looked at well formed" and the question here is "is there
+ * anything in this object I did not look at". A hand-edited reviews.json (or a
+ * future producer nobody re-read this file for) could otherwise hang arbitrary
+ * fields off a stamp — including a `value` — and the heal, which only rebuilds
+ * the fields it knows, would carry them straight through to disk and into the
+ * agent's JSON view of the round.
+ */
+function hasOnlyKeys(value: object, allowed: readonly string[]): boolean {
+  for (const key in value) {
+    if (!allowed.includes(key)) return false
+  }
+  return true
+}
+
+const STAMP_TARGET_KEYS = ['role', 'name', 'uxId'] as const
+const STAMP_FIELD_KEYS = ['role', 'name', 'uxId', 'fill'] as const
+const STAMP_KEYS = ['capturedAt', 'title', 'route', 'viewport', 'dialogs', 'focused', 'fields'] as const
+const STAMP_VIEWPORT_KEYS = ['width', 'height', 'scrollX', 'scrollY', 'dpr', 'zoom'] as const
+const EVIDENCE_KEYS = ['shotPath', 'width', 'height', 'stamp', 'trail'] as const
+const TRAIL_KEYS: Readonly<Record<string, readonly string[]>> = {
+  click: ['at', 'gapMs', 'kind', 'target'],
+  typed: ['at', 'gapMs', 'kind', 'target'],
+  navigate: ['at', 'gapMs', 'kind', 'route'],
+  scroll: ['at', 'gapMs', 'kind', 'scrollY'],
+  note: ['at', 'gapMs', 'kind', 'annotationId'],
+}
+
+function isStampTarget(value: unknown, allowed: readonly string[] = STAMP_TARGET_KEYS): value is StampTarget {
+  if (typeof value !== 'object' || value === null) return false
+  if (!hasOnlyKeys(value, allowed)) return false
+  const t = value as Partial<StampTarget>
+  if (!isCleanReportedString(t.role, MAX_STAMP_TARGET_CHARS)) return false
+  if (!isCleanReportedString(t.name, MAX_STAMP_TARGET_CHARS)) return false
+  if (t.uxId !== undefined && !isCleanReportedString(t.uxId, MAX_STAMP_TARGET_CHARS)) return false
+  return true
+}
+
+function isFiniteNum(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+/**
+ * Is this a trail entry THIS build understands?
+ *
+ * Strict, and the strictness is the point: an unknown `kind` is not a
+ * near-miss to be repaired, it is a shape nobody in this process wrote. Callers
+ * that read a record off disk drop what fails rather than failing the record —
+ * a trail is provenance, and losing a canvas's whole review history to one bad
+ * line would be the worse bug (see `sanitizeTrail`).
+ */
+export function isKeepableTrailEntry(value: unknown): value is TrailEntry {
+  if (typeof value !== 'object' || value === null) return false
+  const e = value as Partial<TrailEntry> & Record<string, unknown>
+  if (!isCleanReportedString(e.at, STAMP_TIME_MAX) || (e.at as string).length === 0) return false
+  if (!isFiniteNum(e.gapMs) || e.gapMs < 0) return false
+  if (typeof e.kind !== 'string' || !(TRAIL_KINDS as readonly string[]).includes(e.kind)) return false
+  // Nothing the shape does not declare. `sanitizeTrail` keeps entries VERBATIM
+  // rather than rebuilding them, so this is the only thing standing between a
+  // hand-edited line and the record — and the agent's `format: 'json'` view
+  // prints whatever the record holds.
+  if (!hasOnlyKeys(e, TRAIL_KEYS[e.kind] ?? [])) return false
+  switch (e.kind) {
+    case 'click':
+      return e.target === null || isStampTarget(e.target)
+    case 'typed':
+      return isStampTarget(e.target)
+    case 'navigate':
+      return isCleanReportedString(e.route, MAX_STAMP_ROUTE_CHARS)
+    case 'scroll':
+      return isFiniteNum(e.scrollY)
+    case 'note':
+      return e.annotationId === undefined || (typeof e.annotationId === 'string' && CANVAS_ANNOTATION_ID_RE.test(e.annotationId))
+    default:
+      return false
+  }
+}
+
+/**
+ * Keep at most `max` trail entries this build understands, NEWEST last.
+ *
+ * Truncates from the FRONT: a trail is read for what led up to the note (or the
+ * submit), so when something has to go it is the oldest scrolling, not the click
+ * that immediately preceded the note. Never throws and never returns undefined —
+ * a malformed line costs that line.
+ */
+export function sanitizeTrail(value: unknown, max: number): TrailEntry[] {
+  if (!Array.isArray(value)) return []
+  const kept: TrailEntry[] = []
+  // Bounded before filtering as well as after: a hand-edited array of a million
+  // entries must cost a walk of `max`-worth of tail, not of the whole array.
+  const window = value.length > max * 4 ? value.slice(value.length - max * 4) : value
+  for (const entry of window) {
+    if (isKeepableTrailEntry(entry)) kept.push(entry)
+  }
+  return kept.length > max ? kept.slice(kept.length - max) : kept
+}
+
+/** Is this a state stamp THIS build understands? Strict, and CLOSED — no key it
+ *  does not declare. See `hasOnlyKeys` for why the closed set matters here. */
+export function isKeepableStamp(value: unknown): value is EvidenceStateStamp {
+  if (typeof value !== 'object' || value === null) return false
+  if (!hasOnlyKeys(value, STAMP_KEYS)) return false
+  const s = value as Partial<EvidenceStateStamp> & Record<string, unknown>
+  if (!isCleanReportedString(s.capturedAt, STAMP_TIME_MAX) || (s.capturedAt as string).length === 0) return false
+  if (s.title !== undefined && !isCleanReportedString(s.title, MAX_STAMP_TITLE_CHARS)) return false
+  if (s.route !== undefined && !isCleanReportedString(s.route, MAX_STAMP_ROUTE_CHARS)) return false
+  const v = s.viewport as Partial<EvidenceStateStamp['viewport']> | undefined
+  if (typeof v !== 'object' || v === null) return false
+  if (!hasOnlyKeys(v, STAMP_VIEWPORT_KEYS)) return false
+  for (const n of [v.width, v.height, v.scrollX, v.scrollY, v.dpr, v.zoom]) {
+    if (!isFiniteNum(n)) return false
+  }
+  if (!Array.isArray(s.dialogs) || s.dialogs.length > MAX_STAMP_DIALOGS) return false
+  if (!s.dialogs.every((d) => isStampTarget(d))) return false
+  if (s.focused !== undefined && !isStampTarget(s.focused)) return false
+  if (!Array.isArray(s.fields) || s.fields.length > MAX_STAMP_FIELDS) return false
+  for (const raw of s.fields) {
+    if (!isStampTarget(raw, STAMP_FIELD_KEYS)) return false
+    const fill = (raw as { fill?: unknown }).fill
+    if (typeof fill !== 'string' || !(FIELD_FILLS as readonly string[]).includes(fill)) return false
+  }
+  return true
+}
+
+/** One stamp target, rebuilt field by field, so nothing rides along. */
+function pickStampTarget(value: unknown): StampTarget | undefined {
+  if (!isStampTarget(value)) return undefined
+  const t = value as StampTarget
+  return { role: t.role, name: t.name, ...(t.uxId !== undefined ? { uxId: t.uxId } : {}) }
+}
+
+/**
+ * The stamp, truncated to its caps and stripped of entries this build does not
+ * understand — or undefined when what is left is not a stamp at all.
+ *
+ * NEVER FATAL. A stamp is a description of a screen; a malformed one costs the
+ * note its chips, not the canvas its history.
+ *
+ * REBUILT BY NAME, never spread. `{ ...s }` copies whatever the file happened to
+ * hold — so a hand-edited reviews.json carrying `fields: [{ …, value: "…" }]`
+ * would have its extra keys preserved by the heal, written back on the next
+ * persist, and printed verbatim by `canvas_review format:'json'`. The closed key
+ * set in `isKeepableStamp` refuses such a record; this rebuild is what makes the
+ * refusal survivable, by producing a clean stamp from the parts that are valid
+ * instead of failing the note.
+ */
+export function sanitizeStamp(value: unknown): EvidenceStateStamp | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const s = value as Partial<EvidenceStateStamp> & Record<string, unknown>
+  const v = (typeof s.viewport === 'object' && s.viewport !== null ? s.viewport : {}) as Partial<
+    EvidenceStateStamp['viewport']
+  >
+  const dialogs: StampTarget[] = []
+  if (Array.isArray(s.dialogs)) {
+    for (const raw of s.dialogs) {
+      if (dialogs.length >= MAX_STAMP_DIALOGS) break
+      const target = pickStampTarget(raw)
+      if (target) dialogs.push(target)
+    }
+  }
+  const fields: Array<StampTarget & { fill: FieldFill }> = []
+  if (Array.isArray(s.fields)) {
+    for (const raw of s.fields) {
+      if (fields.length >= MAX_STAMP_FIELDS) break
+      const fill = (raw as { fill?: unknown } | null)?.fill
+      if (typeof fill !== 'string' || !(FIELD_FILLS as readonly string[]).includes(fill)) continue
+      // Validated against the FIELD key set (which admits `fill`), then rebuilt
+      // from the three identity parts — so a fourth key cannot ride through.
+      const identity = pickStampTargetFromField(raw)
+      if (!identity) continue
+      fields.push({ ...identity, fill: fill as FieldFill })
+    }
+  }
+  const focused = pickStampTarget(s.focused)
+  const candidate: EvidenceStateStamp = {
+    capturedAt: typeof s.capturedAt === 'string' ? s.capturedAt : '',
+    ...(typeof s.title === 'string' ? { title: s.title } : {}),
+    ...(typeof s.route === 'string' ? { route: s.route } : {}),
+    viewport: {
+      width: isFiniteNum(v.width) ? v.width : 0,
+      height: isFiniteNum(v.height) ? v.height : 0,
+      scrollX: isFiniteNum(v.scrollX) ? v.scrollX : 0,
+      scrollY: isFiniteNum(v.scrollY) ? v.scrollY : 0,
+      dpr: isFiniteNum(v.dpr) ? v.dpr : 1,
+      zoom: isFiniteNum(v.zoom) ? v.zoom : 1,
+    },
+    dialogs,
+    ...(focused ? { focused } : {}),
+    fields,
+  }
+  return isKeepableStamp(candidate) ? candidate : undefined
+}
+
+/** A field's identity, checked against the FIELD key set (which admits `fill`)
+ *  and then rebuilt without it. */
+function pickStampTargetFromField(value: unknown): StampTarget | undefined {
+  if (!isStampTarget(value, STAMP_FIELD_KEYS)) return undefined
+  const t = value as StampTarget
+  return { role: t.role, name: t.name, ...(t.uxId !== undefined ? { uxId: t.uxId } : {}) }
+}
+
+/** Is this an evidence record THIS build understands? The record validator's
+ *  question; `sanitizeEvidence` is the load heal's. */
+export function isKeepableEvidence(value: unknown): value is AnnotationEvidence {
+  if (typeof value !== 'object' || value === null) return false
+  // Closed, for the reason the stamp's key set is: `sanitizeEvidence` rebuilds
+  // only the five fields it knows, so an unknown sixth would otherwise be
+  // preserved by the heal and persisted.
+  if (!hasOnlyKeys(value, EVIDENCE_KEYS)) return false
+  const e = value as Partial<AnnotationEvidence> & Record<string, unknown>
+  if (typeof e.shotPath !== 'string' || !EVIDENCE_SHOT_PATH_RE.test(e.shotPath)) return false
+  if (!isFiniteNum(e.width) || e.width <= 0) return false
+  if (!isFiniteNum(e.height) || e.height <= 0) return false
+  if (!isKeepableStamp(e.stamp)) return false
+  if (!Array.isArray(e.trail) || e.trail.length > MAX_TRAIL_ENTRIES_PER_NOTE) return false
+  return e.trail.every(isKeepableTrailEntry)
+}
+
+/** The evidence record, healed to what this build understands — or undefined
+ *  when the SHOT itself is unusable, which is the one part that cannot be
+ *  repaired (there is no picture to point at). */
+export function sanitizeEvidence(value: unknown): AnnotationEvidence | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const e = value as Partial<AnnotationEvidence> & Record<string, unknown>
+  const stamp = sanitizeStamp(e.stamp)
+  if (!stamp) return undefined
+  const candidate: AnnotationEvidence = {
+    shotPath: typeof e.shotPath === 'string' ? e.shotPath : '',
+    width: isFiniteNum(e.width) ? e.width : 0,
+    height: isFiniteNum(e.height) ? e.height : 0,
+    stamp,
+    trail: sanitizeTrail(e.trail, MAX_TRAIL_ENTRIES_PER_NOTE),
+  }
+  return isKeepableEvidence(candidate) ? candidate : undefined
+}
+
+/**
+ * A version's outcome, in the words the USER saw on the button.
+ *
+ * Testing mode calls the same two decisions Pass and Fail — the machine is one,
+ * only the vocabulary changes — and an agent (or a History row) that reads back
+ * "APPROVED" for a build the user pressed *Fail*... on is describing a different
+ * gesture than the one that happened. One function, because the pane, the
+ * History control, the Library and the MCP serializer all have to say the same
+ * word.
+ *
+ * `observations` is how many notes rode an approval. They are recorded, not
+ * owed, so an approval carrying them is still a pass — it just says so.
+ */
+export function verdictLabel(version: CanvasVersion, opts?: { observations?: number }): string {
+  const uat = version.mode === 'uat'
+  const state = version.verdict?.state
+  if (state === undefined) return version.draft ? 'DRAFT' : 'OPEN'
+  if (state === 'approved') {
+    const base = uat ? 'PASSED' : 'APPROVED'
+    return (opts?.observations ?? 0) > 0 ? `${base} WITH OBSERVATIONS` : base
+  }
+  if (state === 'rejected') return uat ? 'FAILED' : 'REJECTED'
+  return state.toUpperCase()
+}
+
+const PACK_NAME_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const
+
+/**
+ * The name a test pack wears when the user has not given it one.
+ *
+ * DERIVED, never stored — which is what keeps it honest. A default that was
+ * written into the record at capture time would still say "build 4" after the
+ * build label changed, and would still name a config the session no longer runs.
+ * The user's own name is the only thing persisted (`CanvasVersion.packName`).
+ *
+ * The date is formatted from a fixed month list rather than through `toLocale*`:
+ * this string is compared in tests and read by an agent, and a name that depends
+ * on the host's locale is a name two machines disagree about. An unparseable
+ * timestamp drops the date segment rather than inventing "today" — a pack
+ * labelled with the wrong day is worse than one labelled with none.
+ */
+export function defaultPackName(args: {
+  configName?: string
+  title?: string
+  buildLabel?: string
+  versionId: string
+  at: string
+}): string {
+  const subject = args.configName?.trim() || args.title?.trim() || 'Test'
+  const build = args.buildLabel?.trim() || args.versionId
+  const t = Date.parse(args.at)
+  const parts = [subject, `build ${build}`]
+  if (Number.isFinite(t)) {
+    const d = new Date(t)
+    parts.push(`${d.getDate()} ${PACK_NAME_MONTHS[d.getMonth()]}`)
+  }
+  const name = parts.join(' · ')
+  return Array.from(name).slice(0, MAX_PACK_NAME_CHARS).join('')
 }
 
 // ── ccc-ux:// URL shape ─────────────────────────────────────────────────────
@@ -1151,6 +1681,30 @@ export type CanvasBridgeEvent =
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'contentClick'; pageX: number; pageY: number; hit: CanvasHitInfo | null }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'contentKey'; key: string }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'contentZoom'; action: CanvasZoomAction }
+  /**
+   * The page moved (M3 trail): a hashchange, a popstate, or a History API push
+   * the bridge wraps. Reported so the trail can say "navigate /checkout" for the
+   * in-page routing that never reaches main's `will-frame-navigate` — a SPA
+   * changes route a dozen times without a single document navigation.
+   *
+   * Pathname and hash ONLY. The query string is deliberately absent: it is where
+   * applications put tokens, ids and search terms, i.e. the content this whole
+   * feature refuses to record. Coalesced and rate-limited in the page (see
+   * NAVIGATED_MIN_INTERVAL_MS) so a routing loop cannot become a flood.
+   */
+  | { ns: typeof CANVAS_BRIDGE_NS; type: 'navigated'; pathname: string; hash: string }
+  /**
+   * The user typed into a field (M3 trail) — IDENTITY ONLY, once per focus
+   * session per target.
+   *
+   * The value is never carried and there is no shape of this event that could
+   * carry it: `hit` is the same role/name/box report the hover chip already
+   * gets. The bridge's own key relay states the rule this obeys — relaying what
+   * a user types into a page's real inputs would be a keylogger wearing a
+   * feature's name — and the "once per focus session" bound is what keeps this
+   * from becoming a per-keystroke channel by volume instead of by content.
+   */
+  | { ns: typeof CANVAS_BRIDGE_NS; type: 'typedInto'; hit: CanvasHitInfo }
 
 // ── Semantic snapshot (P2, spec §4) ─────────────────────────────────────────
 // The richer tree the P2 bridge produces (dom-accessibility-api + aria-query +
@@ -1424,6 +1978,16 @@ export interface CanvasLibraryEntry {
   conversationShortId?: string
   /** Mode of its most recent version, so a mockup is tellable from a UAT run. */
   latestMode?: 'design' | 'uat'
+  /**
+   * The TEST PACK's name and the build it was run against (M3), for uat rows.
+   *
+   * `packName` is the user's own name when they set one; the Library composes
+   * the generated default from `defaultPackName` otherwise, which is why the
+   * default is not stored. `buildLabel` is the agent's label for the build under
+   * test, from the version's own source record.
+   */
+  packName?: string
+  buildLabel?: string
   /** True when the session that owns it is one of the currently-open tiles — the
    *  UI warns before deleting a canvas that is on screen right now. */
   ownedByOpenSession?: boolean
@@ -1505,6 +2069,24 @@ export interface CanvasSnapshotResult {
    *  hidden off-screen frame, not the pane the user has open. The broker
    *  stamps it from the reply envelope after sanitisation. */
   headless?: boolean
+  /**
+   * WHERE the page says it is, and what it calls itself (M3).
+   *
+   * The state stamp's route and title come from here rather than from a second
+   * round-trip, because a stamp has to describe the SAME instant the tree does.
+   * Pathname and hash only — never the query string, for the reason the
+   * `navigated` event gives. Page-reported, so it is capped and cleaned at the
+   * trust boundary and marked as the page's word wherever it is shown.
+   */
+  page?: { pathname: string; hash: string; title: string }
+  /**
+   * The `ref` of the node holding keyboard focus, when the page reported one.
+   *
+   * A ref rather than a description, so the stamp's "focused" chip resolves
+   * against the tree in the same capture instead of carrying a second, possibly
+   * disagreeing, copy of the element's identity.
+   */
+  focusedRef?: string
   /** Scope ids that matched nothing on the page. */
   unmatchedScope?: string[]
   /** The node cap was hit — the tree is partial. */

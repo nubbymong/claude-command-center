@@ -44,7 +44,8 @@ export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeveri
 import type {
   CanvasAnnotationDraft, CanvasChangedEvent, CanvasRenderSource, CanvasReviewChangedEvent,
   CanvasReviewState, CanvasSketchExport, CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasState,
-  ComposerDraftInput, ForceClosures, ReclaimableCanvas,
+  ComposerDraftInput, EvidenceCaptureResult, EvidenceStateStamp, ForceClosures, ReclaimableCanvas, Rect,
+  TrailEntry,
 } from '../../shared/canvas'
 export type {
   AnchorRef, Annotation, AnnotationScope, AnnotationState, ForceClosures,
@@ -53,6 +54,10 @@ export type {
   CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasSnapshotResult,
   CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
   FocusObject, ReclaimableCanvas, Review, CanvasLibraryEntry,
+  // Testing-mode evidence (M3): the renderer builds the stamp and the trail and
+  // renders the recall view from them.
+  AnnotationEvidence, EvidenceCaptureRefusal, EvidenceCaptureResult, EvidenceStateStamp,
+  FieldFill, StampTarget, TrailEntry,
 } from '../../shared/canvas'
 import type {
   ChannelPayload,
@@ -435,6 +440,33 @@ export interface ElectronAPI {
     /** The one-click undo: clear a canvas's completed stamp. */
     completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
+    /** TESTING MODE (M3): screenshot the framed page and hold it, with the state
+     *  stamp and the trail slice taken at the same instant, until a note locks
+     *  it. The rect is clamped in main; refusals are one word from a closed set
+     *  ('rate' | 'pack-full' | 'capture-failed' | 'not-owner' | 'not-uat'). */
+    evidenceCapture: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      rect: Rect
+      stamp: EvidenceStateStamp
+      trail: TrailEntry[]
+    }) => Promise<EvidenceCaptureResult>
+    /** The user cancelled: the pending capture is thrown away. */
+    evidenceDiscard: (args: { sessionId: string; canvasId: string; evidenceId: string }) => Promise<{ ok: boolean }>
+    /** Read one image the canvas RECORDS (evidence shot, pasted image, sketch
+     *  export, composer image). A path that is not on the record answers null. */
+    evidenceRead: (args: { sessionId: string; canvasId: string; path: string }) => Promise<{ dataUrl: string } | null>
+    /** Name the test pack; `null` clears it back to the generated default. A
+     *  refused rename answers with the state main kept. */
+    setPackName: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      name: string | null
+    }) => Promise<CanvasState | null>
+    /** A full-document navigation inside the canvas frame, for the action trail. */
+    onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<any>

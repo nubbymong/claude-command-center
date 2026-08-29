@@ -53,6 +53,8 @@ import {
   settleReviewsForSupersededVersions,
 } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
+import { readImageFileChecked } from './canvas/canvas-evidence'
+import { canvasConfigNameForSession } from './canvas/canvas-session-link'
 import { readCheckedFile } from './utils/safe-file-read'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
@@ -873,6 +875,18 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         settleSuperseded: (canvasId, versionIds) => settleReviewsForSupersededVersions(canvasId, versionIds),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
+        // Testing evidence shots go through the DISCIPLINED reader, not the
+        // plain read above: lstat refuses a reparse point, the size is checked
+        // on an OPEN HANDLE before anything is allocated, and the MIME comes
+        // from the bytes. A store-resolved path is not a promise about the file
+        // still at it — the canvas dir lives under a user-selectable resources
+        // root, writable by anything with access to it (ADR-009 pass on M3).
+        readEvidenceShot: (absPath) => readImageFileChecked(absPath),
+        // The config a session runs, by display name — the first part of a test
+        // pack's generated name (M3). A LABEL: read from the same spawn record
+        // the canvas library's project scope comes from, and it authorizes
+        // nothing.
+        getConfigName: (sessionId) => canvasConfigNameForSession(sessionId),
         markAddressed: (sessionId, reviewId, ids, variantsByNote, addressedIn) =>
           markAnnotationsAddressed(sessionId, reviewId, ids, variantsByNote, addressedIn),
         // canvas_verdict. The store is what refuses 'approved' and what refuses

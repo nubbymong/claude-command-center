@@ -396,6 +396,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       noteSessionSpawnForCanvas(sessionId, {
         cwd: options?.resume?.cwd ?? options?.cwd,
         resumeUuid: options?.resume?.uuid,
+        // The config's display name, for the Testing pack's generated title
+        // (M3). A label like the two above it: it names a run for the user and
+        // authorizes nothing.
+        configLabel: options?.configLabel,
       })
     }
 

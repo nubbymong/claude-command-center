@@ -12,19 +12,34 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import {
+  canvasProjectDirOf,
   deleteArtifact,
   deleteCanvas,
   getCanvasStateById,
   getCanvasStateForSession,
+  isSameCanvasProject,
   listAllCanvases,
   onCanvasChanged,
   renderVersion,
   reopenVersionForReview,
   setActiveVersion,
   setArtifactArchived,
+  setPackName,
   setVersionVerdict,
   verdictTargetVersionId,
 } from '../canvas/canvas-store'
+import {
+  claimCaptureSlot,
+  clampCaptureRect,
+  discardPendingEvidence,
+  encodeEvidenceShot,
+  evidencePackIsFull,
+  evidencePreviewDataUrl,
+  storePendingEvidence,
+  sweepStalePendingEvidence,
+  type CaptureImage,
+} from '../canvas/canvas-evidence'
+import { setCanvasFrameNavigatedSink } from '../canvas/ccc-ux-protocol'
 import {
   MAX_SKETCH_PNG_BYTES,
   clearComposerDraft,
@@ -36,6 +51,7 @@ import {
   deleteAnnotationsForVersions,
   markAddressedNotesSeen,
   onReviewChanged,
+  readRecordedCanvasImage,
   reopenAnnotation,
   reopenReview,
   setComposerDraft,
@@ -47,13 +63,25 @@ import {
 import { completeCanvasGuarded, describeForceClosures, reopenCanvasGuarded } from '../canvas/canvas-completion'
 import { logInfo } from '../debug-logger'
 import {
+  EVIDENCE_ID_RE,
   MAX_NOTE_CHARS,
   MAX_NOTE_IMAGES,
+  MAX_PACK_NAME_CHARS,
   MAX_SKETCH_SCENE_BYTES,
   MAX_SKETCH_SCENE_ELEMENTS,
+  MAX_STAMP_DIALOGS,
+  MAX_STAMP_FIELDS,
+  MAX_STAMP_ROUTE_CHARS,
+  MAX_STAMP_TARGET_CHARS,
+  MAX_STAMP_TITLE_CHARS,
+  MAX_TRAIL_ENTRIES_PER_NOTE,
+  MAX_TRAIL_ENTRIES_PER_RUN,
   artifactPhaseOf,
   artifactRuns,
+  sanitizeStamp,
+  sanitizeTrail,
   type CanvasLibraryEntry,
+  type EvidenceCaptureResult,
 } from '../../shared/canvas'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 import {
@@ -62,6 +90,90 @@ import {
   listReclaimableCanvases,
   reclaimCanvasForSession,
 } from '../canvas/canvas-session-link'
+
+// ---------------------------------------------------------------------------
+// M3 — Testing-mode evidence schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * A PAGE-REPORTED string at the seam: control characters out, then capped.
+ *
+ * Cleaned HERE as well as re-validated in the shared keepers, and the order
+ * matters. The renderer reads these off the page, so by the time they reach this
+ * boundary they are the document's text — and a newline in an accessible name
+ * would let one stamp line read as two in the serializer the agent reads. The
+ * strict keepers downstream REFUSE such a string rather than clean it, so
+ * without this seam a page could cost the user their whole stamp by putting a
+ * tab in a label. Accepts up to four times the cap before trimming, so a long
+ * page string is trimmed rather than rejected.
+ */
+function reportedText(max: number) {
+  return z
+    .string()
+    .max(max * 4)
+    // eslint-disable-next-line no-control-regex
+    .transform((s) => s.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g, ' ').slice(0, max))
+}
+
+const stampTargetSchema = z
+  .object({
+    role: reportedText(MAX_STAMP_TARGET_CHARS),
+    name: reportedText(MAX_STAMP_TARGET_CHARS),
+    uxId: reportedText(MAX_STAMP_TARGET_CHARS).optional(),
+  })
+  .strict()
+
+/**
+ * The state stamp: structure, never content.
+ *
+ * There is no field on this schema that could carry what a user typed, and that
+ * is the design rather than an omission — `fields` names each control and says
+ * only how the form judged it. `capturedAt` is accepted and then OVERWRITTEN in
+ * main with main's own clock: the moment a piece of evidence claims to be from
+ * is not a fact the renderer should be the source of.
+ */
+const evidenceStampSchema = z
+  .object({
+    capturedAt: z.string().max(64).optional(),
+    title: reportedText(MAX_STAMP_TITLE_CHARS).optional(),
+    route: reportedText(MAX_STAMP_ROUTE_CHARS).optional(),
+    viewport: z
+      .object({
+        width: z.number().finite(),
+        height: z.number().finite(),
+        scrollX: z.number().finite(),
+        scrollY: z.number().finite(),
+        dpr: z.number().finite(),
+        zoom: z.number().finite(),
+      })
+      .strict(),
+    dialogs: z.array(stampTargetSchema).max(MAX_STAMP_DIALOGS),
+    focused: stampTargetSchema.optional(),
+    fields: z
+      .array(stampTargetSchema.extend({ fill: z.enum(['empty', 'filled', 'changed', 'invalid']) }).strict())
+      .max(MAX_STAMP_FIELDS),
+  })
+  .strict()
+
+const trailAtSchema = z.string().min(1).max(64)
+const trailGapSchema = z.number().finite().min(0)
+
+/** One action, and NEVER its content. `typed` names the field it happened in;
+ *  there is no shape in this union that carries a value. */
+const trailEntrySchema = z.discriminatedUnion('kind', [
+  z.object({ at: trailAtSchema, gapMs: trailGapSchema, kind: z.literal('click'), target: stampTargetSchema.nullable() }).strict(),
+  z.object({ at: trailAtSchema, gapMs: trailGapSchema, kind: z.literal('typed'), target: stampTargetSchema }).strict(),
+  z.object({ at: trailAtSchema, gapMs: trailGapSchema, kind: z.literal('navigate'), route: reportedText(MAX_STAMP_ROUTE_CHARS) }).strict(),
+  z.object({ at: trailAtSchema, gapMs: trailGapSchema, kind: z.literal('scroll'), scrollY: z.number().finite() }).strict(),
+  z
+    .object({
+      at: trailAtSchema,
+      gapMs: trailGapSchema,
+      kind: z.literal('note'),
+      annotationId: z.string().regex(/^a[0-9]{1,9}$/).optional(),
+    })
+    .strict(),
+])
 
 /** How many canvases NOT belonging to the asking session get a review-count
  *  read per library open. Their own are always counted; the rest are a courtesy
@@ -395,6 +507,10 @@ const reviewSubmitSchema = z
      *  user's word is version-level, and a submit with no decision is the shape
      *  that produced rounds nobody could close. */
     decision: z.enum(['approve', 'reject']),
+    /** The whole RUN's action trail (M3), for a Testing submit. Optional: every
+     *  other mode submits without one, and the store stores nothing rather than
+     *  an empty array claiming the user did nothing. */
+    trail: z.array(trailEntrySchema).max(MAX_TRAIL_ENTRIES_PER_RUN).optional(),
   })
   .strict()
 
@@ -463,6 +579,65 @@ const reviewMarkSeenSchema = z
   .strict()
 
 const annotationReopenSchema = z.object({ sessionId: sessionIdSchema, annotationId: annotationIdSchema }).strict()
+
+/**
+ * TAKE THE EVIDENCE (M3): screenshot the framed page, with the stamp and the
+ * trail slice that describe the same instant.
+ *
+ * `rect` is the ONE thing the renderer chooses, and it is clamped in main
+ * against the window's own content box — `capturePage` will photograph whatever
+ * region of the window it is handed, and that window holds the user's terminals.
+ *
+ * There is no top-level `dpr`. `capturePage` takes CSS pixels and Electron owns
+ * the scale, so nothing here would multiply by it — and the device pixel ratio
+ * the RECORD needs is already `stamp.viewport.dpr`. A second copy at the
+ * envelope was a field with no reader and two possible values.
+ */
+const evidenceCaptureSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    versionId: versionIdSchema,
+    rect: rectSchema,
+    stamp: evidenceStampSchema,
+    trail: z.array(trailEntrySchema).max(MAX_TRAIL_ENTRIES_PER_NOTE),
+  })
+  .strict()
+
+/** The user cancelled the note: throw the capture away. An ID, never a path. */
+const evidenceDiscardSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    evidenceId: z.string().regex(EVIDENCE_ID_RE),
+  })
+  .strict()
+
+/**
+ * Read one image the canvas RECORDS, for the recall view.
+ *
+ * `path` is bounded and shaped here, but the bound is not what makes this safe —
+ * the store resolves the string against the paths on the record and answers null
+ * for anything else, so a traversal string matches nothing rather than being
+ * cleaned into something that does.
+ */
+const evidenceReadSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    path: z.string().min(1).max(256),
+  })
+  .strict()
+
+/** Rename the test pack inline. `null` clears it back to the generated default. */
+const setPackNameSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    versionId: versionIdSchema,
+    name: z.string().max(MAX_PACK_NAME_CHARS * 4).nullable(),
+  })
+  .strict()
 
 // ---------------------------------------------------------------------------
 // Registration
@@ -643,8 +818,8 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   })
 
   ipcMain.handle(IPC.CANVAS_REVIEW_SUBMIT, async (_e, args: unknown) => {
-    const { sessionId, reviewId, sketches, decision } = reviewSubmitSchema.parse(args)
-    const state = submitReview(sessionId, reviewId, sketches, decision)
+    const { sessionId, reviewId, sketches, decision, trail } = reviewSubmitSchema.parse(args)
+    const state = submitReview(sessionId, reviewId, sketches, decision, trail)
     // The submit-with-notes half of the auto-complete (W2). The store already
     // settled the earlier rounds and turned this round's notes into
     // observations; if that left nothing owed anywhere, an approval signs the
@@ -726,6 +901,161 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     const { sessionId, canvasId } = canvasCompleteReopenSchema.parse(args)
     const result = reopenCanvasGuarded(canvasId, sessionId)
     return 'error' in result ? { ok: false as const, reason: result.error } : { ok: true as const, state: result }
+  })
+
+  // ── M3: Testing-mode evidence ────────────────────────────────────────────
+
+  /**
+   * TAKE THE SHOT.
+   *
+   * The checks run in this order and the order is load-bearing:
+   *
+   *   1. OWNERSHIP first, so nothing below it can be used as an oracle — the
+   *      same rule `completeCanvasGuarded` follows. A session asking about a
+   *      canvas it does not hold learns only that it does not hold it;
+   *   2. TESTING ONLY. Mockup and Plan have no auto-capture, by design: a
+   *      screenshot taken without the pause shield is a picture of a page the
+   *      user was still interacting with, which is not evidence;
+   *   3. RATE. A capture is a window read plus up to three encodes on the main
+   *      process, and the gesture behind it (starting a note) cannot repeat
+   *      faster than half a second;
+   *   4. PACK FULL, measured from the directory rather than the record;
+   *   5. the CLAMP, against the window's own content box.
+   *
+   * Every refusal is one word from a closed set. The renderer turns each into
+   * plain language — nothing free-text crosses this boundary, so a failure can
+   * never carry a path or a store message into the pane.
+   */
+  ipcMain.handle(IPC.CANVAS_EVIDENCE_CAPTURE, async (event, args: unknown): Promise<EvidenceCaptureResult> => {
+    const parsed = evidenceCaptureSchema.parse(args)
+    const state = getCanvasStateById(parsed.canvasId)
+    if (!state || state.sessionId !== parsed.sessionId) return { ok: false, reason: 'not-owner' }
+    const version = state.versions.find((v) => v.id === parsed.versionId)
+    // `mode` is the label the user saw (TESTING); a draft is invisible to them,
+    // so evidence about one would be evidence about a page they never opened.
+    if (!version || version.mode !== 'uat' || version.draft) return { ok: false, reason: 'not-uat' }
+    if (!claimCaptureSlot(parsed.sessionId)) return { ok: false, reason: 'rate' }
+    sweepStalePendingEvidence()
+    if (evidencePackIsFull(parsed.canvasId)) return { ok: false, reason: 'pack-full' }
+
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return { ok: false, reason: 'capture-failed' }
+    let rect
+    try {
+      const bounds = win.getContentBounds()
+      rect = clampCaptureRect(parsed.rect, bounds)
+    } catch {
+      return { ok: false, reason: 'capture-failed' }
+    }
+    if (!rect) return { ok: false, reason: 'capture-failed' }
+
+    let image: CaptureImage
+    try {
+      image = (await win.webContents.capturePage(rect)) as unknown as CaptureImage
+    } catch (err) {
+      logInfo(`[canvas] evidence capture failed for ${parsed.canvasId}: ${err}`)
+      return { ok: false, reason: 'capture-failed' }
+    }
+    const shot = encodeEvidenceShot(image)
+    if (!shot) return { ok: false, reason: 'capture-failed' }
+
+    // The stamp's own moment comes from MAIN's clock, not the renderer's: a
+    // piece of evidence should not be able to claim it was taken at a time of
+    // the sender's choosing.
+    const stamp = sanitizeStamp({ ...parsed.stamp, capturedAt: new Date().toISOString() })
+    if (!stamp) return { ok: false, reason: 'capture-failed' }
+    const trail = sanitizeTrail(parsed.trail, MAX_TRAIL_ENTRIES_PER_NOTE)
+
+    let evidenceId: string
+    try {
+      evidenceId = storePendingEvidence({ canvasId: parsed.canvasId, versionId: parsed.versionId, shot, stamp, trail })
+    } catch (err) {
+      logInfo(`[canvas] evidence write failed for ${parsed.canvasId}: ${err}`)
+      return { ok: false, reason: 'capture-failed' }
+    }
+    return {
+      ok: true,
+      evidenceId,
+      previewDataUrl: evidencePreviewDataUrl(image),
+      width: shot.width,
+      height: shot.height,
+    }
+  })
+
+  /** Cancel: the capture is thrown away. Scoped to the caller's own canvas —
+   *  an id alone must not reach into another canvas's pending shot, even to
+   *  destroy it. */
+  ipcMain.handle(IPC.CANVAS_EVIDENCE_DISCARD, async (_e, args: unknown) => {
+    const { sessionId, canvasId, evidenceId } = evidenceDiscardSchema.parse(args)
+    const state = getCanvasStateById(canvasId)
+    if (!state || state.sessionId !== sessionId) return { ok: false as const }
+    return { ok: discardPendingEvidence(canvasId, evidenceId) }
+  })
+
+  /**
+   * Read one recorded image back, for the recall view.
+   *
+   * TWO GATES, and they answer different questions. The SCOPE gate here decides
+   * whether this session may look at this canvas at all: its owner may, and so
+   * may a session in the same PROJECT — the Library (M4) opens other sessions'
+   * memorialised packs, and a pack the user can see in their own project's
+   * library is one they can open. The PATH gate lives in the store and decides
+   * what "this file" means: the string has to be one the canvas records, or the
+   * answer is null.
+   *
+   * Fails closed on both. A session we have no project for matches nothing.
+   */
+  ipcMain.handle(IPC.CANVAS_EVIDENCE_READ, async (_e, args: unknown) => {
+    const { sessionId, canvasId, path: recordedPath } = evidenceReadSchema.parse(args)
+    const owner = getCanvasStateById(canvasId)?.sessionId
+    if (owner !== sessionId) {
+      if (!isSameCanvasProject(canvasCwdForSession(sessionId), canvasProjectDirOf(canvasId))) return null
+    }
+    const image = readRecordedCanvasImage(canvasId, recordedPath)
+    if (!image) return null
+    return { dataUrl: `data:${image.mime};base64,${image.bytes.toString('base64')}` }
+  })
+
+  /**
+   * Name the test pack (the inline rename in the Testing header). Owner-scoped
+   * in the store; `null` clears it back to the generated default.
+   *
+   * A REFUSAL ANSWERS WITH THE STATE MAIN KEPT, not with an error object. The
+   * refusals here are all "that is not yours to rename" or "that version is not
+   * one you can see" — a caller learns nothing from them it did not already
+   * have, and the pane's own answer to a refused rename is to snap the header
+   * back to the truth, which is exactly the state returned. Logged at info,
+   * because the ones that are bugs (a draft id reaching this channel) should
+   * leave a trace.
+   */
+  ipcMain.handle(IPC.CANVAS_SET_PACK_NAME, async (_e, args: unknown) => {
+    const { sessionId, canvasId, versionId, name } = setPackNameSchema.parse(args)
+    const result = setPackName(sessionId, canvasId, versionId, name)
+    if ('error' in result) {
+      logInfo(`[canvas] pack rename refused for ${canvasId}/${versionId}: ${result.error}`)
+      return getCanvasStateForSession(sessionId)
+    }
+    return result
+  })
+
+  /**
+   * A full-document navigation inside a canvas frame, forwarded for the action
+   * trail (M3).
+   *
+   * THE SESSION IS RESOLVED HERE, from main's own canvas record — never from the
+   * page and never from the URL. That is what keeps a page that navigates from
+   * being able to choose which session hears about it.
+   */
+  setCanvasFrameNavigatedSink(({ canvasId, route }) => {
+    const state = getCanvasStateById(canvasId)
+    if (!state) return
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return
+    try {
+      win.webContents.send(IPC.CANVAS_FRAME_NAVIGATED, { sessionId: state.sessionId, canvasId, route })
+    } catch {
+      /* window gone */
+    }
   })
 
   onReviewChanged((event) => {
