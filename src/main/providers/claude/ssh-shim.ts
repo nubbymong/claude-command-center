@@ -164,6 +164,7 @@ export function generateRemoteSetupScript(
   hooksConfig: { port: number; secret: string } | null,
   opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
   nonce: string,
+  remotePath: string = '~',
 ): string {
   // #242 finding F1 (b): the `setup ok` sentinel this script emits (bottom
   // of `lines`, below) MUST carry `nonce` -- required, not optional, so a
@@ -428,6 +429,16 @@ export function generateRemoteSetupScript(
     // no account or the file is unreadable.
     `let acctB64='';try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));if(c&&c.oauthAccount&&typeof c.oauthAccount.emailAddress==='string')acctB64=Buffer.from(c.oauthAccount.emailAddress,'utf-8').toString('base64');let mut=false;if(c.mcpServers){if(c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];mut=true}if(c.mcpServers['conductor']){delete c.mcpServers['conductor'];mut=true}}if(mut)fs.writeFileSync(cj,JSON.stringify(c,null,2))}}catch{}`,
     `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();fs.writeFileSync(md,c?c+'\\n':'')}}catch{}`,
+    // #25: pre-accept claude's first-run "trust this folder" dialog for the
+    // remotePath the USER configured for this SSH session. Without it every
+    // launch shows the trust prompt (default "No, exit"); two concurrent
+    // sessions to the same untrusted folder race on that prompt and one claude
+    // exits to a bare shell ("2nd session can't open claude"). The user
+    // explicitly configured this host+path in CCC, so trusting exactly that
+    // folder is their intent. Written BEFORE claude launches (idempotent; both
+    // the resolved and realpath keys, since claude keys projects by cwd realpath).
+    // Fully fail-open (try/catch): on any error the prompt simply reappears.
+    `try{const cj=path.join(home,'.claude.json');let c={};if(fs.existsSync(cj))c=JSON.parse(fs.readFileSync(cj,'utf-8'));let rp=${JSON.stringify(remotePath)};if(rp==='~')rp=home;else if(rp.slice(0,2)==='~/')rp=path.join(home,rp.slice(2));else if(!path.isAbsolute(rp))rp=path.resolve(home,rp);let tp=rp;try{tp=fs.realpathSync(rp)}catch{}c.projects=c.projects||{};let mut2=false;for(const key of new Set([rp,tp])){c.projects[key]=c.projects[key]||{};if(c.projects[key].hasTrustDialogAccepted!==true){c.projects[key].hasTrustDialogAccepted=true;mut2=true}}if(mut2)fs.writeFileSync(cj,JSON.stringify(c,null,2))}catch{}`,
     // Sentinel now carries the tmux result alongside the original
     // completion marker: pty-manager's parseTmuxSentinel requires an EXACT
     // match on THIS session's nonce, immediately after 'setup ok', before
@@ -588,7 +599,7 @@ export function getRemoteSetupCommand(
   nonce: string,
 ): string {
   assertSafeRemotePath(remotePath)
-  const script = generateRemoteSetupScript(sessionId, hooksConfig, opts, nonce)
+  const script = generateRemoteSetupScript(sessionId, hooksConfig, opts, nonce, remotePath)
   const b64 = Buffer.from(script).toString('base64')
   // `cd --` so a path beginning with "-" is treated as an operand, not an option.
   return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd -- ${remotePath} && clear`

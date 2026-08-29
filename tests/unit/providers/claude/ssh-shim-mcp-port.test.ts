@@ -37,3 +37,27 @@ describe('#24 remote MCP URL uses the per-session port', () => {
     expect(script).toContain('localhost:19333/sse')
   })
 })
+
+// #25: the setup pre-accepts claude's first-run trust dialog for the configured
+// remotePath, so concurrent sessions don't race on the prompt and one exit to a
+// bare shell.
+describe('#25 pre-trust the configured remote folder', () => {
+  it('bakes a hasTrustDialogAccepted write into ~/.claude.json for the default (~) path', () => {
+    const script = generateRemoteSetupScript('sid-1', null, undefined, NONCE, '~')
+    expect(script).toContain('hasTrustDialogAccepted')
+    expect(script).toContain('.claude.json')
+  })
+
+  it('embeds the exact configured remotePath as a string literal (not shell-interpolated)', () => {
+    const script = generateRemoteSetupScript('sid-1', null, undefined, NONCE, '/srv/app')
+    expect(script).toContain('"/srv/app"')
+    expect(script).toContain('hasTrustDialogAccepted')
+  })
+
+  it('resolves ~, ~/sub, and relative paths against the remote home', () => {
+    const script = generateRemoteSetupScript('sid-1', null, undefined, NONCE, '~/proj')
+    // The remote node resolves ~/ and relative paths against os.homedir().
+    expect(script).toContain('path.join(home,rp.slice(2))')
+    expect(script).toContain('path.resolve(home,rp)')
+  })
+})

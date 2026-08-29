@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectClaudeUi, lastPromptLineForClaude } from '../../../../src/main/providers/claude/ui-detection'
+import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from '../../../../src/main/providers/claude/ui-detection'
 
 describe('Claude UI detection', () => {
   describe('detectClaudeUi', () => {
@@ -15,6 +15,32 @@ describe('Claude UI detection', () => {
     })
     it('matches vertical bars + glyphs after claudeSent', () => {
       expect(detectClaudeUi('│ some output', true)).toBe(true)
+    })
+  })
+
+  // #25: the idle-fallback uses this to avoid latching claude-running when
+  // claude actually exited to a bare shell.
+  describe('looksLikeShellPromptTail', () => {
+    it('detects a bare shell prompt (claude exited)', () => {
+      expect(looksLikeShellPromptTail('[adm-severson@p-aai-se01 ~]$ ')).toBe(true)
+      expect(looksLikeShellPromptTail('some output\nuser@host:/tmp# ')).toBe(true)
+    })
+    it('detects a shell prompt through ANSI/OSC noise and trailing blank lines', () => {
+      expect(looksLikeShellPromptTail('\x1b[0m\x1b]0;title\x07[user@host ~]$ \n\n')).toBe(true)
+    })
+    it('never flags a RUNNING claude (❯ / box drawing) as exited', () => {
+      expect(looksLikeShellPromptTail('╭─────────╮\n│ ❯ type here            │\n╰─────────╯')).toBe(false)
+      expect(looksLikeShellPromptTail('❯ ')).toBe(false)
+      // Even if a $ appears earlier, the LAST line is the claude input.
+      expect(looksLikeShellPromptTail('cost: $0.12\n❯ ')).toBe(false)
+    })
+    it('excludes > and ~ endings (a claude screen can end in either)', () => {
+      expect(looksLikeShellPromptTail('foo >')).toBe(false)
+      expect(looksLikeShellPromptTail('~')).toBe(false)
+    })
+    it('is false on empty / no prompt', () => {
+      expect(looksLikeShellPromptTail('')).toBe(false)
+      expect(looksLikeShellPromptTail('just some text')).toBe(false)
     })
   })
 
