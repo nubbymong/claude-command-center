@@ -179,6 +179,10 @@ export function generateRemoteSetupScript(
   if (!/^[A-Za-z0-9]+$/.test(nonce)) {
     throw new Error(`generateRemoteSetupScript: nonce "${nonce}" fails the charset guard (expected [A-Za-z0-9]+).`)
   }
+  // #25: sink-side re-assertion (adversarial review F2) — remotePath is embedded
+  // in the emitted node script (JSON literal) AND cd'd to; the wrapper already
+  // gates it, this closes a future caller that bypasses getRemoteSetupCommand.
+  assertSafeRemotePath(remotePath)
   const { includeStatusLine = true, includeConductorMcp = true, remoteMcpPort } = opts ?? {}
   // Conductor MCP server is always running (independent of browser/vision config),
   // so SSH sessions always get the conductor MCP entry pointing at the
@@ -438,7 +442,7 @@ export function generateRemoteSetupScript(
     // folder is their intent. Written BEFORE claude launches (idempotent; both
     // the resolved and realpath keys, since claude keys projects by cwd realpath).
     // Fully fail-open (try/catch): on any error the prompt simply reappears.
-    `try{const cj=path.join(home,'.claude.json');let c={};if(fs.existsSync(cj))c=JSON.parse(fs.readFileSync(cj,'utf-8'));let rp=${JSON.stringify(remotePath)};if(rp==='~')rp=home;else if(rp.slice(0,2)==='~/')rp=path.join(home,rp.slice(2));else if(!path.isAbsolute(rp))rp=path.resolve(home,rp);let tp=rp;try{tp=fs.realpathSync(rp)}catch{}c.projects=c.projects||{};let mut2=false;for(const key of new Set([rp,tp])){c.projects[key]=c.projects[key]||{};if(c.projects[key].hasTrustDialogAccepted!==true){c.projects[key].hasTrustDialogAccepted=true;mut2=true}}if(mut2)fs.writeFileSync(cj,JSON.stringify(c,null,2))}catch{}`,
+    `try{const cj=path.join(home,'.claude.json');let c={};if(fs.existsSync(cj))c=JSON.parse(fs.readFileSync(cj,'utf-8'));let rp=${JSON.stringify(remotePath)};if(rp==='~')rp=home;else if(rp.slice(0,2)==='~/')rp=path.join(home,rp.slice(2));else if(!path.isAbsolute(rp))rp=path.resolve(home,rp);let tp=rp;try{tp=fs.realpathSync(rp)}catch{}c.projects=c.projects||{};let mut2=false;for(const key of new Set([rp,tp])){c.projects[key]=c.projects[key]||{};if(c.projects[key].hasTrustDialogAccepted!==true){c.projects[key].hasTrustDialogAccepted=true;mut2=true}}if(mut2){const tmp=cj+'.ccctrust.'+process.pid;fs.writeFileSync(tmp,JSON.stringify(c,null,2));fs.renameSync(tmp,cj)}}catch{}`,
     // Sentinel now carries the tmux result alongside the original
     // completion marker: pty-manager's parseTmuxSentinel requires an EXACT
     // match on THIS session's nonce, immediately after 'setup ok', before
