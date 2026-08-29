@@ -231,6 +231,8 @@ jobs:
           PubkeyAuthentication yes
           AllowTcpForwarding yes
           UsePAM no
+          StrictModes no
+          LogLevel VERBOSE
           EOF
           sudo mkdir -p /run/sshd
           sudo "$(command -v sshd)" -t -f "$D/sshd_config"
