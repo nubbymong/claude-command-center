@@ -138,6 +138,22 @@ describe('SessionHeader', () => {
     expect(container.querySelector('[data-testid="session-pill-claudecode"]')?.getAttribute('title')).toContain('probe crashed')
   })
 
+  it('the account pill prefers the LIVE captured account over a diverged profile label', () => {
+    // WINDOWS_1 staging VM, 2026-08-30: a profile whose stored label disagrees
+    // with what is actually signed in inside its dir must not win the pill —
+    // the pill names what the session RUNS AS.
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-x', name: 'Work', accountEmail: 'label@fake.dev' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-x': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ profileId: 'profile-x', provider: 'claude', sessionType: 'local', accountEmail: 'real@x.com' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.getAttribute('title')).toContain('real@x.com')
+    expect(acct?.getAttribute('title')).not.toContain('label@fake.dev')
+    // The profile's friendly name must not relabel a diverged account.
+    expect(acct?.textContent).not.toContain('Work')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
   it('the account pill shows the session account name (resolved from the profile)', () => {
     useAccountProfilesStore.setState({ profiles: [{ id: 'profile-x', name: 'Work', accountEmail: 'me@work.co' } as any] })
     useAccountAuthStore.setState({ byProfile: { 'profile-x': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })

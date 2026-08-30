@@ -268,18 +268,29 @@ function SessionAuthPills({ session }: { session: Session }) {
   const web = status?.web
   const errorSuffix = status?.error ? ` — could not read status: ${status.error}` : ''
 
-  // Account pill: the Claude account this session runs as (name/alias, else a
-  // middle-truncated email), with the account's identity colour. Full email on
-  // hover.
-  const email = profile?.accountEmail ?? ''
+  // Account pill: the Claude account this session ACTUALLY runs as. The LIVE
+  // captured identity (session.accountEmail — spawn-time capture from the
+  // session's real config dir, refreshed on a mid-session /login) wins over
+  // the profile's STORED label: the label is display metadata and can
+  // disagree with what is really signed in inside that profile's dir (seen on
+  // the WINDOWS_1 staging VM, whose fake-labelled profile carried real
+  // credentials — the pill claimed the label while the session ran as the
+  // real account). Owner requirement 2026-08-30: whatever account the launch
+  // choice actually signed in as appears on top. The profile label remains
+  // the fallback until the capture lands, so the pill still paints instantly
+  // and daily (label == reality) behaviour is unchanged.
+  const email = session.accountEmail || profile?.accountEmail || ''
+  // The profile's friendly name applies only while the pill is showing THAT
+  // profile's account — never relabel a diverged live account with it.
+  const nameHint = profile?.accountEmail && profile.accountEmail === email ? profile?.name : undefined
   const accountName = email
     ? (() => {
-        const r = resolveAccountName(email, profile?.name, accountAliases)
+        const r = resolveAccountName(email, nameHint, accountAliases)
         return r === email ? middleTruncateEmail(email) : r
       })()
     : (profile?.name || 'Account')
   const accountTone = resolveIdentityColor(
-    resolveAccountColourKey(email, accountColourOverrides, profile?.colourKey),
+    resolveAccountColourKey(email, accountColourOverrides, session.accountColour ?? profile?.colourKey),
     theme,
   )
 

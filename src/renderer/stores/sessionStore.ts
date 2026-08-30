@@ -309,6 +309,14 @@ export const STRUCTURAL_SESSION_FIELDS = [
   'legacyVersion', 'agentIds', 'effortLevel', 'permissionMode', 'extraArgs', 'disableAutoMemory',
   'enableCodexReview', 'loggingEnabled', 'model', 'provider', 'codexOptions',
   'identityColorKey', 'color', 'githubIntegration',
+  // profileId IS structural: the header's account pill resolves through it, and
+  // it changes exactly at the low-frequency moments a re-render is wanted (the
+  // launch-gate choice patching an account-less session, a mid-session account
+  // switch). Its omission meant the shell handed SessionHeader a STALE record
+  // after a gate choice, so the pill fell back to painting the PRIMARY profile
+  // — the wrong account — until some other structural field changed (found on
+  // the WINDOWS_1 staging VM, 2026-08-30, where the primary is a fake profile).
+  'profileId',
 ] as const
 
 /**

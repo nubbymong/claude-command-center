@@ -180,6 +180,18 @@ describe('sessionStore', () => {
       const a = [makeSession({ id: 'a' })]
       expect(structuralSessionsEqual(a, a)).toBe(true)
     })
+
+    it('treats a profileId change as STRUCTURAL (the launch-gate choice must repaint the header pill)', () => {
+      // Found live on the WINDOWS_1 staging VM (2026-08-30): an account-less
+      // config's session gets profileId patched AFTER creation by the launch
+      // gate; with profileId excluded here the shell handed SessionHeader the
+      // stale record and the pill painted the PRIMARY profile — the wrong
+      // account — indefinitely. Mid-session account switch hits the same path.
+      const a = [makeSession({ id: 'a' })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], profileId: 'profile-real' }])).toBe(false)
+      const b = [makeSession({ id: 'b', profileId: 'profile-one' })]
+      expect(structuralSessionsEqual(b, [{ ...b[0], profileId: 'profile-two' }])).toBe(false)
+    })
   })
 
   describe('getSession', () => {
