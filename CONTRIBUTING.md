@@ -182,22 +182,29 @@ reliable path. Preview locally:
 node scripts/reconcile-issue-dispositions.js --dry-run
 ```
 
-### Desktop-test gate (`desktop-tested` / `skip-desktop-test`)
+### Desktop-test gate (`desktop-tested` / `runtime-validated` / `skip-desktop-test`)
 
 Headless CI (typecheck, unit tests, build) can pass while the packaged app fails
 to run usefully on a real desktop — that has happened. So a PR does not merge on
-green CI alone: **a human must open the app and exercise the change**, and that
-fact is recorded as a label, enforced by the `Desktop test gate` check.
+green CI alone: **the built app must actually be exercised**, and that fact is
+recorded as a label, enforced by the `Desktop test gate` check. There are two
+ways to satisfy it — a human pass or an automated one — plus the skip for
+changes with no runtime surface.
 
-- **`desktop-tested`** — the app was launched and exercised on a real desktop for
-  this change. Apply it once you (or the tester) have actually driven the feature
-  in the running app, not just watched CI go green.
-- **`skip-desktop-test`** — this PR needs no desktop test: docs-, deps-, CI- or
-  changelog-only changes with no runtime surface. Apply it instead of
-  `desktop-tested` for those.
+- **`desktop-tested`** — a **human** launched and exercised the packaged app on a
+  real desktop for this change. Apply it once you (or the tester) have actually
+  driven the feature in the running app, not just watched CI go green.
+- **`runtime-validated`** — **automated** runtime validation passed: VM Playwright
+  E2E and/or the live SSH statusline matrix. This is the automation route (so it
+  no longer borrows `desktop-tested`), and it is strong enough to open the gate on
+  its own — a separate human pass is then optional. See the Master Test Process
+  (aicc_planning discussion #20) for what each automated pack covers.
+- **`skip-desktop-test`** — this PR needs no runtime test: docs-, deps-, CI- or
+  changelog-only changes with no runtime surface. Apply it instead of the two
+  above for those.
 
-The `Desktop test gate` check **fails until one of these two labels is present**,
-so it is the inverse of `ci-run` (which is opt-in — apply it to *run* the matrix;
+The `Desktop test gate` check **fails until one of these labels is present**, so
+it is the inverse of `ci-run` (which is opt-in — apply it to *run* the matrix;
 this one must be present to *allow* the merge). Removing the label turns the check
 red again.
 
