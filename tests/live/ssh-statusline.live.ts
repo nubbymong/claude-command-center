@@ -19,7 +19,7 @@
 //   rocky password + tmux (staged)         [linuxRocky]
 //   rocky password + NO tmux               [linuxRocky]
 //   rocky password + tmux — reattach       [linuxRocky]
-import { describe, it, expect, vi, beforeAll } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { readFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -50,7 +50,13 @@ const { spawnPty, killPty, getSshFlow, writePty, resizePty, endSshRemote } = awa
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 const { startStatuslineWatcher } = await import('../../src/main/statusline-watcher')
+// Tier-0 delivery (harmonise-remote): the REAL conductor MCP server, so the
+// spawn path allocates the `-R` reverse tunnel and bakes the /status POST URL
+// into the remote statusLine command — the matrix now proves the tunnel
+// delivery end-to-end, not just the legacy OSC ladders.
+const { startConductorMcpServer, stopConductorMcpServer } = await import('../../src/main/conductor-mcp-server')
 registerProvider(new ClaudeProvider())
+const LIVE_MCP_PORT = 43199
 
 interface HostEntry { host: string; username: string; password?: string; remoteOs?: 'windows' | 'unix' }
 type Hosts = Partial<Record<'linuxKey' | 'linuxPassword' | 'linuxRocky' | 'mac' | 'windows', HostEntry>>
@@ -140,7 +146,18 @@ async function runSession(sid: string, entry: HostEntry, opts: { detachable?: bo
         .replace(/\s/g, '')
       if (/trustthisfolder|Doyoutrust/i.test(flat)) {
         trustAnswered = true
-        writePty(sid, '\r')
+        // Newer claude (seen 2.1.251 on a Windows remote, 2026-08-30): the
+        // dialog's HIGHLIGHTED DEFAULT is "No, exit" — a bare Enter EXITS
+        // claude (the T7 zero-updates run: claude was gone before its first
+        // statusline tick, and the nudge's "hi" landed in cmd.exe). When the
+        // caret sits on the No option, step down to "Yes, I trust this
+        // folder" first. Older dialogs keep the old default-Enter behaviour.
+        if (flat.includes('❯No,exit')) {
+          writePty(sid, '\x1b[B')
+          setTimeout(() => writePty(sid, '\r'), 250)
+        } else {
+          writePty(sid, '\r')
+        }
       }
     }
     if (updates(w.events).filter((u) => u.sessionId === sid).length >= 2) break
@@ -177,7 +194,11 @@ function killRemoteTmux(entry: HostEntry, sid: string): void {
   } catch { /* password-only host or session already gone */ }
 }
 
-beforeAll(() => { settingsState.value = {} })
+beforeAll(async () => {
+  settingsState.value = {}
+  await startConductorMcpServer(LIVE_MCP_PORT)
+})
+afterAll(() => { try { stopConductorMcpServer() } catch { /* already down */ } })
 
 describe('SSH statusline matrix (LIVE, on-demand)', () => {
   itIf(hosts.linuxKey)('key + tmux wrap (fresh): statusline updates arrive for the session id', async () => {
@@ -257,10 +278,13 @@ describe('SSH statusline matrix (LIVE, on-demand)', () => {
     expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
   }, 240_000)
 
-  itIf(hosts.windows)('windows remote (CONOUT$ shim): statusline updates', async () => {
+  itIf(hosts.windows)('windows remote (tunnel POST): statusline updates', async () => {
     const e = hosts.windows!
     const sid = `lv7${Date.now().toString(36)}`
-    const w = await runSession(sid, e)
+    // nudge: an idle claude legitimately never ticks its statusLine (it fires
+    // on conversation state changes, not repaints — see the reattach note in
+    // runSession). Type a line so a tick is guaranteed within the capture.
+    const w = await runSession(sid, e, { nudge: true })
     report('T7 windows', w, sid)
     killPty(sid)
     expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
