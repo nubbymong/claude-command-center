@@ -173,8 +173,7 @@ export async function parseClaudeTranscriptFile(filePath: string): Promise<Claud
  * Decode a Claude project folder name (encoded path) back to a real filesystem path.
  * e.g. F--MY-PROJECT -> F:/MY_PROJECT
  *
- * Mirrors the inverse of pathToClaudeProjectFolder (claude-project-path.ts) and
- * the sanitizeProjectPath helper in session-discovery.ts.
+ * Mirrors the inverse of pathToClaudeProjectFolder (claude-project-path.ts).
  */
 function decodeClaudeProjectDir(encoded: string): string {
   // Replace leading drive-letter pattern: "X--" -> "X:/"
@@ -190,8 +189,8 @@ function decodeClaudeProjectDir(encoded: string): string {
  * encoded projectDir name so the renderer always receives a real path string.
  *
  * Label: derived from the first user/human message in the JSONL (gates on
- * obj.type === 'user' || obj.type === 'human' before reading content, matching
- * session-discovery.ts line 119). Falls back to sessionId on any failure.
+ * obj.type === 'user' || obj.type === 'human' before reading content). Falls
+ * back to sessionId on any failure.
  */
 export async function listClaudeResumableSessions(): Promise<HistorySession[]> {
   const files = findClaudeHistoryFiles()

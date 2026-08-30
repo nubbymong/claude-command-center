@@ -122,10 +122,6 @@ export const IPC = {
   LOGS2_NEW_MESSAGES: 'logs2:newMessages',   // push: main -> renderer
   LOGS2_SESSION_CONFIG: 'logs2:sessionConfig',
 
-  // Discovery
-  DISCOVERY_PROJECTS: 'discovery:projects',
-  DISCOVERY_SESSIONS: 'discovery:sessions',
-
   // Updates
   UPDATE_CHECK: 'update:check',
   UPDATE_GET_VERSION: 'update:getVersion',

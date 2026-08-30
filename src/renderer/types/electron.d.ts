@@ -522,10 +522,6 @@ export interface ElectronAPI {
     /** A full-document navigation inside the canvas frame, for the action trail. */
     onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => () => void
   }
-  discovery: {
-    getProjects: () => Promise<any>
-    getSessionHistory: (projectPath: string) => Promise<any>
-  }
   update: {
     check: () => Promise<boolean>
     getVersion: () => Promise<string | null>
