@@ -3,6 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { getConductorMcpPort, mcpSessionToken } from '../conductor-mcp-server'
 import { buildStatuslineSetting } from '../providers/claude/statusline-command'
+import { statusPostUrl } from '../providers/claude/ssh-shim'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir } from '../account-profiles'
 import { logWarn } from '../debug-logger'
 
@@ -106,8 +107,23 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
   // U2: deliver the statusLine PER-SESSION rather than via a global
   // ~/.claude/settings.json write. Overrides any statusLine inherited from the
   // shared clone so external `claude` runs outside CCC keep their native line.
+  //
+  // Local unification (harmonise-remote): bake the /status POST URL into the
+  // command (argv[3]) so the local bridge delivers over the SAME channel as
+  // the SSH shims — a loopback POST to the conductor MCP server, per-session
+  // HMAC in the query. No tunnel locally, so the only gate is the server
+  // having bound (port > 0); statusPostUrl returns '' otherwise and the
+  // bridge falls back to the watched status file. try/catch because the
+  // charset guard in statusPostUrl throws rather than emitting a malformed
+  // URL — a failure here must degrade delivery, never break the spawn path.
   if (opts.resourcesDir) {
-    sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir)
+    let statusUrl = ''
+    try {
+      statusUrl = statusPostUrl(sessionId, undefined, getConductorMcpPort(), true)
+    } catch {
+      statusUrl = ''
+    }
+    sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir, sessionId, statusUrl)
   }
 
   // Union the canvas tools into permissions.allow, preserving everything the

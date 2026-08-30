@@ -2,10 +2,26 @@
 // rather than via a global ~/.claude/settings.json write. writeLocalSessionSettings
 // injects the statusLine command (pointing at the bundled resources script) and
 // overrides any statusLine inherited from the shared-settings clone.
+//
+// Local unification (harmonise-remote): the command now carries the session id
+// (argv[2]) and the conductor /status POST URL (argv[3], double-quoted) so the
+// local bridge delivers over the same channel as the SSH shims, with the
+// watched status file as fallback.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+
+// Deterministic MCP port/token so the /status URL bake is assertable. The mock
+// applies to BOTH direct imports (writeLocalSessionMcpConfig) and the
+// statusPostUrl path inside ssh-shim.ts. Port is a mutable holder so one test
+// can exercise the server-unbound (port 0) fallback.
+const h = vi.hoisted(() => ({ port: 19333 }))
+vi.mock('../../../src/main/conductor-mcp-server', () => ({
+  getConductorMcpPort: () => h.port,
+  mcpSessionToken: (sessionId: string) => `tok${sessionId.replace(/[^a-zA-Z0-9]/g, '')}`,
+}))
+
 import { writeLocalSessionSettings } from '../../../src/main/hooks/per-session-settings'
 
 describe('writeLocalSessionSettings -- per-session statusLine', () => {
@@ -17,6 +33,7 @@ describe('writeLocalSessionSettings -- per-session statusLine', () => {
     claudeDir = path.join(fakeHome, '.claude')
     fs.mkdirSync(claudeDir, { recursive: true })
     vi.spyOn(os, 'homedir').mockReturnValue(fakeHome)
+    h.port = 19333
   })
   afterEach(() => {
     fs.rmSync(fakeHome, { recursive: true, force: true })
@@ -29,6 +46,26 @@ describe('writeLocalSessionSettings -- per-session statusLine', () => {
     expect(cfg.statusLine?.type).toBe('command')
     expect(cfg.statusLine?.command).toContain('claude-multi-statusline.js')
     expect(String(cfg.statusLine?.command).startsWith('node ')).toBe(true)
+  })
+
+  it('bakes the session id (argv[2]) and quoted /status POST URL (argv[3]) into the command', () => {
+    const p = writeLocalSessionSettings('sid-1', { resourcesDir: resourcesDir() })
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    const cmd = String(cfg.statusLine?.command)
+    // argv[2]: the sanitised session id, space-separated after the script path.
+    expect(cmd).toMatch(/claude-multi-statusline\.js" sid-1 /)
+    // argv[3]: the /status URL, double-quoted (its query carries `&`), bound to
+    // this session by cccSessionId + per-session HMAC token on the mocked port.
+    expect(cmd).toContain(' "http://127.0.0.1:19333/status?cccSessionId=sid-1&token=toksid1"')
+  })
+
+  it('omits the URL (keeps sid) when the MCP server is unbound — file delivery fallback', () => {
+    h.port = 0
+    const p = writeLocalSessionSettings('sid-1', { resourcesDir: resourcesDir() })
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    const cmd = String(cfg.statusLine?.command)
+    expect(cmd).toMatch(/claude-multi-statusline\.js" sid-1$/)
+    expect(cmd).not.toContain('/status')
   })
 
   it('overrides any statusLine inherited from the shared-settings clone (and keeps other keys)', () => {

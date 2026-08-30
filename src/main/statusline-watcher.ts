@@ -14,10 +14,13 @@
  *    (Tokenomics no longer ingests here — the indexing worker reads raw
  *    transcripts on its own timer/fs-watch.)
  *
- * SSH sessions can't write status files locally, so a remote shim emits OSC
- * sentinels through the PTY stream (see pty-manager.ts:extractSshOscSentinels).
- * Those parsed payloads are dispatched here via dispatchSSHStatuslineUpdate(),
- * which uses the same fan-out pipeline.
+ * Since the harmonise-remote unification the PRIMARY delivery for every
+ * session type is an HTTP POST to the conductor MCP server's /status endpoint
+ * (local bridge → loopback; SSH shim → reverse tunnel), which lands here via
+ * dispatchSSHStatuslineUpdate() and the same fan-out pipeline. The file watch
+ * below is the LOCAL fallback (MCP server unbound, stale per-session
+ * settings); the OSC sentinel path (pty-manager.ts:extractSshOscSentinels →
+ * dispatchSSHStatuslineUpdate) is the SSH fallback for tunnel-less sessions.
  *
  * Provider-specific deploy/configure logic lives in providers/claude/statusline.ts.
  * The legacy deployStatuslineScript() / configureClaudeSettings() symbols are
@@ -119,8 +122,12 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
 }
 
 /**
- * Dispatch a parsed SSH statusline payload to the renderer.
- * Called from pty-manager when an OSC sentinel is extracted from an SSH PTY stream.
+ * Dispatch a statusline payload that arrived as a STRING (not via the file
+ * watcher) to the renderer. Two callers: the conductor MCP server's /status
+ * ingest (the primary channel for BOTH local and SSH sessions since the
+ * harmonise-remote unification — the name predates that) and pty-manager's
+ * OSC sentinel parser (SSH fallback). Every payload passes the same shape
+ * filter regardless of origin.
  */
 export function dispatchSSHStatuslineUpdate(json: string): void {
   if (!sshDispatchWindow) return

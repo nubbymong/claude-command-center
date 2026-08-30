@@ -653,9 +653,19 @@ describe('generateWindowsRemoteSetupScript (item 3)', () => {
     expect(script).toContain("Buffer.from(c.oauthAccount.emailAddress,'utf-8').toString('base64')")
   })
   it('bakes a Windows statusLine command that passes the session id via argv (cmd.exe cannot env-prefix)', () => {
+    // With the conductor MCP on (mocked port), the /status POST URL rides
+    // argv[3], double-quoted against the `&` in its query (harmonise-remote
+    // delivery tier 0).
     const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true }, NONCE)
+    expect(script).toContain(
+      `command:'node '+JSON.stringify(shimPath)+' winsid "http://127.0.0.1:19333/status?cccSessionId=winsid&token=tok-winsid"'`,
+    )
+  })
+  it('argv carries only the sid when the conductor MCP is off (no tunnel ⇒ CONOUT$ ladder)', () => {
+    const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true, includeConductorMcp: false }, NONCE)
     // `node "<shimPath>" <safeSid>` — shimPath JSON.stringify'd at runtime.
     expect(script).toContain(`command:'node '+JSON.stringify(shimPath)+' winsid'`)
+    expect(script).not.toContain('/status?')
   })
   it('rejects a bad nonce (charset guard, fail-closed like the POSIX generator)', () => {
     expect(() => generateWindowsRemoteSetupScript('winsid', undefined, 'bad nonce!')).toThrow(/charset guard/)
@@ -663,23 +673,39 @@ describe('generateWindowsRemoteSetupScript (item 3)', () => {
 })
 
 describe('getWindowsRemoteSetupCommand (item 3 — cmd.exe delivery)', () => {
-  it('delivers via powershell -Command with a single base64 payload that fits cmd.exe 8191 limit', () => {
+  // The `$`-free invariant applies to EVERY delivered form: a PowerShell login
+  // shell expands any $var inside the double-quoted -Command argument before
+  // the child runs, and the earlier `$ProgressPreference=…;$s=…;$s|node` form
+  // had $s expanded to empty -> `;|node` ParserError, so setup silently never
+  // ran (adversarial review, 2026-08-18). The chunked path's temp file uses a
+  // [IO.Path]::GetTempPath() expression for the same reason (not $env:TEMP).
+  // Mutation to prove this can fail: reintroduce a `$` anywhere in the output.
+  it('with the shared gather the full setup takes the CHUNKED path: every line a $-free powershell -Command under the 8191 limit', () => {
     const cmd = getWindowsRemoteSetupCommand('winsid', { includeStatusLine: true, includeConductorMcp: true }, 'winnonce123')
-    expect(cmd.startsWith('powershell -NoProfile -NonInteractive -Command "')).toBe(true)
-    // NOT -EncodedCommand (double-base64 would blow past the cmd line limit).
-    expect(cmd).not.toContain('-EncodedCommand')
-    expect(cmd).toContain('FromBase64String')
-    expect(cmd).toContain('|node')
-    // The -Command payload MUST contain NO `$`: a PowerShell login shell expands
-    // any $var inside the double-quoted argument before the child runs, and the
-    // earlier `$ProgressPreference=…;$s=…;$s|node` form had $s expanded to empty
-    // -> `;|node` ParserError, so setup silently never ran (adversarial review,
-    // 2026-08-18). Mutation to prove this can fail: reintroduce a `$` anywhere in
-    // the -Command string.
     expect(cmd).not.toContain('$')
-    // Well under cmd.exe's 8191-char command-line limit (measured ~4.8k on Hyper-V).
-    expect(cmd.length).toBeLessThan(8191)
+    expect(cmd).not.toContain('-EncodedCommand')
+    const lines = cmd.split('\r')
+    // Grown past the one-liner ceiling (harmonise-remote slice 2) — the whole
+    // point of the chunked path. If this shrinks back under 7500 the one-liner
+    // test below covers the shape instead; >1 line asserts we are ON this path.
+    expect(lines.length).toBeGreaterThan(1)
+    for (const line of lines) {
+      expect(line.startsWith('powershell -NoProfile -NonInteractive -Command "')).toBe(true)
+      // cmd.exe's hard input limit is 8191 per typed line.
+      expect(line.length).toBeLessThan(8191)
+    }
+    // First lines stage the base64; the final line decodes, runs, deletes.
+    expect(lines[0]).toContain('Set-Content -LiteralPath ([IO.Path]::GetTempPath()')
+    const last = lines[lines.length - 1]
+    expect(last).toContain('FromBase64String')
+    expect(last).toContain('|node')
+    expect(last).toContain('Remove-Item -LiteralPath ([IO.Path]::GetTempPath()')
   })
+
+  // No one-liner case: the Windows shim (embedded unconditionally, statusline
+  // on or off) has outgrown the 7500 fast-path ceiling since the shared
+  // gather, so every real setup ships chunked. The fast path stays as dead-
+  // cheap future-proofing, not a tested contract.
 })
 
 describe('buildWindowsClaudeCommand (item 3 — cmd.exe launch)', () => {
