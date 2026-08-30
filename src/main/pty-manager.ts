@@ -875,8 +875,13 @@ const sshTmuxWrappedBySession = new Set<string>()
  * real password prompt with the session's saved password, and wait for exit.
  * The prompt match reuses the connect flow's tightened rule: strip escapes
  * first (ConPTY glues them onto the prompt -- the RC9 lesson), then require
- * the last non-empty line to END with `password:`/`password?` so a MOTD
- * mentioning passwords can't trigger the write.
+ * the last non-empty line to END with `password:`/`password?` so a mid-line
+ * mention of passwords (the usual MOTD shape) can't trigger the write. A
+ * banner line deliberately ENDING in `password:` would still fire it — that
+ * is accepted, because the write's only possible destination is this PTY,
+ * which dials the credential's own host-key-verified host (accept-new
+ * REFUSES a changed key): a premature write to the password's owner, never a
+ * third-party leak (adversarial pass, 2026-08-30).
  *
  * Returns the outcome so callers that care (the live matrix) can await it;
  * the IPC caller stays fire-and-forget.
@@ -890,7 +895,6 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
   const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
   if (target.password) {
     // Password-auth host: PTY + one answered prompt (see doc above).
-    const args = buildSshExecArgs(target, buildRemoteTmuxKillCommand(sessionId), os.platform(), { batchMode: false })
     logInfo(`[ssh] ${sessionId}: ending remote session (password host; kill exec under a dedicated PTY)`)
     return new Promise((resolve) => {
       let settled = false
@@ -905,6 +909,10 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
       }
       const deadline = setTimeout(() => done('failed', 'timeout'), END_REMOTE_PASSWORD_TIMEOUT_MS)
       try {
+        // Argv build INSIDE the executor's try (adversarial pass): a sync throw
+        // here must resolve 'failed' like every other failure, not escape as an
+        // exception into a fire-and-forget IPC caller.
+        const args = buildSshExecArgs(target, buildRemoteTmuxKillCommand(sessionId), os.platform(), { batchMode: false })
         child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
       } catch (err) {
         done('failed', `spawn: ${(err as Error)?.message ?? err}`)
@@ -915,12 +923,24 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
       child.onData((d) => {
         // Bounded rolling tail; the prompt always sits at the end of it.
         tail = (tail + d).slice(-2048)
-        if (passwordSent) return
+        // `settled` too (adversarial pass): after the timeout killed the child,
+        // a final ConPTY flush ending in a prompt-shaped line must not write
+        // into the dead PTY from inside the emitter.
+        if (settled || passwordSent) return
         const lines = stripAnsiForSentinel(tail).split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0)
         const last = lines[lines.length - 1] ?? ''
         if (END_REMOTE_PASSWORD_PROMPT_RE.test(last)) {
           passwordSent = true
-          child!.write(`${target.password}\r`)
+          // CR/LF stripped: a saved password cannot legitimately contain one
+          // (single-line field), and an embedded newline would otherwise split
+          // this into extra PTY lines. try/catch: the exit/data race can leave
+          // the PTY closed mid-callback, and a throw here is inside node-pty's
+          // emitter — main-process uncaughtException territory.
+          try {
+            child!.write(`${target.password!.replace(/[\r\n]/g, '')}\r`)
+          } catch {
+            /* PTY already closed; onExit/timeout settles the outcome */
+          }
         }
       })
       child.onExit(({ exitCode }) => done(exitCode === 0 ? 'completed' : 'failed', `exit=${exitCode}`))

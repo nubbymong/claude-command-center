@@ -29,14 +29,14 @@ let seq = 0
 
 /** Render → one general note → submit as an APPROVAL → complete (the pane's
  *  auto-complete path lands on the same store call). */
-function approvedAndCompleted(sessionId: string): { canvasId: string; reviewId: string } {
+function approvedAndCompleted(sessionId: string, note = 'final constraint: terminal view only'): { canvasId: string; reviewId: string } {
   const title = `Approved subject ${++seq}`
   const r = canvasStore.renderVersion(sessionId, {
     mode: 'design',
     html: '<!doctype html><p>page</p>',
     title,
   })
-  reviewStore.upsertAnnotation(sessionId, { scope: 'general', note: 'final constraint: terminal view only', versionId: r.versionId })
+  reviewStore.upsertAnnotation(sessionId, { scope: 'general', note, versionId: r.versionId })
   const submitted = reviewStore.submitReview(sessionId, reviewStore.getReviewStateForSession(sessionId)!.reviews[0].id, [], 'approve')
   const reviewId = submitted.reviews.find((rv) => rv.status !== 'draft')!.id
   const done = canvasStore.setCanvasCompleted(r.canvasId, 'user', sessionId)
@@ -63,6 +63,21 @@ describe('#573 — reviews stay fetchable after the approval completed the subje
     expect(state?.canvasId).not.toBe(first.canvasId)
     // A session that never completed anything gets nothing — not a neighbour's.
     expect(canvasStore.getLastCompletedCanvasStateForSession(OTHER_SID)).toBeNull()
+  })
+
+  it('a session with its OWN completed canvas still cannot fetch another session’s notes', () => {
+    // The sharp cross-session case (adversarial pass): OTHER_SID qualifies for
+    // the fallback — it has a completed canvas of its own — and asks for the
+    // review id minted on SID's canvas. Review ids are per-canvas ("R1" exists
+    // on both), so the fallback must resolve OTHER_SID's OWN canvas: it gets
+    // its own note back, and the victim's text never crosses over.
+    const victim = approvedAndCompleted(SID, 'VICTIM-PRIVATE-NOTE')
+    approvedAndCompleted(OTHER_SID, 'attacker own note')
+    const out = reviewStore.getReviewPayload(OTHER_SID, victim.reviewId)
+    const notes = [...out.payload.generalNotes, ...out.payload.annotations].map((a) => a.note)
+    expect(notes).toContain('attacker own note')
+    expect(notes.join(' ')).not.toContain('VICTIM-PRIVATE-NOTE')
+    expect(out.payload.review.canvas.canvasId).not.toBe(victim.canvasId)
   })
 
   it('mutation is still terminal: a completed canvas refuses a new note', () => {

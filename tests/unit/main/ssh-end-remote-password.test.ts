@@ -34,6 +34,9 @@ const h = vi.hoisted(() => ({
   }>,
   execFiles: [] as Array<{ bin: string; args: string[] }>,
   execFileError: null as Error | null,
+  // Every log line the module emits, flattened — the "never logged" thesis is
+  // asserted against this (adversarial pass: it was claimed and unasserted).
+  logs: [] as string[],
 }))
 
 vi.mock('node-pty', () => ({
@@ -84,6 +87,11 @@ vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false },
 }))
 
+vi.mock('../../../src/main/debug-logger', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/main/debug-logger')>()
+  const capture = (...args: unknown[]) => { h.logs.push(args.map(String).join(' ')) }
+  return { ...real, logDebug: capture, logTrace: capture, logInfo: capture, logWarn: capture, logError: capture }
+})
 vi.mock('../../../src/main/logging/logging-service', () => ({
   getLogSupervisor: () => null,
   getTranscriptBinder: () => null,
@@ -150,6 +158,7 @@ beforeEach(() => {
   h.ptySpawns.length = 0
   h.execFiles.length = 0
   h.execFileError = null
+  h.logs.length = 0
 })
 
 describe('endSshRemote (#572)', () => {
@@ -223,5 +232,64 @@ describe('endSshRemote (#572)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // ── Adversarial-pass hardenings (2026-08-30) ──────────────────────────────
+
+  it('a prompt arriving AFTER the timeout settled never writes into the dead PTY', async () => {
+    vi.useFakeTimers()
+    try {
+      _setSshTargetForTest('sid-late', { username: 'pi', host: 'h6', port: 22, password: 'late-pw' })
+      const p = endSshRemote('sid-late')
+      const fake = lastPty()
+      await vi.advanceTimersByTimeAsync(20_001)
+      await expect(p).resolves.toBe('failed')
+      // The killed child flushes one last ConPTY chunk ending in a prompt.
+      fake.data!("pi@h6's password: ")
+      expect(fake.writes).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('CR/LF in a saved password cannot become extra PTY lines', async () => {
+    _setSshTargetForTest('sid-crlf', { username: 'pi', host: 'h7', port: 22, password: 'pw\r\nrm -rf x' })
+    const p = endSshRemote('sid-crlf')
+    const fake = lastPty()
+    fake.data!("pi@h7's password: ")
+    expect(fake.writes).toEqual(['pwrm -rf x\r'])
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toBe('completed')
+  })
+
+  it('the RC9 trailing-glue shape (escapes AFTER the prompt, one unterminated) still matches once', async () => {
+    _setSshTargetForTest('sid-trail', { username: 'pi', host: 'h8', port: 22, password: 'pw8' })
+    const p = endSshRemote('sid-trail')
+    const fake = lastPty()
+    fake.data!("pi@h8's password: \x1b[?25h\x1b[")
+    expect(fake.writes).toEqual(['pw8\r'])
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toBe('completed')
+  })
+
+  it('key target: an exec error resolves failed (not completed, not a hang)', async () => {
+    h.execFileError = new Error('ssh: connect refused')
+    _setSshTargetForTest('sid-keyfail', { username: 'u', host: 'h9', port: 22 })
+    await expect(endSshRemote('sid-keyfail')).resolves.toBe('failed')
+  })
+
+  it('the password appears in NO log line, on success or on failure', async () => {
+    _setSshTargetForTest('sid-log1', { username: 'pi', host: 'hA', port: 22, password: 'hunter2secret' })
+    const ok = endSshRemote('sid-log1')
+    const fake = lastPty()
+    fake.data!("pi@hA's password: ")
+    fake.exit!({ exitCode: 0 })
+    await ok
+    _setSshTargetForTest('sid-log2', { username: 'pi', host: 'hB', port: 22, password: 'hunter2secret' })
+    const bad = endSshRemote('sid-log2')
+    lastPty().exit!({ exitCode: 255 })
+    await bad
+    expect(h.logs.length).toBeGreaterThan(0)
+    for (const line of h.logs) expect(line).not.toContain('hunter2secret')
   })
 })
