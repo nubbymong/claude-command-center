@@ -209,4 +209,21 @@ describe('SessionRow card', () => {
     expect(container.querySelector('[data-testid="context-meter-row"]')).toBeNull()
     expect(container.querySelector('.meter-fill')).toBeNull()
   })
+
+  // Phase 3 (harmonise-remote): the card's account line resolves from
+  // accountEmail (live /status tick) with sshRemoteAccount (setup sentinel)
+  // as the SSH fallback, so remote cards carry the same account row as local.
+  it('SSH card shows the account line from sshRemoteAccount when no live tick yet', () => {
+    render(root, { sessionType: 'ssh', accountEmail: undefined, sshRemoteAccount: 'remote@x.com' })
+    const name = container.querySelector('[data-testid="account-name"]')
+    expect(name).not.toBeNull()
+    expect(name!.textContent).toBeTruthy()
+    expect((name as HTMLElement).title).toBe('remote@x.com')
+  })
+
+  it('SSH card prefers the live accountEmail over the setup-sentinel snapshot', () => {
+    render(root, { sessionType: 'ssh', accountEmail: 'live@x.com', sshRemoteAccount: 'stale@x.com' })
+    const name = container.querySelector('[data-testid="account-name"]')
+    expect((name as HTMLElement).title).toBe('live@x.com')
+  })
 })

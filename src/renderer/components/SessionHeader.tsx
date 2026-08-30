@@ -6,7 +6,7 @@ import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountAuthStore } from '../stores/accountAuthStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { resolveAccountName, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { BrandMark } from './BrandMark'
 import { useRestartSession } from '../hooks/useRestartSession'
 import { ASK_LABEL } from '../lib/askConductor'
@@ -185,6 +185,7 @@ function SessionGitHubPill({ session }: { session: Session }) {
  */
 function SessionAuthPills({ session }: { session: Session }) {
   const primary = useAccountProfilesStore((s) => s.profiles.find((p) => p.isPrimary))
+  const profiles = useAccountProfilesStore((s) => s.profiles)
   const refresh = useAccountAuthStore((s) => s.refresh)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
@@ -212,6 +213,43 @@ function SessionAuthPills({ session }: { session: Session }) {
   // stray githubIntegration on the record (there is no path that sets one,
   // the auto-detect banner is gated) could not paint it.
   const gitHub = isAsk ? null : <SessionGitHubPill session={session} />
+
+  // Phase 3 (harmonise-remote): an SSH Claude session gets the ACCOUNT pill,
+  // named from its live /status accountEmail (fallback: the setup-sentinel
+  // snapshot sshRemoteAccount), with the remote signed-in state FOLDED into
+  // it — the pill exists iff the remote reports an account, so a separate
+  // "Claude Code" pill would be redundant, and claude.ai has no remote
+  // equivalent (the accountAuthStore checks are local-profile-scoped).
+  // GitHub-on-remote is deferred; the repoSlug fallthrough below keeps
+  // whatever local detection produced. This pill replaces the old mauve
+  // remote-account pill in the SSH cluster, so remote and local headers
+  // read the same.
+  const isSshClaude = !session.shellOnly && session.sessionType === 'ssh' && (session.provider ?? 'claude') === 'claude'
+  if (isSshClaude) {
+    const remoteEmail = session.accountEmail || session.sshRemoteAccount
+    const gitHubTail = !isAsk && session.githubIntegration?.repoSlug
+      ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
+      : null
+    if (!remoteEmail) return gitHubTail
+    const r = resolveAccountNameByEmail(remoteEmail, profiles, accountAliases)
+    const remoteName = r === remoteEmail ? middleTruncateEmail(remoteEmail) : r
+    const remoteTone = resolveIdentityColor(
+      resolveAccountColourKey(remoteEmail, accountColourOverrides, session.accountColour),
+      theme,
+    )
+    return (
+      <>
+        <HeaderPill
+          label={remoteName}
+          tone={remoteTone}
+          title={`Remote Claude account: ${remoteEmail} (signed in on the remote host)`}
+          testId="session-pill-account"
+        />
+        {gitHubTail}
+      </>
+    )
+  }
+
   if (!applies || !profileId) {
     // Non-Claude sessions still show the GitHub pill (with its own leading
     // separator) so the right cluster stays consistent.
@@ -386,17 +424,10 @@ export default function SessionHeader({ session }: Props) {
               testId="ssh-nonpersistent-pill"
             />
           )}
-          {/* item 10: the account the REMOTE session is signed in as (descriptor
-              only). Distinct from the local SessionAuthPills, which never apply
-              to SSH. */}
-          {session.sshRemoteAccount && (
-            <HeaderPill
-              label={<span className="truncate max-w-[140px]">{session.sshRemoteAccount}</span>}
-              tone="var(--color-mauve)"
-              title={`Remote Claude account: ${session.sshRemoteAccount}`}
-              testId="ssh-remote-account-pill"
-            />
-          )}
+          {/* Phase 3 (harmonise-remote): the old mauve remote-account pill
+              lived here (item 10, testId ssh-remote-account-pill). Retired —
+              SessionAuthPills now renders the ACCOUNT pill for SSH sessions
+              from live accountEmail || sshRemoteAccount, same chrome as local. */}
         </span>
       )}
 

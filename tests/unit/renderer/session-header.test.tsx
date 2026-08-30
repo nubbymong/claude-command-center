@@ -153,7 +153,31 @@ describe('SessionHeader', () => {
     render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, githubIntegration: { enabled: true, repoSlug: 'nubbymong/web', autoDetected: true } as any }))
     expect(container.querySelector('[data-testid="session-pill-github"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    // No remote account known (no live tick, no setup sentinel) — no account pill.
     expect(container.querySelector('[data-testid="session-pill-account"]')).toBeNull()
+  })
+
+  // Phase 3 (harmonise-remote): the SSH header carries the ACCOUNT pill once a
+  // remote account is known — live accountEmail (tunnel /status) preferred,
+  // setup-sentinel sshRemoteAccount as fallback. Signed-in state is FOLDED into
+  // the pill (it exists iff the remote reports an account): no Claude Code /
+  // claude.ai pills, and the old mauve remote-account pill is retired.
+  it('SSH: shows the account pill from the setup-sentinel fallback (sshRemoteAccount)', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, sshRemoteAccount: 'remote@x.com' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.getAttribute('title')).toContain('remote@x.com')
+    expect(container.querySelector('[data-testid="ssh-remote-account-pill"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).toBeNull()
+  })
+
+  it('SSH: the live tunnel accountEmail wins over the setup-sentinel snapshot', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'live@x.com', sshRemoteAccount: 'stale@x.com' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.getAttribute('title')).toContain('live@x.com')
+    expect(acct?.getAttribute('title')).not.toContain('stale@x.com')
   })
 
   it('does NOT show the auth pills for an SSH session (remote creds)', () => {
