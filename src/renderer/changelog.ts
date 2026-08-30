@@ -21,6 +21,19 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.11',
+    date: '2026-08-30',
+    highlights: 'A UX sweep from living on rc.10: the command bar stops hoarding space and the SSH host reads as a quiet pill above the status line instead of a floating IP overhanging the buttons. Two real bugs die with it: End remote now genuinely ends password-auth remote sessions (orphaned Claudes no longer pile up on the host), and approving a canvas round with final notes no longer loses those notes to the agent. The blank browser page gets its brand masthead.',
+    changes: [
+      { type: 'fix', description: 'End remote works on password hosts. The quiet kill that runs when you end an SSH session could only authenticate with a key, so on a saved-password host every End silently left Claude and tmux running on the remote — each one holding a few hundred MB until the host ran dry. The kill now signs in the same way the session did: it answers exactly one password prompt, over its own hidden connection, and the password never appears in a command line or a log. Verified live against a real password host.' },
+      { type: 'fix', description: 'The SSH host badge no longer overhangs the command bar. A remote session used to print its raw IP as a tiny floating pill across whatever buttons sat nearby. The cluster marks now just say which side each pane runs on — THIS PC / REMOTE — and the host itself shows as a quiet rounded pill docked bottom-left of the terminal, riding just above the status line. SSH sessions only, terminal view only, and it never intercepts a click.' },
+      { type: 'fix', description: 'SSH sessions show up in the account strip. A remote session knows which account it is signed in as, but the multi-account strip ignored it — the session appeared under no account at all. It now joins its account’s row (a local session’s identity still wins when both exist), sharing the row’s usage buckets fed by local sessions.' },
+      { type: 'improvement', description: 'Command-bar buttons stop reserving space for their widest label. The Canvas button held permanent dead space sized for the word "Terminal"; toggle buttons now animate to the width of the label they actually show, and their neighbours slide over smoothly — including when the canvas review dot arrives beside the label.' },
+      { type: 'fix', description: 'Approving a canvas round with final notes no longer strands those notes. An approval with nothing else owed signs the canvas off and returns the pane to its front page — correct — but it also cut the agent off from reading the very notes sent with that approval. The agent can now still fetch a review from a signed-off canvas (read-only; nothing else about completion changes).' },
+      { type: 'improvement', description: 'The blank browser page wears the brand. The near-invisible "Browser" title is replaced with the http:// artwork beside a gradient wordmark, baseline-aligned with the art.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.10',
     date: '2026-08-29',
     highlights: 'The Agent Canvas is rebuilt around one idea: a review is a decision, and a decision settles. Approving a version owes the agent nothing — notes you send with an approval are kept as observations, not work — and an approved artefact signs itself off. A new Testing mode lets you click through the build your agent is serving and save evidence notes that lock the screen, the page state and how you got there together, into a pass-or-fail test pack. Unfinished canvas work now outlives the session that made it: any session on the project can pick it up. And a new Canvas Explained page draws the whole model.',
