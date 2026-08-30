@@ -29,14 +29,19 @@ jobs:
         run: node scripts/gen-changelog.js --check
 
   # Desktop-test merge gate (#309). Headless CI can pass while the packaged app
-  # fails to run usefully on a real desktop (it has), so "did a human open it?"
-  # is the real acceptance gate — and it should be enforced by the merge button,
-  # not left to a reviewer's memory or a PR-body note.
+  # fails to run usefully on a real desktop (it has), so "was the built app
+  # actually exercised?" is the real acceptance gate — and it should be enforced
+  # by the merge button, not left to a reviewer's memory or a PR-body note.
+  # Two ways to satisfy it (aicc_planning D#20, the Master Test Process):
+  #   - `desktop-tested`    a HUMAN opened and exercised the packaged app
+  #   - `runtime-validated` AUTOMATED runtime validation passed — VM Playwright
+  #                         e2e and/or the live SSH statusline matrix
   #
   # This is the INVERSE of the `ci-run` label below: `ci-run` is opt-in (present
   # => run the matrix); this one is required-to-allow (the check FAILS unless the
-  # PR carries `desktop-tested` or `skip-desktop-test`). Only PRs are gated;
-  # direct pushes to `main` have no label and are exempt by the event guard.
+  # PR carries `desktop-tested`, `runtime-validated`, or `skip-desktop-test`).
+  # Only PRs are gated; direct pushes to `main` have no label and are exempt by
+  # the event guard.
   #
   # The job's only `if` is event-scoped (`pull_request`), and that is the whole
   # design: on every PR it ALWAYS runs, then decides pass/fail from the labels
@@ -53,20 +58,25 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Require desktop-tested (or skip-desktop-test) label
+      - name: Require desktop-tested / runtime-validated (or skip-desktop-test) label
         env:
           HAS_TESTED: ${{ contains(github.event.pull_request.labels.*.name, 'desktop-tested') }}
+          HAS_RUNTIME: ${{ contains(github.event.pull_request.labels.*.name, 'runtime-validated') }}
           HAS_SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'skip-desktop-test') }}
         run: |
           if [ "$HAS_TESTED" = "true" ]; then
-            echo "PR carries 'desktop-tested' — the app was exercised on a real desktop. Gate open."
+            echo "PR carries 'desktop-tested' — a human exercised the packaged app on a real desktop. Gate open."
+            exit 0
+          fi
+          if [ "$HAS_RUNTIME" = "true" ]; then
+            echo "PR carries 'runtime-validated' — automated runtime validation passed (VM Playwright e2e and/or the live SSH statusline matrix). Gate open."
             exit 0
           fi
           if [ "$HAS_SKIP" = "true" ]; then
-            echo "PR carries 'skip-desktop-test' — no desktop test required (docs/deps/CI/changelog-only). Gate open."
+            echo "PR carries 'skip-desktop-test' — no runtime test required (docs/deps/CI/changelog-only). Gate open."
             exit 0
           fi
-          echo "::error::Desktop-test merge gate: this PR must carry the 'desktop-tested' label (app launched and exercised on a real desktop) or 'skip-desktop-test' (docs/deps/CI/changelog-only) before it can merge. See CONTRIBUTING.md > Desktop-test gate."
+          echo "::error::Desktop-test merge gate: this PR must carry 'desktop-tested' (a human launched and exercised the packaged app), 'runtime-validated' (automated VM e2e and/or the live SSH statusline matrix passed), or 'skip-desktop-test' (docs/deps/CI/changelog-only) before it can merge. See CONTRIBUTING.md > Desktop-test gate."
           exit 1
 
   test:
