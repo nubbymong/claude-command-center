@@ -24,6 +24,15 @@ import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 // smaller, zero-network, and survives token-format changes. Trade-off: stdin
 // doesn't expose `extra_usage`, so SSH statuslines no longer show the extra
 // top-up bar (local sessions still do). Re-add via API later if needed.
+// Delivery order (harmonise-remote): tier 0 is an HTTP POST of the status JSON
+// to the conductor MCP server's /status endpoint through the session's own SSH
+// reverse tunnel (CCC_STATUS_URL env / argv[3]) — no escape sequence, no PTY,
+// no ConPTY re-rendering in the path, so it works identically on every remote
+// (probes 2026-08-30: Windows stacks up to three ConPTYs, each of which may
+// swallow OSC/DCS — bytes that never arrive cannot be parsed). The OSC ladder
+// below is the FALLBACK for sessions with no tunnel (includeConductorMcp off)
+// or a torn tunnel.
+//
 // Fallback order for the OSC sentinel (first that succeeds wins):
 //   1. tmux client tty (#242) — checked FIRST, ahead of /dev/tty below.
 //      Under tmux, EVERY device this shim's own process tree can reach --
@@ -112,6 +121,7 @@ const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');
 if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}
 if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
 const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
+const deliverLegacy=function(){
 let ok=false;if(process.platform==='win32'){try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);ok=true;trace('conout-ok sid='+sid);}catch(e0){trace('conout-fail sid='+sid+' err='+(e0&&e0.code||e0.message||'unknown'));}}
 if(process.env.TMUX){
 // Self-heal (2026-08-27): $CCC_TMUX_BIN can be empty or stale — the bake ran
@@ -146,9 +156,49 @@ if(!ok){try{fs.writeFileSync('/dev/tty',sentinel);ok=true;}catch(e){trace('tty-f
 if(!ok){const pts=findPty();if(pts){try{fs.writeFileSync(pts,sentinel);ok=true;trace('pts-ok sid='+sid+' dev='+pts);}catch(e2){trace('pts-fail sid='+sid+' dev='+pts+' err='+(e2&&e2.code||e2.message||'unknown'));}}else{trace('pts-none sid='+sid);}}
 if(!ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e3){trace('stderr-fail sid='+sid+' err='+(e3&&e3.message||'unknown'));}}
 process.stdout.write(' ');
+};
+const statusUrl=process.argv[3]||process.env.CCC_STATUS_URL||'';
+if(statusUrl){
+let done=false;
+const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag);deliverLegacy();}};
+try{
+const body=JSON.stringify(s);
+const u=new URL(statusUrl);
+const rq=require('http').request({hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)},timeout:3000},function(res){res.resume();fin(!!res.statusCode&&res.statusCode<300,'http-'+res.statusCode);});
+rq.on('timeout',function(){try{rq.destroy();}catch(e4){}fin(false,'timeout');});
+rq.on('error',function(e5){fin(false,(e5&&e5.code)||'err');});
+rq.end(body);
+}catch(e6){fin(false,'ex');}
+}else{deliverLegacy();}
 }catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}
 });
 `
+
+/**
+ * The tunnel URL the remote statusline shim POSTs its payload to (delivery
+ * tier 0): the conductor MCP server's /status endpoint, reached through the
+ * session's own `-R` reverse tunnel. Empty when the tunnel is off (no MCP
+ * server, or includeConductorMcp=false) — the shim then falls back to the
+ * legacy OSC ladder. Charset-asserted because the value is embedded in shell
+ * command lines on both platforms (single-quoted under sh, double-quoted under
+ * cmd.exe); every component is already charset-safe (hex sid via
+ * encodeURIComponent, hex HMAC token, numeric port), so the guard is a
+ * fail-closed backstop, not an expected path.
+ */
+export function statusPostUrl(
+  sessionId: string,
+  remoteMcpPort: number | undefined,
+  mcpPort: number,
+  includeConductorMcp: boolean,
+): string {
+  if (!(mcpPort > 0) || !includeConductorMcp) return ''
+  const listen = remoteMcpPort && remoteMcpPort > 0 ? remoteMcpPort : mcpPort
+  const url = `http://127.0.0.1:${listen}/status?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`
+  if (!/^[A-Za-z0-9:/?=&._%-]+$/.test(url)) {
+    throw new Error('statusPostUrl: generated URL fails the charset guard')
+  }
+  return url
+}
 
 /**
  * Generate a single node script that handles ALL remote setup:
@@ -271,7 +321,15 @@ export function generateRemoteSetupScript(
     // find the tmux binary under a persistent session. tmuxPath is the tier-1/2
     // probe result (empty when none); after a tier-3/4 stage succeeds it is
     // rewritten by buildTmuxBinPatchCommand. tmuxPath is charset-guarded upstream.
-    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${safeSid} CCC_TMUX_BIN='+tmuxPath+' node '+shimPath}`)
+    //
+    // CCC_STATUS_URL (harmonise-remote): delivery tier 0 — the shim POSTs the
+    // payload through the reverse tunnel instead of the OSC ladder. Single-
+    // quoted for sh (`&` in the query string would otherwise background the
+    // command); statusPostUrl charset-guards the value, so the quotes cannot
+    // be escaped from. Empty ⇒ omitted ⇒ the shim uses the ladder.
+    const statusUrl = statusPostUrl(sessionId, remoteMcpPort, mcpPort, includeConductorMcp)
+    const statusUrlEnv = statusUrl ? ` CCC_STATUS_URL=\\'${statusUrl}\\'` : ''
+    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${safeSid}${statusUrlEnv} CCC_TMUX_BIN='+tmuxPath+' node '+shimPath}`)
   }
   if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
 
@@ -711,7 +769,7 @@ export function buildTmuxBinPatchCommand(sessionId: string): string {
  * reaches the SSH client (verified on Hyper-V). Session id rides argv (cmd.exe
  * cannot env-prefix a statusLine command).
  */
-const SSH_STATUSLINE_SHIM_WINDOWS = "const fs=require('fs'),os=require('os'),path=require('path');const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+String(m).replace(/[\\r\\n]+/g,' ')+String.fromCharCode(10));}catch(e){}};let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{try{const data=JSON.parse(input);const sid=process.argv[2]||process.env.CLAUDE_MULTI_SESSION_ID||(data&&data.session_id)||'unknown';const cw=data.context_window||{},u=cw.current_usage||{},cost=data.cost||{},m=data.model||{},rl=data.rate_limits||{};const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}const sentinel=String.fromCharCode(27)+']9999;CMSTATUS='+JSON.stringify(s)+String.fromCharCode(7);try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);trace('conout-ok sid='+sid);}catch(e){trace('conout-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){}}process.stdout.write(' ');}catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}});"
+const SSH_STATUSLINE_SHIM_WINDOWS = "const fs=require('fs'),os=require('os'),path=require('path');const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+String(m).replace(/[\\r\\n]+/g,' ')+String.fromCharCode(10));}catch(e){}};let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{try{const data=JSON.parse(input);const sid=process.argv[2]||process.env.CLAUDE_MULTI_SESSION_ID||(data&&data.session_id)||'unknown';const cw=data.context_window||{},u=cw.current_usage||{},cost=data.cost||{},m=data.model||{},rl=data.rate_limits||{};const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}const sentinel=String.fromCharCode(27)+']9999;CMSTATUS='+JSON.stringify(s)+String.fromCharCode(7);const deliverLegacy=function(){try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);trace('conout-ok sid='+sid);}catch(e){trace('conout-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){}}process.stdout.write(' ');};const statusUrl=process.argv[3]||process.env.CCC_STATUS_URL||'';if(statusUrl){let done=false;const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag);deliverLegacy();}};try{const body=JSON.stringify(s);const u=new URL(statusUrl);const rq=require('http').request({hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)},timeout:3000},function(res){res.resume();fin(!!res.statusCode&&res.statusCode<300,'http-'+res.statusCode);});rq.on('timeout',function(){try{rq.destroy();}catch(e4){}fin(false,'timeout');});rq.on('error',function(e5){fin(false,(e5&&e5.code)||'err');});rq.end(body);}catch(e6){fin(false,'ex');}}else{deliverLegacy();}}catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}});"
 
 export function generateWindowsRemoteSetupScript(
   sessionId: string,
@@ -744,7 +802,13 @@ export function generateWindowsRemoteSetupScript(
   // `+shimPath+`.
   const sesCfgParts: string[] = []
   if (includeStatusLine) {
-    sesCfgParts.push(`statusLine:{type:'command',command:'node '+JSON.stringify(shimPath)+' ${safeSid}'}`)
+    // argv[3] = the tunnel POST URL (delivery tier 0) — double-quoted so
+    // cmd.exe does not split on the `&` in the query string; statusPostUrl
+    // charset-guards the value so the quotes cannot be escaped from. Empty ⇒
+    // omitted ⇒ the shim falls back to its CONOUT$ ladder.
+    const statusUrl = statusPostUrl(sessionId, remoteMcpPort, mcpPort, includeConductorMcp)
+    const statusUrlArg = statusUrl ? ` "${statusUrl}"` : ''
+    sesCfgParts.push(`statusLine:{type:'command',command:'node '+JSON.stringify(shimPath)+' ${safeSid}${statusUrlArg}'}`)
   }
 
   const lines = [

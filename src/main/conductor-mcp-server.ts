@@ -36,6 +36,7 @@ import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-conf
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
 import { readConfig } from './config-manager'
+import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getInstallSecret } from './install-secret'
 import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
@@ -486,6 +487,58 @@ export function authorizeMessagePost(
     }
   }
   return { ok: true, transport }
+}
+
+/** POST /status body cap. Real payloads are 1–2 KB of statusline JSON; 64 KB
+ *  leaves headroom for future fields without letting a hostile remote stream
+ *  megabytes into memory through its tunnel. */
+export const STATUS_BODY_MAX_BYTES = 64 * 1024
+
+/**
+ * Ingest one status payload POSTed by a remote statusline shim over the
+ * session's SSH reverse tunnel (harmonise-remote PR). This replaces smuggling
+ * the payload through the PTY stream as an OSC sentinel: on Windows remotes the
+ * sentinel crosses up to three stacked ConPTYs (pane → psmux → sshd), each of
+ * which may re-render or swallow escape sequences — bytes that never arrive
+ * cannot be parsed. An HTTP body has no such interpreter in the path.
+ *
+ * Binding rule (same as authorizeMessagePost, GHSA-f3wv): the payload's session
+ * identity comes from the AUTHENTICATED token, never from the body. Whatever
+ * `sessionId` the remote wrote is overwritten with `authedSession`, so a remote
+ * host can only ever report status for the session whose HMAC it was issued —
+ * one hostile host cannot repaint another session's statusline.
+ *
+ * Downstream, dispatchSSHStatuslineUpdate applies the same shape filter as the
+ * OSC path (sanitiseSentinelPayload), so both deliveries feed one validator.
+ *
+ * Pure decision + a single dispatch side-effect, exported for unit tests.
+ */
+export function ingestStatusPayload(
+  authedSession: string,
+  rawBody: string,
+): { status: number; body: string } {
+  if (!authedSession) {
+    // Unreachable behind the 401 gate; fail closed under future refactors.
+    return { status: 401, body: 'Unauthorized' }
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawBody)
+  } catch {
+    return { status: 400, body: 'Bad payload' }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { status: 400, body: 'Bad payload' }
+  }
+  const bound = { ...(parsed as Record<string, unknown>), sessionId: authedSession }
+  try {
+    dispatchSSHStatuslineUpdate(JSON.stringify(bound))
+  } catch {
+    // The dispatcher swallows malformed payloads itself; a throw here means a
+    // bug, not a bad request — but the shim's retry loop must not hammer.
+    return { status: 500, body: 'Dispatch failed' }
+  }
+  return { status: 204, body: '' }
 }
 
 // Lazy-load MCP SDK to avoid import issues in test environments
@@ -1129,6 +1182,37 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
             res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: err?.message ?? 'Internal error' } }))
           }
         }
+        return
+      }
+
+      // Status ingest over the SSH reverse tunnel (harmonise-remote): the remote
+      // statusline shim POSTs its payload here instead of writing an OSC
+      // sentinel into the PTY stream. Auth is the same per-session HMAC gate as
+      // every route above; the payload is bound to the AUTHENTICATED session in
+      // ingestStatusPayload, so the body cannot speak for another session.
+      if (req.method === 'POST' && req.url?.startsWith('/status')) {
+        let size = 0
+        let refused = false
+        const chunks: Buffer[] = []
+        req.on('data', (c: Buffer) => {
+          if (refused) return
+          size += c.length
+          if (size > STATUS_BODY_MAX_BYTES) {
+            refused = true
+            res.writeHead(413, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('Payload too large')
+            req.destroy()
+            return
+          }
+          chunks.push(c)
+        })
+        req.on('end', () => {
+          if (refused) return
+          const decision = ingestStatusPayload(authedSession, Buffer.concat(chunks).toString('utf-8'))
+          res.writeHead(decision.status, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end(decision.body)
+        })
+        req.on('error', () => { /* torn connection mid-body — nothing to answer */ })
         return
       }
 

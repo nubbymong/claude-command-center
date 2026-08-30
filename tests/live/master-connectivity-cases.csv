@@ -1,0 +1,108 @@
+CaseID,Case,FROM,TO,Hops,SessionType,SshAuth,DockerAuth,Runnable,Notes
+1,Windows to Windows Tmux,WINDOWS_1,WINDOWS_2,1,Tmux,Keyless,none,YES,Degrade test - no tmux on Windows target; detachable ON must land bare cleanly
+2,Windows to Windows Standard,WINDOWS_1,WINDOWS_2,1,Standard,Keyless,none,YES,The controlled windows-client to windows-target cell (T7 both sides)
+3,Windows to Windows Tmux,WINDOWS_1,WINDOWS_2,1,Tmux,Password,none,YES,Degrade test - as case 1
+4,Windows to Windows Standard,WINDOWS_1,WINDOWS_2,1,Standard,Password,none,YES,
+5,Windows to Unix Tmux (Docker) via Windows,WINDOWS_1,WINDOWS_2&DOCKER,2,Tmux,Keyless,nosudo,NO,No tmux on Windows host hop
+6,Windows to Unix Standard (Docker) via Windows,WINDOWS_1,WINDOWS_2&DOCKER,2,Standard,Keyless,nosudo,YES,Container runtime is unix; shim runs in container; docker on WINDOWS_2
+7,Windows to Unix Tmux (Docker) via Windows,WINDOWS_1,WINDOWS_2&DOCKER,2,Tmux,Password,sudo,NO,No sudo-docker on Windows; no tmux on Windows host
+8,Windows to Unix Standard (Docker) via Windows,WINDOWS_1,WINDOWS_2&DOCKER,2,Standard,Password,sudo,NO,No sudo-docker on Windows
+9,Windows to Unix Tmux (Docker) via Windows,WINDOWS_1,WINDOWS_2&DOCKER,2,Tmux,Keyless,sudo,NO,No sudo-docker on Windows; no tmux on Windows host
+10,Windows to Unix Standard (Docker) via Windows,WINDOWS_1,WINDOWS_2&DOCKER,2,Standard,Keyless,sudo,NO,No sudo-docker on Windows
+11,Windows to Unix Tmux (Docker) via Windows,WINDOWS_1,WINDOWS_2&DOCKER,2,Tmux,Password,nosudo,NO,No tmux on Windows host hop
+12,Windows to Unix Standard (Docker) via Windows,WINDOWS_1,WINDOWS_2&DOCKER,2,Standard,Password,nosudo,YES,
+13,Windows to Mac OS Tmux,WINDOWS_1,MAC_254,1,Tmux,Keyless,none,YES,
+14,Windows to Mac OS Standard,WINDOWS_1,MAC_254,1,Standard,Keyless,none,YES,
+15,Windows to Mac OS Tmux,WINDOWS_1,MAC_254,1,Tmux,Password,none,YES,
+16,Windows to Mac OS Standard,WINDOWS_1,MAC_254,1,Standard,Password,none,YES,
+17,Windows to Unix Tmux (Docker) via Mac OS,WINDOWS_1,MAC_254&DOCKER,2,Tmux,Keyless,nosudo,YES,tmux wraps on mac host; claude in container
+18,Windows to Unix Standard (Docker) via Mac OS,WINDOWS_1,MAC_254&DOCKER,2,Standard,Keyless,nosudo,YES,
+19,Windows to Unix Tmux (Docker) via Mac OS,WINDOWS_1,MAC_254&DOCKER,2,Tmux,Password,sudo,NO,Docker Desktop on mac needs no sudo
+20,Windows to Unix Standard (Docker) via Mac OS,WINDOWS_1,MAC_254&DOCKER,2,Standard,Password,sudo,NO,Docker Desktop on mac needs no sudo
+21,Windows to Unix Tmux (Docker) via Mac OS,WINDOWS_1,MAC_254&DOCKER,2,Tmux,Keyless,sudo,NO,Docker Desktop on mac needs no sudo
+22,Windows to Unix Standard (Docker) via Mac OS,WINDOWS_1,MAC_254&DOCKER,2,Standard,Keyless,sudo,NO,Docker Desktop on mac needs no sudo
+23,Windows to Unix Tmux (Docker) via Mac OS,WINDOWS_1,MAC_254&DOCKER,2,Tmux,Password,nosudo,YES,
+24,Windows to Unix Standard (Docker) via Mac OS,WINDOWS_1,MAC_254&DOCKER,2,Standard,Password,nosudo,YES,
+25,Windows to Rocky Tmux,WINDOWS_1,ROCKY_LINUX,1,Tmux,Keyless,none,YES,Staged tmux (no system tmux on Rocky)
+26,Windows to Rocky Standard,WINDOWS_1,ROCKY_LINUX,1,Standard,Keyless,none,YES,
+27,Windows to Rocky Tmux,WINDOWS_1,ROCKY_LINUX,1,Tmux,Password,none,YES,Existing live-pack T9 analogue
+28,Windows to Rocky Standard,WINDOWS_1,ROCKY_LINUX,1,Standard,Password,none,YES,Existing live-pack T10 analogue
+29,Windows to Ubuntu VM Tmux,WINDOWS_1,UBUNTU_HYPER_V,1,Tmux,Keyless,none,YES,
+30,Windows to Ubuntu VM Standard,WINDOWS_1,UBUNTU_HYPER_V,1,Standard,Keyless,none,YES,
+31,Windows to Ubuntu VM Tmux,WINDOWS_1,UBUNTU_HYPER_V,1,Tmux,Password,none,YES,
+32,Windows to Ubuntu VM Standard,WINDOWS_1,UBUNTU_HYPER_V,1,Standard,Password,none,YES,
+33,Windows to Ubuntu Server Tmux,WINDOWS_1,SERVER_UBUNTU,1,Tmux,Keyless,none,YES,Cross-pair - same distro class as UBUNTU_HYPER_V (full 4 there)
+34,Windows to Ubuntu Server Standard,WINDOWS_1,SERVER_UBUNTU,1,Standard,Password,none,YES,Cross-pair
+35,Windows to Pi Tmux,WINDOWS_1,PI_MINER,1,Tmux,Password,none,YES,ARM wire box; live-pack T4 analogue
+36,Windows to Pi Standard,WINDOWS_1,PI_MINER,1,Standard,Keyless,none,YES,Exercises new Pi key auth
+37,Windows to Unix Tmux (Docker) via Rocky,WINDOWS_1,ROCKY_LINUX&DOCKER,2,Tmux,Keyless,nosudo,YES,Full 8-pair docker-auth surface lives on Rocky from WINDOWS_1
+38,Windows to Unix Standard (Docker) via Rocky,WINDOWS_1,ROCKY_LINUX&DOCKER,2,Standard,Keyless,nosudo,YES,
+39,Windows to Unix Tmux (Docker) via Rocky,WINDOWS_1,ROCKY_LINUX&DOCKER,2,Tmux,Password,sudo,YES,sudo docker exec + sudo password auto-answer
+40,Windows to Unix Standard (Docker) via Rocky,WINDOWS_1,ROCKY_LINUX&DOCKER,2,Standard,Password,sudo,YES,
+41,Windows to Unix Tmux (Docker) via Rocky,WINDOWS_1,ROCKY_LINUX&DOCKER,2,Tmux,Keyless,sudo,YES,
+42,Windows to Unix Standard (Docker) via Rocky,WINDOWS_1,ROCKY_LINUX&DOCKER,2,Standard,Keyless,sudo,YES,
+43,Windows to Unix Tmux (Docker) via Rocky,WINDOWS_1,ROCKY_LINUX&DOCKER,2,Tmux,Password,nosudo,YES,
+44,Windows to Unix Standard (Docker) via Rocky,WINDOWS_1,ROCKY_LINUX&DOCKER,2,Standard,Password,nosudo,YES,
+45,Local baseline Windows (no SSH),WINDOWS_1,WINDOWS_1,0,Local,Local,none,YES,Visual reference - Fable + account baseline; app on WINDOWS_1
+46,Local Docker Windows (no SSH),WINDOWS_1,WINDOWS_1&DOCKER,1,Local,Local,nosudo,PENDING,Pending Q3 - docker as first-class Runtime axis; docker on WINDOWS_1
+47,Mac to Windows Tmux,MAC_254,WINDOWS_2,1,Tmux,Keyless,none,YES,Degrade test from mac client
+48,Mac to Windows Standard,MAC_254,WINDOWS_2,1,Standard,Keyless,none,YES,
+49,Mac to Windows Tmux,MAC_254,WINDOWS_2,1,Tmux,Password,none,YES,Degrade test; password auto-type from mac client
+50,Mac to Windows Standard,MAC_254,WINDOWS_2,1,Standard,Password,none,YES,
+51,Mac to Rocky Tmux,MAC_254,ROCKY_LINUX,1,Tmux,Keyless,none,YES,
+52,Mac to Rocky Standard,MAC_254,ROCKY_LINUX,1,Standard,Keyless,none,YES,
+53,Mac to Rocky Tmux,MAC_254,ROCKY_LINUX,1,Tmux,Password,none,YES,
+54,Mac to Rocky Standard,MAC_254,ROCKY_LINUX,1,Standard,Password,none,YES,
+55,Mac to Ubuntu VM Tmux,MAC_254,UBUNTU_HYPER_V,1,Tmux,Keyless,none,YES,
+56,Mac to Ubuntu VM Standard,MAC_254,UBUNTU_HYPER_V,1,Standard,Keyless,none,YES,
+57,Mac to Ubuntu VM Tmux,MAC_254,UBUNTU_HYPER_V,1,Tmux,Password,none,YES,
+58,Mac to Ubuntu VM Standard,MAC_254,UBUNTU_HYPER_V,1,Standard,Password,none,YES,
+59,Mac to Ubuntu Server Tmux,MAC_254,SERVER_UBUNTU,1,Tmux,Keyless,none,YES,Cross-pair
+60,Mac to Ubuntu Server Standard,MAC_254,SERVER_UBUNTU,1,Standard,Password,none,YES,Cross-pair
+61,Mac to Pi Standard,MAC_254,PI_MINER,1,Standard,Password,none,YES,
+62,Mac to Unix Tmux (Docker) via Rocky,MAC_254,ROCKY_LINUX&DOCKER,2,Tmux,Keyless,nosudo,YES,
+63,Mac to Unix Standard (Docker) via Rocky,MAC_254,ROCKY_LINUX&DOCKER,2,Standard,Keyless,nosudo,YES,
+64,Mac to Unix Tmux (Docker) via Rocky,MAC_254,ROCKY_LINUX&DOCKER,2,Tmux,Password,nosudo,YES,
+65,Mac to Unix Standard (Docker) via Rocky,MAC_254,ROCKY_LINUX&DOCKER,2,Standard,Password,nosudo,YES,
+66,Mac to Unix Tmux (Docker) via Rocky,MAC_254,ROCKY_LINUX&DOCKER,2,Tmux,Password,sudo,YES,sudo-prompt handling from mac client
+67,Mac to Unix Standard (Docker) via Rocky,MAC_254,ROCKY_LINUX&DOCKER,2,Standard,Keyless,sudo,YES,
+68,Mac to Unix Standard (Docker) via Windows,MAC_254,WINDOWS_2&DOCKER,2,Standard,Keyless,nosudo,YES,
+69,Local baseline Mac (no SSH),MAC_254,MAC_254,0,Local,Local,none,YES,Visual reference on mac (.dmg)
+70,Rocky to Windows Tmux,ROCKY_LINUX,WINDOWS_2,1,Tmux,Keyless,none,YES,Degrade test from linux client
+71,Rocky to Windows Standard,ROCKY_LINUX,WINDOWS_2,1,Standard,Keyless,none,YES,
+72,Rocky to Windows Tmux,ROCKY_LINUX,WINDOWS_2,1,Tmux,Password,none,YES,Degrade test; password auto-type from linux client
+73,Rocky to Windows Standard,ROCKY_LINUX,WINDOWS_2,1,Standard,Password,none,YES,
+74,Rocky to Mac Tmux,ROCKY_LINUX,MAC_254,1,Tmux,Keyless,none,YES,
+75,Rocky to Mac Standard,ROCKY_LINUX,MAC_254,1,Standard,Keyless,none,YES,
+76,Rocky to Mac Tmux,ROCKY_LINUX,MAC_254,1,Tmux,Password,none,YES,
+77,Rocky to Mac Standard,ROCKY_LINUX,MAC_254,1,Standard,Password,none,YES,
+78,Rocky to Ubuntu Server Tmux,ROCKY_LINUX,SERVER_UBUNTU,1,Tmux,Keyless,none,YES,Full 4 on this class member from Rocky
+79,Rocky to Ubuntu Server Standard,ROCKY_LINUX,SERVER_UBUNTU,1,Standard,Keyless,none,YES,
+80,Rocky to Ubuntu Server Tmux,ROCKY_LINUX,SERVER_UBUNTU,1,Tmux,Password,none,YES,
+81,Rocky to Ubuntu Server Standard,ROCKY_LINUX,SERVER_UBUNTU,1,Standard,Password,none,YES,
+82,Rocky to Ubuntu VM Tmux,ROCKY_LINUX,UBUNTU_HYPER_V,1,Tmux,Keyless,none,YES,Cross-pair
+83,Rocky to Ubuntu VM Standard,ROCKY_LINUX,UBUNTU_HYPER_V,1,Standard,Password,none,YES,Cross-pair
+84,Rocky to Pi Standard,ROCKY_LINUX,PI_MINER,1,Standard,Password,none,YES,
+85,Rocky to Unix Tmux (Docker) via Mac,ROCKY_LINUX,MAC_254&DOCKER,2,Tmux,Keyless,nosudo,YES,
+86,Rocky to Unix Standard (Docker) via Mac,ROCKY_LINUX,MAC_254&DOCKER,2,Standard,Password,nosudo,YES,
+87,Rocky to Unix Standard (Docker) via Windows,ROCKY_LINUX,WINDOWS_2&DOCKER,2,Standard,Keyless,nosudo,YES,
+88,Local baseline Rocky (no SSH),ROCKY_LINUX,ROCKY_LINUX,0,Local,Local,none,YES,Visual reference on Rocky (AppImage)
+89,Ubuntu VM to Windows Tmux,UBUNTU_HYPER_V,WINDOWS_2,1,Tmux,Keyless,none,YES,Degrade test from ubuntu client
+90,Ubuntu VM to Windows Standard,UBUNTU_HYPER_V,WINDOWS_2,1,Standard,Keyless,none,YES,
+91,Ubuntu VM to Windows Tmux,UBUNTU_HYPER_V,WINDOWS_2,1,Tmux,Password,none,YES,Degrade test; password auto-type from ubuntu client
+92,Ubuntu VM to Windows Standard,UBUNTU_HYPER_V,WINDOWS_2,1,Standard,Password,none,YES,
+93,Ubuntu VM to Mac Tmux,UBUNTU_HYPER_V,MAC_254,1,Tmux,Keyless,none,YES,
+94,Ubuntu VM to Mac Standard,UBUNTU_HYPER_V,MAC_254,1,Standard,Keyless,none,YES,
+95,Ubuntu VM to Mac Tmux,UBUNTU_HYPER_V,MAC_254,1,Tmux,Password,none,YES,
+96,Ubuntu VM to Mac Standard,UBUNTU_HYPER_V,MAC_254,1,Standard,Password,none,YES,
+97,Ubuntu VM to Rocky Tmux,UBUNTU_HYPER_V,ROCKY_LINUX,1,Tmux,Keyless,none,YES,
+98,Ubuntu VM to Rocky Standard,UBUNTU_HYPER_V,ROCKY_LINUX,1,Standard,Keyless,none,YES,
+99,Ubuntu VM to Rocky Tmux,UBUNTU_HYPER_V,ROCKY_LINUX,1,Tmux,Password,none,YES,
+100,Ubuntu VM to Rocky Standard,UBUNTU_HYPER_V,ROCKY_LINUX,1,Standard,Password,none,YES,
+101,Ubuntu VM to Ubuntu Server Tmux,UBUNTU_HYPER_V,SERVER_UBUNTU,1,Tmux,Keyless,none,YES,Cross-pair (same-distro pair)
+102,Ubuntu VM to Ubuntu Server Standard,UBUNTU_HYPER_V,SERVER_UBUNTU,1,Standard,Password,none,YES,Cross-pair
+103,Ubuntu VM to Pi Standard,UBUNTU_HYPER_V,PI_MINER,1,Standard,Password,none,YES,
+104,Ubuntu VM to Unix Tmux (Docker) via Rocky,UBUNTU_HYPER_V,ROCKY_LINUX&DOCKER,2,Tmux,Keyless,nosudo,YES,
+105,Ubuntu VM to Unix Standard (Docker) via Rocky,UBUNTU_HYPER_V,ROCKY_LINUX&DOCKER,2,Standard,Password,sudo,YES,sudo-prompt handling from ubuntu client
+106,Ubuntu VM to Unix Standard (Docker) via Windows,UBUNTU_HYPER_V,WINDOWS_2&DOCKER,2,Standard,Keyless,nosudo,YES,
+107,Local baseline Ubuntu (no SSH),UBUNTU_HYPER_V,UBUNTU_HYPER_V,0,Local,Local,none,YES,Visual reference on Ubuntu (AppImage; needs libfuse2 + deb Chrome for vision)
