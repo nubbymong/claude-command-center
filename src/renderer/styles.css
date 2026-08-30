@@ -1219,8 +1219,31 @@ input[type="range"] {
   width: 9px;
   flex: none;
   color: var(--color-mauve);
+  overflow: hidden;
+  /* #569: the slot used to be reserved (visibility: hidden) so the button never
+     jumped; that read as dead space. Now it grows/shrinks smoothly instead.
+     margin-left cancels the button's flex gap (gap-1.5 = 6px) while collapsed,
+     so an empty slot costs zero width INCLUDING its gap. */
+  transition: width 150ms ease, opacity 150ms ease, margin-left 150ms ease;
 }
-.canvas-resume-dot[data-empty='true'] { visibility: hidden; }
+.canvas-resume-dot[data-empty='true'] {
+  width: 0;
+  opacity: 0;
+  margin-left: -6px;
+}
+
+/* #569: mount-time grow-in for small companions that appear beside a label
+   (e.g. the canvas queue count). Width animates via max-width because a
+   transition cannot run on first paint; margin-left cancels the flex gap at
+   the start of the growth for the same reason as .canvas-resume-dot. */
+@keyframes ccc-grow-in {
+  from { max-width: 0; opacity: 0; margin-left: -6px; }
+  to { max-width: 24px; opacity: 1; margin-left: 0; }
+}
+.ccc-grow-in {
+  animation: ccc-grow-in 150ms ease;
+  overflow: hidden;
+}
 
 /* The same resume identity inside the queue popover. These live in CSS rather
    than as inline `var(--color-mauve)` on the component because the popover IS a

@@ -140,18 +140,19 @@ export default function AgentCanvasButton({ sessionId }: Props) {
             <path d="M5 14h6" />
           </svg>
         )}
-        {/* Reserve only the states a CLICK can reach: `waiting` flips on
-            queue changes, not clicks, so idle must not carry the bold
-            Review-needed width (~48px of dead space) permanently. */}
+        {/* #569: the label animates to each state's own width (ReservedLabel),
+            so neither the bold Review-needed width nor the Terminal width is
+            reserved while the button reads "Canvas" — no dead space, and the
+            row shifts over smoothly instead of jumping. */}
         <ReservedLabel
           current={label}
           states={waiting ? ['Terminal', { text: 'Review needed', bold: true }] : ['Canvas', 'Terminal']}
         />
-        {/* The resume dot. Its SLOT is reserved for the whole idle state, not
-            just when it is filled: the dot arrives from a background sweep, not
-            from a click, and a button that widened by 9px under the cursor
-            would shove every tool to its right. Same reasoning as
-            ReservedLabel, applied to a glyph. */}
+        {/* The resume dot. Its slot now grows/shrinks with a width transition
+            (styles.css .canvas-resume-dot): the dot arrives from a background
+            sweep, not a click, and an INSTANT 9px widening under the cursor
+            would shove every tool to its right — animating the same change is
+            what #569 asks for instead of permanently reserving the slot. */}
         {idle && (
           <span
             className="canvas-resume-dot"
@@ -183,7 +184,7 @@ export default function AgentCanvasButton({ sessionId }: Props) {
                 setQueueOpen((v) => !v)
               }
             }}
-            className="inline-flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full text-[9.5px] font-bold tabular-nums focus-ring"
+            className="ccc-grow-in inline-flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full text-[9.5px] font-bold tabular-nums focus-ring"
             style={{ background: 'var(--status-warning)', color: 'var(--color-crust)' }}
             title={`${queue} waiting on you — open the list`}
             aria-label={`${queue} waiting on you — open the list`}

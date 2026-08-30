@@ -139,6 +139,49 @@ describe('liveAccountUsage', () => {
     expect(out[0].buckets).toHaveLength(0)
     expect(pctOf(out[0], '5h')).toBeNull()
   })
+
+  // #571: an SSH session carries the remote signed-in email in sshRemoteAccount
+  // (no local accountEmail). It must join the matching account row so the strip
+  // shows the account name — and, when a local session on the same account
+  // supplies the per-model buckets (Fable), the SSH session shares that row
+  // instead of being invisible.
+  it('attributes an SSH session to its account row via sshRemoteAccount (#571)', () => {
+    const out = liveAccountUsage(
+      [
+        sess({ id: '1', accountEmail: 'a@x.com', status: 'working', usageBuckets: [bucket('5h', 20), bucket('Fable', 90)] }),
+        sess({ id: '2', sshRemoteAccount: 'A@X.com', status: 'idle', rateLimitCurrent: 55 }),
+      ],
+      profiles,
+      aliases,
+      undefined,
+    )
+    expect(out).toHaveLength(1) // canonicalised email joins the same row
+    expect(out[0].count).toBe(2)
+    expect(pctOf(out[0], '5h')).toBe(55) // worst case includes the SSH session
+    expect(pctOf(out[0], 'Fable')).toBe(90) // local session's bucket still shown
+  })
+
+  it('creates a row for an SSH-only account and prefers accountEmail when both exist', () => {
+    const out = liveAccountUsage(
+      [
+        sess({ id: '1', sshRemoteAccount: 'c@x.com', status: 'working', rateLimitCurrent: 10, rateLimitWeekly: 78 }),
+        // Both fields set: the LOCAL identity wins (sshRemoteAccount ignored).
+        sess({ id: '2', accountEmail: 'a@x.com', sshRemoteAccount: 'c@x.com', status: 'idle', rateLimitCurrent: 5 }),
+      ],
+      profiles,
+      aliases,
+      undefined,
+    )
+    expect(out.map((a) => a.email).sort()).toEqual(['a@x.com', 'c@x.com'])
+    const c = out.find((a) => a.email === 'c@x.com')!
+    expect(c.count).toBe(1)
+    expect(pctOf(c, 'Weekly')).toBe(78)
+  })
+
+  it('still skips sessions with neither accountEmail nor sshRemoteAccount', () => {
+    const out = liveAccountUsage([sess({ id: '1', status: 'working', rateLimitCurrent: 99 })], profiles, aliases, undefined)
+    expect(out).toHaveLength(0)
+  })
 })
 
 // Footer row layout (#378). The old split was by COUNT (<=3 one row, 4..6 two

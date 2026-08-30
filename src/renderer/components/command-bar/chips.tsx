@@ -9,30 +9,50 @@ import { chipTitle, clusterTitle, effectiveKind, type ClusterKind } from './layo
 export const CHIP_CLASS = 'flex items-center gap-1.5 px-2 h-7 text-xs rounded-md border whitespace-nowrap shrink-0 transition-colors duration-150 focus-ring'
 export const CHIP_STYLE: React.CSSProperties = { background: 'var(--surface-raised)', color: 'var(--text-secondary)', borderColor: 'var(--border-subtle)' }
 
-/** #464: a toggle label that reserves the width of its WIDEST state, so a
- *  dual-state button never changes size on click (owner: jarring row
- *  reflows). Every state renders invisibly stacked in one grid cell; the
- *  current one shows. A state that renders bold reserves its BOLD width. */
-export function ReservedLabel({ current, states }: {
+/** #464 → #569: a toggle label whose button must not JUMP size on click.
+ *  The first cut reserved the width of the widest state, which fixed the jump
+ *  but left permanent dead space beside the narrower label (owner, rc.10).
+ *  Now the label animates: a fixed-position measurer (outside the clamped box,
+ *  so ancestor width cannot cap the measurement) reads the current text's
+ *  preferred width and the visible box transitions to it, so neighbouring
+ *  buttons shift over smoothly instead of reflowing instantly or hoarding
+ *  space. `states` is kept in the signature for call-site compatibility; no
+ *  width is reserved from it any more.
+ *  In environments with no real layout (jsdom), measurement reads 0 and the
+ *  label falls back to natural sizing — tests see unclamped text. */
+export function ReservedLabel({ current }: {
   current: React.ReactNode
   states: Array<string | { text: string; bold?: boolean }>
 }) {
+  const measureRef = React.useRef<HTMLSpanElement>(null)
+  const [width, setWidth] = React.useState<number | null>(null)
+  // Runs every render: the label text is tiny and one getBoundingClientRect is
+  // cheap; the 0.5px threshold makes the setState a bail-out on steady state.
+  React.useLayoutEffect(() => {
+    const el = measureRef.current
+    if (!el) return
+    const w = el.getBoundingClientRect().width
+    if (w > 0) setWidth((prev) => (prev !== null && Math.abs(prev - w) < 0.5 ? prev : w))
+    else setWidth(null)
+  })
   return (
-    <span className="grid justify-items-start">
-      {states.map((s) => {
-        const text = typeof s === 'string' ? s : s.text
-        const bold = typeof s !== 'string' && !!s.bold
-        return (
-          <span
-            key={`${text}${bold ? '#bold' : ''}`}
-            className={`col-start-1 row-start-1 invisible whitespace-nowrap ${bold ? 'font-semibold' : ''}`}
-            aria-hidden
-          >
-            {text}
-          </span>
-        )
-      })}
-      <span className="col-start-1 row-start-1 whitespace-nowrap" data-testid="reserved-label-current">{current}</span>
+    <span className="inline-flex">
+      {/* Measurer: fixed + offscreen so no ancestor width can clamp it, while
+          still inheriting the button's font (weight included). */}
+      <span
+        ref={measureRef}
+        aria-hidden
+        className="invisible whitespace-nowrap"
+        style={{ position: 'fixed', left: -9999, top: 0 }}
+      >
+        {current}
+      </span>
+      <span
+        className="inline-block overflow-hidden"
+        style={width === null ? undefined : { width, transition: 'width 150ms ease' }}
+      >
+        <span className="whitespace-nowrap block" data-testid="reserved-label-current">{current}</span>
+      </span>
     </span>
   )
 }
@@ -74,8 +94,13 @@ export function TargetMark({ kind, caps }: { kind: ClusterKind; caps: SessionCap
   const d = kind === 'agent' ? (caps.agent === 'codex' ? Paths.codex : Paths.claude)
     : kind === 'page' ? Paths.globe
     : Paths.shell
+  // #570: the badge says WHICH SIDE, not which host. A raw IP here (up to 15
+  // chars on a 16px glyph, absolutely positioned) overhung the neighbouring
+  // buttons as a floating pill. The host itself stays one hover away in the
+  // cluster tooltip (clusterTitle names it) and permanently in the session
+  // header's "SSH: user@host" line.
   const badge = caps.panesOnDifferentMachines
-    ? (kind === 'partner' ? 'this PC' : kind === 'main-shell' || kind === 'agent' ? (caps.remoteHost ?? 'remote') : null)
+    ? (kind === 'partner' ? 'this PC' : kind === 'main-shell' || kind === 'agent' ? 'remote' : null)
     : null
   return (
     <span
