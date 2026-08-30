@@ -1278,7 +1278,12 @@ input[type="range"] {
    names on purpose — the two surfaces must be free to drift apart. */
 .bsp-masthead {
   display: flex;
-  align-items: center;
+  /* Baseline-align the wordmark with the art's own "http://" (owner, canvas
+     R1): the glyph baseline sits at 58.1% of the art's height and the bottom
+     ~31% of the viewBox is empty, so centring dropped "Browser" visibly below
+     the http midline. flex-end + the wordmark's padding-bottom put the two
+     baselines on one line at the 104px art width. */
+  align-items: flex-end;
   gap: 16px;
   margin-bottom: 8px;
 }
@@ -1297,7 +1302,11 @@ input[type="range"] {
   /* 1.18, not tighter: the canvas masthead pinned this — a tight line-height
      makes the background-clip box crop descenders. */
   line-height: 1.18;
-  padding-bottom: 2px;
+  /* 15px, not decorative: with the masthead flex-end aligned, this lifts the
+     wordmark so its text baseline meets the art's http:// baseline (58.1% of
+     the art's height; ~24.5px above its bottom edge at the 104px width, less
+     the font's own descent + half-leading). Resize the art → retune this. */
+  padding-bottom: 15px;
   background: linear-gradient(
     100deg,
     var(--text-primary) 30%,
