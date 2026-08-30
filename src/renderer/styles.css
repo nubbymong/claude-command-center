@@ -1272,12 +1272,6 @@ input[type="range"] {
 }
 .cqp-dismiss-confirm:hover:not(:disabled) { background: color-mix(in srgb, var(--status-danger) 25%, transparent); }
 
-/* ── SSH host pill (#570) ─────────────────────────────────────────────────
-   The remote host, docked bottom-left of the main terminal pane, riding just
-   above the statusline (canvas v4, approved). Quiet chip family colours; a
-   4px seat of air so the pill shape reads. pointer-events none is load-bearing:
-   the pill sits over the terminal's bottom-left corner and must never eat a
-   click or a selection drag. */
 /* ── Browser start page masthead ──────────────────────────────────────────
    The Agent Canvas front-page recipe (`.cfp-masthead`) on the browser's blank
    page: the http:// brand art beside a gradient-clipped wordmark. Own class
