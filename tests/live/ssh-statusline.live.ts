@@ -43,7 +43,7 @@ vi.mock('../../src/main/ipc/setup-handlers', async (importOriginal) => ({
   getResourcesDirectory: vi.fn(() => scratch),
 }))
 
-const { spawnPty, killPty, getSshFlow, writePty, resizePty } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, getSshFlow, writePty, resizePty, endSshRemote } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 const { startStatuslineWatcher } = await import('../../src/main/statusline-watcher')
@@ -182,6 +182,10 @@ describe('SSH statusline matrix (LIVE, on-demand)', () => {
     const sid = `lv1${Date.now().toString(36)}`
     const w = await runSession(sid, e)
     report('T1 key+tmux fresh', w, sid)
+    // #572: end through the PRODUCT path (before killPty, which clears the End
+    // target) so the matrix exercises the same kill users click; the key-auth
+    // exec below stays as belt-and-braces.
+    await endSshRemote(sid)
     killPty(sid)
     killRemoteTmux(e, sid)
     expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
@@ -197,6 +201,7 @@ describe('SSH statusline matrix (LIVE, on-demand)', () => {
     await sleep(3000)
     const w2 = await runSession(sid, e, { win: makeWin(), nudge: true })
     report('T2b reattach', w2, sid)
+    await endSshRemote(sid) // #572: product End path first (see T1)
     killPty(sid)
     killRemoteTmux(e, sid)
     expect(firstOk).toBe(true)
@@ -217,7 +222,13 @@ describe('SSH statusline matrix (LIVE, on-demand)', () => {
     const sid = `lv4${Date.now().toString(36)}`
     const w = await runSession(sid, e)
     report('T4 password+tmux', w, sid)
+    // #572: THE leak this matrix used to plant on password hosts -- the old
+    // key-auth-only cleanup silently no-opped here and every run left a claude
+    // eating ~350MB of the host forever (the mongminer exhaustion). The product
+    // End path now answers the password prompt itself; assert it worked.
+    const ended = await endSshRemote(sid)
     killPty(sid)
+    expect(ended).toBe('completed')
     expect(misParsedStageFail(w.events, sid)).toEqual([])
     expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
   }, 240_000)
@@ -227,6 +238,7 @@ describe('SSH statusline matrix (LIVE, on-demand)', () => {
     const sid = `lv5${Date.now().toString(36)}`
     const w = await runSession(sid, e, { detachable: false })
     report('T5 password no-tmux', w, sid)
+    await endSshRemote(sid) // no tmux to kill, but this removes the remote sidecars
     killPty(sid)
     expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
   }, 240_000)
@@ -236,6 +248,7 @@ describe('SSH statusline matrix (LIVE, on-demand)', () => {
     const sid = `lv6${Date.now().toString(36)}`
     const w = await runSession(sid, e)
     report('T6 mac', w, sid)
+    await endSshRemote(sid) // #572: product End path first (see T1)
     killPty(sid)
     killRemoteTmux(e, sid)
     expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
