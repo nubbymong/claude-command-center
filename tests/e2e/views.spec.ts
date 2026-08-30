@@ -1,8 +1,19 @@
 /**
- * Playwright E2E tests — Various views (Settings, Usage, Logs, Insights, Browse)
+ * Playwright E2E tests — the nav-rail views and the sessions stage.
  *
  * Runs against an isolated temp data dir (helpers/electron-app) so the app
  * boots to a clean, setup-complete first-launch state with no real user data.
+ *
+ * Navigation model (rc.10, pages-as-tabs): the sidebar nav rail has NO
+ * "Sessions" button — 'sessions' is the DEFAULT view. Every rail entry
+ * (Cloud Agents, Insights, Tokenomics, Conductor MCP, Memory, Logs, Settings,
+ * Feature Guide) opens its page as a TAB in the main strip; closing the last
+ * page tab falls back to the sessions stage. Rail buttons carry the stable
+ * `data-tour="nav-<view>"` anchor (aria-labels are legitimately dynamic —
+ * e.g. Cloud Agents becomes "N agents running" — so the anchor, not the
+ * accessible name, is the src-sanctioned stable selector; see SidebarNav).
+ * The old clickNavButton(index) helper clicked `.px-2.pt-2 button` by INDEX
+ * against a nav order that no longer exists (index 1 landed on Insights).
  */
 
 import { test, expect } from '@playwright/test'
@@ -20,85 +31,82 @@ test.afterAll(async () => {
   await closeIsolatedApp(ctx)
 })
 
-async function clickNavButton(index: number): Promise<boolean> {
-  const sidebar = page.locator('aside')
-  if (!await sidebar.isVisible().catch(() => false)) return false
-  const buttons = sidebar.locator('.px-2.pt-2 button')
-  const count = await buttons.count()
-  if (index >= count) return false
-  await buttons.nth(index).click()
-  await page.waitForTimeout(500)
-  return true
+/** Open a nav-rail page by its ViewType key and wait until its tab is active. */
+async function openPage(view: string): Promise<void> {
+  await page.locator(`aside [data-tour="nav-${view}"]`).click()
+  await expect(
+    page.locator(`[data-testid="page-tab"][data-page="${view}"][aria-current="page"]`),
+  ).toBeVisible({ timeout: 5000 })
+}
+
+/** Close every open page tab; with none left the stage falls back to Sessions. */
+async function gotoSessions(): Promise<void> {
+  const tabs = page.locator('[data-testid="page-tab"]')
+  // Bounded loop: never more page tabs than nav entries.
+  for (let i = 0; i < 12 && (await tabs.count()) > 0; i++) {
+    const tab = tabs.first()
+    await tab.hover() // close button fades in on group hover
+    // The close button is the tab button's sibling inside the same wrapper —
+    // label-agnostic, so a renamed page cannot rot this helper.
+    await tab.locator('xpath=following-sibling::button[1]').click()
+  }
+  await expect(tabs).toHaveCount(0)
 }
 
 test.describe('Sessions View', () => {
-  test('shows empty state or session list', async () => {
-    // Sessions = nav button index 1 (after Cloud Agents)
-    if (!await clickNavButton(1)) { test.skip(); return }
-
-    // Should show either "Create a terminal config" empty state or active tabs
+  test('sessions is the default view and renders the stage', async () => {
+    // No nav button opens Sessions any more — it is the default view, and the
+    // fallback when the last page tab closes.
+    await gotoSessions()
     const body = await page.locator('main').innerHTML()
     expect(body.length).toBeGreaterThan(0)
   })
 
   test('empty sessions shows the app-brand heading', async () => {
-    if (!await clickNavButton(1)) { test.skip(); return }
+    // Land somewhere else first, then come back the way a user does (close the
+    // page tab) — proving the fallback-to-sessions path, not just the boot state.
+    await openPage('insights')
+    await gotoSessions()
 
     // The e2e seed starts with no configs, so the empty state must show the
-    // brand heading (StageEmptyState). A real assertion — the previous
-    // typeof-boolean check passed no matter what rendered. Scoped to the h2 so
-    // the always-visible TitleBar (same brand text, a span) can't satisfy it.
+    // brand heading (StageEmptyState). Scoped to the h2 so the always-visible
+    // TitleBar (same brand text, a span) can't satisfy it.
     const heading = page.locator('h2', { hasText: 'AI Code Conductor' })
     await heading.first().waitFor({ state: 'visible', timeout: 5000 })
     expect(await heading.first().isVisible()).toBe(true)
   })
 })
 
-test.describe('Browse View', () => {
-  test('renders project browser', async () => {
-    // Browse = nav button index 2
-    if (!await clickNavButton(2)) { test.skip(); return }
-    await page.waitForTimeout(500)
-    const body = await page.locator('main').innerHTML()
-    expect(body.length).toBeGreaterThan(0)
-  })
-})
+// The old "Browse View" test is gone with its subject: ProjectBrowser is no
+// longer reachable from the nav (imported but never rendered in App.tsx), and
+// the old "Usage View" is now the Tokenomics page. The current rail pages are
+// pinned one by one below: each opens as an active tab and renders content.
+const RAIL_PAGES: Array<{ view: string; title: string }> = [
+  { view: 'insights', title: 'Insights' },
+  { view: 'tokenomics', title: 'Tokenomics' },
+  { view: 'vision', title: 'Conductor MCP' },
+  { view: 'memory', title: 'Memory' },
+  { view: 'logs', title: 'Logs' },
+  { view: 'settings', title: 'Settings' },
+]
 
-test.describe('Usage View', () => {
-  test('renders usage dashboard', async () => {
-    // Usage = nav button index 3
-    if (!await clickNavButton(3)) { test.skip(); return }
-    await page.waitForTimeout(500)
-    const body = await page.locator('main').innerHTML()
-    expect(body.length).toBeGreaterThan(0)
+for (const { view, title } of RAIL_PAGES) {
+  test.describe(`${title} View`, () => {
+    test(`renders the ${title} page as an active tab`, async () => {
+      await openPage(view)
+      const body = await page.locator('main').innerHTML()
+      expect(body.length).toBeGreaterThan(0)
+    })
   })
-})
+}
 
-test.describe('Insights View', () => {
-  test('renders insights page', async () => {
-    // Insights = nav button index 4
-    if (!await clickNavButton(4)) { test.skip(); return }
-    await page.waitForTimeout(500)
-    const body = await page.locator('main').innerHTML()
-    expect(body.length).toBeGreaterThan(0)
-  })
-})
-
-test.describe('Logs View', () => {
-  test('renders log viewer', async () => {
-    // Logs = nav button index 5
-    if (!await clickNavButton(5)) { test.skip(); return }
-    await page.waitForTimeout(500)
-    const body = await page.locator('main').innerHTML()
-    expect(body.length).toBeGreaterThan(0)
-  })
-})
-
-test.describe('Settings View', () => {
-  test('renders settings page', async () => {
-    // Settings = nav button index 6
-    if (!await clickNavButton(6)) { test.skip(); return }
-    await page.waitForTimeout(500)
+test.describe('Feature Guide View', () => {
+  test('renders the Feature Guide page as an active tab', async () => {
+    // The help entry keeps its own anchor (data-tour="help-button"), not nav-help.
+    await page.locator('aside [data-tour="help-button"]').click()
+    await expect(
+      page.locator('[data-testid="page-tab"][data-page="help"][aria-current="page"]'),
+    ).toBeVisible({ timeout: 5000 })
     const body = await page.locator('main').innerHTML()
     expect(body.length).toBeGreaterThan(0)
   })
@@ -106,8 +114,10 @@ test.describe('Settings View', () => {
 
 test.describe('Sidebar Toggle', () => {
   test('Ctrl+B toggles sidebar', async () => {
+    // The launch helper waits for a sidebar anchor, so the sidebar is
+    // deterministically present here — assert it instead of skipping.
     const sidebar = page.locator('aside')
-    if (!await sidebar.isVisible().catch(() => false)) { test.skip(); return }
+    await expect(sidebar).toBeVisible()
 
     // Toggle off
     await page.keyboard.press('Control+b')
@@ -126,8 +136,7 @@ test.describe('Sidebar Toggle', () => {
 
 test.describe('Session Config Dialog', () => {
   test('Ctrl+T opens new config dialog', async () => {
-    const sidebar = page.locator('aside')
-    if (!await sidebar.isVisible().catch(() => false)) { test.skip(); return }
+    await expect(page.locator('aside')).toBeVisible()
 
     await page.keyboard.press('Control+t')
     await page.waitForTimeout(500)

@@ -23,15 +23,24 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
+  // closeIsolatedApp's worst case (5s graceful race + taskkill + rm retries)
+  // can exceed the 30s default hook budget on a loaded VM — give it headroom.
+  test.setTimeout(120000)
   await closeIsolatedApp(ctx)
 })
 
 test.describe('#501 Artifacts core tool (packaged app)', () => {
   test('appears in Settings → Custom Commands → Core tools, beside Browser', async () => {
     test.setTimeout(60000)
-    // Open Settings by its accessible name (robust to nav re-ordering).
-    await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await page.waitForTimeout(400)
+    // Open Settings from the nav rail. The data-tour anchor is the
+    // src-sanctioned stable selector (nav aria-labels are dynamic by design);
+    // once Settings opens it exists as a page TAB whose accessible name is
+    // also exactly "Settings", so the bare role+name lookup goes ambiguous
+    // on any later pass. Then wait for the tab to be ACTIVE, not a fixed 400ms.
+    await page.locator('aside [data-tour="nav-settings"]').click()
+    await expect(
+      page.locator('[data-testid="page-tab"][data-page="settings"][aria-current="page"]'),
+    ).toBeVisible({ timeout: 5000 })
 
     // Switch to the Custom Commands tab.
     await page.getByRole('button', { name: 'Custom Commands' }).click()

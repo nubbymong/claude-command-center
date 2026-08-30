@@ -117,8 +117,11 @@ test('restores a session after a HARD crash (relaunch, same data dir)', async ()
   await expect(prompt.getByText(SESSION_NAME, { exact: false })).toBeVisible()
   await shot(page, '01-resume-prompt-after-crash')
 
-  // Accept the restore: the session card comes back with the same name.
+  // Accept the restore: the session card comes back with the same name. Session
+  // rows render only inside the RUNNING tabpanel of the two-mode panel (the
+  // unselected tabpanel is unmounted), so select it before asserting.
   await prompt.getByRole('button', { name: 'Resume' }).click()
+  await page.locator('[data-testid="panel-tab-running"]').click()
   await expect(page.locator('.session-card').filter({ hasText: SESSION_NAME }).first()).toBeVisible({ timeout: 30000 })
   await shot(page, '02-session-restored')
 
@@ -206,7 +209,11 @@ async function createTerminalSession(page: Page): Promise<void> {
 
   await page.locator('button:has-text("Create config")').click()
   // Creating from the sidebar launches the config immediately (App.onConfirm ->
-  // launchConfig), so a real running session row appears.
+  // launchConfig), so a real running session row appears — in the RUNNING
+  // tabpanel. Creation leaves the panel on the Saved tab (the config row's
+  // running-count badge, not a tab switch, is the affordance there) and the
+  // unselected tabpanel is unmounted, so switch tabs before asserting the row.
+  await page.locator('[data-testid="panel-tab-running"]').click()
   await expect(page.locator('.session-card').filter({ hasText: SESSION_NAME }).first()).toBeVisible({
     timeout: 30000,
   })

@@ -78,8 +78,11 @@ test.describe('#480 durable session-conversation tracking (packaged app)', () =>
       const page = a.page
 
       // Create a Terminal x Local session (no real `claude` binary needed).
+      // Two-mode panel: open the Saved tab first, then the central "+ New"
+      // button's Config option (#483 — the old new-config-button is gone).
       await page.locator('[data-testid="panel-tab-saved"]').click()
-      await page.locator('[data-testid="new-config-button"]').click()
+      await page.locator('[data-testid="new-button"]').click()
+      await page.locator('[data-testid="new-menu-config"]').click()
       await expect(page.locator('text=New saved config')).toBeVisible({ timeout: 10000 })
       await page.locator('[role="radiogroup"][aria-label="Provider"] label:has(input[value="terminal"])').click()
       await page.locator('[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="local"])').click()
@@ -87,6 +90,10 @@ test.describe('#480 durable session-conversation tracking (packaged app)', () =>
       await page.locator('input[placeholder="e.g. App Dev"]').fill(SESSION_NAME)
       await page.locator('button:has-text("Create config")').click()
 
+      // The launched session's row renders only inside the RUNNING tabpanel
+      // (creation leaves the panel on Saved; the unselected tabpanel is
+      // unmounted), so switch tabs before asserting the row.
+      await page.locator('[data-testid="panel-tab-running"]').click()
       const card = page.locator('.session-card').filter({ hasText: SESSION_NAME }).first()
       await expect(card).toBeVisible({ timeout: 30000 })
       await shot(page, '480-02-session-created')
