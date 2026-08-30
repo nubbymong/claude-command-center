@@ -77,10 +77,10 @@ test.describe('Sessions View', () => {
   })
 })
 
-// The old "Browse View" test is gone with its subject: ProjectBrowser is no
-// longer reachable from the nav (imported but never rendered in App.tsx), and
-// the old "Usage View" is now the Tokenomics page. The current rail pages are
-// pinned one by one below: each opens as an active tab and renders content.
+// The old "Browse View" test is gone with its subject: ProjectBrowser has been
+// removed (it was imported but never rendered), and the old "Usage View" is now
+// the Tokenomics page. The current rail pages are pinned one by one below: each
+// opens as an active tab and renders content.
 const RAIL_PAGES: Array<{ view: string; title: string }> = [
   { view: 'insights', title: 'Insights' },
   { view: 'tokenomics', title: 'Tokenomics' },
