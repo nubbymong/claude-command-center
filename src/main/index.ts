@@ -6,7 +6,6 @@ import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { splashBuildQuery } from './splash-info'
 import { registerUsageHandlers } from './ipc/usage-handlers'
-import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
 import { killAllPty, gracefulExitAllPty, resolveClaudeForPty, isSessionWritable, writePty } from './pty-manager'
@@ -905,7 +904,6 @@ if (!gotTheLock) {
     const getWindow = () => mainWindow
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
-    registerDiscoveryHandlers()
     registerAccountWebHandlers()
     // #439: when a partition is wiped (sign-out / delete / cancelled sign-in),
     // sign-in.ts emits a revocation through the decoupling seam; wire the owners

@@ -445,10 +445,6 @@ export interface ElectronAPI {
      *  page. */
     onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => () => void
   }
-  discovery: {
-    getProjects: () => Promise<unknown>
-    getSessionHistory: (projectPath: string) => Promise<unknown>
-  }
   update: {
     check: () => Promise<boolean>
     getVersion: () => Promise<string>
@@ -1096,11 +1092,6 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC.CANVAS_REVIEW_CHANGED, handler)
     },
-  },
-  discovery: {
-    getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),
-    getSessionHistory: (projectPath) =>
-      ipcRenderer.invoke(IPC.DISCOVERY_SESSIONS, projectPath)
   },
   update: {
     check: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
