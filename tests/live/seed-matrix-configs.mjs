@@ -2,30 +2,31 @@
 /**
  * Seed the "MATRIX TESTS" config section on a FROM machine (harmonise-remote).
  *
- * The master connectivity matrix (master-connectivity-cases.csv) drives real
- * app sessions from each FROM box, so every FROM box needs one launchable
- * config per TO × session-type combination. Hand-creating them per machine
- * does not scale and drifts; this script generates them from the SAME
- * hosts.local.json the live pack uses, so the matrix and the app configs
- * cannot disagree about a host.
+ * CSV-DRIVEN and FROM-SPECIFIC: the master matrix (master-connectivity-cases.csv)
+ * is the single source of truth for which FROM→TO×type cells exist; this script
+ * takes `--from <ROLE>` and generates ONE app config per runnable case for that
+ * FROM, labelled by CaseID, so each FROM box gets exactly its own launchable
+ * slice of the matrix (WINDOWS_1 ≠ MAC_254 ≠ ROCKY_LINUX ≠ UBUNTU_HYPER_V).
+ * Host IPs/usernames come from the SAME hosts.local.json the live pack reads,
+ * so the matrix, the pack and the app configs cannot disagree about a host.
  *
  * Usage (run ON the FROM machine, app CLOSED):
- *   node seed-matrix-configs.mjs [--config-dir <path>] [--hosts <path>]
+ *   node seed-matrix-configs.mjs --from WINDOWS_1
+ *     [--config-dir <path>] [--hosts <path>] [--csv <path>]
  *
- * --config-dir defaults to %LOCALAPPDATA%/AI Code Conductor/resources/CONFIG
- * (the installed app's config dir on Windows); pass it explicitly elsewhere.
- * --hosts defaults to hosts.local.json next to this script.
+ * --config-dir defaults to %LOCALAPPDATA%/AI Code Conductor/resources/CONFIG.
+ * --hosts / --csv default to files next to this script.
  *
- * Idempotent: every generated entry carries the `mx-` id prefix and lives in
- * the `sec-matrix` section; re-running REPLACES exactly that set and touches
- * nothing else (a screenshot-staging workspace's fake configs survive intact).
- * Both files are backed up (.bak-<epoch>) before writing.
+ * NOTHING IS SKIPPED SILENTLY: every case NOT generated is printed with its
+ * reason (Runnable=NO with the CSV's note; a TO role with no hosts.local.json
+ * slot; a case shape the app cannot express yet). Idempotent: replaces only
+ * ids with the `mx-` prefix and the `sec-matrix` section; everything else
+ * (e.g. a screenshot-staging workspace) survives. Files are backed up first.
  *
- * Passwords are NOT seeded: the app stores SSH passwords DPAPI/keychain-
- * encrypted per config (credential-store.ts) which only the app itself can
- * write. The script prints which configs need a password typed once in the
- * Edit modal, and which need the FROM machine's SSH key authorised on the
- * target.
+ * Passwords are NOT seeded — the app stores them DPAPI/keychain-encrypted per
+ * config (credential-store.ts); the script prints which configs need a
+ * password typed once in Edit, which need this machine's SSH key authorised
+ * on the target, and which need docker provisioning.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -36,24 +37,126 @@ function arg(name, dflt) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : dflt
 }
 
+const scriptDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
+const fromRole = arg('--from', '')
 const configDir = arg(
   '--config-dir',
   process.env.LOCALAPPDATA
     ? path.join(process.env.LOCALAPPDATA, 'AI Code Conductor', 'resources', 'CONFIG')
     : '',
 )
-const hostsPath = arg('--hosts', path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'hosts.local.json'))
+const hostsPath = arg('--hosts', path.join(scriptDir, 'hosts.local.json'))
+const csvPath = arg('--csv', path.join(scriptDir, 'master-connectivity-cases.csv'))
 
-if (!configDir || !fs.existsSync(configDir)) {
-  console.error(`config dir not found: ${configDir || '(none)'} — pass --config-dir`)
-  process.exit(1)
-}
-if (!fs.existsSync(hostsPath)) {
-  console.error(`hosts file not found: ${hostsPath} — pass --hosts`)
-  process.exit(1)
+if (!fromRole) { console.error('pass --from <ROLE> (e.g. WINDOWS_1, MAC_254, ROCKY_LINUX, UBUNTU_HYPER_V)'); process.exit(1) }
+if (!configDir || !fs.existsSync(configDir)) { console.error(`config dir not found: ${configDir || '(none)'} — pass --config-dir`); process.exit(1) }
+if (!fs.existsSync(hostsPath)) { console.error(`hosts file not found: ${hostsPath} — pass --hosts`); process.exit(1) }
+if (!fs.existsSync(csvPath)) { console.error(`matrix csv not found: ${csvPath} — pass --csv`); process.exit(1) }
+
+/** Minimal CSV parse — the matrix has no quoted commas today; refuse if one appears. */
+function parseCsv(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0)
+  const headers = lines[0].split(',')
+  return lines.slice(1).map((line) => {
+    if (line.includes('"')) { console.error(`CSV line has quotes — extend the parser before trusting this: ${line}`); process.exit(1) }
+    const cells = line.split(',')
+    const row = {}
+    headers.forEach((h, i) => { row[h.trim()] = (cells[i] ?? '').trim() })
+    return row
+  })
 }
 
 const hosts = JSON.parse(fs.readFileSync(hostsPath, 'utf-8'))
+const rows = parseCsv(fs.readFileSync(csvPath, 'utf-8'))
+
+/** CSV TO-role → hosts.local.json slot + per-role extras. A role mapping to a
+ *  missing slot is reported per case, never silently dropped. */
+const ROLE_SLOTS = {
+  WINDOWS_2: { slot: 'windows', remoteOs: 'windows' },
+  PI_MINER: { slot: 'linuxPassword' },
+  ROCKY_LINUX: { slot: 'linuxRocky' },
+  SERVER_UBUNTU: { slot: 'linuxKey' },
+  MAC_254: { slot: 'mac' },
+  UBUNTU_HYPER_V: { slot: 'ubuntuHyperV' }, // no slot yet — creds TBC (fleet map)
+}
+const DOCKER_CONTAINER = 'ccc-test'
+
+const COLORS = ['slate-blue', 'pink', 'indigo', 'violet', 'plum', 'lavender', 'rose', 'orchid', 'mauve', 'periwinkle']
+const claudeOptions = { model: 'sonnet', effortLevel: 'medium', loggingEnabled: true, agentIds: [] }
+
+const mine = rows.filter((r) => r.FROM === fromRole)
+if (mine.length === 0) { console.error(`no matrix rows have FROM=${fromRole} — check the role name`); process.exit(1) }
+
+const out = []
+const skipped = [] // { id, why }
+const needsPassword = []
+const needsKey = []
+const needsDocker = new Set()
+
+for (const r of mine) {
+  const id = r.CaseID
+  if (r.Runnable !== 'YES') { skipped.push({ id, why: `Runnable=NO — ${r.Notes || 'per matrix'}` }); continue }
+
+  const docker = r.TO.endsWith('&DOCKER')
+  const toRole = docker ? r.TO.slice(0, -'&DOCKER'.length) : r.TO
+
+  if (r.SessionType === 'Local') {
+    if (docker) { skipped.push({ id, why: 'Local+Container needs the structured Runtime field (ledger item e) — not expressible as a config yet' }); continue }
+    out.push({
+      id: `mx-c${id}`,
+      label: `C${id} · Local (${fromRole})`,
+      workingDirectory: process.env.USERPROFILE || process.env.HOME || '~',
+      color: '',
+      identityColorKey: COLORS[out.length % COLORS.length],
+      sessionType: 'local',
+      provider: 'claude',
+      sectionId: 'sec-matrix',
+      claudeOptions,
+    })
+    continue
+  }
+
+  const roleMap = ROLE_SLOTS[toRole]
+  const slot = roleMap ? hosts[roleMap.slot] : undefined
+  if (!roleMap) { skipped.push({ id, why: `TO role ${toRole} has no role→slot mapping in this script` }); continue }
+  if (!slot) { skipped.push({ id, why: `hosts.local.json has no "${roleMap.slot}" slot (add it, e.g. Ubuntu Hyper-V creds TBC) — re-run after` }); continue }
+
+  const tmux = r.SessionType === 'Tmux'
+  const pw = r.SshAuth === 'Password'
+  const sudo = r.DockerAuth === 'sudo'
+  const label =
+    `C${id} · ${toRole} · ${tmux ? 'tmux' : 'standard'} · ${pw ? 'pw' : 'key'}` +
+    (docker ? ` · docker-${r.DockerAuth}` : '')
+
+  out.push({
+    id: `mx-c${id}`,
+    label,
+    workingDirectory: slot.remotePath ?? '~',
+    color: '',
+    identityColorKey: COLORS[out.length % COLORS.length],
+    sessionType: 'ssh',
+    provider: 'claude',
+    sectionId: 'sec-matrix',
+    claudeOptions,
+    sshConfig: {
+      host: slot.host,
+      port: slot.port ?? 22,
+      username: slot.username,
+      remotePath: slot.remotePath ?? '~',
+      hasPassword: false, // flips when the password is typed in Edit (DPAPI)
+      detachable: tmux,
+      remoteOs: roleMap.remoteOs ?? 'auto',
+      postCommand: docker ? `${sudo ? 'sudo ' : ''}docker exec -it ${DOCKER_CONTAINER} bash` : '',
+      ...(docker && sudo ? { hasSudoPassword: true } : {}),
+      dockerContainer: docker ? DOCKER_CONTAINER : '',
+    },
+  })
+  ;(pw ? needsPassword : needsKey).push(label)
+  if (docker) needsDocker.add(`${toRole} (${slot.host}) — container "${DOCKER_CONTAINER}"`)
+}
+
+out.sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)))
+
 const configsFile = path.join(configDir, 'configs.json')
 const sectionsFile = path.join(configDir, 'config-sections.json')
 const configs = fs.existsSync(configsFile) ? JSON.parse(fs.readFileSync(configsFile, 'utf-8')) : []
@@ -63,97 +166,21 @@ if (!Array.isArray(configs) || !Array.isArray(sections)) {
   process.exit(1)
 }
 
-const SECTION_ID = 'sec-matrix'
-const COLORS = ['slate-blue', 'pink', 'indigo', 'violet', 'plum', 'lavender', 'rose', 'orchid', 'mauve', 'periwinkle']
-let colorIdx = 0
-const claudeOptions = { model: 'sonnet', effortLevel: 'medium', loggingEnabled: true, agentIds: [] }
-const needsPassword = []
-const needsKey = []
-const out = []
-
-function add(id, label, ssh, opts = {}) {
-  const cfg = {
-    id: `mx-${id}`,
-    label,
-    workingDirectory: ssh ? ssh.remotePath : (process.env.USERPROFILE || process.env.HOME || '~'),
-    color: '',
-    identityColorKey: COLORS[colorIdx++ % COLORS.length],
-    sessionType: ssh ? 'ssh' : 'local',
-    provider: 'claude',
-    sectionId: SECTION_ID,
-    claudeOptions,
-    ...(ssh ? { sshConfig: ssh } : {}),
-  }
-  out.push(cfg)
-  if (ssh) (opts.auth === 'pw' ? needsPassword : needsKey).push(label)
-}
-
-function sshCfg(slot, { detachable, remoteOs, auth }) {
-  return {
-    host: slot.host,
-    port: slot.port ?? 22,
-    username: slot.username,
-    remotePath: slot.remotePath ?? '~',
-    hasPassword: false, // set by the app when the password is typed in Edit
-    detachable,
-    remoteOs: remoteOs ?? 'auto',
-    postCommand: '',
-    dockerContainer: '',
-  }
-}
-
-// Local — the FROM machine itself.
-add('local', 'Local (this machine)', null)
-
-// Windows target (WINDOWS_2): standard pw + standard key + detach-degrade.
-if (hosts.windows) {
-  const w = hosts.windows
-  add('win2-std-pw', 'Win2 · standard · pw', sshCfg(w, { detachable: false, remoteOs: 'windows', auth: 'pw' }), { auth: 'pw' })
-  add('win2-std-key', 'Win2 · standard · key', sshCfg(w, { detachable: false, remoteOs: 'windows', auth: 'key' }), { auth: 'key' })
-  add('win2-detach', 'Win2 · detach degrade · pw', sshCfg(w, { detachable: true, remoteOs: 'windows', auth: 'pw' }), { auth: 'pw' })
-}
-// Unix password target (Pi): tmux + standard.
-if (hosts.linuxPassword) {
-  const p = hosts.linuxPassword
-  add('pi-tmux-pw', 'Pi · tmux · pw', sshCfg(p, { detachable: true, auth: 'pw' }), { auth: 'pw' })
-  add('pi-std-pw', 'Pi · standard · pw', sshCfg(p, { detachable: false, auth: 'pw' }), { auth: 'pw' })
-}
-// Unix key target (185): tmux + standard.
-if (hosts.linuxKey) {
-  const k = hosts.linuxKey
-  add('185-tmux-key', '185 · tmux · key', sshCfg(k, { detachable: true, auth: 'key' }), { auth: 'key' })
-  add('185-std-key', '185 · standard · key', sshCfg(k, { detachable: false, auth: 'key' }), { auth: 'key' })
-}
-// Rocky (password, no tmux installed — detachable ON exercises the staging rung).
-if (hosts.linuxRocky) {
-  const r = hosts.linuxRocky
-  add('rocky-tmux-pw', 'Rocky · tmux(staged) · pw', sshCfg(r, { detachable: true, auth: 'pw' }), { auth: 'pw' })
-  add('rocky-std-pw', 'Rocky · standard · pw', sshCfg(r, { detachable: false, auth: 'pw' }), { auth: 'pw' })
-}
-// mac (key): tmux + standard.
-if (hosts.mac) {
-  const m = hosts.mac
-  add('mac-tmux-key', 'Mac · tmux · key', sshCfg(m, { detachable: true, auth: 'key' }), { auth: 'key' })
-  add('mac-std-key', 'Mac · standard · key', sshCfg(m, { detachable: false, auth: 'key' }), { auth: 'key' })
-}
-
-// Docker combinations are deliberately NOT generated yet: the structured
-// Runtime field (ledger item e) and the docker installs on the fleet are
-// still owed; free-text postCommand configs would encode exactly the shape
-// that work replaces. Add them here when item (e) lands.
-
 const stamp = Date.now()
-for (const f of [configsFile, sectionsFile]) {
-  if (fs.existsSync(f)) fs.copyFileSync(f, `${f}.bak-${stamp}`)
-}
+for (const f of [configsFile, sectionsFile]) if (fs.existsSync(f)) fs.copyFileSync(f, `${f}.bak-${stamp}`)
 
 const keptConfigs = configs.filter((c) => !(typeof c?.id === 'string' && c.id.startsWith('mx-')))
-const keptSections = sections.filter((s) => s?.id !== SECTION_ID)
-keptSections.push({ id: SECTION_ID, name: 'MATRIX TESTS' })
+const keptSections = sections.filter((s) => s?.id !== 'sec-matrix')
+keptSections.push({ id: 'sec-matrix', name: `MATRIX TESTS — FROM ${fromRole}` })
 fs.writeFileSync(configsFile, JSON.stringify([...keptConfigs, ...out], null, 2))
 fs.writeFileSync(sectionsFile, JSON.stringify(keptSections, null, 2))
 
-console.log(`Wrote ${out.length} matrix configs into section "MATRIX TESTS" (${configDir})`)
-console.log(`Preserved ${keptConfigs.length} existing configs and ${keptSections.length - 1} existing sections; backups .bak-${stamp}`)
-if (needsPassword.length) console.log(`\nType the SSH password ONCE in Edit → Save for:\n  - ${needsPassword.join('\n  - ')}`)
-if (needsKey.length) console.log(`\nNeed this machine's SSH key authorised on the target for:\n  - ${needsKey.join('\n  - ')}`)
+console.log(`FROM ${fromRole}: ${mine.length} matrix cases → ${out.length} configs written (section "MATRIX TESTS — FROM ${fromRole}")`)
+console.log(`Preserved ${keptConfigs.length} existing configs; backups .bak-${stamp}`)
+if (skipped.length) {
+  console.log(`\nNOT generated (${skipped.length}) — every one has a reason, none silent:`)
+  for (const s of skipped.sort((a, b) => Number(a.id) - Number(b.id))) console.log(`  C${s.id}: ${s.why}`)
+}
+if (needsPassword.length) console.log(`\nType the SSH password ONCE in Edit → Save for (${needsPassword.length}):\n  - ${needsPassword.join('\n  - ')}`)
+if (needsKey.length) console.log(`\nNeed this machine's SSH key authorised on the target for (${needsKey.length}):\n  - ${needsKey.join('\n  - ')}`)
+if (needsDocker.size) console.log(`\nDocker provisioning owed before these connect:\n  - ${[...needsDocker].join('\n  - ')}`)
