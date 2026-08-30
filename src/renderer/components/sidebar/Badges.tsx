@@ -114,6 +114,33 @@ export function SshPersistentBadge() {
   )
 }
 
+// Docker/container session badge (harmonise-remote Phase 3): a session whose
+// runtime is a container (sshConfig.dockerContainer set). A SIBLING of the SSH
+// badges, not a replacement — it COMPOSES with them, so an SSH-Persistent +
+// Docker session shows both the chain-link SSH badge and this. Teal keeps it
+// distinct from SSH's blue, tmux's green and the terminal's sky; the
+// stacked-cargo-over-water glyph is the Docker whale reduced to what still
+// reads at 9px. The container name lives in the tooltip, not inline (width).
+export function DockerBadge({ container }: { container?: string }) {
+  return (
+    <div
+      className="flex items-center justify-center w-4 h-4 rounded shrink-0 bg-teal/15 text-teal"
+      title={container ? `Runs in container: ${container}` : 'Runs in a container'}
+      data-testid="docker-badge"
+    >
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        {/* Cargo boxes (the container stack). */}
+        <rect x="4" y="9" width="3.6" height="3.6" rx="0.4" />
+        <rect x="8.2" y="9" width="3.6" height="3.6" rx="0.4" />
+        <rect x="12.4" y="9" width="3.6" height="3.6" rx="0.4" />
+        <rect x="8.2" y="4.8" width="3.6" height="3.6" rx="0.4" />
+        {/* Whale body + waterline. */}
+        <path d="M2 13.5h17.5c0 2.8-2.2 5-5 5H8a6 6 0 0 1-6-5z" />
+      </svg>
+    </div>
+  )
+}
+
 export function CodexBadge() {
   return (
     <div

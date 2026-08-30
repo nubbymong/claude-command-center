@@ -226,4 +226,33 @@ describe('SessionRow card', () => {
     const name = container.querySelector('[data-testid="account-name"]')
     expect((name as HTMLElement).title).toBe('live@x.com')
   })
+
+  // Docker session badge (harmonise-remote Phase 3): a SIBLING of the SSH
+  // transport badge — shown IN ADDITION, keyed on the structured docker field.
+  it('renders the docker badge for a container SSH session, composing with the SSH badge', () => {
+    render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } })
+    const docker = container.querySelector('[data-testid="docker-badge"]')
+    expect(docker).not.toBeNull()
+    expect((docker as HTMLElement).title).toBe('Runs in container: ccc-test')
+    // Composes: the SSH transport badge is still there alongside it.
+    expect(container.querySelector('[data-testid="ssh-badge"]')).not.toBeNull()
+  })
+
+  it('composes the docker badge with the SSH-PERSISTENT badge (both shown)', () => {
+    render(root, { sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } })
+    expect(container.querySelector('[data-testid="docker-badge"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-badge"]')).not.toBeNull()
+  })
+
+  it('renders NO docker badge when dockerContainer is unset or empty', () => {
+    render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } })
+    expect(container.querySelector('[data-testid="docker-badge"]')).toBeNull()
+    act(() => root.unmount()); root = createRoot(container)
+    render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: '' } })
+    expect(container.querySelector('[data-testid="docker-badge"]')).toBeNull()
+    act(() => root.unmount()); root = createRoot(container)
+    // A local session never carries one.
+    render(root, { sessionType: 'local' })
+    expect(container.querySelector('[data-testid="docker-badge"]')).toBeNull()
+  })
 })

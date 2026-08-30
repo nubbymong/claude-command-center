@@ -202,6 +202,26 @@ describe('SessionHeader', () => {
     expect(container.textContent).not.toContain('Claude Code')
     expect(container.textContent).not.toContain('claude.ai')
   })
+
+  // Docker pill in the SSH cluster (harmonise-remote Phase 3): composes with the
+  // persistence pill, keyed on the structured docker field, container on hover.
+  it('SSH: shows the docker pill (naming the container) when the session runs in a container', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } as any }))
+    const pill = container.querySelector('[data-testid="ssh-docker-pill"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.getAttribute('title')).toBe('Runs in container: ccc-test')
+  })
+
+  it('SSH: the docker pill composes with the persistence pill (both shown)', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } as any }))
+    expect(container.querySelector('[data-testid="ssh-docker-pill"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).not.toBeNull()
+  })
+
+  it('SSH: no docker pill when the session is not a container', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))
+    expect(container.querySelector('[data-testid="ssh-docker-pill"]')).toBeNull()
+  })
 })
 
 describe('the slim Ask header (#465)', () => {

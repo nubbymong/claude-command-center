@@ -1,6 +1,6 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { FadeSlot, MoonBadge, SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge, WorkingBadge } from './Badges'
+import { DockerBadge, FadeSlot, MoonBadge, SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge, WorkingBadge } from './Badges'
 import { isAsleep, useSleepStore } from '../../stores/sleepStore'
 import { useActiveStore } from '../../stores/activeStore'
 import { type SessionState } from '../ui/StatusDot'
@@ -200,6 +200,11 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
             with the common case as the odd one out. The name column gets its
             full width back. */}
         {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
+        {/* Docker/container runtime (harmonise-remote Phase 3): a SIBLING of the
+            transport badge, shown IN ADDITION to it — so an SSH-Persistent
+            container session carries both. Keyed on the structured docker
+            field, not the free-text post-command. */}
+        {!!session.sshConfig?.dockerContainer && <DockerBadge container={session.sshConfig.dockerContainer} />}
         {/* Moon BESIDE the type badge (variant B): the type mark stays — the
             moon is additional Watchdog state, not a replacement identity. The
             working pill is its inverse and shares the slot (mutually exclusive:
