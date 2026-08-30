@@ -2049,6 +2049,29 @@ export function reopenCompletedCanvas(canvasId: string, requireOwnerSessionId?: 
   return toState(next)
 }
 
+/**
+ * The session's most recently completed canvas, read-only (#573).
+ *
+ * Completion detaches the sessionIndex pointer, which is right for the PANE
+ * (it falls back to its front page) and wrong for the one read the agent still
+ * owes: an approval-with-notes auto-completes the subject, and the very review
+ * that carried the approval became unfetchable ("no canvas for session")
+ * before the agent could read its notes. Records keep `sessionId`, so the
+ * session's own history is resolvable without the index. Serve READS from it;
+ * renders and completion still refuse completed canvases, and this never
+ * resolves another session's canvas.
+ */
+export function getLastCompletedCanvasStateForSession(sessionId: string): CanvasState | null {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return null
+  ensureDiskScanned()
+  let latest: CanvasRecord | null = null
+  for (const record of canvases.values()) {
+    if (record.sessionId !== sessionId || !record.completed) continue
+    if (!latest || record.completed.at > latest.completed!.at) latest = record
+  }
+  return latest ? toState(latest) : null
+}
+
 /** Windows reserved device basenames — a request for `CON`/`NUL`/`COM1`/… can
  *  open a device rather than a file. Matched on the pre-extension basename. */
 const WIN_RESERVED_BASENAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)$/i
