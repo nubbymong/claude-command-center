@@ -11,7 +11,7 @@ vi.mock('../../src/main/conductor-mcp-server', () => ({
 }))
 vi.mock('../../src/main/hooks/session-hooks-writer', () => ({ buildHooksBlock: () => null }))
 
-import { statusPostUrl, generateRemoteSetupScript, generateWindowsRemoteSetupScript, SSH_STATUSLINE_SHIM, SSH_STATUSLINE_SHIM_WINDOWS } from '../../src/main/providers/claude/ssh-shim'
+import { statusPostUrl, generateRemoteSetupScript, generateWindowsRemoteSetupScript, getWindowsRemoteSetupCommand, SSH_STATUSLINE_SHIM, SSH_STATUSLINE_SHIM_WINDOWS } from '../../src/main/providers/claude/ssh-shim'
 
 describe('statusPostUrl', () => {
   it('is empty when the MCP server is off (port 0) — shim falls back to the OSC ladder', () => {
@@ -56,6 +56,18 @@ describe('setup script plumbing', () => {
   it('Windows statusLine command carries the URL as a double-quoted argv[3]', () => {
     const script = generateWindowsRemoteSetupScript('abc123', { remoteMcpPort: 45111, includeConductorMcp: true }, 'nonceA1')
     expect(script).toContain('"http://127.0.0.1:45111/status?cccSessionId=abc123&token=')
+  })
+
+  it('every line of the Windows setup command stays under cmd.exe input limit', () => {
+    // The live regression this guards: the slice-2 gather snippet grew the
+    // one-liner to ~11K chars and cmd.exe's 8191 input limit silently killed
+    // setup (`running-setup → failed`). The chunked form must keep EVERY
+    // typed line under the limit with margin, and still end by running node.
+    const cmd = getWindowsRemoteSetupCommand('abc123', { remoteMcpPort: 45111, includeConductorMcp: true }, 'nonceA1')
+    const lines = cmd.split('\r')
+    for (const l of lines) expect(l.length).toBeLessThan(8000)
+    expect(lines[lines.length - 1]).toContain('FromBase64String')
+    expect(lines[lines.length - 1]).toContain('|node')
   })
 
   it('both shims are syntactically valid JS (a broken shim only explodes later on a remote host)', () => {

@@ -909,7 +909,31 @@ export function getWindowsRemoteSetupCommand(
   // Single base64 of the node program (its alphabet is [A-Za-z0-9+/=], so it
   // carries no cmd.exe / PowerShell metacharacter and needs no quoting).
   const nodeB64 = Buffer.from(script, 'utf-8').toString('base64')
-  return `powershell -NoProfile -NonInteractive -Command "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${nodeB64}'))|node"`
+  const oneLiner = `powershell -NoProfile -NonInteractive -Command "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${nodeB64}'))|node"`
+  // Fast path: the whole program fits one typed line with margin. cmd.exe's
+  // hard input limit is 8191 chars; stay well under it.
+  if (oneLiner.length <= 7500) return oneLiner
+
+  // Chunked path (harmonise-remote slice 2: the shared gather snippet grew the
+  // Windows shim past the one-liner ceiling — setup silently died at the cmd
+  // input limit, `running-setup → failed`). Write the base64 to a per-session
+  // temp file in <8K lines, decode once, run, delete. Each line is a complete
+  // `powershell -Command "..."` that parses identically under a cmd.exe AND a
+  // PowerShell login shell (the same property the one-liner already relied
+  // on); the PTY executes the lines sequentially, so the caller's single
+  // `write(cmd + '\r')` needs no change. Convert.FromBase64String ignores the
+  // newlines Get-Content -Raw preserves. This removes the size ceiling
+  // permanently instead of shaving bytes until the next feature hits it.
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const b64Path = `$env:TEMP\\ccc-setup-${safeSid}.b64`
+  const CHUNK = 4000
+  const lines: string[] = []
+  for (let i = 0; i < nodeB64.length; i += CHUNK) {
+    const cmdlet = i === 0 ? 'Set-Content' : 'Add-Content'
+    lines.push(`powershell -NoProfile -NonInteractive -Command "${cmdlet} -LiteralPath ${b64Path} -Encoding ascii -Value '${nodeB64.slice(i, i + CHUNK)}'"`)
+  }
+  lines.push(`powershell -NoProfile -NonInteractive -Command "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((Get-Content -LiteralPath ${b64Path} -Raw)))|node; Remove-Item -LiteralPath ${b64Path} -ErrorAction SilentlyContinue"`)
+  return lines.join('\r')
 }
 
 /**
