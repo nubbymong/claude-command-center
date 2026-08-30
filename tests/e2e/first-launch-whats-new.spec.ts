@@ -25,23 +25,34 @@ const APP_VERSION = JSON.parse(
 ).version as string
 
 /**
- * A build the user came FROM. It must be >= the NEWEST step `sinceVersion`
- * (currently `commandBar` at 2.1.0-beta.17), so `stepsNewSince` returns
- * nothing and the What's-New page is the WHOLE upgrade run — which is what
- * lets this spec test the notes→resume handover directly. beta.14 (the old
- * value) was older than beta.17, so the run also included the commandBar setup
- * step: the last CTA read "Set it up →", not "Continue", and dismissing the
- * notes handed to that step rather than to resume — the staleness #448 is about.
- * Bump this when EITHER trigger fires: a later step ships with a newer
+ * A build the user came FROM. Two couplings decide it:
+ *
+ * 1. It must be >= the NEWEST step `sinceVersion` (still `commandBar` at
+ *    2.1.0-beta.17), so `stepsNewSince` returns nothing and the What's-New
+ *    page is the WHOLE upgrade run — which is what lets this spec test the
+ *    notes→resume handover directly. beta.14 (the value before beta.17) was
+ *    older than that, so the run also included the commandBar setup step: the
+ *    last CTA read "Set it up →", not "Continue", and dismissing the notes
+ *    handed to that step rather than to resume — the staleness #448 is about.
+ * 2. It must be past RENAME_SHIPPED_IN (2.1.0-beta.6), so the rename/roadmap
+ *    prelude (#525) stays down and the run OPENS on the notes summary. The
+ *    prelude also has a tester arm this constant cannot reach — beta channel
+ *    + any prerelease build shows it regardless of lastSeenVersion (owner
+ *    call, canvas R2 2026-08-27; `showRenamePageFor` in WhatsNewV2Step.tsx) —
+ *    which is why the settings seed below pins `updateChannel: 'stable'`.
+ *    rc.10 broke this spec through that arm, not through stepsNewSince.
+ *
+ * Bump this when ANY trigger fires: a later step ships with a newer
  * `sinceVersion` (the frozen table in tests/unit/renderer/onboarding-registry.test.ts
  * is where you will see it change), OR this build crosses into a new release
  * line (e.g. 2.2.0) — a line crossing forces the FULL flow, not the notes-only
  * run, and re-breaks these assertions the same way #448 did. Set it to a
- * version on the CURRENT line, at or past the newest step. The last test guards
- * the coupling: the final CTA reads "Continue" only when the notes page is
- * genuinely last.
+ * version on the CURRENT line, at or past the newest step and below the
+ * running build (rc.9 is the RC that shipped before rc.10). The last test
+ * guards the coupling: the final CTA reads "Continue" only when the notes
+ * page is genuinely last.
  */
-const PREV_VERSION = '2.1.0-beta.17'
+const PREV_VERSION = '2.1.0-rc.9'
 
 let app: ElectronApplication | undefined
 let page: Page
@@ -71,9 +82,22 @@ test.beforeAll(async () => {
       onboardingAppVersion: PREV_VERSION,
     }),
   )
+  // `updateChannel: 'stable'`, deliberately (was 'beta'): on the beta channel
+  // every PRERELEASE build opens the notes on the rename/roadmap prelude page
+  // (the tester arm in `showRenamePageFor`) instead of the summary this spec
+  // pins, and this build is an rc. The stable channel keeps the ordinary
+  // post-rename upgrade shape — summary first — on rc and final builds alike,
+  // and `decideUpgradeFlow` still shows the notes for a within-line move on
+  // stable ('within-line'). `updateChannelChosen` marks it an explicit choice
+  // so no channel pre-selection may ever flip it back mid-run.
   fs.writeFileSync(
     path.join(config, 'settings.json'),
-    JSON.stringify({ loggingConsentSeen: true, localMachineName: 'e2e-host', updateChannel: 'beta' }),
+    JSON.stringify({
+      loggingConsentSeen: true,
+      localMachineName: 'e2e-host',
+      updateChannel: 'stable',
+      updateChannelChosen: true,
+    }),
   )
   // Retire the legacy GitHub onboarding modal. It sits BETWEEN the harness and
   // resume in the priority chain, so leaving it armed means the notes hand over

@@ -3,7 +3,7 @@
  *
  * What this covers:
  *   - Settings → GitHub tab renders without crashing
- *   - "Sign in with GitHub / Add auth" entry point is present
+ *   - "Sign in with GitHub / Add account" entry point is present
  *   - AccountsSection shows the empty-state when no profiles exist
  *
  * What this intentionally does NOT cover:
@@ -15,6 +15,11 @@
  *
  * Runs against an isolated temp data dir (helpers/electron-app) so the app
  * boots to a clean, setup-complete first-launch state with no real user data.
+ *
+ * Navigation (rc.10): nav-rail buttons no longer carry `title` attributes
+ * (the OS tooltip was replaced by an inline one), so the old
+ * `button.title === 'Settings'` scan matched nothing. The rail's stable
+ * anchor is `data-tour="nav-settings"`; Settings opens as a page TAB.
  */
 
 import { test, expect } from '@playwright/test'
@@ -40,57 +45,29 @@ test.describe('GitHub OAuth UI', () => {
       await page.waitForTimeout(200)
     }
 
-    // Click the Settings sidebar button. The TitleBar / Sidebar uses `title`
-    // attributes for accessibility labels — same selector pattern as the
-    // training-capture script.
-    const clicked = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const b of buttons) {
-        if (b.title === 'Settings' || b.title?.startsWith('Settings')) {
-          b.click()
-          return true
-        }
-      }
-      return false
-    })
-    expect(clicked).toBe(true)
-    await page.waitForTimeout(600)
+    // Open Settings from the nav rail (stable data-tour anchor; the aria-label
+    // is dynamic by design, and `title` no longer exists on nav items).
+    await page.locator('aside [data-tour="nav-settings"]').click()
+    await expect(
+      page.locator('[data-testid="page-tab"][data-page="settings"][aria-current="page"]'),
+    ).toBeVisible({ timeout: 5000 })
 
-    // Click the GitHub tab within settings. Tabs are rendered as <button>
-    // with text content.
-    const tabClicked = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const b of buttons) {
-        if (b.textContent?.trim() === 'GitHub') {
-          b.click()
-          return true
-        }
-      }
-      return false
-    })
-    expect(tabClicked).toBe(true)
-    await page.waitForTimeout(400)
+    // Switch to the GitHub tab within Settings (left tab list, plain buttons).
+    await page.getByRole('button', { name: 'GitHub', exact: true }).click()
 
-    // AccountsSection header copy is stable - if this changes, the
-    // test fails and we update together with the UI copy.
-    const bodyText = await page.locator('body').innerText()
-    expect(bodyText).toContain('Accounts')
+    // AccountsSection empty-state copy is stable and GitHub-tab-specific — the
+    // bare word "Accounts" also appears in the Settings tab list, so it proved
+    // nothing about reaching the GitHub tab.
+    await expect(page.getByText('No auth profiles yet')).toBeVisible({ timeout: 5000 })
   })
 
   test('"Sign in with GitHub" entry point is clickable', async () => {
-    // Confirm the entry button exists. We avoid clicking it here because
-    // oauthStart would kick off a real device-code request; the unit tests
-    // around OAuthDeviceFlow cover the modal render path.
-    const entryFound = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const b of buttons) {
-        const label = b.textContent?.trim() ?? ''
-        if (label.includes('Sign in with GitHub') || label.includes('Add auth')) {
-          return !b.disabled
-        }
-      }
-      return false
-    })
-    expect(entryFound).toBe(true)
+    // Confirm the entry button exists and is enabled. We avoid clicking it
+    // because oauthStart would kick off a real device-code request; the unit
+    // tests around OAuthDeviceFlow cover the modal render path. Current copy:
+    // "Sign in with GitHub / Add account" (AccountsSection).
+    const entry = page.getByRole('button', { name: /Sign in with GitHub/ })
+    await expect(entry).toBeVisible()
+    await expect(entry).toBeEnabled()
   })
 })

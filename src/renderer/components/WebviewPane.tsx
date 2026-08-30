@@ -4,6 +4,7 @@ import { useBrowserStore } from '../stores/browserStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { normaliseBrowserInput, shortUrlLabel } from '../../shared/browser-url'
+import heroUrl from '../assets/aicc-browser-http.svg'
 
 const ExcalidrawModal = lazy(() => import('./ExcalidrawModal'))
 
@@ -694,12 +695,13 @@ function StartPage(props: {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center px-6 py-8" data-testid="browser-start">
       <div className="w-full max-w-[520px]">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-[var(--brand)]">{Icon.globe}</span>
-          {/* Colour ON the heading: an element-level h2 rule somewhere in the
-              imported stylesheets beat the inherited text colour on the VM
-              (the heading came out near-black on the dark start page). */}
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">Browser</h2>
+        {/* Masthead, the Agent Canvas treatment: brand art in relief beside a
+            gradient wordmark. The clipped gradient also settles the old defect
+            here for good — an element-level h2 colour rule cannot beat
+            `background-clip: text` the way it beat the utility colour. */}
+        <div className="bsp-masthead" data-testid="browser-start-masthead">
+          <img className="bsp-mast-art" src={heroUrl} alt="" aria-hidden="true" data-testid="browser-start-masthead-art" />
+          <h2 className="bsp-mast-word m-0">Browser</h2>
         </div>
         <p className="text-xs text-[var(--text-secondary)] mb-4">A page of your own, beside the terminal. Type an address, or pick a favourite.</p>
         <form

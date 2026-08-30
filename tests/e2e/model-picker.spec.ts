@@ -61,8 +61,10 @@ const transportCard = (v: string) =>
 
 // One shared app instance: a previously-open dialog would block the sidebar
 // button, so close it via Cancel first (Escape does not close this dialog).
+// The dialog's own testids (session-dialog-cancel/-submit) are the stable
+// anchors — bare `button:has-text("Cancel")` can match other dialogs.
 async function openDialog() {
-  const cancel = page.locator('button:has-text("Cancel")').first()
+  const cancel = page.locator('[data-testid="session-dialog-cancel"]')
   if (await cancel.isVisible().catch(() => false)) {
     await cancel.click()
     await expect(page.locator('text=New saved config')).toHaveCount(0)
@@ -112,9 +114,14 @@ test.describe('Model picker — versioned ids (#385)', () => {
 
     await shot('model-picker-opus46-selected.png')
 
-    await page.locator('button:has-text("Create config")').click()
-    // The config appears in the sidebar once created.
-    await expect(page.locator('text=E2E Opus46').first()).toBeVisible({ timeout: 30000 })
+    await page.locator('[data-testid="session-dialog-submit"]').click()
+    // The dialog closes on a successful create...
+    await expect(page.locator('text=New saved config')).toHaveCount(0, { timeout: 15000 })
+    // ...and the config appears as a row in the Saved panel (the tab openDialog
+    // selected). Scoped to the saved tabpanel: a bare `text=` first() could
+    // resolve to a hidden node elsewhere (session tab strip, quick start) and
+    // fail on visibility even though the row rendered.
+    await expect(page.getByTestId('saved-tab').getByText('E2E Opus46')).toBeVisible({ timeout: 30000 })
 
     // The chosen id round-trips UNCHANGED into the persisted config on disk.
     const configsPath = path.join(ctx.dataDir, 'resources', 'CONFIG', 'configs.json')

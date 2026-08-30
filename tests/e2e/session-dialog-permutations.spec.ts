@@ -187,7 +187,10 @@ test.describe('Terminal-only config actually runs its command', () => {
     await providerCard('terminal').click()
     await transportCard('local').click()
 
-    await page.locator('input[placeholder*="path"]').first().fill(probeDir)
+    // Working directory — for the terminal provider the placeholder is
+    // "Leave blank to start in your home folder" (the C:\path\to\project
+    // example placeholder only renders for the claude/codex providers).
+    await page.locator('input[placeholder*="home folder"]').first().fill(probeDir)
     await page.locator('input[placeholder="npm run dev"]').fill('node')
     await page.locator('input[placeholder*="--port 4310"]').fill(`${probeJs.replace(/\\/g, '/')} --token {secret}`)
     await page.locator('input[type="password"]').first().fill('E2E-SECRET-9f3a')

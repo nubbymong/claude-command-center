@@ -834,7 +834,12 @@ function clearLastResumeTarget(sessionId: string): void {
 // a later "End remote" must still be able to reach the host to kill the
 // now-detached remote -- clearing it on every exit made End a silent no-op
 // after any wifi blip (adversarial review, 2026-08-18).
-const sshTargetBySession = new Map<string, { username: string; host: string; port: number }>()
+// #572: the saved SSH password (when the session authed that way) rides along
+// so End can actually reach a password-only host -- see endSshRemote. It stays
+// in this main-process map exactly as long as the target itself (cleared on
+// deliberate close), is never IPC'd, logged or embedded in argv, and is only
+// ever WRITTEN to the End exec's own PTY in answer to a real password prompt.
+const sshTargetBySession = new Map<string, { username: string; host: string; port: number; password?: string }>()
 
 // SSH tmux enhancement (items 1/4): sessions whose launch actually wrapped in a
 // tmux persistence session (`tmuxWrapped` at writeClaudeCmd). The remote for
@@ -858,28 +863,113 @@ const sshTmuxWrappedBySession = new Set<string>()
  * forget with a bounded lifetime; the caller kills the local PTY separately.
  *
  * A no-op when we have no target for the session (never an SSH session, or
- * already cleaned up). Best-effort by design: BatchMode means a password-only
- * host's exec fails fast rather than hanging, in which case the remote simply
- * detaches and survives -- exactly the pre-enhancement behaviour, never worse.
+ * already cleaned up).
+ *
+ * #572: on a key/agent host this is the original BatchMode execFile. On a host
+ * whose session authed by SAVED PASSWORD, BatchMode made End a SILENT NO-OP --
+ * the exec failed fast, the remote tmux+claude survived, and every "ended"
+ * session kept ~350MB of the host's RAM forever (the mongminer exhaustion,
+ * 2026-08-30: a box with zero visible sessions held two orphaned claudes).
+ * Password targets now run the SAME argv (minus BatchMode, plus
+ * NumberOfPasswordPrompts=1) under a small dedicated PTY, answer exactly one
+ * real password prompt with the session's saved password, and wait for exit.
+ * The prompt match reuses the connect flow's tightened rule: strip escapes
+ * first (ConPTY glues them onto the prompt -- the RC9 lesson), then require
+ * the last non-empty line to END with `password:`/`password?` so a mid-line
+ * mention of passwords (the usual MOTD shape) can't trigger the write. A
+ * banner line deliberately ENDING in `password:` would still fire it — that
+ * is accepted, because the write's only possible destination is this PTY,
+ * which dials the credential's own host-key-verified host (accept-new
+ * REFUSES a changed key): a premature write to the password's owner, never a
+ * third-party leak (adversarial pass, 2026-08-30).
+ *
+ * Returns the outcome so callers that care (the live matrix) can await it;
+ * the IPC caller stays fire-and-forget.
  */
 const END_REMOTE_TIMEOUT_MS = 12000
-export function endSshRemote(sessionId: string): void {
+const END_REMOTE_PASSWORD_TIMEOUT_MS = 20000
+const END_REMOTE_PASSWORD_PROMPT_RE = /password[:?]\s*$/i
+export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' | 'no-target'> {
   const target = sshTargetBySession.get(sessionId)
-  if (!target) return
-  try {
-    const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
-    const args = buildSshExecArgs(target, buildRemoteTmuxKillCommand(sessionId), os.platform())
-    logInfo(`[ssh] ${sessionId}: ending remote session (tmux kill-session + sidecar cleanup over a separate exec)`)
-    const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err) => {
-      if (err) logInfo(`[ssh] ${sessionId}: end-remote exec exited non-zero (host may use password auth, or was already gone): ${err.message}`)
-      else logInfo(`[ssh] ${sessionId}: end-remote exec completed`)
+  if (!target) return Promise.resolve('no-target')
+  const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
+  if (target.password) {
+    // Password-auth host: PTY + one answered prompt (see doc above).
+    logInfo(`[ssh] ${sessionId}: ending remote session (password host; kill exec under a dedicated PTY)`)
+    return new Promise((resolve) => {
+      let settled = false
+      let child: pty.IPty | null = null
+      const done = (r: 'completed' | 'failed', why: string): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(deadline)
+        try { child?.kill() } catch { /* already gone */ }
+        logInfo(`[ssh] ${sessionId}: end-remote (password) ${r} (${why})`)
+        resolve(r)
+      }
+      const deadline = setTimeout(() => done('failed', 'timeout'), END_REMOTE_PASSWORD_TIMEOUT_MS)
+      try {
+        // Argv build INSIDE the executor's try (adversarial pass): a sync throw
+        // here must resolve 'failed' like every other failure, not escape as an
+        // exception into a fire-and-forget IPC caller.
+        const args = buildSshExecArgs(target, buildRemoteTmuxKillCommand(sessionId), os.platform(), { batchMode: false })
+        child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+      } catch (err) {
+        done('failed', `spawn: ${(err as Error)?.message ?? err}`)
+        return
+      }
+      let passwordSent = false
+      let tail = ''
+      child.onData((d) => {
+        // Bounded rolling tail; the prompt always sits at the end of it.
+        tail = (tail + d).slice(-2048)
+        // `settled` too (adversarial pass): after the timeout killed the child,
+        // a final ConPTY flush ending in a prompt-shaped line must not write
+        // into the dead PTY from inside the emitter.
+        if (settled || passwordSent) return
+        const lines = stripAnsiForSentinel(tail).split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0)
+        const last = lines[lines.length - 1] ?? ''
+        if (END_REMOTE_PASSWORD_PROMPT_RE.test(last)) {
+          passwordSent = true
+          // CR/LF stripped: a saved password cannot legitimately contain one
+          // (single-line field), and an embedded newline would otherwise split
+          // this into extra PTY lines. try/catch: the exit/data race can leave
+          // the PTY closed mid-callback, and a throw here is inside node-pty's
+          // emitter — main-process uncaughtException territory.
+          try {
+            child!.write(`${target.password!.replace(/[\r\n]/g, '')}\r`)
+          } catch {
+            /* PTY already closed; onExit/timeout settles the outcome */
+          }
+        }
+      })
+      child.onExit(({ exitCode }) => done(exitCode === 0 ? 'completed' : 'failed', `exit=${exitCode}`))
     })
-    // Never let a stuck child keep a handle alive; execFile's own timeout also
-    // covers this, but unref so it can't hold the process open.
-    try { child.unref() } catch { /* noop */ }
-  } catch (err) {
-    logError(`[ssh] ${sessionId}: endSshRemote failed to dispatch: ${(err as Error)?.message ?? err}`)
   }
+  // Key/agent host: the original fire-fast BatchMode exec, now with an
+  // awaitable outcome.
+  return new Promise((resolve) => {
+    try {
+      const args = buildSshExecArgs(target, buildRemoteTmuxKillCommand(sessionId), os.platform())
+      logInfo(`[ssh] ${sessionId}: ending remote session (tmux kill-session + sidecar cleanup over a separate exec)`)
+      const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err) => {
+        if (err) logInfo(`[ssh] ${sessionId}: end-remote exec exited non-zero (host was already gone, or refused key auth): ${err.message}`)
+        else logInfo(`[ssh] ${sessionId}: end-remote exec completed`)
+        resolve(err ? 'failed' : 'completed')
+      })
+      // Never let a stuck child keep a handle alive; execFile's own timeout also
+      // covers this, but unref so it can't hold the process open.
+      try { child.unref() } catch { /* noop */ }
+    } catch (err) {
+      logError(`[ssh] ${sessionId}: endSshRemote failed to dispatch: ${(err as Error)?.message ?? err}`)
+      resolve('failed')
+    }
+  })
+}
+
+/** Test-only: seed an End target without a live spawn (unit tests for #572). */
+export function _setSshTargetForTest(sessionId: string, target: { username: string; host: string; port: number; password?: string }): void {
+  sshTargetBySession.set(sessionId, target)
 }
 
 // === SSH OSC sentinel parser ===
@@ -1245,7 +1335,7 @@ export function spawnPty(
     sshNonceBySession.set(sessionId, sshNonce)
     // item 4: remember this session's connection target so a deliberate End can
     // reach the host over a separate exec. Cleared in cleanupSessionResources.
-    sshTargetBySession.set(sessionId, { username: ssh.username, host: ssh.host, port: ssh.port })
+    sshTargetBySession.set(sessionId, { username: ssh.username, host: ssh.host, port: ssh.port, password: ssh.password })
     // #242 round-3 correction (I3): which entry of buildTmuxLaunchCommand's
     // fixed literal table to use, once a 'setup ok'/stage/push sentinel
     // reports a usable tmux -- never a wire-reported path. `null` means "not

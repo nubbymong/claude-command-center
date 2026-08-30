@@ -90,6 +90,19 @@ describe('the start page', () => {
     expect(api.open).not.toHaveBeenCalled()
     expect(byTest('browser-start-address')).toBe(document.activeElement)
   })
+  it('wears the brand masthead: art plus a real wordmark, not the invisible h2', async () => {
+    open()
+    render()
+    await flush()
+    const art = byTest<HTMLImageElement>('browser-start-masthead-art')
+    expect(art).not.toBeNull()
+    expect(art!.getAttribute('src')).toBeTruthy()
+    // Decorative: the wordmark beside it carries the name for the a11y tree.
+    expect(art!.getAttribute('aria-hidden')).toBe('true')
+    const word = byTest('browser-start-masthead')!.querySelector('h2')
+    expect(word?.textContent).toBe('Browser')
+    expect(word?.className).toContain('bsp-mast-word')
+  })
   it('typing a scheme-less local address and submitting loads http://… and creates the view at the placeholder bounds', async () => {
     open()
     render()

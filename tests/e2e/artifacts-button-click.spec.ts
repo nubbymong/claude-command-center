@@ -62,11 +62,14 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   // Hard-kill: a restored Claude session leaves a live PTY child that can hang a
-  // graceful close.
+  // graceful close. Give the hook headroom past the 30s default, and bound the
+  // taskkill itself — a wedged conhost can otherwise hang execSync (and with it
+  // the whole worker teardown) indefinitely.
+  test.setTimeout(120000)
   try {
     const pid = ctx?.app.process().pid
     if (pid) {
-      if (process.platform === 'win32') execSync(`taskkill /pid ${pid} /T /F`, { windowsHide: true, stdio: 'ignore' })
+      if (process.platform === 'win32') execSync(`taskkill /pid ${pid} /T /F`, { windowsHide: true, stdio: 'ignore', timeout: 15000 })
       else process.kill(pid, 'SIGKILL')
     }
   } catch { /* already gone */ }
@@ -94,10 +97,13 @@ test.describe('#513 Artifacts button — account-backed session', () => {
     await test.info().attach('513-artifacts-in-bar', { path: test.info().outputPath('513-artifacts-in-bar.png'), contentType: 'image/png' })
 
     // Clicking is wired: swallow any account-web dialog it raises (the seeded
-    // account has no real partition), and confirm the app stays healthy.
+    // account has no real partition), and confirm the app stays healthy. The
+    // click opens a real artifacts BrowserWindow (claude.ai) as a side effect;
+    // give the main window a generous budget to settle instead of the 5s
+    // default while that child window spins up on the VM.
     page.on('dialog', (d) => { void d.dismiss().catch(() => {}) })
     await artifacts.click()
     await page.waitForTimeout(500)
-    await expect(page.locator('[data-testid="command-band-core"]').first()).toBeVisible()
+    await expect(page.locator('[data-testid="command-band-core"]').first()).toBeVisible({ timeout: 15000 })
   })
 })

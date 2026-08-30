@@ -828,7 +828,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               ) : (
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 8 3 12 7 16" /><polyline points="17 8 21 12 17 16" /><line x1="14" y1="4" x2="10" y2="20" /></svg>
               )}
-              <ReservedLabel current={isPartnerActive ? (caps.agentName || 'Terminal') : 'Partner'} states={[caps.agentName || 'Terminal', 'Partner']} />
+              <ReservedLabel current={isPartnerActive ? (caps.agentName || 'Terminal') : 'Partner'} />
               {caps.panesOnDifferentMachines && (
                 <span className="rounded px-1 text-[7.5px] font-bold uppercase tracking-wide leading-[11px] border" style={{ background: 'var(--surface-overlay)', borderColor: 'var(--border-strong)', color: 'var(--text-secondary)' }} data-testid="command-machine-badge">this PC</span>
               )}

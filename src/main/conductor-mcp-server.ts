@@ -42,7 +42,7 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
-import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, renderVersion, reopenVersionForReview, resolveInsideCanvasRoot, setVersionVerdict } from './canvas/canvas-store'
+import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, getLastCompletedCanvasStateForSession, renderVersion, reopenVersionForReview, resolveInsideCanvasRoot, setVersionVerdict } from './canvas/canvas-store'
 import { completeCanvasGuarded } from './canvas/canvas-completion'
 import {
   closeAnnotationsByAgent,
@@ -865,6 +865,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         // subject-change draft is in flight (#366); every other tool stays on
         // the user-facing binding above.
         getAgentCanvasState: (sessionId: string) => getAgentCanvasStateForSession(sessionId),
+        // canvas_review only (#573): serves the review an approval rode in on
+        // after that approval auto-completed the subject and detached the
+        // live binding. Read-only; mutating tools stay strict.
+        getLastCompletedCanvasState: (sessionId: string) => getLastCompletedCanvasStateForSession(sessionId),
         requestSnapshot: (args) => requestCanvasSnapshot(args),
         renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
         // C1 (owner state machine 2026-08-26): chat-stated version verdicts,

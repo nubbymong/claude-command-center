@@ -110,7 +110,7 @@ export default function WebviewButton({ sessionId }: Props) {
           <circle cx="5.5" cy="4.25" r="0.5" fill="currentColor" />
         </svg>
       )}
-      <ReservedLabel current={isOpen ? 'Terminal' : 'Browser'} states={['Terminal', 'Browser']} />
+      <ReservedLabel current={isOpen ? 'Terminal' : 'Browser'} />
       {/* The dot only appears while a watch has something to say. A plain
           grey dot on an idle button was a status indicator for no status. */}
       {watching && (

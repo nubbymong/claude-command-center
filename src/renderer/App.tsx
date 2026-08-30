@@ -6,6 +6,7 @@ import SessionHeader from './components/SessionHeader'
 import TerminalView, { killSessionPty } from './components/TerminalView'
 import CommandBar from './components/CommandBar'
 import SessionStatusStrip from './components/SessionStatusStrip'
+import SshHostPill from './components/SshHostPill'
 import WebviewPane from './components/WebviewPane'
 import AgentCanvasPane from './components/AgentCanvasPane'
 import LogsPane from './components/LogsPane'
@@ -1013,7 +1014,7 @@ export default function App() {
                       would remount xterm and take the scrollback with it. */}
                   <PaneFade
                     covered={isShowingExcalidraw}
-                    className="flex-1 flex flex-col"
+                    className="relative flex-1 flex flex-col"
                     style={{
                       display: isShowingPartner || altPaneShowing ? 'none' : 'flex',
                       minHeight: 0,
@@ -1041,6 +1042,11 @@ export default function App() {
                       provider={session.provider}
                       codexOptions={session.codexOptions}
                     />
+                    {/* #570: SSH sessions name their host here — docked above
+                        the statusline, never over the command buttons. Inside
+                        the MAIN terminal PaneFade so the canvas/browser/logs/
+                        partner surfaces structurally cannot show it (R4 a7). */}
+                    <SshHostPill host={session.sshConfig?.host} />
                   </PaneFade>
                   {hasPartner && (
                     <PaneFade

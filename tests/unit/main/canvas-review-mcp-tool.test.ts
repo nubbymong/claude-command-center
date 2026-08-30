@@ -218,3 +218,52 @@ describe('the successful fetch', () => {
     expect(inside).toContain('"envelope": "untrusted-content"')
   })
 })
+
+describe('#573 — the fetch outlives sign-off', () => {
+  // An approval auto-completes the subject and detaches the live binding; the
+  // review that carried the approval must still be fetchable through the
+  // read-only completed-canvas fallback.
+  it('serves the review from the completed canvas when the live binding is gone', async () => {
+    const out = await runCanvasReview(
+      { reviewId: 'R2' },
+      'sess-mine',
+      deps({
+        getCanvasState: () => null,
+        getLastCompletedCanvasState: () => STATE,
+      }),
+    )
+    expect(out.isError).toBe(false)
+    expect(out.text).toContain('ship it')
+  })
+
+  it('the canvasId guard still binds against the fallback state', async () => {
+    const out = await runCanvasReview(
+      { canvasId: 'someone-elses', reviewId: 'R2' },
+      'sess-mine',
+      deps({
+        getCanvasState: () => null,
+        getLastCompletedCanvasState: () => STATE,
+      }),
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toContain('does not belong to this session')
+  })
+
+  it('still refuses when the session has no canvas at all — wired or not', async () => {
+    const wired = await runCanvasReview(
+      { reviewId: 'R2' },
+      'sess-mine',
+      deps({ getCanvasState: () => null, getLastCompletedCanvasState: () => null }),
+    )
+    expect(wired.isError).toBe(true)
+    expect(wired.text).toContain('no canvas yet')
+
+    const unwired = await runCanvasReview(
+      { reviewId: 'R2' },
+      'sess-mine',
+      deps({ getCanvasState: () => null }),
+    )
+    expect(unwired.isError).toBe(true)
+    expect(unwired.text).toContain('no canvas yet')
+  })
+})

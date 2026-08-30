@@ -9,6 +9,14 @@
  * Runs against an isolated temp data dir (helpers/electron-app), so the
  * "first launch" empty state is genuine — no real GitHub auth bleeds in.
  *
+ * The GitHub panel mounts only beside an ACTIVE session (App.tsx), so the FAB
+ * test creates a real local Terminal-only session through the New-config
+ * dialog — the same proven recipe terminal-links.spec.ts uses. The old
+ * version tried to skip when "no sessions exist" by counting [role="tab"]
+ * nodes, which the two-mode Saved/Running sidebar tablist now always
+ * satisfies, and navigated by `button.title` attributes that no longer exist
+ * on nav items — both rc.10 rot.
+ *
  * What this does NOT cover:
  *   - Populated panel sections (requires real GitHub data or fixture
  *     injection into cacheStore — out of E2E scope)
@@ -27,50 +35,43 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
+  // A live Terminal session's PTY can hang a graceful close — closeIsolatedApp
+  // races and tree-kills, but give the hook headroom beyond the 30s default.
+  test.setTimeout(120000)
   await closeIsolatedApp(ctx)
 })
 
 test.describe('GitHub Panel states', () => {
   test('floating logo FAB renders when integration is disabled', async () => {
+    // Creating the config launches a real (local shell) session — headroom.
+    test.setTimeout(120000)
+
     // Dismiss any first-launch modals.
     for (let i = 0; i < 4; i++) {
       await page.keyboard.press('Escape')
       await page.waitForTimeout(200)
     }
 
-    // Navigate to the sessions view — the panel only mounts with an active
-    // session, so we need at least one config. The isolated app launches with
-    // no configs; in that case the panel isn't mounted and the test is a
-    // pass-through (skip with a soft check).
-    await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const b of buttons) {
-        if (b.title === 'Sessions' || b.title?.startsWith('Sessions')) {
-          b.click()
-          return
-        }
-      }
-    })
-    await page.waitForTimeout(400)
+    // Create + launch a Terminal × Local session (terminal-links recipe): the
+    // panel only mounts beside an active session.
+    await page.locator('[data-testid="panel-tab-saved"]').click()
+    await page.locator('[data-testid="new-button"]').click()
+    await page.locator('[data-testid="new-menu-config"]').click()
+    await expect(page.locator('text=New saved config')).toBeVisible({ timeout: 10000 })
+    await page.locator('[role="radiogroup"][aria-label="Provider"] label:has(input[value="terminal"])').click()
+    await page.locator('[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="local"])').click()
+    await expect(page.locator('text=Terminal startup')).toBeVisible({ timeout: 10000 })
+    await page.locator('input[placeholder="npm run dev"]').fill('echo ready')
+    await page.locator('input[placeholder="e.g. App Dev"]').fill('E2E GH Panel')
+    await page.locator('[data-testid="session-dialog-submit"]').click()
+    await expect(page.locator('[data-terminal-active]').first()).toBeVisible({ timeout: 30000 })
 
-    const hasSessions = await page.evaluate(() => {
-      // TabBar renders session tabs; if none exist, the panel isn't mounted.
-      return document.querySelectorAll('[role="tab"], button[title*="session"]').length > 0
-    })
-
-    if (!hasSessions) {
-      test.skip(true, 'No sessions configured — panel not mounted in isolated install')
-      return
-    }
-
-    // When integration is disabled (default), the panel renders a floating
-    // logo FAB (no thin rail) with aria-label "Configure GitHub for this
-    // session". This selector is stable across renders.
-    const fabPresent = await page.evaluate(() => {
-      const fab = document.querySelector('button[data-testid="gh-fab"]')
-      return !!fab
-    })
-    expect(fabPresent).toBe(true)
+    // When integration is disabled (the default for a fresh session), the
+    // panel renders a floating logo FAB (no rail) with the stable testid and
+    // aria-label "Configure GitHub for this session".
+    const fab = page.locator('button[data-testid="gh-fab"]')
+    await expect(fab).toBeVisible({ timeout: 10000 })
+    await expect(fab).toHaveAttribute('aria-label', 'Configure GitHub for this session')
   })
 
   test('Ctrl+/ toggles panel visibility in store', async () => {
@@ -78,7 +79,7 @@ test.describe('GitHub Panel states', () => {
     // Zustand store — the store isn't exposed on window in production
     // builds and this test runs against the packaged renderer. The check
     // here is "the keypress doesn't crash the app", not a strict
-    // before/after visibility assertion (the rail also renders for the
+    // before/after visibility assertion (the FAB also renders for the
     // integration-disabled case, so visibility may not flip).
     // Either the full panel aside or the collapsed/not-configured FAB is
     // present; probe both so the assertion is state-agnostic.
@@ -86,46 +87,26 @@ test.describe('GitHub Panel states', () => {
       page.evaluate(() =>
         document.querySelector('aside[aria-label="GitHub panel"], button[data-testid="gh-fab"]') !== null,
       )
-    const before = await probe()
-    // Dispatch Ctrl+/ (or Cmd+/ on Mac) — the panel's own useEffect handles
-    // the shortcut. We don't assert the exact visibility transition because
-    // the FAB shows even in the integration-disabled case; we just assert
-    // that the keypress doesn't throw.
+    // With the session from the previous test active, the surface exists.
+    expect(await probe()).toBe(true)
+    // Dispatch Ctrl+/ — the panel's own useEffect handles the shortcut. We
+    // don't assert the exact visibility transition because the FAB shows even
+    // in the integration-disabled case; we assert the surface survives it.
     await page.keyboard.press('Control+/')
     await page.waitForTimeout(150)
-    const after = await probe()
-    // Both before/after should be boolean — the shortcut should not crash
-    // the renderer.
-    expect(typeof before).toBe('boolean')
-    expect(typeof after).toBe('boolean')
+    expect(await probe()).toBe(true)
   })
 
   test('Settings > GitHub shows empty auth profile state on first launch', async () => {
-    // Navigate to settings via sidebar title.
-    await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const b of buttons) {
-        if (b.title === 'Settings' || b.title?.startsWith('Settings')) {
-          b.click()
-          return
-        }
-      }
-    })
-    await page.waitForTimeout(500)
+    // Navigate to Settings via the nav rail's stable anchor (`title`
+    // attributes are gone from nav items), then the GitHub tab.
+    await page.locator('aside [data-tour="nav-settings"]').click()
+    await expect(
+      page.locator('[data-testid="page-tab"][data-page="settings"][aria-current="page"]'),
+    ).toBeVisible({ timeout: 5000 })
+    await page.getByRole('button', { name: 'GitHub', exact: true }).click()
 
-    await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const b of buttons) {
-        if (b.textContent?.trim() === 'GitHub') {
-          b.click()
-          return
-        }
-      }
-    })
-    await page.waitForTimeout(400)
-
-    const body = await page.locator('body').innerText()
     // AccountsSection empty-state copy (isolated launch → genuinely empty).
-    expect(body).toContain('No auth profiles yet')
+    await expect(page.getByText('No auth profiles yet')).toBeVisible({ timeout: 5000 })
   })
 })

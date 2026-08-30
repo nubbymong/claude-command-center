@@ -170,6 +170,25 @@ describe('buildSshExecArgs (item 4 — one-shot end-remote exec)', () => {
       expect(args[j - 1]).toBe('-o')
     }
   })
+  it('#572: batchMode:false drops BatchMode and bounds password prompts to exactly one', () => {
+    // The password-auth End path runs this argv under a PTY and answers the
+    // prompt itself; BatchMode would refuse password auth outright, and more
+    // than one prompt would re-ask into a pane nobody is watching.
+    const args = buildSshExecArgs(target, 'true', 'linux', { batchMode: false })
+    expect(args).not.toContain('BatchMode=yes')
+    const i = args.indexOf('NumberOfPasswordPrompts=1')
+    expect(i).toBeGreaterThan(0)
+    expect(args[i - 1]).toBe('-o')
+    // Everything else is identical to the default shape.
+    expect(args).toContain('StrictHostKeyChecking=accept-new')
+    expect(args).toContain('ControlMaster=no')
+    expect(args).toContain('ControlPath=none')
+    expect(args[args.length - 1]).toBe('true')
+    // Default and explicit true stay the original BatchMode shape.
+    expect(buildSshExecArgs(target, 'true', 'linux')).toContain('BatchMode=yes')
+    expect(buildSshExecArgs(target, 'true', 'linux', { batchMode: true })).toContain('BatchMode=yes')
+    expect(buildSshExecArgs(target, 'true', 'linux')).not.toContain('NumberOfPasswordPrompts=1')
+  })
   it('re-asserts the same argv field guard as buildSshArgs (leading dash / whitespace / empty)', () => {
     expect(() => buildSshExecArgs({ ...target, username: '-oProxyCommand=x' }, 'true', 'linux')).toThrow()
     expect(() => buildSshExecArgs({ ...target, host: 'a b' }, 'true', 'linux')).toThrow()

@@ -58,6 +58,15 @@ export interface CanvasToolDeps {
    * which fails safe: the agent is told there is no such version).
    */
   getAgentCanvasState?: (sessionId: string) => CanvasState | null
+  /**
+   * The session's newest COMPLETED canvas (#573), used by canvas_review alone:
+   * a user approval auto-completes the subject and detaches the live binding,
+   * which orphaned the approval's own notes before the agent read them. Reads
+   * only — render, resolve and complete keep refusing a completed canvas.
+   * Optional so existing wirings keep working; absent, the fetch fails as
+   * before.
+   */
+  getLastCompletedCanvasState?: (sessionId: string) => CanvasState | null
   requestSnapshot: (args: {
     sessionId: string
     canvasId: string
@@ -973,6 +982,11 @@ export async function runCanvasReview(
   let state: CanvasState | null
   try {
     state = deps.getCanvasState(sessionId)
+    // #573: an approval auto-completes the subject and detaches the live
+    // binding, so the review THAT approval rode in on must still be fetchable
+    // from the session's completed canvas. Read-only — the other tools do not
+    // follow this fallback.
+    if (!state) state = deps.getLastCompletedCanvasState?.(sessionId) ?? null
   } catch {
     return fail('Could not fetch the review: this session’s canvas could not be read.')
   }

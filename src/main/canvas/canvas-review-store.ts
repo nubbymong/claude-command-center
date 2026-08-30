@@ -58,6 +58,7 @@ import {
   type CanvasReviewState,
   type CanvasSketchExport,
   type CanvasSketchScene,
+  type CanvasState,
   type ComposerDraft,
   type ComposerDraftInput,
   type CanvasVersion,
@@ -75,6 +76,7 @@ import {
   clearAwaitingReview,
   getCanvasStateById,
   getCanvasStateForSession,
+  getLastCompletedCanvasStateForSession,
   setVersionVerdict,
 } from './canvas-store'
 import {
@@ -830,6 +832,25 @@ function canvasForSession(sessionId: string): SessionCanvas | null {
   if (!SESSION_ID_RE.test(sessionId)) return null
   const state = getCanvasStateForSession(sessionId)
   if (!state) return null
+  return toSessionCanvas(state)
+}
+
+/**
+ * READ-ONLY fallback for a session whose canvas just completed (#573): an
+ * approval auto-completes the subject and detaches the session pointer, which
+ * orphaned the approval's own notes before the agent could fetch them. Resolves
+ * the session's newest completed canvas — its own history, never another
+ * session's — for fetch paths only; every mutating path stays on
+ * `canvasForSession` and keeps refusing after sign-off.
+ */
+function completedCanvasForSession(sessionId: string): SessionCanvas | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null
+  const state = getLastCompletedCanvasStateForSession(sessionId)
+  if (!state) return null
+  return toSessionCanvas(state)
+}
+
+function toSessionCanvas(state: CanvasState): SessionCanvas {
   return {
     canvasId: state.canvasId,
     activeVersionId: state.activeVersionId,
@@ -2359,7 +2380,13 @@ export interface ReviewPayloadResult {
 /** Everything the canvas_review tool needs, or a throw whose message the tool
  *  maps to an operator-authored refusal. Draft reviews are not fetchable (D10). */
 export function getReviewPayload(sessionId: string, reviewId: string): ReviewPayloadResult {
-  const canvas = canvasForSession(sessionId)
+  // #573: a fetch outlives sign-off — an approval's own notes arrive after the
+  // auto-complete detached the session pointer, so fall back to the session's
+  // completed canvas. Reads only; the mutating paths above and below do not.
+  // Boundary: the fallback exists only while the session has NO live canvas.
+  // Render a new subject and the old approval's reviews are out of reach again
+  // — deliberate (one open canvas per session); fetch before rendering anew.
+  const canvas = canvasForSession(sessionId) ?? completedCanvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
   if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')

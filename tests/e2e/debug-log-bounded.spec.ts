@@ -19,12 +19,16 @@
  *   - A pre-existing `ccc-e2e-*` dir with a CURRENT mtime SURVIVES — the age
  *     guard must never nuke a run's live data dir.
  *
- * Both fixture dirs are created at MODULE LOAD (before any test body runs, hence
- * before the process's first `launchIsolatedApp`), because the sweep is
- * once-per-process and fires at that first launch. That ordering makes the
- * assertion hold whether this spec runs alone (its own beforeAll launch sweeps)
- * or inside the full serial suite (an earlier spec's first launch sweeps — the
- * stale fixture is already present from module load either way).
+ * Both fixture dirs are created at MODULE LOAD (before any test body runs), and
+ * the beforeAll RE-ARMS the once-per-process sweep latch
+ * (rearmStaleSweepForTest) before its own `launchIsolatedApp`. That re-arm is
+ * load-bearing: Playwright loads spec files lazily, so when this file shares a
+ * worker with earlier specs, an earlier spec's first launch consumed the
+ * once-per-process sweep BEFORE this module was even loaded — the stale fixture
+ * then post-dated the only sweep that would ever run and survived (exactly the
+ * full-suite failure seen on the VM matrix). Re-arming after the fixtures exist
+ * makes THIS spec's launch perform the sweep, deterministically, whether the
+ * spec runs alone or mid-suite.
  *
  * CREDIBILITY (mutation-verified): commenting out the `sweepStaleTempDirs()`
  * call in launchIsolatedApp makes the OLD dir SURVIVE the launch → the first
@@ -62,12 +66,17 @@ import { test, expect } from '@playwright/test'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
+import {
+  launchIsolatedApp,
+  closeIsolatedApp,
+  rearmStaleSweepForTest,
+  IsolatedApp,
+} from './helpers/electron-app'
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000
 
-// Created at MODULE LOAD so they exist before the process's first
-// launchIsolatedApp (the sweep is once-per-process and fires there).
+// Created at MODULE LOAD so they exist before this spec's beforeAll launch —
+// the sweep that launch performs (see the re-arm below) must post-date them.
 const rand = Math.random().toString(36).slice(2, 8)
 // A leaked dir from a "prior crashed run": old mtime → the sweep must remove it.
 const staleDir = path.join(os.tmpdir(), `ccc-e2e-STALE-${rand}`)
@@ -92,6 +101,11 @@ let ctx: IsolatedApp
 
 test.beforeAll(async () => {
   test.setTimeout(120_000)
+  // The sweep is once per worker PROCESS, and an earlier spec sharing this
+  // worker may have consumed it before this module (and its fixtures, seeded
+  // at module load above) existed. Re-arm the latch so the launch below is the
+  // one that sweeps — the fixtures demonstrably pre-date it.
+  rearmStaleSweepForTest()
   ctx = await launchIsolatedApp()
 })
 
@@ -113,12 +127,12 @@ test.afterAll(async () => {
 test('sweeps a stale leaked e2e data dir on launch, keeps a recent one (#487)', async () => {
   test.skip(process.platform !== 'win32', 'the leak this sweep backstops is the Windows PTY-handle case')
 
-  // Precondition: the fresh fixture was created (the stale one may already be
-  // gone if an earlier spec launched first — that is the swept state we assert).
+  // Precondition: the fresh fixture was created.
   expect(fs.existsSync(freshDir), 'fresh fixture dir was not created').toBe(true)
 
   // The stale, >1h-old leaked dir must have been swept by sweepStaleTempDirs()
-  // at the process's first launch.
+  // at this spec's beforeAll launch (re-armed above, so it sweeps even when an
+  // earlier spec in the same worker already consumed the once-per-process pass).
   expect(
     fs.existsSync(staleDir),
     `stale leaked dir was NOT swept (still present): ${staleDir}`,

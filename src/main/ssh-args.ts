@@ -106,10 +106,19 @@ export function buildSshArgs(
  * connection, so the kill never lands in the live Claude pane.
  *
  * Deliberately minimal vs. buildSshArgs: no `-t` (no TTY -- a batch command,
- * not an interactive session), no `-R` MCP tunnel, and BatchMode=yes + a short
- * ConnectTimeout so it FAILS FAST rather than blocking on a password prompt (it
- * relies on key/agent auth; a password-only host simply detaches as before --
- * the remote survives, exactly today's behaviour). `username`/`host` go through
+ * not an interactive session), no `-R` MCP tunnel, and (by default)
+ * BatchMode=yes + a short ConnectTimeout so it FAILS FAST rather than blocking
+ * on a password prompt when only key/agent auth is available.
+ *
+ * `opts.batchMode: false` (#572) is for the password-auth End path: the caller
+ * runs this argv under a PTY and answers the password prompt itself
+ * (endSshRemote, pty-manager.ts). BatchMode would refuse password auth
+ * outright, so it is dropped and replaced with NumberOfPasswordPrompts=1 --
+ * exactly one prompt, so a wrong/absent saved password fails fast instead of
+ * re-prompting into a pane nobody is watching. Every other flag is identical
+ * in both shapes.
+ *
+ * `username`/`host` go through
  * the SAME assertSafeSshField argv guard as buildSshArgs, and `remoteCommand`
  * is a host-authored literal with a single sanitized safeSid operand
  * (buildRemoteTmuxKillCommand, ssh-shim.ts) passed to ssh as ONE positional
@@ -132,17 +141,18 @@ export function buildSshArgs(
  * because Windows OpenSSH has no multiplexing and errors out if config enables
  * it (#241), which is why the flags began win32-only.
  */
-export function buildSshExecArgs(ssh: SshArgsTarget, remoteCommand: string, platform: NodeJS.Platform): string[] {
+export function buildSshExecArgs(ssh: SshArgsTarget, remoteCommand: string, platform: NodeJS.Platform, opts?: { batchMode?: boolean }): string[] {
   assertSafeSshField('username', ssh.username)
   assertSafeSshField('host', ssh.host)
   // `platform` retained for signature parity with buildSshArgs / call sites even
   // though the mux flags are now unconditional.
   void platform
+  const batchMode = opts?.batchMode ?? true
   const args = [
     `${ssh.username}@${ssh.host}`,
     '-p', String(ssh.port),
     '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'BatchMode=yes',
+    ...(batchMode ? ['-o', 'BatchMode=yes'] : ['-o', 'NumberOfPasswordPrompts=1']),
     '-o', 'ConnectTimeout=8',
     '-o', 'ControlMaster=no',
     '-o', 'ControlPath=none',

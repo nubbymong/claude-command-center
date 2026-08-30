@@ -51,6 +51,13 @@ function sessionUsageBuckets(s: Session): UsageBucket[] {
  * Aggregate the live (running) sessions into one entry per distinct account.
  * "Running" = any session still open (excludes `disconnected`/exited). Sessions
  * without a resolved account (shell-only, Codex, not-yet-captured) are skipped.
+ * An SSH session has no LOCAL account identity, but the remote signed-in email
+ * (`sshRemoteAccount`, parsed off the nonce'd setup sentinel, display-only)
+ * attributes it to the matching account row — #571: without this, an SSH
+ * session showed neither its account name nor the account's per-model buckets
+ * (Fable), because those buckets come from the app-side usage API that only a
+ * local session can feed. Local identity wins when both fields exist. This is
+ * presentation grouping only; nothing here grants account authority.
  * Per account, per bucket label, we take the WORST-CASE (max) utilisation so the
  * number is never falsely low when one of an account's sessions has a stale tick.
  * Ordered primary-first, then by name. Pure + unit-tested; the component gates on >=2.
@@ -70,14 +77,15 @@ export function liveAccountUsage(
 
   for (const s of sessions) {
     if (s.status === 'disconnected') continue
-    if (!s.accountEmail) continue
-    const key = canonicaliseEmail(s.accountEmail)
+    const email = s.accountEmail || s.sshRemoteAccount
+    if (!email) continue
+    const key = canonicaliseEmail(email)
     let acc = byEmail.get(key)
     if (!acc) {
       acc = {
-        email: s.accountEmail,
-        name: resolveAccountNameByEmail(s.accountEmail, profiles, aliases),
-        colourKey: resolveAccountColourKey(s.accountEmail, colourOverrides, s.accountColour),
+        email,
+        name: resolveAccountNameByEmail(email, profiles, aliases),
+        colourKey: resolveAccountColourKey(email, colourOverrides, s.accountColour),
         buckets: [],
         count: 0,
         isPrimary: primaryCanon === key,

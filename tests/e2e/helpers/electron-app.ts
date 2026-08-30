@@ -53,6 +53,20 @@ function sweepStaleTempDirs(): void {
   }
 }
 
+/** Test-only: re-arm the once-per-process sweep latch above.
+ *
+ *  Playwright loads spec files LAZILY, one at a time, so a spec whose
+ *  module-load work must pre-date "the process's first launch" (debug-log-bounded
+ *  seeds stale-dir fixtures at module load) can find the latch already consumed:
+ *  an EARLIER spec's launch in the same worker swept before this module even
+ *  existed, and nothing ever sweeps the late-seeded fixture. Such a spec calls
+ *  this (after its fixtures exist) so its OWN launchIsolatedApp performs the
+ *  sweep. Safe to re-run: the sweep is age-guarded (>1h), so a re-armed pass
+ *  never touches the current run's live, minutes-old data dirs. */
+export function rearmStaleSweepForTest(): void {
+  staleSweepDone = false
+}
+
 /** Tree-kill the whole Electron process group. On Windows, `.process().kill()`
  *  terminates only the root process -- a node-pty child (shell + conhost)
  *  reparents and survives, keeping open handles inside dataDir (including the
