@@ -1278,22 +1278,6 @@ input[type="range"] {
    4px seat of air so the pill shape reads. pointer-events none is load-bearing:
    the pill sits over the terminal's bottom-left corner and must never eat a
    click or a selection drag. */
-.ssh-host-pill {
-  position: absolute;
-  left: 10px;
-  bottom: 4px;
-  z-index: 10;
-  padding: 2px 10px 3px;
-  border-radius: 99px;
-  font-size: 10.5px;
-  font-weight: 500;
-  white-space: nowrap;
-  pointer-events: none;
-  background: var(--surface-overlay);
-  border: 1px solid var(--border-strong);
-  color: var(--text-secondary);
-}
-
 /* ── Browser start page masthead ──────────────────────────────────────────
    The Agent Canvas front-page recipe (`.cfp-masthead`) on the browser's blank
    page: the http:// brand art beside a gradient-clipped wordmark. Own class

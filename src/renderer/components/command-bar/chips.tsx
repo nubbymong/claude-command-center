@@ -92,14 +92,14 @@ export function TargetMark({ kind, caps }: { kind: ClusterKind; caps: SessionCap
   const d = kind === 'agent' ? (caps.agent === 'codex' ? Paths.codex : Paths.claude)
     : kind === 'page' ? Paths.globe
     : Paths.shell
-  // #570: the badge says WHICH SIDE, not which host. A raw IP here (up to 15
-  // chars on a 16px glyph, absolutely positioned) overhung the neighbouring
-  // buttons as a floating pill. The host itself stays one hover away in the
-  // cluster tooltip (clusterTitle names it) and permanently in the session
-  // header's "SSH: user@host" line.
-  const badge = caps.panesOnDifferentMachines
-    ? (kind === 'partner' ? 'this PC' : kind === 'main-shell' || kind === 'agent' ? 'remote' : null)
-    : null
+  // harmonise-remote Phase 3 (owner, 2026-08-30): keep ONLY the "this PC" mark
+  // on the partner cluster — it earns its place, since the partner shell really
+  // does run locally while the main pane is remote. The "remote" badge on the
+  // main-shell/agent clusters is dropped: the cluster tooltip (clusterTitle)
+  // and the header's "SSH: user@host" line already say where those run, so the
+  // extra floating pill was redundant chrome over the command buttons (#570
+  // had already cut the raw-IP version of it down to a side label).
+  const badge = caps.panesOnDifferentMachines && kind === 'partner' ? 'this PC' : null
   return (
     <span
       className="relative inline-flex items-center justify-center w-4 h-4 shrink-0"

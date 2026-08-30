@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 /**
- * #570: the machine badge on a cluster mark says WHICH SIDE ("this PC" /
- * "remote"), never which host. Rendering the raw host (a 15-char IP like
- * 192.168.50.201) in an absolutely positioned mini-badge made it overhang the
- * neighbouring command buttons as a floating pill (rc.10). The host itself
- * stays in the cluster tooltip (clusterTitle) and the session header.
+ * harmonise-remote Phase 3 (owner, 2026-08-30): the ONLY machine badge kept on
+ * a cluster mark is "this PC" on the PARTNER cluster (the partner shell really
+ * is local while the main pane is remote). The "remote" badge on the
+ * main-shell/agent clusters is dropped — the cluster tooltip and the header's
+ * "SSH: user@host" line already say where those run, so it was redundant chrome
+ * over the command buttons. (#570 had already cut the raw-IP form down to a
+ * side label; this removes the remaining "remote" side label.)
  */
 import React from 'react'
 import { describe, it, expect, afterEach } from 'vitest'
@@ -40,20 +42,17 @@ afterEach(() => {
   host = null
 })
 
-describe('TargetMark machine badge (#570)', () => {
-  it('labels the agent cluster "remote" on SSH — never the raw host/IP', () => {
+describe('TargetMark machine badge (harmonise-remote Phase 3)', () => {
+  it('shows NO badge on the agent cluster on SSH (the "remote" side label is dropped)', () => {
     const caps = sessionCapabilities(ssh())
     render(<TargetMark kind="agent" caps={caps} />)
-    const badge = host!.querySelector('[data-testid="command-machine-badge"]')
-    expect(badge).not.toBeNull()
-    expect(badge!.textContent).toBe('remote')
-    expect(badge!.textContent).not.toContain('192.168')
-    // The host stays reachable: the cluster tooltip names it.
+    expect(host!.querySelector('[data-testid="command-machine-badge"]')).toBeNull()
+    // The host stays reachable: the cluster tooltip still names it.
     const mark = host!.querySelector('[data-testid="command-cluster-agent"]')
     expect(mark!.getAttribute('title')).toContain('192.168.50.201')
   })
 
-  it('labels the main-shell cluster "remote" and the partner cluster "this PC" on SSH', () => {
+  it('shows NO badge on the main-shell cluster, but KEEPS "this PC" on the partner cluster on SSH', () => {
     const caps = sessionCapabilities(ssh())
     render(
       <>
@@ -62,12 +61,17 @@ describe('TargetMark machine badge (#570)', () => {
       </>,
     )
     const badges = Array.from(host!.querySelectorAll('[data-testid="command-machine-badge"]')).map((b) => b.textContent)
-    expect(badges).toEqual(['remote', 'this PC'])
+    expect(badges).toEqual(['this PC'])
   })
 
   it('shows no badge at all when both panes are on this PC', () => {
     const caps = sessionCapabilities({ provider: 'claude', sessionType: 'local', configId: 'cfg' } as never)
-    render(<TargetMark kind="agent" caps={caps} />)
+    render(
+      <>
+        <TargetMark kind="agent" caps={caps} />
+        <TargetMark kind="partner" caps={caps} />
+      </>,
+    )
     expect(host!.querySelector('[data-testid="command-machine-badge"]')).toBeNull()
   })
 })
