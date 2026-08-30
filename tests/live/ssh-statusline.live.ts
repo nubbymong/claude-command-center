@@ -168,6 +168,16 @@ async function runSession(sid: string, entry: HostEntry, opts: { detachable?: bo
 function report(label: string, w: ReturnType<typeof makeWin>, sid: string): void {
   const u = updates(w.events)
   const p = pane(w.events, sid)
+  // Slice-2 evidence: the harmonised fields — account + per-model buckets
+  // (Fable) + windows — printed from the LAST update so a live run's output
+  // shows what the renderer would actually receive.
+  const last = u.filter((x) => x.sessionId === sid).slice(-1)[0] as Record<string, unknown> | undefined
+  if (last) {
+    const buckets = Array.isArray(last.usageBuckets)
+      ? (last.usageBuckets as Array<{ label?: string; percent?: number }>).map((b) => `${b.label}:${b.percent}%`).join(',')
+      : '-'
+    console.log(`${label} payload: account=${last.accountEmail ?? '-'} buckets=${buckets} 5h=${last.rateLimitCurrent ?? '-'} wk=${last.rateLimitWeekly ?? '-'}`)
+  }
   console.log(`${label}: updates=${u.length} sids=${JSON.stringify([...new Set(u.map((x) => x.sessionId))])} wrapped=${p.includes('has-session')} states=${JSON.stringify([...new Set(states(w.events, sid))])} paneLen=${p.length}`)
   // Stripped pane tail — where claude actually IS when the capture ends.
   const stripped = p.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '').replace(/\r/g, '')

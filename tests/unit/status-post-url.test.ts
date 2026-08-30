@@ -11,7 +11,7 @@ vi.mock('../../src/main/conductor-mcp-server', () => ({
 }))
 vi.mock('../../src/main/hooks/session-hooks-writer', () => ({ buildHooksBlock: () => null }))
 
-import { statusPostUrl, generateRemoteSetupScript, generateWindowsRemoteSetupScript } from '../../src/main/providers/claude/ssh-shim'
+import { statusPostUrl, generateRemoteSetupScript, generateWindowsRemoteSetupScript, SSH_STATUSLINE_SHIM, SSH_STATUSLINE_SHIM_WINDOWS } from '../../src/main/providers/claude/ssh-shim'
 
 describe('statusPostUrl', () => {
   it('is empty when the MCP server is off (port 0) — shim falls back to the OSC ladder', () => {
@@ -56,6 +56,23 @@ describe('setup script plumbing', () => {
   it('Windows statusLine command carries the URL as a double-quoted argv[3]', () => {
     const script = generateWindowsRemoteSetupScript('abc123', { remoteMcpPort: 45111, includeConductorMcp: true }, 'nonceA1')
     expect(script).toContain('"http://127.0.0.1:45111/status?cccSessionId=abc123&token=')
+  })
+
+  it('both shims are syntactically valid JS (a broken shim only explodes later on a remote host)', () => {
+    for (const src of [SSH_STATUSLINE_SHIM, SSH_STATUSLINE_SHIM_WINDOWS]) {
+      // A shebang is legal only at file top level — strip it for the parse check.
+      expect(() => new Function(src.replace(/^#![^\n]*\n/, ''))).not.toThrow()
+    }
+  })
+
+  it('both shims gather account + usage (Fable buckets) before delivering', () => {
+    for (const src of [SSH_STATUSLINE_SHIM, SSH_STATUSLINE_SHIM_WINDOWS]) {
+      expect(src).toContain('oauthAccount')
+      expect(src).toContain('api.anthropic.com')
+      expect(src).toContain('usageBuckets')
+      // gather runs BEFORE the delivery choice: fetchUsage wraps deliver()
+      expect(src).toContain('fetchUsage(function(lim){applyUsage(lim);deliver();})')
+    }
   })
 
   it('both shims ship tunnel-first delivery with the legacy ladder as fallback', () => {

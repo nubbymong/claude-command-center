@@ -95,7 +95,48 @@ import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 //      pts-fail / pts-none / stderr-fallback) so "no statusline ever
 //      appeared" stays diagnosable without guesswork. The log is capped via
 //      append-and-forget; grows slowly.
-const SSH_STATUSLINE_SHIM = `#!/usr/bin/env node
+/**
+ * Shared data-gathering for BOTH remote shims (harmonise-remote slice 2) — one
+ * source so the POSIX and Windows variants cannot drift. Mirrors the LOCAL
+ * bridge (statusline.ts): read the signed-in account from ~/.claude.json
+ * (5 MB cap), then fetch the account's usage from the Anthropic OAuth usage
+ * endpoint with the REMOTE's own token (60 s on-disk cache per account, 5 s
+ * timeout, fail-to-null — the statusline must never block claude). applyUsage
+ * fills what claude's stdin JSON does not carry: the per-model weekly buckets
+ * (Fable), extra_usage, and 5h/weekly when stdin lacked them (stdin wins where
+ * both exist). Plain ES5-ish JS, no template interpolation, declared deps:
+ * fs/os/path from the shim prologue.
+ */
+const SHIM_GATHER_JS = `
+try{var cj=path.join(os.homedir(),'.claude.json');var stA=fs.statSync(cj);if(stA.size<5*1024*1024){var jA=JSON.parse(fs.readFileSync(cj,'utf-8'));if(jA&&jA.oauthAccount&&typeof jA.oauthAccount.emailAddress==='string')s.accountEmail=jA.oauthAccount.emailAddress;}}catch(eA){}
+var fetchUsage=function(cb){
+var doneU=false;var finU=function(lim){if(doneU)return;doneU=true;cb(lim);};
+try{
+var credsPath=path.join(os.homedir(),'.claude','.credentials.json');
+if(!fs.existsSync(credsPath))return finU(null);
+var tokenU=null;try{var creds=JSON.parse(fs.readFileSync(credsPath,'utf-8'));tokenU=creds.claudeAiOauth&&creds.claudeAiOauth.accessToken;}catch(eB){}
+if(!tokenU)return finU(null);
+var cacheKey=String(s.accountEmail||'default').toLowerCase().replace(/[^a-z0-9]/g,'_');
+var cacheFile=path.join(os.tmpdir(),'ccc-remote-usage-cache-'+cacheKey+'.json');
+try{var cst=fs.statSync(cacheFile);if((Date.now()-cst.mtimeMs)/1000<60)return finU(JSON.parse(fs.readFileSync(cacheFile,'utf-8')));}catch(eC){}
+var rqU=require('https').request({hostname:'api.anthropic.com',path:'/api/oauth/usage',method:'GET',headers:{Accept:'application/json',Authorization:'Bearer '+tokenU,'anthropic-beta':'oauth-2025-04-20','User-Agent':'claude-code/2.1.34'},timeout:5000},function(resU){var bU='';resU.on('data',function(cU){bU+=cU;});resU.on('end',function(){try{var jU=JSON.parse(bU);try{fs.writeFileSync(cacheFile,bU)}catch(eD){}finU(jU);}catch(eE){finU(null);}});});
+rqU.on('timeout',function(){try{rqU.destroy()}catch(eF){}finU(null);});
+rqU.on('error',function(){finU(null);});
+rqU.end();
+}catch(eG){finU(null);}
+};
+var applyUsage=function(lim){
+if(!lim)return;
+try{
+if(lim.five_hour&&s.rateLimitCurrent===undefined){s.rateLimitCurrent=Math.round(Number(lim.five_hour.utilization)||0);s.rateLimitCurrentResets=lim.five_hour.resets_at||'';}
+if(lim.seven_day&&s.rateLimitWeekly===undefined){s.rateLimitWeekly=Math.round(Number(lim.seven_day.utilization)||0);s.rateLimitWeeklyResets=lim.seven_day.resets_at||'';}
+if(lim.extra_usage&&lim.extra_usage.is_enabled){s.rateLimitExtra={enabled:true,utilization:Math.round(Number(lim.extra_usage.utilization)||0),usedUsd:Math.round(Number(lim.extra_usage.used_credits||0))/100,limitUsd:Math.round(Number(lim.extra_usage.monthly_limit||0))/100};}
+if(Object.prototype.toString.call(lim.limits)==='[object Array]'){var bks=[];for(var iU=0;iU<lim.limits.length;iU++){var itU=lim.limits[iU];if(!itU||typeof itU!=='object')continue;var grp=typeof itU.group==='string'?itU.group:'';if(grp!=='session'&&grp!=='weekly')continue;var pct=typeof itU.percent==='number'?itU.percent:null;if(pct===null)continue;var lbl='Weekly';if(grp==='session')lbl='5h';else if(itU.scope&&itU.scope.model&&typeof itU.scope.model.display_name==='string'&&itU.scope.model.display_name.trim())lbl=itU.scope.model.display_name;bks.push({key:(typeof itU.kind==='string'?itU.kind:grp)+':'+(lbl==='5h'||lbl==='Weekly'?'':lbl),label:lbl,group:grp,percent:Math.round(pct),resetsAt:itU.resets_at||'',severity:typeof itU.severity==='string'?itU.severity:'normal'});}if(bks.length)s.usageBuckets=bks;}
+}catch(eH){}
+};
+`
+
+export const SSH_STATUSLINE_SHIM = `#!/usr/bin/env node
 const fs=require('fs'),os=require('os'),path=require('path');
 const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');
 const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+m+'\\n');}catch{}};
@@ -120,8 +161,9 @@ const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_per
 const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');
 if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}
 if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
-const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
+${SHIM_GATHER_JS}
 const deliverLegacy=function(){
+const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
 let ok=false;if(process.platform==='win32'){try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);ok=true;trace('conout-ok sid='+sid);}catch(e0){trace('conout-fail sid='+sid+' err='+(e0&&e0.code||e0.message||'unknown'));}}
 if(process.env.TMUX){
 // Self-heal (2026-08-27): $CCC_TMUX_BIN can be empty or stale — the bake ran
@@ -158,6 +200,7 @@ if(!ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}ca
 process.stdout.write(' ');
 };
 const statusUrl=process.argv[3]||process.env.CCC_STATUS_URL||'';
+const deliver=function(){
 if(statusUrl){
 let done=false;
 const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag);deliverLegacy();}};
@@ -170,6 +213,8 @@ rq.on('error',function(e5){fin(false,(e5&&e5.code)||'err');});
 rq.end(body);
 }catch(e6){fin(false,'ex');}
 }else{deliverLegacy();}
+};
+fetchUsage(function(lim){applyUsage(lim);deliver();});
 }catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}
 });
 `
@@ -769,7 +814,7 @@ export function buildTmuxBinPatchCommand(sessionId: string): string {
  * reaches the SSH client (verified on Hyper-V). Session id rides argv (cmd.exe
  * cannot env-prefix a statusLine command).
  */
-const SSH_STATUSLINE_SHIM_WINDOWS = "const fs=require('fs'),os=require('os'),path=require('path');const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+String(m).replace(/[\\r\\n]+/g,' ')+String.fromCharCode(10));}catch(e){}};let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{try{const data=JSON.parse(input);const sid=process.argv[2]||process.env.CLAUDE_MULTI_SESSION_ID||(data&&data.session_id)||'unknown';const cw=data.context_window||{},u=cw.current_usage||{},cost=data.cost||{},m=data.model||{},rl=data.rate_limits||{};const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}const sentinel=String.fromCharCode(27)+']9999;CMSTATUS='+JSON.stringify(s)+String.fromCharCode(7);const deliverLegacy=function(){try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);trace('conout-ok sid='+sid);}catch(e){trace('conout-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){}}process.stdout.write(' ');};const statusUrl=process.argv[3]||process.env.CCC_STATUS_URL||'';if(statusUrl){let done=false;const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag);deliverLegacy();}};try{const body=JSON.stringify(s);const u=new URL(statusUrl);const rq=require('http').request({hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)},timeout:3000},function(res){res.resume();fin(!!res.statusCode&&res.statusCode<300,'http-'+res.statusCode);});rq.on('timeout',function(){try{rq.destroy();}catch(e4){}fin(false,'timeout');});rq.on('error',function(e5){fin(false,(e5&&e5.code)||'err');});rq.end(body);}catch(e6){fin(false,'ex');}}else{deliverLegacy();}}catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}});"
+export const SSH_STATUSLINE_SHIM_WINDOWS = "const fs=require('fs'),os=require('os'),path=require('path');const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+String(m).replace(/[\\r\\n]+/g,' ')+String.fromCharCode(10));}catch(e){}};let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{try{const data=JSON.parse(input);const sid=process.argv[2]||process.env.CLAUDE_MULTI_SESSION_ID||(data&&data.session_id)||'unknown';const cw=data.context_window||{},u=cw.current_usage||{},cost=data.cost||{},m=data.model||{},rl=data.rate_limits||{};const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}" + SHIM_GATHER_JS + "const deliverLegacy=function(){var sentinel=String.fromCharCode(27)+']9999;CMSTATUS='+JSON.stringify(s)+String.fromCharCode(7);try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);trace('conout-ok sid='+sid);}catch(e){trace('conout-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){}}process.stdout.write(' ');};const statusUrl=process.argv[3]||process.env.CCC_STATUS_URL||'';const deliver=function(){if(statusUrl){let done=false;const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag);deliverLegacy();}};try{const body=JSON.stringify(s);const u=new URL(statusUrl);const rq=require('http').request({hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)},timeout:3000},function(res){res.resume();fin(!!res.statusCode&&res.statusCode<300,'http-'+res.statusCode);});rq.on('timeout',function(){try{rq.destroy();}catch(e4){}fin(false,'timeout');});rq.on('error',function(e5){fin(false,(e5&&e5.code)||'err');});rq.end(body);}catch(e6){fin(false,'ex');}}else{deliverLegacy();}};fetchUsage(function(lim){applyUsage(lim);deliver();});}catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}});"
 
 export function generateWindowsRemoteSetupScript(
   sessionId: string,
