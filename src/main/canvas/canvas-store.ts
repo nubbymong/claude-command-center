@@ -2067,7 +2067,17 @@ export function getLastCompletedCanvasStateForSession(sessionId: string): Canvas
   let latest: CanvasRecord | null = null
   for (const record of canvases.values()) {
     if (record.sessionId !== sessionId || !record.completed) continue
-    if (!latest || record.completed.at > latest.completed!.at) latest = record
+    // canvasId tiebreak: two same-ms completions would otherwise resolve by
+    // Map iteration order, which after a restart is NTFS readdir order —
+    // documented random. Same-session data either way; determinism is the
+    // point (code-quality review, 2026-08-30).
+    if (
+      !latest ||
+      record.completed.at > latest.completed!.at ||
+      (record.completed.at === latest.completed!.at && record.canvasId > latest.canvasId)
+    ) {
+      latest = record
+    }
   }
   return latest ? toState(latest) : null
 }

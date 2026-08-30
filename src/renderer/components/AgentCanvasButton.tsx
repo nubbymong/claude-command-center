@@ -144,10 +144,7 @@ export default function AgentCanvasButton({ sessionId }: Props) {
             so neither the bold Review-needed width nor the Terminal width is
             reserved while the button reads "Canvas" — no dead space, and the
             row shifts over smoothly instead of jumping. */}
-        <ReservedLabel
-          current={label}
-          states={waiting ? ['Terminal', { text: 'Review needed', bold: true }] : ['Canvas', 'Terminal']}
-        />
+        <ReservedLabel current={label} />
         {/* The resume dot. Its slot now grows/shrinks with a width transition
             (styles.css .canvas-resume-dot): the dot arrives from a background
             sweep, not a click, and an INSTANT 9px widening under the cursor

@@ -87,7 +87,7 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
             <rect x="2" y="9" width="5" height="5" rx="0.5" />
             <rect x="9" y="9" width="5" height="5" rx="0.5" />
           </svg>
-          <ReservedLabel current={capturing ? '...' : 'Snap'} states={['...', 'Snap']} />
+          <ReservedLabel current={capturing ? '...' : 'Snap'} />
         </button>
 
         {showDropdown && dropdownPos && (

@@ -62,7 +62,9 @@ describe('#573 — reviews stay fetchable after the approval completed the subje
     expect(state?.canvasId).toBe(second.canvasId)
     expect(state?.canvasId).not.toBe(first.canvasId)
     // A session that never completed anything gets nothing — not a neighbour's.
-    expect(canvasStore.getLastCompletedCanvasStateForSession(OTHER_SID)).toBeNull()
+    // Its own sid (never used elsewhere in this file) so test order can't
+    // invalidate the assertion.
+    expect(canvasStore.getLastCompletedCanvasStateForSession('f573cccccccccccccccccccc')).toBeNull()
   })
 
   it('a session with its OWN completed canvas still cannot fetch another session’s notes', () => {

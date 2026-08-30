@@ -58,6 +58,7 @@ import {
   type CanvasReviewState,
   type CanvasSketchExport,
   type CanvasSketchScene,
+  type CanvasState,
   type ComposerDraft,
   type ComposerDraftInput,
   type CanvasVersion,
@@ -849,7 +850,7 @@ function completedCanvasForSession(sessionId: string): SessionCanvas | null {
   return toSessionCanvas(state)
 }
 
-function toSessionCanvas(state: NonNullable<ReturnType<typeof getCanvasStateForSession>>): SessionCanvas {
+function toSessionCanvas(state: CanvasState): SessionCanvas {
   return {
     canvasId: state.canvasId,
     activeVersionId: state.activeVersionId,
@@ -2382,6 +2383,9 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
   // #573: a fetch outlives sign-off — an approval's own notes arrive after the
   // auto-complete detached the session pointer, so fall back to the session's
   // completed canvas. Reads only; the mutating paths above and below do not.
+  // Boundary: the fallback exists only while the session has NO live canvas.
+  // Render a new subject and the old approval's reviews are out of reach again
+  // — deliberate (one open canvas per session); fetch before rendering anew.
   const canvas = canvasForSession(sessionId) ?? completedCanvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)

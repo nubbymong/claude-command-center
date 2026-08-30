@@ -16,14 +16,12 @@ export const CHIP_STYLE: React.CSSProperties = { background: 'var(--surface-rais
  *  so ancestor width cannot cap the measurement) reads the current text's
  *  preferred width and the visible box transitions to it, so neighbouring
  *  buttons shift over smoothly instead of reflowing instantly or hoarding
- *  space. `states` is kept in the signature for call-site compatibility; no
- *  width is reserved from it any more.
+ *  space. The old `states` prop is GONE — nothing reserves width any more, and
+ *  a kept-but-ignored prop reads as load-bearing to the next editor
+ *  (code-quality review, 2026-08-30).
  *  In environments with no real layout (jsdom), measurement reads 0 and the
  *  label falls back to natural sizing — tests see unclamped text. */
-export function ReservedLabel({ current }: {
-  current: React.ReactNode
-  states: Array<string | { text: string; bold?: boolean }>
-}) {
+export function ReservedLabel({ current }: { current: React.ReactNode }) {
   const measureRef = React.useRef<HTMLSpanElement>(null)
   const [width, setWidth] = React.useState<number | null>(null)
   // Runs every render: the label text is tiny and one getBoundingClientRect is
