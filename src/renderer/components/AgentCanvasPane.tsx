@@ -55,6 +55,7 @@ import {
   xrayClickSelects,
   xrayDrawsOnPage,
   xrayHoverIsLive,
+  xrayHoverResolves,
   xrayReadsOutInPanel,
   type CanvasXrayMode,
 } from '../canvas/xray-mode'
@@ -714,6 +715,7 @@ function CanvasSurface({
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
   const modeRef = useRef(mode)
   const xrayModeRef = useRef(xrayMode)
+  const isPlanRef = useRef(isPlan)
   const versionIdRef = useRef(version.id)
   /**
    * What the CURRENT document says it is doing about hover reporting. A bridge
@@ -909,6 +911,7 @@ function CanvasSurface({
   viewportRef.current = viewport
   modeRef.current = mode
   xrayModeRef.current = xrayMode
+  isPlanRef.current = isPlan
   versionIdRef.current = version.id
   zoomRef.current = zoom
 
@@ -1460,7 +1463,9 @@ function CanvasSurface({
    * symptom, so nothing is allowed to wait for one (independent review, #405).
    */
   const syncHoverReporting = useCallback(() => {
-    const enabled = xrayHoverIsLive(xrayModeRef.current)
+    // A PLAN never runs live hover resolution: it corrupted/flashed the pane on
+    // every mousemove and its notes anchor on CLICK anyway (owner, 2026-08-31).
+    const enabled = xrayHoverResolves(xrayModeRef.current, { isPlan: isPlanRef.current })
     // Recorded BEFORE the nothing-to-do check, so that passing through a mode
     // the frame already agrees with still counts as changing the intent. Keyed
     // after it, "Off (gave up) -> On -> Off" read as the same intent as the
@@ -1596,7 +1601,9 @@ function CanvasSurface({
         // reports on and may ignore that request — or never have received it —
         // so the mode the user chose is applied to what actually arrives.
         onPointer: (hit) => {
-          if (!xrayHoverIsLive(xrayModeRef.current)) {
+          // Enforced host-side too (a page-realm bridge may report anyway): a
+          // plan resolves no hover, so a stray pointer draws/reads out nothing.
+          if (!xrayHoverResolves(xrayModeRef.current, { isPlan: isPlanRef.current })) {
             setHover(null)
             return
           }

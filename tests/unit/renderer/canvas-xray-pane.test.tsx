@@ -700,10 +700,10 @@ describe('the redesigned chrome (item C)', () => {
     expect(container.querySelector('[data-testid="canvas-tool-hint"]')?.textContent).toContain('click a section')
   })
 
-  it('a PLAN still RESOLVES the hover — the readout is how a section is named', async () => {
-    // Hiding the switch must not switch the mode off: stealth is what keeps
-    // hover resolution (and therefore note anchoring by data-ux-id) alive, and
-    // the strip is named for what it does rather than for the absent control.
+  it('a PLAN does NOT resolve HOVER (it corrupted/flashed the pane) — a section is named on CLICK instead', async () => {
+    // Owner 2026-08-31: live hover resolution turned a plan into a flashing,
+    // corrupting mess. A plan resolves no hover regardless of the user's mode,
+    // but a CLICK still selects the section (note anchoring by data-ux-id).
     const planState = {
       ...STATE,
       versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'design', entry: 'index.html' } }],
@@ -711,9 +711,26 @@ describe('the redesigned chrome (item C)', () => {
     ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
     await renderPane('on') // the user's OWN setting is On; a plan overrides it
     await hoverSaveButton()
-    expect(readout()!.textContent).toContain('button "Save"')
+    // Hover names nothing on a plan — no per-mousemove resolution.
+    expect(readout()!.textContent).not.toContain('button "Save"')
     expect(readout()!.textContent).toContain('POINTING AT')
     expect(readout()!.textContent).not.toContain('X-RAY')
+    // A click still issues an inspect — the section is named when you click it.
+    askFrame.mockClear()
+    await act(async () => handlers().onContentClick(12, 44))
+    expect(askFrame.mock.calls.some((c) => ((c as unknown as unknown[])[2] as { type?: string })?.type === 'inspect')).toBe(true)
+  })
+
+  it('a PLAN asks the frame to STOP reporting hover (no per-mousemove work at all)', async () => {
+    const planState = {
+      ...STATE,
+      versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'design', entry: 'index.html' } }],
+    } as CanvasState
+    ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
+    await renderPane('on')
+    await act(async () => handlers().onReady())
+    // The frame is told hover reporting is OFF for a plan (false), not on.
+    expect(hoverReportingCalls().every((v) => v === false)).toBe(true)
   })
 
   it('carries the X-ray setting inside the Inspect group', async () => {

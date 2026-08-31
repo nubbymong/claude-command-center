@@ -73,6 +73,21 @@ export function xrayHoverIsLive(mode: CanvasXrayMode): boolean {
   return mode !== 'off'
 }
 
+/**
+ * Does the host resolve the hovered element on EVERY pointer move for this
+ * surface? Live hover resolution drives per-mousemove work in the content frame
+ * and the readout panel; on a PLAN that turned the pane into a flashing,
+ * corrupting mess when the reviewer moved the mouse over it (owner, 2026-08-31).
+ * A plan is reviewed by content and its notes anchor on CLICK (xrayClickSelects
+ * stays true), so live hover buys nothing there and is switched off — hover is
+ * inert, a click still selects the section to note. Non-plan surfaces are
+ * unchanged (they follow the mode).
+ */
+export function xrayHoverResolves(mode: CanvasXrayMode, opts?: { isPlan?: boolean }): boolean {
+  if (opts?.isPlan) return false
+  return xrayHoverIsLive(mode)
+}
+
 /** Does the host paint the hover outline + label chip over the content? */
 export function xrayDrawsOnPage(mode: CanvasXrayMode): boolean {
   return mode === 'on'
