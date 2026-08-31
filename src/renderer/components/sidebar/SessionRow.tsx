@@ -204,7 +204,9 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
             transport badge, shown IN ADDITION to it — so an SSH-Persistent
             container session carries both. Keyed on the structured docker
             field, not the free-text post-command. */}
-        {!!session.sshConfig?.dockerContainer && <DockerBadge container={session.sshConfig.dockerContainer} />}
+        {!!(session.sshConfig?.runtime?.container || session.sshConfig?.dockerContainer) && (
+          <DockerBadge container={session.sshConfig.runtime?.container ?? session.sshConfig.dockerContainer!} />
+        )}
         {/* Moon BESIDE the type badge (variant B): the type mark stays — the
             moon is additional Watchdog state, not a replacement identity. The
             working pill is its inverse and shares the slot (mutually exclusive:

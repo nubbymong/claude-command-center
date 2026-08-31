@@ -59,12 +59,19 @@ function submit(container: HTMLElement) {
   act(() => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
 }
 
-// Provider/transport are native radios styled as cards: <label><input radio>.
+// Provider/connection are native radios styled as cards: <label><input radio>.
 // Return the input so .click() selects it.
-function cardIn(container: HTMLElement, groupLabel: string, text: string): HTMLInputElement {
-  const group = container.querySelector(`[role="radiogroup"][aria-label="${groupLabel}"]`)!
-  const lab = Array.from(group.querySelectorAll('label')).find((l) => l.textContent?.startsWith(text))
-  return lab!.querySelector('input[type="radio"]') as HTMLInputElement
+//
+// Matched on the card's TITLE span (its first <span>), not on the label's whole
+// textContent: the Connection group is 3-way since the config-modal redesign
+// (Local | SSH | SSH Persistent, item i), so a startsWith('SSH') prefix match
+// is ambiguous and would silently depend on DOM order.
+function cardIn(container: HTMLElement, groupLabel: string, title: string): HTMLInputElement {
+  const group = container.querySelector(`[role="radiogroup"][aria-label="${groupLabel}"]`)
+  if (!group) throw new Error(`no radiogroup labelled "${groupLabel}"`)
+  const lab = Array.from(group.querySelectorAll('label')).find((l) => l.querySelector('span')?.textContent === title)
+  if (!lab) throw new Error(`no card titled "${title}" in the "${groupLabel}" group`)
+  return lab.querySelector('input[type="radio"]') as HTMLInputElement
 }
 
 function inputByPlaceholder(container: HTMLElement, ph: string): HTMLInputElement | undefined {
@@ -114,7 +121,7 @@ describe('SessionDialog credential hygiene (#188)', () => {
     const onConfirm = vi.fn()
     act(() => { root.render(React.createElement(SessionDialog, { initial: SSH_WITH_PW, onConfirm, onCancel: vi.fn() })) })
     // Switch transport to Local, give it a valid absolute working directory.
-    act(() => { cardIn(container, 'Where it runs', 'Local').click() })
+    act(() => { cardIn(container, 'Connection', 'Local').click() })
     const wdir = inputByPlaceholder(container, ':\\')  // the win32 working-directory placeholder
     expect(wdir).toBeTruthy()
     setValue(wdir!, 'C:\\proj')
@@ -132,12 +139,12 @@ describe('SessionDialog credential hygiene (#188)', () => {
     // New config.
     act(() => { root.render(React.createElement(SessionDialog, { onConfirm, onCancel: vi.fn() })) })
     act(() => { cardIn(container, 'Provider', 'Claude Code').click() })
-    act(() => { cardIn(container, 'Where it runs', 'SSH').click() })
+    act(() => { cardIn(container, 'Connection', 'SSH').click() })
     setValue(inputByPlaceholder(container, '192.168')!, '10.0.0.5')
     const pw = Array.from(container.querySelectorAll('input[type="password"]'))[0] as HTMLInputElement
     setValue(pw, 'hunter2')
     // Change mind: switch to Local.
-    act(() => { cardIn(container, 'Where it runs', 'Local').click() })
+    act(() => { cardIn(container, 'Connection', 'Local').click() })
     setValue(inputByPlaceholder(container, ':\\')!, 'C:\\proj')
     const label = Array.from(container.querySelectorAll('input')).find((i) => (i as HTMLInputElement).placeholder === 'e.g. App Dev') as HTMLInputElement
     setValue(label, 'oops')

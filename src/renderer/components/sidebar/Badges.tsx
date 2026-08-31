@@ -115,7 +115,9 @@ export function SshPersistentBadge() {
 }
 
 // Docker/container session badge (harmonise-remote Phase 3): a session whose
-// runtime is a container (sshConfig.dockerContainer set). A SIBLING of the SSH
+// runtime is a container — `sshConfig.runtime.container` since the structured
+// Runtime landed (item e), falling back to the legacy `sshConfig.dockerContainer`
+// hint for configs saved before it. A SIBLING of the SSH
 // badges, not a replacement — it COMPOSES with them, so an SSH-Persistent +
 // Docker session shows both the chain-link SSH badge and this. Teal keeps it
 // distinct from SSH's blue, tmux's green and the terminal's sky; the

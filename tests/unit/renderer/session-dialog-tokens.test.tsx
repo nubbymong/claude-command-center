@@ -91,7 +91,10 @@ describe('no palette class survives in any reveal', () => {
 
   it('editing an SSH config with a stored password, a post-command and a group (the yellow "grouped" note)', () => {
     render(EDIT_SSH)
-    expect(byTest('ssh-detachable')).not.toBeNull()
+    // Config-modal redesign (item i): the Detachable checkbox became the "SSH
+    // Persistent" connection card, and the Runtime section owns the container
+    // choice.
+    expect(byTest('runtime-container')).not.toBeNull()
     expect(container.textContent).toContain('Remove stored password')
     expect(container.textContent).toContain("Grouped configs can't also sit under a section")
     expect(paletteSurvivors(byTest('session-dialog')!)).toEqual([])

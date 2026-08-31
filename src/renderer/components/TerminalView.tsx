@@ -83,6 +83,7 @@ interface Props {
     username: string
     remotePath: string
     postCommand?: string
+    runtime?: import('../../shared/types').SshRuntime
   }
   isActive?: boolean
   legacyVersion?: {
@@ -1446,7 +1447,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       {ssh && (
         <SshFlowOverlay
           sessionId={sessionId}
-          hasPostCommand={!!ssh.postCommand}
+          hasPostCommand={!!ssh.postCommand || ssh.runtime?.type === 'container'}
           shellOnly={!!shellOnly}
           enabled
           onRetry={sshRestart}

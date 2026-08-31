@@ -57,7 +57,7 @@ async function shot(name: string) {
 const providerCard = (v: string) =>
   page.locator(`[role="radiogroup"][aria-label="Provider"] label:has(input[value="${v}"])`)
 const transportCard = (v: string) =>
-  page.locator(`[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="${v}"])`)
+  page.locator(`[role="radiogroup"][aria-label="Connection"] label:has(input[value="${v}"])`)
 
 // One shared app instance: a previously-open dialog would block the sidebar
 // button, so close it via Cancel first (Escape does not close this dialog).

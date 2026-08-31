@@ -65,20 +65,20 @@ async function openDialog() {
 // that's what gives them the native ARIA radiogroup keyboard behaviour. A user
 // clicks the CARD, so tests click the label and assert on the input.
 const provider = (v: string) => page.locator(`[role="radiogroup"][aria-label="Provider"] input[value="${v}"]`)
-const transport = (v: string) => page.locator(`[role="radiogroup"][aria-label="Where it runs"] input[value="${v}"]`)
+const transport = (v: string) => page.locator(`[role="radiogroup"][aria-label="Connection"] input[value="${v}"]`)
 const providerCard = (v: string) => page.locator(`[role="radiogroup"][aria-label="Provider"] label:has(input[value="${v}"])`)
-const transportCard = (v: string) => page.locator(`[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="${v}"])`)
+const transportCard = (v: string) => page.locator(`[role="radiogroup"][aria-label="Connection"] label:has(input[value="${v}"])`)
 
 test.describe('SessionDialog — driven flow permutations', () => {
   test('a new config reveals itself: nothing until a provider is picked', async () => {
     await openDialog()
     // Transport is hidden until a provider is chosen, and the footer names the step.
-    await expect(page.locator('[role="radiogroup"][aria-label="Where it runs"]')).toHaveCount(0)
+    await expect(page.locator('[role="radiogroup"][aria-label="Connection"]')).toHaveCount(0)
     await expect(page.locator('text=Choose what this launcher runs')).toBeVisible()
     await expect(page.locator('text=Workspace')).toHaveCount(0)
 
     await providerCard('claude').click()
-    await expect(page.locator('[role="radiogroup"][aria-label="Where it runs"]')).toBeVisible()
+    await expect(page.locator('[role="radiogroup"][aria-label="Connection"]')).toBeVisible()
     await expect(page.locator('text=Choose where it runs')).toBeVisible()
     // Still nothing below until the transport is chosen.
     await expect(page.locator('text=Workspace')).toHaveCount(0)
@@ -109,8 +109,16 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await providerCard('claude').click()
     await transportCard('ssh').click()
     await expect(page.locator('text=Remote directory')).toBeVisible()
-    await expect(page.locator('text=After connecting, run').first()).toBeVisible()
     await expect(page.locator('text=Machine name')).toBeVisible()
+    // Config-modal redesign (item e): the container hop is a structured Runtime
+    // choice the app composes, so THAT is what an SSH config shows up front.
+    // The free-text "After connecting, run" survives for arbitrary prep, but
+    // demoted under the Advanced fold — <details> keeps it in the DOM, so this
+    // asserts VISIBILITY (hidden until disclosed), not presence.
+    await expect(page.locator('[role="radiogroup"][aria-label="Runtime"]')).toBeVisible()
+    await expect(page.locator('text=After connecting, run').first()).toBeHidden()
+    await page.locator('summary:has-text("Advanced")').first().click()
+    await expect(page.locator('text=After connecting, run').first()).toBeVisible()
     // Local-only: indexing never registers over SSH, GitHub detection shells local git.
     await expect(page.locator('text=Index conversation logs')).toHaveCount(0)
     await expect(page.locator('text=GitHub')).toHaveCount(0)
@@ -144,12 +152,16 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await expect(page.locator('text=Starting model')).toHaveCount(0)
   })
 
-  test('Terminal only × SSH points at the post-connect command instead', async () => {
+  test('Terminal only × SSH points at the Runtime section (and prep under Advanced) instead', async () => {
     await openDialog()
     await providerCard('terminal').click()
     await transportCard('ssh').click()
-    await expect(page.locator('text=After connecting, run').first()).toBeVisible()
+    // No local first-run command over SSH; the remote equivalents are the
+    // Runtime choice and, for arbitrary prep, the Advanced post-connect field.
     await expect(page.locator('text=First-run command')).toHaveCount(0)
+    await expect(page.locator('[role="radiogroup"][aria-label="Runtime"]')).toBeVisible()
+    await page.locator('summary:has-text("Advanced")').first().click()
+    await expect(page.locator('text=After connecting, run').first()).toBeVisible()
   })
 
   test('Organise is a real disclosure, not a decorative pill', async () => {

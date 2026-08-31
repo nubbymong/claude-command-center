@@ -34,6 +34,31 @@ export interface GlobalVisionConfig {
 
 // ── SSH ──
 
+/**
+ * Structured runtime (config-modal redesign, harmonise-remote item e/i): where
+ * claude actually RUNS after the connection is up. 'host' = directly on the
+ * connected machine (default). 'container' = the app composes the exec command
+ * itself (`[sudo] <engine> exec -it [-w dir] <name> bash` or `start -ai`) —
+ * replacing the free-text post-command for the docker case, so the container
+ * hop is data the app understands (badges, delivery reachability, End-path
+ * in-container kill) rather than an opaque string. Free-text postCommand is
+ * still honoured forever (prep under Advanced); when both are set the prep
+ * runs first, then the runtime exec.
+ */
+export interface SshRuntime {
+  type: 'host' | 'container'
+  /** Container engine. Default 'docker'; RHEL-family hosts ship podman. */
+  engine?: 'docker' | 'podman'
+  /** Container name (required when type==='container'). */
+  container?: string
+  /** 'exec' = exec into a RUNNING container (default); 'start' = start a stopped one attached. */
+  mode?: 'exec' | 'start'
+  /** Prefix the engine command with sudo (the sudo password field belongs to this). */
+  sudo?: boolean
+  /** Optional working directory INSIDE the container (engine -w flag). */
+  containerDir?: string
+}
+
 export interface SshConfig {
   host: string
   port: number
@@ -43,6 +68,10 @@ export interface SshConfig {
   postCommand?: string
   hasSudoPassword?: boolean
   dockerContainer?: string
+  /** Structured runtime; when set with type 'container' the app composes the
+   *  container command itself. Legacy `dockerContainer` (badge-only hint) is
+   *  superseded by `runtime.container` but still read as a fallback. */
+  runtime?: SshRuntime
   /**
    * SSH tmux enhancement (item 3) — the remote OS. 'auto' (default) and 'unix'
    * both use the POSIX setup path unchanged (no regression). 'windows' uses a

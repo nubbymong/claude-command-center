@@ -52,6 +52,7 @@ export function useLaunchConfig(): (config: TerminalConfig) => string {
         postCommand: config.sshConfig.postCommand,
         hasSudoPassword: config.sshConfig.hasSudoPassword,
         dockerContainer: config.sshConfig.dockerContainer,
+        runtime: config.sshConfig.runtime,
         // SSH tmux enhancement (items 1/3): these MUST ride through to the
         // launched session or the spawn never sees them. Dropping `detachable`
         // here left the owner's "never silently install tmux" opt-out inert

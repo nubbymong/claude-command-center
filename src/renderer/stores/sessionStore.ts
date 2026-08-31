@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
+import type { ProviderId, CodexOptions, TerminalOptions, SshRuntime } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
@@ -15,6 +15,7 @@ export interface SSHConfig {
   postCommand?: string
   hasSudoPassword?: boolean
   dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
+  runtime?: SshRuntime      // item e: structured container runtime
   detachable?: boolean      // item 1: "Detachable" persistent tmux session (default ON; only false disables)
   remoteOs?: 'auto' | 'unix' | 'windows'  // item 3: remote OS (windows = prototype Windows setup path)
 }

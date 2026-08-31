@@ -439,7 +439,7 @@ export default function SessionHeader({ session }: Props) {
               the persistence pill above — an SSH-Persistent container session
               shows both. Keyed on the structured docker field; the container
               name is on hover, teal to match the sidebar badge. */}
-          {!!session.sshConfig.dockerContainer && (
+          {!!(session.sshConfig.runtime?.container || session.sshConfig.dockerContainer) && (
             <HeaderPill
               label={
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden><rect x="4" y="9" width="3.6" height="3.6" rx="0.4" /><rect x="8.2" y="9" width="3.6" height="3.6" rx="0.4" /><rect x="12.4" y="9" width="3.6" height="3.6" rx="0.4" /><rect x="8.2" y="4.8" width="3.6" height="3.6" rx="0.4" /><path d="M2 13.5h17.5c0 2.8-2.2 5-5 5H8a6 6 0 0 1-6-5z" /></svg>
@@ -447,7 +447,7 @@ export default function SessionHeader({ session }: Props) {
               tone="var(--color-teal)"
               word="container"
               dotOnly
-              title={`Runs in container: ${session.sshConfig.dockerContainer}`}
+              title={`Runs in container: ${session.sshConfig.runtime?.container ?? session.sshConfig.dockerContainer}`}
               testId="ssh-docker-pill"
             />
           )}

@@ -173,6 +173,10 @@ export interface ElectronAPI {
         remotePath: string
         postCommand?: string
         dockerContainer?: string
+        /** item e: structured container runtime (main rebuilds it from the
+         *  saved config via spawn-credential-binding; the request's copy is
+         *  informational only). */
+        runtime?: import('../../shared/types').SshRuntime
         /** #242 tier 5: respawning a session that previously reached
          *  claude-running -- drives `--continue` when no tmux persistence
          *  is available. See SSHOptions.reconnect in pty-manager.ts. */

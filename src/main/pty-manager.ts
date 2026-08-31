@@ -5,6 +5,8 @@ import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
 import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ssh-tmux'
 import { stripAnsiForSentinel } from './ansi-strip'
 import { randomId } from '../shared/id'
+import { composeRuntimeCommand } from '../shared/container-command'
+import type { SshRuntime } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
@@ -714,6 +716,9 @@ export interface SSHOptions {
   remotePath: string
   password?: string
   postCommand?: string
+  /** Structured container runtime (item e) — injected from the SAVED config by
+   *  spawn-credential-binding, composed into the effective post-command below. */
+  runtime?: SshRuntime
   sudoPassword?: string
   /**
    * #242 tier 5: true when this spawn respawns a session that had
@@ -1495,7 +1500,7 @@ export function spawnPty(
             return
           }
           logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms → advancing from connecting`)
-          if (ssh.postCommand) setFlowState('awaiting-postcommand', 'idle-fallback')
+          if (postCommand) setFlowState('awaiting-postcommand', 'idle-fallback')
           else if (options?.shellOnly) setFlowState('shell-only', 'idle-fallback')
           else setFlowState('awaiting-claude', 'host (fallback)')
           return
@@ -1668,7 +1673,27 @@ export function spawnPty(
       ? buildWindowsClaudeCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
       : [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
-    const postCommand = ssh.postCommand
+    // Item e (structured Runtime): the app composes the container command from
+    // the saved runtime block; a free-text postCommand (Advanced) is arbitrary
+    // PREP and runs first in the same stage. The flow machinery below is
+    // untouched — it keys on postCommand presence exactly as before.
+    let runtimeCmd: string | undefined
+    // Sticky: a container runtime the validator REJECTED must never degrade into
+    // a host launch. Failing the flow alone was not enough — the failed overlay
+    // offers "Retry Launch", which calls launchClaude(), and launchClaude has no
+    // 'failed' guard, so it would have run host setup + claude on the BARE HOST.
+    // The user asked for a container; silently handing them the host instead is
+    // the same silent-fallback class the tmux ladder refuses elsewhere in this
+    // file. Latch it and refuse every launch path for the life of the session.
+    let runtimeInvalid = false
+    try {
+      runtimeCmd = composeRuntimeCommand(ssh.runtime)
+    } catch (err) {
+      logError(`[ssh] ${sessionId}: container runtime invalid: ${(err as Error)?.message ?? err}`)
+      runtimeInvalid = true
+      setFlowState('failed', 'container runtime invalid')
+    }
+    const postCommand = [ssh.postCommand, runtimeCmd].filter(Boolean).join(' && ') || undefined
     const sudoPassword = ssh.sudoPassword
 
     // Tight password-prompt match: `password:` or `password?` at the trimmed
@@ -2376,10 +2401,19 @@ export function spawnPty(
         //     the user only wanted to enter the container.
         // Users who want claude on the bare HOST can use "Launch
         // Claude on host" instead, which DOES run host setup.
+        if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
         if (currentFlowState !== 'awaiting-postcommand') return
         writePostCommand()
       },
       launchClaude: () => {
+        // Item e: an unusable container runtime is terminal for this session.
+        // Without this, the failed overlay's "Retry Launch" button walks the
+        // host ladder (inInnerShell false, setupSent false -> writeHostSetupCmd)
+        // and starts claude OUTSIDE the container the config asked for. Re-emit
+        // so the overlay keeps saying why instead of appearing inert; the user's
+        // route out is Skip (an explicit choice to drive the raw shell) or
+        // fixing the config.
+        if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
         // #242 round-2 MAJOR fix: tier-3 staging can be in flight for up to
         // STAGE_TIMEOUT_MS (20s) while claudeSent is still false, a window
         // that didn't exist pre-#242 (claudeSent used to flip true in the

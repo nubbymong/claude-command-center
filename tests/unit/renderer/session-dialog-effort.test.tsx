@@ -162,7 +162,11 @@ describe('SessionDialog starting effort', () => {
     // hand-rolled role="radio" buttons did not.
     const named = (n: string) => container.querySelectorAll(`input[type="radio"][name="${n}"]`).length
     expect(named('ccc-provider')).toBe(3)   // Claude Code / Codex / Terminal only
-    expect(named('ccc-transport')).toBe(2)  // Local / SSH
+    // 3-way since the config-modal redesign (item i): the old "Detachable"
+    // checkbox became the third card — persistence is a connection KIND, not a
+    // tweak buried under the SSH fields. Still ONE native radio group, so the
+    // browser's roving-tabindex/arrow-key pattern covers all three.
+    expect(named('ccc-transport')).toBe(3)  // Local / SSH / SSH Persistent
     expect(named('ccc-effort')).toBeGreaterThan(1)  // Default + registry levels
     // No leftover fake-radio buttons claiming radio semantics.
     expect(container.querySelectorAll('button[role="radio"]').length).toBe(0)

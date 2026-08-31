@@ -1258,6 +1258,120 @@ describe('spawnPty SSH branch — tmux tier-3 staging via the container/postComm
   })
 })
 
+// Config-modal redesign, item e (structured Runtime). The container hop used to
+// be a free-text post-command the user typed ("sudo docker exec -it ccc bash");
+// it is now a structured `SshRuntime` the APP composes via
+// composeRuntimeCommand, and pty-manager keys the whole SSH ladder on the
+// EFFECTIVE post-command -- `[ssh.postCommand, runtimeCmd].filter(Boolean).join(' && ')` --
+// rather than on `ssh.postCommand`. That is the one behavioural claim worth
+// pinning: a runtime-only config must drive the flow EXACTLY as the typed
+// string did (idle-fallback -> awaiting-postcommand -> runPostCommand writes the
+// composed command), and a config carrying BOTH must run the free-text prep
+// first, then the runtime hop, in one write.
+//
+// Mutation to prove this can fail: revert either use site in pty-manager.ts --
+// the idle-fallback gate at ~line 1503 (`if (postCommand)` back to
+// `if (ssh.postCommand)`) or `const postCommand = ssh.postCommand` at ~line 1687.
+// With the first reverted the runtime-only session advances to
+// 'awaiting-claude' and runPostCommand() no-ops (nothing is ever written, the
+// container is never entered, and claude silently runs on the HOST); with the
+// second reverted the composed command is dropped from the write.
+//
+// Modelled on driveToContainerStageWrite above (same fakes/timers style); the
+// only addition is a window that RECORDS the ssh:flowState emits, so the
+// 'awaiting-postcommand' half of the claim is asserted directly instead of
+// being inferred from runPostCommand's own state guard.
+function makeFlowRecordingWin(): { win: never; states: Array<{ state: string; info?: string }> } {
+  const states: Array<{ state: string; info?: string }> = []
+  const win = {
+    webContents: {
+      send: (channel: string, payload: unknown) => {
+        if (channel.startsWith('ssh:flowState:')) states.push(payload as { state: string; info?: string })
+      },
+    },
+    isDestroyed: () => false,
+  } as never
+  return { win, states }
+}
+
+const CCC_TEST_RUNTIME = { type: 'container' as const, container: 'ccc-test', sudo: true }
+
+describe('spawnPty SSH branch — structured container Runtime drives the post-command flow (item e)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('runtime-only (no postCommand) reaches awaiting-postcommand and writes the app-composed "sudo docker exec -it ccc-test bash"', () => {
+    const sessionId = 's-runtime-container'
+    const { win, states } = makeFlowRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win, sessionId, { ssh: { ...SSH, runtime: CCC_TEST_RUNTIME } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500) // idle: connecting -> awaiting-postcommand
+    expect(states.map((s) => s.state)).toContain('awaiting-postcommand')
+    getSshFlow(sessionId)!.runPostCommand() // no-ops unless the state really is awaiting-postcommand
+    vi.advanceTimersByTime(300) // writePostCommand's 200ms write delay
+    const postWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('docker exec'))
+    expect(postWrite).toBeDefined()
+    // Exact, including the trailing CR: the app builds this whole line, so a
+    // stray flag/quote/space regression is a defect, not a formatting nit.
+    expect(postWrite![0] as string).toBe('sudo docker exec -it ccc-test bash\r')
+  })
+
+  it('postCommand AND runtime compose as "<prep> && <runtime>" in a single post-command write', () => {
+    const sessionId = 's-runtime-with-prep'
+    const { win, states } = makeFlowRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win, sessionId, { ssh: { ...SSH, postCommand: 'echo prep', runtime: CCC_TEST_RUNTIME } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500)
+    expect(states.map((s) => s.state)).toContain('awaiting-postcommand')
+    getSshFlow(sessionId)!.runPostCommand()
+    vi.advanceTimersByTime(300)
+    const postWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('docker exec'))
+    expect(postWrite).toBeDefined()
+    expect(postWrite![0] as string).toBe('echo prep && sudo docker exec -it ccc-test bash\r')
+  })
+
+  // Fail-CLOSED, found reviewing this change: composeRuntimeCommand rejecting a
+  // container name failed the flow, but nothing stopped the launch paths. The
+  // failed overlay's own button is "Retry Launch" -> launchClaude(), which (with
+  // inInnerShell false and setupSent false) walked the HOST ladder and started
+  // claude on the bare host — the isolation the config asked for silently gone.
+  // Unreachable through the dialog (it validates the same charset before saving)
+  // but reachable from any hand-edited or older config file.
+  //
+  // Mutation to prove this can fail: drop the `if (runtimeInvalid)` guard from
+  // launchClaude in pty-manager.ts — the host setup write reappears and the
+  // second assertion fails.
+  it('an INVALID container runtime fails the flow and refuses every launch path (no silent host fallback)', () => {
+    const sessionId = 's-runtime-invalid'
+    const { win, states } = makeFlowRecordingWin()
+    onDataListeners.length = 0
+    // `evil;name` fails CONTAINER_NAME_RE — composeRuntimeCommand throws.
+    spawnPty(win, sessionId, { ssh: { ...SSH, runtime: { type: 'container', container: 'evil;name' } } } as never)
+    writeMock.mockClear()
+    expect(states.map((s) => s.info)).toContain('container runtime invalid')
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500)
+    // The auto-ladder never advances out of 'failed', so no stage is chained.
+    expect(states.map((s) => s.state)).not.toContain('awaiting-postcommand')
+    expect(states.map((s) => s.state)).not.toContain('awaiting-claude')
+    // ...and the overlay's own "Retry Launch" writes NOTHING: no host setup, no
+    // claude, and above all no container command built from the rejected name.
+    getSshFlow(sessionId)!.launchClaude()
+    getSshFlow(sessionId)!.runPostCommand()
+    vi.advanceTimersByTime(1500)
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(states[states.length - 1]).toEqual({ state: 'failed', info: 'container runtime invalid' })
+  })
+})
+
 // #242 round-3 REWORK finding (MAJOR): the container/postCommand flow
 // re-sends the IDENTICAL setup script with the IDENTICAL nonce and
 // sentinel shape as the host flow (see 'idle after container setup ok ->

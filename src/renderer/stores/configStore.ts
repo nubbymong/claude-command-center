@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
-import type { ProviderId, ClaudeOptions, CodexOptions, TerminalOptions } from '../../shared/types'
+import type { ProviderId, ClaudeOptions, CodexOptions, TerminalOptions, SshRuntime } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 import { generateId } from '../utils/id'
 
@@ -33,6 +33,7 @@ export interface TerminalConfig {
     postCommand?: string      // Command to run after SSH connects (e.g., docker exec)
     hasSudoPassword?: boolean // Whether sudo password is needed for postCommand
     dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
+    runtime?: SshRuntime      // item e: structured container runtime (supersedes free-text docker postCommand)
     detachable?: boolean      // item 1: "Detachable" persistent tmux session (default ON; only false disables)
     remoteOs?: 'auto' | 'unix' | 'windows'  // item 3: remote OS (windows = prototype Windows setup path)
   }
