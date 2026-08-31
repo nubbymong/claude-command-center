@@ -83,6 +83,16 @@ describe('SshFlowOverlay persistence-unavailable warning gate', () => {
     expect(container.textContent).not.toContain(WARNING)
   })
 
+  it('does NOT warn on a LEGACY docker session (free-text postCommand, no structured runtime) with probe=none', () => {
+    // Double Review must-fix: main treats a docker-shaped postCommand with no
+    // structured runtime as a container (persistence forced off), so probe=none
+    // is normal there too — the overlay must mirror that exact gate.
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~', postCommand: 'sudo docker exec -it ccc bash' })
+    mount()
+    push({ state: 'running-claude', info: 'probe=none' })
+    expect(container.textContent).not.toContain(WARNING)
+  })
+
   it('DOES warn on a persistence-wanted session (detachable undefined) with a real ladder failure', () => {
     setSession({ host: 'h', port: 22, username: 'u', remotePath: '~' })
     mount()

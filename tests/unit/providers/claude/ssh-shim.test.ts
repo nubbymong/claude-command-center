@@ -141,6 +141,12 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(script).not.toContain('spawn(process.execPath,[shimPath')
   })
 
+  it('omits the priming spawn when the statusline master switch is off', () => {
+    // includeStatusLine:false => no statusLine, no url file, no priming.
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false, includeConductorMcp: true }, NONCE)
+    expect(script).not.toContain('spawn(process.execPath,[shimPath')
+  })
+
   it('bakes ?cccSessionId=<encoded sid> into the remote MCP URL (P7.7.10 parity)', () => {
     const script = generateRemoteSetupScript('sid+with space', null, undefined, NONCE)
     // encodeURIComponent maps "+" -> "%2B" and " " -> "%20"

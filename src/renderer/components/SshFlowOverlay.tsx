@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { isSshPersistenceFailureReason, formatPersistenceUnavailableMessage } from '../../shared/ssh-tmux-persistence'
+import { parseDockerPostCommand, isContainerRuntime } from '../../shared/container-command'
 import { useSessionStore } from '../stores/sessionStore'
 import { DialogButton } from './ui/Dialog'
 
@@ -57,7 +58,13 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
   // main's gate (pty-manager writeClaudeCmd: detachable !== false && !container)
   // so the overlay never alarms a session that never tried to persist.
   const sshConfig = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.sshConfig)
-  const wantedPersistence = sshConfig?.detachable !== false && sshConfig?.runtime?.type !== 'container'
+  // effectiveRuntime mirrors pty-manager's SSH spawn EXACTLY (incl. the #572
+  // legacy-docker fallback): a free-text `postCommand: 'sudo docker exec …'`
+  // with no structured runtime is ALSO a container session for which main
+  // forces persistence off — so probe=none is normal there too and must not
+  // alarm. Checking only runtime?.type missed that class.
+  const effectiveRuntime = sshConfig?.runtime ?? parseDockerPostCommand(sshConfig?.postCommand ?? '') ?? undefined
+  const wantedPersistence = sshConfig?.detachable !== false && !isContainerRuntime(effectiveRuntime)
   const [busy, setBusy] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
 
