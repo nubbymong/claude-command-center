@@ -244,6 +244,34 @@ describe('SessionHeader', () => {
     useAccountProfilesStore.setState({ profiles: [] })
   })
 
+  // One SSH connection pill (owner UX, 2026-08-31): kind + address in a single
+  // HeaderPill, replacing the old mauve "SSH: user@host" text and the separate
+  // persistent / not-persistent pills. `ssh-connection-pill` is present in BOTH
+  // states; the persistent variant ALSO keeps `ssh-persistent-pill`.
+  it('SSH standard session: one "SSH" connection pill showing the address (no persistent/not-persistent chrome)', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: '192.168.1.5', port: 22, username: 'nick', remotePath: '~' } as any }))
+    const pill = container.querySelector('[data-testid="ssh-connection-pill"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.textContent).toContain('SSH')
+    expect(pill?.textContent).toContain('nick@192.168.1.5') // address at a glance, not only on hover
+    expect(pill?.textContent).not.toContain('SSH-Persistent')
+    // The old text span + both persistence pills are gone.
+    expect(container.textContent).not.toContain('SSH: ')
+    expect(container.textContent).not.toContain('not persistent')
+    expect(container.querySelector('[data-testid="ssh-nonpersistent-pill"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).toBeNull()
+  })
+
+  it('SSH persistent session: the pill reads "SSH-Persistent" and still answers to both testIds', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'box', port: 22, username: 'u', remotePath: '~' } as any }))
+    const pill = container.querySelector('[data-testid="ssh-connection-pill"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.textContent).toContain('SSH-Persistent')
+    expect(pill?.textContent).toContain('u@box')
+    // Existing hook preserved for the persistent variant.
+    expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).not.toBeNull()
+  })
+
   // Docker pill in the SSH cluster (harmonise-remote Phase 3): composes with the
   // persistence pill, keyed on the structured docker field, container on hover.
   it('SSH: shows the docker pill (naming the container) when the session runs in a container', () => {

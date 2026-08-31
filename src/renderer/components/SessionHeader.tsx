@@ -175,6 +175,50 @@ function SessionGitHubPill({ session }: { session: Session }) {
 }
 
 /**
+ * The SSH connection as ONE title-bar-style pill carrying BOTH the connection
+ * kind and the remote address -- replacing the old mauve "SSH: user@host" text
+ * and the separate persistent / not-persistent pills. Green "SSH-Persistent"
+ * when the session is tmux-wrapped (a dropped connection stays alive and
+ * reconnecting resumes it in place); neutral "SSH" otherwise. The address
+ * (user@host) reads inline, at a glance, not only on hover. A STANDARD SSH
+ * session shows this pill too -- it just says "SSH". The docker/container pill
+ * (rendered after this in the cluster) composes with it unchanged.
+ */
+function SshConnectionPill({ session }: { session: Session }) {
+  const ssh = session.sshConfig
+  if (!ssh) return null
+  const persistent = session.sshTmuxPersistent === true
+  const pill = (
+    <HeaderPill
+      label={persistent ? 'SSH-Persistent' : 'SSH'}
+      tone={persistent ? 'var(--status-success)' : 'var(--text-muted)'}
+      title={
+        persistent
+          ? 'This remote session runs inside tmux — a dropped connection stays alive and reconnecting resumes it in place.'
+          : 'Remote session over SSH; a dropped connection ends it and reconnecting resumes via --continue.'
+      }
+      testId="ssh-connection-pill"
+    >
+      <span className="font-mono text-[10px] leading-none" style={{ color: 'var(--text-primary)' }}>
+        {ssh.username}@{ssh.host}
+      </span>
+    </HeaderPill>
+  )
+  // The persistent variant also answers to the legacy `ssh-persistent-pill` hook
+  // (existing tests / the docker-composes assertion). One node can't carry two
+  // data-testids, so a display:contents wrapper (no layout box of its own)
+  // carries that second hook around the pill; `ssh-connection-pill` stays on the
+  // pill itself in BOTH states.
+  return persistent ? (
+    <span style={{ display: 'contents' }} data-testid="ssh-persistent-pill">
+      {pill}
+    </span>
+  ) : (
+    pill
+  )
+}
+
+/**
  * The account · claude.ai · Claude Code (with refresh) pill trio plus the
  * trailing GitHub group. Shared by a LOCAL Claude session and an SSH session
  * whose remote account maps to a local profile: the claude.ai / Claude Code
@@ -471,35 +515,13 @@ export default function SessionHeader({ session }: Props) {
 
       {session.sessionType === 'ssh' && session.sshConfig && (
         <span className="flex items-center gap-1.5 shrink-0">
-          <span className="text-xs text-mauve">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
-          {/* item 8: persistence indicator. Only shown once main has reported a
-              definite status for this session (undefined = not yet known). */}
-          {/* Rendered through the shared HeaderPill (#291's title-bar-style pill
-              system) so the SSH pills sit at the same weight as the account /
-              GitHub pills instead of carrying their own copy of the chrome. */}
-          {session.sshTmuxPersistent === true && (
-            <HeaderPill
-              label={
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
-              }
-              tone="var(--status-success)"
-              word="persistent"
-              dotOnly
-              title="This remote session runs inside tmux — a dropped connection stays alive and reconnecting resumes it in place."
-              testId="ssh-persistent-pill"
-            />
-          )}
-          {session.sshTmuxPersistent === false && (
-            <HeaderPill
-              label="not persistent"
-              tone="var(--text-muted)"
-              dotOnly
-              title="This remote session is not persistent — a dropped connection ends it; reconnecting resumes the conversation via --continue."
-              testId="ssh-nonpersistent-pill"
-            />
-          )}
+          {/* One connection pill: kind ("SSH" / "SSH-Persistent") + the remote
+              address, styled like the account / GitHub HeaderPills (#291's
+              title-bar-style pill system). Replaces the old mauve "SSH: user@host"
+              text and the two separate persistence pills. */}
+          <SshConnectionPill session={session} />
           {/* Docker/container runtime (harmonise-remote Phase 3): composes with
-              the persistence pill above — an SSH-Persistent container session
+              the connection pill above — an SSH-Persistent container session
               shows both. Keyed on the structured docker field; the container
               name is on hover, teal to match the sidebar badge. */}
           {!!(session.sshConfig.runtime?.container || session.sshConfig.dockerContainer) && (
