@@ -78,7 +78,7 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'Sessions',
     items: [
-      { title: 'Detachable SSH.', desc: 'Runs under tmux, so the work survives a dropped VPN.' },
+      { title: 'SSH Persistent.', desc: 'A connection kind of its own — the remote session survives a dropped VPN.' },
       { title: 'Partner terminal.', desc: 'A plain shell beside Claude, labelled so you always know which is which.' },
       { title: 'One row.', desc: 'The tools and your command buttons sit in a single row under the terminal.', seeIt: 'oneRow' },
       { title: 'Two-mode panel.', desc: 'Saved configs and Running sessions each get a tab, with Quick Start pins — and the panel resizes.', seeIt: 'panel' },

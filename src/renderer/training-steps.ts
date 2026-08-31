@@ -259,7 +259,7 @@ export const trainingSteps: TrainingStep[] = [
       'A one-page explainer built into the Agent Canvas: how an artefact moves through versions, what a review stores (the element you anchored to, your drawings, pasted images, and your words, all kept on the version they were made against), and what a Testing note locks together as evidence.',
     highlights: [
       'The **artefact** model in one diagram -- versions increment, and each review with its objects is stored on its version',
-      'Rejecting a version **never loses your notes** -- the agent reads them to build the next one, and History keeps the trail',
+      'Sending a version back **never loses your notes** -- **Reject** a mockup, **Submit Revisions** on a plan; either way the agent reads them to build the next one, and History keeps the trail',
       'The **Mockup, Plan, and Testing** loops drawn end to end, including the evidence record one saved Testing note stores',
       'Plain terms where they apply: a note reads **resolved** once the agent has acted on it; a review reads **settled** once every note is closed',
     ],
@@ -271,7 +271,7 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Back', value: '‹ Home in the page header' },
     ],
     proTip:
-      'Skim it once before your first review. Knowing that every note is stored on its version -- and that rejecting never loses them -- changes how freely you annotate.',
+      'Skim it once before your first review. Knowing that every note is stored on its version -- and that sending a version back never loses them -- changes how freely you annotate.',
     bullets: [
       'One page that explains the **whole canvas review model**',
       'Versions, reviews, and **what each note stores**, drawn as diagrams',

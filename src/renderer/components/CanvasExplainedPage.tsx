@@ -75,7 +75,11 @@ interface FlowSpec {
   nodes: FlowNode[]
   /** arrows[i] joins nodes[i] → nodes[i+1]; `ok` draws it in success green. */
   arrows: Array<{ label?: string; ok?: boolean }>
-  /** The rework loop: an arc from the review node (index 1) back to node 0. */
+  /** The rework loop: an arc from the review node (index 1) back to node 0.
+   *  Its label is the mode's own word for sending a version back -- "Reject"
+   *  on a mockup, "Submit Revisions" on a plan -- drawn in the same tone
+   *  either way, because the app deliberately paints REVISIONS the same red as
+   *  a rejection rather than implying a plan has a third outcome. */
   reject?: string
   /** Testing only: the pack stack the verdict feeds into. */
   pack?: { title: string; lines: string[] }
@@ -320,15 +324,24 @@ const MOCKUP_FLOW: FlowSpec = {
   reject: 'Reject vN — your notes drive v(N+1)',
 }
 
+// A plan has NO Reject: it is iterative, so the back arc is Submit Revisions
+// and the loop is the normal outcome of a first round rather than a failure.
+// Approve is held back while the plan carries an open question, or while a
+// note is still unsent, so an approval never arrives carrying work.
 const PLAN_FLOW: FlowSpec = {
-  aria: 'Plan loop: the agent posts plan v1 as steps you can point at, you review the steps; approving starts the work, rejecting makes the next plan draft answer your notes.',
+  aria: 'Plan loop: the agent posts plan v1 as steps you can point at; you review the steps, noting one and answering its open questions. There is no Reject on a plan: you submit revisions, and plan v2 answers your notes. Approving starts the work, and Approve stays unavailable while any question is still open or a note is unsent.',
   nodes: [
     { w: 196, tone: 'mauve', title: 'Agent posts plan v1', lines: ['steps you can point at'] },
-    { w: 196, tone: 'peach', title: 'You review the steps', lines: ['note a step · answer questions'] },
+    {
+      w: 196,
+      tone: 'peach',
+      title: 'You review the steps',
+      lines: ['note a step · answer its questions', 'Approve blocked while one is open'],
+    },
     { w: 196, tone: 'green', fill: APPROVED_FILL, title: 'Work starts', lines: ['plan one click away on Home'] },
   ],
   arrows: [{}, { label: 'Approve', ok: true }],
-  reject: 'Reject — plan v2 answers your notes',
+  reject: 'Submit Revisions — v2 answers your notes',
 }
 
 const TESTING_FLOW: FlowSpec = {
