@@ -4,7 +4,7 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/ident
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { useAccountAuthStore } from '../stores/accountAuthStore'
+import { useAccountAuthStore, type AccountAuthStatus } from '../stores/accountAuthStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { BrandMark } from './BrandMark'
@@ -175,6 +175,83 @@ function SessionGitHubPill({ session }: { session: Session }) {
 }
 
 /**
+ * The account · claude.ai · Claude Code (with refresh) pill trio plus the
+ * trailing GitHub group. Shared by a LOCAL Claude session and an SSH session
+ * whose remote account maps to a local profile: the claude.ai / Claude Code
+ * checks are local-profile-scoped, so once a remote session is mapped to a local
+ * profile the same set applies (harmonise-remote). The account pill's
+ * label/tone/title are passed in because they differ — a remote session names
+ * its account "Remote Claude account: …". `status` is the accountAuthStore entry
+ * for `profileId`; `gitHubTail` is the already-assembled trailing group (its own
+ * leading separator + the GitHub pill, or null).
+ */
+function AccountAuthPillSet({
+  accountLabel, accountTone, accountTitle, status, profileId, refresh, gitHubTail,
+}: {
+  accountLabel: React.ReactNode
+  accountTone: string
+  accountTitle: string
+  status: AccountAuthStatus | undefined
+  profileId: string
+  refresh: (profileId: string, opts?: { force?: boolean }) => Promise<void>
+  gitHubTail: React.ReactNode
+}) {
+  // Until the FIRST successful read (fetchedAt set) the status is UNKNOWN — the
+  // very first render precedes the fetch effect, and a failed first fetch leaves
+  // no result either. Never paint "signed out"/"not connected" for unknown: show
+  // "…" while pending and "unknown" (error in the tooltip) after a failure.
+  const known = status?.fetchedAt !== undefined
+  const pending = !known && !status?.error
+  const cliOk = status?.cliAuthed === true
+  const web = status?.web
+  const errorSuffix = status?.error ? ` — could not read status: ${status.error}` : ''
+  // A green dot = all good, no word; the word appears only when action is needed
+  // (signed out / not connected / expired / unknown), mirroring the title bar.
+  const codeTone = known && cliOk ? 'var(--status-success)' : known ? 'var(--text-muted)' : 'var(--text-muted)'
+  const codeWord = !known ? (pending ? '…' : 'unknown') : cliOk ? undefined : 'signed out'
+  const aiTone = !known ? 'var(--text-muted)' : web === 'active' ? 'var(--status-success)' : web === 'expired' ? 'var(--status-warning)' : 'var(--text-muted)'
+  const aiWord = !known ? (pending ? '…' : 'unknown') : web === 'active' ? undefined : web === 'expired' ? 'expired' : 'not connected'
+  const doRefresh = () => { if (profileId) void refresh(profileId, { force: true }) }
+  return (
+    <>
+      <HeaderPill
+        label={accountLabel}
+        tone={accountTone}
+        title={accountTitle}
+        testId="session-pill-account"
+      />
+      <HeaderPill
+        label="claude.ai"
+        tone={aiTone}
+        word={aiWord}
+        title={`claude.ai web session for this session's account${errorSuffix}`}
+        testId="session-pill-claudeai"
+      />
+      <HeaderPill
+        label="Claude Code"
+        tone={codeTone}
+        word={codeWord}
+        title={`Claude Code sign-in for this session's account${errorSuffix}`}
+        testId="session-pill-claudecode"
+      >
+        <button
+          onClick={doRefresh}
+          disabled={!!status?.loading}
+          title="Refresh auth status"
+          aria-label="Refresh auth status"
+          className="ml-0.5 opacity-50 hover:opacity-100 disabled:opacity-30 focus-ring rounded"
+          data-testid="session-pill-refresh"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+        </button>
+      </HeaderPill>
+      {/* Separator, then GitHub — its own group, slug on hover. */}
+      {gitHubTail}
+    </>
+  )
+}
+
+/**
  * The session's status cluster (right side of the header), styled to complement
  * the title-bar service pills. Order: account · claude.ai · Claude Code | GitHub.
  * The account pill names the Claude account this session runs as; the two auth
@@ -199,34 +276,46 @@ function SessionAuthPills({ session }: { session: Session }) {
   // auth pills and the GitHub pill are workspace chrome a help surface does not
   // carry — and with no auth pills to feed, the status fetch is skipped too.
   const isAsk = session.kind === 'ask'
-  const profileId = session.profileId ?? primary?.id
+  const isSshClaude = !session.shellOnly && session.sessionType === 'ssh' && (session.provider ?? 'claude') === 'claude'
+  // SSH → local-profile mapping (harmonise-remote): an SSH session delivers its
+  // signed-in account via /status (session.accountEmail; fallback the setup-
+  // sentinel sshRemoteAccount). When that email matches a LOCAL account profile
+  // on THIS machine, the claude.ai web session and the Claude Code sign-in are
+  // local-machine actions on that identity, so the SSH header shows the SAME
+  // pill set as local, driven by that profile. No match → account-only (there is
+  // no local auth to show). session.accountEmail is sanitised at ingest, so this
+  // is a plain equality against locally-configured profiles — no new trust.
+  const remoteEmail = isSshClaude ? (session.accountEmail || session.sshRemoteAccount) : undefined
+  const sshProfileId = remoteEmail ? profiles.find((p) => p.accountEmail === remoteEmail)?.id : undefined
+  // The profile whose auth status feeds the pills: the SSH-mapped local profile
+  // for a mapped remote session, else this session's own (or the primary)
+  // profile. Undefined for an SSH session with no local match (account-only).
+  const profileId = isSshClaude ? sshProfileId : (session.profileId ?? primary?.id)
   const profile = useAccountProfilesStore((s) => (profileId ? s.profiles.find((p) => p.id === profileId) : undefined))
   const status = useAccountAuthStore((s) => (profileId ? s.byProfile[profileId] : undefined))
 
   React.useEffect(() => {
     // This header renders only the ACTIVE session, so mounting/param-change is
-    // "on activate". Re-fetch when the session or its account changes.
-    if (applies && !isAsk && profileId) void refresh(profileId)
-  }, [applies, isAsk, profileId, refresh, session.id])
+    // "on activate". Fetch for a LOCAL Claude session, and for an SSH session
+    // whose remote account maps to a local profile (profileId set). Re-fetch when
+    // the session or its (possibly SSH-mapped) account changes.
+    if ((applies || isSshClaude) && !isAsk && profileId) void refresh(profileId)
+  }, [applies, isSshClaude, isAsk, profileId, refresh, session.id])
 
   // Never a GitHub pill on the Ask session (#465) — structural, so even a
   // stray githubIntegration on the record (there is no path that sets one,
   // the auto-detect banner is gated) could not paint it.
   const gitHub = isAsk ? null : <SessionGitHubPill session={session} />
 
-  // Phase 3 (harmonise-remote): an SSH Claude session gets the ACCOUNT pill,
-  // named from its live /status accountEmail (fallback: the setup-sentinel
-  // snapshot sshRemoteAccount), with the remote signed-in state FOLDED into
-  // it — the pill exists iff the remote reports an account, so a separate
-  // "Claude Code" pill would be redundant, and claude.ai has no remote
-  // equivalent (the accountAuthStore checks are local-profile-scoped).
-  // GitHub-on-remote is deferred; the repoSlug fallthrough below keeps
-  // whatever local detection produced. This pill replaces the old mauve
-  // remote-account pill in the SSH cluster, so remote and local headers
-  // read the same.
-  const isSshClaude = !session.shellOnly && session.sessionType === 'ssh' && (session.provider ?? 'claude') === 'claude'
+  // Phase 3 (harmonise-remote): an SSH Claude session. The ACCOUNT pill is named
+  // from its live /status accountEmail (fallback: the setup-sentinel snapshot
+  // sshRemoteAccount). When that account maps to a LOCAL profile (sshProfileId,
+  // above), the claude.ai / Claude Code pills apply too — those checks are
+  // local-profile-scoped and run on THIS machine for the account identity — so
+  // the header reads exactly like a local one. With no local match, the pill
+  // stands alone (the remote signed-in state is folded into it) and there is no
+  // local auth to show. This pill replaces the old mauve remote-account pill.
   if (isSshClaude) {
-    const remoteEmail = session.accountEmail || session.sshRemoteAccount
     const gitHubTail = !isAsk && session.githubIntegration?.repoSlug
       ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
       : null
@@ -237,12 +326,29 @@ function SessionAuthPills({ session }: { session: Session }) {
       resolveAccountColourKey(remoteEmail, accountColourOverrides, session.accountColour),
       theme,
     )
+    const accountTitle = `Remote Claude account: ${remoteEmail} (signed in on the remote host)`
+    // Mapped to a local profile → the full local pill set, driven by that
+    // profile's auth status. The account pill keeps its remote name/tone/title.
+    if (sshProfileId) {
+      return (
+        <AccountAuthPillSet
+          accountLabel={remoteName}
+          accountTone={remoteTone}
+          accountTitle={accountTitle}
+          status={status}
+          profileId={sshProfileId}
+          refresh={refresh}
+          gitHubTail={gitHubTail}
+        />
+      )
+    }
+    // No local profile for this account → account pill only.
     return (
       <>
         <HeaderPill
           label={remoteName}
           tone={remoteTone}
-          title={`Remote Claude account: ${remoteEmail} (signed in on the remote host)`}
+          title={accountTitle}
           testId="session-pill-account"
         />
         {gitHubTail}
@@ -257,16 +363,6 @@ function SessionAuthPills({ session }: { session: Session }) {
       ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
       : null
   }
-
-  // Until the FIRST successful read (fetchedAt set) the status is UNKNOWN — the
-  // very first render precedes the fetch effect, and a failed first fetch leaves
-  // no result either. Never paint "signed out"/"not connected" for unknown: show
-  // "…" while pending and "unknown" (error in the tooltip) after a failure.
-  const known = status?.fetchedAt !== undefined
-  const pending = !known && !status?.error
-  const cliOk = status?.cliAuthed === true
-  const web = status?.web
-  const errorSuffix = status?.error ? ` — could not read status: ${status.error}` : ''
 
   // Account pill: the Claude account this session ACTUALLY runs as. The LIVE
   // captured identity (session.accountEmail — spawn-time capture from the
@@ -307,52 +403,19 @@ function SessionAuthPills({ session }: { session: Session }) {
     )
   }
 
-  // A green dot = all good, no word; the word appears only when action is needed
-  // (signed out / not connected / expired / unknown), mirroring the title bar.
-  const codeTone = known && cliOk ? 'var(--status-success)' : known ? 'var(--text-muted)' : 'var(--text-muted)'
-  const codeWord = !known ? (pending ? '…' : 'unknown') : cliOk ? undefined : 'signed out'
-  const aiTone = !known ? 'var(--text-muted)' : web === 'active' ? 'var(--status-success)' : web === 'expired' ? 'var(--status-warning)' : 'var(--text-muted)'
-  const aiWord = !known ? (pending ? '…' : 'unknown') : web === 'active' ? undefined : web === 'expired' ? 'expired' : 'not connected'
-
-  const doRefresh = () => { if (profileId) void refresh(profileId, { force: true }) }
-
+  // The full account · claude.ai · Claude Code trio, driven by this profile's
+  // auth status — the same set an SSH-mapped session renders above (the account
+  // pill differs only in its label/tone/title).
   return (
-    <>
-      <HeaderPill
-        label={accountName}
-        tone={accountTone}
-        title={email ? `Account: ${email}` : 'This session’s Claude account'}
-        testId="session-pill-account"
-      />
-      <HeaderPill
-        label="claude.ai"
-        tone={aiTone}
-        word={aiWord}
-        title={`claude.ai web session for this session's account${errorSuffix}`}
-        testId="session-pill-claudeai"
-      />
-      <HeaderPill
-        label="Claude Code"
-        tone={codeTone}
-        word={codeWord}
-        title={`Claude Code sign-in for this session's account${errorSuffix}`}
-        testId="session-pill-claudecode"
-      >
-        <button
-          onClick={doRefresh}
-          disabled={!!status?.loading}
-          title="Refresh auth status"
-          aria-label="Refresh auth status"
-          className="ml-0.5 opacity-50 hover:opacity-100 disabled:opacity-30 focus-ring rounded"
-          data-testid="session-pill-refresh"
-        >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
-        </button>
-      </HeaderPill>
-      {/* Separator, then GitHub — its own group, slug on hover. */}
-      <div className="w-px h-4 bg-surface1 shrink-0" />
-      {gitHub}
-    </>
+    <AccountAuthPillSet
+      accountLabel={accountName}
+      accountTone={accountTone}
+      accountTitle={email ? `Account: ${email}` : 'This session’s Claude account'}
+      status={status}
+      profileId={profileId}
+      refresh={refresh}
+      gitHubTail={<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>}
+    />
   )
 }
 

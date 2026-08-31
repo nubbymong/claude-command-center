@@ -203,6 +203,47 @@ describe('SessionHeader', () => {
     expect(container.textContent).not.toContain('claude.ai')
   })
 
+  // harmonise-remote (owner UX, 2026-08-31): when an SSH session's signed-in
+  // remote account maps to a LOCAL account profile, the claude.ai / Claude Code
+  // pills apply too — those checks are local-profile-scoped and act on the
+  // account identity, which is the same identity on THIS machine. The account
+  // pill keeps its remote name/title; the two auth pills read the mapped profile.
+  it('SSH mapped to a local profile: renders claude.ai + Claude Code pills driven by that profile', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-ssh', name: 'Work', accountEmail: 'remote@x.com' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-ssh': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'remote@x.com' }))
+    expect(container.querySelector('[data-testid="session-pill-account"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).not.toBeNull()
+    // The account pill keeps its remote identity/title...
+    expect(container.querySelector('[data-testid="session-pill-account"]')?.getAttribute('title')).toContain('remote@x.com')
+    // ...and the mapped profile's good auth state shows no problem words.
+    expect(container.textContent).not.toContain('signed out')
+    expect(container.textContent).not.toContain('not connected')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('SSH mapped to a local profile: the auth pills reflect that profile\'s status (signed-out / expired)', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-ssh', name: 'Work', accountEmail: 'remote@x.com' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-ssh': { cliAuthed: false, web: 'expired', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'remote@x.com' }))
+    expect(container.textContent).toContain('signed out')
+    expect(container.textContent).toContain('expired')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('SSH with NO matching local profile: account pill ONLY (no claude.ai / Claude Code)', () => {
+    // A profile exists, but its email does not match the remote account — so
+    // there is no local auth to show and the pill stands alone.
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-other', name: 'Other', accountEmail: 'someoneelse@x.com' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-other': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'remote@x.com' }))
+    expect(container.querySelector('[data-testid="session-pill-account"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).toBeNull()
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
   // Docker pill in the SSH cluster (harmonise-remote Phase 3): composes with the
   // persistence pill, keyed on the structured docker field, container on hover.
   it('SSH: shows the docker pill (naming the container) when the session runs in a container', () => {

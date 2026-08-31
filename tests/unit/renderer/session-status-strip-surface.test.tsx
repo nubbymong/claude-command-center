@@ -137,6 +137,47 @@ describe('SessionStatusStrip account/model de-duplication (Bug 6)', () => {
   })
 })
 
+describe('SessionStatusStrip account far-left (owner UX, 2026-08-31)', () => {
+  // The account is ALWAYS the first child of the strip row now, whether it is
+  // the interactive switch pill (multi-account) or the read-only chip
+  // (single-account / SSH) — so it sits in one consistent place per session.
+  it('switchable session: the account switch pill is the FIRST child of the strip row', () => {
+    sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10, accountEmail: 'a@x.com', profileId: 'p1' }]
+    settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showAccount: true }
+    profilesState.profiles = [
+      { id: 'p1', name: '', accountEmail: 'a@x.com', createdAt: 1 },
+      { id: 'p2', name: '', accountEmail: 'b@x.com', createdAt: 2 },
+    ]
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+    const strip = container.firstChild as HTMLElement
+    const first = strip.firstElementChild as HTMLElement
+    const switchBtn = container.querySelector('[title^="Switch account"]')
+    expect(switchBtn).not.toBeNull()
+    // The switch pill is INSIDE the strip's first child — nothing precedes it.
+    expect(first.contains(switchBtn)).toBe(true)
+  })
+
+  it('non-switchable session: the read-only account chip is the FIRST child of the strip row', () => {
+    sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10, accountEmail: 'a@x.com', profileId: 'p1' }]
+    settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showAccount: true }
+    profilesState.profiles = [{ id: 'p1', name: '', accountEmail: 'a@x.com', createdAt: 1 }] // <2 → not switchable
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+    const strip = container.firstChild as HTMLElement
+    expect((strip.firstElementChild as HTMLElement).getAttribute('data-testid')).toBe('account-chip')
+    expect(container.querySelector('[title^="Switch account"]')).toBeNull()
+  })
+
+  it('the far-left account shows even when the telemetry band (statusLineEnabled) is OFF', () => {
+    sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10, accountEmail: 'a@x.com', profileId: 'p1' }]
+    settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showAccount: true }
+    settingsState.settings.statusLineEnabled = false
+    profilesState.profiles = [{ id: 'p1', name: '', accountEmail: 'a@x.com', createdAt: 1 }]
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+    const strip = container.firstChild as HTMLElement
+    expect((strip.firstElementChild as HTMLElement).getAttribute('data-testid')).toBe('account-chip')
+  })
+})
+
 describe('SessionStatusStrip master switch (onboarding p4)', () => {
   it('absent statusLineEnabled (pre-upgrade config) keeps the telemetry band', () => {
     sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10 }]

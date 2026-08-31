@@ -1,6 +1,6 @@
 // tests/unit/renderer/session-launch.test.ts
 import { describe, it, expect } from 'vitest'
-import { shouldGateAccountChoice, canSwitchAccountForSession, formatSpawnError, resolveResumeAccountMode, shouldPredetermineRestoredAccount } from '../../../src/renderer/utils/sessionLaunch'
+import { shouldGateAccountChoice, canSwitchAccountForSession, sshMappedProfileId, formatSpawnError, resolveResumeAccountMode, shouldPredetermineRestoredAccount } from '../../../src/renderer/utils/sessionLaunch'
 
 describe('shouldGateAccountChoice', () => {
   it('gates a Claude session with >= 2 account profiles', () => {
@@ -66,6 +66,38 @@ describe('canSwitchAccountForSession', () => {
   })
   it('refuses shell-only panes (the add-account /login shell must never switch profile)', () => {
     expect(canSwitchAccountForSession({ provider: 'claude', shellOnly: true, profileCount: 2 })).toBe(false)
+  })
+})
+
+describe('sshMappedProfileId (harmonise-remote: SSH → local profile)', () => {
+  const profiles = [
+    { id: 'p1', accountEmail: 'me@work.co' },
+    { id: 'p2', accountEmail: 'other@x.com' },
+  ]
+
+  it('maps an SSH session to the local profile whose email matches its live accountEmail', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', accountEmail: 'me@work.co' }, profiles)).toBe('p1')
+  })
+  it('falls back to the setup-sentinel sshRemoteAccount when there is no live accountEmail', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', sshRemoteAccount: 'other@x.com' }, profiles)).toBe('p2')
+  })
+  it('prefers the live accountEmail over the sshRemoteAccount snapshot', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', accountEmail: 'me@work.co', sshRemoteAccount: 'other@x.com' }, profiles)).toBe('p1')
+  })
+  it('returns undefined when no local profile matches the remote account', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', accountEmail: 'stranger@nowhere.dev' }, profiles)).toBeUndefined()
+  })
+  it('returns undefined when the SSH session reports no remote account at all', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude' }, profiles)).toBeUndefined()
+  })
+  it('is SSH-only: a LOCAL session never maps (its own profile drives affordances)', () => {
+    expect(sshMappedProfileId({ sessionType: 'local', provider: 'claude', accountEmail: 'me@work.co' }, profiles)).toBeUndefined()
+  })
+  it('is Claude-only: an SSH Codex session never maps (auth is not profile-scoped)', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'codex', accountEmail: 'me@work.co' }, profiles)).toBeUndefined()
+  })
+  it('never maps a shell-only SSH pane (no in-session /login to act on)', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', shellOnly: true, accountEmail: 'me@work.co' }, profiles)).toBeUndefined()
   })
 })
 

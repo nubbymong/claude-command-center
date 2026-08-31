@@ -16,7 +16,7 @@ import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
-import { canSwitchAccountForSession } from '../utils/sessionLaunch'
+import { canSwitchAccountForSession, sshMappedProfileId } from '../utils/sessionLaunch'
 import { useLaunchConfig } from '../hooks/useLaunchConfig'
 import { useClickOutside } from '../hooks/useClickOutside'
 import { useRegionTypography } from '../hooks/useTypography'
@@ -770,7 +770,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        onContextMenu={(e) => { e.preventDefault(); refreshWebOnly(session.profileId ?? primaryProfileId); void refreshWebSessions(session.profileId ?? primaryProfileId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        onContextMenu={(e) => { e.preventDefault(); const prefetchId = sshMappedProfileId(session, accountProfiles) ?? (session.profileId ?? primaryProfileId); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
         ordinal={sessionOrdinals.get(session.id)}
@@ -1300,8 +1300,22 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       {/* Session context menu */}
       {sessionContextMenu && (() => {
         const s = sessions.find((s) => s.id === sessionContextMenu.sessionId)
-        const cfg = s?.configId ? configs.find((c) => c.id === s.configId) : undefined
-        return s ? (
+        if (!s) return null
+        const cfg = s.configId ? configs.find((c) => c.id === s.configId) : undefined
+        // SSH → local-profile mapping (harmonise-remote): a mapped SSH session
+        // gets the local-machine account affordances (claude.ai / Claude Code /
+        // artifacts / sign-in). Undefined for a local/shell/non-Claude session,
+        // and for an SSH session with no matching local profile.
+        const sshProfileId = sshMappedProfileId(s, accountProfiles)
+        // The LOCAL profile the account actions operate on: the session's own
+        // profile for a local session (primary as the #269 fallback), the email-
+        // mapped profile for a mapped SSH session. Undefined for a shell-only
+        // session, and for an SSH session with no matching local profile — which
+        // keeps the profile-scoped items hidden/off there, exactly as before.
+        const actionProfileId = !s.shellOnly && s.sessionType === 'local'
+          ? (s.profileId ?? primaryProfileId)
+          : sshProfileId
+        return (
           <SessionContextMenu
             x={sessionContextMenu.x}
             y={sessionContextMenu.y}
@@ -1336,27 +1350,36 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             // session with a resolved account — an SSH session's browser and
             // credentials live on another machine, and a shell-only session has
             // no /login to run.
-            hasWebSession={!s.shellOnly && !!(s.profileId ?? primaryProfileId) && authByProfile[(s.profileId ?? primaryProfileId)!]?.web === 'active'}
-            codeSignedIn={!s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude' && authByProfile[(s.profileId ?? primaryProfileId)!]?.cliAuthed === true}
+            hasWebSession={
+              // Drives the "Open artifacts" enabled state (+ the authenticate
+              // wording): does the acting profile hold a claude.ai web session.
+              // The acting profile is the SSH-mapped local profile for a mapped
+              // remote session, else the session's own (#269 primary fallback).
+              !!actionProfileId && authByProfile[actionProfileId]?.web === 'active'
+            }
+            codeSignedIn={!!actionProfileId && (s.provider ?? 'claude') === 'claude' && authByProfile[actionProfileId]?.cliAuthed === true}
             onOpenArtifacts={
-              !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
+              actionProfileId
                 ? () => {
                     // Owner call 2026-08-26: this menu item has no chooser of
                     // its own — it silently follows the global open-target
                     // setting (window by default; the pane when chosen). The
                     // helper keeps the window path's error surfacing (#216's
                     // fix: a refusal must never be silent).
-                    openArtifactsPerSetting((s.profileId ?? primaryProfileId)!, s.id)
+                    openArtifactsPerSetting(actionProfileId, s.id)
                   }
                 : undefined
             }
             onAuthenticateWeb={
-              !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
-                ? () => { void authenticateWebForSession((s.profileId ?? primaryProfileId)!) }
+              actionProfileId
+                ? () => { void authenticateWebForSession(actionProfileId) }
                 : undefined
             }
             onSignInCode={
-              !s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude'
+              // Local Claude keeps its exact gate (available even with no profile
+              // yet — that is when you first need to sign in); a mapped SSH
+              // session runs /login in its own (remote) terminal.
+              (!s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude') || sshProfileId
                 ? () => {
                     // Restores what the old add-account flow actually DID: put the
                     // login in front of the user instead of telling them a command.
@@ -1368,7 +1391,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                 : undefined
             }
           />
-        ) : null
+        )
       })()}
 
       {showNewDialog && (
