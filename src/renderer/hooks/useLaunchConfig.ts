@@ -27,6 +27,10 @@ export const CODEX_OFF_LAUNCH_REASON = 'Codex is off. Enable it in Settings → 
  *
  * Keyed on the RUNNING STATE, not the setting alone: a non-Multi-Spawn config
  * with nothing running launches (and is selectable) perfectly normally.
+ *
+ * Deliberately `!== true`, so the stored field's third state (an explicit
+ * `false` — "the user turned this off") blocks exactly like `undefined`. Only
+ * the startup migration tells the two apart; see utils/multiSpawn.ts.
  */
 export function isMultiSpawnLaunchBlocked(
   config: Pick<TerminalConfig, 'allowMultiSpawn'>,

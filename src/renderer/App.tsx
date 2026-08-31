@@ -459,6 +459,11 @@ export default function App() {
   // when the answer could change), and finds nothing to do the moment every
   // multi-copy config is marked. `updateConfig` writes through to disk, so the
   // re-render this triggers sees the flag already set and stops.
+  //
+  // It only ever touches a config whose setting is UNDEFINED (phase 4.1). A
+  // config the user explicitly turned OFF stores `false`, and running this on
+  // every start would otherwise revert that decision each launch for as long as
+  // two copies happened to be live.
   const detachedRemoteEntries = useDetachedRemotesStore((s) => s.entries)
   useEffect(() => {
     if (!configLoaded) return

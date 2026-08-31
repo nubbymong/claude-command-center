@@ -8,6 +8,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { modelGroupsFromRegistry, effortsForModel, PERMISSION_MODES } from '../lib/claude-cli-options'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
+import { resolveAllowMultiSpawnOnSave } from '../utils/multiSpawn'
 import { secretValueProblem, secretPlacementProblem } from '../../shared/command-secret'
 import { parseDockerPostCommand } from '../../shared/container-command'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND } from './ui/Dialog'
@@ -128,7 +129,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
   const [postCommand, setPostCommand] = useState(initial?.sshConfig?.postCommand ?? '')
   // Allow Multi Spawn (phase 4): may this launcher run several copies at once?
-  // Absent/false = off, and a launch is then refused while one is live.
+  // Absent/false = off, and a launch is then refused while one is live. The
+  // STORED field is tri-state (see resolveAllowMultiSpawnOnSave); the checkbox
+  // only needs the two visible states.
   const [allowMultiSpawn, setAllowMultiSpawn] = useState(initial?.allowMultiSpawn === true)
   // SSH tmux enhancement (item 1): "Detachable" (persistent remote session).
   // DEFAULT ON -- only an explicit false disables it, so a config saved before
@@ -502,9 +505,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       } : undefined,
       claudeOptions,
       codexOptions,
-      // Allow Multi Spawn (phase 4): persist only the opt-IN — absent is the
-      // default/off, the same shape rule as sshConfig.detachable's opt-out.
-      allowMultiSpawn: allowMultiSpawn ? true : undefined,
+      // Allow Multi Spawn (phase 4.1): TRI-STATE, not an opt-in-only flag.
+      // Turning it off on a config that had it on stores an explicit `false`,
+      // which the startup migration is forbidden to touch — otherwise the
+      // migration re-enables it next launch and the user's OFF never sticks.
+      allowMultiSpawn: resolveAllowMultiSpawnOnSave(allowMultiSpawn, initial?.allowMultiSpawn),
       // The ×N control's remembered copy count belongs to the ROW, not this
       // dialog. Carry it through untouched so editing a config never resets it
       // (the field-by-field rebuild below the sshConfig spread is exactly how

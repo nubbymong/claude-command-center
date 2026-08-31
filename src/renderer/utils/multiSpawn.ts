@@ -18,6 +18,33 @@ import type { DetachedRemote } from '../../shared/types'
 import type { TerminalConfig } from '../stores/configStore'
 import { matchDetachedRemotes, filterLiveEntries } from './detachedRemotes'
 
+/**
+ * `allowMultiSpawn` is TRI-STATE on disk, and the third state is the point:
+ *
+ *   undefined — never chosen. The startup migration may turn it on.
+ *   true      — on.
+ *   false     — EXPLICITLY DECLINED. The migration must never touch it.
+ *
+ * Without the third state the migration eats the user's decision: it enables a
+ * config that has two copies live, the user opens the editor and turns it back
+ * off, an opt-in-only save writes `undefined`, and the next start sees two
+ * copies again and re-enables it — every start, until a copy happens to exit.
+ *
+ * This is the dialog's save rule. Ticked stores `true`. Unticked stores `false`
+ * whenever the config ALREADY carried a decision (it was on, or it was already
+ * a decline) — turning off something that was on is a decline, and a standing
+ * decline must survive an unrelated edit. Unticked on a config that never had
+ * the field keeps storing `undefined`, so configs that predate the feature stay
+ * clean and stay eligible for grandfathering.
+ */
+export function resolveAllowMultiSpawnOnSave(
+  checked: boolean,
+  previous: boolean | undefined,
+): boolean | undefined {
+  if (checked) return true
+  return previous === undefined ? undefined : false
+}
+
 /** What the ×N control shows the first time it appears (the approved mockup). */
 export const MULTI_SPAWN_DEFAULT_COUNT = 2
 export const MULTI_SPAWN_MIN_COUNT = 1
@@ -106,11 +133,16 @@ export function multiSpawnCopyCount(
  * The startup migration's decision: the ids of configs that demonstrably run
  * MORE THAN ONE copy but are not yet marked Allow Multi Spawn.
  *
- * ENABLE-ONLY and idempotent by construction — a config that already carries
- * the flag is filtered out before it is even counted, so the migration can
+ * ENABLE-ONLY and idempotent by construction — a config that already carries a
+ * decision is filtered out before it is even counted, so the migration can
  * never turn the setting off, and re-running it costs one pass over a handful
  * of records. That is why it needs no one-shot "migrated" flag: it simply runs
  * every start and finds nothing to do.
+ *
+ * The filter is `=== undefined`, NOT `!== true`, and that difference is the
+ * whole of phase 4.1: an explicit `false` is a user who turned this OFF, and
+ * `!== true` would re-enable it on every start for as long as two copies
+ * happened to be live. Only a config that has never been asked is grandfathered.
  */
 export function configsToEnableMultiSpawn(
   configs: ReadonlyArray<CountableConfig>,
@@ -118,6 +150,6 @@ export function configsToEnableMultiSpawn(
   detached: ReadonlyArray<DetachedRemote>,
 ): string[] {
   return configs
-    .filter((c) => c.allowMultiSpawn !== true && multiSpawnCopyCount(c, sessions, detached) > 1)
+    .filter((c) => c.allowMultiSpawn === undefined && multiSpawnCopyCount(c, sessions, detached) > 1)
     .map((c) => c.id)
 }

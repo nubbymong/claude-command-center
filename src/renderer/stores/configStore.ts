@@ -42,8 +42,14 @@ export interface TerminalConfig {
    * Allow Multi Spawn (phase 4): this config may run SEVERAL copies at once.
    * Absent/false = off — a launch is refused while any session of this config
    * is live, and the config cannot be picked in select mode while running.
-   * Persisted only when ON (absent is the default, same shape rule as
-   * `sshConfig.detachable`'s opt-out).
+   *
+   * TRI-STATE on disk (phase 4.1), and only the startup migration cares which
+   * of the two off-states this is:
+   *   undefined — never chosen; the migration may grandfather it on.
+   *   true      — on.
+   *   false     — explicitly declined; the migration must never touch it.
+   * Every other reader treats false and undefined identically (`!== true`).
+   * See utils/multiSpawn.ts for the save rule and the migration predicate.
    */
   allowMultiSpawn?: boolean
   /**

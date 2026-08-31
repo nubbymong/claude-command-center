@@ -27,6 +27,7 @@ import {
   configsToEnableMultiSpawn,
   multiSpawnCopyCount,
   placeMultiSpawnPopover,
+  resolveAllowMultiSpawnOnSave,
   resolveMultiSpawnCount,
   stepMultiSpawnCount,
 } from '../../../src/renderer/utils/multiSpawn'
@@ -83,6 +84,41 @@ describe('the blocking rule — running x allowMultiSpawn', () => {
     // must stay one-at-a-time rather than quietly become multi-spawn.
     expect(isMultiSpawnLaunchBlocked({ allowMultiSpawn: 1 as unknown as boolean }, 1)).toBe(true)
     expect(isMultiSpawnLaunchBlocked({ allowMultiSpawn: 'true' as unknown as boolean }, 1)).toBe(true)
+  })
+
+  it('the stored field is tri-state, but the RULE sees only two — false blocks exactly like undefined', () => {
+    // Phase 4.1: `false` (explicitly declined) and `undefined` (never chosen)
+    // are the same answer to "may this launch again?". Only the migration
+    // distinguishes them.
+    expect(isMultiSpawnLaunchBlocked({ allowMultiSpawn: false }, 1))
+      .toBe(isMultiSpawnLaunchBlocked({ allowMultiSpawn: undefined }, 1))
+    expect(isMultiSpawnLaunchBlocked({ allowMultiSpawn: false }, 0))
+      .toBe(isMultiSpawnLaunchBlocked({ allowMultiSpawn: undefined }, 0))
+  })
+})
+
+describe('the dialog save rule — the tri-state (phase 4.1)', () => {
+  it('ticked always stores true', () => {
+    expect(resolveAllowMultiSpawnOnSave(true, undefined)).toBe(true)
+    expect(resolveAllowMultiSpawnOnSave(true, false)).toBe(true)
+    expect(resolveAllowMultiSpawnOnSave(true, true)).toBe(true)
+  })
+
+  it('turning it OFF after it was ON stores an explicit false — the decline the migration must respect', () => {
+    expect(resolveAllowMultiSpawnOnSave(false, true)).toBe(false)
+  })
+
+  it('a standing decline survives an unrelated edit', () => {
+    // Without this the round-trip loses the decline: open a declined config,
+    // change its label, save — and it is `undefined` again, so the next start
+    // re-enables it. Exactly the bug this phase fixes, one step later.
+    expect(resolveAllowMultiSpawnOnSave(false, false)).toBe(false)
+  })
+
+  it('a config that never had the field keeps storing undefined when left off', () => {
+    // Old configs stay clean, and stay ELIGIBLE for grandfathering — an
+    // untouched checkbox is not a decision.
+    expect(resolveAllowMultiSpawnOnSave(false, undefined)).toBeUndefined()
   })
 })
 
@@ -168,6 +204,48 @@ describe('the migration decision — enable-only, idempotent', () => {
   it('NEVER disables: an enabled config with one copy, or none, is untouched', () => {
     const configs = [cfg('a', { allowMultiSpawn: true }), cfg('b', { allowMultiSpawn: true })]
     expect(configsToEnableMultiSpawn(configs, [sess('s1', 'a')], [])).toEqual([])
+  })
+
+  // ── phase 4.1: the explicit decline ──────────────────────────────────────
+  it('NEVER re-enables a config the user explicitly turned OFF, however many copies are live', () => {
+    const declined = [cfg('a', { allowMultiSpawn: false })]
+    const three = [sess('s1', 'a'), sess('s2', 'a'), sess('s3', 'a')]
+    expect(configsToEnableMultiSpawn(declined, three, [])).toEqual([])
+    // …and with a detached remote in the mix too.
+    expect(configsToEnableMultiSpawn([sshCfg('a', { allowMultiSpawn: false })], [sess('s1', 'a')], [remote('det-1', 'a')])).toEqual([])
+  })
+
+  it('still enables the never-chosen config beside it — the two off-states part ways HERE and nowhere else', () => {
+    const configs = [cfg('declined', { allowMultiSpawn: false }), cfg('fresh')]
+    const sessions = [
+      sess('1', 'declined'), sess('2', 'declined'),
+      sess('3', 'fresh'), sess('4', 'fresh'),
+    ]
+    expect(configsToEnableMultiSpawn(configs, sessions, [])).toEqual(['fresh'])
+  })
+
+  it('the reported repro is closed: migrate -> user turns OFF -> restart leaves it OFF', () => {
+    // 1. Two copies live, never chosen: the migration grandfathers it on.
+    const original = cfg('a')
+    const sessions = [sess('s1', 'a'), sess('s2', 'a')]
+    expect(configsToEnableMultiSpawn([original], sessions, [])).toEqual(['a'])
+    const migrated = { ...original, allowMultiSpawn: true }
+
+    // 2. The user opens the editor and turns it off. The dialog stores the
+    //    explicit decline, not undefined.
+    const saved = { ...migrated, allowMultiSpawn: resolveAllowMultiSpawnOnSave(false, migrated.allowMultiSpawn) }
+    expect(saved.allowMultiSpawn).toBe(false)
+
+    // 3. Next start, same two copies still live. The migration leaves it ALONE
+    //    — this is the assertion the pre-4.1 predicate failed.
+    expect(configsToEnableMultiSpawn([saved], sessions, [])).toEqual([])
+    // And again, and again — the decision is stable, not merely delayed.
+    expect(configsToEnableMultiSpawn([saved], sessions, [])).toEqual([])
+  })
+
+  it('a hand-edited garbage value is never enabled either (fail closed)', () => {
+    const configs = [cfg('a', { allowMultiSpawn: 'yes' as unknown as boolean })]
+    expect(configsToEnableMultiSpawn(configs, [sess('1', 'a'), sess('2', 'a')], [])).toEqual([])
   })
 
   it('is idempotent — applying the result and re-running finds nothing', () => {
