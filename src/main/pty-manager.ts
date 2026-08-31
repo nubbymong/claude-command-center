@@ -1647,13 +1647,18 @@ export function spawnPty(
       // re-latching claude-running re-arms cleanly.
       if (s === 'claude-running' && currentFlowState !== 'claude-running'
           && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude' && options?.isAsk !== true) {
+        // LIVE geometry, not the spawn options: the handshake→claude-running
+        // gap can be long (tmux staging/push), noteResize no-ops before an
+        // entry exists, and the headless pane must wrap exactly like the real
+        // one for the line-anchored detectors to read true.
+        const livePty = ptySessions.get(sessionId)?.ptyProcess
         getWatchdogManager()?.startWatchdog(sessionId, {
           provider: options?.provider,
           ssh: true,
           shellOnly: false,
           ask: false,
-          cols: options?.cols,
-          rows: options?.rows,
+          cols: livePty?.cols ?? options?.cols,
+          rows: livePty?.rows ?? options?.rows,
         })
       }
       currentFlowState = s
