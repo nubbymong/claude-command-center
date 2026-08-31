@@ -95,3 +95,5 @@ process-snapshot-*.txt
 
 # Live connectivity test pack: real host addresses/credentials stay local
 tests/live/hosts.local.json
+tests/live/fleet.local.json
+tests/live/results/
