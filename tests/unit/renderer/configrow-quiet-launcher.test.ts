@@ -33,8 +33,18 @@ describe('ConfigRow quiet launcher', () => {
     expect(launch.className).not.toContain('text-green')
   })
 
-  it('keeps the SSH pill for ssh configs', () => {
+  it('shows the SSH-Persistent pill for a default (detachable) ssh config', () => {
+    // The SSH default is persistent (detachable undefined/true), so the config
+    // row reads SSH-Persistent — matching the running-session badge — instead of
+    // the generic SSH pill.
     act(() => root.render(React.createElement(ConfigRow, { ...(rowProps as any), config: { ...baseConfig, sessionType: 'ssh' } })))
-    expect(container.querySelector('[title="SSH session"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="ssh-persistent-badge"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="ssh-badge"]')).toBeNull()
+  })
+
+  it('shows the plain SSH pill for a non-persistent ssh config (detachable:false)', () => {
+    act(() => root.render(React.createElement(ConfigRow, { ...(rowProps as any), config: { ...baseConfig, sessionType: 'ssh', sshConfig: { host: 'h', username: 'u', remotePath: '~', detachable: false } } })))
+    expect(container.querySelector('[data-testid="ssh-badge"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
   })
 })

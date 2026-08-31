@@ -1,6 +1,6 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { SessionTypeBadge, SshBadge } from './Badges'
+import { SessionTypeBadge, SshBadge, SshPersistentBadge } from './Badges'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -72,8 +72,11 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           Codex off
         </span>
       )}
-      {/* Transport badge stays at the tail — the type now leads the row. */}
-      {config.sessionType === 'ssh' && <SshBadge />}
+      {/* Transport badge stays at the tail — the type now leads the row. A
+          persistent config (detachable, the SSH default) reads SSH-Persistent,
+          matching the running-session badge, so the two SSH kinds are told apart
+          before launch. */}
+      {config.sessionType === 'ssh' && (config.sshConfig?.detachable !== false ? <SshPersistentBadge /> : <SshBadge />)}
       {runningCount > 0 && (
         <button
           onClick={(e) => { e.stopPropagation(); onOpenSession?.() }}

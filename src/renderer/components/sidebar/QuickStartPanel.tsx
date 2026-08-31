@@ -1,6 +1,6 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { SessionTypeBadge, SshBadge } from './Badges'
+import { SessionTypeBadge, SshBadge, SshPersistentBadge } from './Badges'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -86,7 +86,7 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
                 {liveCount}
               </span>
             )}
-            {config.sessionType === 'ssh' && <SshBadge />}
+            {config.sessionType === 'ssh' && (config.sshConfig?.detachable !== false ? <SshPersistentBadge /> : <SshBadge />)}
             <button
               onClick={blocked ? undefined : () => onLaunch(config)}
               disabled={blocked}
