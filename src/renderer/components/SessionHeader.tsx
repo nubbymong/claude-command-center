@@ -4,6 +4,7 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/ident
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { sshMappedProfileId } from '../utils/sessionLaunch'
 import { useAccountAuthStore, type AccountAuthStatus } from '../stores/accountAuthStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
@@ -329,8 +330,19 @@ function SessionAuthPills({ session }: { session: Session }) {
   // pill set as local, driven by that profile. No match → account-only (there is
   // no local auth to show). session.accountEmail is sanitised at ingest, so this
   // is a plain equality against locally-configured profiles — no new trust.
-  const remoteEmail = isSshClaude ? (session.accountEmail || session.sshRemoteAccount) : undefined
-  const sshProfileId = remoteEmail ? profiles.find((p) => p.accountEmail === remoteEmail)?.id : undefined
+  // sshMappedProfileId falls back to the session's launch profileId when the
+  // live /status email hasn't arrived yet (or the local profile's own email is
+  // not populated), so the pills resolve the moment a fresh SSH session opens
+  // instead of only after a restart.
+  const sshProfileId = isSshClaude ? sshMappedProfileId(session, profiles) : undefined
+  const sshProfile = useAccountProfilesStore((s) => (sshProfileId ? s.profiles.find((p) => p.id === sshProfileId) : undefined))
+  // Account identity for the SSH pill: the live remote email when known, else
+  // the mapped profile's own email — so the top-bar account shows immediately
+  // on connect (from the launch account) and refines to the remote's reported
+  // email when /status lands.
+  const remoteEmail = isSshClaude
+    ? (session.accountEmail || session.sshRemoteAccount || sshProfile?.accountEmail)
+    : undefined
   // The profile whose auth status feeds the pills: the SSH-mapped local profile
   // for a mapped remote session, else this session's own (or the primary)
   // profile. Undefined for an SSH session with no local match (account-only).

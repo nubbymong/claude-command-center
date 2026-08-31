@@ -29,8 +29,13 @@ export function resolveSignInOpenTarget(
   return accountPrefersPane ? 'pane' : 'window'
 }
 
-/** The session that can host the in-app account surface, if any — the same
- *  gate as the pane's own claude.ai entry (#475): local and not shell-only.
+/** The session that can host the in-app account surface, if any: a non-shell
+ *  Claude session. LOCAL or SSH — the account pane is a webview that runs on
+ *  THIS machine (the local browser), independent of where the session's
+ *  terminal runs, and an SSH session's account is the local profile it maps to
+ *  (harmonise-remote), so the pane shows that same account's claude.ai. Without
+ *  SSH here, "open artifacts in the in-app browser" silently fell back to the
+ *  window for remote sessions.
  *  Prefers the active session, then the given one, then any eligible.
  *
  *  `requirePreferred` binds the host to the caller's own vetted session (adv
@@ -41,7 +46,8 @@ export function resolveSignInOpenTarget(
  *  which legitimately has no specific session, leaves it off. */
 export function paneHostSession(preferredSessionId?: string, requirePreferred = false): string | null {
   const st = useSessionStore.getState()
-  const eligible = st.sessions.filter((s) => !s.shellOnly && s.sessionType === 'local')
+  const eligible = st.sessions.filter((s) => !s.shellOnly && (s.provider ?? 'claude') === 'claude'
+    && (s.sessionType === 'local' || s.sessionType === 'ssh'))
   const preferred = eligible.find((s) => s.id === preferredSessionId)
   if (requirePreferred) return preferred?.id ?? null
   const active = eligible.find((s) => s.id === st.activeSessionId)

@@ -79,12 +79,23 @@ export function sshMappedProfileId(
     provider?: ProviderId
     accountEmail?: string
     sshRemoteAccount?: string
+    profileId?: string
   },
   profiles: ReadonlyArray<{ id: string; accountEmail?: string }>,
 ): string | undefined {
   if (session.shellOnly || session.sessionType !== 'ssh' || (session.provider ?? 'claude') !== 'claude') return undefined
+  // Prefer the live remote account (from /status) mapped to a local profile —
+  // it names the account actually signed in on the remote. But that lags a
+  // fresh connect (the email arrives with the first status tick, AND a local
+  // profile's own accountEmail may not be populated until it has run locally),
+  // which left the claude.ai/Claude Code pills and the artifacts affordance
+  // blank until the user opened a LOCAL session with the same account. Fall
+  // back to the account the session was LAUNCHED under (`profileId`, set at the
+  // pre-spawn account gate — immediate, and in the normal same-identity case
+  // the SAME profile), so the affordances resolve the moment the session opens.
   const email = session.accountEmail || session.sshRemoteAccount
-  return email ? profiles.find((p) => p.accountEmail === email)?.id : undefined
+  const byEmail = email ? profiles.find((p) => p.accountEmail === email)?.id : undefined
+  return byEmail ?? (session.profileId && profiles.some((p) => p.id === session.profileId) ? session.profileId : undefined)
 }
 
 /**

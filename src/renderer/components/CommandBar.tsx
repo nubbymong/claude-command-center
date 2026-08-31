@@ -3,6 +3,7 @@ import { useCommandStore, CustomCommand, CommandSection } from '../stores/comman
 import { bandMembers, type CommandBand } from '../lib/command-bands'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { sshMappedProfileId } from '../utils/sessionLaunch'
 import { useCommandBarStore, type CoreToolId, type CommandBarOverflow, type HiddenCoreTools } from '../stores/commandBarStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { useLogsStore } from '../stores/useLogsStore'
@@ -203,12 +204,18 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
   // #501: the Artifacts core tool opens this account's artifacts on claude.ai via
   // the existing accountWeb.openArtifacts IPC (the Sidebar's per-session action).
-  // It applies only to a local, non-shell session that resolves to an account
-  // profile (its own, else the primary) — the same guard the Sidebar uses.
+  // Applies to a non-shell Claude session that resolves to a local account
+  // profile: its own (else the primary) for a local session, or — same as the
+  // Sidebar's account affordances (harmonise-remote) — the email-mapped local
+  // profile for an SSH session whose account matches a local one. Artifacts
+  // open on THIS machine for that account identity, so remote-ness is no bar.
   const primaryProfileId = useAccountProfilesStore((s) => s.profiles.find((p) => p.isPrimary)?.id)
-  const artifactsProfileId = session?.profileId ?? primaryProfileId
+  const profiles = useAccountProfilesStore((s) => s.profiles)
+  const artifactsProfileId = session && !session.shellOnly && session.sessionType === 'local'
+    ? (session.profileId ?? primaryProfileId)
+    : sshMappedProfileId(session ?? {}, profiles)
   const artifactsApplicable =
-    !!session && !session.shellOnly && session.sessionType === 'local' && !!artifactsProfileId
+    !!session && !session.shellOnly && (session.provider ?? 'claude') === 'claude' && !!artifactsProfileId
   const openArtifacts = useCallback(() => {
     if (!artifactsProfileId) return
     // Owner call 2026-08-26: routed through the global open-target setting
@@ -603,11 +610,10 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const moreCount = foldedChips.length + plan.inapplicable.length
     let chipIndex = 0
     const sectionName = (id?: string) => plan.sections.find((s) => s.id === id)?.name
-    // An empty band shows nothing but its GLOBAL/SESSION label, which just adds
-    // noise to the row (owner). Hide the label — and its leading divider — when
-    // the band carries no commands at all, EXCEPT while a drag is in progress:
-    // an empty band is still the drop target that makes a command global or
-    // session-scoped, so the label must reappear then to give somewhere to drop.
+    // The persistent GLOBAL/SESSION text labels are retired (harmonise-remote
+    // removals): the divider separates the two bands and each button carries its
+    // scope in its own tooltip/menu. The leading divider still shows for a band
+    // that carries commands (or during a drag); an empty idle band shows nothing.
     const bandEmpty = plan.chips.length === 0 && plan.inapplicable.length === 0
     const showBandLabel = !bandEmpty || !!dragId
     return (
@@ -623,15 +629,19 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           onDragOver={(e) => onSlotDragOver(e, band)}
           onDrop={(e) => onSlotDrop(e, band)}
         >
-          {showBandLabel && (
+          {/* Scope labels are gone (owner: the two command types don't need
+              differentiating — a blank separator is enough, no words). But an
+              EMPTY band still needs a visible drop zone while dragging (it is
+              what scopes a command global vs session), so show a WORDLESS dashed
+              box then — the tooltip carries the meaning for anyone who hovers. */}
+          {bandEmpty && dragId && (
             <span
-              className="shrink-0 text-[9.5px] font-semibold uppercase tracking-[.09em] px-1 select-none"
-              style={{ color: 'var(--text-muted)' }}
-              title={band === 'global' ? 'Global — these buttons show in every config' : `Session — this config only${configName ? ` (${configName})` : ''}`}
-              data-testid={`command-band-label-${band}`}
-            >
-              {plan.label}
-            </span>
+              className="shrink-0 w-8 h-4 rounded border border-dashed select-none pointer-events-none"
+              style={{ borderColor: 'var(--border-subtle)' }}
+              data-testid={`command-band-droptarget-${band}`}
+              aria-label={band === 'global' ? 'Drop to show in every config' : 'Drop for this config only'}
+              title={band === 'global' ? 'Drop to show in every config' : `Drop for this config only${configName ? ` (${configName})` : ''}`}
+            />
           )}
           {plan.clusters.map((cluster) => (
             <React.Fragment key={cluster.kind}>
