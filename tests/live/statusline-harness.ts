@@ -109,18 +109,26 @@ const TRUST_RE = /trustthisfolder|Doyoutrust/i
  *  12 quiet seconds, resize (what the renderer's fit addon does on attach
  *  anyway) and type a line — the response (even "not logged in") is a state
  *  change and must produce a tick. This cut a fresh combo from ~93s to ~25s. */
-export async function runSession(sid: string, entry: HostEntry, opts: { detachable?: boolean; captureMs?: number; win?: ReturnType<typeof makeWin>; nudge?: boolean } = {}) {
+export async function runSession(sid: string, entry: HostEntry, opts: { detachable?: boolean; captureMs?: number; win?: ReturnType<typeof makeWin>; nudge?: boolean; runtime?: import('../../src/shared/types').SshRuntime; sudoPassword?: string } = {}) {
   const w = opts.win ?? makeWin()
   try { startStatuslineWatcher(() => w.win as never) } catch { /* status-dir watch is irrelevant here */ }
   const ssh: Record<string, unknown> = { host: entry.host, port: 22, username: entry.username, remotePath: '~' }
   if (entry.password) ssh.password = entry.password
   if (entry.remoteOs) ssh.remoteOs = entry.remoteOs
   if (opts.detachable !== undefined) ssh.detachable = opts.detachable
+  // Item e (docker lane): structured container runtime — the spawn composes
+  // the [sudo] docker|podman exec command itself, exactly like the product.
+  if (opts.runtime) ssh.runtime = opts.runtime
+  if (opts.sudoPassword) ssh.sudoPassword = opts.sudoPassword
   spawnPty(w.win, sid, { ssh, provider: 'claude' } as never)
   let launched = false
+  let postCmdRun = false
   const t0 = Date.now()
   while (Date.now() - t0 < 90_000) {
     const st = states(w.events, sid)
+    // Container/prep flow: click "Run command" at the overlay point, the same
+    // consent a user gives; the inner shell then re-raises awaiting-claude.
+    if (!postCmdRun && st.includes('awaiting-postcommand')) { getSshFlow(sid)!.runPostCommand(); postCmdRun = true }
     if (!launched && st.includes('awaiting-claude')) { getSshFlow(sid)!.launchClaude(); launched = true }
     if (st.includes('claude-running')) break
     await sleep(500)

@@ -15,7 +15,11 @@ import type { SshRuntime } from './types'
  */
 
 // Docker/podman container-name charset (both engines enforce this on create).
-const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
+// Exported because the End path revalidates the SAME name independently before
+// interpolating it into the in-container kill command (buildContainerKillCommand,
+// ssh-shim.ts) — a second boundary, but deliberately not a second COPY of the
+// charset, which could drift from this one.
+export const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 // Same conservative charset the SSH remotePath uses: letters/digits _ . / - ~
 const CONTAINER_DIR_RE = /^[A-Za-z0-9_./~-]+$/
 

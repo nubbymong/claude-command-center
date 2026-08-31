@@ -17,7 +17,7 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
-import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, generateWindowsRemoteSetupScript, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from '../../../../src/main/providers/claude/ssh-shim'
+import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, generateWindowsRemoteSetupScript, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from '../../../../src/main/providers/claude/ssh-shim'
 
 // #242 finding F1 (b): generateRemoteSetupScript/getRemoteSetupCommand/
 // configureRemoteSettings now require a nonce.
@@ -637,6 +637,112 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
     expect(cmd).toContain('kill-session -t ccc-a_b_c__x_')
     // No raw metacharacter reaches the target token.
     expect(cmd).not.toContain('ccc-a;b')
+  })
+})
+
+// #572 one hop deeper (live-proven by T20, ssh-statusline-docker.live.ts,
+// 2026-08-31): for a CONTAINER runtime the tmux kill only drops the exec
+// CLIENT — claude keeps running inside the container. buildContainerKillCommand
+// reaches in and kills THIS session's claude, scoped by the settings marker
+// already in its argv.
+describe('buildContainerKillCommand (#572 in-container orphan)', () => {
+  const rootless = { type: 'container', engine: 'podman', container: 'ccc-test' } as const
+
+  it('returns nothing at all for a non-container runtime', () => {
+    expect(buildContainerKillCommand('s1', undefined)).toBe('')
+    expect(buildContainerKillCommand('s1', { type: 'host' })).toBe('')
+  })
+
+  it('rootless podman: engine exec + marker-scoped kill + sidecar removal, exit-0 tail', () => {
+    const cmd = buildContainerKillCommand('lv20abc', rootless)
+    expect(cmd).toBe(
+      "podman exec ccc-test bash -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json 2>/dev/null; exec pkill -f settings-lv20abc' 2>/dev/null; true"
+    )
+    // No sudo anywhere for a rootless container.
+    expect(cmd).not.toContain('sudo')
+    // No `-it`: this is a one-shot kill, not an interactive shell.
+    expect(cmd).not.toContain('exec -it')
+  })
+
+  it('defaults the engine to docker and honours the podman pick (a two-literal choice, never free text)', () => {
+    expect(buildContainerKillCommand('s1', { type: 'container', container: 'c1' })).toContain('docker exec c1 ')
+    expect(buildContainerKillCommand('s1', { type: 'container', engine: 'docker', container: 'c1' })).toContain('docker exec c1 ')
+    expect(buildContainerKillCommand('s1', { type: 'container', engine: 'podman', container: 'c1' })).toContain('podman exec c1 ')
+    // An engine value outside the two literals cannot reach the command.
+    const hostile = buildContainerKillCommand('s1', { type: 'container', engine: 'x; rm -rf /' as never, container: 'c1' })
+    expect(hostile).toContain('docker exec c1 ')
+    expect(hostile).not.toContain('rm -rf /')
+  })
+
+  // ── THE marker: this is what makes the kill session-scoped ─────────────────
+
+  it('scopes the kill to THIS session by the --settings marker, not to "claude"', () => {
+    const cmd = buildContainerKillCommand('lv20abc', rootless)
+    expect(cmd).toContain('pkill -f settings-lv20abc')
+    // A blunt pkill would end a CO-TENANT session's claude in the same
+    // container — the whole point of the marker. Proven live: killing
+    // settings-lv20mtgp7kzo left a concurrent settings-lv20mtgpb4zx alive.
+    expect(cmd).not.toMatch(/pkill -f claude\b/)
+  })
+
+  it('sanitizes a session id with shell metacharacters into the marker (safeSid is the ONLY free value)', () => {
+    const cmd = buildContainerKillCommand('a;b c$(x)', rootless)
+    expect(cmd).toContain('pkill -f settings-a_b_c__x_')
+    expect(cmd).toContain('rm -f ~/.claude/settings-a_b_c__x_.json ~/.claude/mcp-a_b_c__x_.json')
+    // Nothing raw survives: no metacharacter, and no way out of the single
+    // quotes wrapping the inner script.
+    expect(cmd).not.toContain(';b c')
+    expect(cmd).not.toContain('$(x)')
+    expect(cmd.match(/'/g)).toHaveLength(2)
+  })
+
+  it('rejects a container name that fails revalidation instead of interpolating it', () => {
+    // The spawn path (composeRuntimeCommand) already throws on these; End
+    // revalidates independently in case the stored runtime was ever mutated.
+    for (const container of ['', '  ', 'ccc test', 'ccc;rm -rf /', '$(id)', '-ccc', '.ccc', 'a"b', "a'b"]) {
+      expect(buildContainerKillCommand('s1', { type: 'container', engine: 'podman', container })).toBe('')
+    }
+    // The legitimate charset still passes.
+    expect(buildContainerKillCommand('s1', { type: 'container', engine: 'podman', container: 'a.b_c-1' })).toContain('podman exec a.b_c-1 ')
+  })
+
+  // ── The two live-proven shape rules ────────────────────────────────────────
+
+  it('removes the sidecars BEFORE the pkill, and execs the pkill (or the shell SIGTERMs itself)', () => {
+    const cmd = buildContainerKillCommand('lv20abc', rootless)
+    const rmAt = cmd.indexOf('rm -f ~/.claude/settings-lv20abc.json')
+    const killAt = cmd.indexOf('pkill -f settings-lv20abc')
+    expect(rmAt).toBeGreaterThan(-1)
+    expect(killAt).toBeGreaterThan(rmAt)
+    // `exec` replaces the shell image, so the marker-bearing `bash -c` cmdline
+    // is GONE before pkill scans /proc — procps never signals its own pid.
+    // Measured on the real container: the naive `pkill; rm; true` ordering
+    // exits 143 (self-SIGTERM) with the sidecars left behind.
+    expect(cmd).toContain('; exec pkill -f')
+  })
+
+  it('rootful (sudo + saved password): forces the prompt to exactly `password:` and KEEPS stderr', () => {
+    const cmd = buildContainerKillCommand('lv21abc', { ...rootless, sudo: true }, { hasSudoPassword: true })
+    // -S: the ssh exec gets no remote tty, so sudo must read stdin.
+    // -p password:: sudo's DEFAULT prompt is "[sudo] password for <user>:",
+    // which endSshRemote's tight matcher (/password[:?]\s*$/i) does NOT match.
+    expect(cmd).toContain('sudo -S -p password: podman exec ccc-test ')
+    // sudo writes that prompt to STDERR — silencing it would hang the End.
+    expect(cmd).not.toContain("' 2>/dev/null;")
+    expect(cmd.endsWith("'; true")).toBe(true)
+  })
+
+  it('rootful with NO saved sudo password: `sudo -n`, which never prompts (no hang, no starved tmux kill)', () => {
+    const cmd = buildContainerKillCommand('s1', { ...rootless, sudo: true })
+    expect(cmd).toContain('sudo -n podman exec ccc-test ')
+    expect(cmd).not.toContain('-S')
+    // Nothing will prompt, so stderr noise can go back to /dev/null.
+    expect(cmd).toContain("' 2>/dev/null; true")
+  })
+
+  it('a sudo flag is never emitted for a rootless container, with or without a saved password', () => {
+    expect(buildContainerKillCommand('s1', rootless, { hasSudoPassword: true })).not.toContain('sudo')
+    expect(buildContainerKillCommand('s1', { ...rootless, sudo: false }, { hasSudoPassword: true })).not.toContain('sudo')
   })
 })
 

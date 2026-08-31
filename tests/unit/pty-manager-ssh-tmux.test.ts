@@ -126,7 +126,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/tmp' },
 }))
 
-const { spawnPty, getSshFlow, killPty, gracefulExitPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest, _hasSshTargetForTest } = await import('../../src/main/pty-manager')
+const { spawnPty, getSshFlow, killPty, gracefulExitPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest, _hasSshTargetForTest, _getSshTargetForTest } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 // Pure module, no node-pty/electron deps -- safe to import directly (unlike
@@ -234,6 +234,32 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     expect(claudeWrite![0] as string).not.toContain('has-session')
+  })
+
+  // Container runtime (item e): the ladder is FORCED OFF regardless of the
+  // Detachable toggle — the hop-2 wrap (tmux inside the container) is
+  // live-proven to break statusline delivery (T23, ssh-statusline-docker
+  // .live.ts, 2026-08-31). Bare claude in-container until the hop-1 design.
+  it('container runtime forces the ladder OFF: bare claude even on tmux=path, no staging, despite Detachable default-on', () => {
+    onDataListeners.length = 0
+    const sid = 's-container-no-tmux'
+    spawnPty(fakeWin, sid, { ssh: { ...SSH, runtime: { type: 'container', container: 'ccc-test' } } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500) // idle: connecting -> awaiting-postcommand
+    getSshFlow(sid)!.runPostCommand()
+    vi.advanceTimersByTime(300)
+    feedPtyData('user@container:~$ ') // inner shell -> awaiting-claude
+    getSshFlow(sid)!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite![0] as string).not.toContain('has-session')
+    expect(claudeWrite![0] as string).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   it('detachable default (undefined) still wraps in tmux on tmux=path', () => {
@@ -2087,6 +2113,30 @@ describe('endSshRemote target lifecycle — survives a drop, cleared on delibera
     // Deliberate close drops it.
     killPty('s-endtarget')
     expect(_hasSshTargetForTest('s-endtarget')).toBe(false)
+  })
+
+  // #572 one hop deeper: End also has to reach INSIDE a container runtime, so
+  // the SAME spawn-time capture carries the structured runtime and the sudo
+  // password alongside the connection target.
+  it('captures the structured container runtime AND the sudo password at spawn', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-endtarget-ctr', {
+      ssh: { ...SSH, runtime: { type: 'container', engine: 'podman', container: 'ccc-test', sudo: true }, sudoPassword: 'sudo-pw' },
+    } as never)
+    const t = _getSshTargetForTest('s-endtarget-ctr')
+    expect(t?.runtime).toEqual({ type: 'container', engine: 'podman', container: 'ccc-test', sudo: true })
+    expect(t?.sudoPassword).toBe('sudo-pw')
+    killPty('s-endtarget-ctr')
+    expect(_getSshTargetForTest('s-endtarget-ctr')).toBeUndefined()
+  })
+
+  it('a plain host session captures no runtime and no sudo password', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-endtarget-plain', { ssh: SSH } as never)
+    const t = _getSshTargetForTest('s-endtarget-plain')
+    expect(t?.runtime).toBeUndefined()
+    expect(t?.sudoPassword).toBeUndefined()
+    killPty('s-endtarget-plain')
   })
 })
 

@@ -1,6 +1,8 @@
 import { getConductorMcpPort, mcpSessionToken } from '../../conductor-mcp-server'
 import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 import { SHIM_GATHER_JS } from './statusline-gather'
+import { CONTAINER_NAME_RE } from '../../../shared/container-command'
+import type { SshRuntime } from '../../../shared/types'
 
 /**
  * SSH statusline shim — Node.js script written to the REMOTE host at
@@ -617,6 +619,94 @@ export function buildRemoteTmuxKillCommand(sessionId: string): string {
     `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)} 2>/dev/null`,
     `true`,
   ].join('; ')
+}
+
+/**
+ * The #572 orphan class, ONE HOP DEEPER: when the session's structured runtime
+ * is a container, claude does not run on the connected host at all — it runs
+ * INSIDE `<engine> exec -it <name> bash`. buildRemoteTmuxKillCommand kills the
+ * host tmux session, which drops the exec CLIENT; the claude process inside the
+ * container survives, forever. Measured live on the Rocky host 2026-08-31: three
+ * claude processes still alive in `ccc-test` after End (T20,
+ * ssh-statusline-docker.live.ts).
+ *
+ * THE KILL KEY is the session-unique marker already in the in-container claude
+ * argv: `--settings ~/.claude/settings-<safeSid>.json` (remoteSessionSettingsPath).
+ * A container can host SEVERAL CCC sessions at once, so a blunt `pkill claude`
+ * would end a co-tenant's work; matching the marker kills exactly this session's
+ * claude. Verified live: killing `settings-lv20mtgp7kzo` left a concurrent
+ * `settings-lv20mtgpb4zx` claude running.
+ *
+ * Interpolation discipline mirrors buildRemoteTmuxKillCommand: `safeSid` is
+ * sanitized to `[A-Za-z0-9_-]`, the container name is RE-VALIDATED here against
+ * the engines' own charset (CONTAINER_NAME_RE — the same constant
+ * composeRuntimeCommand validated at spawn, checked again at this second
+ * boundary in case the stored runtime was ever mutated), and the engine is a
+ * two-literal pick. Anything that fails validation returns '' (no command) —
+ * an unvalidated value is NEVER interpolated.
+ *
+ * ── Two shape deviations from the obvious form, both live-proven ────────────
+ *
+ * 1. `rm` FIRST, then `exec pkill` — NOT `pkill; rm; true`.
+ *    `pkill -f` matches against the whole /proc cmdline of every process in the
+ *    container, and the `bash -c '<script>'` we are running IS such a process:
+ *    its cmdline spells the marker (in the pattern AND in the rm's paths), so
+ *    the obvious ordering makes the shell SIGTERM itself before the rm runs.
+ *    Measured on the real container: `exec_exit=143`, sidecars left behind.
+ *    Bracket-escaping the pattern does not help — the rm's literal path still
+ *    matches. So the sidecar removal happens first, and the pkill is `exec`'d,
+ *    replacing the shell image: procps' pkill never signals its own pid, and
+ *    after the exec there is no marker-bearing shell left to match. Re-measured:
+ *    `exec_exit=0`, claude dead, both sidecars removed.
+ *    (Known limitation, not engineered for: a container run with `--pid=host`
+ *    would let this pkill see the host-side shell running this very command.
+ *    CCC never creates containers, and the shape is unchanged for every normal
+ *    PID-namespaced container.)
+ *
+ * 2. `sudo -S -p password:` — the CUSTOM PROMPT is load-bearing.
+ *    The ssh exec gets no remote tty (buildSshExecArgs passes no `-t`), so a
+ *    plain `sudo` would die with "no tty present"; `-S` reads the password from
+ *    stdin, which is the ssh channel endSshRemote's PTY writes into. sudo's
+ *    DEFAULT prompt is `[sudo] password for <user>:`, which does NOT match
+ *    endSshRemote's tight matcher (/password[:?]\s*$/i — "password" must be
+ *    followed directly by the colon). `-p password:` forces the prompt to
+ *    exactly `password:` (verified byte-for-byte on the real host: 9 bytes, no
+ *    trailing space), so the existing, already-hardened matcher is reused
+ *    UNCHANGED rather than loosened.
+ *    Consequence: sudo writes that prompt to STDERR, so this segment must NOT
+ *    be `2>/dev/null` when we intend to answer it — the redirect would swallow
+ *    the prompt and hang the End until its timeout. stderr is therefore
+ *    silenced only when there is no prompt to read.
+ *
+ * `hasSudoPassword: false` with `runtime.sudo` set falls back to `sudo -n`
+ * (non-interactive): it succeeds under NOPASSWD and fails FAST otherwise,
+ * instead of blocking on a prompt nobody will answer — which would also starve
+ * the tmux kill that runs after this in the same remote command.
+ *
+ * Returns '' when the runtime is not a container, so callers can compose with a
+ * plain truthiness check.
+ */
+export function buildContainerKillCommand(
+  sessionId: string,
+  runtime: SshRuntime | undefined,
+  opts?: { hasSudoPassword?: boolean }
+): string {
+  if (!runtime || runtime.type !== 'container') return ''
+  const name = (runtime.container ?? '').trim()
+  if (!CONTAINER_NAME_RE.test(name)) return ''
+  const engine = runtime.engine === 'podman' ? 'podman' : 'docker'
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  // The marker as it appears in the in-container claude argv. `settings-` is a
+  // host-authored literal; safeSid is the only free value and is sanitized.
+  const marker = `settings-${safeSid}`
+  const sudo = runtime.sudo ? (opts?.hasSudoPassword ? 'sudo -S -p password: ' : 'sudo -n ') : ''
+  // stderr is kept ONLY when a sudo prompt has to reach the matcher (see 2 above).
+  const quiet = runtime.sudo && opts?.hasSudoPassword ? '' : ' 2>/dev/null'
+  const inner = `rm -f ~/.claude/${marker}.json ~/.claude/mcp-${safeSid}.json 2>/dev/null; exec pkill -f ${marker}`
+  // No `-it`: this is a one-shot kill over a non-interactive exec, not a shell.
+  // The inner script is single-quoted for the remote shell and, by the charset
+  // rules above, cannot contain a quote to break out with.
+  return `${sudo}${engine} exec ${name} bash -c '${inner}'${quiet}; true`
 }
 
 /**

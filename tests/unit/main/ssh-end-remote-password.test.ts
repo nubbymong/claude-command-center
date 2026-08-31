@@ -293,3 +293,141 @@ describe('endSshRemote (#572)', () => {
     for (const line of h.logs) expect(line).not.toContain('hunter2secret')
   })
 })
+
+// ── #572, ONE HOP DEEPER: the in-container orphan ───────────────────────────
+//
+// A session whose runtime is a container runs claude INSIDE
+// `<engine> exec -it <name> bash`. End killed the host tmux session, which
+// dropped the exec CLIENT — and claude kept running in the container forever.
+// Live-proven 2026-08-31 (T20, ssh-statusline-docker.live.ts): three claude
+// processes still alive in `ccc-test` after End.
+describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
+  const CONTAINER = { type: 'container', engine: 'podman', container: 'ccc-test' } as const
+
+  it('key host + rootless container: BatchMode exec, container kill BEFORE the tmux kill', async () => {
+    _setSshTargetForTest('sid-ctr-key', { username: 'u', host: 'hK', port: 22, runtime: CONTAINER })
+    await expect(endSshRemote('sid-ctr-key')).resolves.toBe('completed')
+    // No prompt to answer -> the original fire-fast BatchMode path.
+    expect(h.ptySpawns).toHaveLength(0)
+    expect(h.execFiles).toHaveLength(1)
+    const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
+    expect(remote).toContain("podman exec ccc-test bash -c '")
+    expect(remote).toContain('pkill -f settings-sid-ctr-key')
+    expect(remote).toContain('kill-session -t ccc-sid-ctr-key')
+    // ORDERING IS LOAD-BEARING: the tmux teardown drops the exec client the
+    // container kill travels through, so the in-container claude must die
+    // first or the kill never lands (and T20's measurement races).
+    expect(remote.indexOf('podman exec')).toBeLessThan(remote.indexOf('kill-session'))
+  })
+
+  it('a host runtime still sends the tmux kill ALONE (no engine exec appears)', async () => {
+    _setSshTargetForTest('sid-host-rt', { username: 'u', host: 'hH', port: 22, runtime: { type: 'host' } })
+    await expect(endSshRemote('sid-host-rt')).resolves.toBe('completed')
+    const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
+    expect(remote).toContain('kill-session -t ccc-sid-host-rt')
+    expect(remote).not.toContain('exec ')
+    expect(remote).not.toContain('pkill')
+  })
+
+  it('key host + ROOTFUL container with a saved sudo password: switches to the PTY variant and answers ONE (sudo) prompt', async () => {
+    _setSshTargetForTest('sid-ctr-sudo-key', {
+      username: 'u', host: 'hS', port: 22,
+      runtime: { ...CONTAINER, sudo: true }, sudoPassword: 'sudo-secret',
+    })
+    const p = endSshRemote('sid-ctr-sudo-key')
+    // A key host would normally take the BatchMode path — the sudo prompt is
+    // what forces a PTY here.
+    expect(h.execFiles).toHaveLength(0)
+    const fake = lastPty()
+    expect(fake.args).not.toContain('BatchMode=yes')
+    expect(fake.args.join(' ')).toContain('sudo -S -p password: podman exec ccc-test')
+    // Neither secret ever rides in argv.
+    expect(fake.args.join(' ')).not.toContain('sudo-secret')
+    // The host has no ssh password, so the FIRST prompt is sudo's.
+    fake.data!('password:')
+    expect(fake.writes).toEqual(['sudo-secret\r'])
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toBe('completed')
+  })
+
+  it('key host + rootful container with NO saved sudo password: stays on BatchMode with `sudo -n` (never hangs on a prompt)', async () => {
+    _setSshTargetForTest('sid-ctr-sudo-nopw', { username: 'u', host: 'hN', port: 22, runtime: { ...CONTAINER, sudo: true } })
+    await expect(endSshRemote('sid-ctr-sudo-nopw')).resolves.toBe('completed')
+    expect(h.ptySpawns).toHaveLength(0)
+    const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
+    expect(remote).toContain('sudo -n podman exec ccc-test')
+    expect(remote).not.toContain('-S')
+    // The tmux kill still runs — a blocked sudo prompt would have starved it.
+    expect(remote).toContain('kill-session -t ccc-sid-ctr-sudo-nopw')
+  })
+
+  // THE T21 SHAPE: password host + rootful container = two prompts, in order.
+  it('password host + rootful container: answers ssh THEN sudo, each with its own secret', async () => {
+    _setSshTargetForTest('sid-ctr-two', {
+      username: 'nm', host: 'hT', port: 22, password: 'ssh-pw',
+      runtime: { ...CONTAINER, sudo: true }, sudoPassword: 'sudo-pw',
+    })
+    const p = endSshRemote('sid-ctr-two')
+    const fake = lastPty()
+    // 1) ssh's own prompt, in the RC9 ConPTY-glued shape.
+    fake.data!("\x1b[?25lnm@hT's password: ")
+    expect(fake.writes).toEqual(['ssh-pw\r'])
+    // ssh answers its prompt with a bare newline. Before the tail was consumed
+    // on answering, THIS chunk still ended on the already-answered prompt line
+    // and burned the sudo password into ssh's prompt.
+    fake.data!('\r\n')
+    expect(fake.writes).toEqual(['ssh-pw\r'])
+    // 2) sudo's forced prompt, arriving as its own chunk (no trailing newline —
+    //    measured byte-for-byte on the real host).
+    fake.data!('password:')
+    expect(fake.writes).toEqual(['ssh-pw\r', 'sudo-pw\r'])
+    // 3) A THIRD prompt-shaped line must extract nothing: the secret list is
+    //    exhausted, so the answer count is bounded by the prompts we expect.
+    fake.data!('\r\nsomething password: ')
+    expect(fake.writes).toHaveLength(2)
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toBe('completed')
+  })
+
+  it('password host + ROOTLESS container: still exactly ONE prompt, and no sudo in the remote command', async () => {
+    _setSshTargetForTest('sid-ctr-pw-rootless', { username: 'nm', host: 'hR', port: 22, password: 'ssh-pw', runtime: CONTAINER })
+    const p = endSshRemote('sid-ctr-pw-rootless')
+    const fake = lastPty()
+    expect(fake.args.join(' ')).not.toContain('sudo')
+    fake.data!("nm@hR's password: ")
+    expect(fake.writes).toEqual(['ssh-pw\r'])
+    // No sudo prompt can follow, so a later prompt-shaped line writes nothing.
+    fake.data!('\r\npassword:')
+    expect(fake.writes).toHaveLength(1)
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toBe('completed')
+  })
+
+  it('an invalid stored container name yields NO engine exec, and the tmux kill still runs', async () => {
+    _setSshTargetForTest('sid-ctr-bad', { username: 'u', host: 'hB', port: 22, runtime: { type: 'container', engine: 'podman', container: 'ccc test; rm -rf /' } })
+    await expect(endSshRemote('sid-ctr-bad')).resolves.toBe('completed')
+    const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
+    expect(remote).not.toContain('podman')
+    expect(remote).not.toContain('rm -rf /')
+    expect(remote).toContain('kill-session -t ccc-sid-ctr-bad')
+  })
+
+  it('neither the sudo password nor the ssh password reaches a log line', async () => {
+    _setSshTargetForTest('sid-ctr-log', {
+      username: 'nm', host: 'hL', port: 22, password: 'sshhunter2',
+      runtime: { ...CONTAINER, sudo: true }, sudoPassword: 'sudohunter2',
+    })
+    const p = endSshRemote('sid-ctr-log')
+    const fake = lastPty()
+    fake.data!("nm@hL's password: ")
+    fake.data!('\r\n')
+    fake.data!('password:')
+    fake.exit!({ exitCode: 0 })
+    await p
+    expect(h.logs.length).toBeGreaterThan(0)
+    for (const line of h.logs) {
+      expect(line).not.toContain('sshhunter2')
+      expect(line).not.toContain('sudohunter2')
+    }
+  })
+})
