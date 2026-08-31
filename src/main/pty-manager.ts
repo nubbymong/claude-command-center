@@ -3721,14 +3721,16 @@ export function spawnPty(
 
   ptySessions.set(sessionId, { ptyProcess, sessionId })
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
-  // Watchdog (#235): local, interactive Claude sessions only — never SSH,
-  // Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
-  // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op
-  // when the feature is off.
-  if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
+  // Watchdog (#235): any interactive Claude session — LOCAL or SSH (owner
+  // 2026-08-31: it observes the PTY, which an SSH session has too; the headless
+  // xterm renders the escapes and the retry send() reaches the remote claude).
+  // Never Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
+  // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op when
+  // the feature is off (default). feedData already flows for every session.
+  if (!options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
     getWatchdogManager()?.startWatchdog(sessionId, {
       provider: options?.provider,
-      ssh: false,
+      ssh: !!options?.ssh,
       shellOnly: false,
       // Explicit kind flag (#266 MAJOR-5), never the askPrompt heuristic: that
       // was false for a question-less Ask launch and after every restart.

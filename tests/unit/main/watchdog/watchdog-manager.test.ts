@@ -102,15 +102,19 @@ describe('WatchdogManager — default-off / gating', () => {
     expect(mgr.getStates()).toEqual([])
   })
 
-  it('gates on session type: ssh, shellOnly, and non-claude providers never start a watchdog', () => {
+  it('gates on session type: shellOnly and non-claude never start; an SSH Claude session DOES (2026-08-31 — it observes the PTY like local)', () => {
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)
-    mgr.startWatchdog('ssh1', { provider: 'claude', ssh: true, shellOnly: false })
     mgr.startWatchdog('shell1', { provider: 'claude', ssh: false, shellOnly: true })
     mgr.startWatchdog('codex1', { provider: 'codex', ssh: false, shellOnly: false })
     expect(instances).toHaveLength(0)
-    mgr.startWatchdog('local1', { provider: 'claude', ssh: false, shellOnly: false })
+    // SSH Claude now arms, exactly like local — same PTY signal, headless-xterm
+    // rendering, retry send() to the remote claude.
+    mgr.startWatchdog('ssh1', { provider: 'claude', ssh: true, shellOnly: false })
     expect(instances).toHaveLength(1)
+    expect(mgr.isActive('ssh1')).toBe(true)
+    mgr.startWatchdog('local1', { provider: 'claude', ssh: false, shellOnly: false })
+    expect(instances).toHaveLength(2)
   })
 
   it('never arms on an Ask Conductor one-shot (#266 MAJOR-5), by the kind flag not askPrompt', () => {

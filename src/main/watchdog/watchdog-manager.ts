@@ -353,14 +353,19 @@ function readWatchdogSettings(): WatchdogSettings {
   }
 }
 
-// Gate: only a LOCAL Claude session gets a watchdog — never SSH, never Codex,
-// never a bare shell (nothing to detect rate-limit/overload text in). The
-// call site in pty-manager.ts only calls startWatchdog from the local-Claude
-// branch already, but this re-checks so the manager is safe to call directly
-// (and so the gating is unit-testable on its own).
-function isLocalClaudeSession(info?: WatchdogSessionInfo): boolean {
+// Gate: any interactive Claude session gets a watchdog — LOCAL or SSH. The
+// watchdog is pure PTY observation: it feeds the session's bytes into a headless
+// xterm (so escapes RENDER, robust to the ConPTY/ssh gluing that defeats raw
+// sentinel parsing) and detects silence (the sleep moon) + rate-limit/overload
+// banners on the rendered tail. An SSH session's PTY carries exactly the same
+// signal, and its retry send() reaches the remote claude through the same PTY —
+// so remote sessions are watched too (owner, 2026-08-31: "it's monitoring the
+// PTY, why wouldn't it work for remote"). Still NEVER a bare shell (no claude
+// output to detect), Codex, or an Ask one-shot (#266 MAJOR-5: an ephemeral ask
+// surface must not grow a retry badge). The whole feature is default-OFF
+// (settings.enabled), so enabling SSH only widens an already-opted-in watchdog.
+function isWatchableClaudeSession(info?: WatchdogSessionInfo): boolean {
   if (!info) return true
-  if (info.ssh) return false
   if (info.shellOnly) return false
   if (info.ask) return false
   return (info.provider ?? 'claude') === 'claude'
@@ -506,7 +511,7 @@ export class WatchdogManager {
     // stale watcher in place.
     if (this.entries.has(sessionId)) this.stopWatchdog(sessionId)
 
-    if (!isLocalClaudeSession(info)) return
+    if (!isWatchableClaudeSession(info)) return
     const settings = readWatchdogSettings()
     if (settings.enabled !== true) return // default OFF — feature is inert unless explicitly opted in
 
