@@ -246,7 +246,9 @@ afterEach(async () => {
 describe('the decision says what the user is deciding on (W11)', () => {
   it('names the version, the plan, or the build', () => {
     expect(decisionLabels(designVersion())).toEqual({ approve: 'Approve v8', reject: 'Reject v8' })
-    expect(decisionLabels(planVersion())).toEqual({ approve: 'Approve plan', reject: 'Reject plan' })
+    // A plan has no Reject (owner spec, 2026-08-31) — the other button asks for
+    // another turn of the loop. The DECISION underneath is still 'reject'.
+    expect(decisionLabels(planVersion())).toEqual({ approve: 'Approve plan', reject: 'Submit Revisions' })
     expect(decisionLabels(uatVersion('2026.8.29'))).toEqual({ approve: 'Pass build 2026.8.29', reject: 'Fail build 2026.8.29' })
     // No build label: the version id is the honest fallback, never a blank.
     expect(decisionLabels(uatVersion())).toEqual({ approve: 'Pass build v4', reject: 'Fail build v4' })
@@ -257,6 +259,8 @@ describe('the decision says what the user is deciding on (W11)', () => {
     expect(submitLabel(designVersion(), 'approve', 0)).toBe('Submit — Approve v8')
     expect(submitLabel(designVersion(), 'reject', 3)).toBe('Submit — Reject v8, 3 notes')
     expect(submitLabel(planVersion(), 'approve', 0)).toBe('Submit — Approve plan')
+    expect(submitLabel(planVersion(), 'reject', 2)).toBe('Submit revisions — 2 notes')
+    expect(submitLabel(planVersion(), 'reject', 1)).toBe('Submit revisions — 1 note')
     expect(submitLabel(uatVersion(), 'reject', 3)).toBe('Submit test — Fail, 3 defects')
     expect(submitLabel(uatVersion(), 'approve', 2)).toBe('Submit test — Pass, 2 observations')
     expect(submitLabel(uatVersion(), 'approve', 0)).toBe('Submit test — Pass')

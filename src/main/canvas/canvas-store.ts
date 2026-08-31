@@ -36,6 +36,8 @@ import {
   type ResumableRow,
   artifactRunContaining,
   artifactRuns,
+  countOpenPlanQuestions,
+  isKeepableOpenQuestions,
   isKeepableVerdict,
   libraryRowKindOf,
   openVersionOf,
@@ -896,6 +898,10 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // carrying bidi overrides or an over-long run is dropped with its version
   // rather than rendered in the header the user reads.
   if (ver.packName !== undefined && sanitizePackName(ver.packName) !== ver.packName) return false
+  // A plan's open-question count gates the Approve button, so a hand-edited
+  // value must not survive into it — same all-or-nothing rule as every field
+  // above: OUR shape, or the version drops.
+  if (!isKeepableOpenQuestions(ver.openQuestions)) return false
   // WHO rendered it (M4). Checked by ROUND-TRIP against the shared healer, for
   // the same reason `packName` is: a stamp that does not equal its own
   // re-sanitisation was not written by this build. It is DROPPED rather than
@@ -1524,6 +1530,13 @@ export function renderVersion(
     const dir = versionDir(canvasId, versionId)
     mkdirSecure(dir)
     atomicWriteSecure(path.join(dir, 'index.html'), source.html)
+    // A PLAN's open questions, counted off the document it was rendered from —
+    // the pane gates Approve on this, and counting here means the number and the
+    // page the user is reading are the same artefact. Zero is left absent, which
+    // is what absence already means. Never counted for a design: the marker is a
+    // plan-authoring convention and a mockup that happens to carry it is not a
+    // plan.
+    const openQuestions = source.mode === 'plan' ? countOpenPlanQuestions(source.html) : 0
     version = {
       id: versionId,
       mode: source.mode,
@@ -1531,6 +1544,7 @@ export function renderVersion(
       source: { mode: 'design', entry: 'index.html' },
       ...(isDraft ? { draft: true as const } : {}),
       ...(isShow ? { show: true as const } : {}),
+      ...(openQuestions > 0 ? { openQuestions } : {}),
     }
   } else if (source.mode === 'uat') {
     const distRoot = path.resolve(source.distRoot)

@@ -40,6 +40,10 @@ interface Props {
   /** Which layer the pointer is on, so the empty state can be honest about
    *  whether hovering the content is even possible. */
   pointerOwner: CanvasPointerOwner
+  /** What this strip is CALLED. 'X-Ray' everywhere the X-Ray switch exists; a
+   *  plan has no such switch on its toolbar, so naming the strip after it would
+   *  re-introduce the apparatus by the back door. */
+  heading?: string
 }
 
 /** Page coordinates, rounded — a sub-pixel box is noise in a readout. */
@@ -48,42 +52,67 @@ function boxText(box: CanvasHitInfo['box']): string {
   return `${r(box.width)} × ${r(box.height)} at ${r(box.x)}, ${r(box.y)}`
 }
 
-/** What to say with no element to name — which depends entirely on whether the
- *  content could have been hovered at all. */
+/**
+ * What to say with no element to name.
+ *
+ * Only when hovering is IMPOSSIBLE — Draw and Region hold the pointer, so the
+ * strip owes the user an explanation for staying empty (independent review of
+ * #405). Browse with the pointer simply off the page owes nothing: "Hover the
+ * page — what you point at is named here" was a tutorial line living permanently
+ * in the chrome, telling a user who is about to hover something they already
+ * know. An em dash says "nothing under the pointer" in the width it deserves.
+ */
 function idleText(pointerOwner: CanvasPointerOwner): string {
   if (pointerOwner === 'glass') return 'Draw has the pointer — switch to Browse to name what you point at.'
   if (pointerOwner === 'marquee') return 'Region has the pointer — switch to Browse to name what you point at.'
-  return 'Hover the page — what you point at is named here.'
+  return '—'
 }
 
-export default function CanvasXrayReadout({ hit, label, pointerOwner }: Props) {
+/**
+ * One line, not three.
+ *
+ * This is a status strip under the review panel, and it used to open with a
+ * heading, a subtitle explaining what stealth mode is, and only then the thing
+ * the user is pointing at — two lines of standing explanation above one line of
+ * content, in a 320px box hung off the bottom of a 352px panel, so it did not
+ * even line up with it. It now reads left to right on one row: what it is, what
+ * is under the pointer, and the box in numbers. The tokens are the app's own
+ * (`--surface-chrome`, `--border-subtle`, …) rather than raw palette classes, so
+ * it matches the toolbar it belongs to instead of the terminal.
+ */
+export default function CanvasXrayReadout({ hit, label, pointerOwner, heading = 'X-Ray' }: Props) {
   return (
     <div
-      className="w-80 shrink-0 border-l border-t border-surface0 bg-mantle text-[12px] px-3 py-2"
+      className="w-full shrink-0 flex items-center gap-2 px-3 h-[26px] text-[11px]"
+      style={{
+        borderTop: '1px solid var(--border-subtle)',
+        borderLeft: '1px solid var(--border-subtle)',
+        background: 'var(--surface-chrome)',
+        color: 'var(--text-secondary)',
+      }}
       data-testid="canvas-xray-readout"
     >
-      <div className="flex items-center gap-2">
-        <span className="font-medium text-subtext1">X-Ray</span>
-        <span className="text-[11px] text-overlay1">stealth — nothing is drawn on the page</span>
-      </div>
+      <span className="shrink-0 text-[9px] font-bold tracking-[0.08em]" style={{ color: 'var(--text-secondary)' }} aria-hidden>
+        {heading.toUpperCase()}
+      </span>
       {hit ? (
         <>
           {/* Every word of the identity is the frame's own report about itself,
               marked exactly as the On-mode chip and the locked label are. Moving
               the readout off the page does not make the page a more reliable
               narrator of it. */}
-          <div className="mt-1 truncate text-text" title={PAGE_REPORTED_TITLE} data-testid="canvas-xray-label">
-            <span className="text-overlay1">{PAGE_REPORTED_MARK} </span>
+          <span className="min-w-0 truncate" style={{ color: 'var(--text-primary)' }} title={PAGE_REPORTED_TITLE} data-testid="canvas-xray-label">
+            <span style={{ color: 'var(--text-muted)' }}>{PAGE_REPORTED_MARK} </span>
             {label}
-          </div>
-          <div className="mt-0.5 text-[11px] text-subtext0" data-testid="canvas-xray-box">
+          </span>
+          <span className="shrink-0 ml-auto tabular-nums" style={{ color: 'var(--text-muted)' }} data-testid="canvas-xray-box">
             {boxText(hit.box)}
-          </div>
+          </span>
         </>
       ) : (
-        <div className="mt-1 text-[11px] text-subtext0" data-testid="canvas-xray-idle">
+        <span className="min-w-0 truncate" style={{ color: 'var(--text-muted)' }} data-testid="canvas-xray-idle">
           {idleText(pointerOwner)}
-        </div>
+        </span>
       )}
     </div>
   )
