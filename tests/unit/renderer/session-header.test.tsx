@@ -224,6 +224,26 @@ describe('SessionHeader', () => {
     useAccountProfilesStore.setState({ profiles: [] })
   })
 
+  // Bug (owner, 2026-08-31): a STANDARD SSH session showed nothing at the top —
+  // no account pill, no claude.ai / Claude Code pills — while its Artifacts
+  // button worked. Root cause: the header gated the whole pill set on a
+  // displayed remote email, but the mapped profile (sshMappedProfileId, the same
+  // signal the Artifacts button uses) had resolved via the launch-profileId
+  // fallback and its accountEmail had not populated yet. The header must render
+  // from the mapped profile, using its NAME until the remote reports.
+  it('SSH mapped via the launch profile with NO email yet: still renders the pill set, labelled by the profile name', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-ssh', name: 'Work' } as any] }) // no accountEmail yet
+    useAccountAuthStore.setState({ byProfile: { 'profile-ssh': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, profileId: 'profile-ssh' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.textContent).toContain('Work')
+    expect(acct?.getAttribute('title')).toContain('Launch account')
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).not.toBeNull()
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
   // harmonise-remote (owner UX, 2026-08-31): when an SSH session's signed-in
   // remote account maps to a LOCAL account profile, the claude.ai / Claude Code
   // pills apply too — those checks are local-profile-scoped and act on the

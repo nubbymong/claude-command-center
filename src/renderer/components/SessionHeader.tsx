@@ -376,16 +376,29 @@ function SessionAuthPills({ session }: { session: Session }) {
     const gitHubTail = !isAsk && session.githubIntegration?.repoSlug
       ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
       : null
-    if (!remoteEmail) return gitHubTail
-    const r = resolveAccountNameByEmail(remoteEmail, profiles, accountAliases)
-    const remoteName = r === remoteEmail ? middleTruncateEmail(remoteEmail) : r
+    // Render the pills whenever we have EITHER a reported/mapped remote email OR
+    // a mapped local profile (sshProfileId — the SAME mapping the Artifacts
+    // button resolves off). Gating the whole header on remoteEmail left a
+    // standard SSH session blank at the top while its Artifacts button worked,
+    // because the live remote /status email had not populated session.accountEmail
+    // yet even though the launch profile was known. Only a session with neither
+    // falls through to just the GitHub pill.
+    if (!remoteEmail && !sshProfileId) return gitHubTail
+    // Identity to show: the reported/mapped remote email when known, else the
+    // mapped profile's own email or name as a first-connect placeholder, so the
+    // header paints immediately instead of waiting on the first remote tick.
+    const idEmail = remoteEmail || sshProfile?.accountEmail || ''
+    const r = idEmail ? resolveAccountNameByEmail(idEmail, profiles, accountAliases) : ''
+    const remoteName = idEmail
+      ? (r === idEmail ? middleTruncateEmail(idEmail) : r)
+      : (sshProfile?.name || 'Account')
     const remoteTone = resolveIdentityColor(
-      resolveAccountColourKey(remoteEmail, accountColourOverrides, session.accountColour),
+      resolveAccountColourKey(idEmail, accountColourOverrides, session.accountColour ?? sshProfile?.colourKey),
       theme,
     )
     const accountTitle = reportedEmail
       ? `Remote Claude account: ${remoteEmail} (signed in on the remote host)`
-      : `Launch account: ${remoteEmail} (the remote host has not reported its signed-in account yet)`
+      : `Launch account: ${idEmail || remoteName} (the remote host has not reported its signed-in account yet)`
     // Mapped to a local profile → the full local pill set, driven by that
     // profile's auth status. The account pill keeps its remote name/tone/title.
     if (sshProfileId) {
