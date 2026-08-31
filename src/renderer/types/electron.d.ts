@@ -242,6 +242,9 @@ export interface ElectronAPI {
     /** SSH Persistent (resume liveness): ask main whether a config's detached
      *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
     checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../../shared/types').DetachedRemoteLiveness>
+    /** SSH Persistent (resume liveness, tier 1): is a host answering at all?
+     *  ICMP + TCP:22 fallback, no ssh/auth. Demote-only — see host-ping.ts. */
+    pingHost: (payload: { host: string }) => Promise<import('../../shared/types').HostPingResult>
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void

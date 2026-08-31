@@ -13,7 +13,8 @@ import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
-import type { SshRuntime, DetachedRemoteLiveness } from '../../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, HostPingResult } from '../../shared/types'
+import { pingHost } from '../host-ping'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
 import {
   sanitizeRestoredSpawnOptions,
@@ -287,6 +288,12 @@ const checkDetachedLiveSchema = z.object({
   sessionIds: z.array(sessionIdSchema).max(64),
 })
 
+// SSH Persistent (resume liveness, tier 1) input. A bound/DoS guard only — the
+// authoritative host validation is isValidPingHost inside host-ping.ts (charset,
+// leading-dash, length), which runs before any spawn and is what the unit tests
+// assert against. Both layers reject; neither sanitises-and-continues.
+const pingHostSchema = z.object({ host: z.string().min(1).max(255) })
+
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {
     cwd?: string
@@ -525,5 +532,16 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     const s = saved.sshConfig
     const password = loadCredential(configId) ?? undefined
     return probeTmuxLive({ username: s.username, host: s.host, port: Number(s.port), password }, sessionIds)
+  })
+
+  // SSH Persistent (resume liveness, TIER 1): is a host answering at all? No ssh,
+  // no auth, no credential read — one ICMP echo with a TCP:22 fallback. The
+  // renderer supplies the host because the reachability tier is keyed by HOST,
+  // not by config (several configs share one box, and one ping serves them all);
+  // nothing here is interpolated into a shell, and host-ping.ts refuses anything
+  // outside its strict charset before a process is spawned.
+  ipcMain.handle(IPC.SSH_PING_HOST, async (_event, payload: unknown): Promise<HostPingResult> => {
+    const { host } = pingHostSchema.parse(payload)
+    return pingHost(host)
   })
 }

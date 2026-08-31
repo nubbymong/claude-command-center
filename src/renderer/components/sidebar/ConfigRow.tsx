@@ -8,6 +8,7 @@ import { CODEX_OFF_LAUNCH_REASON } from '../../hooks/useLaunchConfig'
 import { DELETE_WHILE_RUNNING_REASON, runningCountLabel } from './sessionsPanelState'
 import { useDetachedRemotesStore } from '../../stores/detachedRemotesStore'
 import { useDetachedLivenessStore } from '../../stores/livenessStore'
+import { useHostReachabilityStore } from '../../stores/hostReachability'
 import { matchDetachedRemotes } from '../../utils/detachedRemotes'
 import { verifiedLiveCount } from '../../utils/detachedRemotesLiveness'
 
@@ -48,12 +49,15 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
 
   // SSH Persistent (resume liveness): amber count of VERIFIED-live detached
   // sessions re-attachable for this config. Recomputed from the registry + the
-  // liveness map (both refreshed once on config-list mount, no poll).
+  // liveness map (refreshed on events only, no SSH poll) and DEMOTED by the
+  // tier-1 host map, so the badge stops claiming re-attachable sessions on a box
+  // that has stopped answering.
   const detachedEntries = useDetachedRemotesStore((s) => s.entries)
   const livenessMap = useDetachedLivenessStore((s) => s.bySession)
+  const hostReach = useHostReachabilityStore((s) => s.byHost)
   const reattachCount = React.useMemo(
-    () => verifiedLiveCount(matchDetachedRemotes(detachedEntries, config), livenessMap),
-    [detachedEntries, livenessMap, config],
+    () => verifiedLiveCount(matchDetachedRemotes(detachedEntries, config), livenessMap, hostReach),
+    [detachedEntries, livenessMap, hostReach, config],
   )
 
   // No locked state (owner revision 2026-08-24): a config is a template and

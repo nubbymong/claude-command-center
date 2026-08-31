@@ -44,6 +44,7 @@ import SshCloseDialog from './components/SshCloseDialog'
 import SshReattachGoneNotice from './components/SshReattachGoneNotice'
 import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
 import { probeGoneSessions } from './stores/livenessStore'
+import { pingAllDetachedHosts } from './stores/hostReachability'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, DIALOG_INPUT_CLASS, DIALOG_INPUT_STYLE } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
@@ -742,6 +743,13 @@ export default function App() {
       // feeds the resume surface + the amber re-attachable counter, never the
       // launch path (a config launch always starts new).
       useDetachedRemotesStore.getState().hydrate(savedState.detachedRemotes)
+      // SSH Persistent (resume liveness, tier 1): ONE initial reachability pass
+      // over the distinct hosts we just rehydrated, so a box that is off at
+      // launch is already demoted before the user looks. A single pass, not an
+      // armed timer — the ~90s ping clock only runs while the Running tab is
+      // visible (Phase 3 arms it via armHostPings/disarmHostPings). Fire and
+      // forget: never blocks restore, never throws.
+      void pingAllDetachedHosts()
       // Per-session "hide this tool" entries key on session ids, which persist
       // across restarts; drop the ones whose session did not come back (ADR-018 M3).
       useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))

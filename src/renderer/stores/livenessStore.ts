@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TerminalConfig } from './configStore'
+import { useConfigStore, type TerminalConfig } from './configStore'
 import type { DetachedRemoteLiveness } from '../../shared/types'
 import { useDetachedRemotesStore } from './detachedRemotesStore'
 import { persistSessionState } from '../session-persistence'
@@ -78,6 +78,35 @@ export async function refreshAllDetachedLiveness(configs: LaunchableConfig[]): P
   await Promise.all(
     configs.filter((c) => matchDetachedRemotes(entries, c).length > 0).map((c) => refreshDetachedLiveness(c)),
   )
+}
+
+// ── The event hooks: every place a full SSH verify is allowed to happen ──
+//
+// The SSH `tmux ls` probe authenticates and spends a connection, so it runs on
+// EVENTS and never on a clock. That list is closed, and it is exactly these
+// four plus the app-start pass (App.tsx) and the tier-1 recovery transition
+// (hostReachability.ts). The repeating cheap check is the host ping, which can
+// only ever demote.
+//
+// They are thin, deliberately: named seams Phase 3's Remote Resumable section
+// calls, so the "when may we ssh?" policy reads as a list in one file instead of
+// being scattered across component effects. refreshDetachedLiveness's in-flight
+// guard collapses whatever arrives while a probe is already running, so a burst
+// of focus events costs one probe.
+
+/** The resume section became visible — verify everything it is about to show. */
+export async function verifyOnResumeSectionOpen(): Promise<void> {
+  await refreshAllDetachedLiveness(useConfigStore.getState().configs)
+}
+
+/** The window regained focus — the user was away, so re-verify. */
+export async function verifyOnWindowFocus(): Promise<void> {
+  await refreshAllDetachedLiveness(useConfigStore.getState().configs)
+}
+
+/** A resumable card was clicked — verify just that config before acting on it. */
+export async function verifyOnCardClick(config: LaunchableConfig): Promise<void> {
+  await refreshDetachedLiveness(config)
 }
 
 /**

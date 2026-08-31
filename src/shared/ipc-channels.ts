@@ -67,6 +67,11 @@ export const IPC = {
   // detached `ccc-<sessionId>` tmux sessions are still ALIVE on a config's host,
   // via a `tmux ls` over a separate ssh exec. Returns DetachedRemoteLiveness.
   SSH_CHECK_DETACHED_LIVE: 'ssh:checkDetachedLive',
+  // SSH Persistent (resume liveness, TIER 1): is a HOST answering at all? One
+  // ICMP echo with a TCP:22 fallback — no ssh, no auth, no credentials. Cheap
+  // enough to run on a slow timer, and DEMOTE-ONLY: a reachable host never
+  // promotes anything to live (only SSH_CHECK_DETACHED_LIVE can do that).
+  SSH_PING_HOST: 'ssh:pingHost',
 
   // Statusline
   STATUSLINE_UPDATE: 'statusline:update',

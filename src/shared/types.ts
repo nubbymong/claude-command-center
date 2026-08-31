@@ -283,6 +283,23 @@ export interface DetachedRemoteLiveness {
   liveSessionIds: string[]
 }
 
+/**
+ * SSH Persistent — TIER 1 reachability result for one HOST (`ssh:pingHost`).
+ *
+ * `reachable` means the box answered an ICMP echo, or accepted a TCP connection
+ * on the SSH port when ICMP was filtered. It says NOTHING about any tmux session
+ * running on it — only DetachedRemoteLiveness can, and only a tier-2 SSH verify
+ * produces one. Consequently this result is used demote-only: consecutive
+ * failures mark a host's entries unreachable, a success never marks one live.
+ * `via` records which tier answered; `reason` is a short machine-readable why.
+ */
+export interface HostPingResult {
+  host: string
+  reachable: boolean
+  via: 'icmp' | 'tcp' | 'none'
+  reason?: string
+}
+
 // ── Statusline ──
 
 export interface RateLimitExtra {

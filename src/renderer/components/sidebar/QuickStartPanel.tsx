@@ -8,6 +8,7 @@ import { CODEX_OFF_LAUNCH_REASON } from '../../hooks/useLaunchConfig'
 import { quickStartConfigs, resolveQuickStartCollapsed, runningCountLabel } from './sessionsPanelState'
 import { useDetachedRemotesStore } from '../../stores/detachedRemotesStore'
 import { useDetachedLivenessStore } from '../../stores/livenessStore'
+import { useHostReachabilityStore } from '../../stores/hostReachability'
 import { matchDetachedRemotes } from '../../utils/detachedRemotes'
 import { verifiedLiveCount } from '../../utils/detachedRemotesLiveness'
 
@@ -34,6 +35,9 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
   // item below from the registry + liveness map (subscribed once here).
   const detachedEntries = useDetachedRemotesStore((s) => s.entries)
   const livenessMap = useDetachedLivenessStore((s) => s.bySession)
+  // Tier-1 host reachability: demote-only, so an entry on a host that stopped
+  // answering drops out of the count (see hostReachability.ts).
+  const hostReach = useHostReachabilityStore((s) => s.byHost)
 
   const items = quickStartConfigs(configs)
   // Nothing pinned at all: no strip, no empty state — Quick Start is opt-in
@@ -95,7 +99,7 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
               </span>
             )}
             {config.sessionType === 'ssh' && (config.sshConfig?.detachable !== false ? <SshPersistentBadge /> : <SshBadge />)}
-            {config.sessionType === 'ssh' && <SshReattachBadge count={verifiedLiveCount(matchDetachedRemotes(detachedEntries, config), livenessMap)} />}
+            {config.sessionType === 'ssh' && <SshReattachBadge count={verifiedLiveCount(matchDetachedRemotes(detachedEntries, config), livenessMap, hostReach)} />}
             <button
               onClick={blocked ? undefined : () => onLaunch(config)}
               disabled={blocked}
