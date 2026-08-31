@@ -127,7 +127,10 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     // the url file, feeding a minimal {session_id} on stdin — and never blocks
     // setup on it (unref).
     expect(script).toContain('spawn(process.execPath,[shimPath,"sid-x",urlPath]')
-    expect(script).toContain('JSON.stringify({session_id:"sid-x"})')
+    // sid rides argv[2] (the shim reads argv[2]||env||stdin), so no stdin pipe
+    // is needed — stdio:'ignore' keeps the detached spawn output-free (the
+    // #379 main-spawn audit requires 'ignore' for every detached:true).
+    expect(script).toContain(`stdio:'ignore',detached:true`)
     expect(script).toContain('_pr.unref()')
     // The priming must sit BEFORE the completion sentinel so it launches during
     // setup, not after claude is already up.
