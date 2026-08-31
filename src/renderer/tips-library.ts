@@ -248,7 +248,23 @@ export const TIPS_LIBRARY: Tip[] = [
       postUse: {
         shortText: 'A remote session shows its account and usage too',
         title: 'What a Remote Session Reports Back',
-        body: 'A remote session is not a second-class one. It reports its status back over its own connection to the app, so it fills in the same places a local session does: the **account line** on the session card, the **account pill** in the header, and its own bars in the **multi-account strip** along the bottom -- 5-hour, weekly and the per-model ones.\n\nRun **`/login`** on the remote and the session moves to the right account within a few seconds; you do not have to relaunch it.\n\nThere is nothing to install on the host and no setup to re-run. It needs the **built-in tools** left on (Settings > General) because the status travels back through the connection they open -- so if a remote status line is the only one missing, look there first.',
+        body: 'A remote session is not a second-class one. It reports its status back over its own connection to the app, so it fills in the same places a local session does: the **account line** on the session card, the **account pill** in the header, and its own bars in the **multi-account strip** along the bottom -- 5-hour, weekly and the per-model ones. All of it is there the moment the session connects, not after a restart, and the header names the connection with a single **SSH** or **SSH-Persistent** pill carrying the host address.\n\nRun **`/login`** on the remote and the session moves to the right account within a few seconds; you do not have to relaunch it.\n\nThere is nothing to install on the host and no setup to re-run. It needs the **built-in tools** left on (Settings > General) because the status travels back through the connection they open -- so if a remote status line is the only one missing, look there first.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.ssh-account-tools',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 54,
+    requires: ['sessions.session-type'],
+    variants: {
+      primary: {
+        shortText: 'A remote session gets your local account\'s tools',
+        title: 'Account Tools on a Remote Session',
+        body: 'A session running on another machine over SSH can still reach the account tools that live **here** on yours. When the remote is signed in as one of the accounts you also use locally, the session header grows the same **claude.ai** and **Claude Code** pills a local session has -- each with a refresh -- and its **right-click menu** grows **Open artifacts** and the sign-in items.\n\nThey work because those checks and actions run on your own machine for that account identity, not on the remote. So the tools appear only when the remote account matches a local one; with no match the header just names the account, as before.\n\nOne thing stays local: **switching** a session\'s account. A remote session uses the login on its own host -- to change that, run **`/login`** over there.',
+        focusHint: 'A remote session\'s header pills, and its right-click menu in the sidebar',
       },
     },
   },
