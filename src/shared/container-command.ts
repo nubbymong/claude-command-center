@@ -91,6 +91,10 @@ export function composeRuntimeCommand(runtime: SshRuntime | undefined): string |
  * is converted silently — this only powers the affordance.
  */
 export function parseDockerPostCommand(postCommand: string): SshRuntime | null {
+  // Tolerate a non-string: postCommand can arrive from a hand-edited config
+  // file (bindSshToSavedConfig copies it untyped), and a `.trim()` TypeError
+  // here would throw out of spawnPty rather than reading as "no docker shape".
+  if (typeof postCommand !== 'string') return null
   const m = postCommand.trim().match(
     /^(sudo\s+)?(docker|podman)\s+exec\s+(?:-it|-ti|-i\s+-t)\s+([A-Za-z0-9][A-Za-z0-9_.-]*)\s+(?:bash|sh|\/bin\/bash|\/bin\/sh)$/
   )

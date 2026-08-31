@@ -138,12 +138,45 @@ describe('sanitiseSentinelPayload — /status ingest bounds (ADR-009)', () => {
   it('leaves normal numeric/boolean fields untouched (no reliability regression)', () => {
     const out = dispatch({
       sessionId: 's1', contextUsedPercent: 42, costUsd: 1.25, fastMode: true,
-      rateLimitExtra: { enabled: true, utilization: 5 }, contextWindowSize: 200000,
+      rateLimitExtra: { enabled: true, utilization: 5, usedUsd: 1.2, limitUsd: 10 }, contextWindowSize: 200000,
     })
     expect(out).toMatchObject({
       sessionId: 's1', contextUsedPercent: 42, costUsd: 1.25, fastMode: true, contextWindowSize: 200000,
     })
-    expect(out!.rateLimitExtra).toEqual({ enabled: true, utilization: 5 })
+    expect(out!.rateLimitExtra).toEqual({ enabled: true, utilization: 5, usedUsd: 1.2, limitUsd: 10 })
+  })
+
+  // ADR-009 re-attack R1: the renderer reads rateLimitExtra.usedUsd.toFixed(),
+  // so a partial/mistyped object from a hostile remote used to blank the whole
+  // window via the App ErrorBoundary, re-poisoned every tick. The sanitiser
+  // now drops the whole key unless all four fields are the right type.
+  // Mutation to prove this fails: restore `t === 'object'` in the generic tail.
+  it('DROPS a partial or mistyped rateLimitExtra (the render-crash guard)', () => {
+    for (const bad of [
+      { enabled: true },                                   // the exploit: numbers missing
+      { enabled: true, utilization: 5, usedUsd: 'x', limitUsd: 10 }, // usedUsd not a number
+      { enabled: 'yes', utilization: 5, usedUsd: 1, limitUsd: 10 },  // enabled not a boolean
+      { enabled: true, utilization: NaN, usedUsd: 1, limitUsd: 10 }, // non-finite
+      'not-an-object',
+      ['array'],
+    ]) {
+      const out = dispatch({ sessionId: 's1', rateLimitExtra: bad })
+      expect('rateLimitExtra' in out!).toBe(false)
+    }
+  })
+
+  it('keeps a fully-typed rateLimitExtra', () => {
+    const out = dispatch({ sessionId: 's1', rateLimitExtra: { enabled: false, utilization: 0, usedUsd: 0, limitUsd: 5 } })
+    expect(out!.rateLimitExtra).toEqual({ enabled: false, utilization: 0, usedUsd: 0, limitUsd: 5 })
+  })
+
+  // The generic object pass-through is GONE: no unhandled nested object rides
+  // into the renderer. usageBuckets and rateLimitExtra are the only two the
+  // renderer reads structurally, and both have their own validator above.
+  it('drops any other nested object rather than passing it through', () => {
+    const out = dispatch({ sessionId: 's1', someObj: { a: 1 }, model: 'Fable' })
+    expect('someObj' in out!).toBe(false)
+    expect(out!.model).toBe('Fable')
   })
 })
 

@@ -227,6 +227,21 @@ function sanitiseSentinelPayload(v: unknown): StatuslineData | null {
       if (clean !== null) out[key] = clean
       continue
     }
+    // rateLimitExtra is the ONE nested object the renderer reads by field
+    // (SessionStatusStrip renders `.usedUsd.toFixed(2)` gated only on
+    // `.enabled`). A hostile remote that posts `{enabled:true}` with the
+    // numbers missing/typed wrong throws in the render and the App-level
+    // ErrorBoundary blanks the whole window -- persistently, since the next
+    // tick re-poisons the store (ADR-009 re-attack R1). Structurally validate
+    // it here at the single ingest chokepoint: all four fields must be the
+    // right type or the key is dropped (the previous good value stays on
+    // screen). This is also why the generic object pass-through below is gone
+    // -- no other nested object is read by field, so none should ride through.
+    if (key === 'rateLimitExtra') {
+      const clean = sanitiseRateLimitExtra(val)
+      if (clean !== null) out[key] = clean
+      continue
+    }
     // transcriptPath goes to the SAME transcript binder the hooks gateway feeds,
     // and the gateway shape-filters it (#180). This side only type-checked it, so
     // the two sources disagreed about the same field: any string, any length, any
@@ -246,10 +261,28 @@ function sanitiseSentinelPayload(v: unknown): StatuslineData | null {
     // values are dropped, not truncated -- a half-string is not a better label
     // than none, and dropping keeps the previous good value on screen.
     if (t === 'string') { if ((val as string).length <= STATUS_STRING_MAX) out[key] = val }
-    else if (t === 'boolean' || t === 'object') out[key] = val
+    else if (t === 'boolean') out[key] = val
     else if (t === 'number' && Number.isFinite(val as number)) out[key] = val
+    // Objects are NOT passed through generically any more: the only nested
+    // shapes the renderer reads (usageBuckets, rateLimitExtra) are validated
+    // above, and an unhandled object can only be dead weight or a render hazard.
   }
   return out as unknown as StatuslineData
+}
+
+/**
+ * Validate the extra-usage block: every field the renderer reads must be the
+ * right type, or the whole key is dropped. Returns null (key omitted) for a
+ * non-object or any field mismatch -- fail closed, keeping the last good value.
+ */
+function sanitiseRateLimitExtra(v: unknown): { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number } | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null
+  const o = v as Record<string, unknown>
+  if (typeof o.enabled !== 'boolean') return null
+  for (const k of ['utilization', 'usedUsd', 'limitUsd'] as const) {
+    if (typeof o[k] !== 'number' || !Number.isFinite(o[k])) return null
+  }
+  return { enabled: o.enabled, utilization: o.utilization as number, usedUsd: o.usedUsd as number, limitUsd: o.limitUsd as number }
 }
 
 /**

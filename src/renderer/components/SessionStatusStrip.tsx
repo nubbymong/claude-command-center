@@ -31,6 +31,16 @@ interface SessionStatusStripProps {
   sessionId: string
 }
 
+/** Defense in depth for the extra-usage block: the main-process sanitiser
+ *  already drops a malformed rateLimitExtra, but this render reads
+ *  `.usedUsd.toFixed()` etc., so guard the numeric fields at the point of use
+ *  too -- a partial object (a hostile SSH host's `{enabled:true}`) must never
+ *  reach `.toFixed` and blank the window via the ErrorBoundary (ADR-009 R1). */
+function validExtraUsage(e: Session['rateLimitExtra']): e is NonNullable<Session['rateLimitExtra']> {
+  return !!e && e.enabled === true
+    && typeof e.utilization === 'number' && typeof e.usedUsd === 'number' && typeof e.limitUsd === 'number'
+}
+
 // Shared pill styling for the control cluster (Mode / Model / Compact /
 // Restart). Token-driven so it tracks both themes and reads as one system
 // with the CommandBar command chips. (UAT R2 Task 4.)
@@ -320,13 +330,13 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           // return limits[]. Hidden-set keyed by label (see hiddenUsageBuckets).
           const shown = (session.usageBuckets ?? []).filter((b) => !hiddenBuckets.includes(b.label))
           if (session.usageBuckets && session.usageBuckets.length > 0) {
-            if (shown.length === 0 && !session.rateLimitExtra?.enabled) return null
+            if (shown.length === 0 && !validExtraUsage(session.rateLimitExtra)) return null
             return (
               <span className="flex items-center gap-3 shrink-0">
                 {shown.map((b) => (
                   <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} showReset={sl.showResetTime} />
                 ))}
-                {session.rateLimitExtra?.enabled && (
+                {validExtraUsage(session.rateLimitExtra) && (
                   <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
                 )}
               </span>
