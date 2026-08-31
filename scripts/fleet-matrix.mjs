@@ -114,7 +114,13 @@ async function provision(fromName) {
   await run(def, `mkdir -p ${repo}`)
   await scpFile(def, tar, '/tmp/ccc-src.tar.gz')
   fs.unlinkSync(tar)
-  await run(def, `cd ${repo} && tar xzf /tmp/ccc-src.tar.gz`)
+  // Faithful sync, not an overlay: tar xzf leaves behind files that were
+  // DELETED at HEAD (the split retired ssh-statusline.live.ts, but an overlay
+  // extract left the stale monolith running ALONGSIDE the new lanes — dup
+  // combos, wrong runtime). Wipe the tracked CODE dirs before extracting so the
+  // tree matches HEAD exactly; node_modules and the gitignored hosts/fleet files
+  // live outside these and are (re)created in the later steps.
+  await run(def, `cd ${repo} && rm -rf src tests scripts && tar xzf /tmp/ccc-src.tar.gz`)
 
   console.log(`[2/6] hosts.local.json (with per-FROM host overrides)`)
   const hosts = readJson(hostsPath)
