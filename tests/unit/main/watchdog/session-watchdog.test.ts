@@ -795,6 +795,8 @@ describe('SessionWatchdog — SSH send hardening (requireClaudeChrome)', () => {
     drivenToDue(t, wd)
     wd.tick()
     expect(t.sent).toEqual(['continue'])
+    // The SSH precondition was actually consulted (not sent via the local path).
+    expect(hasClaudeInputChrome).toHaveBeenCalled()
   })
 
   it('reads the gate RAW over SSH — canSendNow is called WITHOUT the remote-controlled non-dim companion', () => {

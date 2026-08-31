@@ -742,37 +742,40 @@ export function canSendNow(text: string, nonDimText?: string): SendGateResult {
   return { ok: true }
 }
 
-// Positive, Claude-SPECIFIC chrome the live pane carries: the boxed input row,
-// or a footer only Claude Code renders. Distinct from canSendNow, which is a
-// DENYLIST of shapes not to type into — a denylist is safe only when the pane
-// is ALWAYS Claude's own renderer, which holds for a LOCAL session but NOT for
-// SSH, where the remote draws every byte (a shell prompt, `[sudo] password:`, a
-// `[y/N]` confirm, `less`, a REPL). An SSH watchdog requires THIS before it may
-// send, so a retry can never land in a non-Claude pane. It is a scoping
-// precondition, NOT an authenticator: a remote that deliberately forges Claude's
-// whole UI is out of scope (it already owns its own shell); the cases this
-// closes are the accidental ones — a log line reading "API Error: 429", claude
-// exiting to the shell, an auth or confirm prompt — none of which carry it.
-// Deliberately NOT a bare `❯`: starship/pure/zsh prompts use that glyph, so a
-// shell would slip through; the BOXED row and the footers do not occur outside
-// Claude's TUI.
-const CLAUDE_CHROME_SIGNALS: RegExp[] = [
-  /^\s*│\s*[>❯][^│]*│\s*$/, // the boxed input row ("│ > … │" / "│ ❯ … │")
+// Claude Code pins its FOOTER as the bottom-most line of the pane in every
+// state: "⏵⏵ accept edits on …", "? for shortcuts", or the working
+// "… (esc to interrupt)". `hasClaudeInputChrome` requires that footer to be the
+// LAST non-blank line — the bottom-anchored "this pane is Claude's, right now"
+// signal.
+//
+// It exists because canSendNow is a DENYLIST of Claude-chrome shapes it must not
+// type INTO — safe only when the pane is ALWAYS Claude's own renderer, which
+// holds for a LOCAL session but NOT for SSH, where the remote draws every byte
+// (a shell prompt, `[sudo] password:`, a `[y/N]` confirm, `less`, a REPL, a
+// full-screen TUI like lazygit/btop). An SSH watchdog requires THIS before it
+// may send.
+//
+// Bottom-anchored on purpose (adversarial pass round 2): an earlier version
+// scanned the whole 14-line window, so a Claude footer left in scrollback
+// vouched for a sudo prompt two lines below it, a `hasRule && hasBar` pairing
+// matched any rounded-border TUI, and a log line merely CONTAINING "esc to
+// interrupt" forged it. When claude exits to a shell, or the user runs any
+// program, or a log/pager/TUI is on screen, THAT is the last line — never
+// Claude's footer — so none of them vouch. Scoping precondition, not an
+// authenticator: a remote that renders Claude's exact footer as its literal
+// bottom line is forging Claude's UI and is out of scope (it already owns its
+// own shell); the cases this closes are the accidental ones.
+const CLAUDE_FOOTER_SIGNALS: RegExp[] = [
   /^\s*⏵⏵/, // the mode footer ("⏵⏵ accept edits on …")
-  /^\s*\?\s+for shortcuts\b/i, // the shortcuts footer hint
-  /shift\+tab to (?:cycle|select)/i, // the tab-cycle footer hint
-  /\|\s*v\d+\.\d+\.\d+\b/, // the footer version segment ("… | v2.1.201")
+  /\?\s+for\s+shortcuts\b/i, // the shortcuts footer hint
   /esc to interrupt/i, // the working/streaming footer
 ]
 
 export function hasClaudeInputChrome(text: string): boolean {
-  const lines = stripAnsi(text).split('\n')
-  const tail = lines.slice(Math.max(0, lines.length - SEND_GATE_TAIL_LINES))
-  if (tail.some((l) => CLAUDE_CHROME_SIGNALS.some((r) => r.test(l)))) return true
-  // The input-box FRAME: a box-drawing rule AND a bar-gutter row present
-  // together in the window. A lone rule can be a table border (psql/duf), so
-  // both are required — the pairing is Claude's input box, not tabular output.
-  const hasRule = tail.some((l) => /^[\s─╭╮╰╯]+$/.test(l) && /─{3,}/.test(l))
-  const hasBar = tail.some((l) => /^\s*│.*│\s*$/.test(l))
-  return hasRule && hasBar
+  const nonBlank = stripAnsi(text)
+    .split('\n')
+    .map((l) => l.replace(/\s+$/, ''))
+    .filter((l) => l.length > 0)
+  const last = nonBlank[nonBlank.length - 1] ?? ''
+  return CLAUDE_FOOTER_SIGNALS.some((r) => r.test(last))
 }

@@ -451,25 +451,22 @@ describe('interactive rate-limit-options menu', () => {
   })
 })
 
-describe('hasClaudeInputChrome (SSH send precondition) — positive Claude-pane evidence', () => {
+describe('hasClaudeInputChrome (SSH send precondition) — bottom-anchored Claude footer', () => {
   const RULE = '─────────────────────────────────────────'
   const FOOTER = '  ⏵⏵ accept edits on (shift+tab to cycle) · ? for shortcuts'
 
-  it('true: a genuine Claude input pane (frame + footer)', () => {
+  it('true: a genuine Claude pane — the footer is the last non-blank line', () => {
     expect(hasClaudeInputChrome(['Some output', RULE, '❯ ', RULE, FOOTER].join('\n'))).toBe(true)
   })
-  it('true: the boxed input row alone', () => {
-    expect(hasClaudeInputChrome('output\n│ > type here                    │')).toBe(true)
+  it('true: the footer is the last line even with trailing blank lines', () => {
+    expect(hasClaudeInputChrome([RULE, '❯ ', RULE, FOOTER, '', ''].join('\n'))).toBe(true)
   })
-  it('true: the working footer ("esc to interrupt")', () => {
-    expect(hasClaudeInputChrome('✻ Cogitating… (esc to interrupt)')).toBe(true)
-  })
-  it('true: the version footer segment', () => {
-    expect(hasClaudeInputChrome('  Sonnet 4.5 · claude-conductor | v2.1.201')).toBe(true)
+  it('true: the working footer ("esc to interrupt") as the last line', () => {
+    expect(hasClaudeInputChrome('working…\n✻ Cogitating… (esc to interrupt)')).toBe(true)
   })
 
-  // The whole point over SSH: a remote-drawn NON-Claude pane must read false, so
-  // the watchdog never types a retry into it.
+  // The whole point over SSH: any remote-drawn NON-Claude pane must read false,
+  // because ITS content — not Claude's footer — is the bottom line.
   it.each([
     ['bash prompt', 'nicholas@rocky:~$ '],
     ['bash prompt with the user half-typed command', 'nicholas@rocky:~$ sudo rm -rf /tmp/build'],
@@ -480,7 +477,14 @@ describe('hasClaudeInputChrome (SSH send precondition) — positive Claude-pane 
     ['the less/man pager', '(END)'],
     ['a psql REPL', 'production=# SELECT 1;'],
     ['a starship/zsh shell using ❯ as its own prompt', 'nicholas@rocky ~/src \n❯ '],
-    ['a bare box-rule table border (psql/duf) with no input row', ['name  value', RULE, 'a     1'].join('\n')],
+    // Round-2 repros: residual Claude chrome must NOT vouch once the pane moved on.
+    ['claude exited to a shell (footer still in scrollback, sudo prompt at bottom)',
+      [RULE, '❯ ', RULE, FOOTER, '', 'nicholas@rocky:~/src$ sudo dnf upgrade', '[sudo] password for nicholas: '].join('\n')],
+    ['a stale footer with one shell line below it (the 1-line-gap attack)',
+      [FOOTER, 'nicholas@rocky:~$ '].join('\n')],
+    ['a rounded-border TUI (lazygit/gum) — rule + bar but no footer',
+      ['╭────────────────────────╮', '│ Drop the production DB? │', '╰────────────────────────╯'].join('\n')],
+    ['a tail -f log whose last line merely mentions the words', 'ERROR upstream API Error: 529 overloaded_error'],
   ])('false: %s', (_label, tail) => {
     expect(hasClaudeInputChrome(tail)).toBe(false)
   })
