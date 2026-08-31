@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, probeTmuxLive, SSHOptions } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, probeTmuxLive, SSHOptions, SshEndTarget } from '../pty-manager'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
@@ -283,16 +283,75 @@ export const sessionIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+
 // for LOCAL name matching — so this schema is a bound/DoS guard, and the
 // argv-injection defence lives at buildSshExecArgs (host/user from the saved
 // config only).
+// A saved config's own id (CSPRNG hex from shared/id.ts) and the credential-key
+// charset. One definition, shared by every handler that turns a renderer-named
+// configId into a keychain read + an ssh exec, so they cannot drift apart.
+const configIdSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9]+$/, 'configId has invalid characters')
+
 const checkDetachedLiveSchema = z.object({
-  configId: z.string().min(1).max(64).regex(/^[A-Za-z0-9]+$/, 'configId has invalid characters'),
+  configId: configIdSchema,
   sessionIds: z.array(sessionIdSchema).max(64),
 })
+
+// SSH_END_REMOTE input, in two shapes (Phase 3.5).
+//
+//   'sess-abc'                            — a LIVE session: main already holds
+//                                           its target from spawn.
+//   { sessionId, configId? }              — a DETACHED remote from the resume
+//                                           registry: no live target exists, so
+//                                           the handler rebuilds one from the
+//                                           SAVED config named by `configId`.
+//
+// The bare-string form is kept because the End-vs-Leave dialog still sends it;
+// a union means one channel, one place the target is resolved, and one surface
+// to audit — rather than two handlers that could disagree about what may be
+// killed. Neither id ever reaches the remote command: the tmux target is
+// derived LOCALLY as `ccc-<safeSid(sessionId)>` (buildRemoteTmuxKillCommand),
+// and host/user/port come only from the saved config.
+const endRemoteSchema = z.union([
+  sessionIdSchema,
+  z.object({ sessionId: sessionIdSchema, configId: configIdSchema.optional() }),
+])
 
 // SSH Persistent (resume liveness, tier 1) input. A bound/DoS guard only — the
 // authoritative host validation is isValidPingHost inside host-ping.ts (charset,
 // leading-dash, length), which runs before any spawn and is what the unit tests
 // assert against. Both layers reject; neither sanitises-and-continues.
 const pingHostSchema = z.object({ host: z.string().min(1).max(255) })
+
+/**
+ * Rebuild an End-remote target from the SAVED config on disk (Phase 3.5).
+ *
+ * The one place a DETACHED remote's connection details come from, and every
+ * field is read from main's own state: host/user/port from the config file,
+ * password and sudo password from that config's OWN keychain slots (the same
+ * `<id>` / `<id>_sudo` keys pty:spawn uses), the container runtime from the
+ * saved SSH block. The caller passes an id; it does not pass a host, a
+ * credential, or a command — the same trust rule as bindSshToSavedConfig, and
+ * the same shape SSH_CHECK_DETACHED_LIVE already relies on.
+ *
+ * `undefined` for an unknown id, a non-SSH config, or a config with no SSH
+ * block: End then has no target and no-ops, which is the correct fail-closed
+ * answer — there is no host to reach, so there is nothing to guess at.
+ *
+ * The runtime rides along deliberately. Without it a detached CONTAINER
+ * session's kill would drop the tmux client and leave claude running inside the
+ * container forever — #572's one-hop-deeper orphan, reached by the detached
+ * road instead of the live one.
+ */
+function endTargetFromSavedConfig(configId: string): SshEndTarget | undefined {
+  const saved = findSavedConfig(readConfig('configs'), configId)
+  if (!saved || saved.sessionType !== 'ssh' || !saved.sshConfig) return undefined
+  const s = saved.sshConfig
+  return {
+    username: s.username,
+    host: s.host,
+    port: Number(s.port),
+    password: loadCredential(configId) ?? undefined,
+    runtime: s.runtime,
+    sudoPassword: loadCredential(configId + '_sudo') ?? undefined,
+  }
+}
 
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {
@@ -509,9 +568,24 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
   // SSH tmux enhancement (item 4): deliberately END a persistent remote session
   // (tmux kill-session + sidecar cleanup over a SEPARATE ssh exec). The renderer
   // still tears down the local PTY itself (killSessionPty) after this resolves.
-  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, sessionId: string) => {
-    sessionIdSchema.parse(sessionId)
-    endSshRemote(sessionId)
+  //
+  // Phase 3.5 adds the DETACHED branch: a remote the user LEFT RUNNING has no
+  // live target in main (killPty dropped it, and a restart never had one), so
+  // when the payload names a `configId` the target is rebuilt from the SAVED
+  // config exactly as SSH_CHECK_DETACHED_LIVE does — host/user/port off the
+  // config on disk, secrets straight from that config's own keychain slots. The
+  // renderer supplies two ids and nothing else; it can neither name a host nor
+  // name the tmux session to kill (that is `ccc-<safeSid(sessionId)>`, derived
+  // locally in buildRemoteTmuxKillCommand).
+  //
+  // Best-effort throughout: an unknown config, a non-SSH config, an unreachable
+  // host and an already-dead session all end the same way — nothing thrown at
+  // the renderer, which drops the registry entry regardless.
+  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, payload: unknown) => {
+    const parsed = endRemoteSchema.parse(payload)
+    const sessionId = typeof parsed === 'string' ? parsed : parsed.sessionId
+    const configId = typeof parsed === 'string' ? undefined : parsed.configId
+    endSshRemote(sessionId, configId ? endTargetFromSavedConfig(configId) : undefined)
   })
 
   // SSH Persistent (resume liveness): is a set of DETACHED `ccc-<sessionId>` tmux

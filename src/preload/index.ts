@@ -180,8 +180,15 @@ export interface ElectronAPI {
      *  persistence + remote-account descriptors pushed by main. */
     onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
     /** item 4: END the remote session (tmux kill-session + sidecar cleanup via
-     *  a separate ssh exec) then kill the local PTY. */
-    endRemote: (sessionId: string) => Promise<void>
+     *  a separate ssh exec) then kill the local PTY.
+     *
+     *  A bare id ends a LIVE session, whose target main captured at spawn. The
+     *  object form (Phase 3.5) ends a DETACHED one from the resume registry:
+     *  main has no captured target for it, so it rebuilds the connection from
+     *  the SAVED config named by `configId` (host/user/port + that config's own
+     *  keychain secrets). Passing ids is the whole of the caller's power — the
+     *  host is never named here, and neither is the tmux session. */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
     /** SSH Persistent (resume liveness): ask main whether a config's detached
      *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
     checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../shared/types').DetachedRemoteLiveness>
@@ -873,7 +880,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(channel, handler)
       return () => ipcRenderer.removeListener(channel, handler)
     },
-    endRemote: (sessionId: string) => ipcRenderer.invoke(IPC.SSH_END_REMOTE, sessionId),
+    endRemote: (target: string | { sessionId: string; configId?: string }) => ipcRenderer.invoke(IPC.SSH_END_REMOTE, target),
     checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) =>
       ipcRenderer.invoke(IPC.SSH_CHECK_DETACHED_LIVE, payload),
     pingHost: (payload: { host: string }) => ipcRenderer.invoke(IPC.SSH_PING_HOST, payload),

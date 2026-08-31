@@ -852,14 +852,25 @@ function clearLastResumeTarget(sessionId: string): void {
 // `sudoPassword` so a ROOTFUL container's kill can answer sudo's own prompt.
 // Both obey the same custody rule as `password` above — main-process only,
 // never IPC'd, never logged, never in argv.
-const sshTargetBySession = new Map<string, {
+/**
+ * Everything the End exec needs to reach a host and clean up after one session.
+ *
+ * Captured at spawn into `sshTargetBySession` for a LIVE session, and — since
+ * Phase 3.5 — rebuildable from the SAVED config for a DETACHED one, which the
+ * map cannot hold (see endSshRemote's `fallbackTarget`). Both producers are
+ * main-process only: the renderer never supplies a field of this, it only names
+ * a session id and a config id.
+ */
+export interface SshEndTarget {
   username: string
   host: string
   port: number
   password?: string
   runtime?: SshRuntime
   sudoPassword?: string
-}>()
+}
+
+const sshTargetBySession = new Map<string, SshEndTarget>()
 
 // SSH tmux enhancement (items 1/4): sessions whose launch actually wrapped in a
 // tmux persistence session (`tmuxWrapped` at writeClaudeCmd). The remote for
@@ -977,8 +988,19 @@ const END_REMOTE_SUDO_PROMPT_RE = /^password:\s*$/
  * one shape it must not swallow is already excluded above.
  */
 const END_REMOTE_SSH_PROMPT_RE = /password[:?]\s*$/i
-export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' | 'no-target'> {
-  const target = sshTargetBySession.get(sessionId)
+export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<'completed' | 'failed' | 'no-target'> {
+  // Phase 3.5 — the DETACHED case. `sshTargetBySession` is captured at spawn and
+  // dropped by killPty, and "Leave running" IS a killPty: so for every remote in
+  // the resume registry the map is empty, and before this the End IPC resolved
+  // 'no-target' and left the remote tmux + claude alive forever. That is the
+  // #572 orphan class arriving by a different road — a user pressing Remove and
+  // being told nothing while ~350MB of their host stays spoken for.
+  //
+  // The fallback is rebuilt by the CALLER from the saved config + keychain (see
+  // the SSH_END_REMOTE handler), never from the renderer. A live target still
+  // WINS: it carries the session's real runtime and the credentials it actually
+  // authed with, which is strictly better evidence than the config on disk.
+  const target = sshTargetBySession.get(sessionId) ?? fallbackTarget
   if (!target) return Promise.resolve('no-target')
   const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
   const hasSudoPassword = Boolean(target.sudoPassword)

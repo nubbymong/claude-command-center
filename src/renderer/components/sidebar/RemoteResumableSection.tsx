@@ -185,25 +185,25 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
    * to go, and a host that cannot be reached now is exactly the case where
    * leaving the card forever is the worse outcome.
    *
-   * KNOWN GAP (reported with this phase, not fixed here): `ssh:endRemote` keys
-   * off `sshTargetBySession`, a MAIN-process map captured at spawn and cleared
-   * by `killPty` — which "Leave running" calls. So for a detached entry the
-   * handler resolves 'no-target' and the remote tmux session survives. The call
-   * is made anyway (it is correct for the one case that still has a target, and
-   * harmless otherwise); closing the gap needs a main-side target rebuilt from
-   * the saved config, the way `ssh:checkDetachedLive` already does — an
-   * IPC/credential change that is its own ADR-009 pass.
+   * The configId is what makes the kill actually land (Phase 3.5). Main has no
+   * captured target for a DETACHED remote — `killPty` dropped it, and "Leave
+   * running" is a killPty — so the bare-id call resolved 'no-target' and left
+   * the remote tmux + claude alive. Naming the config lets main rebuild the
+   * connection from the saved config on disk. Prefer the id of the config this
+   * entry currently PAIRS with (which follows a re-created config to its new
+   * id) over the one recorded at detach time.
    */
   const removeRemote = useCallback(async (entry: DetachedRemote, mightBeLive: boolean) => {
     if (mightBeLive) {
+      const configId = configForDetachedEntry(entry, configs)?.id ?? entry.configId
       try {
-        await window.electronAPI?.ssh?.endRemote?.(entry.sessionId)
+        await window.electronAPI?.ssh?.endRemote?.({ sessionId: entry.sessionId, configId })
       } catch {
         /* best-effort: the remote is at worst still detached, and the card goes */
       }
     }
     dropEntry(entry.sessionId)
-  }, [dropEntry])
+  }, [dropEntry, configs])
 
   /** The whole-card action: verify THIS config, then resume or explain. */
   const activateCard = useCallback(async (entry: DetachedRemote) => {

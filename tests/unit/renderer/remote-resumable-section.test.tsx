@@ -28,7 +28,7 @@ import type { DetachedRemote, DetachedRemoteLiveness, HostPingResult } from '../
 
 const checkDetachedLive = vi.fn<[{ configId: string; sessionIds: string[] }], Promise<DetachedRemoteLiveness>>()
 const pingHost = vi.fn<[{ host: string }], Promise<HostPingResult>>()
-const endRemote = vi.fn<[string], Promise<void>>()
+const endRemote = vi.fn<[string | { sessionId: string; configId?: string }], Promise<void>>()
 const addSession = vi.fn()
 const persistSessionState = vi.fn()
 
@@ -411,9 +411,21 @@ describe('Remote Resumable — context menu', () => {
     await mountThen({ liveness: { 'det-1': 'live' } })
     await rightClick(cards()[0])
     await click(q('[data-testid="rr-ctx-remove"]'))
-    expect(endRemote).toHaveBeenCalledWith('det-1')
+    // Phase 3.5: BOTH ids. Main has no captured target for a DETACHED remote
+    // (killPty dropped it), so without the configId to rebuild the connection
+    // from the saved config the kill is a silent no-op and the remote lives on.
+    expect(endRemote).toHaveBeenCalledWith({ sessionId: 'det-1', configId: 'cfg-1' })
     expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
     expect(persistSessionState).toHaveBeenCalled()
+  })
+
+  it('names the config the entry pairs with NOW, following a re-created config to its new id', async () => {
+    useConfigStore.setState({ configs: [cfg({ id: 'cfgrecreated' })] })
+    useDetachedRemotesStore.setState({ entries: [entry({ configId: 'cfgdeleted' })] })
+    await mountThen({ liveness: { 'det-1': 'live' } })
+    await rightClick(cards()[0])
+    await click(q('[data-testid="rr-ctx-remove"]'))
+    expect(endRemote).toHaveBeenCalledWith({ sessionId: 'det-1', configId: 'cfgrecreated' })
   })
 
   it('a kill FAILURE still drops the entry', async () => {
@@ -422,7 +434,7 @@ describe('Remote Resumable — context menu', () => {
     await mount()
     await rightClick(cards()[0])
     await click(q('[data-testid="rr-ctx-remove"]'))
-    expect(endRemote).toHaveBeenCalledWith('det-1')
+    expect(endRemote).toHaveBeenCalledWith({ sessionId: 'det-1', configId: 'cfg-1' })
     expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
   })
 
@@ -467,7 +479,10 @@ describe('Remote Resumable — deleted saved config', () => {
     expect(dialog!.textContent).toContain('its saved config was deleted')
 
     await click(q('[data-testid="rr-missing-remove"]'))
-    expect(endRemote).toHaveBeenCalledWith('det-1')
+    // Nothing pairs with it any more, so the id recorded at detach time is the
+    // best (and only) thing to name. Main finds no config, so the kill no-ops —
+    // and the card still goes, which is what the user asked for.
+    expect(endRemote).toHaveBeenCalledWith({ sessionId: 'det-1', configId: 'cfg-1' })
     expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
   })
 
