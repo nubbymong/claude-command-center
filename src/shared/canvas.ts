@@ -1711,6 +1711,13 @@ export function sanitizeEvidence(value: unknown): AnnotationEvidence | undefined
  *
  * `observations` is how many notes rode an approval. They are recorded, not
  * owed, so an approval carrying them is still a pass — it just says so.
+ *
+ * A PLAN is the third vocabulary (owner spec, 2026-08-31). Its rejected state
+ * reads REVISIONS, because a plan has no Reject: the user asked for another
+ * turn of an iterative document, and a badge saying REJECTED in the Library
+ * contradicts the button they actually pressed. The STORED verdict is still
+ * `rejected` — this is a display mapping and nothing else, so the C1 machine,
+ * its transitions and its audit trail are untouched.
  */
 export function verdictLabel(version: CanvasVersion, opts?: { observations?: number }): string {
   const uat = version.mode === 'uat'
@@ -1720,8 +1727,36 @@ export function verdictLabel(version: CanvasVersion, opts?: { observations?: num
     const base = uat ? 'PASSED' : 'APPROVED'
     return (opts?.observations ?? 0) > 0 ? `${base} WITH OBSERVATIONS` : base
   }
-  if (state === 'rejected') return uat ? 'FAILED' : 'REJECTED'
+  if (state === 'rejected') return uat ? 'FAILED' : version.mode === 'plan' ? 'REVISIONS' : 'REJECTED'
   return state.toUpperCase()
+}
+
+/**
+ * Which TREATMENT a verdict label wears — the colour half of `verdictLabel`.
+ *
+ * It lives here, beside the function that mints the words, because the surfaces
+ * that paint a badge do not have the verdict: the Library composes its rows in
+ * MAIN and hands the renderer a finished string (`CanvasLibraryRow.verdict`), so
+ * three separate call sites each grew their own `startsWith('REJECTED')` ladder
+ * over the same vocabulary. Three copies of a mapping that only one file can
+ * change is a drift bug waiting for its third word — and 'REVISIONS' was that
+ * third word: every one of those ladders would have fallen through to the muted
+ * default and painted a plan revision grey.
+ *
+ * 'bad' is the same tone FAILED and REJECTED already wore. A revision requested
+ * is not a failure, but it IS the outcome that owes the agent another version,
+ * and giving it its own colour would say a plan's two outcomes are three.
+ *
+ * Prefix-matched because `verdictLabel` appends "WITH OBSERVATIONS".
+ */
+export type VerdictOutcome = 'ok' | 'bad' | 'open' | 'other'
+
+export function verdictOutcomeOf(label: string): VerdictOutcome {
+  const v = (label || '').toUpperCase()
+  if (v.startsWith('APPROVED') || v.startsWith('PASSED')) return 'ok'
+  if (v.startsWith('REJECTED') || v.startsWith('FAILED') || v.startsWith('REVISIONS')) return 'bad'
+  if (v === 'OPEN' || v === 'DRAFT') return 'open'
+  return 'other'
 }
 
 const PACK_NAME_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const

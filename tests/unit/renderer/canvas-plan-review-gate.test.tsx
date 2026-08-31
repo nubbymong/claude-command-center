@@ -262,14 +262,19 @@ describe('the revision words', () => {
     expect(q('reject-needs-note')!.textContent).toContain('Revisions need a note')
   })
 
-  it('a settled plan round reads REVISIONS REQUESTED, never REJECTED', async () => {
+  it('a settled plan round reads REVISIONS, never REJECTED — the badge`s own word', async () => {
     const { roundOutcomeLabel } = await import('../../../src/renderer/components/CanvasNotesPanel')
+    const { verdictLabel } = await import('../../../src/shared/canvas')
     const group = {
       review: { id: 'R1', versionId: 'v3', decision: 'reject' as const },
       closedNotes: [],
     } as never
-    expect(roundOutcomeLabel(group, [plan()])).toBe('REVISIONS REQUESTED')
+    expect(roundOutcomeLabel(group, [plan()])).toBe('REVISIONS')
     expect(roundOutcomeLabel(group, [mockup()])).toBe('REJECTED')
+    // One fact, one word: the panel row and the History/Library badge agree.
+    const rejected = { verdict: { state: 'rejected' as const, by: 'user' as const, at: 'x' } }
+    expect(roundOutcomeLabel(group, [plan()])).toBe(verdictLabel(plan(rejected)))
+    expect(roundOutcomeLabel(group, [mockup()])).toBe(verdictLabel(mockup(rejected)))
   })
 
   it('a closed plan version says it went back for revisions', async () => {

@@ -22,6 +22,7 @@ import {
   sanitizeStamp,
   sanitizeTrail,
   verdictLabel,
+  verdictOutcomeOf,
   type Annotation,
   type CanvasVersion,
   type EvidenceStateStamp,
@@ -310,6 +311,76 @@ describe('verdictLabel', () => {
     expect(verdictLabel(approved, { observations: 0 })).toBe('PASSED')
     // Observations never soften a FAIL: they only ride an approval.
     expect(verdictLabel(version({ verdict: { state: 'rejected', at: 'now', by: 'user' } }), { observations: 2 })).toBe('FAILED')
+  })
+
+  // ── A PLAN's third vocabulary (owner spec, 2026-08-31) ────────────────────
+  //
+  // A plan has no Reject — the buttons are Approve and Submit Revisions — so a
+  // History or Library badge reading REJECTED contradicts the gesture the user
+  // actually made. The mapping is DISPLAY ONLY: the stored verdict stays
+  // 'rejected' so the C1 machine, its transitions and its audit trail are
+  // untouched.
+  const plan = (v?: CanvasVersion['verdict']): CanvasVersion =>
+    version({ mode: 'plan', source: { mode: 'design', entry: 'index.html' }, ...(v ? { verdict: v } : {}) })
+  const mockup = (v?: CanvasVersion['verdict']): CanvasVersion =>
+    version({ mode: 'design', source: { mode: 'design', entry: 'index.html' }, ...(v ? { verdict: v } : {}) })
+  const REJECTED = { state: 'rejected', at: 'now', by: 'user' } as const
+
+  it('reads REVISIONS for a plan, and leaves mockup and testing exactly as they were', () => {
+    expect(verdictLabel(plan(REJECTED))).toBe('REVISIONS')
+    expect(verdictLabel(mockup(REJECTED))).toBe('REJECTED')
+    expect(verdictLabel(version({ verdict: REJECTED }))).toBe('FAILED')
+  })
+
+  it('maps the WORD only — the stored verdict is untouched, and every other plan state is shared', () => {
+    const p = plan(REJECTED)
+    expect(p.verdict!.state).toBe('rejected')
+    expect(verdictLabel(plan({ state: 'approved', at: 'now', by: 'user' }))).toBe('APPROVED')
+    expect(verdictLabel(plan({ state: 'superseded', at: 'now', by: 'system' }))).toBe('SUPERSEDED')
+    expect(verdictLabel(plan({ state: 'withdrawn', at: 'now', by: 'user' }))).toBe('WITHDRAWN')
+    expect(verdictLabel(plan())).toBe('OPEN')
+  })
+})
+
+describe('verdictOutcomeOf — one classifier for every badge colour', () => {
+  const REJECTED = { state: 'rejected', at: 'now', by: 'user' } as const
+  const planV = version({ mode: 'plan', source: { mode: 'design', entry: 'index.html' }, verdict: REJECTED })
+  const mockupV = version({ mode: 'design', source: { mode: 'design', entry: 'index.html' }, verdict: REJECTED })
+
+  it('gives a plan revision the SAME treatment a rejection and a failure get', () => {
+    // The whole point of the mapping: the word changes, the colour must not.
+    // Three surfaces paint from this (`CanvasLibrary`, `CanvasEmptyState`,
+    // `CanvasEvidenceRecall`) and none of them can see the stored verdict.
+    expect(verdictOutcomeOf(verdictLabel(planV))).toBe('bad')
+    expect(verdictOutcomeOf(verdictLabel(mockupV))).toBe('bad')
+    expect(verdictOutcomeOf(verdictLabel(version({ verdict: REJECTED })))).toBe('bad')
+    expect(verdictOutcomeOf(verdictLabel(planV))).toBe(verdictOutcomeOf(verdictLabel(mockupV)))
+  })
+
+  it('classifies the rest of the vocabulary, prefixes included', () => {
+    expect(verdictOutcomeOf('APPROVED')).toBe('ok')
+    expect(verdictOutcomeOf('APPROVED WITH OBSERVATIONS')).toBe('ok')
+    expect(verdictOutcomeOf('PASSED WITH OBSERVATIONS')).toBe('ok')
+    expect(verdictOutcomeOf('OPEN')).toBe('open')
+    expect(verdictOutcomeOf('DRAFT')).toBe('open')
+    expect(verdictOutcomeOf('SUPERSEDED')).toBe('other')
+    expect(verdictOutcomeOf('')).toBe('other')
+  })
+
+  it('classifies EVERY word verdictLabel can mint — nothing falls through unnoticed', () => {
+    // The failure this guards is exactly how REVISIONS would have shipped grey:
+    // a new label, three copied prefix ladders, and no test that walks the
+    // vocabulary. `other` is legitimate for the archival states, so the
+    // assertion is that a decided ACTIVE verdict is never unclassified.
+    for (const mode of ['design', 'plan', 'uat'] as const) {
+      const src = mode === 'uat'
+        ? ({ mode: 'uat', distRoot: 'F:/build/dist', entry: 'index.html' } as const)
+        : ({ mode: 'design', entry: 'index.html' } as const)
+      for (const state of ['approved', 'rejected'] as const) {
+        const label = verdictLabel(version({ mode, source: src, verdict: { state, at: 'now', by: 'user' } }))
+        expect(verdictOutcomeOf(label), `${mode}/${state} -> ${label}`).toBe(state === 'approved' ? 'ok' : 'bad')
+      }
+    }
   })
 })
 

@@ -187,6 +187,35 @@ beforeEach(() => {
   root = createRoot(container)
 })
 
+describe('the verdict badge', () => {
+  // A plan has no Reject, so its rejected verdict reads REVISIONS (owner spec,
+  // 2026-08-31). The word is the only thing that changes: this surface only
+  // ever sees a finished label composed in main, so the badge that would have
+  // fallen through to the muted default is what these pin.
+  it('gives a plan REVISIONS the SAME treatment as a mockup REJECTED', async () => {
+    const { verdictBadge } = await import('../../../src/renderer/components/CanvasEmptyState')
+    const plan = verdictBadge(libRow({ kind: 'plan', verdict: 'REVISIONS' }))
+    const mockup = verdictBadge(libRow({ verdict: 'REJECTED' }))
+    const pack = verdictBadge(libRow({ kind: 'pack', verdict: 'FAILED' }))
+    expect(plan.text).toBe('REVISIONS')
+    expect(mockup.text).toBe('REJECTED')
+    // Identical colour derivation — the whole point of mapping the word only.
+    expect(plan.className).toBe(mockup.className)
+    expect(plan.className).toBe(pack.className)
+    expect(plan.className).toContain('cfp-vb-bad')
+    expect(plan.className).not.toContain('cfp-vb-muted')
+  })
+
+  it('still reads the rest of the vocabulary as it did', async () => {
+    const { verdictBadge } = await import('../../../src/renderer/components/CanvasEmptyState')
+    expect(verdictBadge(libRow({ verdict: 'APPROVED WITH OBSERVATIONS' })).className).toContain('cfp-vb-ok')
+    expect(verdictBadge(libRow({ verdict: 'OPEN' })).className).toContain('cfp-vb-open')
+    expect(verdictBadge(libRow({ verdict: 'SUPERSEDED' })).className).toContain('cfp-vb-muted')
+    // Row-level facts still win over the verdict word.
+    expect(verdictBadge(libRow({ kind: 'plan', verdict: 'REVISIONS', archived: true })).text).toBe('ARCHIVED')
+  })
+})
+
 describe('the masthead', () => {
   it('draws the staged artwork in relief beside the wordmark', async () => {
     await render()

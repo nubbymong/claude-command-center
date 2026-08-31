@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Annotation, CanvasVersion } from '../../shared/canvas'
+import { verdictOutcomeOf, type Annotation, type CanvasVersion } from '../../shared/canvas'
 import { stampChips, trailLineParts } from '../canvas/canvas-state-stamp'
 import { trailClockTime } from '../../shared/canvas-review-serialize'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
@@ -163,12 +163,12 @@ export function CanvasEvidenceRecall({
     }
   }, [note])
 
+  // Through the shared classifier rather than a fourth copy of the prefix
+  // ladder: the word arrives already composed by `verdictLabel`, so only the
+  // file that mints the vocabulary can be trusted to classify it.
+  const badgeOutcome = verdictOutcomeOf(verdict)
   const badgeTone =
-    verdict.startsWith('FAILED') || verdict.startsWith('REJECTED')
-      ? 'var(--color-red)'
-      : verdict.startsWith('PASSED') || verdict.startsWith('APPROVED')
-        ? 'var(--color-green)'
-        : 'var(--text-muted)'
+    badgeOutcome === 'bad' ? 'var(--color-red)' : badgeOutcome === 'ok' ? 'var(--color-green)' : 'var(--text-muted)'
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]" data-testid="canvas-recall">

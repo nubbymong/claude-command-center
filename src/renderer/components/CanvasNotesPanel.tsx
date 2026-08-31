@@ -321,8 +321,10 @@ export function roundOutcomeLabel(group: ReviewGroup, versions: readonly CanvasV
   if (hasObservations || decision === undefined) return settledLabel(group, versions) ?? 'settled'
   if (decision === 'approve') return uat ? 'PASSED' : 'APPROVED'
   // A plan was never rejected — the user asked for another turn. Same decision,
-  // same machine; the row says what the button said (see decisionLabels).
-  if (mode === 'plan') return 'REVISIONS REQUESTED'
+  // same machine; the row says what the button said (see decisionLabels). The
+  // SAME word `verdictLabel` puts on the History and Library badges: one fact
+  // must not have two names depending on which panel is showing it.
+  if (mode === 'plan') return 'REVISIONS'
   return uat ? 'FAILED' : 'REJECTED'
 }
 
