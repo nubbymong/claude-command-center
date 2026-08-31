@@ -259,7 +259,16 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   // value reaches this command (the #242 sink posture is unchanged). Errors are
   // swallowed (old tmux with no `mouse` option, or the server briefly gone) so
   // the launch always falls through to claude -- fail-open toward running.
-  const mouseOff = `${tmuxBinToken} set-option -t ${target} mouse off 2>/dev/null`
+  // Also force the tmux STATUS BAR off for CCC's own session (owner call
+  // 2026-08-31: happy to lose the bar so the watchdog works). A visible status
+  // bar REPAINTS on tmux's `status-interval` (default 15s), and every repaint is
+  // PTY output that resets the watchdog's silence clock, so the sleep indicator
+  // would never fire over a tmux-wrapped SSH session. Session-scoped
+  // (`-t ${target}`, no `-g`) and error-swallowed, exactly like the mouse-off
+  // beside it, and independent of the `attach` that follows (a `;`, not `&&`).
+  const mouseOff =
+    `${tmuxBinToken} set-option -t ${target} mouse off 2>/dev/null; ` +
+    `${tmuxBinToken} set-option -t ${target} status off 2>/dev/null`
   // Fresh-create branch only: resume the prior conversation on a reconnect
   // where the remote session was gone. Appended to innerCmd BEFORE quoting so
   // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.
