@@ -138,6 +138,9 @@ const { buildTmuxStageCommand, TMUX_STAGE_SHA256 } = await import('../../src/mai
 // to either token doesn't silently desync the test expectations from the
 // real value.
 const { ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR } = await import('../../src/main/ssh-tmux')
+// The End container-kill builder, so the derived-runtime capture can be proven
+// to actually produce a kill command (ADR-009 legacy-docker gating).
+const { buildContainerKillCommand } = await import('../../src/main/providers/claude/ssh-shim')
 registerProvider(new ClaudeProvider())
 
 const fakeWin = { webContents: { send: () => {} }, isDestroyed: () => false } as never
@@ -260,6 +263,55 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     expect(claudeWrite).toBeDefined()
     expect(claudeWrite![0] as string).not.toContain('has-session')
     expect(claudeWrite![0] as string).not.toMatch(/new-session\s+-s\s+ccc-/)
+  })
+
+  // ADR-009: a config written BEFORE the structured Runtime field existed says
+  // `postCommand: 'sudo docker exec -it <name> bash'` and carries no `runtime`
+  // at all — but claude still ends up inside the container. Keying the gate on
+  // `ssh.runtime` alone classed those sessions as plain hosts, so they got BOTH
+  // container defects the structured path had already fixed: tmux wrapped them
+  // at hop 2 (statusline dead) and End composed no in-container kill (#572).
+  // Mutation to prove this can fail: gate on `ssh.runtime?.type` again.
+  it('LEGACY docker post-command (no structured runtime) is gated as a container: bare claude, no staging', () => {
+    onDataListeners.length = 0
+    const sid = 's-legacy-docker'
+    spawnPty(fakeWin, sid, { ssh: { ...SSH, postCommand: 'sudo docker exec -it ccc-test bash' } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500) // idle: connecting -> awaiting-postcommand
+    getSshFlow(sid)!.runPostCommand()
+    vi.advanceTimersByTime(300)
+    feedPtyData('user@container:~$ ') // inner shell -> awaiting-claude
+    getSshFlow(sid)!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite![0] as string).not.toContain('has-session')
+    expect(claudeWrite![0] as string).not.toMatch(/new-session\s+-s\s+ccc-/)
+  })
+
+  it('a NON-docker post-command is still a plain host session (the parse must not over-match)', () => {
+    onDataListeners.length = 0
+    const sid = 's-plain-postcmd'
+    spawnPty(fakeWin, sid, { ssh: { ...SSH, postCommand: 'source ~/.venv/bin/activate' } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500)
+    getSshFlow(sid)!.runPostCommand()
+    vi.advanceTimersByTime(300)
+    feedPtyData('user@host:~$ ')
+    getSshFlow(sid)!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite![0] as string).toContain(`new-session -s ccc-${sid}`)
   })
 
   it('detachable default (undefined) still wraps in tmux on tmux=path', () => {
@@ -2139,6 +2191,37 @@ describe('endSshRemote target lifecycle — survives a drop, cleared on delibera
     killPty('s-endtarget-plain')
   })
 
+  // ADR-009, the End half of the legacy-docker gap: without an effective
+  // runtime these sessions captured `runtime: undefined`, so
+  // buildContainerKillCommand returned '' and their claude orphaned inside the
+  // container forever — #572, still open for exactly the population that had
+  // been entering containers the longest.
+  // Mutation to prove this can fail: capture `ssh.runtime` instead.
+  it('a LEGACY docker post-command captures a DERIVED container runtime so End can reach inside', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-endtarget-legacy', {
+      ssh: { ...SSH, postCommand: 'sudo docker exec -it ccc-test bash' },
+    } as never)
+    const t = _getSshTargetForTest('s-endtarget-legacy')
+    expect(t?.runtime).toEqual({ type: 'container', engine: 'docker', container: 'ccc-test', mode: 'exec', sudo: true })
+    expect(buildContainerKillCommand('s-endtarget-legacy', t?.runtime)).toContain(
+      "docker exec ccc-test bash -c '",
+    )
+    killPty('s-endtarget-legacy')
+  })
+
+  it('a structured runtime always WINS over a docker-shaped post-command', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-endtarget-both', {
+      ssh: {
+        ...SSH,
+        postCommand: 'sudo docker exec -it decoy bash',
+        runtime: { type: 'container', engine: 'podman', container: 'real-one' },
+      },
+    } as never)
+    expect(_getSshTargetForTest('s-endtarget-both')?.runtime).toEqual({ type: 'container', engine: 'podman', container: 'real-one' })
+    killPty('s-endtarget-both')
+  })
 })
 
 // ===========================================================================

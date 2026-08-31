@@ -40,6 +40,18 @@ export function readContainerName(runtime: SshRuntime): string {
 }
 
 /**
+ * Does this runtime put claude one hop deeper, inside a container?
+ *
+ * The single predicate every container-conditional decision keys on (the tmux
+ * persistence gate and the End container-kill), so a runtime that reached the
+ * app from a legacy free-text post-command is classed the same way a structured
+ * one is. See `effectiveRuntime` in pty-manager's SSH spawn branch.
+ */
+export function isContainerRuntime(runtime: SshRuntime | undefined): boolean {
+  return runtime?.type === 'container'
+}
+
+/**
  * Runtime types this build understands. A `runtime` block that is PRESENT but
  * carries anything else is a corrupt or hand-edited config, not a host session.
  */

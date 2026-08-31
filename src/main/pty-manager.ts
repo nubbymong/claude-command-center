@@ -5,7 +5,7 @@ import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
 import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ssh-tmux'
 import { stripAnsiForSentinel } from './ansi-strip'
 import { randomId } from '../shared/id'
-import { composeRuntimeCommand } from '../shared/container-command'
+import { composeRuntimeCommand, parseDockerPostCommand, isContainerRuntime } from '../shared/container-command'
 import type { SshRuntime } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
@@ -1379,8 +1379,30 @@ export function spawnPty(
     // container sessions run a bare claude that resumes via `--continue`;
     // persistence for containers is the hop-1 design follow-up (host tmux
     // wrapping the exec client — the owner's stated model).
-    const persistenceEnabled = ssh.detachable !== false && ssh.runtime?.type !== 'container'
-    if (ssh.detachable !== false && ssh.runtime?.type === 'container') {
+    //
+    // EFFECTIVE runtime, derived once and used by every container-conditional
+    // decision below (adversarial review, ADR-009). A config written before the
+    // structured Runtime field existed says `postCommand: 'sudo docker exec -it
+    // <name> bash'` and carries no `runtime` at all — but claude still ends up
+    // one hop deeper, inside the container, exactly as a structured container
+    // session does. Keying only on `ssh.runtime` classed those sessions as plain
+    // hosts, and they got BOTH container defects the structured path had already
+    // fixed: the tmux ladder wrapped them at hop 2 (live-proven to leave the
+    // statusline dead), and End composed no in-container kill, so their claude
+    // orphaned in the container forever (#572).
+    //
+    // A structured `runtime` always wins; the parse is only consulted when there
+    // is none. This changes the persistence GATE and the End KILL only — the
+    // launch command for a legacy config is untouched, because its postCommand
+    // already enters the container and composeRuntimeCommand below still reads
+    // the structured field alone.
+    const effectiveRuntime = ssh.runtime ?? parseDockerPostCommand(ssh.postCommand ?? '') ?? undefined
+    const isContainerSession = isContainerRuntime(effectiveRuntime)
+    if (!ssh.runtime && isContainerSession) {
+      logInfo(`[ssh] ${sessionId}: legacy docker post-command detected — treating this session as a container runtime (persistence gate + End kill)`)
+    }
+    const persistenceEnabled = ssh.detachable !== false && !isContainerSession
+    if (ssh.detachable !== false && isContainerSession) {
       logInfo(`[ssh] ${sessionId}: container runtime — tmux persistence skipped (hop-2 wrap breaks statusline delivery; hop-1 design pending)`)
     }
     // Lift: SSH setup script + per-session settings path live on the
@@ -1495,7 +1517,10 @@ export function spawnPty(
       host: ssh.host,
       port: ssh.port,
       password: ssh.password,
-      runtime: ssh.runtime,
+      // The EFFECTIVE runtime (see above): a legacy free-text docker
+      // post-command gets an End container-kill too, instead of orphaning its
+      // claude inside the container.
+      runtime: effectiveRuntime,
       sudoPassword: ssh.sudoPassword,
     })
     // #242 round-3 correction (I3): which entry of buildTmuxLaunchCommand's
