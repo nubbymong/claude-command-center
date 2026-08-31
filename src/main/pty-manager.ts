@@ -1635,6 +1635,27 @@ export function spawnPty(
       // --continue with no conversation to continue). A destroyed flow emits
       // nothing: it no longer exists as far as the renderer is concerned.
       if (destroyed) return
+      // Watchdog (#235, SSH): arm only once claude is actually RUNNING on the
+      // remote — not at spawn, as local does. At spawn an SSH PTY carries the
+      // handshake: banner/MOTD, password and sudo prompts, a bare remote
+      // shell. Those bytes are remote-controlled, and a rate-limit/safeguard
+      // pattern appearing in them could otherwise trip a retry send() into an
+      // auth prompt. The claude-running latch is the "claude prompt present"
+      // signal this flow already owns; every latch site funnels through here.
+      // Same eligibility as the spawn-time gate (never shell-only/Codex/Ask);
+      // startWatchdog itself tears down any prior entry, so a reconnect
+      // re-latching claude-running re-arms cleanly.
+      if (s === 'claude-running' && currentFlowState !== 'claude-running'
+          && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude' && options?.isAsk !== true) {
+        getWatchdogManager()?.startWatchdog(sessionId, {
+          provider: options?.provider,
+          ssh: true,
+          shellOnly: false,
+          ask: false,
+          cols: options?.cols,
+          rows: options?.rows,
+        })
+      }
       currentFlowState = s
       currentFlowInfo = info
       logInfo(`[ssh] ${sessionId}: flow → ${s}${info ? ` (${info})` : ''}`)
@@ -3724,13 +3745,17 @@ export function spawnPty(
   // Watchdog (#235): any interactive Claude session — LOCAL or SSH (owner
   // 2026-08-31: it observes the PTY, which an SSH session has too; the headless
   // xterm renders the escapes and the retry send() reaches the remote claude).
+  // LOCAL arms here at spawn (the PTY runs claude directly). SSH arms LATER, at
+  // the claude-running latch inside the SSH flow (see setFlowState) — at spawn
+  // its PTY carries the handshake (auth prompts, remote-controlled MOTD), which
+  // the watchdog must never be in a position to type into.
   // Never Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
   // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op when
   // the feature is off (default). feedData already flows for every session.
-  if (!options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
+  if (!options?.shellOnly && !options?.ssh && (options?.provider ?? 'claude') === 'claude') {
     getWatchdogManager()?.startWatchdog(sessionId, {
       provider: options?.provider,
-      ssh: !!options?.ssh,
+      ssh: false,
       shellOnly: false,
       // Explicit kind flag (#266 MAJOR-5), never the askPrompt heuristic: that
       // was false for a question-less Ask launch and after every restart.

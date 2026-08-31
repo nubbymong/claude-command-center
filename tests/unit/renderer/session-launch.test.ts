@@ -99,6 +99,23 @@ describe('sshMappedProfileId (harmonise-remote: SSH → local profile)', () => {
   it('never maps a shell-only SSH pane (no in-session /login to act on)', () => {
     expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', shellOnly: true, accountEmail: 'me@work.co' }, profiles)).toBeUndefined()
   })
+
+  // First-connect fallback: the launch profileId stands in ONLY while no
+  // remote identity has arrived. Once an email is known, the email mapping
+  // alone decides — a stand-in must never fabricate affordances for a remote
+  // account that deliberately matched nothing (Double Review F1).
+  it('falls back to the launch profileId while NO remote identity has arrived yet', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', profileId: 'p1' }, profiles)).toBe('p1')
+  })
+  it('rejects a launch profileId that no longer exists (deleted profile)', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', profileId: 'p9' }, profiles)).toBeUndefined()
+  })
+  it('a KNOWN remote identity matching no profile stays unmapped — the launch profileId never stands in', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', accountEmail: 'stranger@nowhere.dev', profileId: 'p1' }, profiles)).toBeUndefined()
+  })
+  it('an email match always wins over a differing launch profileId', () => {
+    expect(sshMappedProfileId({ sessionType: 'ssh', provider: 'claude', accountEmail: 'other@x.com', profileId: 'p1' }, profiles)).toBe('p2')
+  })
 })
 
 describe('formatSpawnError', () => {

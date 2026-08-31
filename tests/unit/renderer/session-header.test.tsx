@@ -196,11 +196,32 @@ describe('SessionHeader', () => {
     expect(acct?.getAttribute('title')).not.toContain('stale@x.com')
   })
 
-  it('does NOT show the auth pills for an SSH session (remote creds)', () => {
+  it('does NOT show the auth pills when the KNOWN remote account matches no local profile — even with a launch profileId (no fabricated mapping)', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-z', name: 'Work', accountEmail: 'me@work.co' } as any] })
     useAccountAuthStore.setState({ byProfile: { 'profile-z': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
-    render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))
+    render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'stranger@nowhere.dev' }))
+    // The account pill names the remote's own identity; profile-z's auth pills
+    // (a DIFFERENT account) must not attach to it.
+    expect(container.querySelector('[data-testid="session-pill-account"]')?.getAttribute('title')).toContain('stranger@nowhere.dev')
     expect(container.textContent).not.toContain('Claude Code')
     expect(container.textContent).not.toContain('claude.ai')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('first connect (no remote identity yet): the launch profile stands in with a provisional title, then the reported email takes over', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-z', name: 'Work', accountEmail: 'me@work.co' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-z': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    // Locally-sourced stand-in: captioned as the LAUNCH account, never asserted
+    // as the remote's sign-in (that claim waits for the remote to report).
+    expect(acct?.getAttribute('title')).toContain('me@work.co')
+    expect(acct?.getAttribute('title')).toContain('Launch account')
+    expect(acct?.getAttribute('title')).not.toContain('signed in on the remote host')
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).not.toBeNull()
+    useAccountProfilesStore.setState({ profiles: [] })
   })
 
   // harmonise-remote (owner UX, 2026-08-31): when an SSH session's signed-in

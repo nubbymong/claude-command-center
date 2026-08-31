@@ -35,7 +35,9 @@ export function resolveSignInOpenTarget(
  *  terminal runs, and an SSH session's account is the local profile it maps to
  *  (harmonise-remote), so the pane shows that same account's claude.ai. Without
  *  SSH here, "open artifacts in the in-app browser" silently fell back to the
- *  window for remote sessions.
+ *  window for remote sessions. Codex sessions are excluded (deliberate
+ *  tightening alongside the SSH widening): the pane is a claude.ai account
+ *  surface, which a Codex tile's own start page never offers.
  *  Prefers the active session, then the given one, then any eligible.
  *
  *  `requirePreferred` binds the host to the caller's own vetted session (adv

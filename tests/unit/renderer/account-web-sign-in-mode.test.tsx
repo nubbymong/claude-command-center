@@ -191,10 +191,28 @@ describe('sign-in routing', () => {
     expect(container.textContent).toContain('sign-in window was used instead')
   })
 
-  it('an SSH or shell-only session cannot host the pane — same fallback (#475 gate)', async () => {
+  // harmonise-remote: pane hosting is unified on paneHostSession — a non-shell
+  // Claude session, LOCAL or SSH (the pane is a local webview regardless of
+  // where the session's terminal runs). The old #475 local-only gate is gone;
+  // shell-only still never hosts.
+  it('an SSH Claude session CAN host the sign-in pane (the pane is a local webview)', async () => {
     api.status.mockResolvedValue(statusPayload({ webSignInMode: 'internal-pane' }))
     SESSIONS = [{ id: 's-ssh', sessionType: 'ssh' }, { id: 's-shell', sessionType: 'local', shellOnly: true }] as never
     ACTIVE = 's-ssh'
+    const seen = vi.fn()
+    window.addEventListener('app:openAccountPane', seen)
+    await render()
+    await clickSignIn()
+    window.removeEventListener('app:openAccountPane', seen)
+    expect(api.signIn).not.toHaveBeenCalled()
+    expect(seen).toHaveBeenCalledTimes(1)
+    expect((seen.mock.calls[0][0] as CustomEvent).detail).toEqual({ sessionId: 's-ssh', profileId: 'profile-aaa111' })
+  })
+
+  it('a shell-only session still never hosts the pane — window fallback with a notice', async () => {
+    api.status.mockResolvedValue(statusPayload({ webSignInMode: 'internal-pane' }))
+    SESSIONS = [{ id: 's-shell', sessionType: 'local', shellOnly: true }] as never
+    ACTIVE = 's-shell'
     const seen = vi.fn()
     window.addEventListener('app:openAccountPane', seen)
     await render()

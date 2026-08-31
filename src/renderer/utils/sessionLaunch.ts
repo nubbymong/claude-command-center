@@ -84,18 +84,21 @@ export function sshMappedProfileId(
   profiles: ReadonlyArray<{ id: string; accountEmail?: string }>,
 ): string | undefined {
   if (session.shellOnly || session.sessionType !== 'ssh' || (session.provider ?? 'claude') !== 'claude') return undefined
-  // Prefer the live remote account (from /status) mapped to a local profile —
-  // it names the account actually signed in on the remote. But that lags a
-  // fresh connect (the email arrives with the first status tick, AND a local
-  // profile's own accountEmail may not be populated until it has run locally),
-  // which left the claude.ai/Claude Code pills and the artifacts affordance
-  // blank until the user opened a LOCAL session with the same account. Fall
-  // back to the account the session was LAUNCHED under (`profileId`, set at the
-  // pre-spawn account gate — immediate, and in the normal same-identity case
-  // the SAME profile), so the affordances resolve the moment the session opens.
+  // The live remote account (from /status; fallback the setup-sentinel
+  // snapshot) is the authority: once an email is known, ONLY an email match
+  // maps — a known remote identity that matches no local profile stays
+  // unmapped (account-only pills), never silently replaced by some other
+  // local account's affordances.
+  //
+  // Only while NO remote identity has arrived yet (the instant between a
+  // fresh connect and the first status tick — first-connect priming makes
+  // this short) does the session's own launch `profileId` stand in, so the
+  // pills resolve immediately instead of blank. In the normal same-identity
+  // case that is the SAME account; when /status lands the email mapping
+  // takes over (and corrects it if not).
   const email = session.accountEmail || session.sshRemoteAccount
-  const byEmail = email ? profiles.find((p) => p.accountEmail === email)?.id : undefined
-  return byEmail ?? (session.profileId && profiles.some((p) => p.id === session.profileId) ? session.profileId : undefined)
+  if (email) return profiles.find((p) => p.accountEmail === email)?.id
+  return session.profileId && profiles.some((p) => p.id === session.profileId) ? session.profileId : undefined
 }
 
 /**

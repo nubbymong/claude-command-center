@@ -615,10 +615,10 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     // scope in its own tooltip/menu. The leading divider still shows for a band
     // that carries commands (or during a drag); an empty idle band shows nothing.
     const bandEmpty = plan.chips.length === 0 && plan.inapplicable.length === 0
-    const showBandLabel = !bandEmpty || !!dragId
+    const showBandDivider = !bandEmpty || !!dragId
     return (
       <React.Fragment key={band}>
-        {showBandLabel && <div className="w-px h-4 mx-0.5 shrink-0" style={{ background: 'var(--border-subtle)' }} />}
+        {showBandDivider && <div className="w-px h-4 mx-0.5 shrink-0" style={{ background: 'var(--border-subtle)' }} />}
         <div
           role="toolbar"
           aria-label={`${plan.label} commands`}

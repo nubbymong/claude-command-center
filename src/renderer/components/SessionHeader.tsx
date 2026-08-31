@@ -330,19 +330,20 @@ function SessionAuthPills({ session }: { session: Session }) {
   // pill set as local, driven by that profile. No match → account-only (there is
   // no local auth to show). session.accountEmail is sanitised at ingest, so this
   // is a plain equality against locally-configured profiles — no new trust.
-  // sshMappedProfileId falls back to the session's launch profileId when the
-  // live /status email hasn't arrived yet (or the local profile's own email is
-  // not populated), so the pills resolve the moment a fresh SSH session opens
-  // instead of only after a restart.
+  // sshMappedProfileId falls back to the session's launch profileId ONLY while
+  // no remote email has arrived yet, so the pills resolve the moment a fresh
+  // SSH session opens instead of only after a restart. Once the remote reports,
+  // the email mapping alone decides (a known non-matching identity stays
+  // account-only — never another account's affordances).
   const sshProfileId = isSshClaude ? sshMappedProfileId(session, profiles) : undefined
   const sshProfile = useAccountProfilesStore((s) => (sshProfileId ? s.profiles.find((p) => p.id === sshProfileId) : undefined))
-  // Account identity for the SSH pill: the live remote email when known, else
-  // the mapped profile's own email — so the top-bar account shows immediately
-  // on connect (from the launch account) and refines to the remote's reported
-  // email when /status lands.
-  const remoteEmail = isSshClaude
-    ? (session.accountEmail || session.sshRemoteAccount || sshProfile?.accountEmail)
-    : undefined
+  // Account identity for the SSH pill: the REPORTED remote email when known,
+  // else the mapped launch profile's own email — so the top-bar account shows
+  // immediately on connect and refines to the remote's reported email when
+  // /status lands. `reportedEmail` tracks which of the two is being shown: a
+  // locally-sourced stand-in must not be captioned as the remote's sign-in.
+  const reportedEmail = isSshClaude ? (session.accountEmail || session.sshRemoteAccount) : undefined
+  const remoteEmail = isSshClaude ? (reportedEmail || sshProfile?.accountEmail) : undefined
   // The profile whose auth status feeds the pills: the SSH-mapped local profile
   // for a mapped remote session, else this session's own (or the primary)
   // profile. Undefined for an SSH session with no local match (account-only).
@@ -382,7 +383,9 @@ function SessionAuthPills({ session }: { session: Session }) {
       resolveAccountColourKey(remoteEmail, accountColourOverrides, session.accountColour),
       theme,
     )
-    const accountTitle = `Remote Claude account: ${remoteEmail} (signed in on the remote host)`
+    const accountTitle = reportedEmail
+      ? `Remote Claude account: ${remoteEmail} (signed in on the remote host)`
+      : `Launch account: ${remoteEmail} (the remote host has not reported its signed-in account yet)`
     // Mapped to a local profile → the full local pill set, driven by that
     // profile's auth status. The account pill keeps its remote name/tone/title.
     if (sshProfileId) {

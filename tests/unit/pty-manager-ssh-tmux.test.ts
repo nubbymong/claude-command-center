@@ -120,6 +120,22 @@ const spawnMock = vi.fn(() => {
   return inst
 })
 vi.mock('node-pty', () => ({ spawn: spawnMock }))
+
+// Watchdog stub: pty-manager only ever reaches the manager through
+// getWatchdogManager() (null in tests otherwise). The stub records the calls so
+// the arming-point tests below can assert WHEN an SSH session's watchdog starts
+// (at the claude-running latch, never during the handshake) without pulling the
+// real manager (headless xterm) into this suite.
+const watchdogStub = {
+  startWatchdog: vi.fn(),
+  stopWatchdog: vi.fn(),
+  feedData: vi.fn(),
+  noteRedrawTrigger: vi.fn(),
+  noteResize: vi.fn(),
+}
+vi.mock('../../src/main/watchdog/watchdog-manager', () => ({
+  getWatchdogManager: () => watchdogStub,
+}))
 vi.mock('electron', () => ({
   BrowserWindow: class {},
   nativeTheme: { shouldUseDarkColors: false, on: () => {} },
@@ -2685,5 +2701,47 @@ describe('sentinel parsers — ConPTY glued-escape immunity (2026-08-27)', () =>
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-glue-e2e')
+  })
+})
+
+// Double Review W1 (2026-08-31, watchdog-over-SSH): an SSH session's watchdog
+// must arm at the claude-running latch, NEVER at spawn. At spawn the PTY
+// carries the ssh handshake — banner/MOTD, password and sudo prompts, a bare
+// remote shell — all remote-controlled bytes the watchdog's retry send() must
+// never be in a position to type into. The claude-running latch (every site
+// funnels through setFlowState) is the "claude prompt present" signal.
+describe('spawnPty SSH branch — watchdog arms at claude-running, not at spawn', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    watchdogStub.startWatchdog.mockClear()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('never arms during the handshake; arms exactly once when claude UI is detected, with ssh:true', () => {
+    const sessionId = 's-watchdog-defer'
+    driveToClaudeWrite(sessionId, 'setup ok {NONCE} tmux=path\r\n')
+    // Handshake + setup + claude write are all behind us — still not armed.
+    expect(watchdogStub.startWatchdog).not.toHaveBeenCalled()
+    // Claude's TUI paints (lenient post-claudeCmd detector: box drawing).
+    feedPtyData('\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u256e\r\n\u2502 \u276f \u2502\r\n')
+    expect(watchdogStub.startWatchdog).toHaveBeenCalledTimes(1)
+    expect(watchdogStub.startWatchdog).toHaveBeenCalledWith(sessionId, expect.objectContaining({ ssh: true, shellOnly: false, ask: false }))
+    // Re-painting claude UI later must not double-arm (the latch is edge-triggered).
+    feedPtyData('\u256d\u2500\u2500\u256e\r\n')
+    expect(watchdogStub.startWatchdog).toHaveBeenCalledTimes(1)
+    killPty(sessionId)
+  })
+
+  it('a shell-only SSH session never arms even when box-drawing output appears', () => {
+    const sessionId = 's-watchdog-shellonly'
+    onDataListeners.length = 0
+    spawnPty(fakeWin, sessionId, { ssh: SSH, shellOnly: true } as never)
+    vi.advanceTimersByTime(2000)
+    feedPtyData('\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u256e\r\n\u2502 \u276f \u2502\r\n')
+    vi.advanceTimersByTime(2000)
+    expect(watchdogStub.startWatchdog).not.toHaveBeenCalled()
+    killPty(sessionId)
   })
 })
