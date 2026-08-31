@@ -485,6 +485,9 @@ describe('hasClaudeInputChrome (SSH send precondition) — bottom-anchored Claud
     ['a rounded-border TUI (lazygit/gum) — rule + bar but no footer',
       ['╭────────────────────────╮', '│ Drop the production DB? │', '╰────────────────────────╯'].join('\n')],
     ['a tail -f log whose last line merely mentions the words', 'ERROR upstream API Error: 529 overloaded_error'],
+    // The footer phrase appears mid-line (a `git show`/`rg` of Claude source),
+    // not line-anchored — the anchored regex must NOT match it.
+    ['a source/grep line mentioning the footer text mid-line', "  const HINT = /\\?\\s+for shortcuts/  // the '? for shortcuts' footer"],
   ])('false: %s', (_label, tail) => {
     expect(hasClaudeInputChrome(tail)).toBe(false)
   })

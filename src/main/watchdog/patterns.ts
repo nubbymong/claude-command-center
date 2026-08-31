@@ -767,8 +767,11 @@ export function canSendNow(text: string, nonDimText?: string): SendGateResult {
 // own shell); the cases this closes are the accidental ones.
 const CLAUDE_FOOTER_SIGNALS: RegExp[] = [
   /^\s*⏵⏵/, // the mode footer ("⏵⏵ accept edits on …")
-  /\?\s+for\s+shortcuts\b/i, // the shortcuts footer hint
-  /esc to interrupt/i, // the working/streaming footer
+  /^\s*\?\s+for\s+shortcuts\b/i, // the shortcuts footer hint — line-anchored (as
+  // CHROME_LINE has it) so a `git show`/`rg` line that merely CONTAINS the phrase
+  // mid-line does not vouch (adversarial pass, final round MINOR).
+  /esc to interrupt/i, // the working/streaming footer (only reachable while
+  // isWorking is true, which every send site defers on — kept for completeness)
 ]
 
 export function hasClaudeInputChrome(text: string): boolean {
