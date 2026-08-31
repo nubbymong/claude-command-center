@@ -115,6 +115,32 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(writeMatch![0]).not.toContain('conductor-vision')
   })
 
+  // First-connect priming (harmonise-remote UX): the setup script spawns the
+  // shim once, detached, so account + usage buckets reach the app and the usage
+  // cache warms BEFORE claude's first statusline tick. It reuses the shim file
+  // just written (shimPath), THIS session's safeSid, and the same 0600 url file
+  // (urlPath) the statusLine command uses — no new remote code, no new secret
+  // path. Live-proven on a cold Pi connect: update #0 carried account+Fable.
+  it('primes one detached shim run (warm cache + early account/buckets) when a tunnel URL exists', () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    // Spawns the SHIM FILE (not a fresh script), with the session's safeSid and
+    // the url file, feeding a minimal {session_id} on stdin — and never blocks
+    // setup on it (unref).
+    expect(script).toContain('spawn(process.execPath,[shimPath,"sid-x",urlPath]')
+    expect(script).toContain('JSON.stringify({session_id:"sid-x"})')
+    expect(script).toContain('_pr.unref()')
+    // The priming must sit BEFORE the completion sentinel so it launches during
+    // setup, not after claude is already up.
+    expect(script.indexOf('spawn(process.execPath,[shimPath')).toBeLessThan(script.indexOf('setup ok'))
+  })
+
+  it('omits the priming spawn when there is no tunnel URL (conductor MCP off)', () => {
+    // includeConductorMcp:false => statusUrl is empty => no priming (nothing to
+    // POST to; the shim's OSC fallback has no tty from a detached spawn anyway).
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: true, includeConductorMcp: false }, NONCE)
+    expect(script).not.toContain('spawn(process.execPath,[shimPath')
+  })
+
   it('bakes ?cccSessionId=<encoded sid> into the remote MCP URL (P7.7.10 parity)', () => {
     const script = generateRemoteSetupScript('sid+with space', null, undefined, NONCE)
     // encodeURIComponent maps "+" -> "%2B" and " " -> "%20"

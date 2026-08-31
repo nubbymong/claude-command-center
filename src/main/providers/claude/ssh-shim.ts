@@ -584,9 +584,30 @@ export function generateRemoteSetupScript(
     // fixed b64 charset so parseTmuxSentinel's completion latch (which now
     // tolerates an optional ` acct=<b64>` suffix before the line terminator)
     // still resolves, and so the value can't smuggle a space/metacharacter.
+    // First-connect priming (harmonise-remote UX): claude emits its statusLine
+    // only on its own render/activity schedule, and the shim posts the per-model
+    // usage buckets (Fable) only after a live usage fetch — so on a COLD connect
+    // the account pill and buckets lag until claude ticks with a warm cache,
+    // which a user reads as "missing until I restart". Run the shim ONCE now,
+    // detached, so it (a) warms the 60 s usage cache and (b) POSTs account +
+    // buckets through the tunnel BEFORE claude's first tick. Reuses the shim file
+    // just written, with THIS session's own safeSid and the SAME 0600 url file
+    // the statusLine command uses (argv[3]=urlPath, resolved by SHIM_STATUS_URL_JS)
+    // — no new remote code, no new secret path, no new sink. A minimal stdin
+    // ({session_id}) means the priming payload carries account + buckets but no
+    // model/context; claude's own ticks fill those, and the store merges per
+    // field. Fully fire-and-forget and fail-open: gated on a tunnel URL existing
+    // (else there is nothing to POST to and the shim's OSC fallback has no tty
+    // from a detached spawn anyway), unref'd so setup never waits on it, and any
+    // spawn/stdin error is swallowed. `shimPath`/`urlPath` are the remote-side
+    // consts written above; `process.execPath` is the node already running this
+    // setup script.
+    includeStatusLine && statusUrl
+      ? `try{var _pr=require('child_process').spawn(process.execPath,[shimPath,${JSON.stringify(safeSid)},urlPath],{stdio:['pipe','ignore','ignore'],detached:true});_pr.on('error',function(){});_pr.stdin.on('error',function(){});_pr.stdin.end(JSON.stringify({session_id:${JSON.stringify(safeSid)}}));if(_pr.unref)_pr.unref();}catch{}`
+      : '',
     `process.stdout.write('setup ok ${nonce} tmux='+tmuxClass+' acct='+acctB64+'\\n')`,
   ]
-  return lines.join(';')
+  return lines.filter(Boolean).join(';')
 }
 
 // Path to the per-session settings file on the remote. Kept in sync with the
