@@ -13,6 +13,7 @@ import {
   matchDetachedRemotes,
   filterLiveEntries,
   resumableRemotesForConfig,
+  configForDetachedEntry,
   describeDetachedAge,
   type DetachableSession,
   type LaunchableConfig,
@@ -133,6 +134,38 @@ describe('resumableRemotesForConfig (what the resume surface may offer)', () => 
   it('offers nothing for a config with no matching remote', () => {
     const entries = [entry({ sessionId: 'a', configId: 'someone-else' })]
     expect(resumableRemotesForConfig(entries, sshConfig({ id: 'cfg-z', sshConfig: { host: 'z', port: 22, username: 'z', remotePath: '/z' } }), [])).toEqual([])
+  })
+})
+
+describe('configForDetachedEntry', () => {
+  it('finds the config by its id', () => {
+    const configs = [sshConfig({ id: 'other' }), sshConfig({ id: 'cfg-1' })]
+    expect(configForDetachedEntry(entry(), configs)?.id).toBe('cfg-1')
+  })
+
+  it('prefers the EXACT configId over another config that merely shares the host', () => {
+    // Both match under matchDetachedRemotes' host+user+path fallback. Resuming
+    // into the wrong template (different account, model, post-command) is worse
+    // than treating the entry as config-less, so the id must win outright.
+    const sameHostDifferentConfig = sshConfig({ id: 'cfg-2' })
+    const configs = [sameHostDifferentConfig, sshConfig({ id: 'cfg-1' })]
+    expect(configForDetachedEntry(entry({ configId: 'cfg-1' }), configs)?.id).toBe('cfg-1')
+  })
+
+  it('falls back to host+user+path for a RE-CREATED config (new id, same remote)', () => {
+    const configs = [sshConfig({ id: 'cfg-recreated' })]
+    expect(configForDetachedEntry(entry({ configId: 'cfg-deleted' }), configs)?.id).toBe('cfg-recreated')
+  })
+
+  it('returns undefined when the saved config was DELETED — the resume surface renders it anyway', () => {
+    expect(configForDetachedEntry(entry(), [])).toBeUndefined()
+    expect(
+      configForDetachedEntry(entry({ configId: 'gone' }), [sshConfig({ id: 'x', sshConfig: { host: 'elsewhere', port: 22, username: 'z', remotePath: '/z' } })]),
+    ).toBeUndefined()
+  })
+
+  it('never pairs an entry with a non-SSH config', () => {
+    expect(configForDetachedEntry(entry({ configId: undefined }), [sshConfig({ id: 'local-1', sessionType: 'local' })])).toBeUndefined()
   })
 })
 

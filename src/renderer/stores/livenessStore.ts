@@ -110,6 +110,18 @@ export async function verifyOnCardClick(config: LaunchableConfig): Promise<void>
 }
 
 /**
+ * Full teardown for tests: forget every recorded liveness AND clear the
+ * in-flight guard. Both halves matter — `inFlight` is module state, so a probe
+ * a test left pending would silently swallow the NEXT test's probe (the guard
+ * doing exactly its job, against a caller that no longer exists). Sibling of
+ * hostReachability's resetHostReachability.
+ */
+export function resetDetachedLiveness(): void {
+  inFlight.clear()
+  useDetachedLivenessStore.setState({ bySession: {} })
+}
+
+/**
  * App-restart path: probe the restored persistent-SSH sessions' OWN tmux targets
  * and return the ids whose remote is CONFIRMED gone (verified, not alive). Grouped
  * by configId (only sessions with a configId can be probed — the target is built

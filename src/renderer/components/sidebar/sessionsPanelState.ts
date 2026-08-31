@@ -34,6 +34,12 @@ export function resolveQuickStartCollapsed(value: unknown): boolean {
   return value === true
 }
 
+/** Remote Resumable (SSH Persistent Phase 3), same rule as Quick Start's:
+ *  absent or unknown => expanded, only an explicit true collapses. */
+export function resolveRemoteResumableCollapsed(value: unknown): boolean {
+  return value === true
+}
+
 /** Sidebar width bounds (#461). The floor protects ConfigRow's measured
  *  right-12 hover-strip budget and keeps the Saved⇄Running tabs from hitting
  *  min-content overflow (~170px); the ceiling keeps the terminal usable. */

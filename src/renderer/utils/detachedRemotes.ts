@@ -90,6 +90,34 @@ export function resumableRemotesForConfig(
 }
 
 /**
+ * The saved config ONE registry entry belongs to, or undefined when its config
+ * has been DELETED. The inverse of `matchDetachedRemotes` (which goes
+ * config → entries), and deliberately built on the same rule so the two can
+ * never disagree: the strong `configId` key first, then the
+ * host+username+remotePath fallback for a re-created config pointing at the
+ * same remote.
+ *
+ * `undefined` is a normal, expected answer — the user may delete a config while
+ * a remote it launched is still running on the host. The resume surface renders
+ * that entry from its own recorded `label` and offers Remove instead of Resume;
+ * nothing here may throw on it.
+ */
+export function configForDetachedEntry<C extends LaunchableConfig>(
+  entry: DetachedRemote,
+  configs: C[],
+): C | undefined {
+  // Exact config id wins outright. matchDetachedRemotes would also accept a
+  // DIFFERENT config that merely shares host+user+path, and resuming into the
+  // wrong template (different account, model, post-command) is worse than the
+  // deleted-config path.
+  if (entry.configId) {
+    const exact = configs.find((c) => c.id === entry.configId)
+    if (exact) return exact
+  }
+  return configs.find((c) => matchDetachedRemotes([entry], c).length > 0)
+}
+
+/**
  * Compact "left running Xm ago" phrasing for the resume surface. Pure (takes
  * `now`) so it is testable and never surprises the render with a moving clock.
  */

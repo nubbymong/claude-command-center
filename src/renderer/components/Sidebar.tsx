@@ -37,6 +37,7 @@ import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
 import { runningConfigCounts, sessionInstanceOrdinals } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import QuickStartPanel from './sidebar/QuickStartPanel'
+import RemoteResumableSection from './sidebar/RemoteResumableSection'
 import { resolveDefaultPanelTab, resolveSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, launchableInGroup, launchableInSection, type PanelTab } from './sidebar/sessionsPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
@@ -277,6 +278,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   // Per-session instance ordinal (#454), same input array as the counts so the
   // two always agree. Only same-config 2+ instances get a number.
   const sessionOrdinals = useMemo(() => sessionInstanceOrdinals(sessions), [sessions])
+  // SSH Persistent (Phase 3): the ids that are live RIGHT NOW. Remote Resumable
+  // must never offer an entry whose session is already open — resuming reuses
+  // the id, so it would collide with a running tile. Over ALL sessions (the Ask
+  // session included): "is this id taken?" is not a per-view question.
+  const liveSessionIds = useMemo(() => allSessions.map((s) => s.id), [allSessions])
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
   // The LOOSE configs: in no group and no section (a stale id pointing at a
@@ -431,6 +437,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
   const launchFromConfig = async (config: TerminalConfig) => {
     launchConfig(config)
+    // The missed-copy guard: a launch from the SAVED tab used to switch the
+    // main view to the new terminal while leaving the panel on Saved, so the
+    // tile the user had just made was on a list they were not looking at —
+    // and the usual next move was to press Start again. Follow the session.
+    // A no-op for the surfaces that already live on Running (Quick Start).
+    selectPanelTab('running')
     onViewChange('sessions')
   }
 
@@ -1299,6 +1311,24 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           unsectionedUngroupedSessions.map(renderSessionRow)
         )}
       </div>
+
+      {/* SSH Persistent (Phase 3) — Remote Resumable, docked at the BOTTOM of
+          the Running tab under Active Sessions. A sibling of the session
+          scroller (which owns the flex-1), so it pins to the bottom rather than
+          scrolling with the list. Renders nothing when the registry is empty.
+          Mounted only while this tab is, which is also what arms/disarms the
+          tier-1 host pings. */}
+      <RemoteResumableSection
+        liveSessionIds={liveSessionIds}
+        onRevealSession={(id) => {
+          setActiveSession(id)
+          // Belt-and-braces (the missed-copy guard): the section only exists
+          // inside this tab, so a click already implies Running — but a resume
+          // must never leave the user looking at a list the new tile is not in.
+          selectPanelTab('running')
+          onViewChange('sessions')
+        }}
+      />
       </div>
       )}{/* end Running tab */}
 
