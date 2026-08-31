@@ -115,7 +115,7 @@ export const ON_PATH_TMUX_BIN_EXPR = 'command tmux'
  * embedded on the remote host, and so a session id containing shell
  * metacharacters or spaces can't break out of the `-s <name>` argument.
  */
-function safeSid(sessionId: string): string {
+export function safeSid(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
 }
 

@@ -41,6 +41,10 @@ import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import SshCloseDialog from './components/SshCloseDialog'
+import ResumeSessionDialog from './components/ResumeSessionDialog'
+import SshReattachGoneNotice from './components/SshReattachGoneNotice'
+import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
+import { probeGoneSessions } from './stores/livenessStore'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, DIALOG_INPUT_CLASS, DIALOG_INPUT_STYLE } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
@@ -732,6 +736,13 @@ export default function App() {
       }
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
+      // SSH Persistent (Phase 1): rehydrate the left-running registry from the
+      // same persisted file BEFORE the save below (which folds it back in via
+      // buildSessionState). App-restart restore is otherwise UNCHANGED — the
+      // sessions that were open reattach by keeping their id; the registry only
+      // feeds the MANUAL-launch resume prompt, and its live-filter drops any
+      // entry whose id just came back as a restored session.
+      useDetachedRemotesStore.getState().hydrate(savedState.detachedRemotes)
       // Per-session "hide this tool" entries key on session ids, which persist
       // across restarts; drop the ones whose session did not come back (ADR-018 M3).
       useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
@@ -746,6 +757,27 @@ export default function App() {
       } catch {
         /* best-effort: the debounced autosave rewrites on the next session-set change */
       }
+
+      // SSH Persistent (resume liveness): app-restart auto-reattach is UNCHANGED
+      // (each persistent SSH session already re-spawned above and reattaches
+      // optimistically). Reconcile ASYNC — never blocking restore: probe each
+      // restored persistent SSH session's own tmux target, and for any the host
+      // CONFIRMS is gone, flag it so the pane shows the "remote session ended"
+      // notice with Start new (rather than silently handing back a blank session
+      // that looks like the one left running). Unverified hosts flag nothing.
+      void (async () => {
+        const persistentSsh = restoredSessions.filter(
+          (s) => s.sessionType === 'ssh' && !!s.sshConfig && s.sshConfig.detachable !== false && !!s.configId,
+        )
+        if (persistentSsh.length === 0) return
+        const gone = await probeGoneSessions(persistentSsh.map((s) => ({ id: s.id, configId: s.configId })))
+        const store = useSessionStore.getState()
+        for (const id of gone) {
+          // Only flag a session still present (the user may have closed it in the
+          // window between restore and the probe returning).
+          if (store.getSession(id)) store.updateSession(id, { sshRemoteReattachGone: true })
+        }
+      })()
 
       if (sessionSummary.changed > 0) {
         const s = useSettingsStore.getState()
@@ -1040,6 +1072,13 @@ export default function App() {
                       provider={session.provider}
                       codexOptions={session.codexOptions}
                     />
+                    {/* SSH Persistent (resume liveness): the app-restart "remote
+                        session ended" notice. Self-subscribes by id and renders
+                        nothing until a probe confirms the reattach target is gone
+                        (the flag is not a structural field the shell re-renders
+                        on). The PaneFade is `relative`, so it parks top-right of
+                        the pane like the flow overlay. */}
+                    {session.sessionType === 'ssh' && <SshReattachGoneNotice sessionId={session.id} />}
                   </PaneFade>
                   {hasPartner && (
                     <PaneFade
@@ -1379,6 +1418,7 @@ export default function App() {
         )}
 
         <SshCloseDialog />
+        <ResumeSessionDialog />
         {closeDialog && (
           <CloseDialog
             mode={closeDialog}

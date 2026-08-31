@@ -1,11 +1,15 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { SessionTypeBadge, SshBadge, SshPersistentBadge } from './Badges'
+import { SessionTypeBadge, SshBadge, SshPersistentBadge, SshReattachBadge } from './Badges'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { CODEX_OFF_LAUNCH_REASON } from '../../hooks/useLaunchConfig'
 import { quickStartConfigs, resolveQuickStartCollapsed, runningCountLabel } from './sessionsPanelState'
+import { useDetachedRemotesStore } from '../../stores/detachedRemotesStore'
+import { useDetachedLivenessStore } from '../../stores/livenessStore'
+import { matchDetachedRemotes } from '../../utils/detachedRemotes'
+import { verifiedLiveCount } from '../../utils/detachedRemotesLiveness'
 
 interface QuickStartPanelProps {
   configs: TerminalConfig[]
@@ -26,6 +30,10 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
   const collapsed = resolveQuickStartCollapsed(useSettingsStore((s) => s.settings.quickStartCollapsed))
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const codexOff = useSettingsStore((s) => s.settings.codexEnabled === false)
+  // SSH Persistent (resume liveness): amber re-attachable counts, computed per
+  // item below from the registry + liveness map (subscribed once here).
+  const detachedEntries = useDetachedRemotesStore((s) => s.entries)
+  const livenessMap = useDetachedLivenessStore((s) => s.bySession)
 
   const items = quickStartConfigs(configs)
   // Nothing pinned at all: no strip, no empty state — Quick Start is opt-in
@@ -87,6 +95,7 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
               </span>
             )}
             {config.sessionType === 'ssh' && (config.sshConfig?.detachable !== false ? <SshPersistentBadge /> : <SshBadge />)}
+            {config.sessionType === 'ssh' && <SshReattachBadge count={verifiedLiveCount(matchDetachedRemotes(detachedEntries, config), livenessMap)} />}
             <button
               onClick={blocked ? undefined : () => onLaunch(config)}
               disabled={blocked}

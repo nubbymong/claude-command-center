@@ -222,10 +222,65 @@ export interface SavedSession {
   disableAutoMemory?: boolean
 }
 
+/**
+ * SSH Persistent — "Resume a Running Session" (Phase 1).
+ *
+ * A remote tmux session the user chose to LEAVE RUNNING (detach, reattach
+ * later) rather than end. Keyed by the CCC session id, so a later manual launch
+ * of the same config can reuse that id and land back on the exact tmux target
+ * (`ccc-<sessionId>`) the has-session→attach branch reattaches to.
+ *
+ * Persisted inside SessionState so it survives an app restart. DESCRIPTOR ONLY —
+ * `accountEmail` is the remote-reported oauth account (already charset/length
+ * capped host-side), never a credential.
+ */
+export interface DetachedRemote {
+  /** The CCC session id the detached remote was running under. Reused verbatim
+   *  on resume so the tmux target `ccc-<sessionId>` matches again. */
+  sessionId: string
+  /** The saved config this remote was launched from (`config.id`). Primary key
+   *  for the manual-launch match; host/user/remotePath is the fallback. */
+  configId?: string
+  host: string
+  username: string
+  remotePath: string
+  /** Multiplexer holding the session alive. Always 'tmux' today (psmux is the
+   *  Windows-only path and is NOT wired yet — the field is recorded for it). */
+  mux: 'tmux' | 'psmux'
+  /** Remote Claude account (oauthAccount.emailAddress), when known. Descriptor. */
+  accountEmail?: string
+  /** Display label at detach time (customName || config label). */
+  label: string
+  /** Epoch ms the remote was left running, for the "left running Xm ago" copy. */
+  detachedAt: number
+}
+
 export interface SessionState {
   sessions: SavedSession[]
   activeSessionId: string | null
   savedAt: number
+  /** SSH Persistent (Phase 1): remotes left running for a later reattach. Absent
+   *  on files written before this feature; round-trips untouched through the
+   *  main-side save/load (only `sessions` is migrated). */
+  detachedRemotes?: DetachedRemote[]
+}
+
+/**
+ * SSH Persistent — liveness result for a set of candidate detached remotes.
+ *
+ * Returned by the `ssh:checkDetachedLive` IPC after a main-side `tmux ls` over a
+ * separate ssh exec built from the SAVED config. `outcome`:
+ *   - 'verified'   — the host answered; `liveSessionIds` are the candidates whose
+ *                    `ccc-<sessionId>` tmux target is actually alive. Any queried
+ *                    id NOT in the list is confirmed DEAD.
+ *   - 'unverified' — the host could not be reached / auth failed / no completion
+ *                    sentinel came back. Distinct from "dead": the caller FAILS
+ *                    OPEN (still offers, marked "couldn't verify"), because a
+ *                    reattach self-heals if the remote really is gone.
+ */
+export interface DetachedRemoteLiveness {
+  outcome: 'verified' | 'unverified'
+  liveSessionIds: string[]
 }
 
 // ── Statusline ──

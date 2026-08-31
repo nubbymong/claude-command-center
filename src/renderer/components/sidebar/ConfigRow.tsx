@@ -1,11 +1,15 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { SessionTypeBadge, SshBadge, SshPersistentBadge } from './Badges'
+import { SessionTypeBadge, SshBadge, SshPersistentBadge, SshReattachBadge } from './Badges'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { CODEX_OFF_LAUNCH_REASON } from '../../hooks/useLaunchConfig'
 import { DELETE_WHILE_RUNNING_REASON, runningCountLabel } from './sessionsPanelState'
+import { useDetachedRemotesStore } from '../../stores/detachedRemotesStore'
+import { useDetachedLivenessStore } from '../../stores/livenessStore'
+import { matchDetachedRemotes } from '../../utils/detachedRemotes'
+import { verifiedLiveCount } from '../../utils/detachedRemotesLiveness'
 
 interface ConfigRowProps {
   config: TerminalConfig
@@ -42,6 +46,16 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
 
   const typeKind = config.shellOnly ? 'shell' : (config.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'
 
+  // SSH Persistent (resume liveness): amber count of VERIFIED-live detached
+  // sessions re-attachable for this config. Recomputed from the registry + the
+  // liveness map (both refreshed once on config-list mount, no poll).
+  const detachedEntries = useDetachedRemotesStore((s) => s.entries)
+  const livenessMap = useDetachedLivenessStore((s) => s.bySession)
+  const reattachCount = React.useMemo(
+    () => verifiedLiveCount(matchDetachedRemotes(detachedEntries, config), livenessMap),
+    [detachedEntries, livenessMap, config],
+  )
+
   // No locked state (owner revision 2026-08-24): a config is a template and
   // may relaunch while running. Live sessions surface as the count pill below;
   // only DELETE stays guarded while any session runs.
@@ -77,6 +91,7 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           matching the running-session badge, so the two SSH kinds are told apart
           before launch. */}
       {config.sessionType === 'ssh' && (config.sshConfig?.detachable !== false ? <SshPersistentBadge /> : <SshBadge />)}
+      {config.sessionType === 'ssh' && <SshReattachBadge count={reattachCount} />}
       {runningCount > 0 && (
         <button
           onClick={(e) => { e.stopPropagation(); onOpenSession?.() }}

@@ -63,6 +63,10 @@ export const IPC = {
   // item 4: renderer asks main to END the remote (tmux kill-session + sidecar
   // cleanup over a separate ssh exec) before/instead of a plain close.
   SSH_END_REMOTE: 'ssh:endRemote',
+  // SSH Persistent (resume liveness): renderer asks main whether a set of
+  // detached `ccc-<sessionId>` tmux sessions are still ALIVE on a config's host,
+  // via a `tmux ls` over a separate ssh exec. Returns DetachedRemoteLiveness.
+  SSH_CHECK_DETACHED_LIVE: 'ssh:checkDetachedLive',
 
   // Statusline
   STATUSLINE_UPDATE: 'statusline:update',

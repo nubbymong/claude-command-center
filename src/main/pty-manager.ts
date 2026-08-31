@@ -3,10 +3,11 @@ import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
 import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ssh-tmux'
+import { buildTmuxListCommand, parseTmuxLivenessOutput, computeLiveSessionIds, TMUX_LIVENESS_END } from './ssh-liveness'
 import { stripAnsiForSentinel } from './ansi-strip'
 import { randomId } from '../shared/id'
 import { composeRuntimeCommand, parseDockerPostCommand, isContainerRuntime } from '../shared/container-command'
-import type { SshRuntime } from '../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
@@ -1094,6 +1095,115 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
     } catch (err) {
       logError(`[ssh] ${sessionId}: endSshRemote failed to dispatch: ${(err as Error)?.message ?? err}`)
       resolve('failed')
+    }
+  })
+}
+
+const LIVENESS_TIMEOUT_MS = 10000
+const LIVENESS_PASSWORD_TIMEOUT_MS = 15000
+
+/**
+ * SSH Persistent — probe whether the `ccc-<safeSid(id)>` tmux sessions for a set
+ * of DETACHED remotes are still alive on `target`'s host, so the resume flow never
+ * offers (or silently auto-resumes) a dead session.
+ *
+ * The connection target is built by the CALLER from the SAVED config (never the
+ * renderer), exactly like endSshRemote's — host/user/port + the same keychain
+ * password. This mirrors endSshRemote's two shapes: a key/agent host runs a
+ * fire-fast BatchMode `execFile`; a password host runs the same argv under a PTY
+ * and answers the ssh password prompt by SHAPE (END_REMOTE_SSH_PROMPT_RE), reusing
+ * that path's matcher. The remote command (buildTmuxListCommand) is a host-authored
+ * literal with no wire operand; the candidate ids are matched LOCALLY via safeSid.
+ *
+ * Outcome is fail-OPEN: any connection failure, auth failure, or a run with no
+ * completion sentinel returns 'unverified' (NOT "all dead"), so a host that is
+ * merely asleep does not wipe a user's reattachable sessions. Only a run that came
+ * back WITH the sentinel is 'verified', and only then are absent ids treated as
+ * dead. Never throws — every failure path resolves 'unverified'.
+ */
+export function probeTmuxLive(
+  target: { username: string; host: string; port: number; password?: string },
+  sessionIds: string[],
+): Promise<DetachedRemoteLiveness> {
+  const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
+  const remoteCommand = buildTmuxListCommand()
+  const unverified: DetachedRemoteLiveness = { outcome: 'unverified', liveSessionIds: [] }
+  // Turn captured output into a result. `connected` is the sentinel test done by
+  // the caller (execFile) OR here (parseTmuxLivenessOutput.completed).
+  const finish = (raw: string): DetachedRemoteLiveness => {
+    const parsed = parseTmuxLivenessOutput(raw)
+    if (!parsed.completed) return unverified
+    return { outcome: 'verified', liveSessionIds: computeLiveSessionIds(sessionIds, parsed.names) }
+  }
+
+  if (target.password) {
+    // Password host: PTY that answers the single ssh prompt with the saved
+    // password. We resolve as soon as the END sentinel arrives (don't wait for
+    // exit), and on timeout still parse whatever came back (a completed run that
+    // just didn't EOF cleanly is still verified).
+    return new Promise((resolve) => {
+      let settled = false
+      let child: pty.IPty | null = null
+      let out = ''
+      let tail = ''
+      let passwordSent = false
+      const done = (result: DetachedRemoteLiveness, why: string): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(deadline)
+        try { child?.kill() } catch { /* already gone */ }
+        logInfo(`[ssh] liveness probe (password) ${result.outcome} (${why}; ${result.liveSessionIds.length}/${sessionIds.length} live)`)
+        resolve(result)
+      }
+      const deadline = setTimeout(() => done(finish(out), 'timeout'), LIVENESS_PASSWORD_TIMEOUT_MS)
+      try {
+        // Argv build INSIDE the try (adversarial posture, as in endSshRemote): a
+        // sync throw here must resolve 'unverified', never escape the promise.
+        const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
+        child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+      } catch (err) {
+        done(unverified, `spawn: ${(err as Error)?.message ?? err}`)
+        return
+      }
+      child.onData((d) => {
+        out += d
+        tail = (tail + d).slice(-2048)
+        if (settled) return
+        // The command completed the moment the END sentinel appears.
+        if (out.includes(TMUX_LIVENESS_END)) { done(finish(out), 'sentinel'); return }
+        if (passwordSent) return
+        const lines = stripAnsiForSentinel(tail).split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0)
+        const last = lines[lines.length - 1] ?? ''
+        // Only the ssh password prompt is expected here (no sudo — a read-only
+        // `tmux ls` needs no elevation). Answer it once, then consume the tail so
+        // the just-answered prompt cannot re-fire.
+        if (END_REMOTE_SSH_PROMPT_RE.test(last)) {
+          passwordSent = true
+          tail = ''
+          try { child!.write(`${target.password!.replace(/[\r\n]/g, '')}\r`) } catch { /* PTY closed; exit/timeout settles */ }
+        }
+      })
+      child.onExit(() => done(finish(out), 'exit'))
+    })
+  }
+
+  // Key/agent host: fire-fast BatchMode exec, capture stdout, parse.
+  return new Promise((resolve) => {
+    try {
+      const args = buildSshExecArgs(target, remoteCommand, os.platform())
+      execFile(bin, args, { timeout: LIVENESS_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+        const raw = (stdout ?? '').toString()
+        // A non-zero exit is NOT a failure here: `tmux ls` exits non-zero when no
+        // server is running, yet the echo'd END sentinel still prints, so a
+        // completed-but-empty run is correctly 'verified' with zero live ids. Only
+        // the missing sentinel (connection/auth failure) yields 'unverified'.
+        const result = finish(raw)
+        logInfo(`[ssh] liveness probe ${result.outcome} (${err ? `exit err: ${err.message}` : 'ok'}; ${result.liveSessionIds.length}/${sessionIds.length} live)`)
+        resolve(result)
+      }).unref?.()
+    } catch (err) {
+      logError(`[ssh] liveness probe failed to dispatch: ${(err as Error)?.message ?? err}`)
+      resolve(unverified)
     }
   })
 }

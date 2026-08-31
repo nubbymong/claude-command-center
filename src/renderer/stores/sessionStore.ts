@@ -169,6 +169,13 @@ export interface Session {
    *  main's ssh:sessionInfo push on each spawn. undefined = not yet known;
    *  false = SSH but non-persistent (bare launch). */
   sshTmuxPersistent?: boolean
+  /** SSH Persistent (resume liveness): set true when, after an app-restart
+   *  auto-reattach, a liveness probe CONFIRMED the remote tmux this session was
+   *  reattaching to is gone — so the session came back as a fresh start, not the
+   *  one left running. Drives a small inline notice + "Start new". Ephemeral,
+   *  never persisted (not in session-persistence's allowlist); cleared on dismiss
+   *  / Start new. undefined = not gone (or not yet/ever probed). */
+  sshRemoteReattachGone?: boolean
   /** SSH tmux enhancement (item 10): the Claude account the REMOTE session is
    *  signed in as (oauthAccount.emailAddress from the remote ~/.claude.json),
    *  read off the nonce'd setup sentinel. DESCRIPTOR ONLY -- never a

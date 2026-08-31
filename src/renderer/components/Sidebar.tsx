@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
 import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../stores/configStore'
+import { useDetachedRemotesStore } from '../stores/detachedRemotesStore'
+import { refreshAllDetachedLiveness } from '../stores/livenessStore'
 import { useCommandStore } from '../stores/commandStore'
 import { commandSecretKey } from '../../shared/command-secret'
 import { reorderLoose } from '../utils/reorderLoose'
@@ -103,6 +105,18 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const appMeta = useAppMetaStore((s) => s.meta)
   const updateAppMeta = useAppMetaStore((s) => s.update)
+  // SSH Persistent (resume liveness): refresh the amber re-attachable counters
+  // when the config list is present and the detached registry has entries —
+  // once, plus again whenever a NEW remote is left running (count increases).
+  // No poll: the store's own in-flight guard dedupes concurrent probes.
+  const detachedCount = useDetachedRemotesStore((s) => s.entries.length)
+  const prevDetachedCount = useRef(0)
+  useEffect(() => {
+    if (detachedCount > prevDetachedCount.current) {
+      void refreshAllDetachedLiveness(useConfigStore.getState().configs)
+    }
+    prevDetachedCount.current = detachedCount
+  }, [detachedCount])
   const showFirstRunCard = configs.length === 0 && !appMeta.hasCreatedFirstConfig && !appMeta.firstRunCardDismissed && !tourActive
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)

@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, SSHOptions } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, probeTmuxLive, SSHOptions } from '../pty-manager'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
@@ -8,12 +8,12 @@ import { isValidLegacyVersion } from '../../shared/legacy-version'
 import { loadCredential } from '../credential-store'
 import { readConfig } from '../config-manager'
 import { collectCommandSecrets } from '../command-secrets'
-import { bindSshToSavedConfig, argSecretAllowed } from '../spawn-credential-binding'
+import { bindSshToSavedConfig, argSecretAllowed, findSavedConfig } from '../spawn-credential-binding'
 import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
-import type { SshRuntime } from '../../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness } from '../../shared/types'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
 import {
   sanitizeRestoredSpawnOptions,
@@ -276,6 +276,17 @@ export const spawnOptionsSchema = z.object({
 // boundary contract is unit-tested against the real schema.
 export const sessionIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/, 'session id has invalid characters')
 
+// SSH Persistent (resume liveness) input. `configId` matches the credential-key
+// charset (the config's own id); `sessionIds` are bounded and each is a CCC id.
+// The ids are never interpolated into the remote command — safeSid sanitizes them
+// for LOCAL name matching — so this schema is a bound/DoS guard, and the
+// argv-injection defence lives at buildSshExecArgs (host/user from the saved
+// config only).
+const checkDetachedLiveSchema = z.object({
+  configId: z.string().min(1).max(64).regex(/^[A-Za-z0-9]+$/, 'configId has invalid characters'),
+  sessionIds: z.array(sessionIdSchema).max(64),
+})
+
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {
     cwd?: string
@@ -494,5 +505,25 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, sessionId: string) => {
     sessionIdSchema.parse(sessionId)
     endSshRemote(sessionId)
+  })
+
+  // SSH Persistent (resume liveness): is a set of DETACHED `ccc-<sessionId>` tmux
+  // sessions still alive on a config's host? The connection target is built
+  // ENTIRELY from the SAVED config named by `configId` (host/user/port) with the
+  // password from that config's keychain slot — never from the renderer, which
+  // supplies only the config id and the candidate session ids. The ids reach the
+  // remote host only via safeSid-matched NAMES (probeTmuxLive), never the command.
+  // Fail-open: an unknown/non-SSH config, or any exec failure, returns
+  // 'unverified' (not "dead"), so a host that is merely asleep is never mistaken
+  // for a wiped session.
+  ipcMain.handle(IPC.SSH_CHECK_DETACHED_LIVE, async (_event, payload: unknown): Promise<DetachedRemoteLiveness> => {
+    const { configId, sessionIds } = checkDetachedLiveSchema.parse(payload)
+    const saved = findSavedConfig(readConfig('configs'), configId)
+    if (!saved || saved.sessionType !== 'ssh' || !saved.sshConfig) {
+      return { outcome: 'unverified', liveSessionIds: [] }
+    }
+    const s = saved.sshConfig
+    const password = loadCredential(configId) ?? undefined
+    return probeTmuxLive({ username: s.username, host: s.host, port: Number(s.port), password }, sessionIds)
   })
 }

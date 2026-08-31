@@ -239,6 +239,9 @@ export interface ElectronAPI {
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
     onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
     endRemote: (sessionId: string) => Promise<void>
+    /** SSH Persistent (resume liveness): ask main whether a config's detached
+     *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
+    checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../../shared/types').DetachedRemoteLiveness>
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void

@@ -182,6 +182,9 @@ export interface ElectronAPI {
     /** item 4: END the remote session (tmux kill-session + sidecar cleanup via
      *  a separate ssh exec) then kill the local PTY. */
     endRemote: (sessionId: string) => Promise<void>
+    /** SSH Persistent (resume liveness): ask main whether a config's detached
+     *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
+    checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../shared/types').DetachedRemoteLiveness>
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
@@ -868,6 +871,8 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(channel, handler)
     },
     endRemote: (sessionId: string) => ipcRenderer.invoke(IPC.SSH_END_REMOTE, sessionId),
+    checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) =>
+      ipcRenderer.invoke(IPC.SSH_CHECK_DETACHED_LIVE, payload),
   },
   statusline: {
     onUpdate: (callback) => {

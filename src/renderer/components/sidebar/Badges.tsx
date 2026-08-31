@@ -114,6 +114,28 @@ export function SshPersistentBadge() {
   )
 }
 
+// SSH Persistent (resume liveness): an AMBER counter of VERIFIED-live detached
+// sessions re-attachable for this config — i.e. sessions the user left running on
+// the host that a liveness probe has confirmed are still there. COMPOSES with the
+// SshPersistentBadge (it does not replace it). Rendered only when count > 0.
+export function SshReattachBadge({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <div
+      className="flex items-center justify-center h-4 px-1 gap-0.5 rounded shrink-0 bg-peach/15 text-peach"
+      title={`${count} running session${count === 1 ? '' : 's'} left on the host — launch to reattach`}
+      style={{ fontSize: '8px', fontWeight: 700, letterSpacing: '0.5px' }}
+      data-testid="ssh-reattach-badge"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+        <path d="M3 3v5h5" />
+      </svg>
+      {count}
+    </div>
+  )
+}
+
 // Docker/container session badge (harmonise-remote Phase 3): a session whose
 // runtime is a container — `sshConfig.runtime.container` since the structured
 // Runtime landed (item e), falling back to the legacy `sshConfig.dockerContainer`
