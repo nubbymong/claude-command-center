@@ -35,14 +35,31 @@ afterAll(() => { try { stopConductorMcpServer() } catch { /* already down */ } }
 
 /** Count claude processes INSIDE the named container store (rootless via the
  *  key host; rootful via sudo -S with the password piped on stdin). */
-function claudeCountInContainer(rootful: boolean): number {
+/** Count THIS SESSION's claude processes inside the container, matched by the
+ *  same session-unique `settings-<safeSid>` marker the End path kills by.
+ *  Scoped, not a blunt claude count: the fixture container is SHARED — other
+ *  FROM boxes run their own docker combos against it concurrently, and a
+ *  whole-container count reads their live sessions as this test's orphans
+ *  (exactly what happened when the Rocky-FROM pack overlapped a WINDOWS_1
+ *  rerun, 2026-08-31). The bracket trick keeps pgrep from matching its own
+ *  bash -c cmdline. */
+function claudeCountInContainer(rootful: boolean, sid: string): number {
   const key = hosts.linuxRockyKey!
+  const safeSid = sid.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const pattern = `settings-[${safeSid[0]}]${safeSid.slice(1)}`
   // Rootful goes through `sudo -S` with the password on STDIN (never argv — it
   // would sit in the remote process list otherwise).
   const cmd = rootful
-    ? 'sudo -S podman exec ccc-test bash -c "pgrep -fc [c]laude || true" 2>/dev/null'
-    : 'podman exec ccc-test bash -c "pgrep -fc [c]laude || true"'
-  const out = execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', `${key.username}@${key.host}`, cmd],
+    ? `sudo -S podman exec ccc-test bash -c "pgrep -fc ${pattern} || true" 2>/dev/null`
+    : `podman exec ccc-test bash -c "pgrep -fc ${pattern} || true"`
+  // The probe is a MEASUREMENT channel, not the product path — skip host-key
+  // pinning entirely so a locked/unreadable known_hosts (the WINDOWS_1 VM's
+  // standing file-lock) cannot fail the measurement while the product sessions
+  // themselves run fine.
+  const knownHostsNull = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  const out = execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+    '-o', 'StrictHostKeyChecking=no', '-o', `UserKnownHostsFile=${knownHostsNull}`,
+    `${key.username}@${key.host}`, cmd],
     { encoding: 'utf8', timeout: 20000, input: rootful ? `${hosts.linuxRocky!.password}\n` : undefined })
   return Number(out.trim().split('\n').pop()) || 0
 }
@@ -56,13 +73,13 @@ describe('SSH statusline matrix — docker lane (LIVE, on-demand)', () => {
       runtime: { type: 'container', engine: 'podman', container: 'ccc-test' },
     })
     report('T20 docker rootless', w, sid)
-    const inContainer = claudeCountInContainer(false)
+    const inContainer = claudeCountInContainer(false, sid)
     // #572 one hop deeper: killing the exec CLIENT alone can orphan claude
     // inside the container — End must actually clear it.
     await endSshRemote(sid)
     killPty(sid)
     await sleep(4000)
-    const afterEnd = claudeCountInContainer(false)
+    const afterEnd = claudeCountInContainer(false, sid)
     expect(misParsedStageFail(w.events, sid)).toEqual([])
     expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
     expect(inContainer).toBeGreaterThan(0)
