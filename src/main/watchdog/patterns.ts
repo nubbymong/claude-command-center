@@ -741,3 +741,38 @@ export function canSendNow(text: string, nonDimText?: string): SendGateResult {
   }
   return { ok: true }
 }
+
+// Positive, Claude-SPECIFIC chrome the live pane carries: the boxed input row,
+// or a footer only Claude Code renders. Distinct from canSendNow, which is a
+// DENYLIST of shapes not to type into — a denylist is safe only when the pane
+// is ALWAYS Claude's own renderer, which holds for a LOCAL session but NOT for
+// SSH, where the remote draws every byte (a shell prompt, `[sudo] password:`, a
+// `[y/N]` confirm, `less`, a REPL). An SSH watchdog requires THIS before it may
+// send, so a retry can never land in a non-Claude pane. It is a scoping
+// precondition, NOT an authenticator: a remote that deliberately forges Claude's
+// whole UI is out of scope (it already owns its own shell); the cases this
+// closes are the accidental ones — a log line reading "API Error: 429", claude
+// exiting to the shell, an auth or confirm prompt — none of which carry it.
+// Deliberately NOT a bare `❯`: starship/pure/zsh prompts use that glyph, so a
+// shell would slip through; the BOXED row and the footers do not occur outside
+// Claude's TUI.
+const CLAUDE_CHROME_SIGNALS: RegExp[] = [
+  /^\s*│\s*[>❯][^│]*│\s*$/, // the boxed input row ("│ > … │" / "│ ❯ … │")
+  /^\s*⏵⏵/, // the mode footer ("⏵⏵ accept edits on …")
+  /^\s*\?\s+for shortcuts\b/i, // the shortcuts footer hint
+  /shift\+tab to (?:cycle|select)/i, // the tab-cycle footer hint
+  /\|\s*v\d+\.\d+\.\d+\b/, // the footer version segment ("… | v2.1.201")
+  /esc to interrupt/i, // the working/streaming footer
+]
+
+export function hasClaudeInputChrome(text: string): boolean {
+  const lines = stripAnsi(text).split('\n')
+  const tail = lines.slice(Math.max(0, lines.length - SEND_GATE_TAIL_LINES))
+  if (tail.some((l) => CLAUDE_CHROME_SIGNALS.some((r) => r.test(l)))) return true
+  // The input-box FRAME: a box-drawing rule AND a bar-gutter row present
+  // together in the window. A lone rule can be a table border (psql/duf), so
+  // both are required — the pairing is Claude's input box, not tabular output.
+  const hasRule = tail.some((l) => /^[\s─╭╮╰╯]+$/.test(l) && /─{3,}/.test(l))
+  const hasBar = tail.some((l) => /^\s*│.*│\s*$/.test(l))
+  return hasRule && hasBar
+}

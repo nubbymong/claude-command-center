@@ -14,6 +14,7 @@ import {
   isInternalRetry,
   resumedAfterLimit,
   hasActiveMonitors,
+  hasClaudeInputChrome,
 } from '../../../../src/main/watchdog/patterns'
 
 // Mirrors upstream claude-auto-retry's DEFAULT_OVERLOAD.patterns / DEFAULT_SAFEGUARD.patterns
@@ -447,6 +448,41 @@ describe('interactive rate-limit-options menu', () => {
   it('ignores a menu only quoted above live work (tail-scoped)', () => {
     const pane = [...MENU_UPGRADE_FIRST.split('\n'), ...Array(10).fill('● unrelated work'), '❯ '].join('\n')
     expect(isRateLimitOptionsPrompt(pane, 6)).toBe(false)
+  })
+})
+
+describe('hasClaudeInputChrome (SSH send precondition) — positive Claude-pane evidence', () => {
+  const RULE = '─────────────────────────────────────────'
+  const FOOTER = '  ⏵⏵ accept edits on (shift+tab to cycle) · ? for shortcuts'
+
+  it('true: a genuine Claude input pane (frame + footer)', () => {
+    expect(hasClaudeInputChrome(['Some output', RULE, '❯ ', RULE, FOOTER].join('\n'))).toBe(true)
+  })
+  it('true: the boxed input row alone', () => {
+    expect(hasClaudeInputChrome('output\n│ > type here                    │')).toBe(true)
+  })
+  it('true: the working footer ("esc to interrupt")', () => {
+    expect(hasClaudeInputChrome('✻ Cogitating… (esc to interrupt)')).toBe(true)
+  })
+  it('true: the version footer segment', () => {
+    expect(hasClaudeInputChrome('  Sonnet 4.5 · claude-conductor | v2.1.201')).toBe(true)
+  })
+
+  // The whole point over SSH: a remote-drawn NON-Claude pane must read false, so
+  // the watchdog never types a retry into it.
+  it.each([
+    ['bash prompt', 'nicholas@rocky:~$ '],
+    ['bash prompt with the user half-typed command', 'nicholas@rocky:~$ sudo rm -rf /tmp/build'],
+    ['ssh password prompt', "nicholas@rocky's password: "],
+    ['sudo password prompt', '[sudo] password for nicholas: '],
+    ['ssh key passphrase', 'Enter passphrase for key /home/n/.ssh/id_ed25519: '],
+    ['a [y/N] confirm', 'Force-push to origin/main? [Y/n] '],
+    ['the less/man pager', '(END)'],
+    ['a psql REPL', 'production=# SELECT 1;'],
+    ['a starship/zsh shell using ❯ as its own prompt', 'nicholas@rocky ~/src \n❯ '],
+    ['a bare box-rule table border (psql/duf) with no input row', ['name  value', RULE, 'a     1'].join('\n')],
+  ])('false: %s', (_label, tail) => {
+    expect(hasClaudeInputChrome(tail)).toBe(false)
   })
 })
 

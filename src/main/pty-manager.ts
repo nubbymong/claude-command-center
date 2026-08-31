@@ -1645,8 +1645,22 @@ export function spawnPty(
       // Same eligibility as the spawn-time gate (never shell-only/Codex/Ask);
       // startWatchdog itself tears down any prior entry, so a reconnect
       // re-latching claude-running re-arms cleanly.
-      if (s === 'claude-running' && currentFlowState !== 'claude-running'
-          && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude' && options?.isAsk !== true) {
+      // `claudeSent` guard (adversarial pass, 2026-08-31): arm only once the
+      // flow has actually WRITTEN the claude command. detectClaudeUi's strict
+      // box-rule (`╭─{5,}`) matches in ANY phase regardless of claudeSent, so a
+      // hostile/odd remote can print box drawing in its pre-auth MOTD and drive
+      // the flow to claude-running while the pane is still a password prompt.
+      // claudeSent is false until writeClaudeCmd runs (on fresh launch AND
+      // reconnect), so it cleanly separates a genuine claude from a forged
+      // banner. (The send gate's positive-chrome precondition is the real
+      // safety net; this keeps the watchdog from even arming on a forge.)
+      // One source for both the guard and the payload, so a future edit cannot
+      // desync them (the manager's isWatchableClaudeSession is a real second
+      // gate, not fed a hard-coded false — adversarial pass MINOR).
+      const sshShellOnly = options?.shellOnly === true
+      const sshAsk = options?.isAsk === true
+      if (s === 'claude-running' && currentFlowState !== 'claude-running' && claudeSent
+          && !sshShellOnly && (options?.provider ?? 'claude') === 'claude' && !sshAsk) {
         // LIVE geometry, not the spawn options: the handshake→claude-running
         // gap can be long (tmux staging/push), noteResize no-ops before an
         // entry exists, and the headless pane must wrap exactly like the real
@@ -1655,8 +1669,8 @@ export function spawnPty(
         getWatchdogManager()?.startWatchdog(sessionId, {
           provider: options?.provider,
           ssh: true,
-          shellOnly: false,
-          ask: false,
+          shellOnly: sshShellOnly,
+          ask: sshAsk,
           cols: livePty?.cols ?? options?.cols,
           rows: livePty?.rows ?? options?.rows,
         })
@@ -2724,6 +2738,15 @@ export function spawnPty(
       const data = extractSshOscSentinels(sessionId, rawData)
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
+      // Watchdog (#235, SSH): feed the SAME terminal bytes the renderer gets
+      // into the headless pane. No-op until this session arms its watchdog (at
+      // the claude-running latch, above) and when the feature is off. This is
+      // pure observation — like the renderer send it belongs ABOVE the
+      // flow-destroyed guard below — and is what makes the SSH watchdog live;
+      // the b515cbce claim that "feedData already flows for every session" was
+      // true only of the local branch, so silence detection and every banner
+      // detector read an empty pane over SSH until this line.
+      getWatchdogManager()?.feedData(sessionId, data)
 
       // Follow-up adversarial pass (lifecycle MAJOR): once the flow is
       // destroyed, terminal bytes still belong on the renderer's data channel

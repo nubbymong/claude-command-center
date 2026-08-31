@@ -528,6 +528,9 @@ export class WatchdogManager {
         return e ? readPanePair(e.term, TAIL_MAX_LINES, true).nonDim : ''
       },
       isSessionAlive: () => this.host.isSessionAlive(sessionId),
+      // SSH panes are remote-drawn — harden the send gate (positive Claude
+      // chrome required; dim companion dropped). See WatchdogAdapter.
+      requireClaudeChrome: info?.ssh === true,
       send: (text: string) => this.host.send(sessionId, text),
       now: () => this.now(),
       log: (level, msg) => {

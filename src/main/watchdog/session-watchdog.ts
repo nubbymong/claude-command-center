@@ -20,6 +20,7 @@ import {
   isInternalRetry,
   resumedAfterLimit,
   canSendNow,
+  hasClaudeInputChrome,
 } from './patterns'
 import { parseResetTime, calculateWaitMs } from './time-parser'
 import { resolveWatchdogConfig } from './config'
@@ -64,6 +65,13 @@ export interface WatchdogAdapter {
    *  on any caret text, placeholder or not). */
   getTailNonDim?(): string
   isSessionAlive(): boolean
+  /** SSH session: the pane is drawn by a REMOTE host and can be anything (a
+   *  shell, a pager, a `[sudo] password:` prompt, a REPL), so the send gate is
+   *  hardened — it requires positive Claude input chrome AND reads raw (the
+   *  dim/non-dim companion is remote-controlled, so it is dropped, failing
+   *  closed on any caret text). Absent/false for a LOCAL session, whose pane is
+   *  always Claude's own renderer. */
+  requireClaudeChrome?: boolean
   send(text: string): void
   now(): number
   log(level: 'info' | 'warn' | 'error', msg: string): void
@@ -423,6 +431,32 @@ export class SessionWatchdog {
    *  shows a menu or the user's draft), with the wait pushed out by `deferMs`
    *  and no attempt consumed. */
   private sendGate(tail: string, now: number, deferMs: number): boolean {
+    // SSH: the pane is drawn by the remote and may be a shell, pager, REPL, or
+    // auth/confirm prompt — none of which canSendNow (a denylist of CLAUDE
+    // chrome) knows to refuse. Require positive Claude input chrome first, so a
+    // retry can never be typed into a non-Claude pane (a bare shell, `[sudo]
+    // password:`, `[y/N]`), including the case where claude has exited to the
+    // shell mid-session. And read the gate RAW: the dim/non-dim companion is
+    // remote-controlled over SSH, and its one lever — "this row is dim" — would
+    // flip a real draft to sendable, so it is dropped (fail closed on any caret
+    // text). A LOCAL session keeps the exact prior behaviour.
+    if (this.adapter.requireClaudeChrome) {
+      if (!hasClaudeInputChrome(tail)) {
+        this.waitUntil = now + deferMs
+        this.adapter.log('info', 'Retry deferred: the remote pane is not showing Claude — no automated line will be typed into it.')
+        return false
+      }
+      const sshGate = canSendNow(tail)
+      if (sshGate.ok) return true
+      this.waitUntil = now + deferMs
+      this.adapter.log(
+        'info',
+        sshGate.reason === 'menu'
+          ? 'Retry deferred: an interactive menu/prompt is open — an automated line would select in it.'
+          : "Retry deferred: the input box carries the user's unsubmitted draft.",
+      )
+      return false
+    }
     const gate = canSendNow(tail, this.adapter.getTailNonDim?.())
     if (gate.ok) return true
     this.waitUntil = now + deferMs

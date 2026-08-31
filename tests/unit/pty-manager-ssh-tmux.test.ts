@@ -2744,4 +2744,34 @@ describe('spawnPty SSH branch — watchdog arms at claude-running, not at spawn'
     expect(watchdogStub.startWatchdog).not.toHaveBeenCalled()
     killPty(sessionId)
   })
+
+  // Adversarial pass MAJOR-1: detectClaudeUi's strict box-rule matches in ANY
+  // phase, so a hostile/odd remote could print box drawing in its pre-auth MOTD
+  // and drive the flow to claude-running while the pane is still an auth prompt.
+  // The `&& claudeSent` arm guard means the watchdog does NOT arm until the flow
+  // has actually written the claude command.
+  it('does NOT arm on box-drawing that appears BEFORE the claude command is written (forged MOTD)', () => {
+    const sessionId = 's-watchdog-forge'
+    onDataListeners.length = 0
+    spawnPty(fakeWin, sessionId, { ssh: SSH } as never)
+    // No launchClaude() \u2192 claudeSent stays false. A MOTD box-rule arrives.
+    feedPtyData('\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\r\nWelcome to prod\r\n\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\r\n')
+    // The flow may latch claude-running off the strict box-rule, but the
+    // watchdog must not arm without claudeSent.
+    expect(watchdogStub.startWatchdog).not.toHaveBeenCalled()
+    killPty(sessionId)
+  })
+
+  // Adversarial pass BLOCKER-1: the SSH branch must FEED the watchdog its PTY
+  // bytes (b515cbce shipped without this, so detection read an empty pane and
+  // silence latched a permanent sleep moon).
+  it('feeds SSH PTY output to the watchdog (feedData)', () => {
+    const sessionId = 's-watchdog-feed'
+    onDataListeners.length = 0
+    watchdogStub.feedData.mockClear()
+    spawnPty(fakeWin, sessionId, { ssh: SSH } as never)
+    feedPtyData('some remote output\r\n')
+    expect(watchdogStub.feedData).toHaveBeenCalledWith(sessionId, expect.stringContaining('some remote output'))
+    killPty(sessionId)
+  })
 })
