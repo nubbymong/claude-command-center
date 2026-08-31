@@ -50,11 +50,12 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.1.0',
     section: 'getting-started',
     summary:
-      'Every workspace starts as a saved config. First choose what it runs -- Claude Code, Codex, or Terminal only -- then whether it runs locally or over SSH; the rest of the form unfolds from those two answers. A config carries its label, colour, working directory, starting model and starting effort, plus a permission mode and any extra CLI arguments.',
+      'Every workspace starts as a saved config. First choose what it runs -- Claude Code, Codex, or Terminal only -- then how it connects: **Local**, **SSH**, or **SSH Persistent** (a remote session that survives a dropped link). The rest of the form unfolds from those two answers. A config carries its label, colour, working directory, starting model and starting effort, plus a permission mode and any extra CLI arguments.',
     highlights: [
       'Pick a **starting model** per config; the dropdown lists what is currently available, newest first',
       '**Starting effort** is a config field (low, medium, high, xhigh, max, ultracode); change it live in Claude with `/effort`. The card shows the current level',
-      'Local or SSH -- one config form, full Claude support either way',
+      'Connection is three cards, not a checkbox: **Local**, **SSH**, **SSH Persistent** -- one config form, full Claude support on all three',
+      'An SSH config also has a **Runtime** section: run on the host, or **in a Docker container** the app execs into for you (engine, name, optional directory, sudo)',
     ],
     howToTrigger: [
       { label: 'Create', value: 'Saved tab → + New → Config' },
@@ -67,7 +68,7 @@ export const trainingSteps: TrainingStep[] = [
       'Create **saved configs** with custom working directories and models',
       'Effort is **live** -- run `/effort` in Claude to change it; the level shows on the card and in the statusline',
       '**Bundle agent templates** from your Library into the spawned session',
-      'Connect to remote machines via **SSH** with full Claude support',
+      'Connect to remote machines via **SSH** with full Claude support -- same statusline, account and usage as a local session',
     ],
     screenshotFilename: 'step-session-options.jpg',
   },

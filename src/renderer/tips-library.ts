@@ -246,9 +246,9 @@ export const TIPS_LIBRARY: Tip[] = [
         body: 'Create a config with **SSH** as the session type, enter host/port/user/remote path, and Claude runs on the remote with full file access. Your terminal stays local.\n\nWhen the session connects, an in-pane overlay shows **Launch Claude / Skip** -- your click triggers the statusline injection and runs Claude. No prompt-detection magic, no setup blobs accidentally pasted into a running Claude.\n\nPasswords (if you don\'t use key auth) are encrypted with your OS credential store and only decrypted in the main process, never in the renderer.',
       },
       postUse: {
-        shortText: 'Run Claude inside a Docker container via SSH',
-        title: 'Docker-in-SSH (post-connect command)',
-        body: 'Edit your SSH config and set a **Post-connect command** like `sudo docker exec -it claude-dev bash`. After SSH login the overlay shows **Run post-connect command / Skip**; click it, and once the inner shell is ready a second overlay offers **Launch Claude / Skip**.\n\nGreat for reproducible builds and isolating Claude\'s file access from the host.',
+        shortText: 'A remote session shows its account and usage too',
+        title: 'What a Remote Session Reports Back',
+        body: 'A remote session is not a second-class one. It reports its status back over its own connection to the app, so it fills in the same places a local session does: the **account line** on the session card, the **account pill** in the header, and its own bars in the **multi-account strip** along the bottom -- 5-hour, weekly and the per-model ones.\n\nRun **`/login`** on the remote and the session moves to the right account within a few seconds; you do not have to relaunch it.\n\nThere is nothing to install on the host and no setup to re-run. It needs the **built-in tools** left on (Settings > General) because the status travels back through the connection they open -- so if a remote status line is the only one missing, look there first.',
       },
     },
   },
@@ -678,7 +678,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Ask for the plan as a flow, not a document',
         title: 'Plan Mode on the Canvas',
-        body: 'Nobody reads a long markdown plan. Ask your agent to **put the plan on the canvas** and it comes back as a visual flow with a summary: the steps, what each one touches, and what has to happen before what.\n\nA plan is stored and served exactly like a design, so everything you already know still works on it -- click a step to leave a **note**, walk the versions as the plan changes, and **approve or reject** the version in front of you. Approving it signs the plan off, and the canvas front page keeps a **View plan** jump to it, so the agreed version stays one click away while the work is being done.\n\nUse it before a big change rather than after: correcting a step on the canvas costs a click, correcting it in the code costs an afternoon.',
+        body: 'Nobody reads a long markdown plan. Ask your agent to **put the plan on the canvas** and it comes back as a visual flow with a summary: the steps, what each one touches, and what has to happen before what.\n\nA plan is reviewed as a plan, not as a mockup. The two buttons are **Approve** and **Submit Revisions** -- there is no Reject, because a plan is meant to go round again. Click a step to leave a **note**, and send the round.\n\n**Approve is deliberately hard to reach.** It stays unavailable while the plan carries an **open question**, or while you have a note you have not sent, and the panel names which: *"Approve is unavailable: 2 open questions -- answer them in a note and submit revisions"*. Answer them, submit revisions, and the next version is the one you can approve -- so an approval never arrives carrying work the agent has not seen. A round you sent back reads **REVISIONS** in History.\n\nApproving signs the plan off, and the canvas front page keeps a **View plan** jump to it. Use it before a big change: correcting a step on the canvas costs a click, correcting it in the code costs an afternoon.',
         focusHint: 'Session toolbar -- the Canvas button, once your agent has rendered a plan',
       },
     },
@@ -787,9 +787,25 @@ export const TIPS_LIBRARY: Tip[] = [
     variants: {
       primary: {
         shortText: 'Keep a remote session alive when the link drops',
-        title: 'Detachable SSH Sessions',
-        body: 'You run sessions over SSH -- so you have met the failure: the laptop sleeps, the VPN blinks, and the work on the other end dies with the connection.\n\nTurn on **Detachable** in the SSH config and the remote Claude runs inside a tmux session instead. The link dropping no longer kills it: reconnect and the session is reattached where it was, output and all.\n\nClosing a persistent session asks what you actually meant -- **End it** on the host, or **Leave it running** and come back later. The sidebar marks which of your sessions are persistent.',
-        focusHint: 'Session config -- SSH section, the "Detachable" toggle',
+        title: 'SSH Persistent Sessions',
+        body: 'You run sessions over SSH -- so you have met the failure: the laptop sleeps, the VPN blinks, and the work on the other end dies with the connection.\n\nHow a config connects is a choice of three cards, not a checkbox: **Local**, **SSH**, and **SSH Persistent**. Pick the third and the remote Claude runs inside a tmux session, so the link dropping no longer kills it -- reconnect and you are reattached where you were, output and all.\n\nClosing a persistent session asks what you actually meant -- **End it** on the host, or **Leave it running** and come back later. The sidebar marks which of your sessions are persistent.\n\n(If you set the old **Detachable** checkbox on a config, it already opens as SSH Persistent. Nothing to re-save.)',
+        focusHint: 'Session config -- the connection cards, the third one: "SSH Persistent"',
+      },
+    },
+  },
+
+  {
+    id: 'tip.container-runtime',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 72,
+    requires: ['sessions.session-type'],
+    variants: {
+      primary: {
+        shortText: 'Run a remote session inside a container',
+        title: 'Runtime: Run Claude in a Container',
+        body: 'An SSH config has a **Runtime** section that decides where the session lands once it has connected: **On the host**, or **In a Docker container**.\n\nPick the container option and you fill in fields instead of maintaining a shell one-liner: the **engine** (docker or podman), the **container name**, whether to **Exec into running** or **Start stopped**, an optional directory inside the container, and a tick if the engine needs **sudo** (that password goes to your OS credential store, like an SSH password). The app composes and runs the command.\n\nClaude runs *inside* the container with the statusline, account and usage all working, and ending the session stops that session\'s Claude in there -- another session sharing the container is left alone.\n\nAlready doing this with a hand-written command? The dialog spots a docker-shaped one and offers a one-click **Convert**. It never rewrites it silently, and **After connecting, run** stays under **Advanced** for prep that is not a container.',
+        focusHint: 'Session config -- the Runtime section, below the connection cards (SSH configs only)',
       },
     },
   },

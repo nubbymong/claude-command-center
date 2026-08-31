@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.12] - 2026-08-31
+
+> A remote session stops being a second-class one. Local and remote sessions now report their status the same way, over the same channel, so an SSH session shows its account and its full usage — including the per-model bars — exactly like a session on your own machine. That also fixes the one host the status line never worked on: a Windows remote. The config dialog answers "where does this run?" properly for the first time: Connection is a choice of three (Local, SSH, SSH Persistent), and a new Runtime section runs the session inside a Docker or Podman container without you maintaining a shell one-liner. And a plan on the canvas is reviewed as a plan: Approve or Submit Revisions, with approval held back while a question is still open.
+
+### Added
+- A remote session shows its account and its usage, like a local one. An SSH session now reports over its own connection back to the app rather than by painting escape codes through the terminal, and it gathers the same figures a local session does: the signed-in account on the remote, the 5-hour and weekly limits, and the per-model bars (Fable included). So the account line on the session card, the account pill in the session header and the multi-account strip along the bottom all fill in for remote sessions. The strip no longer has to borrow a local session's numbers, and signing in with /login on the remote moves the session to the right account on the next tick. Nothing to install or re-run: it applies to sessions you launch from now on.
+- Connection is three plain choices: Local, SSH, or SSH Persistent. Persistence used to be a "Detachable" checkbox tucked below the SSH fields, which read like an option rather than what it is — a different kind of connection, one that keeps running when the link drops. It is now the third card beside Local and SSH, described where you choose it. Your saved configs are untouched and need no editing: one that had Detachable set simply opens as SSH Persistent.
+- Run the session inside a container, without writing the command yourself. A new Runtime section on an SSH config asks where the session lands once it has connected: on the host, or in a Docker container. Pick the engine (docker or podman), name the container, choose whether to step into a running one or start a stopped one, optionally give a directory inside it, and say if the engine needs sudo — the app composes and runs the command. Claude runs inside the container with the full status line, account and usage, the same as anywhere else. If you already do this with a hand-written "after connecting" line, the dialog spots it and offers a one-click Convert; it never rewrites your command behind your back, and arbitrary prep still has its home under Advanced.
+
+### Changed
+- The remote host is named once instead of three times. The floating host pill docked at the bottom-left of the terminal is gone, and so is the small "remote" tag on the command-bar clusters — both added last release, and both saying again what the header's "SSH: user@host" line already says. The "this PC" mark stays on the partner shell, where it is genuinely surprising that the pane runs somewhere else.
+- A container session says so. A small teal container mark sits on the session card and in the session header, with the container name on hover. It reads alongside the SSH marks rather than replacing them, so a persistent remote session in a container wears all three.
+- A plan on the canvas is reviewed as a plan. The two buttons are Approve and Submit Revisions — there is no Reject on a plan, because a plan is meant to go round again. Approve is held back while the plan still has an open question, or while you have a note you have not sent, and the panel says which: "Approve is unavailable: 2 open questions — answer them in a note and submit revisions". So an approval never arrives carrying work the agent has not seen. History reads REVISIONS rather than REJECTED for a round you sent back.
+- Less apparatus around a review. A plan drops the X-Ray switch, Region and Sketch entirely — it is reviewed by reading it and pointing at a step, and a padlocked control whose whole content was an apology for being disabled is worse than no control. The hover readout beside the page is one quiet row instead of a three-line box, and on a plan it is headed "Pointing at" rather than "X-Ray".
+
+### Fixed
+- The status line works on a Windows remote host. Connecting to a Windows machine over SSH used to show no status line at all, and the last release reported that as an upstream limitation to wait out. It was ours. A Windows remote stacks up to three terminal layers between Claude and your pane, and at least one of them rewrites or swallows the codes the status line was travelling in — bytes that never arrive cannot be read. The status now travels as data over the session's own connection instead, which no terminal layer touches, so Windows, Linux and macOS remotes all behave identically. It needs the built-in tools switched on (they are, by default); without them a remote session falls back to the old path.
+- Ending a container session ends the right Claude. The end that runs when you close a remote session now reaches inside the container and stops that session's Claude, matched on the session's own marker — so a second session sharing the same container carries on untouched, and a container no longer accumulates abandoned processes.
+
 ## [2.1.0-rc.11] - 2026-08-30
 
 > A UX sweep from living on rc.10: the command bar stops hoarding space and the SSH host reads as a quiet pill above the status line instead of a floating IP overhanging the buttons. Two real bugs die with it: End remote now genuinely ends password-auth remote sessions (orphaned Claudes no longer pile up on the host), and approving a canvas round with final notes no longer loses those notes to the agent. The blank browser page gets its brand masthead.
@@ -1432,6 +1451,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.12]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.12
 [2.1.0-rc.11]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.11
 [2.1.0-rc.10]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.10
 [2.1.0-rc.9]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.9
