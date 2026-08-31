@@ -366,6 +366,29 @@ describe('buildTmuxBinPatchCommand (#242 finding F3)', () => {
       buildTmuxBinPatchCommand('sid-x'),
     )
   })
+
+  // ADR-009 ordering invariant. CCC_STATUS_URL_FILE was placed AFTER
+  // CCC_TMUX_BIN in the statusLine command, so this patch's `/CCC_TMUX_BIN=\S*/`
+  // rewrite must stop at the space between them. Put the new var FIRST (or drop
+  // the space) and the rewrite would swallow it, taking the whole tier-0
+  // delivery with it on every host that reaches tier 3/4 — a silent statusline
+  // death on exactly the hosts the patch exists to serve.
+  // Mutation to prove this can fail: emit `CCC_STATUS_URL_FILE=…CCC_TMUX_BIN=…`.
+  it("the patch's CCC_TMUX_BIN rewrite leaves CCC_STATUS_URL_FILE intact in the real generated command", () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    // The command as the emitted script builds it, with the two remote-side
+    // consts resolved the way the remote node would resolve them.
+    const built = script
+      .match(/command:'([^']*)'\+tmuxPath\+' CCC_STATUS_URL_FILE='\+urlPath\+' node '\+shimPath/)
+    expect(built).not.toBeNull()
+    const command = `${built![1]}` + '' + ` CCC_STATUS_URL_FILE=/home/u/.claude/ccc-status-sid-x.url node /home/u/.claude/conductor-ssh-statusline.js`
+    // Empty tmux bin (the tier-1/2 miss that makes this patch run at all).
+    expect(command).toContain('CCC_TMUX_BIN= CCC_STATUS_URL_FILE=')
+    const patched = command.replace(/CCC_TMUX_BIN=\S*/, 'CCC_TMUX_BIN=/home/u/.claude/bin/tmux')
+    expect(patched).toContain('CCC_TMUX_BIN=/home/u/.claude/bin/tmux')
+    expect(patched).toContain('CCC_STATUS_URL_FILE=/home/u/.claude/ccc-status-sid-x.url')
+    expect(patched).toContain(' node /home/u/.claude/conductor-ssh-statusline.js')
+  })
 })
 
 // #242 MAJOR: tier 1/2 tmux detection had ZERO coverage -- reverting the
@@ -463,8 +486,9 @@ describe('SSH remote setup script — tier-2 -V execution probe + nested-tmux ov
 interface SetupRunResult {
   stdout: string
   execFileCalls: Array<{ file: string; args: string[] }>
-  /** Every fs.writeFileSync the script performed (settings, shim, mcp). */
-  writes: Array<{ path: string; content: string }>
+  /** Every fs.writeFileSync the script performed (settings, shim, mcp, status URL),
+   *  with the write OPTIONS — the mode/flag custody is part of the contract. */
+  writes: Array<{ path: string; content: string; opts?: Record<string, unknown> }>
 }
 
 function runSetupScript(opts: {
@@ -482,7 +506,7 @@ function runSetupScript(opts: {
     mkdirSync: () => {},
     chmodSync: () => {},
     rmSync: () => {},
-    writeFileSync: (p: string, content: unknown) => { result.writes.push({ path: String(p), content: String(content) }) },
+    writeFileSync: (p: string, content: unknown, wopts?: Record<string, unknown>) => { result.writes.push({ path: String(p), content: String(content), opts: wopts }) },
     readFileSync: () => { throw enoent() },
     existsSync: () => false,
     accessSync: (p: string) => { (opts.accessSync ?? (() => { throw enoent() }))(p) },
@@ -584,7 +608,11 @@ describe('SSH remote setup script — runtime behaviour of the tmux probes (fail
     expect(sentinelTmuxClass(r.stdout)).toBe('none') // launch stays bare (no nesting)
     const settingsWrite = r.writes.find((w) => w.path.includes('settings-sid-rt'))
     expect(settingsWrite).toBeDefined()
-    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN=/usr/bin/tmux node')
+    // The bin is followed by a SPACE, not end-of-command: the status-URL file
+    // env var (ADR-009 token custody) sits between it and `node`, and
+    // buildTmuxBinPatchCommand's /CCC_TMUX_BIN=\S*/ rewrite must stop at that
+    // space rather than swallowing the rest of the line.
+    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN=/usr/bin/tmux CCC_STATUS_URL_FILE=')
   })
 
   it('control: no tmux anywhere still bakes an empty CCC_TMUX_BIN (nothing to preserve)', () => {
@@ -595,7 +623,28 @@ describe('SSH remote setup script — runtime behaviour of the tmux probes (fail
     expect(sentinelTmuxClass(r.stdout)).toBe('none')
     const settingsWrite = r.writes.find((w) => w.path.includes('settings-sid-rt'))
     expect(settingsWrite).toBeDefined()
-    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN= node')
+    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN= CCC_STATUS_URL_FILE=')
+  })
+
+  // ADR-009 token custody: the /status URL carries this session's MCP token, so
+  // it must NOT be in the statusLine command (an env-prefix needs a shell, which
+  // publishes the whole line — token included — to the remote host's process
+  // table). It goes to a 0600 file; only the path is in the command.
+  // Mutation to prove this can fail: put the URL back in the env prefix.
+  it('writes the status URL to a 0600 exclusive-create file and puts only the PATH in the command', () => {
+    const r = runSetupScript({ env: {}, execSync: () => '/usr/bin/tmux\n' })
+    const urlWrite = r.writes.find((w) => w.path.includes('ccc-status-sid-rt.url'))
+    expect(urlWrite).toBeDefined()
+    expect(urlWrite!.content).toContain('/status?cccSessionId=')
+    expect(urlWrite!.content).toContain('token=')
+    expect(urlWrite!.opts).toMatchObject({ mode: 0o600, flag: 'wx' })
+    const settingsWrite = r.writes.find((w) => w.path.includes('settings-sid-rt'))
+    expect(settingsWrite!.content).toContain('CCC_STATUS_URL_FILE=')
+    // The token never appears in the command itself.
+    expect(settingsWrite!.content).not.toContain('CCC_STATUS_URL=')
+    const cmd = JSON.parse(settingsWrite!.content).statusLine.command as string
+    expect(cmd).not.toContain('token=')
+    expect(cmd).toContain('ccc-status-sid-rt.url')
   })
 })
 
@@ -653,10 +702,21 @@ describe('buildContainerKillCommand (#572 in-container orphan)', () => {
     expect(buildContainerKillCommand('s1', { type: 'host' })).toBe('')
   })
 
+  // ADR-009: this runs from endSshRemote OUTSIDE the executor's try, so a
+  // TypeError here escaped and skipped ALL remote cleanup — container kill, tmux
+  // kill and sidecar sweep alike. A non-string `container` must read as "no
+  // name" and return '', not throw.
+  // Mutation to prove this can fail: restore `(runtime.container ?? '').trim()`.
+  it('a NON-STRING container name returns \'\' instead of throwing out of the End path', () => {
+    for (const bad of [42, ['ccc-test'], { n: 1 }, null, true]) {
+      expect(buildContainerKillCommand('s1', { type: 'container', container: bad } as never)).toBe('')
+    }
+  })
+
   it('rootless podman: engine exec + marker-scoped kill + sidecar removal, exit-0 tail', () => {
     const cmd = buildContainerKillCommand('lv20abc', rootless)
     expect(cmd).toBe(
-      "podman exec ccc-test bash -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json 2>/dev/null; exec pkill -f settings-lv20abc' 2>/dev/null; true"
+      "podman exec ccc-test bash -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json ~/.claude/ccc-status-lv20abc.url 2>/dev/null; exec pkill -f settings-lv20abc' 2>/dev/null; true"
     )
     // No sudo anywhere for a rootless container.
     expect(cmd).not.toContain('sudo')
@@ -758,14 +818,19 @@ describe('generateWindowsRemoteSetupScript (item 3)', () => {
     // Reads the account the SAME way the POSIX path does.
     expect(script).toContain("Buffer.from(c.oauthAccount.emailAddress,'utf-8').toString('base64')")
   })
-  it('bakes a Windows statusLine command that passes the session id via argv (cmd.exe cannot env-prefix)', () => {
-    // With the conductor MCP on (mocked port), the /status POST URL rides
-    // argv[3], double-quoted against the `&` in its query (harmonise-remote
-    // delivery tier 0).
+  it('bakes a Windows statusLine command that passes the session id and the status-URL FILE PATH via argv', () => {
+    // With the conductor MCP on (mocked port), argv[3] carries the PATH of the
+    // status-URL file — never the URL itself (ADR-009 token custody: cmd.exe
+    // cannot env-prefix, so the pre-hardening form put the token in the argv of
+    // a process the remote respawns every tick, i.e. in its process table).
+    // Mutation to prove this can fail: interpolate `statusUrl` back into argv.
     const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true }, NONCE)
     expect(script).toContain(
-      `command:'node '+JSON.stringify(shimPath)+' winsid "http://127.0.0.1:19333/status?cccSessionId=winsid&token=tok-winsid"'`,
+      `command:'node '+JSON.stringify(shimPath)+' winsid'+' '+JSON.stringify(urlPath)`,
     )
+    // The URL (and its token) is written to the sidecar, not the command.
+    expect(script).toContain(`fs.writeFileSync(urlPath,"http://127.0.0.1:19333/status?cccSessionId=winsid&token=tok-winsid",{flag:'wx'})`)
+    expect(script).not.toContain(`' winsid "http://`)
   })
   it('argv carries only the sid when the conductor MCP is off (no tunnel ⇒ CONOUT$ ladder)', () => {
     const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true, includeConductorMcp: false }, NONCE)
@@ -800,12 +865,31 @@ describe('getWindowsRemoteSetupCommand (item 3 — cmd.exe delivery)', () => {
       // cmd.exe's hard input limit is 8191 per typed line.
       expect(line.length).toBeLessThan(8191)
     }
-    // First lines stage the base64; the final line decodes, runs, deletes.
-    expect(lines[0]).toContain('Set-Content -LiteralPath ([IO.Path]::GetTempPath()')
+    // First line creates the temp file EXCLUSIVELY (ADR-009: -ItemType File
+    // fails on an existing path, so a squatted file is never written through);
+    // the middle lines append the base64; the final line verifies the digest,
+    // runs, and deletes in a `finally`.
+    expect(lines[0]).toContain('New-Item -ItemType File -Path ([IO.Path]::GetTempPath()')
+    expect(lines[0]).toContain('-ErrorAction Stop')
+    expect(lines[1]).toContain('Add-Content -LiteralPath ([IO.Path]::GetTempPath()')
     const last = lines[lines.length - 1]
     expect(last).toContain('FromBase64String')
     expect(last).toContain('|node')
-    expect(last).toContain('Remove-Item -LiteralPath ([IO.Path]::GetTempPath()')
+    expect(last).toContain('}finally{Remove-Item -LiteralPath ([IO.Path]::GetTempPath()')
+    // Integrity gate over the decoded program, mirroring TMUX_STAGE_SHA256.
+    expect(last).toMatch(/SHA256\]::Create\(\)\.ComputeHash/)
+    expect(last).toMatch(/-ne '[0-9a-f]{64}'\)\{exit 9\}/)
+  })
+
+  // The temp path must not be guessable between runs — a fixed
+  // `ccc-setup-<sid>.b64` could be squatted by a co-tenant on a shared Windows
+  // host. Mutation to prove this can fail: drop the random component.
+  it('gives the chunked temp file a FRESH random component on every call', () => {
+    const nameOf = (cmd: string): string => cmd.match(/ccc-setup-winsid-([0-9a-f]+)\.b64/)![1]
+    const a = nameOf(getWindowsRemoteSetupCommand('winsid', { includeStatusLine: true }, 'winnonce123'))
+    const b = nameOf(getWindowsRemoteSetupCommand('winsid', { includeStatusLine: true }, 'winnonce123'))
+    expect(a).toHaveLength(16)
+    expect(a).not.toBe(b)
   })
 
   // No one-liner case: the Windows shim (embedded unconditionally, statusline

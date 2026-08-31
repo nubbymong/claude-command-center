@@ -2138,6 +2138,7 @@ describe('endSshRemote target lifecycle — survives a drop, cleared on delibera
     expect(t?.sudoPassword).toBeUndefined()
     killPty('s-endtarget-plain')
   })
+
 })
 
 // ===========================================================================

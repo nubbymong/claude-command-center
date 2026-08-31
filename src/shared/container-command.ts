@@ -23,9 +23,45 @@ export const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 // Same conservative charset the SSH remotePath uses: letters/digits _ . / - ~
 const CONTAINER_DIR_RE = /^[A-Za-z0-9_./~-]+$/
 
+/**
+ * Read `runtime.container` as a string, or `undefined` when it is absent.
+ *
+ * Adversarial review (ADR-009): the field is typed `string | undefined` but the
+ * value is loaded from a JSON config file and, on the no-configId spawn branch,
+ * arrives straight off the IPC request — neither of which the type system
+ * checks. `(runtime.container ?? '').trim()` throws a TypeError on a number or
+ * an array, and one of the two call sites (buildContainerKillCommand, reached
+ * from endSshRemote OUTSIDE the executor try) would have turned that throw into
+ * a skipped cleanup of EVERYTHING — container, tmux and sidecars alike. A
+ * non-string is now simply "no name", which both call sites already reject.
+ */
+export function readContainerName(runtime: SshRuntime): string {
+  return typeof runtime.container === 'string' ? runtime.container.trim() : ''
+}
+
+/**
+ * Runtime types this build understands. A `runtime` block that is PRESENT but
+ * carries anything else is a corrupt or hand-edited config, not a host session.
+ */
+const KNOWN_RUNTIME_TYPES: ReadonlySet<string> = new Set(['host', 'container'])
+
 export function composeRuntimeCommand(runtime: SshRuntime | undefined): string | undefined {
-  if (!runtime || runtime.type !== 'container') return undefined
-  const name = (runtime.container ?? '').trim()
+  // No runtime block at all = a plain host session (the pre-redesign default).
+  if (!runtime) return undefined
+  // Adversarial review (ADR-009): an unrecognised `type` used to fall through
+  // this function's `!== 'container'` test and return undefined — i.e. a config
+  // whose Runtime block says `'Container'` or `'containr'` launched claude on
+  // the BARE HOST, silently, with no container hop and no error. config:save
+  // does no schema validation, so a typo (or a config edited by hand, or written
+  // by an older/newer build) reached this sink verbatim. Fail closed instead:
+  // throwing joins the `runtimeInvalid` latch in pty-manager, which refuses
+  // every launch path for the session rather than degrading to the host — the
+  // same posture the validated-but-unsafe container name already had.
+  if (!KNOWN_RUNTIME_TYPES.has(runtime.type as string)) {
+    throw new Error(`unknown ssh runtime type: ${JSON.stringify(runtime.type)}`)
+  }
+  if (runtime.type !== 'container') return undefined
+  const name = readContainerName(runtime)
   if (!name) throw new Error('container runtime selected but no container name configured')
   if (!CONTAINER_NAME_RE.test(name)) throw new Error(`unsafe container name: ${JSON.stringify(name)}`)
   const engine = runtime.engine === 'podman' ? 'podman' : 'docker'

@@ -13,6 +13,7 @@ import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
+import type { SshRuntime } from '../../shared/types'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
 import {
   sanitizeRestoredSpawnOptions,
@@ -41,6 +42,11 @@ interface RendererSSHOptions {
   /** SSH tmux enhancement (item 3): remote OS. 'windows' selects the Windows
    *  setup path; 'auto'/'unix'/undefined use POSIX unchanged. */
   remoteOs?: 'auto' | 'unix' | 'windows'
+  /** Structured container runtime (item e). Declared so the type matches what
+   *  actually crosses the seam — the parse result is discarded, so this field
+   *  reaches spawnPty from the raw request on the no-configId branch. Shape and
+   *  bounds are enforced by `sshSchema` below. */
+  runtime?: SshRuntime
 }
 
 // host/username are fused into `${username}@${host}` and handed to ssh as
@@ -66,6 +72,30 @@ const sshSchema = z.object({
   reconnect: z.boolean().optional(),
   detachable: z.boolean().optional(),
   remoteOs: z.enum(['auto', 'unix', 'windows']).optional(),
+  // Structured container runtime. Declared here because the parse RESULT is
+  // discarded (see the spawn handler) -- `options` itself is forwarded to
+  // spawnPty, so an undeclared field is not stripped, it is waved through. On
+  // the no-configId branch this block therefore reached the container-command
+  // composer and the End kill-command builder straight off the IPC request, with
+  // its TypeScript types unenforced: a numeric or array `container` made
+  // `(runtime.container ?? '').trim()` throw a TypeError, and in endSshRemote
+  // that throw sat OUTSIDE the executor's try -- skipping the whole remote
+  // cleanup, container and tmux and sidecars alike (adversarial review, ADR-009).
+  //
+  // Types and bounds only. The container NAME/DIR charsets stay with
+  // composeRuntimeCommand so a bad value fails into the session's
+  // `runtimeInvalid` latch (which explains itself in the UI) rather than as a
+  // raw IPC rejection. `type` IS enumerated here: an unrecognised value must
+  // never reach a code path that could read it as "not a container" and launch
+  // on the bare host.
+  runtime: z.object({
+    type: z.enum(['host', 'container']),
+    engine: z.enum(['docker', 'podman']).optional(),
+    container: z.string().max(255).optional(),
+    mode: z.enum(['exec', 'start']).optional(),
+    sudo: z.boolean().optional(),
+    containerDir: z.string().max(4096).optional(),
+  }).optional(),
 }).optional()
 
 export const spawnOptionsSchema = z.object({

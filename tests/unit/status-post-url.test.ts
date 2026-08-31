@@ -41,21 +41,35 @@ describe('statusPostUrl', () => {
 })
 
 describe('setup script plumbing', () => {
-  it('POSIX statusLine command carries CCC_STATUS_URL single-quoted when the tunnel is on', () => {
+  // ADR-009 token custody. The URL carries this session's MCP token, and both
+  // pre-hardening forms (a POSIX shell env-prefix, a Windows argv) published it
+  // to the remote host's process table for the session's whole life. It now goes
+  // to a 0600 sidecar and only the PATH rides the command line.
+  it('POSIX statusLine command carries CCC_STATUS_URL_FILE, never the URL, when the tunnel is on', () => {
     const script = generateRemoteSetupScript('abc123', null, { remoteMcpPort: 45111, includeConductorMcp: true }, 'nonceA1', '~')
-    expect(script).toContain("CCC_STATUS_URL=\\'http://127.0.0.1:45111/status?cccSessionId=abc123&token=")
-  })
-
-  it('POSIX statusLine command omits the CCC_STATUS_URL assignment when the tunnel is off', () => {
-    const script = generateRemoteSetupScript('abc123', null, { remoteMcpPort: 0, includeConductorMcp: false }, 'nonceA1', '~')
-    // The shim SOURCE always mentions CCC_STATUS_URL (it reads the env var);
-    // what must be absent is the command-line ASSIGNMENT that would arm tier 0.
+    expect(script).toContain("CCC_STATUS_URL_FILE='+urlPath")
+    // The URL itself is only ever WRITTEN to the sidecar.
+    expect(script).toContain(`fs.writeFileSync(urlPath,"http://127.0.0.1:45111/status?cccSessionId=abc123&token=`)
+    expect(script).toContain("{mode:0o600,flag:'wx'}")
     expect(script).not.toContain("CCC_STATUS_URL=\\'")
   })
 
-  it('Windows statusLine command carries the URL as a double-quoted argv[3]', () => {
+  it('POSIX statusLine command omits the URL-file assignment and writes no sidecar when the tunnel is off', () => {
+    const script = generateRemoteSetupScript('abc123', null, { remoteMcpPort: 0, includeConductorMcp: false }, 'nonceA1', '~')
+    // The shim SOURCE always mentions CCC_STATUS_URL_FILE (it reads the env var);
+    // what must be absent is the command-line ASSIGNMENT that would arm tier 0.
+    expect(script).not.toContain("CCC_STATUS_URL_FILE='+urlPath")
+    expect(script).not.toContain("CCC_STATUS_URL=\\'")
+    // A stale sidecar from a previous connect is swept, never left readable.
+    expect(script).toContain('try{fs.rmSync(urlPath,{force:true})}catch{}')
+    expect(script).not.toContain('fs.writeFileSync(urlPath,')
+  })
+
+  it('Windows statusLine command carries the sidecar PATH as argv[3], not the URL', () => {
     const script = generateWindowsRemoteSetupScript('abc123', { remoteMcpPort: 45111, includeConductorMcp: true }, 'nonceA1')
-    expect(script).toContain('"http://127.0.0.1:45111/status?cccSessionId=abc123&token=')
+    expect(script).toContain(`+' '+JSON.stringify(urlPath)`)
+    expect(script).toContain(`fs.writeFileSync(urlPath,"http://127.0.0.1:45111/status?cccSessionId=abc123&token=`)
+    expect(script).not.toContain(`' abc123 "http://`)
   })
 
   it('every line of the Windows setup command stays under cmd.exe input limit', () => {

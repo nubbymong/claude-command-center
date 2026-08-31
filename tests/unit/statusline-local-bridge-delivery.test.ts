@@ -7,7 +7,7 @@
 // statusline-account-cache.test.ts; this file proves the script actually
 // behaves, not merely contains the right substrings.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync } from 'fs'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { spawn } from 'child_process'
@@ -92,6 +92,53 @@ describe('local statusline bridge: real delivery ladder', () => {
     }
   })
 
+  // ADR-009 token custody: the real production shape. argv[3] is the PATH of a
+  // 0600 file holding the token-bearing URL, so the token never appears in the
+  // bridge's own command line (where every other account on this machine can
+  // read it out of the process table). The URL form above still works for
+  // settings files written by an older build.
+  // Mutation to prove this can fail: delete readStatusUrlFile from the resolver.
+  it('reads the URL out of a file when argv[3] is a PATH, and posts the same payload', async () => {
+    const received: Array<{ url: string; body: string }> = []
+    const server = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => { body += c })
+      req.on('end', () => { received.push({ url: req.url ?? '', body }); res.writeHead(204); res.end() })
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    const port = (server.address() as AddressInfo).port
+    const urlFile = join(sandboxHome, 'ccc-status-sid-file.url')
+    try {
+      writeFileSync(urlFile, `http://127.0.0.1:${port}/status?cccSessionId=sid-file&token=t0k`, { mode: 0o600 })
+      const { code, stdout } = await runBridge(scriptPath, sandboxHome, ['sid-file', urlFile])
+      expect(code).toBe(0)
+      expect(stdout).toBe(' ')
+      expect(received).toHaveLength(1)
+      expect(received[0].url).toContain('/status?cccSessionId=sid-file')
+      expect(JSON.parse(received[0].body).sessionId).toBe('sid-file')
+      // POST succeeded ⇒ no fallback file.
+      expect(existsSync(join(statusDir, 'sid-file.json'))).toBe(false)
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  })
+
+  it('falls back to the status file when the URL file is missing or fails the charset guard', async () => {
+    // Missing file: nothing to POST to ⇒ file delivery, not a crash.
+    const missing = join(sandboxHome, 'no-such-status.url')
+    const a = await runBridge(scriptPath, sandboxHome, ['sid-nofile', missing])
+    expect(a.code).toBe(0)
+    expect(existsSync(join(statusDir, 'sid-nofile.json'))).toBe(true)
+
+    // Present but junk: the resolver's charset guard rejects it rather than
+    // handing `new URL()` an attacker-shaped string.
+    const junk = join(sandboxHome, 'junk-status.url')
+    writeFileSync(junk, 'file:///etc/passwd or a space-bearing value')
+    const b = await runBridge(scriptPath, sandboxHome, ['sid-junkurl', junk])
+    expect(b.code).toBe(0)
+    expect(existsSync(join(statusDir, 'sid-junkurl.json'))).toBe(true)
+  })
+
   it('falls back to the status file when the POST is refused', async () => {
     // Grab a port that is closed: bind, note it, close it again.
     const probe = http.createServer()
@@ -118,7 +165,7 @@ describe('local statusline bridge: real delivery ladder', () => {
     expect(existsSync(file)).toBe(true)
     const written = JSON.parse(readFileSync(file, 'utf-8'))
     expect(written.sessionId).toBe('sid-legacy')
-    // Sanity: the two delivery tests wrote exactly their own files.
-    expect(readdirSync(statusDir).sort()).toEqual(['sid-fall.json', 'sid-legacy.json'])
+    // Sanity: the fallback tests wrote exactly their own files.
+    expect(readdirSync(statusDir).sort()).toEqual(['sid-fall.json', 'sid-junkurl.json', 'sid-legacy.json', 'sid-nofile.json'])
   })
 })

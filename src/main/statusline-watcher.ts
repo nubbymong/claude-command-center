@@ -140,6 +140,43 @@ export function dispatchSSHStatuslineUpdate(json: string): void {
 }
 
 /**
+ * Length cap for every free string a status payload can carry.
+ *
+ * Adversarial review (ADR-009): the sanitiser bounded `sessionId` and nothing
+ * else, so every other string -- model name, reset timestamps, account label --
+ * was copied at whatever length the sender chose, on every tick, straight into
+ * the renderer. 256 is generous for every real field (Claude's longest model
+ * display name is well under 40) and the same bound `sessionId` already used.
+ */
+const STATUS_STRING_MAX = 256
+
+/** Cap on `usageBuckets` entries. Real payloads carry 2-6 (5h + per-model weekly). */
+const STATUS_BUCKETS_MAX = 32
+
+/**
+ * Maximum length of a remote account label, and the display charset it must
+ * match. An email address and nothing else.
+ *
+ * THE single validator for this field, shared by both delivery paths (ADR-009):
+ * pty-manager's `parseSetupAccountSentinel` (the setup-sentinel path, which has
+ * gated it since item 10) and `sanitiseSentinelPayload` below (the /status
+ * ingest, which did not). Both are fed by a REMOTE host that chooses the value,
+ * both surface it as a label next to the session, and the renderer prefers the
+ * /status value where both exist -- so a validator on only one of them was a
+ * validator on neither. It is never interpreted, never a credential, never an
+ * auth key; the gate is a display gate, so anything that is not plainly an email
+ * is dropped rather than repaired.
+ */
+export const REMOTE_ACCOUNT_MAX = 254
+export const REMOTE_ACCOUNT_DISPLAY_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
+
+/** Returns the label when it passes the display gate, `undefined` otherwise. */
+export function sanitiseRemoteAccountEmail(v: unknown): string | undefined {
+  if (typeof v !== 'string' || v.length === 0 || v.length > REMOTE_ACCOUNT_MAX) return undefined
+  return REMOTE_ACCOUNT_DISPLAY_RE.test(v) ? v : undefined
+}
+
+/**
  * Shape-check an OSC sentinel payload before it is fanned out.
  *
  * This payload is lifted verbatim out of an SSH PTY byte stream, so it is
@@ -164,11 +201,32 @@ function sanitiseSentinelPayload(v: unknown): StatuslineData | null {
   // sessionId is the routing key -- without a usable one there is nothing to
   // fan out to. Bounded because it is used to build log lines and lookups.
   const sessionId = src.sessionId
-  if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > 256) return null
+  if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > STATUS_STRING_MAX) return null
 
   const out: Record<string, unknown> = { sessionId }
   for (const [key, val] of Object.entries(src)) {
     if (key === 'sessionId') continue
+    // The remote account label. The OSC/setup-sentinel path has always run this
+    // through a strict display validator (parseSetupAccountSentinel,
+    // pty-manager.ts); this path copied it verbatim -- any length, any codepoint
+    // -- and the renderer reads `accountEmail || sshRemoteAccount`, so the
+    // UNVALIDATED value won wherever both existed. A hostile remote controls this
+    // field. One validator now gates both deliveries; anything that fails is
+    // DROPPED, so the render sites fall back to the sentinel-validated snapshot.
+    if (key === 'accountEmail') {
+      const clean = sanitiseRemoteAccountEmail(val)
+      if (clean !== undefined) out[key] = clean
+      continue
+    }
+    // Per-model usage buckets: an array of small label/percent records the
+    // renderer draws directly. Bound the array AND the strings inside it -- the
+    // generic object passthrough below would otherwise let a hostile remote hand
+    // the renderer thousands of buckets carrying megabyte-long labels.
+    if (key === 'usageBuckets') {
+      const clean = sanitiseUsageBuckets(val)
+      if (clean !== null) out[key] = clean
+      continue
+    }
     // transcriptPath goes to the SAME transcript binder the hooks gateway feeds,
     // and the gateway shape-filters it (#180). This side only type-checked it, so
     // the two sources disagreed about the same field: any string, any length, any
@@ -181,12 +239,39 @@ function sanitiseSentinelPayload(v: unknown): StatuslineData | null {
     }
     const t = typeof val
     // Scalars are copied when they are finite/real; objects are passed through
-    // for the nested shapes (rateLimitExtra, usage buckets) that the renderer
-    // already treats defensively.
-    if (t === 'string' || t === 'boolean' || t === 'object') out[key] = val
+    // for the nested shapes (rateLimitExtra) that the renderer already treats
+    // defensively. Strings are LENGTH-BOUNDED: every one of them is a label the
+    // renderer puts on screen, and an unbounded copy let a hostile remote push
+    // an arbitrarily long value through the fan-out on every tick. Over-long
+    // values are dropped, not truncated -- a half-string is not a better label
+    // than none, and dropping keeps the previous good value on screen.
+    if (t === 'string') { if ((val as string).length <= STATUS_STRING_MAX) out[key] = val }
+    else if (t === 'boolean' || t === 'object') out[key] = val
     else if (t === 'number' && Number.isFinite(val as number)) out[key] = val
   }
   return out as unknown as StatuslineData
+}
+
+/**
+ * Bound the per-model usage-bucket array: at most STATUS_BUCKETS_MAX entries,
+ * each an object whose string fields are length-capped the same way every other
+ * displayed string is. Non-object entries are dropped. Returns null when the
+ * value is not an array at all (the key is then omitted entirely).
+ */
+function sanitiseUsageBuckets(v: unknown): unknown[] | null {
+  if (!Array.isArray(v)) return null
+  const out: unknown[] = []
+  for (const entry of v.slice(0, STATUS_BUCKETS_MAX)) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue
+    const clean: Record<string, unknown> = {}
+    for (const [k, val] of Object.entries(entry as Record<string, unknown>)) {
+      if (typeof val === 'string') { if (val.length <= STATUS_STRING_MAX) clean[k] = val }
+      else if (typeof val === 'number') { if (Number.isFinite(val)) clean[k] = val }
+      else if (typeof val === 'boolean') clean[k] = val
+    }
+    out.push(clean)
+  }
+  return out
 }
 
 /**

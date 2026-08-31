@@ -1,7 +1,8 @@
+import crypto from 'node:crypto'
 import { getConductorMcpPort, mcpSessionToken } from '../../conductor-mcp-server'
 import { buildHooksBlock } from '../../hooks/session-hooks-writer'
-import { SHIM_GATHER_JS } from './statusline-gather'
-import { CONTAINER_NAME_RE } from '../../../shared/container-command'
+import { SHIM_GATHER_JS, SHIM_STATUS_URL_JS } from './statusline-gather'
+import { CONTAINER_NAME_RE, readContainerName } from '../../../shared/container-command'
 import type { SshRuntime } from '../../../shared/types'
 
 /**
@@ -166,7 +167,7 @@ if(!ok){const pts=findPty();if(pts){try{fs.writeFileSync(pts,sentinel);ok=true;t
 if(!ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e3){trace('stderr-fail sid='+sid+' err='+(e3&&e3.message||'unknown'));}}
 process.stdout.write(' ');
 };
-const statusUrl=process.argv[3]||process.env.CCC_STATUS_URL||'';
+${SHIM_STATUS_URL_JS}
 const deliver=function(){
 if(statusUrl){
 let done=false;
@@ -319,6 +320,10 @@ export function generateRemoteSetupScript(
   // it is placed immediately after the shim is written, ahead of the
   // sesCfg build.
   const sesCfgParts: string[] = []
+  // Hoisted out of the includeStatusLine block below: the `lines` array needs it
+  // to decide whether to WRITE the 0600 status-URL file (and, when there is no
+  // URL, to sweep a stale one left by a previous connect).
+  let statusUrl = ''
   if (includeStatusLine) {
     // Use safeSid, not the raw sessionId (#265; independently reached by #242
     // F2): this value is embedded in a single-quoted JS string literal inside
@@ -334,24 +339,41 @@ export function generateRemoteSetupScript(
     // probe result (empty when none); after a tier-3/4 stage succeeds it is
     // rewritten by buildTmuxBinPatchCommand. tmuxPath is charset-guarded upstream.
     //
-    // CCC_STATUS_URL (harmonise-remote): delivery tier 0 — the shim POSTs the
-    // payload through the reverse tunnel instead of the OSC ladder. Single-
-    // quoted for sh (`&` in the query string would otherwise background the
-    // command); statusPostUrl charset-guards the value, so the quotes cannot
-    // be escaped from. Empty ⇒ omitted ⇒ the shim uses the ladder. The guard
-    // THROWS rather than emitting a malformed URL — catch and degrade to the
-    // ladder instead of letting the throw kill the whole setup script (this
+    // CCC_STATUS_URL_FILE (harmonise-remote + ADR-009 token custody): delivery
+    // tier 0 — the shim POSTs the payload through the reverse tunnel instead of
+    // the OSC ladder.
+    //
+    // The URL itself is NOT in this command. It carries this session's MCP
+    // token, and an env-prefix (`CCC_STATUS_URL='…' claude`) requires a shell,
+    // so the pre-hardening form put the whole token-bearing URL into the remote
+    // host's process table — `ps auxww`, `/proc/<pid>/cmdline` — for the life of
+    // the session, readable by any other local account and by any co-tenant
+    // process in the same container. That token opens every MCP route on the
+    // tunnel, /sse and vision_eval included. Every other token-bearing artefact
+    // this generator writes (settings-<sid>.json, mcp-<sid>.json) was already
+    // confined to a 0600 file for exactly that reason; this was the outlier.
+    //
+    // What travels in argv now is `urlPath` — a filename, not a secret. The file
+    // is written below with the same unlink-then-`wx` 0600 custody as its two
+    // siblings, and the shim reads it via $CCC_STATUS_URL_FILE (SHIM_STATUS_URL_JS).
+    // Empty URL ⇒ no file, no env var ⇒ the shim uses the ladder. The charset
+    // guard THROWS rather than emitting a malformed URL — catch and degrade to
+    // the ladder instead of letting the throw kill the whole setup script (this
     // generator's output runs under 2>/dev/null: a throw here would silently
     // cost the session its setup, statusline AND MCP, for a value that is
     // hex in every real spawn).
-    let statusUrl = ''
     try {
       statusUrl = statusPostUrl(sessionId, remoteMcpPort, mcpPort, includeConductorMcp)
     } catch {
       statusUrl = ''
     }
-    const statusUrlEnv = statusUrl ? ` CCC_STATUS_URL=\\'${statusUrl}\\'` : ''
-    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${safeSid}${statusUrlEnv} CCC_TMUX_BIN='+tmuxPath+' node '+shimPath}`)
+    // `urlPath` is a REMOTE-side const (declared in `lines` below), concatenated
+    // into the emitted command exactly as `tmuxPath` and `shimPath` are — the
+    // remote home directory is not knowable here. Placed AFTER the CCC_TMUX_BIN
+    // assignment so buildTmuxBinPatchCommand's `/CCC_TMUX_BIN=\S*/` rewrite still
+    // matches a bounded token (`\S*` stops at the space before this one).
+    const statusUrlEnv = statusUrl ? `+' CCC_STATUS_URL_FILE='+urlPath` : ''
+    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${safeSid} CCC_TMUX_BIN='+tmuxPath${statusUrlEnv}+' node '+shimPath}`)
   }
   if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
 
@@ -472,6 +494,22 @@ export function generateRemoteSetupScript(
     // the per-session file on the FIRST post-upgrade connect (the shared-file
     // heal further down runs after this clone is taken).
     `if(sBase.statusLine&&typeof sBase.statusLine.command==='string'&&sBase.statusLine.command.includes('conductor-ssh-statusline'))delete sBase.statusLine`,
+    // ADR-009 token custody: the tier-0 status URL (with this session's MCP
+    // token) goes into its OWN 0600 file rather than into the claude launch
+    // line's env prefix, where the whole remote host could read it out of the
+    // process table. Same unlink-then-exclusive-create as the two token
+    // sidecars below: `wx` refuses to write through a symlink re-planted in the
+    // unlink->write window, and the 0600 applies on the fresh create.
+    //
+    // `urlPath` is declared unconditionally because the `statusLine` command
+    // built above concatenates it; when there is no URL to deliver (no tunnel,
+    // MCP off) the file is only REMOVED, so a stale URL from a previous connect
+    // — potentially naming a port this session no longer owns — cannot be read
+    // back by the shim.
+    `const urlPath=path.join(claudeDir,'ccc-status-${safeSid}.url')`,
+    statusUrl
+      ? `try{fs.rmSync(urlPath,{force:true})}catch{}try{fs.writeFileSync(urlPath,${JSON.stringify(statusUrl)},{mode:0o600,flag:'wx'})}catch{}`
+      : `try{fs.rmSync(urlPath,{force:true})}catch{}`,
     // Per-session settings -- clone of shared (without mcpServers) with CCC
     // keys overridden.
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
@@ -571,6 +609,27 @@ export function remoteSessionMcpConfigPath(sessionId: string): string {
 }
 
 /**
+ * Path to the per-session status-URL file on the remote (ADR-009 hardening).
+ *
+ * The tier-0 delivery URL carries this session's MCP token in its query string.
+ * It used to be baked into the claude launch line as a `CCC_STATUS_URL='…'`
+ * env-prefix — and an env-prefix needs a shell, so the whole URL, token
+ * included, sat in the remote host's process table for the life of the session,
+ * readable by any other local user or co-tenant container process. Every OTHER
+ * token-bearing artefact in this file (settings-<sid>.json, mcp-<sid>.json) was
+ * deliberately confined to a 0600 file for exactly that reason; this one was the
+ * outlier. The URL now lives in a 0600 file alongside them and only its PATH —
+ * which is not a secret — travels in argv.
+ *
+ * Same `safeSid` sanitisation as its two siblings, so the name cannot carry a
+ * shell metacharacter into the `rm` lists below.
+ */
+export function remoteSessionStatusUrlPath(sessionId: string): string {
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `~/.claude/ccc-status-${safeSid}.url`
+}
+
+/**
  * U8: the in-band cleanup command run down a live SSH PTY when a session is
  * explicitly closed -- removes the two per-session sidecars CCC planted on the
  * remote (`settings-<sid>.json` + `mcp-<sid>.json`). The shared statusline shim
@@ -580,7 +639,7 @@ export function remoteSessionMcpConfigPath(sessionId: string): string {
  * filenames, so it cannot smuggle shell metacharacters into the command.
  */
 export function buildRemoteSessionCleanupCommand(sessionId: string): string {
-  return `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)}\n`
+  return `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)} ${remoteSessionStatusUrlPath(sessionId)}\n`
 }
 
 /**
@@ -616,7 +675,7 @@ export function buildRemoteTmuxKillCommand(sessionId: string): string {
   const kills = tmuxBins.map((b) => `${b} kill-session -t ${target} 2>/dev/null`).join('; ')
   return [
     kills,
-    `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)} 2>/dev/null`,
+    `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)} ${remoteSessionStatusUrlPath(sessionId)} 2>/dev/null`,
     `true`,
   ].join('; ')
 }
@@ -692,7 +751,12 @@ export function buildContainerKillCommand(
   opts?: { hasSudoPassword?: boolean }
 ): string {
   if (!runtime || runtime.type !== 'container') return ''
-  const name = (runtime.container ?? '').trim()
+  // Type-guarded read (adversarial review, ADR-009): this runs from
+  // endSshRemote OUTSIDE its executor try, so a TypeError here escaped as an
+  // unhandled rejection and skipped ALL remote cleanup — the container kill,
+  // the tmux kill and the sidecar sweep. A non-string name is "no name", which
+  // the charset gate below already refuses.
+  const name = readContainerName(runtime)
   if (!CONTAINER_NAME_RE.test(name)) return ''
   const engine = runtime.engine === 'podman' ? 'podman' : 'docker'
   const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -702,7 +766,10 @@ export function buildContainerKillCommand(
   const sudo = runtime.sudo ? (opts?.hasSudoPassword ? 'sudo -S -p password: ' : 'sudo -n ') : ''
   // stderr is kept ONLY when a sudo prompt has to reach the matcher (see 2 above).
   const quiet = runtime.sudo && opts?.hasSudoPassword ? '' : ' 2>/dev/null'
-  const inner = `rm -f ~/.claude/${marker}.json ~/.claude/mcp-${safeSid}.json 2>/dev/null; exec pkill -f ${marker}`
+  // The status-URL sidecar (ADR-009 token custody) is removed here too. Its
+  // name does NOT contain the `settings-<safeSid>` pkill marker, so adding it
+  // cannot change which processes the `exec pkill` below matches.
+  const inner = `rm -f ~/.claude/${marker}.json ~/.claude/mcp-${safeSid}.json ~/.claude/ccc-status-${safeSid}.url 2>/dev/null; exec pkill -f ${marker}`
   // No `-it`: this is a one-shot kill over a non-interactive exec, not a shell.
   // The inner script is single-quoted for the remote shell and, by the charset
   // rules above, cannot contain a quote to break out with.
@@ -879,7 +946,7 @@ export function buildTmuxBinPatchCommand(sessionId: string): string {
  * reaches the SSH client (verified on Hyper-V). Session id rides argv (cmd.exe
  * cannot env-prefix a statusLine command).
  */
-export const SSH_STATUSLINE_SHIM_WINDOWS = "const fs=require('fs'),os=require('os'),path=require('path');const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+String(m).replace(/[\\r\\n]+/g,' ')+String.fromCharCode(10));}catch(e){}};let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{try{const data=JSON.parse(input);const sid=process.argv[2]||process.env.CLAUDE_MULTI_SESSION_ID||(data&&data.session_id)||'unknown';const cw=data.context_window||{},u=cw.current_usage||{},cost=data.cost||{},m=data.model||{},rl=data.rate_limits||{};const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}" + SHIM_GATHER_JS + "const deliverLegacy=function(){var sentinel=String.fromCharCode(27)+']9999;CMSTATUS='+JSON.stringify(s)+String.fromCharCode(7);try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);trace('conout-ok sid='+sid);}catch(e){trace('conout-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){}}process.stdout.write(' ');};const statusUrl=process.argv[3]||process.env.CCC_STATUS_URL||'';const deliver=function(){if(statusUrl){let done=false;const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag);deliverLegacy();}};try{const body=JSON.stringify(s);const u=new URL(statusUrl);const rq=require('http').request({hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)},timeout:3000},function(res){res.resume();fin(!!res.statusCode&&res.statusCode<300,'http-'+res.statusCode);});rq.on('timeout',function(){try{rq.destroy();}catch(e4){}fin(false,'timeout');});rq.on('error',function(e5){fin(false,(e5&&e5.code)||'err');});rq.end(body);}catch(e6){fin(false,'ex');}}else{deliverLegacy();}};fetchUsage(function(lim){applyUsage(lim);deliver();});}catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}});"
+export const SSH_STATUSLINE_SHIM_WINDOWS = "const fs=require('fs'),os=require('os'),path=require('path');const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+String(m).replace(/[\\r\\n]+/g,' ')+String.fromCharCode(10));}catch(e){}};let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{try{const data=JSON.parse(input);const sid=process.argv[2]||process.env.CLAUDE_MULTI_SESSION_ID||(data&&data.session_id)||'unknown';const cw=data.context_window||{},u=cw.current_usage||{},cost=data.cost||{},m=data.model||{},rl=data.rate_limits||{};const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}" + SHIM_GATHER_JS + "const deliverLegacy=function(){var sentinel=String.fromCharCode(27)+']9999;CMSTATUS='+JSON.stringify(s)+String.fromCharCode(7);try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);trace('conout-ok sid='+sid);}catch(e){trace('conout-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){}}process.stdout.write(' ');};" + SHIM_STATUS_URL_JS + "const deliver=function(){if(statusUrl){let done=false;const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag);deliverLegacy();}};try{const body=JSON.stringify(s);const u=new URL(statusUrl);const rq=require('http').request({hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)},timeout:3000},function(res){res.resume();fin(!!res.statusCode&&res.statusCode<300,'http-'+res.statusCode);});rq.on('timeout',function(){try{rq.destroy();}catch(e4){}fin(false,'timeout');});rq.on('error',function(e5){fin(false,(e5&&e5.code)||'err');});rq.end(body);}catch(e6){fin(false,'ex');}}else{deliverLegacy();}};fetchUsage(function(lim){applyUsage(lim);deliver();});}catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}});"
 
 export function generateWindowsRemoteSetupScript(
   sessionId: string,
@@ -911,21 +978,34 @@ export function generateWindowsRemoteSetupScript(
   // correctly for the JSON settings file, exactly as the POSIX generator embeds
   // `+shimPath+`.
   const sesCfgParts: string[] = []
+  // Hoisted for the same reason as the POSIX generator: `lines` below writes (or
+  // sweeps) the status-URL file based on it.
+  let statusUrl = ''
   if (includeStatusLine) {
-    // argv[3] = the tunnel POST URL (delivery tier 0) — double-quoted so
-    // cmd.exe does not split on the `&` in the query string; statusPostUrl
-    // charset-guards the value so the quotes cannot be escaped from. Empty ⇒
-    // omitted ⇒ the shim falls back to its CONOUT$ ladder. Catch the guard's
-    // throw and degrade to the ladder — same fail posture as the POSIX
+    // argv[3] = the PATH of the status-URL file (delivery tier 0), not the URL.
+    //
+    // ADR-009 token custody: the URL carries this session's MCP token, and the
+    // pre-hardening form put it straight into the statusLine command — i.e. into
+    // the argv of every `node conductor-ssh-statusline.js` the remote spawns, and
+    // so into the remote machine's process table for any other account to read.
+    // cmd.exe cannot env-prefix a command, so the POSIX generator's
+    // $CCC_STATUS_URL_FILE trick does not apply here; instead argv[3] carries the
+    // FILE PATH and the shared resolver (SHIM_STATUS_URL_JS) reads the URL out of
+    // it. The resolver still accepts a literal URL in argv[3], so a settings file
+    // written by an older build keeps delivering until the next connect rewrites
+    // it. Empty ⇒ omitted ⇒ the shim falls back to its CONOUT$ ladder. Catch the
+    // guard's throw and degrade to the ladder — same fail posture as the POSIX
     // generator above.
-    let statusUrl = ''
     try {
       statusUrl = statusPostUrl(sessionId, remoteMcpPort, mcpPort, includeConductorMcp)
     } catch {
       statusUrl = ''
     }
-    const statusUrlArg = statusUrl ? ` "${statusUrl}"` : ''
-    sesCfgParts.push(`statusLine:{type:'command',command:'node '+JSON.stringify(shimPath)+' ${safeSid}${statusUrlArg}'}`)
+    // `urlPath` is a REMOTE-side const (declared in `lines`); JSON.stringify'd at
+    // runtime on the remote so its backslashes are quoted for both the JSON
+    // settings file and cmd.exe, exactly as `shimPath` already is.
+    const statusUrlArg = statusUrl ? `+' '+JSON.stringify(urlPath)` : ''
+    sesCfgParts.push(`statusLine:{type:'command',command:'node '+JSON.stringify(shimPath)+' ${safeSid}'${statusUrlArg}}`)
   }
 
   const lines = [
@@ -938,6 +1018,14 @@ export function generateWindowsRemoteSetupScript(
     `let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}`,
     `const sBase=Object.assign({},s);delete sBase.mcpServers`,
     `if(sBase.statusLine&&typeof sBase.statusLine.command==='string'&&sBase.statusLine.command.includes('conductor-ssh-statusline'))delete sBase.statusLine`,
+    // ADR-009 token custody, Windows side. Same file, same exclusive create as
+    // the POSIX generator; the 0600 mode is dropped because NTFS uses ACLs (the
+    // sibling token files here are written the same way). No URL ⇒ remove only,
+    // so a previous connect's URL cannot be read back.
+    `const urlPath=path.join(claudeDir,'ccc-status-${safeSid}.url')`,
+    statusUrl
+      ? `try{fs.rmSync(urlPath,{force:true})}catch{}try{fs.writeFileSync(urlPath,${JSON.stringify(statusUrl)},{flag:'wx'})}catch{}`
+      : `try{fs.rmSync(urlPath,{force:true})}catch{}`,
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
     `const sesCfg=Object.assign({},sBase,{${sesCfgParts.join(',')}})`,
     `try{fs.rmSync(sesPath,{force:true})}catch{}try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2),{flag:'wx'})}catch{}`,
@@ -1005,15 +1093,56 @@ export function getWindowsRemoteSetupCommand(
   // environment, and one already-shipped `$` regression (`$s|node` → empty
   // pipe ParserError, setup never ran) is why the invariant exists. A bare
   // method-call expression has nothing for the parent to expand.
+  //
+  // ADR-009 hardening. Three problems with the original shape, all in the same
+  // few lines: the filename was fully predictable (`ccc-setup-<sid>.b64`) and the
+  // first write was a plain `Set-Content`, so a co-tenant on a shared Windows
+  // host could sit on the path; nothing checked that what came back off disk was
+  // what we wrote before piping it into `node`; and the file was removed only on
+  // the happy path, so any failure left the token-bearing setup program sitting
+  // in the machine-wide temp directory.
+  //
+  //  - A fresh 16-hex-char random component per invocation (crypto.randomBytes)
+  //    means the path cannot be predicted or squatted between runs.
+  //  - `New-Item -ItemType File` creates EXCLUSIVELY: it fails if the path
+  //    already exists, so the sequence never writes through a squatted file (or
+  //    a junction planted at it). `-ErrorAction Stop` makes that failure fatal
+  //    to the line rather than silently continuing into the appends.
+  //  - The decoded program is SHA-256'd against a digest computed here, on this
+  //    side, before it reaches `node` — the same integrity gate the tmux stage
+  //    already applies to its downloaded archive (TMUX_STAGE_SHA256,
+  //    ssh-tmux-stage.ts). A mismatch runs nothing.
+  //  - The removal is in a `finally`, so it happens on the digest-mismatch path
+  //    and on any node/decode failure, not just on success.
+  //
+  // The `$`-free invariant documented above still holds: every expression here
+  // is a method call or a literal, so a PowerShell login shell has nothing to
+  // expand before the child powershell parses it.
   const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
-  const b64Path = `([IO.Path]::GetTempPath()+'ccc-setup-${safeSid}.b64')`
+  const unique = crypto.randomBytes(8).toString('hex')
+  const b64Path = `([IO.Path]::GetTempPath()+'ccc-setup-${safeSid}-${unique}.b64')`
+  // Digest of the DECODED program — what actually gets piped to node.
+  const scriptSha256 = crypto.createHash('sha256').update(Buffer.from(script, 'utf-8')).digest('hex')
   const CHUNK = 4000
   const lines: string[] = []
+  lines.push(`powershell -NoProfile -NonInteractive -Command "New-Item -ItemType File -Path ${b64Path} -ErrorAction Stop|Out-Null"`)
   for (let i = 0; i < nodeB64.length; i += CHUNK) {
-    const cmdlet = i === 0 ? 'Set-Content' : 'Add-Content'
-    lines.push(`powershell -NoProfile -NonInteractive -Command "${cmdlet} -LiteralPath ${b64Path} -Encoding ascii -Value '${nodeB64.slice(i, i + CHUNK)}'"`)
+    lines.push(`powershell -NoProfile -NonInteractive -Command "Add-Content -LiteralPath ${b64Path} -Encoding ascii -Value '${nodeB64.slice(i, i + CHUNK)}'"`)
   }
-  lines.push(`powershell -NoProfile -NonInteractive -Command "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((Get-Content -LiteralPath ${b64Path} -Raw)))|node; Remove-Item -LiteralPath ${b64Path} -ErrorAction SilentlyContinue"`)
+  // The base64 is decoded TWICE — once to hash, once to run. That is deliberate:
+  // it keeps the line free of any variable (the no-`$` invariant) without
+  // reaching for Set-Variable/Get-Variable, and decoding is deterministic and
+  // cheap. The digest is over the DECODED bytes, so it does not depend on the
+  // line terminators Add-Content puts between chunks (Convert.FromBase64String
+  // ignores those). Verified end to end against a real powershell.exe: matching
+  // digest runs the program, a mismatched one exits 9 having run nothing, and
+  // the temp file is gone in both cases.
+  lines.push(
+    `powershell -NoProfile -NonInteractive -Command "try{` +
+      `if(([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Convert]::FromBase64String((Get-Content -LiteralPath ${b64Path} -Raw)))).Replace('-','').ToLower()) -ne '${scriptSha256}'){exit 9};` +
+      `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((Get-Content -LiteralPath ${b64Path} -Raw)))|node` +
+    `}finally{Remove-Item -LiteralPath ${b64Path} -Force -ErrorAction SilentlyContinue}"`,
+  )
   return lines.join('\r')
 }
 

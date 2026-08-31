@@ -19,7 +19,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 
-import { SHIM_GATHER_JS } from './statusline-gather'
+import { SHIM_GATHER_JS, SHIM_STATUS_URL_JS } from './statusline-gather'
 
 /**
  * Deploy the statusline script that Claude Code will invoke.
@@ -117,7 +117,7 @@ process.stdin.on('end', () => {
       } catch (e1) {}
       process.stdout.write(' ');
     };
-    const statusUrl = process.argv[3] || process.env.CCC_STATUS_URL || '';
+    ${SHIM_STATUS_URL_JS}
     const deliver = function () {
       if (statusUrl) {
         let done = false;

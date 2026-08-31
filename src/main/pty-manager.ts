@@ -35,7 +35,7 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
 import { buildTerminalLaunchLine } from './terminal-launch-line'
-import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
+import { dispatchSSHStatuslineUpdate, cleanupStatusFile, sanitiseRemoteAccountEmail } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
 import { getGateway, isExactBindSourceActive } from './hooks'
@@ -45,6 +45,7 @@ import {
   removeLocalSessionSettings,
   writeLocalSessionMcpConfig,
   removeLocalSessionMcpConfig,
+  removeLocalSessionStatusUrl,
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
@@ -237,8 +238,10 @@ export function parseTmuxSentinel(data: string, nonce: string): TmuxDetectionCla
  * Returns the sanitized descriptor, or `undefined` when the field is absent,
  * empty, undecodable, or fails the display charset (never throws).
  */
-const SSH_REMOTE_ACCOUNT_MAX = 254
-const SSH_REMOTE_ACCOUNT_DISPLAY_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
+// ADR-009: the max + display charset now live in ONE place
+// (sanitiseRemoteAccountEmail, statusline-watcher.ts) and gate BOTH deliveries
+// of this field -- this setup sentinel and the /status ingest, which used to
+// copy it verbatim and, because the renderer prefers its value, silently won.
 export function parseSetupAccountSentinel(data: string, nonce: string): string | undefined {
   // Same ConPTY-glue hazard as parseTmuxSentinel above (ansi-strip.ts).
   const m = stripAnsiForSentinel(data).match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(?:path|home|none) acct=([A-Za-z0-9+/=]*)(?=[\\r\\n])`))
@@ -249,10 +252,9 @@ export function parseSetupAccountSentinel(data: string, nonce: string): string |
   } catch {
     return undefined
   }
-  if (!decoded || decoded.length > SSH_REMOTE_ACCOUNT_MAX) return undefined
-  // Display-charset gate: an email address only. Anything else (a hostile
+  // Display gate: an email address only, length-capped. Anything else (a hostile
   // host trying to plant markup / control chars in the label) is dropped.
-  return SSH_REMOTE_ACCOUNT_DISPLAY_RE.test(decoded) ? decoded : undefined
+  return sanitiseRemoteAccountEmail(decoded)
 }
 
 /**
@@ -927,16 +929,53 @@ const sshTmuxWrappedBySession = new Set<string>()
  *   password | yes       | yes  |  yes   | PTY                  | 2 (ssh, sudo)
  *   password | yes       | yes  |  no    | PTY (`sudo -n`)      | 1 (ssh)
  *
- * The PTY variant answers the prompts IN ARRIVAL ORDER from a fixed secret
- * list -- ssh's own prompt first (only when the host authed by password), then
- * sudo's, which `-p password:` forces into the exact shape the existing tight
- * matcher already accepts. Answering CONSUMES the rolling tail, so the just-
- * answered prompt (which stays the last non-empty line until fresh output
- * arrives) cannot re-trigger and burn the next secret on the wrong prompt.
+ * The PTY variant answers each prompt with the secret whose PROMPT SHAPE it
+ * matches -- never by arrival position (adversarial review, ADR-009).
+ *
+ * Position was the wrong key. It assumed the prompts arrive exactly as the table
+ * predicts, and two ordinary situations break that:
+ *
+ *   - A host configured with a password that now authenticates by KEY (a key was
+ *     added later; the password is still in the keychain). ssh never prompts, so
+ *     the FIRST prompt to arrive is sudo's -- and the positional rule fed it the
+ *     SSH password, sending one credential into a different authority's audit
+ *     log and its retry loop.
+ *   - A key-auth host whose key is refused, degrading to a password prompt. The
+ *     positional rule fed sshd the SUDO password: a credential for the remote
+ *     root path, typed at a prompt that, on a first connect under `accept-new`,
+ *     an on-path attacker can be the one presenting.
+ *
+ * Shape discriminates cleanly because CCC authors one of the two prompts:
+ * `sudo -S -p password:` (buildContainerKillCommand, ssh-shim.ts) forces sudo's
+ * to be exactly `password:` -- lowercase, bare, nothing before it (verified
+ * byte-for-byte on a real host: 9 bytes, no trailing space). ssh's own prompt is
+ * never that: the client prints `<user>@<host>'s password:` for the password
+ * method, and keyboard-interactive/PAM prints a capitalised `Password:`. So a
+ * BARE LOWERCASE `password:` is sudo's and nothing else; anything else that ends
+ * in a password prompt is ssh's.
+ *
+ * A prompt matching neither secret's shape is left UNANSWERED -- End then fails
+ * on its timeout with the cleanup incomplete, which is the correct trade against
+ * writing a credential to the wrong authority. Answering CONSUMES the rolling
+ * tail, so the just-answered prompt (which stays the last non-empty line until
+ * fresh output arrives) cannot re-trigger and burn the other secret.
  */
 const END_REMOTE_TIMEOUT_MS = 12000
 const END_REMOTE_PASSWORD_TIMEOUT_MS = 20000
-const END_REMOTE_PASSWORD_PROMPT_RE = /password[:?]\s*$/i
+/**
+ * sudo's prompt, forced to this exact shape by `-p password:`. Case-SENSITIVE
+ * and anchored at BOTH ends: the capitalised `Password:` that PAM/
+ * keyboard-interactive shows over ssh must NOT match here, and a prefixed
+ * `<user>@<host>'s password:` must not either.
+ */
+const END_REMOTE_SUDO_PROMPT_RE = /^password:\s*$/
+/**
+ * ssh's own password prompt: any line ending in a password prompt that is not
+ * sudo's bare lowercase form. Deliberately broad on this side -- the client's
+ * wording varies with the auth method and the server's PAM config -- because the
+ * one shape it must not swallow is already excluded above.
+ */
+const END_REMOTE_SSH_PROMPT_RE = /password[:?]\s*$/i
 export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' | 'no-target'> {
   const target = sshTargetBySession.get(sessionId)
   if (!target) return Promise.resolve('no-target')
@@ -955,11 +994,25 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
   }
   if (target.password || needsSudoPrompt) {
     // Prompt-answering host and/or rootful container: PTY + answered prompts.
-    // Order is fixed by which prompts can actually occur (see the table above).
-    const secrets: string[] = []
-    if (target.password) secrets.push(target.password)
-    if (needsSudoPrompt) secrets.push(target.sudoPassword!)
-    logInfo(`[ssh] ${sessionId}: ending remote session (kill exec under a dedicated PTY; ${secrets.length} prompt(s) expected)`)
+    // Each secret carries the SHAPE of the prompt it is allowed to answer (see
+    // the doc comment above); nothing is keyed on arrival position.
+    const pending: Array<{ kind: 'ssh' | 'sudo'; secret: string; accepts: (line: string) => boolean }> = []
+    if (target.password) {
+      pending.push({
+        kind: 'ssh',
+        secret: target.password,
+        // ssh's prompt, and explicitly NOT sudo's bare lowercase `password:`.
+        accepts: (l) => END_REMOTE_SSH_PROMPT_RE.test(l) && !END_REMOTE_SUDO_PROMPT_RE.test(l),
+      })
+    }
+    if (needsSudoPrompt) {
+      pending.push({
+        kind: 'sudo',
+        secret: target.sudoPassword!,
+        accepts: (l) => END_REMOTE_SUDO_PROMPT_RE.test(l),
+      })
+    }
+    logInfo(`[ssh] ${sessionId}: ending remote session (kill exec under a dedicated PTY; ${pending.length} prompt(s) expected: ${pending.map((p) => p.kind).join(',')})`)
     return new Promise((resolve) => {
       let settled = false
       let child: pty.IPty | null = null
@@ -982,11 +1035,10 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
         done('failed', `spawn: ${(err as Error)?.message ?? err}`)
         return
       }
-      // How many prompts we have already answered. Bounded by `secrets.length`,
-      // so no amount of prompt-shaped output can extract more than the prompts
-      // this variant genuinely expects (1 for a password host, 2 when a rootful
-      // container's sudo prompt follows it).
-      let answered = 0
+      // Each secret is REMOVED from `pending` once used, so no amount of
+      // prompt-shaped output can extract more than the prompts this variant
+      // genuinely expects (1 for a password host, 2 when a rootful container's
+      // sudo prompt follows it) and none can be replayed.
       let tail = ''
       child.onData((d) => {
         // Bounded rolling tail; the prompt always sits at the end of it.
@@ -994,12 +1046,17 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
         // `settled` too (adversarial pass): after the timeout killed the child,
         // a final ConPTY flush ending in a prompt-shaped line must not write
         // into the dead PTY from inside the emitter.
-        if (settled || answered >= secrets.length) return
+        if (settled || pending.length === 0) return
         const lines = stripAnsiForSentinel(tail).split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0)
         const last = lines[lines.length - 1] ?? ''
-        if (END_REMOTE_PASSWORD_PROMPT_RE.test(last)) {
-          const secret = secrets[answered]
-          answered += 1
+        // Route by SHAPE: the secret answered is the one whose prompt this is,
+        // whatever order the prompts arrive in. A prompt matching no secret's
+        // shape is left alone -- End then times out with cleanup incomplete,
+        // which beats typing a credential at the wrong authority's prompt.
+        const idx = pending.findIndex((p) => p.accepts(last))
+        if (idx >= 0) {
+          const [{ secret, kind }] = pending.splice(idx, 1)
+          logInfo(`[ssh] ${sessionId}: end-remote answering the ${kind} prompt`)
           // CONSUME the tail. ssh answers its own prompt with a bare newline,
           // so the very next chunk would otherwise still end on that same
           // (already-answered) prompt line and immediately burn the sudo secret
@@ -3805,6 +3862,9 @@ export function spawnPty(
       } catch { /* gateway may have already stopped during shutdown */ }
       removeLocalSessionSettings(sessionId)
       removeLocalSessionMcpConfig(sessionId)
+      // ADR-009 token custody: the status-URL sidecar carries this session's MCP
+      // token, so it is swept on the SAME teardown as the other two.
+      removeLocalSessionStatusUrl(sessionId)
       // P6: clear opt-in registration and per-session usage record.
       unregisterCodexReviewSession(sessionId)
       disposeCodexReviewUsage(sessionId)

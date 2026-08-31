@@ -79,8 +79,13 @@ describe('local statusline bridge: shared gather + POST-first delivery', () => {
     expect(scriptContent).toContain('oauthAccount')
   })
 
-  it('delivers POST-first (argv[3] / CCC_STATUS_URL) with the status file as fallback', () => {
-    expect(scriptContent).toContain("process.argv[3] || process.env.CCC_STATUS_URL || ''")
+  it('delivers POST-first (argv[3] URL-or-file / CCC_STATUS_URL[_FILE]) with the status file as fallback', () => {
+    // ADR-009 token custody: argv[3] is normally the PATH of a 0600 file holding
+    // the token-bearing URL; a literal `http…` is still accepted so a settings
+    // file written by an older build keeps delivering until it is rewritten.
+    expect(scriptContent).toContain("var statusArg=process.argv[3]||''")
+    expect(scriptContent).toContain("statusArg.slice(0,4)==='http'?statusArg:readStatusUrlFile(statusArg)")
+    expect(scriptContent).toContain("process.env.CCC_STATUS_URL||readStatusUrlFile(process.env.CCC_STATUS_URL_FILE||'')")
     expect(scriptContent).toContain('deliverLegacy')
     // Fallback still writes <statusDir>/<sid>.json for the directory watcher.
     expect(scriptContent).toContain("path.join(statusDir, sid + '.json')")

@@ -29,6 +29,32 @@ describe('composeRuntimeCommand (item e — the app builds the container command
     expect(() => composeRuntimeCommand({ type: 'container', container: 'ok', containerDir: '/srv;id' })).toThrow(/unsafe container directory/)
     expect(() => composeRuntimeCommand({ type: 'container', container: 'ok', containerDir: 'a b' })).toThrow(/unsafe container directory/)
   })
+
+  // ADR-009: an unrecognised `type` used to fall through the `!== 'container'`
+  // test and return undefined — i.e. a config whose Runtime block says
+  // `'Container'` launched claude on the BARE HOST, silently, with no container
+  // hop and no error. config:save does no schema validation, so a typo (or a
+  // hand-edited / older-build config) reached this sink verbatim. It must fail
+  // CLOSED, joining pty-manager's `runtimeInvalid` latch.
+  // Mutation to prove this can fail: restore `if (!runtime || runtime.type !== 'container') return undefined`.
+  it('a PRESENT runtime with an unrecognised type FAILS CLOSED instead of silently launching on the host', () => {
+    for (const bad of ['Container', 'containr', 'CONTAINER', '', 'docker']) {
+      expect(() => composeRuntimeCommand({ type: bad } as never)).toThrow(/unknown ssh runtime type/)
+    }
+    // The two known types keep their existing meaning.
+    expect(composeRuntimeCommand(undefined)).toBeUndefined()
+    expect(composeRuntimeCommand({ type: 'host' })).toBeUndefined()
+  })
+
+  // ADR-009: `container` is typed `string | undefined` but arrives from a JSON
+  // config and, on the no-configId spawn branch, straight off the IPC request.
+  // `(runtime.container ?? '').trim()` threw a TypeError on a number or an
+  // array; a non-string must read as "no name", which the existing gate rejects.
+  it('a NON-STRING container name is rejected as a missing name, never a TypeError', () => {
+    for (const bad of [42, ['ccc-test'], { name: 'ccc-test' }, true]) {
+      expect(() => composeRuntimeCommand({ type: 'container', container: bad } as never)).toThrow(/no container name/)
+    }
+  })
 })
 
 describe('parseDockerPostCommand (one-click convert affordance)', () => {

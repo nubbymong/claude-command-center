@@ -124,6 +124,7 @@ vi.mock('../../../src/main/hooks/per-session-settings', () => ({
   removeLocalSessionSettings: () => {},
   writeLocalSessionMcpConfig: () => null,
   removeLocalSessionMcpConfig: () => {},
+  removeLocalSessionStatusUrl: () => {},
 }))
 vi.mock('../../../src/main/claude-account-identity', () => ({
   captureClaudeAccount: () => {},
@@ -410,6 +411,82 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     expect(remote).not.toContain('podman')
     expect(remote).not.toContain('rm -rf /')
     expect(remote).toContain('kill-session -t ccc-sid-ctr-bad')
+  })
+
+  // ── ADR-009: prompt routing is by SHAPE, never by arrival position ─────────
+  //
+  // The positional rule ("first prompt gets the first secret") assumed the
+  // prompts arrive exactly as the variant table predicts. Two ordinary
+  // situations break that, and each sent a credential to the wrong authority.
+  //
+  // Mutation to prove these can fail: give both secrets the same matcher (or
+  // route by index again) and every test below flips.
+  describe('prompt-shape routing', () => {
+    it('stale stored password + key auth: the SUDO prompt gets the SUDO secret, never the ssh one', async () => {
+      // The config still carries a password, but the host now authenticates by
+      // key, so ssh never prompts and the FIRST prompt to arrive is sudo's.
+      // Positionally that was the ssh password — typed at sudo's prompt.
+      _setSshTargetForTest('sid-stale-pw', {
+        username: 'nm', host: 'hSt', port: 22, password: 'ssh-pw',
+        runtime: { ...CONTAINER, sudo: true }, sudoPassword: 'sudo-pw',
+      })
+      const p = endSshRemote('sid-stale-pw')
+      const fake = lastPty()
+      fake.data!('password:')
+      expect(fake.writes).toEqual(['sudo-pw\r'])
+      // And the ssh secret is still available for a prompt of its own shape.
+      fake.data!("\r\nnm@hSt's password: ")
+      expect(fake.writes).toEqual(['sudo-pw\r', 'ssh-pw\r'])
+      fake.exit!({ exitCode: 0 })
+      await expect(p).resolves.toBe('completed')
+    })
+
+    it('key auth degrading to a password prompt: sshd NEVER receives the sudo password', async () => {
+      // Key-auth host + rootful container => the only secret we hold is sudo's.
+      // If the key is refused, ssh falls back to a password prompt; positionally
+      // that prompt got the sudo password — a credential for the remote root
+      // path, typed at a prompt a first-connect MITM can be presenting.
+      _setSshTargetForTest('sid-degrade', {
+        username: 'u', host: 'hD', port: 22,
+        runtime: { ...CONTAINER, sudo: true }, sudoPassword: 'sudo-only',
+      })
+      const p = endSshRemote('sid-degrade')
+      const fake = lastPty()
+      fake.data!("u@hD's password: ")
+      expect(fake.writes).toHaveLength(0)
+      // A capitalised keyboard-interactive prompt is ssh's too — also refused.
+      fake.data!('\r\nPassword: ')
+      expect(fake.writes).toHaveLength(0)
+      // The real sudo prompt still gets answered when it arrives.
+      fake.data!('\r\npassword:')
+      expect(fake.writes).toEqual(['sudo-only\r'])
+      fake.exit!({ exitCode: 0 })
+      await expect(p).resolves.toBe('completed')
+    })
+
+    it('a capitalised `Password:` is ssh\'s, not sudo\'s (keyboard-interactive still answers)', async () => {
+      _setSshTargetForTest('sid-kbdint', { username: 'pi', host: 'hI', port: 22, password: 'kbd-pw' })
+      const p = endSshRemote('sid-kbdint')
+      const fake = lastPty()
+      fake.data!('Password: ')
+      expect(fake.writes).toEqual(['kbd-pw\r'])
+      fake.exit!({ exitCode: 0 })
+      await expect(p).resolves.toBe('completed')
+    })
+
+    it('an ssh-only session ignores a bare `password:` (nothing else could have produced it)', async () => {
+      // No container, so no sudo prompt is expected. A bare lowercase
+      // `password:` is not ssh's shape, so the ssh secret is not spent on it.
+      _setSshTargetForTest('sid-bare', { username: 'pi', host: 'hZ', port: 22, password: 'ssh-only' })
+      const p = endSshRemote('sid-bare')
+      const fake = lastPty()
+      fake.data!('password:')
+      expect(fake.writes).toHaveLength(0)
+      fake.data!("\r\npi@hZ's password: ")
+      expect(fake.writes).toEqual(['ssh-only\r'])
+      fake.exit!({ exitCode: 0 })
+      await expect(p).resolves.toBe('completed')
+    })
   })
 
   it('neither the sudo password nor the ssh password reaches a log line', async () => {
