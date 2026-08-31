@@ -112,8 +112,8 @@ export async function endRemoteAndClose(sessionId: string): Promise<void> {
 /** "Leave running": detach only — the remote tmux session survives for a later
  *  reattach. Identical to a plain close (which, for a live SSH PTY, detaches),
  *  plus SSH Persistent (Phase 1): record the detached remote in the persisted
- *  registry BEFORE teardown so a later manual launch of the same config can offer
- *  to reattach it. */
+ *  registry BEFORE teardown so the resume surface can later offer to reattach it.
+ *  Launching the config again does NOT consult this — that always starts new. */
 export function leaveRunningAndClose(sessionId: string): void {
   // Capture the entry while the session is still in the store. Non-SSH / config-
   // less sessions yield null (buildDetachedRemote guards), so this is a no-op for

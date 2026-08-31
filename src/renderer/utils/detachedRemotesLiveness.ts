@@ -3,10 +3,10 @@
  *
  * The main-side probe returns a DetachedRemoteLiveness ({outcome, liveSessionIds})
  * for a set of queried detached remotes. The renderer keeps a per-session liveness
- * map and derives from it: what to OFFER on a manual launch (fail-open — hide only
- * a CONFIRMED-dead remote), which entries to PRUNE (verified-dead only), and the
- * AMBER counter (verified-live only). No store, no React — all decisions live here
- * so the fail-open/closed rules are unit-testable in one place.
+ * map and derives from it: what to OFFER on the resume surface (fail-open — hide
+ * only a CONFIRMED-dead remote), which entries to PRUNE (verified-dead only), and
+ * the AMBER counter (verified-live only). No store, no React — all decisions live
+ * here so the fail-open/closed rules are unit-testable in one place.
  */
 import type { DetachedRemote, DetachedRemoteLiveness } from '../../shared/types'
 
@@ -42,9 +42,9 @@ export function applyLivenessResult(prev: LivenessMap, queriedSessionIds: Iterab
 }
 
 /**
- * The entries to OFFER for reattach: fail-OPEN — everything EXCEPT a
- * confirmed-dead remote. 'checking', 'unverified', 'live', and not-yet-checked
- * are all offered, because a reattach self-heals if the remote turns out gone
+ * The entries to OFFER for reattach on the resume surface: fail-OPEN — everything
+ * EXCEPT a confirmed-dead remote. 'checking', 'unverified', 'live', and
+ * not-yet-checked are all offered, because a reattach self-heals if it is gone
  * (has-session misses → fresh create + --continue). Only a VERIFIED-dead session
  * is withheld.
  */
@@ -52,8 +52,8 @@ export function offerableEntries(entries: DetachedRemote[], map: LivenessMap): D
   return entries.filter((e) => map[e.sessionId] !== 'dead')
 }
 
-/** True when at least one OFFERED entry could not be verified — drives the
- *  dialog's "couldn't verify — offering anyway" note. */
+/** True when at least one OFFERED entry could not be verified — drives the resume
+ *  surface's "couldn't verify — offering anyway" note. */
 export function hasUnverifiedOffer(entries: DetachedRemote[], map: LivenessMap): boolean {
   return offerableEntries(entries, map).some((e) => map[e.sessionId] === 'unverified')
 }

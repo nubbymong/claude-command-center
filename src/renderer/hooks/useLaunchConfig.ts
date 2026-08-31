@@ -4,10 +4,6 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { TerminalConfig } from '../stores/configStore'
 import { generateId } from '../utils/id'
 import { markSessionForResumePicker } from '../utils/resumePicker'
-import { useDetachedRemotesStore } from '../stores/detachedRemotesStore'
-import { useResumeLaunchStore } from '../stores/resumeLaunchStore'
-import { resumableRemotesForConfig } from '../utils/detachedRemotes'
-import { refreshDetachedLiveness } from '../stores/livenessStore'
 
 /** True when this config cannot launch because the Codex master is off.
  *  Single source of truth for every launch surface (rows, pinned panel,
@@ -19,10 +15,11 @@ export function isConfigLaunchBlocked(config: Pick<TerminalConfig, 'provider'>):
 /** The reason shown wherever a blocked config is marked disabled. */
 export const CODEX_OFF_LAUNCH_REASON = 'Codex is off. Enable it in Settings → Codex to launch this config.'
 
-/** Overrides for a launch. SSH Persistent (Phase 3): a resume reuses the
- *  detached remote's ORIGINAL session id and asks for the SSH reconnect flag so
- *  the tmux target `ccc-<sessionId>` matches and, on a lost remote, `--continue`
- *  resumes the conversation. */
+/** Overrides for a launch. SSH Persistent: a RESUME reuses the detached remote's
+ *  ORIGINAL session id and asks for the SSH reconnect flag so the tmux target
+ *  `ccc-<sessionId>` matches and, on a lost remote, `--continue` resumes the
+ *  conversation. Only the resume surface passes these — a plain config launch
+ *  never does (it always mints a fresh id). */
 export interface LaunchSessionOptions {
   /** Reuse this id instead of minting a fresh one (reattach). Safe ONLY because
    *  the old tile was removed on Leave running — never pass a live id. */
@@ -36,8 +33,8 @@ export interface LaunchSessionOptions {
  * Build the Session object for a config launch, or `null` when the config is
  * launch-blocked (Codex off). Pure aside from `isConfigLaunchBlocked` (reads
  * settings) and id generation — extracted so both the sidebar/empty-state launch
- * and the resume dialog build the SAME session shape. Credentials are resolved in
- * main at PTY spawn time, never here.
+ * and the resume/reattach path build the SAME session shape. Credentials are
+ * resolved in main at PTY spawn time, never here.
  */
 export function buildLaunchSession(config: TerminalConfig, opts?: LaunchSessionOptions): Session | null {
   // Backstop for any path that missed the disabled UI (group/section
@@ -104,7 +101,8 @@ export function buildLaunchSession(config: TerminalConfig, opts?: LaunchSessionO
 /**
  * The raw launch action: build the session, mark a fresh local session for the
  * resume picker, and add it. Returns the new session id (or '' when blocked).
- * Used by both `useLaunchConfig` (after the resume gate) and the resume dialog.
+ * Used by `useLaunchConfig` (plain launch, fresh id) and by the resume surface,
+ * which passes the detached remote's original id + reconnect to REATTACH.
  */
 export function useLaunchSessionAction(): (config: TerminalConfig, opts?: LaunchSessionOptions) => string {
   const addSession = useSessionStore((s) => s.addSession)
@@ -124,38 +122,18 @@ export function useLaunchSessionAction(): (config: TerminalConfig, opts?: Launch
 /**
  * Shared "launch a saved config into a new active session" action. Reused by the
  * centre empty state and the sidebar so every surface takes the EXACT same path.
- * Returns the new session id, or '' when the launch is blocked OR deferred to the
- * resume prompt (Phase 2).
+ * Returns the new session id, or '' when the launch is blocked (Codex off).
  *
- * SSH Persistent — "Resume a Running Session": before launching an SSH config,
- * consult the detached-remote registry. If one or more left-running remotes match
- * this config and are not already live, park the launch in the resume store and
- * open ResumeSessionDialog instead of spawning; the dialog then reattaches
- * (Resume), launches fresh, or cancels. Non-SSH launches and SSH configs with no
- * match are unaffected.
+ * SSH Persistent — a manual launch ALWAYS starts a NEW session, with a fresh id,
+ * immediately. Left-running remotes in the detached registry do NOT interrupt it:
+ * there is no resume prompt and no gate on this path (the launch-time dialog was
+ * dropped from the design). Resume lives on its own surface, which reattaches by
+ * calling `useLaunchSessionAction` with the remote's original id + reconnect.
  */
 export function useLaunchConfig(): (config: TerminalConfig) => string {
   const launch = useLaunchSessionAction()
   return useCallback((config: TerminalConfig) => {
     if (isConfigLaunchBlocked(config)) return ''
-    const entries = useDetachedRemotesStore.getState().entries
-    if (entries.length > 0) {
-      // Only reached with a non-empty registry, so tests with no detached
-      // remotes never touch the session store's getState here.
-      const liveIds = useSessionStore.getState().sessions.map((s) => s.id)
-      const matches = resumableRemotesForConfig(entries, config, liveIds)
-      if (matches.length > 0) {
-        // Open the prompt immediately (optimistic) AND kick off the host liveness
-        // probe: the dialog reconciles as it returns — hiding confirmed-dead rows,
-        // marking unreachable ones "couldn't verify", pruning dead from the
-        // registry. Opening first (rather than blocking up to the probe timeout)
-        // keeps the launch responsive; a reattach self-heals if a shown remote
-        // turns out gone.
-        useResumeLaunchStore.getState().request({ config, entries: matches })
-        void refreshDetachedLiveness(config)
-        return ''
-      }
-    }
     return launch(config)
   }, [launch])
 }

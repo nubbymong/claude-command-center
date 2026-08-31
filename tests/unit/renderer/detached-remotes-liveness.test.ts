@@ -2,7 +2,7 @@
  * SSH Persistent — the renderer reconcile helpers over the liveness map.
  *
  * These encode the fail-open/closed rules the whole feature turns on:
- *   - OFFER (manual launch): hide only a CONFIRMED-dead remote; a checking /
+ *   - OFFER (resume surface): hide only a CONFIRMED-dead remote; a checking /
  *     unverified / live remote is still offered (fail-open — reattach self-heals).
  *   - PRUNE (registry): drop VERIFIED-dead only — never on an 'unverified' probe.
  *   - AMBER count: VERIFIED-live only — never "maybe".
@@ -51,7 +51,7 @@ describe('markChecking / applyLivenessResult', () => {
   })
 })
 
-describe('offerableEntries (fail-open — hide only confirmed-dead)', () => {
+describe('offerableEntries (resume surface; fail-open — hide only confirmed-dead)', () => {
   it('offers live, unverified, checking and not-yet-checked; hides confirmed-dead', () => {
     const map: LivenessMap = { a: 'live', b: 'dead', c: 'unverified' }
     expect(offerableEntries(entries, map).map((e) => e.sessionId)).toEqual(['a', 'c'])

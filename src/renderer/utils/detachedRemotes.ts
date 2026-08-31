@@ -77,8 +77,9 @@ export function filterLiveEntries(entries: DetachedRemote[], liveSessionIds: Ite
 }
 
 /**
- * The reattach candidates to OFFER for a manual launch: matched by config and
- * not currently live. `[]` means launch straight through with no prompt.
+ * The reattach candidates to OFFER for a config on the resume surface: matched by
+ * config and not currently live. `[]` means this config has nothing to resume.
+ * NOT consulted by the launch path — a config launch always starts new.
  */
 export function resumableRemotesForConfig(
   entries: DetachedRemote[],
@@ -89,8 +90,8 @@ export function resumableRemotesForConfig(
 }
 
 /**
- * Compact "left running Xm ago" phrasing for the dialog. Pure (takes `now`) so
- * it is testable and never surprises the render with a moving clock.
+ * Compact "left running Xm ago" phrasing for the resume surface. Pure (takes
+ * `now`) so it is testable and never surprises the render with a moving clock.
  */
 export function describeDetachedAge(detachedAt: number, now: number): string {
   const ms = Math.max(0, now - detachedAt)

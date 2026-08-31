@@ -41,7 +41,6 @@ import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import SshCloseDialog from './components/SshCloseDialog'
-import ResumeSessionDialog from './components/ResumeSessionDialog'
 import SshReattachGoneNotice from './components/SshReattachGoneNotice'
 import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
 import { probeGoneSessions } from './stores/livenessStore'
@@ -740,8 +739,8 @@ export default function App() {
       // same persisted file BEFORE the save below (which folds it back in via
       // buildSessionState). App-restart restore is otherwise UNCHANGED — the
       // sessions that were open reattach by keeping their id; the registry only
-      // feeds the MANUAL-launch resume prompt, and its live-filter drops any
-      // entry whose id just came back as a restored session.
+      // feeds the resume surface + the amber re-attachable counter, never the
+      // launch path (a config launch always starts new).
       useDetachedRemotesStore.getState().hydrate(savedState.detachedRemotes)
       // Per-session "hide this tool" entries key on session ids, which persist
       // across restarts; drop the ones whose session did not come back (ADR-018 M3).
@@ -1418,7 +1417,6 @@ export default function App() {
         )}
 
         <SshCloseDialog />
-        <ResumeSessionDialog />
         {closeDialog && (
           <CloseDialog
             mode={closeDialog}

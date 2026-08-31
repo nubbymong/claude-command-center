@@ -2,9 +2,10 @@
  * SSH Persistent — "Resume a Running Session": the pure registry helpers.
  *
  * These back the whole feature — building an entry from a left-running session,
- * matching the registry against a config being launched, and dropping anything
- * already live (the guard that keeps app-restart restore from ever offering a
- * session that just came back). No store, no React, no window.
+ * matching the registry against a config, and dropping anything already live (the
+ * guard that keeps app-restart restore from ever offering a session that just
+ * came back). They feed the RESUME surface, never the launch path (a config launch
+ * always starts new). No store, no React, no window.
  */
 import { describe, it, expect } from 'vitest'
 import {
@@ -116,7 +117,7 @@ describe('filterLiveEntries', () => {
   })
 })
 
-describe('resumableRemotesForConfig (the manual-launch decision)', () => {
+describe('resumableRemotesForConfig (what the resume surface may offer)', () => {
   it('offers a matched, not-live remote', () => {
     const entries = [entry({ sessionId: 'a', configId: 'cfg-1' })]
     expect(resumableRemotesForConfig(entries, sshConfig(), []).map((e) => e.sessionId)).toEqual(['a'])

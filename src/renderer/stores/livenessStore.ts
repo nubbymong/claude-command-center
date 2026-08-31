@@ -13,7 +13,7 @@ import {
 
 /**
  * SSH Persistent — ephemeral per-session liveness the renderer learns from the
- * main-side probe. Feeds the resume dialog (hide confirmed-dead, show
+ * main-side probe. Feeds the resume surface (hide confirmed-dead, show
  * checking/couldn't-verify) and the amber re-attachable counter. NOT persisted —
  * re-derived on demand. No default export (project convention).
  */
