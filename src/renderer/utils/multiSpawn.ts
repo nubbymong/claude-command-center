@@ -153,3 +153,99 @@ export function configsToEnableMultiSpawn(
     .filter((c) => c.allowMultiSpawn === undefined && multiSpawnCopyCount(c, sessions, detached) > 1)
     .map((c) => c.id)
 }
+
+// ── The post-install startup page (phase 5) ──────────────────────────────────
+
+/**
+ * How many sessions this start is bringing back: restored sessions plus detached
+ * remotes still waiting in the registry.
+ *
+ * Counted exactly as `multiSpawnCopyCount` counts one config's copies — the Ask
+ * Conductor session is config-less and skipped, and a remote whose session is
+ * already live counts ONCE, not twice — because this number is the page's claim
+ * about where its per-row counts came from. If the two disagreed, the strip
+ * would say "based on 3 sessions" over rows that add up to four.
+ *
+ * Zero means the page shows no strip, no chips and no counts: with nothing
+ * resuming there is nothing for them to be derived FROM.
+ */
+export function resumingSessionCount(
+  sessions: ReadonlyArray<CountableSession>,
+  detached: ReadonlyArray<DetachedRemote>,
+): number {
+  const live = sessions.filter((s) => s.kind !== 'ask')
+  const liveIds = new Set(sessions.map((s) => s.id))
+  return live.length + filterLiveEntries([...detached], liveIds).length
+}
+
+/** One row of the startup page, decided from the stored value and the copies found. */
+export interface MultiSpawnRowState {
+  /** Copies found right now: live sessions + resumable remotes. */
+  count: number
+  /** Where the toggle starts — the EFFECTIVE value, not the stored one. */
+  enabled: boolean
+  /** The migration turned this on (or is about to) — drives the green chip. */
+  auto: boolean
+}
+
+/**
+ * The startup page's initial state for one config — the "effective" value, which
+ * is the stored one only when the migration has nothing to say.
+ *
+ * Three inputs, and each off-state means something different:
+ *
+ *   stored `true`       → ON. The chip appears only if THIS START's migration is
+ *                         what turned it on (`autoEnabledIds`); a config the user
+ *                         switched on last week is not an automatic enable.
+ *   stored `undefined`  → the migration's own predicate decides. More than one
+ *                         copy found ⇒ ON + chip, because the App-level migration
+ *                         will write exactly that within a frame or two; the page
+ *                         must not show OFF for a row that is about to be ON.
+ *   stored `false`      → OFF, and NEVER a chip, however many copies are live.
+ *                         That is a decline, and the migration has already
+ *                         promised not to touch it (phase 4.1) — a page that
+ *                         re-enabled it here would break the same promise one
+ *                         surface later.
+ *
+ * Anything else stored (a hand-edited `"yes"`) fails closed to OFF, matching
+ * both the launch rule and the migration filter.
+ *
+ * The chip is withheld when the count has since dropped to one — a copy exited
+ * between the migration writing and the page mounting. The row stays ON (the
+ * write happened) but "auto · 1 copies found" would be a lie.
+ */
+export function multiSpawnStartupRowState(
+  config: CountableConfig,
+  sessions: ReadonlyArray<CountableSession>,
+  detached: ReadonlyArray<DetachedRemote>,
+  autoEnabledIds: ReadonlyArray<string> = [],
+): MultiSpawnRowState {
+  const count = multiSpawnCopyCount(config, sessions, detached)
+  const stored = config.allowMultiSpawn
+  if (stored === true) {
+    return { count, enabled: true, auto: autoEnabledIds.includes(config.id) && count > 1 }
+  }
+  if (stored === undefined) {
+    const wouldEnable = count > 1
+    return { count, enabled: wouldEnable, auto: wouldEnable }
+  }
+  return { count, enabled: false, auto: false }
+}
+
+/**
+ * What to store for one row when the user presses Continue.
+ *
+ * The `previous` handed to `resolveAllowMultiSpawnOnSave` is the EFFECTIVE value,
+ * not the stored one, and that substitution is the whole point: an auto-enabled
+ * row still holds `undefined` on disk, so passing the stored value would resolve
+ * an un-tick to `undefined` — "never chosen" — and the migration would switch it
+ * straight back on at the next start. Turning off something that is ON is a
+ * decline whether the user or the migration put it there.
+ */
+export function resolveStartupRowSave(
+  checked: boolean,
+  row: MultiSpawnRowState,
+  stored: boolean | undefined,
+): boolean | undefined {
+  return resolveAllowMultiSpawnOnSave(checked, row.enabled ? true : stored)
+}

@@ -25,8 +25,18 @@
  *                          doesn't flash for the few hundred ms before a higher
  *                          gate's timer fires and then get swapped out from
  *                          under the user.
- *   7. resume            — "restore your sessions?". Every boot, so it is last:
- *                          the one-time surfaces above get their turn first.
+ *   7. resume            — "restore your sessions?". Every boot, so it sits
+ *                          below the one-time surfaces above.
+ *   8. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
+ *                          and both halves of that are deliberate. It must come
+ *                          after the release notes, because it is the second
+ *                          page of one upgrade story — and the `*Due`
+ *                          short-circuit below is what makes it wait, since
+ *                          `whatsNewDue` stays true until the harness stamps.
+ *                          It must also come after `resume`, because its per-row
+ *                          copy counts are read from the sessions this start
+ *                          brought back; shown first it would count zero and
+ *                          claim nothing was resumable.
  *
  * `resume` joined the chain on 2026-08-21. It and the Sentinel panel were the
  * two boot surfaces still OUTSIDE it, each with its own render condition — the
@@ -44,6 +54,7 @@ export type BootGate =
   | 'machineName'
   | 'loggingConsent'
   | 'resume'
+  | 'multiSpawnIntro'
 
 export interface BootGateState {
   configLoaded: boolean
@@ -59,6 +70,10 @@ export interface BootGateState {
   loggingConsentSeen: boolean
   /** Saved sessions are waiting on a restore decision. Optional: absent === false. */
   resumePending?: boolean
+  /** The Allow Multi Spawn startup page is due this launch — decided once at
+   *  boot (decideMultiSpawnIntro) from meta read before anything stamped.
+   *  Optional: absent === false. */
+  multiSpawnIntroDue?: boolean
   /** shouldShowWhatsNew() — true before postConfigInit has armed the harness. */
   whatsNewDue: boolean
   /** shouldShowTraining() || isFirstInstall() — true before the tour opens. */
@@ -78,5 +93,6 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null
   if (!s.loggingConsentSeen) return 'loggingConsent'
   if (s.resumePending) return 'resume'
+  if (s.multiSpawnIntroDue) return 'multiSpawnIntro'
   return null
 }

@@ -134,3 +134,42 @@ describe('pickBootGate', () => {
     expect(pickBootGate(makeState())).toBeNull()
   })
 })
+
+/**
+ * The Allow Multi Spawn startup page (phase 5) is the LAST gate, and the two
+ * things it waits for are the two halves of its own correctness: it is the
+ * second page of one upgrade story (release notes first), and its per-row copy
+ * counts are read from the sessions the resume prompt has just brought back.
+ */
+describe('pickBootGate — the Multi Spawn startup page', () => {
+  it('waits while the release notes are still due (not yet armed)', () => {
+    // whatsNewDue stays true until the harness stamps on close. The page must
+    // not paint in the gap between the launch decision and the harness opening.
+    expect(pickBootGate(makeState({ multiSpawnIntroDue: true, whatsNewDue: true }))).toBeNull()
+  })
+
+  it('waits while the release-notes harness is actually on screen', () => {
+    expect(pickBootGate(makeState({ multiSpawnIntroDue: true, onboardingDue: true, whatsNewDue: true }))).toBe('onboarding')
+  })
+
+  it('shows on the SAME start, the moment the notes are dismissed', () => {
+    // Dismissal stamps lastSeenVersion (whatsNewDue -> false) and clears the
+    // notes-only arm (onboardingDue -> false). Nothing else has to happen: the
+    // page is due on this launch, not the next one.
+    expect(pickBootGate(makeState({ multiSpawnIntroDue: true }))).toBe('multiSpawnIntro')
+  })
+
+  it('waits behind the resume prompt — its counts come from what resumes', () => {
+    expect(pickBootGate(makeState({ multiSpawnIntroDue: true, resumePending: true }))).toBe('resume')
+  })
+
+  it('waits behind the one-time consent notice too', () => {
+    expect(pickBootGate(makeState({ multiSpawnIntroDue: true, loggingConsentSeen: false }))).toBe('loggingConsent')
+  })
+
+  it('is absent === false, like the other optional gates', () => {
+    const { multiSpawnIntroDue, ...withoutIt } = makeState({ multiSpawnIntroDue: true })
+    expect(multiSpawnIntroDue).toBe(true)
+    expect(pickBootGate(withoutIt as BootGateState)).toBeNull()
+  })
+})

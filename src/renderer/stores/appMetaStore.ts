@@ -9,6 +9,10 @@ export interface AppMeta {
    *  build it names (#369); `lastRunVersionOf` falls back to setupVersion on metas older than it. */
   lastRunVersion?: string
   lastTrainingVersion?: string
+  /** The build that showed the Allow Multi Spawn startup page. A version stamp
+   *  rather than a boolean, exactly like lastSeenVersion — see
+   *  onboarding/multi-spawn-intro-gate.ts. */
+  multiSpawnIntroVersion?: string
   commandsSeeded?: boolean
   colorMigrated?: boolean
   /** Set once the saved config the RETIRED "Ask the Conductor" path used to

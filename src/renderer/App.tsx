@@ -50,6 +50,8 @@ import { useSessionStore, structuralSessionsEqual, Session } from './stores/sess
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
 import { configsToEnableMultiSpawn } from './utils/multiSpawn'
+import { MultiSpawnStartupPage } from './components/MultiSpawnStartupPage'
+import { decideMultiSpawnIntro, markMultiSpawnIntroSeen } from './onboarding/multi-spawn-intro-gate'
 import { useCommandBarStore } from './stores/commandBarStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
@@ -58,7 +60,7 @@ import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
-import { bootWhatsNewSurface } from './onboarding/upgrade-flow'
+import { bootWhatsNewSurface, lastRunVersionOf } from './onboarding/upgrade-flow'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -149,6 +151,16 @@ export default function App() {
    *  completed the flow, but has not seen the notes for the build now running.
    *  Armed once in postConfigInit, cleared when the harness completes. */
   const [whatsNewOnly, setWhatsNewOnly] = useState(false)
+  /** The Allow Multi Spawn startup page is due this launch. Decided ONCE in
+   *  postConfigInit from meta read before anything stamps — by the time the
+   *  release-notes harness has closed, a first install is indistinguishable
+   *  from an upgrade. Cleared by either of the page's buttons. */
+  const [multiSpawnIntroDue, setMultiSpawnIntroDue] = useState(false)
+  /** Config ids the grandfathering migration turned on THIS START — the rows
+   *  the startup page marks "auto · N copies found". Accumulated because the
+   *  page mounts after the migration has already written `true`, at which point
+   *  a stored `true` no longer says who set it. */
+  const [multiSpawnAutoEnabled, setMultiSpawnAutoEnabled] = useState<string[]>([])
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
@@ -471,6 +483,13 @@ export default function App() {
     if (ids.length === 0) return
     const { updateConfig } = useConfigStore.getState()
     for (const id of ids) updateConfig(id, { allowMultiSpawn: true })
+    // Remembered for the startup page (phase 5), which shows these rows a
+    // "auto · N copies found" chip. Appended only when something new appears —
+    // the write above flips the same configs to `true`, so the next pass
+    // returns nothing and this settles immediately.
+    setMultiSpawnAutoEnabled((prev) =>
+      ids.every((id) => prev.includes(id)) ? prev : [...new Set([...prev, ...ids])],
+    )
   }, [configLoaded, configs, sessions, detachedRemoteEntries])
 
   // Post-config-load initialization
@@ -509,6 +528,26 @@ export default function App() {
       // Only arm the notes-only mode when the harness is not already coming up
       // for its own reasons; there, whatsNewV2 is simply its first page.
       if (surface === 'tour' && !alreadyRunning) setWhatsNewOnly(true)
+
+      // Allow Multi Spawn's post-install page (phase 5). Decided from the SAME
+      // pre-stamp `appMeta` snapshot the release-notes decision above used, and
+      // for the same reason: the harness stamps `lastSeenVersion` when it
+      // closes, so a first install read after that is indistinguishable from an
+      // upgrade. Its own marker (`multiSpawnIntroVersion`) is separate — the two
+      // surfaces are dismissed independently, one after the other.
+      //
+      // The gate only ARMS it; `pickBootGate` holds it behind the release notes
+      // and the resume prompt (bootGates: it is last in the chain).
+      const introDecision = decideMultiSpawnIntro({
+        lastSeenVersion: appMeta.lastSeenVersion,
+        lastRunVersion: lastRunVersionOf(appMeta),
+        multiSpawnIntroVersion: appMeta.multiSpawnIntroVersion,
+        currentVersion: __APP_VERSION__,
+        configCount: useConfigStore.getState().configs.length,
+        channel: useSettingsStore.getState().settings.updateChannel,
+      })
+      if (introDecision.markSeen) markMultiSpawnIntroSeen()
+      if (introDecision.show) setMultiSpawnIntroDue(true)
 
       // Record that THIS build ran — AFTER the decision above has read the
       // previous value, which is the whole point of it. It is the witness
@@ -1295,6 +1334,7 @@ export default function App() {
     showMachineNamePrompt,
     loggingConsentSeen: Boolean(loggingConsentSeen),
     resumePending: pendingRestore !== null,
+    multiSpawnIntroDue,
     whatsNewDue: shouldShowWhatsNew(),
     trainingDue: shouldShowTraining() || isFirstInstall(),
     githubOnboardingDue: isGitHubOnboardingDue(),
@@ -1402,6 +1442,16 @@ export default function App() {
                 console.error('[App] Resume refresh failed:', err)
               }
             }}
+          />
+        )}
+
+        {/* Last in the boot chain (bootGates): the second page of one upgrade
+            story — release notes, then this — and its per-row copy counts read
+            the sessions the resume prompt has just brought back. */}
+        {bootGate === 'multiSpawnIntro' && (
+          <MultiSpawnStartupPage
+            autoEnabledIds={multiSpawnAutoEnabled}
+            onDone={() => setMultiSpawnIntroDue(false)}
           />
         )}
 
