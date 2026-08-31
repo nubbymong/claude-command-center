@@ -49,6 +49,7 @@ vi.mock('../../../src/main/account-profiles', async (importOriginal) => {
 
 const { getResourcesDirectory } = await import('../../../src/main/ipc/setup-handlers')
 const { ensureCanvasPlugin, _resetCanvasPluginForTest } = await import('../../../src/main/canvas/canvas-plugin')
+const { PLAN_OPEN_QUESTION_ATTR } = await import('../../../src/shared/canvas')
 
 // Built from escapes so no literal control byte ever sits in THIS file either.
 const CONTROL_BYTES = new RegExp('[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]')
@@ -194,13 +195,37 @@ describe('the skill teaches the settled machine', () => {
     expect(skill).not.toMatch(/picks IN THE PANE|approve the note WITHOUT picking|bulk approve/i)
   })
 
-  it('teaches the plan skill the same version-level decision', () => {
+  it('teaches the plan skill the PLAN decision — Approve or Submit Revisions, never Reject', () => {
     const plan = fs.readFileSync(planSkillPath(ensureCanvasPlugin()!), 'utf8')
-    expect(plan).toMatch(/Approve owes nothing/i)
+    expect(plan).toMatch(/Submit Revisions/)
+    // A plan is iterative: the word Reject may only appear denying itself.
+    expect(plan).toMatch(/no Reject on a plan/i)
     expect(plan).toContain('updatedIn')
     // An approval signs the canvas off; the agent must not complete after it.
     expect(plan).toMatch(/do not call `canvas_complete`/i)
     expect(plan).not.toMatch(/waiting on the user/i)
+  })
+
+  it('teaches the plan skill the open-question marker the pane actually counts', () => {
+    // The skill is the ONLY place this authoring contract is written down, and a
+    // marker the agent does not emit is a gate that never fires.
+    const plan = fs.readFileSync(planSkillPath(ensureCanvasPlugin()!), 'utf8')
+    expect(plan).toContain(`${PLAN_OPEN_QUESTION_ATTR}="open"`)
+    expect(plan).toContain(`${PLAN_OPEN_QUESTION_ATTR}="parked"`)
+    expect(plan).toMatch(/Approve is unavailable .*while the count is\s*\n?\s*above zero/i)
+  })
+
+  it('teaches the plan FORMAT — two tabs, dot-notation sections, pills not decoration', () => {
+    const plan = fs.readFileSync(planSkillPath(ensureCanvasPlugin()!), 'utf8')
+    expect(plan).toMatch(/Tab 1/)
+    expect(plan).toMatch(/Tab 2/)
+    expect(plan).toMatch(/Build approach/)
+    expect(plan).toMatch(/Testing methodology/)
+    expect(plan).toMatch(/data-ux-id="3\.1"/)
+    expect(plan).toMatch(/No colour for decoration/i)
+    // The superseded shape is GONE rather than sitting beside the new one.
+    expect(plan).not.toMatch(/six parts/i)
+    expect(plan).not.toMatch(/Scope fence|Blast radius/)
   })
 })
 
