@@ -242,15 +242,44 @@ async function harvest(fromName, { phase = 'known', name = '' } = {}) {
 
 function parseRunLog(log) {
   const clean = log.replace(/\x1b\[[0-9;]*m/g, '')
-  const tests = []
-  for (const m of clean.matchAll(/^\s*([✓×])\s+(.+?)\s+\d+ms$/gm)) {
-    if (/tests\/live\//.test(m[2])) continue
-    tests.push({ ok: m[1] === '✓', title: m[2].trim() })
+  // Dedupe by title, LAST occurrence wins: a targeted rerun appended to the
+  // main log (harvest-log stitches them) supersedes the earlier outcome.
+  const byTitle = new Map()
+  // Mark glyph families: unix ✓/✗/×; Windows sometimes √/×; and the WINDOWS_1
+  // scheduled-task pipeline double-mangles UTF-8 through cp437 into UTF-16
+  // (`✓`→`Γ£ô`, `✗`→`Γ£ù`, `×`→`├ù`) — accept those verbatim rather than
+  // attempting a cp437 round-trip.
+  for (const m of clean.matchAll(/^\s*(✓|√|Γ£ô|×|✗|x|Γ£ù|├ù)\s+(.+?)\s+\d+ms$/gm)) {
+    if (/tests[\\/]live[\\/]/.test(m[2])) continue
+    byTitle.set(m[2].trim(), m[1] === '✓' || m[1] === '√' || m[1] === 'Γ£ô')
   }
+  const tests = [...byTitle.entries()].map(([title, ok]) => ({ ok, title }))
   const payloads = [...clean.matchAll(/^\s*(T\S+[^:]*): account=(\S+) buckets=(\S+).*$/gm)]
     .map((m) => ({ combo: m[1].replace(/ payload$/, ''), account: m[2], buckets: m[3] }))
   const doneMarker = /DONE-MARKER/.test(clean)
   return { doneMarker, tests, payloads }
+}
+
+/** Import externally-produced run logs (e.g. the WINDOWS_1 VM's scheduled-task
+ *  run, plus any targeted rerun logs) into the results store: logs are
+ *  concatenated in the order given, so a rerun's outcome supersedes the main
+ *  run's for the same test title. UTF-16 logs (PowerShell redirects) are
+ *  detected and converted. */
+function harvestLogs(fromName, files, { phase = 'known' } = {}) {
+  if (!files.length) fail('harvest-log needs at least one log file')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const dir = path.join(resultsDir, `${fromName}-all-${phase}-${stamp}`)
+  fs.mkdirSync(dir, { recursive: true })
+  const text = files.map((f) => {
+    const b = fs.readFileSync(f)
+    return b[0] === 0xff && b[1] === 0xfe ? b.toString('utf16le') : b.toString('utf8')
+  }).join('\n')
+  fs.writeFileSync(path.join(dir, 'run.log'), text)
+  const parsed = parseRunLog(text)
+  fs.writeFileSync(path.join(dir, 'parsed.json'), JSON.stringify({ from: fromName, phase, ...parsed }, null, 2))
+  console.log(`imported ${files.length} log(s) → ${path.relative(repoRoot, dir)}`)
+  console.log(`  tests: ${parsed.tests.filter((t) => t.ok).length}/${parsed.tests.length} passed; payload lines: ${parsed.payloads.length}`)
+  for (const t of parsed.tests.filter((t) => !t.ok)) console.log(`  FAILED: ${t.title}`)
 }
 
 /* ---------------- report ---------------- */
@@ -261,22 +290,45 @@ function coverageFor(row) {
   const docker = row.TO.includes('&DOCKER')
   if (row.Runnable !== 'YES') return { status: 'NOT-RUNNABLE', why: row.Notes || 'marked not runnable' }
   if (/UBUNTU_HYPER_V/.test(row.TO) || row.FROM === 'UBUNTU_HYPER_V') return { status: 'DROPPED', why: 'owner dropped Ubuntu (2026-08-31)' }
-  if (docker) return { status: 'DOCKER-PHASE', why: 'container runtime build pending (structured Runtime field)' }
+  if (docker) {
+    const toRole = row.TO.replace('&DOCKER', '')
+    if (toRole === 'ROCKY_LINUX') {
+      // Container fixture live on the Rocky host (podman rootless + rootful).
+      if (row.SessionType === 'Tmux') return { status: 'NOT-SUPPORTED', why: 'container persistence pending the hop-1 design (in-container tmux breaks delivery — ladder forced off; T23 proves the gate)' }
+      const dkey = `${row.SshAuth}|${row.DockerAuth}`
+      const dmap = {
+        'Keyless|nosudo': 'T20 docker exec (podman rootless, key)',
+        'Password|sudo': 'T21 docker exec (podman rootful, sudo+password)',
+      }
+      if (dmap[dkey]) return { test: dmap[dkey] }
+      return { status: 'NOT-AUTOMATED', why: `no docker-lane slot for ${dkey}` }
+    }
+    if (toRole === 'WINDOWS_2') return { status: 'NOT-RUNNABLE', why: 'no container runtime on WINDOWS_2 (WSL2 needs nested virtualization — owner action)' }
+    if (toRole === 'MAC_254') return { status: 'NOT-SUPPORTED', why: 'container on macOS cannot reach the host-loopback tunnel bind (probed 2026-08-31: host.docker.internal→127.0.0.1:port unreachable via colima/Lima); needs the reachability-injection design (0.0.0.0 -R bind or app-injected relay)' }
+    return { status: 'DOCKER-PHASE', why: 'local container spawn path pending' }
+  }
   if (row.TO === row.FROM || row.Hops === '0') return { status: 'NOT-AUTOMATED', why: 'local session — covered by unit/e2e, not the SSH pack' }
   const key = `${row.TO}|${row.SessionType}|${row.SshAuth}`
+  if (row.TO === 'WINDOWS_2' && row.SessionType === 'Tmux') {
+    return { status: 'NOT-SUPPORTED', why: 'Windows target has no tmux; psmux staging rung pending (ledger item c)' }
+  }
+  if (row.TO === 'SERVER_UBUNTU' && row.SshAuth === 'Password') {
+    return { status: 'NOT-RUNNABLE', why: 'sshd on 185 offers no password method (publickey,keyboard-interactive; probed 2026-08-31)' }
+  }
   const map = {
     'SERVER_UBUNTU|Tmux|Keyless': 'key + tmux wrap (fresh)',
     'SERVER_UBUNTU|Standard|Keyless': 'key + NO tmux (detachable off)',
     'PI_MINER|Tmux|Password': 'password + tmux',
     'PI_MINER|Standard|Password': 'password + NO tmux',
+    'PI_MINER|Tmux|Keyless': 'pi key + tmux',
+    'PI_MINER|Standard|Keyless': 'pi key + NO tmux',
     'MAC_254|Tmux|Keyless': 'mac key: statusline updates',
     'MAC_254|Standard|Keyless': 'mac key: statusline updates',
     'WINDOWS_2|Standard|Keyless': 'windows remote (tunnel POST)',
-    'WINDOWS_2|Tmux|Keyless': 'windows remote (tunnel POST)',
     'ROCKY_LINUX|Tmux|Password': 'rocky password + tmux (staged)',
     'ROCKY_LINUX|Standard|Password': 'rocky password + NO tmux',
-    'ROCKY_LINUX|Tmux|Keyless': 'rocky password + tmux (staged)',
-    'ROCKY_LINUX|Standard|Keyless': 'rocky password + NO tmux',
+    'ROCKY_LINUX|Tmux|Keyless': 'rocky key + tmux (staged)',
+    'ROCKY_LINUX|Standard|Keyless': 'rocky key + NO tmux',
   }
   const test = map[key]
   return test ? { test } : { status: 'NOT-AUTOMATED', why: `no pack slot for ${key}` }
@@ -332,7 +384,8 @@ const main = async () => {
   if (cmd === 'provision') await provision(arg)
   else if (cmd === 'run') await runPack(arg, { phase: opt('phase', 'known'), name: opt('name', ''), wait: !!opt('wait', false) })
   else if (cmd === 'harvest') await harvest(arg, { phase: opt('phase', 'known'), name: opt('name', '') })
+  else if (cmd === 'harvest-log') harvestLogs(arg, rest.filter((r) => !r.startsWith('--') && r !== opt('phase', 'known')), { phase: opt('phase', 'known') })
   else if (cmd === 'report') report()
-  else fail('usage: fleet-matrix.mjs provision|run|harvest <FROM> [--phase known|unknown] [--name filter] [--wait] | report')
+  else fail('usage: fleet-matrix.mjs provision|run|harvest <FROM> [--phase known|unknown] [--name filter] [--wait] | harvest-log <FROM> <log...> [--phase p] | report')
 }
 main().catch((e) => fail(e.message))
