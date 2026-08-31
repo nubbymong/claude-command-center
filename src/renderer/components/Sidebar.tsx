@@ -19,7 +19,8 @@ import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { canSwitchAccountForSession, sshMappedProfileId } from '../utils/sessionLaunch'
-import { useLaunchConfig } from '../hooks/useLaunchConfig'
+import { useLaunchConfig, isMultiSpawnLaunchBlocked, alreadyRunningLaunchCopy, cannotSelectCopy } from '../hooks/useLaunchConfig'
+import { resolveMultiSpawnCount, type PopoverAnchor } from '../utils/multiSpawn'
 import { useClickOutside } from '../hooks/useClickOutside'
 import { useRegionTypography } from '../hooks/useTypography'
 import SidebarNav from './sidebar/SidebarNav'
@@ -37,6 +38,7 @@ import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
 import { runningConfigCounts, sessionInstanceOrdinals } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import QuickStartPanel from './sidebar/QuickStartPanel'
+import MultiSpawnPopover from './sidebar/MultiSpawnPopover'
 import RemoteResumableSection from './sidebar/RemoteResumableSection'
 import { resolveDefaultPanelTab, resolveSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, launchableInGroup, launchableInSection, type PanelTab } from './sidebar/sessionsPanelState'
 import FirstRunCard from './FirstRunCard'
@@ -446,6 +448,99 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     onViewChange('sessions')
   }
 
+  // ── Allow Multi Spawn (phase 4) ─────────────────────────────────────────
+  // ONE select mode and ONE selection for the whole panel: the Saved toolbar's
+  // toggle and Quick Start's Select button flip the same switch, so a launch
+  // set can be assembled from either list without losing what is already
+  // ticked when the user changes tab.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedConfigIds, setSelectedConfigIds] = useState<Set<string>>(new Set())
+  // The needs-Multi-Spawn popover: at most one open, owned here (like the
+  // context menus) so it is positioned `fixed` OUTSIDE the two scrollers.
+  const [multiSpawnPrompt, setMultiSpawnPrompt] = useState<
+    { configId: string; kind: 'launch' | 'select'; anchor: PopoverAnchor } | null
+  >(null)
+  const promptCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelPromptClose = () => {
+    if (promptCloseTimer.current) { clearTimeout(promptCloseTimer.current); promptCloseTimer.current = null }
+  }
+  const closeMultiSpawnPrompt = () => { cancelPromptClose(); setMultiSpawnPrompt(null) }
+  const showMultiSpawnPrompt = (configId: string, kind: 'launch' | 'select', el: HTMLElement) => {
+    cancelPromptClose()
+    const r = el.getBoundingClientRect()
+    setMultiSpawnPrompt({ configId, kind, anchor: { top: r.top, right: r.right, bottom: r.bottom } })
+  }
+  // Grace period so the pointer can travel from the blocked control into the
+  // popover (which cancels this) without it vanishing en route.
+  const hideMultiSpawnPromptSoon = () => {
+    cancelPromptClose()
+    promptCloseTimer.current = setTimeout(() => setMultiSpawnPrompt(null), 180)
+  }
+  useEffect(() => () => cancelPromptClose(), [])
+
+  /** ×N: launch exactly `n` fresh copies, sequentially, through the ONE launch
+   *  path — so each gets a fresh id and the tab follows to Running. */
+  const launchCopies = async (config: TerminalConfig, n: number) => {
+    for (let i = 0; i < resolveMultiSpawnCount(n); i++) await launchFromConfig(config)
+  }
+
+  /** Persist the ×N control's stepped copy count on the config. */
+  const setSpawnCount = (config: TerminalConfig, n: number) => {
+    updateConfig(config.id, { multiSpawnCount: resolveMultiSpawnCount(n) })
+  }
+
+  /** The popover's way out on a LAUNCH surface: set the flag, persist it, and
+   *  launch — passing the patched config so the launch action's own backstop
+   *  sees the new value rather than this render's stale copy. */
+  const enableMultiSpawnAndLaunch = async (config: TerminalConfig) => {
+    updateConfig(config.id, { allowMultiSpawn: true })
+    closeMultiSpawnPrompt()
+    await launchFromConfig({ ...config, allowMultiSpawn: true })
+  }
+
+  /** The popover's way out in SELECT mode: the lock becomes a tick box — and
+   *  it arrives ticked, because including this config is why the button was
+   *  pressed. */
+  const enableMultiSpawnForSelect = (config: TerminalConfig) => {
+    updateConfig(config.id, { allowMultiSpawn: true })
+    closeMultiSpawnPrompt()
+    setSelectedConfigIds((prev) => new Set(prev).add(config.id))
+  }
+
+  const toggleSelectMode = () => {
+    closeMultiSpawnPrompt()
+    setSelectMode((on) => {
+      if (on) setSelectedConfigIds(new Set())
+      return !on
+    })
+  }
+
+  const toggleConfigSelected = (configId: string) => {
+    setSelectedConfigIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(configId)) next.delete(configId)
+      else next.add(configId)
+      return next
+    })
+  }
+
+  const exitSelectMode = () => {
+    closeMultiSpawnPrompt()
+    setSelectMode(false)
+    setSelectedConfigIds(new Set())
+  }
+
+  /** Run all: one fresh session per selected config, then out of select mode.
+   *  Anything that became one-at-a-time-blocked while the selection sat there
+   *  is dropped rather than silently refused by the backstop. */
+  const launchSelection = async () => {
+    const chosen = configs.filter(
+      (c) => selectedConfigIds.has(c.id) && !isMultiSpawnLaunchBlocked(c, runningCounts.get(c.id) ?? 0),
+    )
+    exitSelectMode()
+    for (const config of chosen) await launchFromConfig(config)
+  }
+
   const launchGroup = async (groupId: string) => {
     // Running configs are skipped (launchableInGroup): launch-all is bring-up
     // — it fills in what is missing and never silently doubles what runs.
@@ -776,7 +871,57 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onDrop={loose ? (e) => handleConfigDrop(e, config.id) : undefined}
         onDragEnd={handleConfigDragEnd}
         isDragOver={loose && dragOverConfigId === config.id}
+        selectMode={selectMode}
+        selected={selectedConfigIds.has(config.id)}
+        onToggleSelected={() => toggleConfigSelected(config.id)}
+        onLaunchMany={(n) => { void launchCopies(config, n) }}
+        onSpawnCountChange={(n) => setSpawnCount(config, n)}
+        onBlockedLaunch={(el) => showMultiSpawnPrompt(config.id, 'launch', el)}
+        onBlockedSelect={(el) => showMultiSpawnPrompt(config.id, 'select', el)}
+        onPromptHoverOut={hideMultiSpawnPromptSoon}
       />
+    )
+  }
+
+  /**
+   * The select-mode footer — "N selected · Cancel · Launch N" (approved mockup,
+   * column 2). Docked at the bottom of WHICHEVER tab is showing, because the
+   * Saved list and Quick Start feed the same selection; without it a selection
+   * made in Quick Start would have no way to run.
+   */
+  const renderSelectBar = () => {
+    if (!selectMode) return null
+    const n = selectedConfigIds.size
+    return (
+      <div
+        className="shrink-0 border-t border-[var(--border-subtle)] p-2 flex items-center gap-2"
+        data-testid="select-launch-bar"
+      >
+        <span className="text-[11px] flex-1" style={{ color: 'var(--text-secondary)' }}>
+          {n} selected
+        </span>
+        <button
+          onClick={exitSelectMode}
+          data-testid="select-launch-cancel"
+          className="h-[26px] px-2.5 rounded-md bg-transparent border border-[var(--border-strong)] text-[var(--text-muted)] text-[11px] font-semibold hover:text-[var(--text-primary)] transition-colors focus-ring"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => { void launchSelection() }}
+          disabled={n === 0}
+          aria-disabled={n === 0}
+          data-testid="select-launch-run"
+          className={`h-[26px] px-3 rounded-md text-[11px] font-bold flex items-center gap-1.5 border transition-colors focus-ring ${
+            n === 0
+              ? 'border-[var(--border-subtle)] bg-[var(--surface-raised)] text-[var(--text-muted)] cursor-not-allowed'
+              : 'border-[color-mix(in_srgb,var(--brand)_50%,transparent)] bg-[color-mix(in_srgb,var(--brand)_15%,transparent)] text-[var(--brand)] hover:bg-[color-mix(in_srgb,var(--brand)_25%,transparent)]'
+          }`}
+        >
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor" aria-hidden><polygon points="3,1 10,6 3,11" /></svg>
+          Launch {n}
+        </button>
+      </div>
     )
   }
 
@@ -914,7 +1059,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             the Saved TAB (always mounted), not here. */}
         {/* One central + New button (#483) — what to create is the second
             click's question, so the two answers live in a menu, not the row. */}
-        <div ref={newMenuRef} className="px-2 pb-1.5 flex justify-center shrink-0 relative">
+        {/* Phase 4 puts the Select toggle at the toolbar's right end (approved
+            mockup, column 2), so + New moves off centre and takes its own
+            relative box — the menu anchors to the BUTTON, not to the row. */}
+        <div className="px-2 pb-1.5 flex items-center justify-between gap-2 shrink-0">
+          <div ref={newMenuRef} className="relative">
           <button
             data-testid="new-button"
             onClick={() => setShowNewMenu((v) => !v)}
@@ -929,7 +1078,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             <div
               role="menu"
               data-testid="new-menu"
-              className="absolute top-full left-1/2 -translate-x-1/2 z-50 rounded-lg shadow-xl py-1 min-w-[150px]"
+              className="absolute top-full left-0 z-50 rounded-lg shadow-xl py-1 min-w-[150px]"
               style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
             >
               <button
@@ -953,6 +1102,26 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               </button>
             </div>
           )}
+          </div>
+          <button
+            onClick={toggleSelectMode}
+            aria-pressed={selectMode}
+            data-testid="config-select-toggle"
+            title={selectMode ? 'Leave select mode' : 'Select several configs to launch together'}
+            /* V2 semantic tokens, not the retired palette: this control is new
+               (#360's migration direction), and it keeps Sidebar.tsx's palette
+               ratchet in dialog-palette-retired.test.ts from creeping up. */
+            className={`h-7 px-3 rounded-md border text-[11px] font-semibold flex items-center gap-1.5 shrink-0 transition-colors focus-ring ${
+              selectMode
+                ? 'bg-[color-mix(in_srgb,var(--brand)_20%,transparent)] border-[color-mix(in_srgb,var(--brand)_45%,transparent)] text-[var(--brand)]'
+                : 'bg-transparent border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            Select
+          </button>
         </div>
 
         {/* The scrolling launcher list — sections, groups, loose configs. */}
@@ -1073,6 +1242,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         )}
         {unsectionedUngroupedConfigs.map(renderConfigRow)}
       </div>
+      {renderSelectBar()}
       </div>
       )}{/* end Saved tab */}
 
@@ -1114,6 +1284,33 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         />
       )}
 
+      {/* Allow Multi Spawn — the needs-Multi-Spawn popover (phase 4). Rendered
+          HERE, a sibling of the context menus, so its `fixed` box escapes both
+          tabs' `overflow-y-auto` scrollers; the row only reports where its
+          blocked control is. */}
+      {multiSpawnPrompt && (() => {
+        const cfg = configs.find((c) => c.id === multiSpawnPrompt.configId)
+        if (!cfg) return null
+        const copy = multiSpawnPrompt.kind === 'launch'
+          ? alreadyRunningLaunchCopy(cfg.label)
+          : cannotSelectCopy(cfg.label)
+        return (
+          <MultiSpawnPopover
+            anchor={multiSpawnPrompt.anchor}
+            headline={copy.headline}
+            body={copy.body}
+            actionLabel={multiSpawnPrompt.kind === 'launch' ? 'Enable Multi Spawn & launch' : 'Enable Multi Spawn'}
+            onAction={() => {
+              if (multiSpawnPrompt.kind === 'launch') void enableMultiSpawnAndLaunch(cfg)
+              else enableMultiSpawnForSelect(cfg)
+            }}
+            onClose={closeMultiSpawnPrompt}
+            onPointerEnter={cancelPromptClose}
+            onPointerLeave={hideMultiSpawnPromptSoon}
+          />
+        )
+      })()}
+
       {/* Group context menu */}
       {groupContextMenu && (
         <GroupContextMenu
@@ -1137,6 +1334,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         running={runningCounts}
         onLaunch={launchFromConfig}
         onContextMenu={handleConfigContextMenu}
+        onLaunchMany={(config, n) => { void launchCopies(config, n) }}
+        onSpawnCountChange={setSpawnCount}
+        onBlockedLaunch={(config, el) => showMultiSpawnPrompt(config.id, 'launch', el)}
+        onBlockedSelect={(config, el) => showMultiSpawnPrompt(config.id, 'select', el)}
+        onPromptHoverOut={hideMultiSpawnPromptSoon}
+        selectMode={selectMode}
+        selectedIds={selectedConfigIds}
+        onToggleSelected={toggleConfigSelected}
+        onToggleSelectMode={toggleSelectMode}
       />
       <div className="p-3 flex items-center justify-between">
         <span className="flex items-center gap-1.5">
@@ -1329,6 +1535,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           onViewChange('sessions')
         }}
       />
+      {renderSelectBar()}
       </div>
       )}{/* end Running tab */}
 

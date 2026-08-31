@@ -18,9 +18,13 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
   return { useSettingsStore }
 })
 vi.mock('../../../src/renderer/hooks/useThemeController', () => ({ useResolvedTheme: () => 'dark' }))
-vi.mock('../../../src/renderer/hooks/useLaunchConfig', () => ({
+// Phase 4: the panel now asks the REAL blocking rule (isMultiSpawnLaunchBlocked
+// and its copy helpers), so the module is only partially mocked — the hook is
+// stubbed to keep the store out, the pure rule stays honest.
+vi.mock('../../../src/renderer/hooks/useLaunchConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/renderer/hooks/useLaunchConfig')>()),
   CODEX_OFF_LAUNCH_REASON: 'Codex is off',
-  useLaunchConfig: () => () => {},
+  useLaunchConfig: () => () => '',
 }))
 
 const { default: QuickStartPanel } = await import('../../../src/renderer/components/sidebar/QuickStartPanel')
@@ -53,13 +57,16 @@ describe('QuickStartPanel', () => {
     expect(a.querySelector('[data-testid="quick-start-running-count"]')).toBeNull()
   })
 
-  it('a running pin can still START another instance', () => {
-    const onLaunch = vi.fn()
-    render({ configs: [cfg('b')], running: new Map([['b', 1]]), onLaunch })
-    const start = container.querySelector('[data-testid="quick-start-item"] button') as HTMLButtonElement
-    expect(start.disabled).toBe(false)
-    act(() => { start.click() })
-    expect(onLaunch).toHaveBeenCalledTimes(1)
+  // Phase 4 narrows the 2026-08-24 revision: a running pin only relaunches when
+  // it is a Multi Spawn config; the one-at-a-time refusal is covered in
+  // multi-spawn-blocking.test.tsx.
+  it('a running MULTI SPAWN pin can still start another instance (phase 4)', () => {
+    const onLaunchMany = vi.fn()
+    render({ configs: [cfg('b', { allowMultiSpawn: true })], running: new Map([['b', 1]]), onLaunchMany })
+    const spawn = container.querySelector('[data-testid="quick-start-multi-spawn-launch"]') as HTMLButtonElement
+    expect(spawn.disabled).toBe(false)
+    act(() => { spawn.click() })
+    expect(onLaunchMany).toHaveBeenCalledTimes(1)
   })
 
   it('Start launches the config', () => {

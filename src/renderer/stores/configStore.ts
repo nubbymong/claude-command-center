@@ -38,6 +38,21 @@ export interface TerminalConfig {
     remoteOs?: 'auto' | 'unix' | 'windows'  // item 3: remote OS (windows = prototype Windows setup path)
   }
   pinned?: boolean
+  /**
+   * Allow Multi Spawn (phase 4): this config may run SEVERAL copies at once.
+   * Absent/false = off — a launch is refused while any session of this config
+   * is live, and the config cannot be picked in select mode while running.
+   * Persisted only when ON (absent is the default, same shape rule as
+   * `sshConfig.detachable`'s opt-out).
+   */
+  allowMultiSpawn?: boolean
+  /**
+   * How many copies the row's ×N control launches. Only meaningful with
+   * `allowMultiSpawn`; absent => MULTI_SPAWN_DEFAULT_COUNT (2). Clamped 1-9 at
+   * read time (`resolveMultiSpawnCount`) so a hand-edited file cannot spawn a
+   * hundred sessions.
+   */
+  multiSpawnCount?: number
   machineName?: string // Identifies which machine this session runs on
   /** v1.5.19: account profile a session spawned from this config runs under
    *  (drives CLAUDE_CONFIG_DIR at PTY spawn). Absent = the bare default account. */

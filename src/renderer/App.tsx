@@ -49,6 +49,7 @@ import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, Dia
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
+import { configsToEnableMultiSpawn } from './utils/multiSpawn'
 import { useCommandBarStore } from './stores/commandBarStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
@@ -444,6 +445,28 @@ export default function App() {
     })()
     return () => { cancelled = true }
   }, [configLoaded, logsWipeBytes])
+
+  // ── Allow Multi Spawn grandfathering (phase 4) ───────────────────────────
+  // Configs created before Allow Multi Spawn existed had no such limit, and
+  // some of them are legitimately running several copies right now. Turning the
+  // one-at-a-time rule on for them would suddenly refuse a launch they have
+  // always been allowed — so any config that DEMONSTRABLY runs more than one
+  // copy (live sessions + detached remotes that would reattach to it) gets the
+  // setting turned on, once, and persisted with the config.
+  //
+  // ENABLE-ONLY and idempotent, so it needs no one-shot flag: it runs on every
+  // start (and again whenever the session set or the registry moves, which is
+  // when the answer could change), and finds nothing to do the moment every
+  // multi-copy config is marked. `updateConfig` writes through to disk, so the
+  // re-render this triggers sees the flag already set and stops.
+  const detachedRemoteEntries = useDetachedRemotesStore((s) => s.entries)
+  useEffect(() => {
+    if (!configLoaded) return
+    const ids = configsToEnableMultiSpawn(configs, sessions, detachedRemoteEntries)
+    if (ids.length === 0) return
+    const { updateConfig } = useConfigStore.getState()
+    for (const id of ids) updateConfig(id, { allowMultiSpawn: true })
+  }, [configLoaded, configs, sessions, detachedRemoteEntries])
 
   // Post-config-load initialization
   useEffect(() => {

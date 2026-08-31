@@ -127,6 +127,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [sshRemotePath, setSshRemotePath] = useState(initial?.sshConfig?.remotePath ?? '~')
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
   const [postCommand, setPostCommand] = useState(initial?.sshConfig?.postCommand ?? '')
+  // Allow Multi Spawn (phase 4): may this launcher run several copies at once?
+  // Absent/false = off, and a launch is then refused while one is live.
+  const [allowMultiSpawn, setAllowMultiSpawn] = useState(initial?.allowMultiSpawn === true)
   // SSH tmux enhancement (item 1): "Detachable" (persistent remote session).
   // DEFAULT ON -- only an explicit false disables it, so a config saved before
   // this field existed (undefined) opens ticked.
@@ -499,6 +502,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       } : undefined,
       claudeOptions,
       codexOptions,
+      // Allow Multi Spawn (phase 4): persist only the opt-IN — absent is the
+      // default/off, the same shape rule as sshConfig.detachable's opt-out.
+      allowMultiSpawn: allowMultiSpawn ? true : undefined,
+      // The ×N control's remembered copy count belongs to the ROW, not this
+      // dialog. Carry it through untouched so editing a config never resets it
+      // (the field-by-field rebuild below the sshConfig spread is exactly how
+      // detachable and loggingEnabled were silently dropped before).
+      multiSpawnCount: initial?.multiSpawnCount,
       machineName: sessionType === 'ssh' && machineName.trim() ? machineName.trim() : undefined,
       // Account is no longer a config field -- it's chosen at launch by the
       // pre-spawn account gate. Preserve any pre-existing value on edit so older
@@ -675,6 +686,23 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
               {uiProvider === 'codex' && (
                 <p className="text-[11px] text-[var(--text-muted)] mt-1.5">Codex runs on this PC only — SSH isn't available.</p>
               )}
+              {/* Allow Multi Spawn (phase 4). Off by default: a launcher runs
+                  ONE session at a time, and every launch surface refuses the
+                  second copy (with a popover offering this very switch). Turn
+                  it on for a config you routinely want several of. */}
+              <label className="flex items-start gap-2 mt-2.5 cursor-pointer" data-testid="allow-multi-spawn-field">
+                <input
+                  type="checkbox"
+                  checked={allowMultiSpawn}
+                  onChange={(e) => setAllowMultiSpawn(e.target.checked)}
+                  className="mt-0.5 rounded border-[var(--border-subtle)] accent-[var(--brand)]"
+                  data-testid="allow-multi-spawn"
+                />
+                <span className="block">
+                  <span className="block text-sm text-[var(--text-secondary)]">Allow Multi Spawn</span>
+                  <span className="block text-[10px] text-[var(--text-muted)] mt-0.5">Launch several copies of this config at once</span>
+                </span>
+              </label>
             </>
           )}
 

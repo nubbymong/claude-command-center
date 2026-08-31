@@ -15,6 +15,56 @@ export function isConfigLaunchBlocked(config: Pick<TerminalConfig, 'provider'>):
 /** The reason shown wherever a blocked config is marked disabled. */
 export const CODEX_OFF_LAUNCH_REASON = 'Codex is off. Enable it in Settings → Codex to launch this config.'
 
+/**
+ * Allow Multi Spawn (phase 4) — THE rule, in one place.
+ *
+ * A config that is not a Multi Spawn config runs ONE copy at a time: while any
+ * session launched from it is live, it cannot launch again. Every launch
+ * surface (the config row's hover launch, Quick Start's start button, select
+ * mode's tick box) asks this exact function, and so does `useLaunchConfig`
+ * itself as a backstop — so a surface that forgets the affordance still cannot
+ * spawn the second copy.
+ *
+ * Keyed on the RUNNING STATE, not the setting alone: a non-Multi-Spawn config
+ * with nothing running launches (and is selectable) perfectly normally.
+ */
+export function isMultiSpawnLaunchBlocked(
+  config: Pick<TerminalConfig, 'allowMultiSpawn'>,
+  runningCount: number,
+): boolean {
+  return runningCount > 0 && config.allowMultiSpawn !== true
+}
+
+/** Popover copy for a launch refused by the rule above (bold head + body). */
+export function alreadyRunningLaunchCopy(label: string): { headline: string; body: string } {
+  return {
+    headline: `${label} is already running.`,
+    body: "It isn't a Multi Spawn config, so it runs one at a time.",
+  }
+}
+
+/** Popover copy for a SELECTION refused by the same rule. */
+export function cannotSelectCopy(label: string): { headline: string; body: string } {
+  return {
+    headline: `${label} can't be selected.`,
+    body: "It's already running and isn't a Multi Spawn config — it runs one at a time.",
+  }
+}
+
+/** Flat one-liner for `title` / `aria-label`, where markup is not available. */
+export function flattenPopoverCopy(copy: { headline: string; body: string }): string {
+  return `${copy.headline} ${copy.body}`
+}
+
+/** Live sessions launched from this config, right now. Mirrors
+ *  `runningConfigCounts` (the Ask session is config-less and skipped) but reads
+ *  the store directly so the launch backstop needs no props. */
+function liveCountForConfig(configId: string): number {
+  return useSessionStore
+    .getState()
+    .sessions.filter((s) => s.kind !== 'ask' && s.configId === configId).length
+}
+
 /** Overrides for a launch. SSH Persistent: a RESUME reuses the detached remote's
  *  ORIGINAL session id and asks for the SSH reconnect flag so the tmux target
  *  `ccc-<sessionId>` matches and, on a lost remote, `--continue` resumes the
@@ -128,12 +178,18 @@ export function useLaunchSessionAction(): (config: TerminalConfig, opts?: Launch
  * immediately. Left-running remotes in the detached registry do NOT interrupt it:
  * there is no resume prompt and no gate on this path (the launch-time dialog was
  * dropped from the design). Resume lives on its own surface, which reattaches by
- * calling `useLaunchSessionAction` with the remote's original id + reconnect.
+ * calling `useLaunchSessionAction` with the remote's original id + reconnect —
+ * a path this hook's Multi Spawn backstop deliberately does NOT sit on, because
+ * a reattach re-adopts a session that already exists rather than making a copy.
  */
 export function useLaunchConfig(): (config: TerminalConfig) => string {
   const launch = useLaunchSessionAction()
   return useCallback((config: TerminalConfig) => {
     if (isConfigLaunchBlocked(config)) return ''
+    // Allow Multi Spawn backstop: a surface that missed the blocked affordance
+    // (a group/section launch-all, a keyboard path, a stale render) still
+    // cannot spawn the second copy of a one-at-a-time config.
+    if (isMultiSpawnLaunchBlocked(config, liveCountForConfig(config.id))) return ''
     return launch(config)
   }, [launch])
 }
