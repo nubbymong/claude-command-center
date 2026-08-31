@@ -260,8 +260,8 @@ function parseRunLog(log) {
 function coverageFor(row) {
   const docker = row.TO.includes('&DOCKER')
   if (row.Runnable !== 'YES') return { status: 'NOT-RUNNABLE', why: row.Notes || 'marked not runnable' }
-  if (docker) return { status: 'DOCKER-PHASE', why: 'container runtime build pending (structured Runtime field)' }
   if (/UBUNTU_HYPER_V/.test(row.TO) || row.FROM === 'UBUNTU_HYPER_V') return { status: 'DROPPED', why: 'owner dropped Ubuntu (2026-08-31)' }
+  if (docker) return { status: 'DOCKER-PHASE', why: 'container runtime build pending (structured Runtime field)' }
   if (row.TO === row.FROM || row.Hops === '0') return { status: 'NOT-AUTOMATED', why: 'local session — covered by unit/e2e, not the SSH pack' }
   const key = `${row.TO}|${row.SessionType}|${row.SshAuth}`
   const map = {
