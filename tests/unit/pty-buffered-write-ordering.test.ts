@@ -125,12 +125,28 @@ describe('a write that lands while the launch line is still queued', () => {
     vi.advanceTimersByTime(400) // launch line lands, hold releases
     vi.advanceTimersByTime(5000) // let the chunked writer drain its interval
 
-    const payloads = writeMock.mock.calls
+    // Select ONLY the paste's own chunk writes. The paste is a run of one
+    // sentinel byte, so every replayed chunk is a PURE run of it (`/^X+$/`) and
+    // nothing else -- while the launch line is always a shell command
+    // (`cd '...' && '...claude...' ...; exit`) that can never be all-X.
+    //
+    // The old `includes('X')` filter was a latent ~9% flake (it surfaced on the
+    // Linux CI runner as `expected 278 to be less than or equal to 256`). The
+    // launch line is a SEPARATE, single un-chunked write -- a command line is not
+    // a multi-KB paste and is deliberately not routed through the chunker -- and
+    // its --plugin-dir/--settings/--mcp-config paths live under the per-worker
+    // temp root `ccc-vitest-<rand>`. `fs.mkdtempSync` fills that random suffix
+    // from [A-Za-z0-9], so ~9% of runs it contains an uppercase 'X'; that launch
+    // line (278-424 B, > 256) then matched `includes('X')` and tripped the <=256
+    // assertion meant only for paste chunks. A pure-run filter is deterministic
+    // (no dependence on the random temp name) and still catches a genuinely
+    // oversized PASTE write -- an un-chunked replay would be one X-run > 256.
+    const pasteChunks = writeMock.mock.calls
       .map((c) => (typeof c[0] === 'string' ? c[0] : ''))
-      .filter((s) => s.includes('X'))
-    expect(payloads.length).toBeGreaterThan(1) // chunked, not one write
-    expect(Math.max(...payloads.map((p) => p.length))).toBeLessThanOrEqual(256)
-    expect(payloads.join('').length).toBe(big.length) // and nothing lost
+      .filter((s) => /^X+$/.test(s))
+    expect(pasteChunks.length).toBeGreaterThan(1) // chunked, not one write
+    expect(Math.max(...pasteChunks.map((p) => p.length))).toBeLessThanOrEqual(256)
+    expect(pasteChunks.join('')).toBe(big) // and nothing lost or reordered
 
     killPty(id)
   })
