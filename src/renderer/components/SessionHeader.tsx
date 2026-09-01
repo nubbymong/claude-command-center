@@ -4,10 +4,13 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/ident
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { useAccountAuthStore } from '../stores/accountAuthStore'
+import { sshMappedProfileId } from '../utils/sessionLaunch'
+import { useAccountAuthStore, type AccountAuthStatus } from '../stores/accountAuthStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { resolveAccountName, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { BrandMark } from './BrandMark'
+import { ContainerGlyph, containerBadgeTitle } from './sidebar/Badges'
+import { containerNameOf, resolveTransportBadge } from './sidebar/transportBadge'
 import { useRestartSession } from '../hooks/useRestartSession'
 import { ASK_LABEL } from '../lib/askConductor'
 
@@ -153,6 +156,84 @@ function HeaderPill({
 }
 
 /**
+ * How long the SSH-account shimmer waits for identity before giving up.
+ *
+ * A shimmer that never resolves is worse than blank (the bottom bar's own rule
+ * — see RateLimitBarPending / PendingDot in MultiAccountStatusline). First-connect
+ * priming makes identity arrive within a couple of ticks in the normal case, so
+ * this only covers the pathological "no account will ever come" session (a bare
+ * SSH host that never reports one), where after this bound the header falls back
+ * to exactly today's output — the GitHub tail, or nothing.
+ */
+const SSH_AUTH_PENDING_GIVE_UP_MS = 20_000
+
+/**
+ * One skeleton pill sized like a resolved HeaderPill (same chrome, a shimmer
+ * where the dot + label go), so the account · claude.ai · Claude Code cluster
+ * does not jump width when identity lands. Purely decorative (aria-hidden); the
+ * wrapper carries the accessible label.
+ */
+function SshAuthSkeletonPill({ width }: { width: number }) {
+  return (
+    <span
+      className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface0/60 bg-surface0/40 shrink-0"
+      data-testid="session-auth-skeleton"
+      aria-hidden
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-surface1" />
+      <span
+        // Same shimmer track the bottom bar's pending meter uses
+        // (statusline-pending-track / -sweep in styles.css), so the two read as
+        // one "coming" signal and prefers-reduced-motion is already honoured.
+        className="statusline-pending-track inline-block bg-surface1 rounded-sm"
+        // height 10 (not 8) so the skeleton pill is the same ~14px tall as a
+        // resolved HeaderPill -- the cluster does not jump height when identity lands.
+        style={{ width, height: 10 }}
+      />
+    </span>
+  )
+}
+
+/**
+ * FIX (owner request, 2026-09-01): while an SSH Claude session's identity is
+ * still in flight — no reported remote email AND no mapped local profile yet —
+ * the top bar used to be blank where the account · claude.ai · Claude Code pills
+ * will land. Show a loading shimmer there instead (plus the real GitHub pill when
+ * a repo slug is known), so the user reads "coming" rather than "nothing".
+ *
+ * The PARENT (SessionAuthPills) switches branches the instant identity arrives —
+ * this component unmounts and the real pills render — so this owns only the
+ * GIVE-UP: after SSH_AUTH_PENDING_GIVE_UP_MS from first render it falls back to
+ * exactly what this branch showed before (the GitHub tail, or nothing).
+ */
+function SshAuthPending({ gitHubTail }: { gitHubTail: React.ReactNode }) {
+  const [gaveUp, setGaveUp] = React.useState(false)
+  React.useEffect(() => {
+    const t = setTimeout(() => setGaveUp(true), SSH_AUTH_PENDING_GIVE_UP_MS)
+    return () => clearTimeout(t)
+  }, [])
+  if (gaveUp) return <>{gitHubTail}</>
+  return (
+    <>
+      <span
+        // gap-3 mirrors the header's own gap between the resolved pills, so the
+        // skeleton cluster occupies the same footprint the real trio will.
+        className="flex items-center gap-3 shrink-0"
+        role="status"
+        aria-label="Loading account"
+        data-testid="session-auth-pending"
+      >
+        {/* account · claude.ai · Claude Code — widths approximate the resolved labels. */}
+        <SshAuthSkeletonPill width={52} />
+        <SshAuthSkeletonPill width={46} />
+        <SshAuthSkeletonPill width={60} />
+      </span>
+      {gitHubTail}
+    </>
+  )
+}
+
+/**
  * The session's GitHub connection, as a title-bar-style pill. The repo slug is
  * shown ON HOVER (title), never inline -- the pill just reads "GitHub" with a
  * connection dot, so it sits quietly beside the Claude pills at the same weight.
@@ -175,51 +256,84 @@ function SessionGitHubPill({ session }: { session: Session }) {
 }
 
 /**
- * The session's status cluster (right side of the header), styled to complement
- * the title-bar service pills. Order: account · claude.ai · Claude Code | GitHub.
- * The account pill names the Claude account this session runs as; the two auth
- * pills say whether it is signed in / connected (a green dot = good, a word only
- * when action is needed). GitHub follows a separator, its repo slug on hover.
- * Status comes from the shared accountAuthStore, fetched on activate + after any
- * sign-in/out + manual refresh (never polled — the Claude Code check is heavy).
+ * The SSH connection as ONE title-bar-style pill carrying BOTH the connection
+ * kind and the remote address -- replacing the old mauve "SSH: user@host" text
+ * and the separate persistent / not-persistent pills. THREE kinds now (phase 6,
+ * the same truth table the sidebar badges read): the teal container mark when
+ * claude runs a hop deeper inside a container, green "SSH-Persistent" when the
+ * session is tmux-wrapped (a dropped connection stays alive and reconnecting
+ * resumes it in place), neutral "SSH" otherwise. The kind slot is exclusive --
+ * a container session is never tmux-wrapped (main forces persistence off), so
+ * the old separate container pill beside an "SSH" one said one thing twice.
+ * The address (user@host) reads inline in EVERY kind, at a glance, not only on
+ * hover: this pill is what guarantees a standard SSH session is never headless.
  */
-function SessionAuthPills({ session }: { session: Session }) {
-  const primary = useAccountProfilesStore((s) => s.profiles.find((p) => p.isPrimary))
-  const refresh = useAccountAuthStore((s) => s.refresh)
-  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
-  const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
-  const theme = useResolvedTheme()
-  // Only LOCAL Claude sessions carry per-session Claude Code creds + a claude.ai
-  // web session. SSH (remote creds), Codex (not profile-scoped) and shell-only
-  // sessions show nothing — same gate the context-menu auth items use.
-  const applies = !session.shellOnly && session.sessionType === 'local' && (session.provider ?? 'claude') === 'claude'
-  // The Ask help session (#465) keeps ONLY the account pill: it still runs as an
-  // account (that requirement predates this), but the claude.ai / Claude Code
-  // auth pills and the GitHub pill are workspace chrome a help surface does not
-  // carry — and with no auth pills to feed, the status fetch is skipped too.
-  const isAsk = session.kind === 'ask'
-  const profileId = session.profileId ?? primary?.id
-  const profile = useAccountProfilesStore((s) => (profileId ? s.profiles.find((p) => p.id === profileId) : undefined))
-  const status = useAccountAuthStore((s) => (profileId ? s.byProfile[profileId] : undefined))
+function SshConnectionPill({ session }: { session: Session }) {
+  const ssh = session.sshConfig
+  if (!ssh) return null
+  const kind = resolveTransportBadge({
+    isSsh: session.sessionType === 'ssh',
+    ssh,
+    persistent: session.sshTmuxPersistent === true,
+  })
+  const container = kind === 'container' ? containerNameOf(ssh) : undefined
+  const persistent = kind === 'persistent'
+  const pill = (
+    <HeaderPill
+      label={kind === 'container' ? <ContainerGlyph size={11} /> : persistent ? 'SSH-Persistent' : 'SSH'}
+      tone={kind === 'container' ? 'var(--color-teal)' : persistent ? 'var(--status-success)' : 'var(--text-muted)'}
+      dotOnly={kind === 'container'}
+      title={
+        kind === 'container'
+          ? containerBadgeTitle(container)
+          : persistent
+            ? 'This remote session runs inside tmux — a dropped connection stays alive and reconnecting resumes it in place.'
+            : 'Remote session over SSH; a dropped connection ends it and reconnecting resumes via --continue.'
+      }
+      testId="ssh-connection-pill"
+    >
+      <span className="font-mono text-[10px] leading-none" style={{ color: 'var(--text-primary)' }}>
+        {ssh.username}@{ssh.host}
+      </span>
+    </HeaderPill>
+  )
+  // The persistent and container variants also answer to their legacy hooks
+  // (`ssh-persistent-pill` / `ssh-docker-pill`). One node can't carry two
+  // data-testids, so a display:contents wrapper (no layout box of its own)
+  // carries the second hook around the pill; `ssh-connection-pill` stays on the
+  // pill itself in ALL THREE states.
+  const legacyHook = kind === 'container' ? 'ssh-docker-pill' : persistent ? 'ssh-persistent-pill' : undefined
+  return legacyHook ? (
+    <span style={{ display: 'contents' }} data-testid={legacyHook}>
+      {pill}
+    </span>
+  ) : (
+    pill
+  )
+}
 
-  React.useEffect(() => {
-    // This header renders only the ACTIVE session, so mounting/param-change is
-    // "on activate". Re-fetch when the session or its account changes.
-    if (applies && !isAsk && profileId) void refresh(profileId)
-  }, [applies, isAsk, profileId, refresh, session.id])
-
-  // Never a GitHub pill on the Ask session (#465) — structural, so even a
-  // stray githubIntegration on the record (there is no path that sets one,
-  // the auto-detect banner is gated) could not paint it.
-  const gitHub = isAsk ? null : <SessionGitHubPill session={session} />
-  if (!applies || !profileId) {
-    // Non-Claude sessions still show the GitHub pill (with its own leading
-    // separator) so the right cluster stays consistent.
-    return !isAsk && session.githubIntegration?.repoSlug
-      ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
-      : null
-  }
-
+/**
+ * The account · claude.ai · Claude Code (with refresh) pill trio plus the
+ * trailing GitHub group. Shared by a LOCAL Claude session and an SSH session
+ * whose remote account maps to a local profile: the claude.ai / Claude Code
+ * checks are local-profile-scoped, so once a remote session is mapped to a local
+ * profile the same set applies (harmonise-remote). The account pill's
+ * label/tone/title are passed in because they differ — a remote session names
+ * its account "Remote Claude account: …". `status` is the accountAuthStore entry
+ * for `profileId`; `gitHubTail` is the already-assembled trailing group (its own
+ * leading separator + the GitHub pill, or null).
+ */
+function AccountAuthPillSet({
+  accountLabel, accountTone, accountTitle, status, profileId, refresh, gitHubTail,
+}: {
+  accountLabel: React.ReactNode
+  accountTone: string
+  accountTitle: string
+  status: AccountAuthStatus | undefined
+  profileId: string
+  refresh: (profileId: string, opts?: { force?: boolean }) => Promise<void>
+  gitHubTail: React.ReactNode
+}) {
   // Until the FIRST successful read (fetchedAt set) the status is UNKNOWN — the
   // very first render precedes the fetch effect, and a failed first fetch leaves
   // no result either. Never paint "signed out"/"not connected" for unknown: show
@@ -229,50 +343,19 @@ function SessionAuthPills({ session }: { session: Session }) {
   const cliOk = status?.cliAuthed === true
   const web = status?.web
   const errorSuffix = status?.error ? ` — could not read status: ${status.error}` : ''
-
-  // Account pill: the Claude account this session runs as (name/alias, else a
-  // middle-truncated email), with the account's identity colour. Full email on
-  // hover.
-  const email = profile?.accountEmail ?? ''
-  const accountName = email
-    ? (() => {
-        const r = resolveAccountName(email, profile?.name, accountAliases)
-        return r === email ? middleTruncateEmail(email) : r
-      })()
-    : (profile?.name || 'Account')
-  const accountTone = resolveIdentityColor(
-    resolveAccountColourKey(email, accountColourOverrides, profile?.colourKey),
-    theme,
-  )
-
-  // Slim Ask header (#465): the account pill alone. Everything below this point
-  // is auth-status wording for pills the Ask session does not render.
-  if (isAsk) {
-    return (
-      <HeaderPill
-        label={accountName}
-        tone={accountTone}
-        title={email ? `Account: ${email}` : 'This session’s Claude account'}
-        testId="session-pill-account"
-      />
-    )
-  }
-
   // A green dot = all good, no word; the word appears only when action is needed
   // (signed out / not connected / expired / unknown), mirroring the title bar.
   const codeTone = known && cliOk ? 'var(--status-success)' : known ? 'var(--text-muted)' : 'var(--text-muted)'
   const codeWord = !known ? (pending ? '…' : 'unknown') : cliOk ? undefined : 'signed out'
   const aiTone = !known ? 'var(--text-muted)' : web === 'active' ? 'var(--status-success)' : web === 'expired' ? 'var(--status-warning)' : 'var(--text-muted)'
   const aiWord = !known ? (pending ? '…' : 'unknown') : web === 'active' ? undefined : web === 'expired' ? 'expired' : 'not connected'
-
   const doRefresh = () => { if (profileId) void refresh(profileId, { force: true }) }
-
   return (
     <>
       <HeaderPill
-        label={accountName}
+        label={accountLabel}
         tone={accountTone}
-        title={email ? `Account: ${email}` : 'This session’s Claude account'}
+        title={accountTitle}
         testId="session-pill-account"
       />
       <HeaderPill
@@ -301,9 +384,209 @@ function SessionAuthPills({ session }: { session: Session }) {
         </button>
       </HeaderPill>
       {/* Separator, then GitHub — its own group, slug on hover. */}
-      <div className="w-px h-4 bg-surface1 shrink-0" />
-      {gitHub}
+      {gitHubTail}
     </>
+  )
+}
+
+/**
+ * The session's status cluster (right side of the header), styled to complement
+ * the title-bar service pills. Order: account · claude.ai · Claude Code | GitHub.
+ * The account pill names the Claude account this session runs as; the two auth
+ * pills say whether it is signed in / connected (a green dot = good, a word only
+ * when action is needed). GitHub follows a separator, its repo slug on hover.
+ * Status comes from the shared accountAuthStore, fetched on activate + after any
+ * sign-in/out + manual refresh (never polled — the Claude Code check is heavy).
+ */
+function SessionAuthPills({ session }: { session: Session }) {
+  const primary = useAccountProfilesStore((s) => s.profiles.find((p) => p.isPrimary))
+  const profiles = useAccountProfilesStore((s) => s.profiles)
+  const refresh = useAccountAuthStore((s) => s.refresh)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  const theme = useResolvedTheme()
+  // Only LOCAL Claude sessions carry per-session Claude Code creds + a claude.ai
+  // web session. SSH (remote creds), Codex (not profile-scoped) and shell-only
+  // sessions show nothing — same gate the context-menu auth items use.
+  const applies = !session.shellOnly && session.sessionType === 'local' && (session.provider ?? 'claude') === 'claude'
+  // The Ask help session (#465) keeps ONLY the account pill: it still runs as an
+  // account (that requirement predates this), but the claude.ai / Claude Code
+  // auth pills and the GitHub pill are workspace chrome a help surface does not
+  // carry — and with no auth pills to feed, the status fetch is skipped too.
+  const isAsk = session.kind === 'ask'
+  const isSshClaude = !session.shellOnly && session.sessionType === 'ssh' && (session.provider ?? 'claude') === 'claude'
+  // SSH → local-profile mapping (harmonise-remote): an SSH session delivers its
+  // signed-in account via /status (session.accountEmail; fallback the setup-
+  // sentinel sshRemoteAccount). When that email matches a LOCAL account profile
+  // on THIS machine, the claude.ai web session and the Claude Code sign-in are
+  // local-machine actions on that identity, so the SSH header shows the SAME
+  // pill set as local, driven by that profile. No match → account-only (there is
+  // no local auth to show). session.accountEmail is sanitised at ingest, so this
+  // is a plain equality against locally-configured profiles — no new trust.
+  // sshMappedProfileId falls back to the session's launch profileId ONLY while
+  // no remote email has arrived yet, so the pills resolve the moment a fresh
+  // SSH session opens instead of only after a restart. Once the remote reports,
+  // the email mapping alone decides (a known non-matching identity stays
+  // account-only — never another account's affordances).
+  const sshProfileId = isSshClaude ? sshMappedProfileId(session, profiles) : undefined
+  const sshProfile = useAccountProfilesStore((s) => (sshProfileId ? s.profiles.find((p) => p.id === sshProfileId) : undefined))
+  // Account identity for the SSH pill: the REPORTED remote email when known,
+  // else the mapped launch profile's own email — so the top-bar account shows
+  // immediately on connect and refines to the remote's reported email when
+  // /status lands. `reportedEmail` tracks which of the two is being shown: a
+  // locally-sourced stand-in must not be captioned as the remote's sign-in.
+  const reportedEmail = isSshClaude ? (session.accountEmail || session.sshRemoteAccount) : undefined
+  const remoteEmail = isSshClaude ? (reportedEmail || sshProfile?.accountEmail) : undefined
+  // The profile whose auth status feeds the pills: the SSH-mapped local profile
+  // for a mapped remote session, else this session's own (or the primary)
+  // profile. Undefined for an SSH session with no local match (account-only).
+  const profileId = isSshClaude ? sshProfileId : (session.profileId ?? primary?.id)
+  const profile = useAccountProfilesStore((s) => (profileId ? s.profiles.find((p) => p.id === profileId) : undefined))
+  const status = useAccountAuthStore((s) => (profileId ? s.byProfile[profileId] : undefined))
+
+  React.useEffect(() => {
+    // This header renders only the ACTIVE session, so mounting/param-change is
+    // "on activate". Fetch for a LOCAL Claude session, and for an SSH session
+    // whose remote account maps to a local profile (profileId set). Re-fetch when
+    // the session or its (possibly SSH-mapped) account changes.
+    if ((applies || isSshClaude) && !isAsk && profileId) void refresh(profileId)
+  }, [applies, isSshClaude, isAsk, profileId, refresh, session.id])
+
+  // Never a GitHub pill on the Ask session (#465) — structural, so even a
+  // stray githubIntegration on the record (there is no path that sets one,
+  // the auto-detect banner is gated) could not paint it.
+  const gitHub = isAsk ? null : <SessionGitHubPill session={session} />
+
+  // Phase 3 (harmonise-remote): an SSH Claude session. The ACCOUNT pill is named
+  // from its live /status accountEmail (fallback: the setup-sentinel snapshot
+  // sshRemoteAccount). When that account maps to a LOCAL profile (sshProfileId,
+  // above), the claude.ai / Claude Code pills apply too — those checks are
+  // local-profile-scoped and run on THIS machine for the account identity — so
+  // the header reads exactly like a local one. With no local match, the pill
+  // stands alone (the remote signed-in state is folded into it) and there is no
+  // local auth to show. This pill replaces the old mauve remote-account pill.
+  if (isSshClaude) {
+    const gitHubTail = !isAsk && session.githubIntegration?.repoSlug
+      ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
+      : null
+    // Render the pills whenever we have EITHER a reported/mapped remote email OR
+    // a mapped local profile (sshProfileId — the SAME mapping the Artifacts
+    // button resolves off). Gating the whole header on remoteEmail left a
+    // standard SSH session blank at the top while its Artifacts button worked,
+    // because the live remote /status email had not populated session.accountEmail
+    // yet even though the launch profile was known. A session with neither shows
+    // a loading shimmer (FIX 2026-09-01) where the account/claude.ai/Claude Code
+    // pills will land — resolved the instant identity arrives (this branch stops
+    // being taken), and self-limiting: after SSH_AUTH_PENDING_GIVE_UP_MS it falls
+    // back to exactly the prior output (the GitHub tail, or nothing).
+    // key by session.id so switching between two still-pending SSH sessions
+    // remounts the shimmer with a FRESH give-up clock, instead of the second
+    // inheriting whatever was left of the first one's 20s timer.
+    if (!remoteEmail && !sshProfileId) return <SshAuthPending key={session.id} gitHubTail={gitHubTail} />
+    // Identity to show: the reported/mapped remote email when known, else the
+    // mapped profile's own email or name as a first-connect placeholder, so the
+    // header paints immediately instead of waiting on the first remote tick.
+    const idEmail = remoteEmail || sshProfile?.accountEmail || ''
+    const r = idEmail ? resolveAccountNameByEmail(idEmail, profiles, accountAliases) : ''
+    const remoteName = idEmail
+      ? (r === idEmail ? middleTruncateEmail(idEmail) : r)
+      : (sshProfile?.name || 'Account')
+    const remoteTone = resolveIdentityColor(
+      resolveAccountColourKey(idEmail, accountColourOverrides, session.accountColour ?? sshProfile?.colourKey),
+      theme,
+    )
+    const accountTitle = reportedEmail
+      ? `Remote Claude account: ${remoteEmail} (signed in on the remote host)`
+      : `Launch account: ${idEmail || remoteName} (the remote host has not reported its signed-in account yet)`
+    // Mapped to a local profile → the full local pill set, driven by that
+    // profile's auth status. The account pill keeps its remote name/tone/title.
+    if (sshProfileId) {
+      return (
+        <AccountAuthPillSet
+          accountLabel={remoteName}
+          accountTone={remoteTone}
+          accountTitle={accountTitle}
+          status={status}
+          profileId={sshProfileId}
+          refresh={refresh}
+          gitHubTail={gitHubTail}
+        />
+      )
+    }
+    // No local profile for this account → account pill only.
+    return (
+      <>
+        <HeaderPill
+          label={remoteName}
+          tone={remoteTone}
+          title={accountTitle}
+          testId="session-pill-account"
+        />
+        {gitHubTail}
+      </>
+    )
+  }
+
+  if (!applies || !profileId) {
+    // Non-Claude sessions still show the GitHub pill (with its own leading
+    // separator) so the right cluster stays consistent.
+    return !isAsk && session.githubIntegration?.repoSlug
+      ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
+      : null
+  }
+
+  // Account pill: the Claude account this session ACTUALLY runs as. The LIVE
+  // captured identity (session.accountEmail — spawn-time capture from the
+  // session's real config dir, refreshed on a mid-session /login) wins over
+  // the profile's STORED label: the label is display metadata and can
+  // disagree with what is really signed in inside that profile's dir (seen on
+  // the WINDOWS_1 staging VM, whose fake-labelled profile carried real
+  // credentials — the pill claimed the label while the session ran as the
+  // real account). Owner requirement 2026-08-30: whatever account the launch
+  // choice actually signed in as appears on top. The profile label remains
+  // the fallback until the capture lands, so the pill still paints instantly
+  // and daily (label == reality) behaviour is unchanged.
+  const email = session.accountEmail || profile?.accountEmail || ''
+  // The profile's friendly name applies only while the pill is showing THAT
+  // profile's account — never relabel a diverged live account with it.
+  const nameHint = profile?.accountEmail && profile.accountEmail === email ? profile?.name : undefined
+  const accountName = email
+    ? (() => {
+        const r = resolveAccountName(email, nameHint, accountAliases)
+        return r === email ? middleTruncateEmail(email) : r
+      })()
+    : (profile?.name || 'Account')
+  const accountTone = resolveIdentityColor(
+    resolveAccountColourKey(email, accountColourOverrides, session.accountColour ?? profile?.colourKey),
+    theme,
+  )
+
+  // Slim Ask header (#465): the account pill alone. Everything below this point
+  // is auth-status wording for pills the Ask session does not render.
+  if (isAsk) {
+    return (
+      <HeaderPill
+        label={accountName}
+        tone={accountTone}
+        title={email ? `Account: ${email}` : 'This session’s Claude account'}
+        testId="session-pill-account"
+      />
+    )
+  }
+
+  // The full account · claude.ai · Claude Code trio, driven by this profile's
+  // auth status — the same set an SSH-mapped session renders above (the account
+  // pill differs only in its label/tone/title).
+  return (
+    <AccountAuthPillSet
+      accountLabel={accountName}
+      accountTone={accountTone}
+      accountTitle={email ? `Account: ${email}` : 'This session’s Claude account'}
+      status={status}
+      profileId={profileId}
+      refresh={refresh}
+      gitHubTail={<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>}
+    />
   )
 }
 
@@ -359,44 +642,20 @@ export default function SessionHeader({ session }: Props) {
 
       {session.sessionType === 'ssh' && session.sshConfig && (
         <span className="flex items-center gap-1.5 shrink-0">
-          <span className="text-xs text-mauve">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
-          {/* item 8: persistence indicator. Only shown once main has reported a
-              definite status for this session (undefined = not yet known). */}
-          {/* Rendered through the shared HeaderPill (#291's title-bar-style pill
-              system) so the SSH pills sit at the same weight as the account /
-              GitHub pills instead of carrying their own copy of the chrome. */}
-          {session.sshTmuxPersistent === true && (
-            <HeaderPill
-              label={
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
-              }
-              tone="var(--status-success)"
-              word="persistent"
-              dotOnly
-              title="This remote session runs inside tmux — a dropped connection stays alive and reconnecting resumes it in place."
-              testId="ssh-persistent-pill"
-            />
-          )}
-          {session.sshTmuxPersistent === false && (
-            <HeaderPill
-              label="not persistent"
-              tone="var(--text-muted)"
-              dotOnly
-              title="This remote session is not persistent — a dropped connection ends it; reconnecting resumes the conversation via --continue."
-              testId="ssh-nonpersistent-pill"
-            />
-          )}
-          {/* item 10: the account the REMOTE session is signed in as (descriptor
-              only). Distinct from the local SessionAuthPills, which never apply
-              to SSH. */}
-          {session.sshRemoteAccount && (
-            <HeaderPill
-              label={<span className="truncate max-w-[140px]">{session.sshRemoteAccount}</span>}
-              tone="var(--color-mauve)"
-              title={`Remote Claude account: ${session.sshRemoteAccount}`}
-              testId="ssh-remote-account-pill"
-            />
-          )}
+          {/* One connection pill: kind ("SSH" / "SSH-Persistent") + the remote
+              address, styled like the account / GitHub HeaderPills (#291's
+              title-bar-style pill system). Replaces the old mauve "SSH: user@host"
+              text and the two separate persistence pills. */}
+          {/* Phase 6: the container runtime is now the connection pill's KIND,
+              not a second pill beside it — teal glyph, no word, the container
+              name on hover, and the user@host address kept. The old separate
+              `ssh-docker-pill` HeaderPill lived here; its testid rides the
+              connection pill's wrapper so nothing that queries it breaks. */}
+          <SshConnectionPill session={session} />
+          {/* Phase 3 (harmonise-remote): the old mauve remote-account pill
+              lived here (item 10, testId ssh-remote-account-pill). Retired —
+              SessionAuthPills now renders the ACCOUNT pill for SSH sessions
+              from live accountEmail || sshRemoteAccount, same chrome as local. */}
         </span>
       )}
 

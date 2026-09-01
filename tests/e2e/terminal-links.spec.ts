@@ -72,7 +72,7 @@ test.describe('#21 terminal link handling (real app, real xterm)', () => {
   test.beforeAll(async () => {
     await openDialog()
     await page.locator('[role="radiogroup"][aria-label="Provider"] label:has(input[value="terminal"])').click()
-    await page.locator('[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="local"])').click()
+    await page.locator('[role="radiogroup"][aria-label="Connection"] label:has(input[value="local"])').click()
     await expect(page.locator('text=Terminal startup')).toBeVisible({ timeout: 10000 })
     await page.locator('input[placeholder="npm run dev"]').fill('echo ready')
     await page.locator('input[placeholder="e.g. App Dev"]').fill('E2E Links')

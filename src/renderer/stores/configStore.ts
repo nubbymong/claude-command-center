@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
-import type { ProviderId, ClaudeOptions, CodexOptions, TerminalOptions } from '../../shared/types'
+import type { ProviderId, ClaudeOptions, CodexOptions, TerminalOptions, SshRuntime } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 import { generateId } from '../utils/id'
 
@@ -33,10 +33,32 @@ export interface TerminalConfig {
     postCommand?: string      // Command to run after SSH connects (e.g., docker exec)
     hasSudoPassword?: boolean // Whether sudo password is needed for postCommand
     dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
+    runtime?: SshRuntime      // item e: structured container runtime (supersedes free-text docker postCommand)
     detachable?: boolean      // item 1: "Detachable" persistent tmux session (default ON; only false disables)
     remoteOs?: 'auto' | 'unix' | 'windows'  // item 3: remote OS (windows = prototype Windows setup path)
   }
   pinned?: boolean
+  /**
+   * Allow Multi Spawn (phase 4): this config may run SEVERAL copies at once.
+   * Absent/false = off — a launch is refused while any session of this config
+   * is live, and the config cannot be picked in select mode while running.
+   *
+   * TRI-STATE on disk (phase 4.1), and only the startup migration cares which
+   * of the two off-states this is:
+   *   undefined — never chosen; the migration may grandfather it on.
+   *   true      — on.
+   *   false     — explicitly declined; the migration must never touch it.
+   * Every other reader treats false and undefined identically (`!== true`).
+   * See utils/multiSpawn.ts for the save rule and the migration predicate.
+   */
+  allowMultiSpawn?: boolean
+  /**
+   * How many copies the row's ×N control launches. Only meaningful with
+   * `allowMultiSpawn`; absent => MULTI_SPAWN_DEFAULT_COUNT (2). Clamped 1-9 at
+   * read time (`resolveMultiSpawnCount`) so a hand-edited file cannot spawn a
+   * hundred sessions.
+   */
+  multiSpawnCount?: number
   machineName?: string // Identifies which machine this session runs on
   /** v1.5.19: account profile a session spawned from this config runs under
    *  (drives CLAUDE_CONFIG_DIR at PTY spawn). Absent = the bare default account. */

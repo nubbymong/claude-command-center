@@ -14,7 +14,7 @@ import {
   resumeRefusalText,
   useCanvasResumableRows,
 } from '../lib/canvasQueue'
-import type { CanvasLibraryRow, CanvasLibraryTab, LibraryRowKind, ResumableRow } from '../../shared/canvas'
+import { verdictOutcomeOf, type CanvasLibraryRow, type CanvasLibraryTab, type LibraryRowKind, type ResumableRow } from '../../shared/canvas'
 import { CanvasLibrary } from './CanvasLibrary'
 import { useArmedConfirm } from '../hooks/useArmedConfirm'
 import { DismissButton } from './ui/DismissButton'
@@ -45,8 +45,10 @@ function kindWord(kind: LibraryRowKind): string {
  *
  * ARCHIVED and SIGNED OFF are row-level facts, not verdicts, so they win over
  * the verdict string — an archived rejected mockup is archived first. Below
- * that the mapping is by prefix, because `verdictLabel` appends
- * "WITH OBSERVATIONS" to an approved or passed run.
+ * that the classification is `verdictOutcomeOf`, which lives beside the function
+ * that MINTS these words: this surface only ever sees the finished label (main
+ * composes the row), so the two have to be maintained in one place or a new
+ * word silently falls through to the muted default.
  */
 export function verdictBadge(row: Pick<CanvasLibraryRow, 'verdict' | 'archived' | 'completed'>): {
   text: string
@@ -55,10 +57,12 @@ export function verdictBadge(row: Pick<CanvasLibraryRow, 'verdict' | 'archived' 
   if (row.archived) return { text: 'ARCHIVED', className: 'cfp-vb cfp-vb-muted' }
   if (row.completed) return { text: 'SIGNED OFF', className: 'cfp-vb cfp-vb-done' }
   const v = (row.verdict || '').toUpperCase()
-  if (v.startsWith('APPROVED') || v.startsWith('PASSED')) return { text: v, className: 'cfp-vb cfp-vb-ok' }
-  if (v.startsWith('REJECTED') || v.startsWith('FAILED')) return { text: v, className: 'cfp-vb cfp-vb-bad' }
-  if (v === 'OPEN' || v === 'DRAFT') return { text: v, className: 'cfp-vb cfp-vb-open' }
-  return { text: v || 'OPEN', className: 'cfp-vb cfp-vb-muted' }
+  switch (verdictOutcomeOf(v)) {
+    case 'ok': return { text: v, className: 'cfp-vb cfp-vb-ok' }
+    case 'bad': return { text: v, className: 'cfp-vb cfp-vb-bad' }
+    case 'open': return { text: v, className: 'cfp-vb cfp-vb-open' }
+    default: return { text: v || 'OPEN', className: 'cfp-vb cfp-vb-muted' }
+  }
 }
 
 /** Type marks, one stroked glyph per artefact kind (the mock's own family). */

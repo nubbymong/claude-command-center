@@ -199,7 +199,7 @@ async function createTerminalSession(page: Page): Promise<void> {
     .locator('[role="radiogroup"][aria-label="Provider"] label:has(input[value="terminal"])')
     .click()
   await page
-    .locator('[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="local"])')
+    .locator('[role="radiogroup"][aria-label="Connection"] label:has(input[value="local"])')
     .click()
 
   // Working directory is optional for a terminal config; fill it so we can assert

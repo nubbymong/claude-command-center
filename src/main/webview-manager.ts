@@ -300,6 +300,52 @@ export function navigateWebview(sessionId: string, url: string): boolean {
   }
 }
 
+/**
+ * Push an agent-chosen URL to the USER's in-app browser pane (the visible
+ * WebContentsView, NOT the headless vision browser). This is the main-side
+ * half of the `open_in_app_browser` MCP tool.
+ *
+ * It is deliberately fire-and-forget and NON-navigating: it validates the
+ * scheme one last time, then emits WEBVIEW_AGENT_PUSH to the renderer, whose
+ * store records the pending URL and raises the Browser-tool notification pill.
+ * It never loads the page into the view here — the URL loads on-open, when the
+ * user opens the pane or clicks the pill (near-instant, and the same navigate
+ * path the address bar uses). That is what makes the "never yank a page the
+ * user is actively viewing" rule hold: the agent can only ever RAISE a pill,
+ * never repoint the view.
+ *
+ * Returns false when there is no window to notify, when the session id is not
+ * well-formed, or when the URL is not http/https. The MCP tool has already
+ * validated the URL; this is the last main-side gate, applying the exact same
+ * http/https-only rule every other webview door enforces (defence in depth —
+ * a future non-MCP caller must clear the same bar).
+ */
+export function pushAgentUrlToWebview(win: BrowserWindow | null, sessionId: string, url: string): boolean {
+  if (!win || win.isDestroyed()) {
+    logError('[webview] agent push refused: no window to notify')
+    return false
+  }
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) {
+    logError('[webview] agent push refused: session id is not well-formed')
+    return false
+  }
+  if (!isAllowedBrowserUrl(url)) {
+    logError('[webview] agent push refused: url is not http/https')
+    return false
+  }
+  try {
+    // The NORMALISED href, never the raw string — the WHATWG parser strips the
+    // leading whitespace and tab/newline the scheme gate ignores, so a value
+    // that passed the gate cannot smuggle a CR/LF into the store or the pill.
+    win.webContents.send(IPC.WEBVIEW_AGENT_PUSH, { sessionId, url: new URL(url).href })
+    logInfo(`[webview] agent pushed a page to session ${sessionId}`)
+    return true
+  } catch (err) {
+    logError(`[webview] agent push failed for ${sessionId}: ${(err as Error)?.message ?? err}`)
+    return false
+  }
+}
+
 export function closeWebview(sessionId: string): boolean {
   const entry = views.get(sessionId)
   if (!entry) return false

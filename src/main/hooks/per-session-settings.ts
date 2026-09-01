@@ -3,6 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { getConductorMcpPort, mcpSessionToken } from '../conductor-mcp-server'
 import { buildStatuslineSetting } from '../providers/claude/statusline-command'
+import { statusPostUrl } from '../providers/claude/ssh-shim'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir } from '../account-profiles'
 import { logWarn } from '../debug-logger'
 
@@ -24,6 +25,23 @@ export function getLocalSessionSettingsPath(sessionId: string): string {
 export function getLocalSessionMcpConfigPath(sessionId: string): string {
   const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
   return path.join(os.homedir(), '.claude', `mcp-${safeSid}.json`)
+}
+
+/**
+ * Path to the per-session status-URL file (ADR-009 token custody).
+ *
+ * The /status delivery URL carries `?token=<per-session HMAC>` — the same secret
+ * that gates the loopback MCP server and therefore `vision_eval`. It used to be
+ * baked straight into the `statusLine` command, i.e. into the argv of a process
+ * Claude Code respawns every second or two, which published it to every other
+ * account on this machine through the process table. It now lives here, written
+ * 0600 through the same atomic secure writer as `mcp-<sid>.json`, and only the
+ * PATH reaches the command line. Same `~/.claude/` layout as the remote sidecars
+ * so boot-cleanup can sweep both from one place.
+ */
+export function getLocalSessionStatusUrlPath(sessionId: string): string {
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return path.join(os.homedir(), '.claude', `ccc-status-${safeSid}.url`)
 }
 
 /**
@@ -106,8 +124,34 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
   // U2: deliver the statusLine PER-SESSION rather than via a global
   // ~/.claude/settings.json write. Overrides any statusLine inherited from the
   // shared clone so external `claude` runs outside CCC keep their native line.
+  //
+  // Local unification (harmonise-remote): deliver over the SAME channel as the
+  // SSH shims — a loopback POST to the conductor MCP server, per-session HMAC in
+  // the query. No tunnel locally, so the only gate is the server having bound
+  // (port > 0); statusPostUrl returns '' otherwise and the bridge falls back to
+  // the watched status file. try/catch because the charset guard in
+  // statusPostUrl throws rather than emitting a malformed URL — a failure here
+  // must degrade delivery, never break the spawn path.
+  //
+  // ADR-009 token custody: the URL goes into a 0600 file and only the file's
+  // PATH is baked into the statusLine command (argv[3]). See
+  // getLocalSessionStatusUrlPath. A write failure leaves `urlFile` empty, so the
+  // command carries no argv[3] at all and the bridge degrades to the status-file
+  // delivery — never a fallback that would put the URL back on the command line.
   if (opts.resourcesDir) {
-    sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir)
+    let statusUrl = ''
+    try {
+      statusUrl = statusPostUrl(sessionId, undefined, getConductorMcpPort(), true)
+    } catch {
+      statusUrl = ''
+    }
+    let urlFile = ''
+    if (statusUrl) {
+      urlFile = writeLocalSessionStatusUrl(sessionId, statusUrl)
+    } else {
+      removeLocalSessionStatusUrl(sessionId)
+    }
+    sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir, sessionId, urlFile || undefined)
   }
 
   // Union the canvas tools into permissions.allow, preserving everything the
@@ -176,6 +220,39 @@ export function writeLocalSessionMcpConfig(sessionId: string, includeConductor =
   const cfg = { mcpServers }
   const cfgPath = getLocalSessionMcpConfigPath(sessionId)
   return atomicJsonWrite(cfgPath, cfg)
+}
+
+/**
+ * Write the per-session status-URL file, 0600, through the same
+ * mkdirSecure + hardenCredentialDir + atomic-rename writer the token-bearing
+ * `mcp-<sid>.json` uses. Returns the path, or '' when the write failed — the
+ * caller then omits argv[3] entirely rather than falling back to putting the URL
+ * on the command line.
+ *
+ * Unlink-first so the rename lands on a fresh inode rather than through a
+ * pre-existing symlink at the target (atomicWriteSecure stages and renames, but
+ * a stale entry here is ours to clear either way).
+ */
+export function writeLocalSessionStatusUrl(sessionId: string, statusUrl: string): string {
+  const filePath = getLocalSessionStatusUrlPath(sessionId)
+  try {
+    mkdirSecure(path.dirname(filePath))
+    hardenCredentialDir(path.dirname(filePath))
+    try { fs.unlinkSync(filePath) } catch { /* absent is the normal case */ }
+    atomicWriteSecure(filePath, statusUrl, 0o600)
+    return filePath
+  } catch (err) {
+    logWarn(`[per-session] secure write of ${path.basename(filePath)} failed (${String(err)}); statusline will use file delivery`)
+    return ''
+  }
+}
+
+export function removeLocalSessionStatusUrl(sessionId: string): void {
+  try {
+    fs.unlinkSync(getLocalSessionStatusUrlPath(sessionId))
+  } catch {
+    /* file may already be gone or never written */
+  }
 }
 
 export function removeLocalSessionSettings(sessionId: string): void {

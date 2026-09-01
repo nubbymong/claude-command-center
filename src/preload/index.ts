@@ -180,8 +180,21 @@ export interface ElectronAPI {
      *  persistence + remote-account descriptors pushed by main. */
     onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
     /** item 4: END the remote session (tmux kill-session + sidecar cleanup via
-     *  a separate ssh exec) then kill the local PTY. */
-    endRemote: (sessionId: string) => Promise<void>
+     *  a separate ssh exec) then kill the local PTY.
+     *
+     *  A bare id ends a LIVE session, whose target main captured at spawn. The
+     *  object form (Phase 3.5) ends a DETACHED one from the resume registry:
+     *  main has no captured target for it, so it rebuilds the connection from
+     *  the SAVED config named by `configId` (host/user/port + that config's own
+     *  keychain secrets). Passing ids is the whole of the caller's power — the
+     *  host is never named here, and neither is the tmux session. */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
+    /** SSH Persistent (resume liveness): ask main whether a config's detached
+     *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
+    checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../shared/types').DetachedRemoteLiveness>
+    /** SSH Persistent (resume liveness, tier 1): is a host answering at all?
+     *  ICMP + TCP:22 fallback, no ssh/auth. Demote-only — see host-ping.ts. */
+    pingHost: (payload: { host: string }) => Promise<import('../shared/types').HostPingResult>
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
@@ -381,6 +394,8 @@ export interface ElectronAPI {
      *  An approve or reject also settles that artefact's earlier rounds; an
      *  approve auto-completes when nothing else is owed. */
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
+    /** #580: the chat line that tells the agent a verdict/review was filed. Queued while the agent's turn is open. */
+    agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' | 'unwired' | 'refused'; reason?: string }>
     /** C1: reopen a version for review; later ready versions become withdrawn.
      *  Wakes no ROUND — settled stays settled. */
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
@@ -504,6 +519,11 @@ export interface ElectronAPI {
     /** Subscribe to navigation state from the session's view: the page it is
      *  actually on, its title, whether back/forward are possible, loading. */
     onNavigated: (handler: (state: WebviewNavState) => void) => () => void
+    /** Subscribe to an AGENT PUSH: the agent asked to show the user a page in
+     *  this in-app browser (the open_in_app_browser MCP tool). Carries
+     *  { sessionId, url }; the store records it as pending and raises the
+     *  Browser-tool pill. It NEVER navigates on its own. Returns an unsubscribe fn. */
+    onAgentPush: (handler: (payload: { sessionId: string; url: string }) => void) => () => void
   }
   session: {
     save: (state: unknown) => Promise<boolean>
@@ -580,6 +600,7 @@ export interface ElectronAPI {
     selectResourcesDir: () => Promise<string | null>
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
+    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
     spawnCliSetup: (cols: number, rows: number) => Promise<string>
     killCliSetup: () => Promise<boolean>
   }
@@ -867,7 +888,10 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(channel, handler)
       return () => ipcRenderer.removeListener(channel, handler)
     },
-    endRemote: (sessionId: string) => ipcRenderer.invoke(IPC.SSH_END_REMOTE, sessionId),
+    endRemote: (target: string | { sessionId: string; configId?: string }) => ipcRenderer.invoke(IPC.SSH_END_REMOTE, target),
+    checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) =>
+      ipcRenderer.invoke(IPC.SSH_CHECK_DETACHED_LIVE, payload),
+    pingHost: (payload: { host: string }) => ipcRenderer.invoke(IPC.SSH_PING_HOST, payload),
   },
   statusline: {
     onUpdate: (callback) => {
@@ -1050,6 +1074,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_VERDICT, args),
+    agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => ipcRenderer.invoke(IPC.CANVAS_AGENT_MARKER, args),
     versionReopen: (args: { sessionId: string; versionId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_REOPEN, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>
@@ -1127,6 +1152,7 @@ const electronAPI: ElectronAPI = {
     selectResourcesDir: () => ipcRenderer.invoke(IPC.SETUP_SELECT_RESOURCES_DIR),
     setResourcesDir: (dir: string) => ipcRenderer.invoke(IPC.SETUP_SET_RESOURCES_DIR, dir),
     isCliReady: () => ipcRenderer.invoke(IPC.SETUP_IS_CLI_READY),
+    probeCli: () => ipcRenderer.invoke(IPC.SETUP_PROBE_CLI),
     spawnCliSetup: (cols: number, rows: number) => ipcRenderer.invoke(IPC.SETUP_SPAWN_CLI_SETUP, cols, rows),
     killCliSetup: () => ipcRenderer.invoke(IPC.SETUP_KILL_CLI_SETUP),
   },
@@ -1165,6 +1191,11 @@ const electronAPI: ElectronAPI = {
       const fn = (_e: unknown, state: WebviewNavState) => handler(state)
       ipcRenderer.on(IPC.WEBVIEW_NAVIGATED, fn)
       return () => ipcRenderer.removeListener(IPC.WEBVIEW_NAVIGATED, fn)
+    },
+    onAgentPush: (handler: (payload: { sessionId: string; url: string }) => void) => {
+      const fn = (_e: unknown, payload: { sessionId: string; url: string }) => handler(payload)
+      ipcRenderer.on(IPC.WEBVIEW_AGENT_PUSH, fn)
+      return () => ipcRenderer.removeListener(IPC.WEBVIEW_AGENT_PUSH, fn)
     },
   },
   session: {

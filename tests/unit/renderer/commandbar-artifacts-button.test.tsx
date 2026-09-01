@@ -2,8 +2,11 @@
 /**
  * #501: the Artifacts core-tool button in the command bar. It opens the current
  * account's artifacts via the existing accountWeb.openArtifacts IPC (the Sidebar's
- * per-session action), and appears only for a local, non-shell session that
- * resolves to an account profile.
+ * per-session action), and appears for a non-shell Claude session that resolves
+ * to an account profile — a LOCAL session's own/primary profile, or an SSH
+ * session's mapped local profile (harmonise-remote: the remote's reported email
+ * matched to a local profile, with the launch profileId standing in only until
+ * the remote identity arrives).
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -109,8 +112,36 @@ describe('#501 Artifacts command-bar button', () => {
     expect(artifactsBtn()).toBeNull()
   })
 
-  it('is hidden for a non-local (SSH) session', () => {
+  it('renders for an SSH session whose reported remote account maps to a local profile, and opens THAT profile', () => {
+    SESSION = { id: 's-1', label: 't', workingDirectory: '/', sessionType: 'ssh', provider: 'claude', accountEmail: 'me@work.co' }
+    PROFILES = [{ id: 'prof-1', accountEmail: 'me@work.co' }]
+    render()
+    const b = artifactsBtn()
+    expect(b).not.toBeNull()
+    act(() => { b!.click() })
+    expect(openArtifacts).toHaveBeenCalledWith('prof-1')
+  })
+
+  it('renders for a fresh SSH session via the launch profileId before the remote identity arrives', () => {
     SESSION = { id: 's-1', label: 't', workingDirectory: '/', sessionType: 'ssh', provider: 'claude', profileId: 'prof-1' }
+    PROFILES = [{ id: 'prof-1' }]
+    render()
+    const b = artifactsBtn()
+    expect(b).not.toBeNull()
+    act(() => { b!.click() })
+    expect(openArtifacts).toHaveBeenCalledWith('prof-1')
+  })
+
+  it('is hidden for an SSH session whose KNOWN remote account matches no local profile — even with a launch profileId', () => {
+    SESSION = { id: 's-1', label: 't', workingDirectory: '/', sessionType: 'ssh', provider: 'claude', accountEmail: 'stranger@nowhere.dev', profileId: 'prof-1' }
+    PROFILES = [{ id: 'prof-1', accountEmail: 'me@work.co' }]
+    render()
+    expect(artifactsBtn()).toBeNull()
+  })
+
+  it('is hidden for an unmapped SSH session (no remote identity, no launch profile)', () => {
+    SESSION = { id: 's-1', label: 't', workingDirectory: '/', sessionType: 'ssh', provider: 'claude' }
+    PROFILES = [{ id: 'prof-1', accountEmail: 'me@work.co' }]
     render()
     expect(artifactsBtn()).toBeNull()
   })

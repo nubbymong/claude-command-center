@@ -18,6 +18,7 @@ import {
   xrayClickSelects,
   xrayDrawsOnPage,
   xrayHoverIsLive,
+  xrayHoverResolves,
   xrayReadsOutInPanel,
 } from '../../../src/renderer/canvas/xray-mode'
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
@@ -108,6 +109,26 @@ describe('the mode is remembered per USER', () => {
     }
   })
 
+  // Plan hover gate (owner 2026-08-31): a PLAN corrupts/flashes on live hover
+  // resolution, so it resolves no hover regardless of mode — but a click still
+  // selects (note anchoring), and NON-plan surfaces are untouched.
+  it('xrayHoverResolves: a plan never resolves hover, in any mode', () => {
+    for (const m of CANVAS_XRAY_MODES) {
+      expect(xrayHoverResolves(m, { isPlan: true })).toBe(false)
+    }
+  })
+  it('xrayHoverResolves: a non-plan surface follows the mode (unchanged behaviour)', () => {
+    expect(xrayHoverResolves('off')).toBe(false)
+    expect(xrayHoverResolves('stealth')).toBe(true)
+    expect(xrayHoverResolves('on')).toBe(true)
+    expect(xrayHoverResolves('stealth', { isPlan: false })).toBe(true)
+  })
+  it('xrayHoverResolves: click-select is independent — a plan still selects on click', () => {
+    // The plan gate touches hover only; xrayClickSelects is unchanged, so a
+    // click still anchors a note on a plan.
+    expect(xrayClickSelects('stealth')).toBe(true)
+  })
+
   it('survives hydrate() — the mode is read back from a stored config on next launch', () => {
     useSettingsStore.getState().hydrate({ canvasXrayMode: 'off' } as never)
     expect(resolveCanvasXrayMode(useSettingsStore.getState().settings.canvasXrayMode)).toBe('off')
@@ -123,5 +144,30 @@ describe('the mode is remembered per USER', () => {
   it('hydrating a corrupt stored value reads as ON rather than a broken mode', () => {
     useSettingsStore.getState().hydrate({ canvasXrayMode: 'x-ray' } as never)
     expect(resolveCanvasXrayMode(useSettingsStore.getState().settings.canvasXrayMode)).toBe('on')
+  })
+})
+
+// ── Phase 7 item D — a plan reads out nothing, because it resolves nothing ───
+describe('a PLAN surface', () => {
+  it('reads nothing out in the panel, in every mode', () => {
+    for (const mode of CANVAS_XRAY_MODES) {
+      expect(xrayReadsOutInPanel(mode, { isPlan: true })).toBe(false)
+    }
+  })
+
+  it('leaves a NON-plan surface exactly as it was', () => {
+    for (const mode of CANVAS_XRAY_MODES) {
+      expect(xrayReadsOutInPanel(mode, { isPlan: false })).toBe(xrayReadsOutInPanel(mode))
+    }
+  })
+
+  it('never reads out what it does not resolve — the two predicates move together', () => {
+    for (const mode of CANVAS_XRAY_MODES) {
+      for (const isPlan of [true, false]) {
+        if (!xrayHoverResolves(mode, { isPlan })) {
+          expect(xrayReadsOutInPanel(mode, { isPlan })).toBe(false)
+        }
+      }
+    }
   })
 })

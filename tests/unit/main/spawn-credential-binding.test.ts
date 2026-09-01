@@ -35,6 +35,18 @@ describe('bindSshToSavedConfig', () => {
     expect((r.ssh as { dockerContainer?: string }).dockerContainer).toBeUndefined()
   })
 
+  it('injects the SAVED runtime block and ignores a renderer-supplied one (item e — runtime is config-trusted like postCommand)', () => {
+    const saved = {
+      id: 'cfgR', sessionType: 'ssh',
+      sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', container: 'ccc-test', sudo: true } },
+    }
+    const req = { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', container: 'evil', sudo: false } }
+    const r = bindSshToSavedConfig(req as never, 'cfgR', [saved])
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.ssh.runtime).toEqual({ type: 'container', container: 'ccc-test', sudo: true })
+  })
+
   it('refuses when the named config does not exist, when no id is named, or when the config is not SSH', () => {
     expect(bindSshToSavedConfig(REQ, 'ghost', CONFIGS)).toEqual({ ok: false, reason: 'no saved config with id ghost' })
     expect(bindSshToSavedConfig(REQ, undefined, CONFIGS).ok).toBe(false)

@@ -138,6 +138,22 @@ describe('SessionHeader', () => {
     expect(container.querySelector('[data-testid="session-pill-claudecode"]')?.getAttribute('title')).toContain('probe crashed')
   })
 
+  it('the account pill prefers the LIVE captured account over a diverged profile label', () => {
+    // WINDOWS_1 staging VM, 2026-08-30: a profile whose stored label disagrees
+    // with what is actually signed in inside its dir must not win the pill —
+    // the pill names what the session RUNS AS.
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-x', name: 'Work', accountEmail: 'label@fake.dev' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-x': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ profileId: 'profile-x', provider: 'claude', sessionType: 'local', accountEmail: 'real@x.com' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.getAttribute('title')).toContain('real@x.com')
+    expect(acct?.getAttribute('title')).not.toContain('label@fake.dev')
+    // The profile's friendly name must not relabel a diverged account.
+    expect(acct?.textContent).not.toContain('Work')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
   it('the account pill shows the session account name (resolved from the profile)', () => {
     useAccountProfilesStore.setState({ profiles: [{ id: 'profile-x', name: 'Work', accountEmail: 'me@work.co' } as any] })
     useAccountAuthStore.setState({ byProfile: { 'profile-x': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
@@ -153,14 +169,222 @@ describe('SessionHeader', () => {
     render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, githubIntegration: { enabled: true, repoSlug: 'nubbymong/web', autoDetected: true } as any }))
     expect(container.querySelector('[data-testid="session-pill-github"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    // No remote account known (no live tick, no setup sentinel) — no account pill.
     expect(container.querySelector('[data-testid="session-pill-account"]')).toBeNull()
   })
 
-  it('does NOT show the auth pills for an SSH session (remote creds)', () => {
+  // Phase 3 (harmonise-remote): the SSH header carries the ACCOUNT pill once a
+  // remote account is known — live accountEmail (tunnel /status) preferred,
+  // setup-sentinel sshRemoteAccount as fallback. Signed-in state is FOLDED into
+  // the pill (it exists iff the remote reports an account): no Claude Code /
+  // claude.ai pills, and the old mauve remote-account pill is retired.
+  it('SSH: shows the account pill from the setup-sentinel fallback (sshRemoteAccount)', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, sshRemoteAccount: 'remote@x.com' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.getAttribute('title')).toContain('remote@x.com')
+    expect(container.querySelector('[data-testid="ssh-remote-account-pill"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).toBeNull()
+  })
+
+  it('SSH: the live tunnel accountEmail wins over the setup-sentinel snapshot', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'live@x.com', sshRemoteAccount: 'stale@x.com' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.getAttribute('title')).toContain('live@x.com')
+    expect(acct?.getAttribute('title')).not.toContain('stale@x.com')
+  })
+
+  it('does NOT show the auth pills when the KNOWN remote account matches no local profile — even with a launch profileId (no fabricated mapping)', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-z', name: 'Work', accountEmail: 'me@work.co' } as any] })
     useAccountAuthStore.setState({ byProfile: { 'profile-z': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
-    render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))
+    render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'stranger@nowhere.dev' }))
+    // The account pill names the remote's own identity; profile-z's auth pills
+    // (a DIFFERENT account) must not attach to it.
+    expect(container.querySelector('[data-testid="session-pill-account"]')?.getAttribute('title')).toContain('stranger@nowhere.dev')
     expect(container.textContent).not.toContain('Claude Code')
     expect(container.textContent).not.toContain('claude.ai')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('first connect (no remote identity yet): the launch profile stands in with a provisional title, then the reported email takes over', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-z', name: 'Work', accountEmail: 'me@work.co' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-z': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    // Locally-sourced stand-in: captioned as the LAUNCH account, never asserted
+    // as the remote's sign-in (that claim waits for the remote to report).
+    expect(acct?.getAttribute('title')).toContain('me@work.co')
+    expect(acct?.getAttribute('title')).toContain('Launch account')
+    expect(acct?.getAttribute('title')).not.toContain('signed in on the remote host')
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).not.toBeNull()
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  // Bug (owner, 2026-08-31): a STANDARD SSH session showed nothing at the top —
+  // no account pill, no claude.ai / Claude Code pills — while its Artifacts
+  // button worked. Root cause: the header gated the whole pill set on a
+  // displayed remote email, but the mapped profile (sshMappedProfileId, the same
+  // signal the Artifacts button uses) had resolved via the launch-profileId
+  // fallback and its accountEmail had not populated yet. The header must render
+  // from the mapped profile, using its NAME until the remote reports.
+  it('SSH mapped via the launch profile with NO email yet: still renders the pill set, labelled by the profile name', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-ssh', name: 'Work' } as any] }) // no accountEmail yet
+    useAccountAuthStore.setState({ byProfile: { 'profile-ssh': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, profileId: 'profile-ssh' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.textContent).toContain('Work')
+    expect(acct?.getAttribute('title')).toContain('Launch account')
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).not.toBeNull()
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  // harmonise-remote (owner UX, 2026-08-31): when an SSH session's signed-in
+  // remote account maps to a LOCAL account profile, the claude.ai / Claude Code
+  // pills apply too — those checks are local-profile-scoped and act on the
+  // account identity, which is the same identity on THIS machine. The account
+  // pill keeps its remote name/title; the two auth pills read the mapped profile.
+  it('SSH mapped to a local profile: renders claude.ai + Claude Code pills driven by that profile', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-ssh', name: 'Work', accountEmail: 'remote@x.com' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-ssh': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'remote@x.com' }))
+    expect(container.querySelector('[data-testid="session-pill-account"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).not.toBeNull()
+    // The account pill keeps its remote identity/title...
+    expect(container.querySelector('[data-testid="session-pill-account"]')?.getAttribute('title')).toContain('remote@x.com')
+    // ...and the mapped profile's good auth state shows no problem words.
+    expect(container.textContent).not.toContain('signed out')
+    expect(container.textContent).not.toContain('not connected')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('SSH mapped to a local profile: the auth pills reflect that profile\'s status (signed-out / expired)', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-ssh', name: 'Work', accountEmail: 'remote@x.com' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-ssh': { cliAuthed: false, web: 'expired', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'remote@x.com' }))
+    expect(container.textContent).toContain('signed out')
+    expect(container.textContent).toContain('expired')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('SSH with NO matching local profile: account pill ONLY (no claude.ai / Claude Code)', () => {
+    // A profile exists, but its email does not match the remote account — so
+    // there is no local auth to show and the pill stands alone.
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-other', name: 'Other', accountEmail: 'someoneelse@x.com' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-other': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, accountEmail: 'remote@x.com' }))
+    expect(container.querySelector('[data-testid="session-pill-account"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).toBeNull()
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  // One SSH connection pill (owner UX, 2026-08-31): kind + address in a single
+  // HeaderPill, replacing the old mauve "SSH: user@host" text and the separate
+  // persistent / not-persistent pills. `ssh-connection-pill` is present in BOTH
+  // states; the persistent variant ALSO keeps `ssh-persistent-pill`.
+  it('SSH standard session: one "SSH" connection pill showing the address (no persistent/not-persistent chrome)', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: '192.168.1.5', port: 22, username: 'nick', remotePath: '~' } as any }))
+    const pill = container.querySelector('[data-testid="ssh-connection-pill"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.textContent).toContain('SSH')
+    expect(pill?.textContent).toContain('nick@192.168.1.5') // address at a glance, not only on hover
+    expect(pill?.textContent).not.toContain('SSH-Persistent')
+    // The old text span + both persistence pills are gone.
+    expect(container.textContent).not.toContain('SSH: ')
+    expect(container.textContent).not.toContain('not persistent')
+    expect(container.querySelector('[data-testid="ssh-nonpersistent-pill"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).toBeNull()
+  })
+
+  it('SSH persistent session: the pill reads "SSH-Persistent" and still answers to both testIds', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'box', port: 22, username: 'u', remotePath: '~' } as any }))
+    const pill = container.querySelector('[data-testid="ssh-connection-pill"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.textContent).toContain('SSH-Persistent')
+    expect(pill?.textContent).toContain('u@box')
+    // Existing hook preserved for the persistent variant.
+    expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).not.toBeNull()
+  })
+
+  // Container transport in the header (phase 6): the connection pill's KIND
+  // becomes the container mark — it no longer sits beside an "SSH" pill saying
+  // the same thing twice. The address stays, the legacy testid stays.
+  it('SSH: a container session shows the container pill (naming it on hover) and KEEPS the address', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } as any }))
+    const pill = container.querySelector('[data-testid="ssh-connection-pill"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.getAttribute('title')).toContain('Container session over SSH')
+    expect(pill?.getAttribute('title')).toContain('ccc-test')
+    // Address still reads inline — this pill is the SSH session's only guarantee
+    // of a visible host in the top bar.
+    expect(pill?.textContent).toContain('u@h')
+    // Logo only: neither SSH word, and never the engine's brand name.
+    expect(pill?.textContent).not.toContain('SSH-Persistent')
+    expect(pill?.textContent?.toLowerCase()).not.toContain('docker')
+    expect(pill?.getAttribute('title')?.toLowerCase()).not.toContain('docker')
+    // The legacy hook still resolves (it now rides the connection pill).
+    expect(container.querySelector('[data-testid="ssh-docker-pill"]')).not.toBeNull()
+  })
+
+  it('SSH: the container kind OUTRANKS persistence — one pill, not two', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } as any }))
+    expect(container.querySelector('[data-testid="ssh-docker-pill"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).toBeNull()
+    expect(container.querySelectorAll('[data-testid="ssh-connection-pill"]').length).toBe(1)
+  })
+
+  it('SSH: a structured container runtime is recognised too, not just the legacy hint', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', container: 'rocky-dev', engine: 'podman' } } as any }))
+    expect(container.querySelector('[data-testid="ssh-connection-pill"]')?.getAttribute('title')).toContain('rocky-dev')
+  })
+
+  it('SSH: no container pill when the session is not a container', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))
+    expect(container.querySelector('[data-testid="ssh-docker-pill"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-connection-pill"]')?.textContent).toContain('SSH')
+  })
+
+  // Phase 6, item 2: a STANDARD SSH session with NEITHER a reported remote
+  // account NOR a mapped local profile renders no account pill at all — the
+  // account cluster is correctly empty. The connection pill must still show, or
+  // the top bar goes blank for exactly the session that most needs to say where
+  // it is. (Verified pre-existing behaviour; pinned here so it cannot regress
+  // the way the account cluster once did.)
+  it('SSH standard, no reported email and no mapped profile: the connection pill still shows the host', () => {
+    useAccountProfilesStore.setState({ profiles: [] })
+    render(makeSession({
+      provider: 'claude', sessionType: 'ssh',
+      accountEmail: undefined, sshRemoteAccount: undefined, profileId: undefined,
+      sshConfig: { host: '10.0.0.9', port: 22, username: 'pi', remotePath: '~' } as any,
+    }))
+    // The account cluster is empty...
+    expect(container.querySelector('[data-testid="session-pill-account"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    // ...and the connection pill is still there, naming the host.
+    const pill = container.querySelector('[data-testid="ssh-connection-pill"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.textContent).toContain('SSH')
+    expect(pill?.textContent).toContain('pi@10.0.0.9')
+  })
+
+  it('SSH standard with a launch profileId that matches NO profile: connection pill still shows', () => {
+    // The one remaining "neither" path: a stale launch profile id that resolves
+    // to nothing, so sshMappedProfileId returns undefined as well.
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-other', name: 'Other', accountEmail: 'x@y.z' } as any] })
+    render(makeSession({
+      provider: 'claude', sessionType: 'ssh', profileId: 'profile-gone',
+      sshConfig: { host: 'box', port: 22, username: 'u', remotePath: '~' } as any,
+    }))
+    expect(container.querySelector('[data-testid="session-pill-account"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-connection-pill"]')?.textContent).toContain('u@box')
+    useAccountProfilesStore.setState({ profiles: [] })
   })
 })
 

@@ -50,16 +50,19 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.1.0',
     section: 'getting-started',
     summary:
-      'Every workspace starts as a saved config. First choose what it runs -- Claude Code, Codex, or Terminal only -- then whether it runs locally or over SSH; the rest of the form unfolds from those two answers. A config carries its label, colour, working directory, starting model and starting effort, plus a permission mode and any extra CLI arguments.',
+      'Every workspace starts as a saved config. First choose what it runs -- Claude Code, Codex, or Terminal only -- then how it connects: **Local**, **SSH**, or **SSH Persistent** (a remote session that survives a dropped link). The rest of the form unfolds from those two answers. A config carries its label, colour, working directory, starting model and starting effort, plus a permission mode and any extra CLI arguments.',
     highlights: [
       'Pick a **starting model** per config; the dropdown lists what is currently available, newest first',
       '**Starting effort** is a config field (low, medium, high, xhigh, max, ultracode); change it live in Claude with `/effort`. The card shows the current level',
-      'Local or SSH -- one config form, full Claude support either way',
+      'Connection is three cards, not a checkbox: **Local**, **SSH**, **SSH Persistent** -- one config form, full Claude support on all three',
+      'An SSH config also has a **Runtime** section: run on the host, or **in a Docker container** the app execs into for you (engine, name, optional directory, sudo)',
+      '**Allow Multi Spawn** decides whether the config can run more than one session at a time. Off by default: its row then gets a copy count you can launch several at once from, and without it a running config declines a second launch and says so',
     ],
     howToTrigger: [
       { label: 'Create', value: 'Saved tab → + New → Config' },
       { label: 'Edit', value: 'Hover a config → pencil icon' },
       { label: 'Pin', value: 'Right-click a config → Pin to Quick Start' },
+      { label: 'Launch several', value: 'Select (Saved toolbar or Quick Start header) → tick → Launch' },
     ],
     proTip:
       'Drag a folder onto the sidebar to create a working-directory config in one drop -- fastest way to bootstrap a new project session.',
@@ -67,7 +70,7 @@ export const trainingSteps: TrainingStep[] = [
       'Create **saved configs** with custom working directories and models',
       'Effort is **live** -- run `/effort` in Claude to change it; the level shows on the card and in the statusline',
       '**Bundle agent templates** from your Library into the spawned session',
-      'Connect to remote machines via **SSH** with full Claude support',
+      'Connect to remote machines via **SSH** with full Claude support -- same statusline, account and usage as a local session',
     ],
     screenshotFilename: 'step-session-options.jpg',
   },
@@ -258,7 +261,7 @@ export const trainingSteps: TrainingStep[] = [
       'A one-page explainer built into the Agent Canvas: how an artefact moves through versions, what a review stores (the element you anchored to, your drawings, pasted images, and your words, all kept on the version they were made against), and what a Testing note locks together as evidence.',
     highlights: [
       'The **artefact** model in one diagram -- versions increment, and each review with its objects is stored on its version',
-      'Rejecting a version **never loses your notes** -- the agent reads them to build the next one, and History keeps the trail',
+      'Sending a version back **never loses your notes** -- **Reject** a mockup, **Submit Revisions** on a plan; either way the agent reads them to build the next one, and History keeps the trail',
       'The **Mockup, Plan, and Testing** loops drawn end to end, including the evidence record one saved Testing note stores',
       'Plain terms where they apply: a note reads **resolved** once the agent has acted on it; a review reads **settled** once every note is closed',
     ],
@@ -270,7 +273,7 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Back', value: '‹ Home in the page header' },
     ],
     proTip:
-      'Skim it once before your first review. Knowing that every note is stored on its version -- and that rejecting never loses them -- changes how freely you annotate.',
+      'Skim it once before your first review. Knowing that every note is stored on its version -- and that sending a version back never loses them -- changes how freely you annotate.',
     bullets: [
       'One page that explains the **whole canvas review model**',
       'Versions, reviews, and **what each note stores**, drawn as diagrams',

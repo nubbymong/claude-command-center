@@ -25,9 +25,18 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => {
 
 const { getResourcesDirectory } = await import('../../../src/main/ipc/setup-handlers')
 const store = await import('../../../src/main/canvas/canvas-store')
+const { countOpenPlanQuestions, MAX_PLAN_OPEN_QUESTIONS, PLAN_OPEN_QUESTION_ATTR } = await import('../../../src/shared/canvas')
 
 const SID = 'a1b2c3d4e5f6a7b8c9d0e1f2'
 const DOC = '<!doctype html><html><body><p data-ux-id="step-1">first</p></body></html>'
+
+/** A plan document carrying `n` OPEN questions, plus one parked one that must
+ *  never count — a parked decision does not hold its own plan hostage. */
+const planWithQuestions = (n: number): string =>
+  '<!doctype html><html><body>' +
+  '<div data-plan-question="parked" data-ux-id="q0">deferred</div>' +
+  Array.from({ length: n }, (_, i) => `<div data-plan-question="open" data-ux-id="q${i + 1}">Q${i + 1}</div>`).join('') +
+  '</body></html>'
 
 const canvasJson = (canvasId: string) =>
   path.join(getResourcesDirectory(), 'canvas', canvasId, 'canvas.json')
@@ -91,6 +100,50 @@ describe('a plan render', () => {
   })
 })
 
+describe('open questions — the count Approve is gated on', () => {
+  it('counts the attribute the exported constant NAMES — the skill teaches that name', () => {
+    // The counter's own expression is a literal (it must not be built from a
+    // string at call time), so this is what stops the two drifting apart: the
+    // marker the skill tells agents to emit is the marker the count reads.
+    expect(countOpenPlanQuestions(`<div ${PLAN_OPEN_QUESTION_ATTR}="open">Q1</div>`)).toBe(1)
+  })
+
+  it('counts only the OPEN marker, whatever the quoting or the case', () => {
+    expect(countOpenPlanQuestions('<div data-plan-question="open">a</div>')).toBe(1)
+    expect(countOpenPlanQuestions("<div data-plan-question='open'>a</div>")).toBe(1)
+    expect(countOpenPlanQuestions('<div DATA-PLAN-QUESTION = "OPEN">a</div>')).toBe(1)
+    expect(countOpenPlanQuestions(planWithQuestions(3))).toBe(3)
+  })
+
+  it('ignores a parked or answered question, and a plan with none', () => {
+    expect(countOpenPlanQuestions('<div data-plan-question="parked">a</div>')).toBe(0)
+    expect(countOpenPlanQuestions('<div data-plan-question="answered">a</div>')).toBe(0)
+    // The word "open" in prose is not a marker.
+    expect(countOpenPlanQuestions('<p>Two questions are still open.</p>')).toBe(0)
+    expect(countOpenPlanQuestions(DOC)).toBe(0)
+    expect(countOpenPlanQuestions('')).toBe(0)
+  })
+
+  it('stops at the cap rather than trusting a document to be sane', () => {
+    expect(countOpenPlanQuestions(planWithQuestions(MAX_PLAN_OPEN_QUESTIONS + 40))).toBe(MAX_PLAN_OPEN_QUESTIONS)
+  })
+
+  it('stamps the count on the version at render, and leaves zero absent', () => {
+    const withQ = store.renderVersion(SID, { mode: 'plan', html: planWithQuestions(2), title: 'Q plan' })
+    const clean = store.renderVersion(SID, { mode: 'plan', html: DOC, title: 'Q plan' })
+    const versions = store.getCanvasStateForSession(SID)!.versions
+    expect(versions.find((v) => v.id === withQ.versionId)!.openQuestions).toBe(2)
+    // Absence IS zero — a new version with nothing open is what unlocks Approve.
+    expect(versions.find((v) => v.id === clean.versionId)!.openQuestions).toBeUndefined()
+  })
+
+  it('never counts them for a DESIGN render — the marker is a plan convention', () => {
+    const d = store.renderVersion(SID, { mode: 'design', html: planWithQuestions(2) })
+    const v = store.getCanvasStateForSession(SID)!.versions.find((x) => x.id === d.versionId)!
+    expect(v.openQuestions).toBeUndefined()
+  })
+})
+
 describe('a record read back from disk', () => {
   /** Rewrite canvas.json with `mutate` applied, then force a reload. */
   function reloadWith(canvasId: string, mutate: (record: any) => void): void {
@@ -126,5 +179,24 @@ describe('a record read back from disk', () => {
     const { canvasId, versionId } = store.renderVersion(SID, { mode: 'plan', html: DOC })
     reloadWith(canvasId, (r) => { r.versions[0].source.mode = 'plan' })
     expect(store.getServableVersion(canvasId, versionId)).toBeNull()
+  })
+
+  it('keeps a legitimate open-question count', () => {
+    const { canvasId, versionId } = store.renderVersion(SID, { mode: 'plan', html: planWithQuestions(2) })
+    reloadWith(canvasId, () => { /* unchanged */ })
+    expect(store.getCanvasStateForSession(SID)!.versions.find((v) => v.id === versionId)!.openQuestions).toBe(2)
+  })
+
+  it('DROPS a version whose open-question count was hand-edited out of shape', () => {
+    // The count gates the Approve button, so a value this build did not write is
+    // not repaired down to zero (which would UNLOCK approval) — the version goes,
+    // like every other field read back out of shape.
+    for (const bad of [-1, 1.5, 'none', MAX_PLAN_OPEN_QUESTIONS + 1, null]) {
+      store._resetCanvasStoreForTest()
+      fs.rmSync(path.join(getResourcesDirectory(), 'canvas'), { recursive: true, force: true })
+      const { canvasId, versionId } = store.renderVersion(SID, { mode: 'plan', html: planWithQuestions(2) })
+      reloadWith(canvasId, (r) => { r.versions[0].openQuestions = bad })
+      expect(store.getServableVersion(canvasId, versionId), String(bad)).toBeNull()
+    }
   })
 })

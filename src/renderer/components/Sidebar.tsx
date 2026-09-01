@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
 import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../stores/configStore'
+import { useDetachedRemotesStore } from '../stores/detachedRemotesStore'
+import { refreshAllDetachedLiveness } from '../stores/livenessStore'
 import { useCommandStore } from '../stores/commandStore'
 import { commandSecretKey } from '../../shared/command-secret'
 import { reorderLoose } from '../utils/reorderLoose'
@@ -16,8 +18,9 @@ import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
-import { canSwitchAccountForSession } from '../utils/sessionLaunch'
-import { useLaunchConfig } from '../hooks/useLaunchConfig'
+import { canSwitchAccountForSession, sshMappedProfileId } from '../utils/sessionLaunch'
+import { useLaunchConfig, isMultiSpawnLaunchBlocked, alreadyRunningLaunchCopy, cannotSelectCopy } from '../hooks/useLaunchConfig'
+import { resolveMultiSpawnCount, type PopoverAnchor } from '../utils/multiSpawn'
 import { useClickOutside } from '../hooks/useClickOutside'
 import { useRegionTypography } from '../hooks/useTypography'
 import SidebarNav from './sidebar/SidebarNav'
@@ -32,9 +35,12 @@ import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
+import UngroupedConfigsHeader from './sidebar/UngroupedConfigsHeader'
 import { runningConfigCounts, sessionInstanceOrdinals } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import QuickStartPanel from './sidebar/QuickStartPanel'
+import MultiSpawnPopover from './sidebar/MultiSpawnPopover'
+import RemoteResumableSection from './sidebar/RemoteResumableSection'
 import { resolveDefaultPanelTab, resolveSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, launchableInGroup, launchableInSection, type PanelTab } from './sidebar/sessionsPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
@@ -103,6 +109,18 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const appMeta = useAppMetaStore((s) => s.meta)
   const updateAppMeta = useAppMetaStore((s) => s.update)
+  // SSH Persistent (resume liveness): refresh the amber re-attachable counters
+  // when the config list is present and the detached registry has entries —
+  // once, plus again whenever a NEW remote is left running (count increases).
+  // No poll: the store's own in-flight guard dedupes concurrent probes.
+  const detachedCount = useDetachedRemotesStore((s) => s.entries.length)
+  const prevDetachedCount = useRef(0)
+  useEffect(() => {
+    if (detachedCount > prevDetachedCount.current) {
+      void refreshAllDetachedLiveness(useConfigStore.getState().configs)
+    }
+    prevDetachedCount.current = detachedCount
+  }, [detachedCount])
   const showFirstRunCard = configs.length === 0 && !appMeta.hasCreatedFirstConfig && !appMeta.firstRunCardDismissed && !tourActive
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
@@ -126,6 +144,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const [ungroupedSessionsCollapsed, setUngroupedSessionsCollapsed] = useState<Record<string, boolean>>({})
   const toggleUngroupedSessionsCollapsed = (key: string) =>
     setUngroupedSessionsCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
+  // Phase 6: the SAVED tab's loose tail gets the same headed, collapsible
+  // treatment (one bucket, so a plain boolean rather than the sessions map).
+  const [ungroupedConfigsCollapsed, setUngroupedConfigsCollapsed] = useState(false)
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
   const [sessionRenameValue, setSessionRenameValue] = useState('')
   const [sessionContextMenu, setSessionContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null)
@@ -263,6 +284,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   // Per-session instance ordinal (#454), same input array as the counts so the
   // two always agree. Only same-config 2+ instances get a number.
   const sessionOrdinals = useMemo(() => sessionInstanceOrdinals(sessions), [sessions])
+  // SSH Persistent (Phase 3): the ids that are live RIGHT NOW. Remote Resumable
+  // must never offer an entry whose session is already open — resuming reuses
+  // the id, so it would collide with a running tile. Over ALL sessions (the Ask
+  // session included): "is this id taken?" is not a per-view question.
+  const liveSessionIds = useMemo(() => allSessions.map((s) => s.id), [allSessions])
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
   // The LOOSE configs: in no group and no section (a stale id pointing at a
@@ -417,7 +443,106 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
   const launchFromConfig = async (config: TerminalConfig) => {
     launchConfig(config)
+    // The missed-copy guard: a launch from the SAVED tab used to switch the
+    // main view to the new terminal while leaving the panel on Saved, so the
+    // tile the user had just made was on a list they were not looking at —
+    // and the usual next move was to press Start again. Follow the session.
+    // A no-op for the surfaces that already live on Running (Quick Start).
+    selectPanelTab('running')
     onViewChange('sessions')
+  }
+
+  // ── Allow Multi Spawn (phase 4) ─────────────────────────────────────────
+  // ONE select mode and ONE selection for the whole panel: the Saved toolbar's
+  // toggle and Quick Start's Select button flip the same switch, so a launch
+  // set can be assembled from either list without losing what is already
+  // ticked when the user changes tab.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedConfigIds, setSelectedConfigIds] = useState<Set<string>>(new Set())
+  // The needs-Multi-Spawn popover: at most one open, owned here (like the
+  // context menus) so it is positioned `fixed` OUTSIDE the two scrollers.
+  const [multiSpawnPrompt, setMultiSpawnPrompt] = useState<
+    { configId: string; kind: 'launch' | 'select'; anchor: PopoverAnchor } | null
+  >(null)
+  const promptCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelPromptClose = () => {
+    if (promptCloseTimer.current) { clearTimeout(promptCloseTimer.current); promptCloseTimer.current = null }
+  }
+  const closeMultiSpawnPrompt = () => { cancelPromptClose(); setMultiSpawnPrompt(null) }
+  const showMultiSpawnPrompt = (configId: string, kind: 'launch' | 'select', el: HTMLElement) => {
+    cancelPromptClose()
+    const r = el.getBoundingClientRect()
+    setMultiSpawnPrompt({ configId, kind, anchor: { top: r.top, right: r.right, bottom: r.bottom } })
+  }
+  // Grace period so the pointer can travel from the blocked control into the
+  // popover (which cancels this) without it vanishing en route.
+  const hideMultiSpawnPromptSoon = () => {
+    cancelPromptClose()
+    promptCloseTimer.current = setTimeout(() => setMultiSpawnPrompt(null), 180)
+  }
+  useEffect(() => () => cancelPromptClose(), [])
+
+  /** ×N: launch exactly `n` fresh copies, sequentially, through the ONE launch
+   *  path — so each gets a fresh id and the tab follows to Running. */
+  const launchCopies = async (config: TerminalConfig, n: number) => {
+    for (let i = 0; i < resolveMultiSpawnCount(n); i++) await launchFromConfig(config)
+  }
+
+  /** Persist the ×N control's stepped copy count on the config. */
+  const setSpawnCount = (config: TerminalConfig, n: number) => {
+    updateConfig(config.id, { multiSpawnCount: resolveMultiSpawnCount(n) })
+  }
+
+  /** The popover's way out on a LAUNCH surface: set the flag, persist it, and
+   *  launch — passing the patched config so the launch action's own backstop
+   *  sees the new value rather than this render's stale copy. */
+  const enableMultiSpawnAndLaunch = async (config: TerminalConfig) => {
+    updateConfig(config.id, { allowMultiSpawn: true })
+    closeMultiSpawnPrompt()
+    await launchFromConfig({ ...config, allowMultiSpawn: true })
+  }
+
+  /** The popover's way out in SELECT mode: the lock becomes a tick box — and
+   *  it arrives ticked, because including this config is why the button was
+   *  pressed. */
+  const enableMultiSpawnForSelect = (config: TerminalConfig) => {
+    updateConfig(config.id, { allowMultiSpawn: true })
+    closeMultiSpawnPrompt()
+    setSelectedConfigIds((prev) => new Set(prev).add(config.id))
+  }
+
+  const toggleSelectMode = () => {
+    closeMultiSpawnPrompt()
+    setSelectMode((on) => {
+      if (on) setSelectedConfigIds(new Set())
+      return !on
+    })
+  }
+
+  const toggleConfigSelected = (configId: string) => {
+    setSelectedConfigIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(configId)) next.delete(configId)
+      else next.add(configId)
+      return next
+    })
+  }
+
+  const exitSelectMode = () => {
+    closeMultiSpawnPrompt()
+    setSelectMode(false)
+    setSelectedConfigIds(new Set())
+  }
+
+  /** Run all: one fresh session per selected config, then out of select mode.
+   *  Anything that became one-at-a-time-blocked while the selection sat there
+   *  is dropped rather than silently refused by the backstop. */
+  const launchSelection = async () => {
+    const chosen = configs.filter(
+      (c) => selectedConfigIds.has(c.id) && !isMultiSpawnLaunchBlocked(c, runningCounts.get(c.id) ?? 0),
+    )
+    exitSelectMode()
+    for (const config of chosen) await launchFromConfig(config)
   }
 
   const launchGroup = async (groupId: string) => {
@@ -634,6 +759,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     (c) => (!c.groupId || !groups.some((g) => g.id === c.groupId)) &&
            (!c.sectionId || !sections.some((s) => s.id === c.sectionId))
   )
+  // Phase 6: the loose tail is DIVIDED AND HEADED, but only when something
+  // organised sits above it — a sidebar of nothing but loose configs needs
+  // neither a rule nor the word "Ungrouped" to explain itself.
+  const showUngroupedConfigsHeader =
+    unsectionedUngroupedConfigs.length > 0 && (sectionData.length > 0 || unsectionedGroups.length > 0)
 
   // Session organization mirrors config hierarchy
   const getSessionGroup = (session: Session): string | undefined => {
@@ -750,7 +880,57 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onDrop={loose ? (e) => handleConfigDrop(e, config.id) : undefined}
         onDragEnd={handleConfigDragEnd}
         isDragOver={loose && dragOverConfigId === config.id}
+        selectMode={selectMode}
+        selected={selectedConfigIds.has(config.id)}
+        onToggleSelected={() => toggleConfigSelected(config.id)}
+        onLaunchMany={(n) => { void launchCopies(config, n) }}
+        onSpawnCountChange={(n) => setSpawnCount(config, n)}
+        onBlockedLaunch={(el) => showMultiSpawnPrompt(config.id, 'launch', el)}
+        onBlockedSelect={(el) => showMultiSpawnPrompt(config.id, 'select', el)}
+        onPromptHoverOut={hideMultiSpawnPromptSoon}
       />
+    )
+  }
+
+  /**
+   * The select-mode footer — "N selected · Cancel · Launch N" (approved mockup,
+   * column 2). Docked at the bottom of WHICHEVER tab is showing, because the
+   * Saved list and Quick Start feed the same selection; without it a selection
+   * made in Quick Start would have no way to run.
+   */
+  const renderSelectBar = () => {
+    if (!selectMode) return null
+    const n = selectedConfigIds.size
+    return (
+      <div
+        className="shrink-0 border-t border-[var(--border-subtle)] p-2 flex items-center gap-2"
+        data-testid="select-launch-bar"
+      >
+        <span className="text-[11px] flex-1" style={{ color: 'var(--text-secondary)' }}>
+          {n} selected
+        </span>
+        <button
+          onClick={exitSelectMode}
+          data-testid="select-launch-cancel"
+          className="h-[26px] px-2.5 rounded-md bg-transparent border border-[var(--border-strong)] text-[var(--text-muted)] text-[11px] font-semibold hover:text-[var(--text-primary)] transition-colors focus-ring"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => { void launchSelection() }}
+          disabled={n === 0}
+          aria-disabled={n === 0}
+          data-testid="select-launch-run"
+          className={`h-[26px] px-3 rounded-md text-[11px] font-bold flex items-center gap-1.5 border transition-colors focus-ring ${
+            n === 0
+              ? 'border-[var(--border-subtle)] bg-[var(--surface-raised)] text-[var(--text-muted)] cursor-not-allowed'
+              : 'border-[color-mix(in_srgb,var(--brand)_50%,transparent)] bg-[color-mix(in_srgb,var(--brand)_15%,transparent)] text-[var(--brand)] hover:bg-[color-mix(in_srgb,var(--brand)_25%,transparent)]'
+          }`}
+        >
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor" aria-hidden><polygon points="3,1 10,6 3,11" /></svg>
+          Launch {n}
+        </button>
+      </div>
     )
   }
 
@@ -770,7 +950,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        onContextMenu={(e) => { e.preventDefault(); refreshWebOnly(session.profileId ?? primaryProfileId); void refreshWebSessions(session.profileId ?? primaryProfileId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        onContextMenu={(e) => { e.preventDefault(); const prefetchId = sshMappedProfileId(session, accountProfiles) ?? (session.profileId ?? primaryProfileId); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
         ordinal={sessionOrdinals.get(session.id)}
@@ -888,7 +1068,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             the Saved TAB (always mounted), not here. */}
         {/* One central + New button (#483) — what to create is the second
             click's question, so the two answers live in a menu, not the row. */}
-        <div ref={newMenuRef} className="px-2 pb-1.5 flex justify-center shrink-0 relative">
+        {/* Phase 4 puts the Select toggle at the toolbar's right end (approved
+            mockup, column 2), so + New moves off centre and takes its own
+            relative box — the menu anchors to the BUTTON, not to the row. */}
+        <div className="px-2 pb-1.5 flex items-center justify-between gap-2 shrink-0">
+          <div ref={newMenuRef} className="relative">
           <button
             data-testid="new-button"
             onClick={() => setShowNewMenu((v) => !v)}
@@ -903,7 +1087,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             <div
               role="menu"
               data-testid="new-menu"
-              className="absolute top-full left-1/2 -translate-x-1/2 z-50 rounded-lg shadow-xl py-1 min-w-[150px]"
+              className="absolute top-full left-0 z-50 rounded-lg shadow-xl py-1 min-w-[150px]"
               style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
             >
               <button
@@ -927,6 +1111,26 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               </button>
             </div>
           )}
+          </div>
+          <button
+            onClick={toggleSelectMode}
+            aria-pressed={selectMode}
+            data-testid="config-select-toggle"
+            title={selectMode ? 'Leave select mode' : 'Select several configs to launch together'}
+            /* V2 semantic tokens, not the retired palette: this control is new
+               (#360's migration direction), and it keeps Sidebar.tsx's palette
+               ratchet in dialog-palette-retired.test.ts from creeping up. */
+            className={`h-7 px-3 rounded-md border text-[11px] font-semibold flex items-center gap-1.5 shrink-0 transition-colors focus-ring ${
+              selectMode
+                ? 'bg-[color-mix(in_srgb,var(--brand)_20%,transparent)] border-[color-mix(in_srgb,var(--brand)_45%,transparent)] text-[var(--brand)]'
+                : 'bg-transparent border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            Select
+          </button>
         </div>
 
         {/* The scrolling launcher list — sections, groups, loose configs. */}
@@ -1035,18 +1239,33 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
         {/* Unsectioned ungrouped configs — the loose list. Divided from the
             organised part above so the eye stops reading it as the tail of
-            the last group; the rule only appears when there IS something above
-            it, so a sidebar of nothing but loose configs stays clean. */}
-        {unsectionedUngroupedConfigs.length > 0 && (sectionData.length > 0 || unsectionedGroups.length > 0) && (
-          <div
-            className="mx-2 mt-2 mb-1.5 border-t border-surface1"
-            role="separator"
-            aria-label="Configs not in a section or group"
-            data-testid="loose-configs-divider"
-          />
+            the last group, and (phase 6, signed-off replica) HEADED: the rule
+            alone said "something changed here" without saying what, leaving the
+            only rows on the tab with no heading of their own. Both the rule and
+            the header appear only when there IS something organised above, so a
+            sidebar of nothing but loose configs stays clean. */}
+        {showUngroupedConfigsHeader && (
+          <>
+            <div
+              className="mx-2 mt-2 mb-1.5 border-t border-surface1"
+              role="separator"
+              aria-label="Configs not in a section or group"
+              data-testid="loose-configs-divider"
+            />
+            <UngroupedConfigsHeader
+              collapsed={ungroupedConfigsCollapsed}
+              onToggleCollapse={() => setUngroupedConfigsCollapsed((c) => !c)}
+            />
+          </>
         )}
-        {unsectionedUngroupedConfigs.map(renderConfigRow)}
+        {/* The collapse only applies while its header is on screen: deleting the
+            last group hides the header, and a stale `true` would then strand the
+            loose rows with nothing left to expand from. Drag/drop and the
+            context menu ride renderConfigRow unchanged — a loose row is still a
+            drop target. */}
+        {(!showUngroupedConfigsHeader || !ungroupedConfigsCollapsed) && unsectionedUngroupedConfigs.map(renderConfigRow)}
       </div>
+      {renderSelectBar()}
       </div>
       )}{/* end Saved tab */}
 
@@ -1088,6 +1307,33 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         />
       )}
 
+      {/* Allow Multi Spawn — the needs-Multi-Spawn popover (phase 4). Rendered
+          HERE, a sibling of the context menus, so its `fixed` box escapes both
+          tabs' `overflow-y-auto` scrollers; the row only reports where its
+          blocked control is. */}
+      {multiSpawnPrompt && (() => {
+        const cfg = configs.find((c) => c.id === multiSpawnPrompt.configId)
+        if (!cfg) return null
+        const copy = multiSpawnPrompt.kind === 'launch'
+          ? alreadyRunningLaunchCopy(cfg.label)
+          : cannotSelectCopy(cfg.label)
+        return (
+          <MultiSpawnPopover
+            anchor={multiSpawnPrompt.anchor}
+            headline={copy.headline}
+            body={copy.body}
+            actionLabel={multiSpawnPrompt.kind === 'launch' ? 'Enable Multi Spawn & launch' : 'Enable Multi Spawn'}
+            onAction={() => {
+              if (multiSpawnPrompt.kind === 'launch') void enableMultiSpawnAndLaunch(cfg)
+              else enableMultiSpawnForSelect(cfg)
+            }}
+            onClose={closeMultiSpawnPrompt}
+            onPointerEnter={cancelPromptClose}
+            onPointerLeave={hideMultiSpawnPromptSoon}
+          />
+        )
+      })()}
+
       {/* Group context menu */}
       {groupContextMenu && (
         <GroupContextMenu
@@ -1111,6 +1357,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         running={runningCounts}
         onLaunch={launchFromConfig}
         onContextMenu={handleConfigContextMenu}
+        onLaunchMany={(config, n) => { void launchCopies(config, n) }}
+        onSpawnCountChange={setSpawnCount}
+        onBlockedLaunch={(config, el) => showMultiSpawnPrompt(config.id, 'launch', el)}
+        onBlockedSelect={(config, el) => showMultiSpawnPrompt(config.id, 'select', el)}
+        onPromptHoverOut={hideMultiSpawnPromptSoon}
+        selectMode={selectMode}
+        selectedIds={selectedConfigIds}
+        onToggleSelected={toggleConfigSelected}
+        onToggleSelectMode={toggleSelectMode}
       />
       <div className="p-3 flex items-center justify-between">
         <span className="flex items-center gap-1.5">
@@ -1285,6 +1540,25 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           unsectionedUngroupedSessions.map(renderSessionRow)
         )}
       </div>
+
+      {/* SSH Persistent (Phase 3) — Remote Resumable, docked at the BOTTOM of
+          the Running tab under Active Sessions. A sibling of the session
+          scroller (which owns the flex-1), so it pins to the bottom rather than
+          scrolling with the list. Renders nothing when the registry is empty.
+          Mounted only while this tab is, which is also what arms/disarms the
+          tier-1 host pings. */}
+      <RemoteResumableSection
+        liveSessionIds={liveSessionIds}
+        onRevealSession={(id) => {
+          setActiveSession(id)
+          // Belt-and-braces (the missed-copy guard): the section only exists
+          // inside this tab, so a click already implies Running — but a resume
+          // must never leave the user looking at a list the new tile is not in.
+          selectPanelTab('running')
+          onViewChange('sessions')
+        }}
+      />
+      {renderSelectBar()}
       </div>
       )}{/* end Running tab */}
 
@@ -1300,8 +1574,22 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       {/* Session context menu */}
       {sessionContextMenu && (() => {
         const s = sessions.find((s) => s.id === sessionContextMenu.sessionId)
-        const cfg = s?.configId ? configs.find((c) => c.id === s.configId) : undefined
-        return s ? (
+        if (!s) return null
+        const cfg = s.configId ? configs.find((c) => c.id === s.configId) : undefined
+        // SSH → local-profile mapping (harmonise-remote): a mapped SSH session
+        // gets the local-machine account affordances (claude.ai / Claude Code /
+        // artifacts / sign-in). Undefined for a local/shell/non-Claude session,
+        // and for an SSH session with no matching local profile.
+        const sshProfileId = sshMappedProfileId(s, accountProfiles)
+        // The LOCAL profile the account actions operate on: the session's own
+        // profile for a local session (primary as the #269 fallback), the email-
+        // mapped profile for a mapped SSH session. Undefined for a shell-only
+        // session, and for an SSH session with no matching local profile — which
+        // keeps the profile-scoped items hidden/off there, exactly as before.
+        const actionProfileId = !s.shellOnly && s.sessionType === 'local'
+          ? (s.profileId ?? primaryProfileId)
+          : sshProfileId
+        return (
           <SessionContextMenu
             x={sessionContextMenu.x}
             y={sessionContextMenu.y}
@@ -1336,27 +1624,36 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             // session with a resolved account — an SSH session's browser and
             // credentials live on another machine, and a shell-only session has
             // no /login to run.
-            hasWebSession={!s.shellOnly && !!(s.profileId ?? primaryProfileId) && authByProfile[(s.profileId ?? primaryProfileId)!]?.web === 'active'}
-            codeSignedIn={!s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude' && authByProfile[(s.profileId ?? primaryProfileId)!]?.cliAuthed === true}
+            hasWebSession={
+              // Drives the "Open artifacts" enabled state (+ the authenticate
+              // wording): does the acting profile hold a claude.ai web session.
+              // The acting profile is the SSH-mapped local profile for a mapped
+              // remote session, else the session's own (#269 primary fallback).
+              !!actionProfileId && authByProfile[actionProfileId]?.web === 'active'
+            }
+            codeSignedIn={!!actionProfileId && (s.provider ?? 'claude') === 'claude' && authByProfile[actionProfileId]?.cliAuthed === true}
             onOpenArtifacts={
-              !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
+              actionProfileId
                 ? () => {
                     // Owner call 2026-08-26: this menu item has no chooser of
                     // its own — it silently follows the global open-target
                     // setting (window by default; the pane when chosen). The
                     // helper keeps the window path's error surfacing (#216's
                     // fix: a refusal must never be silent).
-                    openArtifactsPerSetting((s.profileId ?? primaryProfileId)!, s.id)
+                    openArtifactsPerSetting(actionProfileId, s.id)
                   }
                 : undefined
             }
             onAuthenticateWeb={
-              !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
-                ? () => { void authenticateWebForSession((s.profileId ?? primaryProfileId)!) }
+              actionProfileId
+                ? () => { void authenticateWebForSession(actionProfileId) }
                 : undefined
             }
             onSignInCode={
-              !s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude'
+              // Local Claude keeps its exact gate (available even with no profile
+              // yet — that is when you first need to sign in); a mapped SSH
+              // session runs /login in its own (remote) terminal.
+              (!s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude') || sshProfileId
                 ? () => {
                     // Restores what the old add-account flow actually DID: put the
                     // login in front of the user instead of telling them a command.
@@ -1368,7 +1665,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                 : undefined
             }
           />
-        ) : null
+        )
       })()}
 
       {showNewDialog && (

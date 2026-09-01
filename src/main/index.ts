@@ -70,6 +70,7 @@ import { registerWatchdogHandlers } from './ipc/watchdog-handlers'
 import { initWatchdogManager, getWatchdogManager } from './watchdog/watchdog-manager'
 import { startRulesEngine } from './channel-rules'
 import { startEffortTracker } from './effort-tracker'
+import { startCanvasMarkerQueue } from './canvas/canvas-marker-delivery'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
@@ -1101,6 +1102,20 @@ if (!gotTheLock) {
     try { initTokenomics({ emit: emitWithMerge }) } catch (err) { logError(`[tokenomics] init failed: ${(err as Error)?.message ?? err}`) }
     registerTokenomics2Handlers(getWindow)
     startEffortTracker()
+    // #580: the canvas marker queue watches the same hook stream for the agent's
+    // turn boundary, so a verdict filed mid-turn is held rather than swallowed.
+    // Both ends are injected here so the canvas IPC module needs no static
+    // import of pty-manager or the gateway (see canvas-marker-delivery.ts).
+    startCanvasMarkerQueue({
+      // The same submit shape every other programmatic line into the Claude TUI
+      // uses (the watchdog retry, the command buttons, the launch line).
+      write: (sessionId, line) => writePty(sessionId, line + '\r'),
+      subscribe: (cb) => {
+        const gw = getGateway()
+        if (!gw) return
+        gw.subscribe((e) => { if (e.sessionId) cb(e.sessionId, e.event) })
+      },
+    })
     startAttentionSource()
     startJankDetector()
     // Main-process event-loop jank monitor: feeds the "Jank m/c" main half on the
@@ -1161,7 +1176,7 @@ if (!gotTheLock) {
     // settings rewrite the mcpServers URL to this instance's actual port
     // (see per-session-settings.ts).
     const mcpPort = resolveConductorMcpPort(isPackagedApp())
-    startConductorMcpServer(mcpPort).catch(err => {
+    startConductorMcpServer(mcpPort, getWindow).catch(err => {
       logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
     })
 

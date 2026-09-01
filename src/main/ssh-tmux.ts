@@ -5,7 +5,7 @@
  * shape is unit-testable without the full pty-manager dependency graph.
  *
  * The wrapper is a has-session conditional: `if tmux has-session -t
- * ccc-<safeSid>; then tmux attach; else tmux new-session -s ccc-<safeSid>
+ * =ccc-<safeSid>; then tmux attach; else tmux new-session -s ccc-<safeSid>
  * <cmd>; fi`. The attach branch reattaches a still-running claude; the
  * fresh branch (reached when the session is gone, e.g. after a remote
  * reboot) creates a new one, resuming the conversation via `--continue`
@@ -115,7 +115,7 @@ export const ON_PATH_TMUX_BIN_EXPR = 'command tmux'
  * embedded on the remote host, and so a session id containing shell
  * metacharacters or spaces can't break out of the `-s <name>` argument.
  */
-function safeSid(sessionId: string): string {
+export function safeSid(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
 }
 
@@ -194,11 +194,13 @@ export interface TmuxLaunchInput {
  * session is still alive, attach to it" apart from "the session is gone
  * (remote reboot), create a fresh one and resume the conversation". Produces,
  * for a tier-1 (`staged: false`) binary (#546 mouse-off elided as `<mo>` =
- * `command tmux set-option -t ccc-<sid> mouse off 2>/dev/null`):
- *   `if command tmux has-session -t ccc-<sid> 2>/dev/null; then`
- *   ` <mo>; command tmux attach -t ccc-<sid> || <fresh>;`
+ * `command tmux set-option -t =ccc-<sid> mouse off 2>/dev/null`):
+ *   `if command tmux has-session -t =ccc-<sid> 2>/dev/null; then`
+ *   ` <mo>; command tmux attach -t =ccc-<sid> || <fresh>;`
  *   ` else <fresh>; fi`   where <fresh> =
  *   ` command tmux new-session -s ccc-<sid> '<mo>; <innerCmd[ --continue]>'`
+ * Every `-t` operand carries tmux's `=` EXACT-match prefix; the `-s` NAME does
+ * not (see `name` / `target` below).
  * and for a tier-2/3/4 (`staged: true`) binary the identical shape with
  * `"$HOME"/.claude/bin/tmux` as the token. The leading token is literally
  * `ON_PATH_TMUX_BIN_EXPR` / `STAGED_TMUX_BIN_EXPR`, NEVER a value this
@@ -248,7 +250,27 @@ export interface TmuxLaunchInput {
 export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   const sid = safeSid(input.sessionId)
   const tmuxBinToken = input.staged ? STAGED_TMUX_BIN_EXPR : ON_PATH_TMUX_BIN_EXPR
-  const target = `ccc-${sid}`
+  /**
+   * The session NAME — what `new-session -s` creates. A name is a literal, so
+   * it never carries the `=` exact-match prefix: `-s =ccc-x` would create a
+   * session literally called `=ccc-x`, which nothing would ever find again.
+   */
+  const name = `ccc-${sid}`
+  /**
+   * The EXACT-match TARGET — what every `-t` operand takes (adversarial review,
+   * 2026-09-01 — MAJOR; the sibling of the same fix in
+   * buildRemoteTmuxKillCommand, ssh-shim.ts).
+   *
+   * safeSid proves the id is metacharacter-free, not that it is NARROW, and a
+   * bare `-t ccc-a` is resolved by tmux in three widening steps: exact name,
+   * then PREFIX, then fnmatch. A short session id therefore ATTACHES to some
+   * other `ccc-…` session on the host — the same widening class as a wrong
+   * kill, and arguably worse, because the user then drives somebody else's live
+   * agent believing it is theirs. tmux's `=` prefix takes only an exact match
+   * and is standard target syntax on every tmux the fleet runs (3.x across the
+   * fleet, plus the pinned static build tiers 3/4 stage).
+   */
+  const target = `=${name}`
   // #546: force mouse mode OFF for CCC's own tmux session so classic
   // drag-selection works even when the remote user's ~/.tmux.conf has
   // `set -g mouse on` -- with mouse on, tmux captures the drag and xterm never
@@ -259,15 +281,42 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   // value reaches this command (the #242 sink posture is unchanged). Errors are
   // swallowed (old tmux with no `mouse` option, or the server briefly gone) so
   // the launch always falls through to claude -- fail-open toward running.
-  const mouseOff = `${tmuxBinToken} set-option -t ${target} mouse off 2>/dev/null`
+  // Also force the tmux STATUS BAR off for CCC's own session (owner call
+  // 2026-08-31: happy to lose the bar so the watchdog works). A visible status
+  // bar REPAINTS on tmux's `status-interval` (default 15s), and every repaint is
+  // PTY output that resets the watchdog's silence clock, so the sleep indicator
+  // would never fire over a tmux-wrapped SSH session. Session-scoped
+  // (`-t ${target}`, no `-g`) and error-swallowed, exactly like the mouse-off
+  // beside it, and independent of the `attach` that follows (a `;`, not `&&`).
+  // The session options CCC forces on its own tmux session, built once and
+  // rendered two ways: `-t ${target}` for the attach branch (run from the outer
+  // shell BEFORE attach, so it needs an explicit target — has-session proved the
+  // `=`-exact target resolves), and TARGETLESS for the fresh pane (the option
+  // runs INSIDE `new-session`, where the current session already IS ours, so no
+  // `-t` can miss). Every operand is a literal or the safeSid target — #242 sink
+  // posture unchanged; all error-swallowed and `;`-joined so the launch always
+  // falls through to claude.
+  //   mouse off      — #546, classic drag-select even under `set -g mouse on`.
+  //   status off     — hide the status bar (owner call 2026-08-31).
+  //   status-interval 0 — the DECISIVE one for the watchdog: even if the bar is
+  //     visible (a remote `~/.tmux.conf` re-enabling `status on`, an old option
+  //     name, a swallowed error), interval 0 stops the timed CLOCK REPAINT that
+  //     is PTY output resetting the watchdog's silence clock every ~15s. The bar
+  //     no longer flashes the session "working". Belt-and-braces to `status off`.
+  const sessionOpts = (t: string): string =>
+    `${tmuxBinToken} set-option ${t}mouse off 2>/dev/null; ` +
+    `${tmuxBinToken} set-option ${t}status off 2>/dev/null; ` +
+    `${tmuxBinToken} set-option ${t}status-interval 0 2>/dev/null`
+  const mouseOff = sessionOpts(`-t ${target} `)
+  const mouseOffInPane = sessionOpts('')
   // Fresh-create branch only: resume the prior conversation on a reconnect
   // where the remote session was gone. Appended to innerCmd BEFORE quoting so
   // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.
   const claudeInner = input.reconnect ? `${input.innerCmd} --continue` : input.innerCmd
   // The mouse-off runs INSIDE the freshly-created pane (where the session is
   // live and addressable), then claude; both ride tmux's single quoted arg.
-  const freshInner = `${mouseOff}; ${claudeInner}`
-  const fresh = `${tmuxBinToken} new-session -s ${target} ${singleQuote(freshInner)}`
+  const freshInner = `${mouseOffInPane}; ${claudeInner}`
+  const fresh = `${tmuxBinToken} new-session -s ${name} ${singleQuote(freshInner)}`
   // has-session/attach is NOT atomic: the session can die (claude exits, remote
   // reboots) in the gap between `has-session` returning 0 and `attach` running
   // (measured ~10ms on a real host), and a bare `attach` then fails with

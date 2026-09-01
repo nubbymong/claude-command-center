@@ -370,9 +370,9 @@ Nobody reads a markdown plan. They skim it, say "sounds good", and discover
 in the diff that you meant something else by step 3.
 
 A plan on the canvas is the same content with somewhere to point. The user
-selects a step and writes a note on THAT step; you get it back anchored, in one
-review, exactly like a design review. The whole loop is the one you already know
-from the \`agent-canvas\` skill — this skill only says what a plan PAGE contains.
+selects a section and writes a note on THAT section; you get it back anchored, in
+one review. The loop is the one you already know from the \`agent-canvas\` skill
+— this skill says what a plan PAGE contains and how its review differs.
 
 \`\`\`
 canvas_render { mode: "plan", htmlPath: "<absolute path>", title: "<what the work is>", ready: true }
@@ -384,45 +384,100 @@ back. Use \`ready: false\` drafts while you self-check the page and \`ready:
 true\` for the hand-over, same as a design. Re-rendering the same \`title\`
 adds a version, so a revised plan sits beside the one they annotated.
 
-The decision is on the VERSION, as everywhere else: they Approve plan or Reject
-plan. **Approve owes nothing** — any notes filed with it are OBSERVATIONS to
-read, not work coming back. **Reject** means the notes drive the next plan
-version: revise, render, and \`canvas_resolve\` each note you acted on with
-\`updatedIn: "vN+1"\`.
+## Register
 
-## The six parts, all of them, every time
+A plan is a technical document, not a painting.
 
-Two plans are only comparable if they have the same shape. Write all six even
-when one is short — an empty section is information.
+- Terse. Bullets, not paragraphs. One screen is the target; two is the ceiling.
+- No preamble, no restating the request, no "this document describes".
+- No colour for decoration. Colour is a SIGNAL: a red or amber pill, and nothing
+  else. Use one for an open-question count, a parked decision, a hard ordering
+  constraint. A page where three things are coloured has three warnings; a page
+  where everything is coloured has none.
+- Plain ASCII section ids. No glyphs, no icons standing in for words.
 
-1. **Goal** — one sentence on what will be true afterwards. Not a restatement
-   of the request; the OUTCOME.
-2. **Flow** — the steps, in order, as a visual flow rather than a list. Work
-   that genuinely runs in parallel is drawn as a branch. Give every step a
-   stable \`data-ux-id="step-1"\`, \`"step-4a"\` … — those ids are what the
-   user's notes re-anchor to when you revise the plan, so NEVER renumber an
-   existing step. A new step gets a new id.
-3. **Scope fence** — what you are NOT doing. The single most common review note
-   on any plan is "don't also change X", so commit to the boundary up front and
-   let them annotate the boundary itself.
-4. **Blast radius** — what this reaches. Subsystems touched, and the neighbouring
-   ones you are stating are NOT touched. Absence is information; reviewers do not
-   worry about your steps, they worry about what else moves.
-5. **Open questions** — with a count, at the TOP. Buried in prose these get
-   skipped and you end up guessing. Hoisted, they are the first thing the user
-   answers.
-6. **Verification** — how both of you will know it worked, decided BEFORE the
-   work rather than afterwards by whoever is tired. Name the actual command or
-   the actual test.
+## Shape: two tabs
+
+**Tab 1 — the phasing.** What the work is and what order it happens in, at a
+glance. In this order, nothing above it:
+
+- \`Scope\` — what this plan addresses. Bullets. Say what is OUT as well.
+- \`Build approach\` — ONE line. "One PR." / "PR per phase." / "One PR, phase 5
+  behind a flag."
+- the phase list, in EXECUTION ORDER: number, name, one line each. Ordering
+  constraints on the row that has them.
+
+**Tab 2 — the detail.** One block per phase, each with exactly three sections:
+
+- \`N.1 Build\` — what gets built, high level. Files and functions only where the
+  name IS the decision.
+- \`N.2 Testing methodology\` — what is automated, what needs the user, and the
+  permutations that matter (hosts, OSes, modes). Name the command.
+- \`N.3 Questions\` — numbered \`Q1\`, \`Q2\`, each ONE clearly-articulated
+  question with your DEFAULT if it goes unanswered. "None." when there are none
+  — an empty section is information.
+
+## Addressing: every section is referenceable
+
+Their feedback names a section, so every section needs a name worth citing. Dot
+notation or plain letters (\`1\`, \`1.1\`, \`3.1a\`, \`Q2\`), and the same string
+is the anchor:
+
+\`\`\`html
+<div class="psec" data-ux-id="3.1"><span class="n">3.1</span>Build</div>
+<div class="q" data-plan-question="open" data-ux-id="q2"><span class="qid">Q2</span>…</div>
+\`\`\`
+
+- The visible number and the \`data-ux-id\` are the SAME string. A note anchored
+  to \`3.1\` and a user saying "3.1" have to mean one thing.
+- NEVER renumber an existing id between versions — that is how a note re-anchors
+  onto the wrong section. New material gets a new id.
+- They can annotate the whole plan as well (no selection = whole page), so a
+  cross-cutting objection has somewhere to land.
+
+Reference implementation: \`.ccc-canvas/plan-remote-harmonise.html\` — two tabs,
+dot-notation sections, pills only where something is parked.
+
+## Open questions gate the approval
+
+Mark every question you are still asking:
+
+\`\`\`html
+<div data-plan-question="open"   data-ux-id="q1">Q1 …</div>
+<div data-plan-question="parked" data-ux-id="q2">PARKED …</div>
+\`\`\`
+
+- \`open\` is COUNTED, and Approve is unavailable to the user while the count is
+  above zero. \`parked\` (or any other value) is not counted: a deferred decision
+  does not hold the plan hostage.
+- Their answers come back as REVISIONS. Fold each answer into the phase it
+  belongs to, drop the marker, render the next version — that version is the one
+  they can approve.
+- Do not leave a question you have already answered marked \`open\`, and do not
+  mark a rhetorical one at all.
+
+## The decision
+
+Two buttons: **Approve** and **Submit Revisions**. There is no Reject on a plan
+— a plan is iterative.
+
+- **Submit Revisions** is the normal outcome of a first round. The notes drive
+  the next version: revise, render, and \`canvas_resolve\` each note you acted on
+  with \`updatedIn: "vN+1"\`.
+- **Approve** means the plan is right as it stands. It is blocked while any
+  question is open, and blocked while the user has any note to send — so an
+  approval never arrives carrying work.
+- A revision that raises NEW questions blocks approval again. That is correct;
+  never suppress a real question to unlock the button.
 
 ## How it behaves
 
 - **The plan accompanies the conversation, it does not replace it.** Keep a
   three-line summary in the terminal and point at the canvas. The terminal is
   still where you are talking to them.
-- **Open questions do NOT block.** Start on the steps that are not waiting on an
-  answer and mark the rest as waiting. Idling while a question sits unanswered
-  wastes the user's time; guessing at it wastes yours.
+- **Do not idle on an open question.** Blocking the APPROVAL is not blocking the
+  WORK: start the phases that are not waiting on an answer, and say which ones
+  are. Waiting wastes their time; guessing wastes yours.
 - **An approved plan is the record.** Their approval signs the canvas off and
   their pane returns to its front page — do not read that as the plan being
   thrown away, and do not call \`canvas_complete\` after it. The plan is one
@@ -430,15 +485,16 @@ when one is short — an empty section is information.
   Library: it is what you check yourself against, and what a later reviewer
   reads to see what was agreed. Start work.
 - **A plan that changed is a new version, not an edit.** Render again with the
-  same title. Their notes re-anchor by step id.
+  same title. Their notes re-anchor by section id.
 
 ## Never
 
-- Never render a plan as a wall of paragraphs with a heading on top. If it has
-  no flow and no ids, it is markdown in a browser and it buys nothing.
-- Never renumber or rename a step id between versions.
-- Never say the same thing in two of the six parts. Each fact has one home;
-  repeating it is how a reviewer ends up annotating the same point twice.
+- Never render a plan as a wall of paragraphs with a heading on top. No sections
+  and no ids means markdown in a browser, and it buys nothing.
+- Never renumber or rename a section id between versions.
+- Never colour something to make it look finished. Pills are for attention.
+- Never say the same thing in both tabs. Tab 1 is the shape, Tab 2 is the
+  content; repeating a fact is how a reviewer annotates the same point twice.
 - Never start the work before rendering when the user asked for a plan — the
   render IS the handover.
 `

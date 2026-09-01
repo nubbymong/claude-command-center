@@ -42,6 +42,7 @@ import {
   type CaptureImage,
 } from '../canvas/canvas-evidence'
 import { setCanvasFrameNavigatedSink } from '../canvas/ccc-ux-protocol'
+import { deliverCanvasMarker } from '../canvas/canvas-marker-delivery'
 import {
   MAX_SKETCH_PNG_BYTES,
   clearComposerDraft,
@@ -644,6 +645,60 @@ const reviewSubmitSchema = z
  * earlier round of the artefact — it would close the user's own outstanding
  * feedback while saying why to nobody.
  */
+/**
+ * Every byte a marker may NOT carry: the C0 range (NUL through 0x1F), DEL, and
+ * the C1 range (0x80-0x9F).
+ *
+ * The old rule stripped `[\r\n]` alone, on the stated theory that what crosses
+ * this channel is "a LINE and not keystrokes". CR/LF are the only bytes that
+ * SUBMIT, so that closed the multiple-messages hole — but they are far from the
+ * only bytes a terminal ACTS on. `\x03` is SIGINT and interrupts whatever the
+ * agent is doing; `\x1b` opens an escape sequence, so `\x1b[200~`/`\x1b[201~`
+ * forge bracketed-paste boundaries around the rest of the line and `\x1b]…`
+ * opens an OSC that this app's own PTY reader parses for sentinels; NUL and the
+ * C1 8-bit forms (0x9B is CSI, 0x9D is OSC) reach the same machinery by another
+ * door. Every one of them travelled inside a 400-character "line".
+ *
+ * So the rule is now the whole control range, replaced with a space rather than
+ * deleted (deleting would silently splice `abc\x03def` into a single word).
+ * Nothing legitimate is lost: the real markers are ASCII text plus `·` and `—`,
+ * both well above this range.
+ */
+// eslint-disable-next-line no-control-regex -- matching the control range IS the point
+const MARKER_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F-\u009F]+/g
+
+/**
+ * The marker line (#580) and the canvas it speaks for.
+ *
+ * SINGLE-LINE AND CONTROL-FREE by construction (see MARKER_CONTROL_CHARS_RE):
+ * a renderer bug, a canvas title carrying a newline, or a deliberately crafted
+ * payload cannot turn one marker into several submitted messages, interrupt the
+ * agent, or smuggle an escape sequence into the PTY. Length-capped like every
+ * other renderer string that reaches a terminal.
+ *
+ * `canvasId` is REQUIRED, and it is the ownership binding (adversarial review,
+ * 2026-09-01). The marker names a verdict ("Approved v7 on the canvas ·
+ * canvas_version_verdict recorded") and is the ONLY thing that tells the agent
+ * one was filed — a clean approval creates no review record at all. Without a
+ * canvas in the payload there was nothing to check the claim against: any
+ * session id plus any 400 characters was accepted, so the channel delivered an
+ * unverifiable assertion about somebody else's canvas into a session's
+ * terminal. Naming the canvas lets the handler ask the same ownership question
+ * `canvas:archiveArtifact` asks before it acts.
+ */
+const agentMarkerSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    line: z
+      .string()
+      .min(1)
+      .max(400)
+      .transform((s) => s.replace(MARKER_CONTROL_CHARS_RE, ' ').trim())
+      .refine((s) => s.length > 0, { message: 'marker line is empty' }),
+  })
+  .strict()
+
 const versionVerdictSchema = z
   .object({
     sessionId: sessionIdSchema,
@@ -983,6 +1038,45 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     }
     if (state === 'approved') autoCompleteAfterUserApproval(result.canvasId, sessionId)
     return result
+  })
+
+  /**
+   * #580 — the marker line that TELLS the agent a verdict/review was filed.
+   *
+   * The panel used to write this straight into the PTY. That is correct at a
+   * prompt and useless mid-turn: Claude Code is not reading a user line while it
+   * streams, so a verdict filed during an agent turn was swallowed and the agent
+   * was never told. It bit hardest on a CLEAN APPROVAL, which by design creates
+   * no review record at all (`submitReview` refuses a round with no notes) --
+   * the marker is the entire delivery, so losing it loses the approval.
+   *
+   * Routed through the queue instead: written now if the turn is closed, held
+   * and flushed at the next `Stop` if it is open. The CR is appended there, not
+   * here — but "so what travels over IPC is a LINE and not keystrokes" was only
+   * ever true of CR/LF. Every OTHER control byte a terminal acts on (0x03
+   * SIGINT, 0x1b and the 8-bit C1 forms that open escape/OSC sequences, NUL)
+   * rode straight through the old `[\r\n]`-only strip. The schema now removes
+   * the whole C0/C1 range, so the claim holds for real; see
+   * MARKER_CONTROL_CHARS_RE.
+   *
+   * OWNERSHIP (adversarial review, 2026-09-01). The payload used to be a
+   * sessionId and 400 characters — no canvas, so nothing to check the marker's
+   * claim against, and any session could be told that a verdict had been filed
+   * on a canvas it does not own. It now names the canvas and is refused unless
+   * that session owns it, through the SAME guard `canvas:archiveArtifact` uses
+   * a few handlers down (`canvasArtifactMutationAllowed`, the owner-only rule).
+   * Owner-only is the right strength here: the marker is a claim ABOUT that
+   * canvas's state, and only its owner's session can have produced one.
+   *
+   * A refusal is REPORTED, not thrown: the renderer treats delivery as
+   * best-effort and swallows rejections, so a thrown refusal would be invisible
+   * on both sides.
+   */
+  ipcMain.handle(IPC.CANVAS_AGENT_MARKER, async (_e, args: unknown) => {
+    const { sessionId, canvasId, line } = agentMarkerSchema.parse(args)
+    const allowed = canvasArtifactMutationAllowed(sessionId, canvasId)
+    if (!allowed.ok) return { delivery: 'refused' as const, reason: allowed.reason }
+    return { delivery: deliverCanvasMarker(sessionId, line) }
   })
 
   ipcMain.handle(IPC.CANVAS_VERSION_REOPEN, async (_e, args: unknown) => {

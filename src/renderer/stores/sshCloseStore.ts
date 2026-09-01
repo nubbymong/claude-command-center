@@ -1,7 +1,10 @@
 import { create } from 'zustand'
 import { useSessionStore } from './sessionStore'
 import { useWebviewStore } from './webviewStore'
+import { useDetachedRemotesStore } from './detachedRemotesStore'
 import { killSessionPty } from '../ptyTracker'
+import { buildDetachedRemote } from '../utils/detachedRemotes'
+import { persistSessionState } from '../session-persistence'
 
 // SSH tmux enhancement (item 4): a one-slot store for the "you're closing a
 // PERSISTENT remote session" confirmation. Any close call site (tab close,
@@ -92,17 +95,37 @@ export async function endRemoteAndClose(sessionId: string): Promise<void> {
     // Best-effort — even if the end exec couldn't be dispatched, still close the
     // local tab (the remote at worst detaches, exactly the pre-enhancement path).
   }
+  // SSH Persistent (Phase 1 lifecycle): the remote is being ended, so drop any
+  // left-running registry entry for this id — it must never be offered for
+  // reattach again. No-op when the id was never registered (the common case:
+  // ending a LIVE session that was never left running), and then the End path is
+  // untouched — only a real registry change triggers the durable flush below.
+  const hadEntry = useDetachedRemotesStore.getState().entries.some((e) => e.sessionId === sessionId)
+  useDetachedRemotesStore.getState().remove(sessionId)
   killSessionPty(sessionId)
   forgetSessionBrowserProfile(sessionId)
   useSessionStore.getState().removeSession(sessionId)
   useSshCloseStore.getState().clear()
+  if (hadEntry) void persistSessionState()
 }
 
 /** "Leave running": detach only — the remote tmux session survives for a later
- *  reattach. Identical to a plain close (which, for a live SSH PTY, detaches). */
+ *  reattach. Identical to a plain close (which, for a live SSH PTY, detaches),
+ *  plus SSH Persistent (Phase 1): record the detached remote in the persisted
+ *  registry BEFORE teardown so the resume surface can later offer to reattach it.
+ *  Launching the config again does NOT consult this — that always starts new. */
 export function leaveRunningAndClose(sessionId: string): void {
+  // Capture the entry while the session is still in the store. Non-SSH / config-
+  // less sessions yield null (buildDetachedRemote guards), so this is a no-op for
+  // anything that has nothing to reattach.
+  const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+  const entry = buildDetachedRemote(session, Date.now())
+  if (entry) useDetachedRemotesStore.getState().add(entry)
   killSessionPty(sessionId)
   forgetSessionBrowserProfile(sessionId)
   useSessionStore.getState().removeSession(sessionId)
   useSshCloseStore.getState().clear()
+  // Persist immediately so the entry survives an app restart even if the app is
+  // closed before the debounced session autosave fires (best-effort).
+  if (entry) void persistSessionState()
 }

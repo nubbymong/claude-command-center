@@ -17,7 +17,7 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
-import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, generateWindowsRemoteSetupScript, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from '../../../../src/main/providers/claude/ssh-shim'
+import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, generateWindowsRemoteSetupScript, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from '../../../../src/main/providers/claude/ssh-shim'
 
 // #242 finding F1 (b): generateRemoteSetupScript/getRemoteSetupCommand/
 // configureRemoteSettings now require a nonce.
@@ -113,6 +113,41 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(writeMatch).not.toBeNull()
     expect(writeMatch![0]).toContain('conductor')
     expect(writeMatch![0]).not.toContain('conductor-vision')
+  })
+
+  // First-connect priming (harmonise-remote UX): the setup script spawns the
+  // shim once, detached, so account + usage buckets reach the app and the usage
+  // cache warms BEFORE claude's first statusline tick. It reuses the shim file
+  // just written (shimPath), THIS session's safeSid, and the same 0600 url file
+  // (urlPath) the statusLine command uses — no new remote code, no new secret
+  // path. Live-proven on a cold Pi connect: update #0 carried account+Fable.
+  it('primes one detached shim run (warm cache + early account/buckets) when a tunnel URL exists', () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    // Spawns the SHIM FILE (not a fresh script), with the session's safeSid and
+    // the url file, feeding a minimal {session_id} on stdin — and never blocks
+    // setup on it (unref).
+    expect(script).toContain('spawn(process.execPath,[shimPath,"sid-x",urlPath]')
+    // sid rides argv[2] (the shim reads argv[2]||env||stdin), so no stdin pipe
+    // is needed — stdio:'ignore' keeps the detached spawn output-free (the
+    // #379 main-spawn audit requires 'ignore' for every detached:true).
+    expect(script).toContain(`stdio:'ignore',detached:true`)
+    expect(script).toContain('_pr.unref()')
+    // The priming must sit BEFORE the completion sentinel so it launches during
+    // setup, not after claude is already up.
+    expect(script.indexOf('spawn(process.execPath,[shimPath')).toBeLessThan(script.indexOf('setup ok'))
+  })
+
+  it('omits the priming spawn when there is no tunnel URL (conductor MCP off)', () => {
+    // includeConductorMcp:false => statusUrl is empty => no priming (nothing to
+    // POST to; the shim's OSC fallback has no tty from a detached spawn anyway).
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: true, includeConductorMcp: false }, NONCE)
+    expect(script).not.toContain('spawn(process.execPath,[shimPath')
+  })
+
+  it('omits the priming spawn when the statusline master switch is off', () => {
+    // includeStatusLine:false => no statusLine, no url file, no priming.
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false, includeConductorMcp: true }, NONCE)
+    expect(script).not.toContain('spawn(process.execPath,[shimPath')
   })
 
   it('bakes ?cccSessionId=<encoded sid> into the remote MCP URL (P7.7.10 parity)', () => {
@@ -366,6 +401,29 @@ describe('buildTmuxBinPatchCommand (#242 finding F3)', () => {
       buildTmuxBinPatchCommand('sid-x'),
     )
   })
+
+  // ADR-009 ordering invariant. CCC_STATUS_URL_FILE was placed AFTER
+  // CCC_TMUX_BIN in the statusLine command, so this patch's `/CCC_TMUX_BIN=\S*/`
+  // rewrite must stop at the space between them. Put the new var FIRST (or drop
+  // the space) and the rewrite would swallow it, taking the whole tier-0
+  // delivery with it on every host that reaches tier 3/4 — a silent statusline
+  // death on exactly the hosts the patch exists to serve.
+  // Mutation to prove this can fail: emit `CCC_STATUS_URL_FILE=…CCC_TMUX_BIN=…`.
+  it("the patch's CCC_TMUX_BIN rewrite leaves CCC_STATUS_URL_FILE intact in the real generated command", () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    // The command as the emitted script builds it, with the two remote-side
+    // consts resolved the way the remote node would resolve them.
+    const built = script
+      .match(/command:'([^']*)'\+tmuxPath\+' CCC_STATUS_URL_FILE='\+urlPath\+' node '\+shimPath/)
+    expect(built).not.toBeNull()
+    const command = `${built![1]}` + '' + ` CCC_STATUS_URL_FILE=/home/u/.claude/ccc-status-sid-x.url node /home/u/.claude/conductor-ssh-statusline.js`
+    // Empty tmux bin (the tier-1/2 miss that makes this patch run at all).
+    expect(command).toContain('CCC_TMUX_BIN= CCC_STATUS_URL_FILE=')
+    const patched = command.replace(/CCC_TMUX_BIN=\S*/, 'CCC_TMUX_BIN=/home/u/.claude/bin/tmux')
+    expect(patched).toContain('CCC_TMUX_BIN=/home/u/.claude/bin/tmux')
+    expect(patched).toContain('CCC_STATUS_URL_FILE=/home/u/.claude/ccc-status-sid-x.url')
+    expect(patched).toContain(' node /home/u/.claude/conductor-ssh-statusline.js')
+  })
 })
 
 // #242 MAJOR: tier 1/2 tmux detection had ZERO coverage -- reverting the
@@ -463,8 +521,9 @@ describe('SSH remote setup script — tier-2 -V execution probe + nested-tmux ov
 interface SetupRunResult {
   stdout: string
   execFileCalls: Array<{ file: string; args: string[] }>
-  /** Every fs.writeFileSync the script performed (settings, shim, mcp). */
-  writes: Array<{ path: string; content: string }>
+  /** Every fs.writeFileSync the script performed (settings, shim, mcp, status URL),
+   *  with the write OPTIONS — the mode/flag custody is part of the contract. */
+  writes: Array<{ path: string; content: string; opts?: Record<string, unknown> }>
 }
 
 function runSetupScript(opts: {
@@ -482,7 +541,7 @@ function runSetupScript(opts: {
     mkdirSync: () => {},
     chmodSync: () => {},
     rmSync: () => {},
-    writeFileSync: (p: string, content: unknown) => { result.writes.push({ path: String(p), content: String(content) }) },
+    writeFileSync: (p: string, content: unknown, wopts?: Record<string, unknown>) => { result.writes.push({ path: String(p), content: String(content), opts: wopts }) },
     readFileSync: () => { throw enoent() },
     existsSync: () => false,
     accessSync: (p: string) => { (opts.accessSync ?? (() => { throw enoent() }))(p) },
@@ -584,7 +643,11 @@ describe('SSH remote setup script — runtime behaviour of the tmux probes (fail
     expect(sentinelTmuxClass(r.stdout)).toBe('none') // launch stays bare (no nesting)
     const settingsWrite = r.writes.find((w) => w.path.includes('settings-sid-rt'))
     expect(settingsWrite).toBeDefined()
-    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN=/usr/bin/tmux node')
+    // The bin is followed by a SPACE, not end-of-command: the status-URL file
+    // env var (ADR-009 token custody) sits between it and `node`, and
+    // buildTmuxBinPatchCommand's /CCC_TMUX_BIN=\S*/ rewrite must stop at that
+    // space rather than swallowing the rest of the line.
+    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN=/usr/bin/tmux CCC_STATUS_URL_FILE=')
   })
 
   it('control: no tmux anywhere still bakes an empty CCC_TMUX_BIN (nothing to preserve)', () => {
@@ -595,7 +658,28 @@ describe('SSH remote setup script — runtime behaviour of the tmux probes (fail
     expect(sentinelTmuxClass(r.stdout)).toBe('none')
     const settingsWrite = r.writes.find((w) => w.path.includes('settings-sid-rt'))
     expect(settingsWrite).toBeDefined()
-    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN= node')
+    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN= CCC_STATUS_URL_FILE=')
+  })
+
+  // ADR-009 token custody: the /status URL carries this session's MCP token, so
+  // it must NOT be in the statusLine command (an env-prefix needs a shell, which
+  // publishes the whole line — token included — to the remote host's process
+  // table). It goes to a 0600 file; only the path is in the command.
+  // Mutation to prove this can fail: put the URL back in the env prefix.
+  it('writes the status URL to a 0600 exclusive-create file and puts only the PATH in the command', () => {
+    const r = runSetupScript({ env: {}, execSync: () => '/usr/bin/tmux\n' })
+    const urlWrite = r.writes.find((w) => w.path.includes('ccc-status-sid-rt.url'))
+    expect(urlWrite).toBeDefined()
+    expect(urlWrite!.content).toContain('/status?cccSessionId=')
+    expect(urlWrite!.content).toContain('token=')
+    expect(urlWrite!.opts).toMatchObject({ mode: 0o600, flag: 'wx' })
+    const settingsWrite = r.writes.find((w) => w.path.includes('settings-sid-rt'))
+    expect(settingsWrite!.content).toContain('CCC_STATUS_URL_FILE=')
+    // The token never appears in the command itself.
+    expect(settingsWrite!.content).not.toContain('CCC_STATUS_URL=')
+    const cmd = JSON.parse(settingsWrite!.content).statusLine.command as string
+    expect(cmd).not.toContain('token=')
+    expect(cmd).toContain('ccc-status-sid-rt.url')
   })
 })
 
@@ -617,16 +701,17 @@ describe('SSH statusline shim -- tmux client-tty bypass (#242)', () => {
 describe('buildRemoteTmuxKillCommand (item 4)', () => {
   it('kills the ccc-<safeSid> session across every known tmux location and removes both sidecars', () => {
     const cmd = buildRemoteTmuxKillCommand('sess-1')
-    // Targets the tmux session name, mirroring buildTmuxLaunchCommand.
-    expect(cmd).toContain('kill-session -t ccc-sess-1')
+    // Targets the tmux session name, mirroring buildTmuxLaunchCommand — with
+    // tmux's `=` EXACT-match prefix (see the exactness case below).
+    expect(cmd).toContain('kill-session -t =ccc-sess-1')
     // Tries PATH + both Homebrew prefixes (macOS non-login exec has a minimal
     // PATH, so `command -v tmux` alone would miss /opt/homebrew/bin) + system +
     // the CCC-staged tier-2 binary.
-    expect(cmd).toContain('tmux kill-session -t ccc-sess-1')
-    expect(cmd).toContain('/opt/homebrew/bin/tmux kill-session -t ccc-sess-1')
-    expect(cmd).toContain('/usr/local/bin/tmux kill-session -t ccc-sess-1')
-    expect(cmd).toContain('/usr/bin/tmux kill-session -t ccc-sess-1')
-    expect(cmd).toContain('"$HOME/.claude/bin/tmux" kill-session -t ccc-sess-1')
+    expect(cmd).toContain('tmux kill-session -t =ccc-sess-1')
+    expect(cmd).toContain('/opt/homebrew/bin/tmux kill-session -t =ccc-sess-1')
+    expect(cmd).toContain('/usr/local/bin/tmux kill-session -t =ccc-sess-1')
+    expect(cmd).toContain('/usr/bin/tmux kill-session -t =ccc-sess-1')
+    expect(cmd).toContain('"$HOME/.claude/bin/tmux" kill-session -t =ccc-sess-1')
     // Removes the two per-session sidecars.
     expect(cmd).toContain('rm -f ~/.claude/settings-sess-1.json ~/.claude/mcp-sess-1.json')
     // Every step best-effort; the whole exec still exits 0.
@@ -634,9 +719,181 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
   })
   it('sanitizes a session id with shell metacharacters into the -t argument', () => {
     const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
-    expect(cmd).toContain('kill-session -t ccc-a_b_c__x_')
+    expect(cmd).toContain('kill-session -t =ccc-a_b_c__x_')
     // No raw metacharacter reaches the target token.
     expect(cmd).not.toContain('ccc-a;b')
+  })
+
+  // ── EXACTNESS, not just charset (adversarial review, 2026-09-01) ───────────
+  //
+  // The two cases above prove the target is metacharacter-FREE. They do not
+  // prove it is NARROW, and that was the actual hole: `sessionIdSchema` has a
+  // floor of ONE character, so `{ sessionId: 'a' }` is a SCHEMA-VALID payload
+  // for `ssh:endRemote`, and tmux resolves a bare `-t ccc-a` by exact match,
+  // then PREFIX, then fnmatch — killing whichever other `ccc-…` session on the
+  // host starts with `a`.
+  //
+  // Mutation to prove these can fail: drop the leading `=` from `target` in
+  // buildRemoteTmuxKillCommand (ssh-shim.ts).
+  it('a schema-VALID one-character id yields an EXACT-match operand, never a bare (prefix-matching) name', () => {
+    const cmd = buildRemoteTmuxKillCommand('a')
+    const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
+    expect(operands.length).toBe(5)
+    for (const t of operands) expect(t).toBe('=ccc-a')
+    // The pre-fix form is GONE: no `-t` operand is the bare name that tmux
+    // would widen to a prefix/fnmatch search.
+    expect(cmd).not.toMatch(/kill-session -t ccc-a(\s|$)/)
+  })
+
+  it('the `=` rides the SANITISED id, so exactness and the charset gate compose', () => {
+    const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
+    const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
+    expect(operands.length).toBeGreaterThan(0)
+    for (const t of operands) expect(t).toMatch(/^=ccc-[A-Za-z0-9_-]+$/)
+  })
+})
+
+// #572 one hop deeper (live-proven by T20, ssh-statusline-docker.live.ts,
+// 2026-08-31): for a CONTAINER runtime the tmux kill only drops the exec
+// CLIENT — claude keeps running inside the container. buildContainerKillCommand
+// reaches in and kills THIS session's claude, scoped by the settings marker
+// already in its argv.
+describe('buildContainerKillCommand (#572 in-container orphan)', () => {
+  const rootless = { type: 'container', engine: 'podman', container: 'ccc-test' } as const
+
+  it('returns nothing at all for a non-container runtime', () => {
+    expect(buildContainerKillCommand('s1', undefined)).toBe('')
+    expect(buildContainerKillCommand('s1', { type: 'host' })).toBe('')
+  })
+
+  // ADR-009: this runs from endSshRemote OUTSIDE the executor's try, so a
+  // TypeError here escaped and skipped ALL remote cleanup — container kill, tmux
+  // kill and sidecar sweep alike. A non-string `container` must read as "no
+  // name" and return '', not throw.
+  // Mutation to prove this can fail: restore `(runtime.container ?? '').trim()`.
+  it('a NON-STRING container name returns \'\' instead of throwing out of the End path', () => {
+    for (const bad of [42, ['ccc-test'], { n: 1 }, null, true]) {
+      expect(buildContainerKillCommand('s1', { type: 'container', container: bad } as never)).toBe('')
+    }
+  })
+
+  it('rootless podman: engine exec + marker-scoped kill + sidecar removal, exit-0 tail', () => {
+    const cmd = buildContainerKillCommand('lv20abc', rootless)
+    expect(cmd).toBe(
+      "podman exec ccc-test bash -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json ~/.claude/ccc-status-lv20abc.url 2>/dev/null; exec pkill -f \"/settings-lv20abc\\.json\"' 2>/dev/null; true"
+    )
+    // No sudo anywhere for a rootless container.
+    expect(cmd).not.toContain('sudo')
+    // No `-it`: this is a one-shot kill, not an interactive shell.
+    expect(cmd).not.toContain('exec -it')
+  })
+
+  it('defaults the engine to docker and honours the podman pick (a two-literal choice, never free text)', () => {
+    expect(buildContainerKillCommand('s1', { type: 'container', container: 'c1' })).toContain('docker exec c1 ')
+    expect(buildContainerKillCommand('s1', { type: 'container', engine: 'docker', container: 'c1' })).toContain('docker exec c1 ')
+    expect(buildContainerKillCommand('s1', { type: 'container', engine: 'podman', container: 'c1' })).toContain('podman exec c1 ')
+    // An engine value outside the two literals cannot reach the command.
+    const hostile = buildContainerKillCommand('s1', { type: 'container', engine: 'x; rm -rf /' as never, container: 'c1' })
+    expect(hostile).toContain('docker exec c1 ')
+    expect(hostile).not.toContain('rm -rf /')
+  })
+
+  // ── THE marker: this is what makes the kill session-scoped ─────────────────
+
+  it('scopes the kill to THIS session by the --settings marker, not to "claude"', () => {
+    const cmd = buildContainerKillCommand('lv20abc', rootless)
+    expect(cmd).toContain('pkill -f "/settings-lv20abc\\.json"')
+    // A blunt pkill would end a CO-TENANT session's claude in the same
+    // container — the whole point of the marker. Proven live: killing
+    // settings-lv20mtgp7kzo left a concurrent settings-lv20mtgpb4zx alive.
+    expect(cmd).not.toMatch(/pkill -f claude\b/)
+  })
+
+  // ── ANCHORING, not just charset (adversarial review, 2026-09-01) ───────────
+  //
+  // `pkill -f` matches an UNANCHORED regex anywhere in the cmdline, so the bare
+  // marker was a PREFIX match on every co-tenant claude in the container. With
+  // `sessionId: 'a'` — a schema-VALID payload, the id floor is one character —
+  // `settings-a` matches `--settings ~/.claude/settings-a1b2c3d4.json` and kills
+  // somebody else's live agent.
+  //
+  // Mutation to prove this can fail: put `pkill -f ${marker}` back in
+  // buildContainerKillCommand (ssh-shim.ts).
+  it('a schema-VALID one-character id yields an ANCHORED pattern that cannot match a longer id', () => {
+    const cmd = buildContainerKillCommand('a', rootless)
+    const pattern = /exec pkill -f "([^"]+)"/.exec(cmd)?.[1]
+    expect(pattern).toBe('/settings-a\\.json')
+    // The pattern really is a regex that refuses the co-tenant's filename.
+    const re = new RegExp(pattern!)
+    expect(re.test('claude --settings /root/.claude/settings-a.json')).toBe(true)
+    expect(re.test('claude --settings ~/.claude/settings-a.json')).toBe(true)
+    expect(re.test('claude --settings /root/.claude/settings-a1b2c3d4.json')).toBe(false)
+    // The pre-fix, unanchored form is GONE.
+    expect(cmd).not.toMatch(/pkill -f settings-a(\s|'|$)/)
+  })
+
+  it('sanitizes a session id with shell metacharacters into the marker (safeSid is the ONLY free value)', () => {
+    const cmd = buildContainerKillCommand('a;b c$(x)', rootless)
+    expect(cmd).toContain('pkill -f "/settings-a_b_c__x_\\.json"')
+    expect(cmd).toContain('rm -f ~/.claude/settings-a_b_c__x_.json ~/.claude/mcp-a_b_c__x_.json')
+    // Nothing raw survives: no metacharacter, and no way out of the single
+    // quotes wrapping the inner script. The pattern's own quotes are DOUBLE, so
+    // the single-quote count is unchanged by the anchoring.
+    expect(cmd).not.toContain(';b c')
+    expect(cmd).not.toContain('$(x)')
+    expect(cmd.match(/'/g)).toHaveLength(2)
+    // `\.` is the only regex metacharacter the pattern can ever carry.
+    const pattern = /exec pkill -f "([^"]+)"/.exec(cmd)?.[1]
+    expect(pattern).toMatch(/^\/settings-[A-Za-z0-9_-]+\\\.json$/)
+  })
+
+  it('rejects a container name that fails revalidation instead of interpolating it', () => {
+    // The spawn path (composeRuntimeCommand) already throws on these; End
+    // revalidates independently in case the stored runtime was ever mutated.
+    for (const container of ['', '  ', 'ccc test', 'ccc;rm -rf /', '$(id)', '-ccc', '.ccc', 'a"b', "a'b"]) {
+      expect(buildContainerKillCommand('s1', { type: 'container', engine: 'podman', container })).toBe('')
+    }
+    // The legitimate charset still passes.
+    expect(buildContainerKillCommand('s1', { type: 'container', engine: 'podman', container: 'a.b_c-1' })).toContain('podman exec a.b_c-1 ')
+  })
+
+  // ── The two live-proven shape rules ────────────────────────────────────────
+
+  it('removes the sidecars BEFORE the pkill, and execs the pkill (or the shell SIGTERMs itself)', () => {
+    const cmd = buildContainerKillCommand('lv20abc', rootless)
+    const rmAt = cmd.indexOf('rm -f ~/.claude/settings-lv20abc.json')
+    const killAt = cmd.indexOf('pkill -f "/settings-lv20abc\\.json"')
+    expect(rmAt).toBeGreaterThan(-1)
+    expect(killAt).toBeGreaterThan(rmAt)
+    // `exec` replaces the shell image, so the marker-bearing `bash -c` cmdline
+    // is GONE before pkill scans /proc — procps never signals its own pid.
+    // Measured on the real container: the naive `pkill; rm; true` ordering
+    // exits 143 (self-SIGTERM) with the sidecars left behind.
+    expect(cmd).toContain('; exec pkill -f')
+  })
+
+  it('rootful (sudo + saved password): forces the prompt to exactly `password:` and KEEPS stderr', () => {
+    const cmd = buildContainerKillCommand('lv21abc', { ...rootless, sudo: true }, { hasSudoPassword: true })
+    // -S: the ssh exec gets no remote tty, so sudo must read stdin.
+    // -p password:: sudo's DEFAULT prompt is "[sudo] password for <user>:",
+    // which endSshRemote's tight matcher (/password[:?]\s*$/i) does NOT match.
+    expect(cmd).toContain('sudo -S -p password: podman exec ccc-test ')
+    // sudo writes that prompt to STDERR — silencing it would hang the End.
+    expect(cmd).not.toContain("' 2>/dev/null;")
+    expect(cmd.endsWith("'; true")).toBe(true)
+  })
+
+  it('rootful with NO saved sudo password: `sudo -n`, which never prompts (no hang, no starved tmux kill)', () => {
+    const cmd = buildContainerKillCommand('s1', { ...rootless, sudo: true })
+    expect(cmd).toContain('sudo -n podman exec ccc-test ')
+    expect(cmd).not.toContain('-S')
+    // Nothing will prompt, so stderr noise can go back to /dev/null.
+    expect(cmd).toContain("' 2>/dev/null; true")
+  })
+
+  it('a sudo flag is never emitted for a rootless container, with or without a saved password', () => {
+    expect(buildContainerKillCommand('s1', rootless, { hasSudoPassword: true })).not.toContain('sudo')
+    expect(buildContainerKillCommand('s1', { ...rootless, sudo: false }, { hasSudoPassword: true })).not.toContain('sudo')
   })
 })
 
@@ -652,10 +909,25 @@ describe('generateWindowsRemoteSetupScript (item 3)', () => {
     // Reads the account the SAME way the POSIX path does.
     expect(script).toContain("Buffer.from(c.oauthAccount.emailAddress,'utf-8').toString('base64')")
   })
-  it('bakes a Windows statusLine command that passes the session id via argv (cmd.exe cannot env-prefix)', () => {
+  it('bakes a Windows statusLine command that passes the session id and the status-URL FILE PATH via argv', () => {
+    // With the conductor MCP on (mocked port), argv[3] carries the PATH of the
+    // status-URL file — never the URL itself (ADR-009 token custody: cmd.exe
+    // cannot env-prefix, so the pre-hardening form put the token in the argv of
+    // a process the remote respawns every tick, i.e. in its process table).
+    // Mutation to prove this can fail: interpolate `statusUrl` back into argv.
     const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true }, NONCE)
+    expect(script).toContain(
+      `command:'node '+JSON.stringify(shimPath)+' winsid'+' '+JSON.stringify(urlPath)`,
+    )
+    // The URL (and its token) is written to the sidecar, not the command.
+    expect(script).toContain(`fs.writeFileSync(urlPath,"http://127.0.0.1:19333/status?cccSessionId=winsid&token=tok-winsid",{flag:'wx'})`)
+    expect(script).not.toContain(`' winsid "http://`)
+  })
+  it('argv carries only the sid when the conductor MCP is off (no tunnel ⇒ CONOUT$ ladder)', () => {
+    const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true, includeConductorMcp: false }, NONCE)
     // `node "<shimPath>" <safeSid>` — shimPath JSON.stringify'd at runtime.
     expect(script).toContain(`command:'node '+JSON.stringify(shimPath)+' winsid'`)
+    expect(script).not.toContain('/status?')
   })
   it('rejects a bad nonce (charset guard, fail-closed like the POSIX generator)', () => {
     expect(() => generateWindowsRemoteSetupScript('winsid', undefined, 'bad nonce!')).toThrow(/charset guard/)
@@ -663,23 +935,58 @@ describe('generateWindowsRemoteSetupScript (item 3)', () => {
 })
 
 describe('getWindowsRemoteSetupCommand (item 3 — cmd.exe delivery)', () => {
-  it('delivers via powershell -Command with a single base64 payload that fits cmd.exe 8191 limit', () => {
+  // The `$`-free invariant applies to EVERY delivered form: a PowerShell login
+  // shell expands any $var inside the double-quoted -Command argument before
+  // the child runs, and the earlier `$ProgressPreference=…;$s=…;$s|node` form
+  // had $s expanded to empty -> `;|node` ParserError, so setup silently never
+  // ran (adversarial review, 2026-08-18). The chunked path's temp file uses a
+  // [IO.Path]::GetTempPath() expression for the same reason (not $env:TEMP).
+  // Mutation to prove this can fail: reintroduce a `$` anywhere in the output.
+  it('with the shared gather the full setup takes the CHUNKED path: every line a $-free powershell -Command under the 8191 limit', () => {
     const cmd = getWindowsRemoteSetupCommand('winsid', { includeStatusLine: true, includeConductorMcp: true }, 'winnonce123')
-    expect(cmd.startsWith('powershell -NoProfile -NonInteractive -Command "')).toBe(true)
-    // NOT -EncodedCommand (double-base64 would blow past the cmd line limit).
-    expect(cmd).not.toContain('-EncodedCommand')
-    expect(cmd).toContain('FromBase64String')
-    expect(cmd).toContain('|node')
-    // The -Command payload MUST contain NO `$`: a PowerShell login shell expands
-    // any $var inside the double-quoted argument before the child runs, and the
-    // earlier `$ProgressPreference=…;$s=…;$s|node` form had $s expanded to empty
-    // -> `;|node` ParserError, so setup silently never ran (adversarial review,
-    // 2026-08-18). Mutation to prove this can fail: reintroduce a `$` anywhere in
-    // the -Command string.
     expect(cmd).not.toContain('$')
-    // Well under cmd.exe's 8191-char command-line limit (measured ~4.8k on Hyper-V).
-    expect(cmd.length).toBeLessThan(8191)
+    expect(cmd).not.toContain('-EncodedCommand')
+    const lines = cmd.split('\r')
+    // Grown past the one-liner ceiling (harmonise-remote slice 2) — the whole
+    // point of the chunked path. If this shrinks back under 7500 the one-liner
+    // test below covers the shape instead; >1 line asserts we are ON this path.
+    expect(lines.length).toBeGreaterThan(1)
+    for (const line of lines) {
+      expect(line.startsWith('powershell -NoProfile -NonInteractive -Command "')).toBe(true)
+      // cmd.exe's hard input limit is 8191 per typed line.
+      expect(line.length).toBeLessThan(8191)
+    }
+    // First line creates the temp file EXCLUSIVELY (ADR-009: -ItemType File
+    // fails on an existing path, so a squatted file is never written through);
+    // the middle lines append the base64; the final line verifies the digest,
+    // runs, and deletes in a `finally`.
+    expect(lines[0]).toContain('New-Item -ItemType File -Path ([IO.Path]::GetTempPath()')
+    expect(lines[0]).toContain('-ErrorAction Stop')
+    expect(lines[1]).toContain('Add-Content -LiteralPath ([IO.Path]::GetTempPath()')
+    const last = lines[lines.length - 1]
+    expect(last).toContain('FromBase64String')
+    expect(last).toContain('|node')
+    expect(last).toContain('}finally{Remove-Item -LiteralPath ([IO.Path]::GetTempPath()')
+    // Integrity gate over the decoded program, mirroring TMUX_STAGE_SHA256.
+    expect(last).toMatch(/SHA256\]::Create\(\)\.ComputeHash/)
+    expect(last).toMatch(/-ne '[0-9a-f]{64}'\)\{exit 9\}/)
   })
+
+  // The temp path must not be guessable between runs — a fixed
+  // `ccc-setup-<sid>.b64` could be squatted by a co-tenant on a shared Windows
+  // host. Mutation to prove this can fail: drop the random component.
+  it('gives the chunked temp file a FRESH random component on every call', () => {
+    const nameOf = (cmd: string): string => cmd.match(/ccc-setup-winsid-([0-9a-f]+)\.b64/)![1]
+    const a = nameOf(getWindowsRemoteSetupCommand('winsid', { includeStatusLine: true }, 'winnonce123'))
+    const b = nameOf(getWindowsRemoteSetupCommand('winsid', { includeStatusLine: true }, 'winnonce123'))
+    expect(a).toHaveLength(16)
+    expect(a).not.toBe(b)
+  })
+
+  // No one-liner case: the Windows shim (embedded unconditionally, statusline
+  // on or off) has outgrown the 7500 fast-path ceiling since the shared
+  // gather, so every real setup ships chunked. The fast path stays as dead-
+  // cheap future-proofing, not a tested contract.
 })
 
 describe('buildWindowsClaudeCommand (item 3 — cmd.exe launch)', () => {

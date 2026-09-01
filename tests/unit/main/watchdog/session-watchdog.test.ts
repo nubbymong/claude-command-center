@@ -11,6 +11,7 @@ vi.mock('../../../../src/main/watchdog/patterns', () => ({
   isInternalRetry: vi.fn(),
   resumedAfterLimit: vi.fn(),
   canSendNow: vi.fn(),
+  hasClaudeInputChrome: vi.fn(),
 }))
 vi.mock('../../../../src/main/watchdog/time-parser', () => ({
   parseResetTime: vi.fn(),
@@ -30,10 +31,11 @@ const isWorking = vi.mocked(patterns.isWorking)
 const isInternalRetry = vi.mocked(patterns.isInternalRetry)
 const resumedAfterLimit = vi.mocked(patterns.resumedAfterLimit)
 const canSendNow = vi.mocked(patterns.canSendNow)
+const hasClaudeInputChrome = vi.mocked(patterns.hasClaudeInputChrome)
 const parseResetTime = vi.mocked(timeParser.parseResetTime)
 const calculateWaitMs = vi.mocked(timeParser.calculateWaitMs)
 
-function makeAdapter() {
+function makeAdapter(opts: { requireClaudeChrome?: boolean } = {}) {
   let currentNow = 0
   let tail = ''
   let alive = true
@@ -43,6 +45,7 @@ function makeAdapter() {
   const adapter: WatchdogAdapter = {
     getTail: () => tail,
     isSessionAlive: () => alive,
+    requireClaudeChrome: opts.requireClaudeChrome,
     send: (text: string) => sent.push(text),
     now: () => currentNow,
     log: (level, msg) => logs.push({ level, msg }),
@@ -69,6 +72,7 @@ beforeEach(() => {
   isInternalRetry.mockReturnValue(false)
   resumedAfterLimit.mockReturnValue(false)
   canSendNow.mockReturnValue({ ok: true })
+  hasClaudeInputChrome.mockReturnValue(true)
   findRateLimitMessage.mockReturnValue(null)
   parseResetTime.mockReturnValue(null)
   calculateWaitMs.mockReturnValue(3_600_000)
@@ -752,5 +756,66 @@ describe('the send gate (#266 BLOCKER-2 / MAJOR-3) — no automated line into a 
     wd.tick()
     expect(t.sent).toHaveLength(0)
     expect(wd.getState().safeguardAttempts).toBe(0)
+  })
+})
+
+// Adversarial pass (2026-08-31): over SSH the pane is drawn by a REMOTE host and
+// may be a shell, pager, REPL, or auth/confirm prompt — none of which canSendNow
+// (a denylist of Claude chrome) refuses. An SSH watchdog (requireClaudeChrome)
+// must require positive Claude input chrome before it types, and must read the
+// gate RAW (the dim companion is remote-controlled). These pin BLOCKER-2 and
+// MAJOR-2 (claude-exited-to-shell).
+describe('SessionWatchdog — SSH send hardening (requireClaudeChrome)', () => {
+  function drivenToDue(t: ReturnType<typeof makeAdapter>, wd: SessionWatchdog) {
+    isRateLimited.mockReturnValue(true)
+    isWorking.mockReturnValue(false)
+    findRateLimitMessage.mockReturnValue('resets 3pm')
+    calculateWaitMs.mockReturnValue(60_000)
+    t.setTail('You have hit your limit, resets 3pm')
+    wd.feed()
+    t.setNow(60_001)
+  }
+
+  it('does NOT send when the remote pane shows no Claude chrome (a bare shell / auth prompt), even though the retry is due', () => {
+    const t = makeAdapter({ requireClaudeChrome: true })
+    const wd = new SessionWatchdog('ssh1', t.adapter)
+    hasClaudeInputChrome.mockReturnValue(false) // e.g. "nicholas@rocky:~$ "
+    drivenToDue(t, wd)
+    wd.tick()
+    expect(t.sent).toHaveLength(0)
+    expect(wd.getState().attempts).toBe(0) // deferred, no attempt consumed
+    expect(t.logs.some((l) => l.msg.includes('not showing Claude'))).toBe(true)
+  })
+
+  it('DOES send when Claude chrome is present and the pane is sendable', () => {
+    const t = makeAdapter({ requireClaudeChrome: true })
+    const wd = new SessionWatchdog('ssh1', t.adapter)
+    hasClaudeInputChrome.mockReturnValue(true)
+    canSendNow.mockReturnValue({ ok: true })
+    drivenToDue(t, wd)
+    wd.tick()
+    expect(t.sent).toEqual(['continue'])
+    // The SSH precondition was actually consulted (not sent via the local path).
+    expect(hasClaudeInputChrome).toHaveBeenCalled()
+  })
+
+  it('reads the gate RAW over SSH — canSendNow is called WITHOUT the remote-controlled non-dim companion', () => {
+    const t = makeAdapter({ requireClaudeChrome: true })
+    const wd = new SessionWatchdog('ssh1', t.adapter)
+    hasClaudeInputChrome.mockReturnValue(true)
+    drivenToDue(t, wd)
+    wd.tick()
+    // Every canSendNow call in the SSH path passes exactly one argument.
+    expect(canSendNow.mock.calls.every((c) => c.length === 1)).toBe(true)
+  })
+
+  it('a local session is unchanged: no chrome precondition, non-dim companion still used', () => {
+    const t = makeAdapter() // requireClaudeChrome undefined
+    const wd = new SessionWatchdog('local1', t.adapter)
+    hasClaudeInputChrome.mockReturnValue(false) // must be IGNORED for local
+    drivenToDue(t, wd)
+    wd.tick()
+    expect(t.sent).toEqual(['continue'])
+    expect(hasClaudeInputChrome).not.toHaveBeenCalled()
   })
 })

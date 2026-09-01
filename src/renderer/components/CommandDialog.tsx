@@ -6,8 +6,8 @@ import { normaliseBrowserInput } from '../../shared/browser-url'
 import { sessionCapabilities, describeTarget, type SessionCapabilities, type CommandTarget } from '../lib/session-capabilities'
 import { swatchesFor, DEFAULT_COMMAND_COLOR } from '../lib/command-swatches'
 import { describeReviewReason, planSecretMove } from '../lib/command-upgrade'
-import { CommandChip, TargetMark } from './command-bar/chips'
-import { clusterOf, effectiveKind } from './command-bar/layout'
+import { CommandChip } from './command-bar/chips'
+import { effectiveKind } from './command-bar/layout'
 import { IconColourPicker } from './command-bar/menus'
 import { CommandIcon } from './command-icons'
 import { ON_BRAND } from './ui/Dialog'
@@ -335,7 +335,15 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
     hasSecretArg: secretOn || undefined,
     webView: webViewEnabled && webViewUrl.trim() ? { enabled: true, url: webViewUrl.trim() } : undefined,
     pinned: initial?.pinned,
+    sectionId,
   }
+
+  // The one decoration the preview may draw beside the chip, and only because
+  // the USER named it. No section chosen -> nothing; a section whose name is
+  // blank -> nothing. Nothing is invented on the user's behalf.
+  const previewSection = sectionId ? visibleSections.find((s) => s.id === sectionId) : undefined
+  const previewSectionName = previewSection?.name?.trim() || undefined
+  const previewSectionColor = previewSection?.color
 
   // ---- the upgrade review banner (D13) ----------------------------------------
   const pendingReasons = (initial?.needsReview ?? []).filter((r) => !fixedReasons.includes(r))
@@ -760,8 +768,23 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                 <div className="rounded-[9px] border px-2.5 py-2 mb-1" style={{ background: 'var(--surface-base)', borderColor: 'var(--border-subtle)' }} data-testid="command-preview" aria-live="polite">
                   <div className="text-[9.5px] font-semibold uppercase tracking-[.09em] mb-1.5" style={{ color: 'var(--text-muted)' }}>Preview · on the bar</div>
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[9.5px] font-semibold uppercase tracking-[.09em] px-0.5" style={{ color: 'var(--text-muted)' }} data-testid="command-preview-band">{scope === 'global' ? 'Global' : 'Session'}</span>
-                    <TargetMark kind={clusterOf(draft, caps)} caps={caps} />
+                    {/* Wordless (owner, harmonise-remote): the GLOBAL/SESSION
+                        wordmark and the automatic cluster STAR are both gone —
+                        the bar itself stopped drawing the band label, so a
+                        preview that still shouted one was showing a bar that no
+                        longer exists. The only decoration left is the section
+                        label, and only when the USER named a section: nothing is
+                        decorated on the user's behalf. Where the text goes is
+                        already said in words on the right of this row. */}
+                    {previewSectionName && (
+                      <span
+                        className="shrink-0 flex items-center h-4 pl-1.5 pr-1 text-[9.5px] font-semibold uppercase tracking-[.08em] rounded border-l"
+                        style={{ color: previewSectionColor || 'var(--text-secondary)', borderColor: 'var(--border-strong)' }}
+                        data-testid="command-preview-section"
+                      >
+                        {previewSectionName}
+                      </span>
+                    )}
                     <CommandChip cmd={draft} caps={caps} onClick={noop} onContextMenu={noop} tabIndex={-1} />
                     <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       {kind === 'page' ? 'opens in' : kind === 'prompt' ? 'sends to' : 'types into'} <span style={{ color: 'var(--text-secondary)' }}>{destination}</span>

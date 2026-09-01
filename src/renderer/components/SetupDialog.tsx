@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { buildLogTheme } from '../lib/terminal-theme'
@@ -8,6 +8,7 @@ import {
   DialogBody,
   DialogFooter,
   DialogButton,
+  DialogCallout,
   DIALOG_INPUT_CLASS,
   DIALOG_INPUT_STYLE,
   DIALOG_LABEL_CLASS,
@@ -22,6 +23,12 @@ interface Props {
 /** The first-run screen replaces the whole app, so its backdrop is the opaque
  *  app base rather than the usual scrim — there is nothing behind it to dim. */
 const OPAQUE_BACKDROP: React.CSSProperties = { background: 'var(--surface-base)' }
+
+/** The one thing the user has to run. Kept as a constant so the notice, the
+ *  copy button and the test all speak about the same string. */
+const INSTALL_COMMAND = 'npm install -g @anthropic-ai/claude-code'
+
+type CliProbe = { installed: boolean; path?: string; probe: string }
 
 /**
  * The setup flow's hero, kept deliberately OUT of the shared `DialogHeader`.
@@ -67,6 +74,11 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   const [loading, setLoading] = useState(true)
   const [ptyExited, setPtyExited] = useState(false)
   const [ptySpawned, setPtySpawned] = useState(false)
+  // Step 2's gate. `null` = not asked yet / asking; the terminal is not opened
+  // and no PTY is spawned until a probe says the CLI is actually there.
+  const [cliProbe, setCliProbe] = useState<CliProbe | null>(null)
+  const [probing, setProbing] = useState(false)
+  const [copied, setCopied] = useState(false)
   const termContainerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -85,9 +97,36 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     })
   }, [])
 
-  // Terminal setup for step 2
+  /**
+   * The step-2 gate (phase 7 item B). Without the CLI there is nothing for the
+   * setup PTY to run: it used to spawn anyway, print "'claude' is not
+   * recognized", and let the user click through to an app in which no session
+   * can ever start. Probe first; the terminal only opens on a hit.
+   *
+   * Fail-closed by design -- an errored probe reports `installed: false` from
+   * main, and Retry re-asks -- so a user who installs the CLI in another window
+   * is one click from unblocked.
+   */
+  const probeCli = useCallback(async () => {
+    setProbing(true)
+    try {
+      const result = await window.electronAPI.setup.probeCli()
+      setCliProbe(result)
+    } catch (err) {
+      setCliProbe({ installed: false, probe: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setProbing(false)
+    }
+  }, [])
+
   useEffect(() => {
-    if (step !== 2) return
+    if (step !== 2 || cliProbe) return
+    void probeCli()
+  }, [step, cliProbe, probeCli])
+
+  // Terminal setup for step 2 — only once the CLI is known to be installed.
+  useEffect(() => {
+    if (step !== 2 || !cliProbe?.installed) return
 
     const term = new Terminal({
       theme: buildLogTheme(),
@@ -153,7 +192,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
       termRef.current = null
       fitAddonRef.current = null
     }
-  }, [step])
+  }, [step, cliProbe?.installed])
 
   const handleBrowseData = async () => {
     const result = await window.electronAPI.setup.selectDataDir()
@@ -168,6 +207,9 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   const handleContinue = async () => {
     await window.electronAPI.setup.setDataDir(dataDir)
     await window.electronAPI.setup.setResourcesDir(resourcesDir)
+    // Re-arm the CLI gate: coming back to step 2 always re-probes, so a user who
+    // went Back to install the CLI is not shown a stale verdict.
+    setCliProbe(null)
     setStep(2)
   }
 
@@ -189,6 +231,96 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     )
   }
 
+  // Step 2, blocked: the Claude CLI is not installed on this machine. This is a
+  // FULL STOP -- no Skip, no Continue, no way past. Everything the app does
+  // needs that binary, so "carry on and hope" only produces a broken app the
+  // user has no way to diagnose. The only ways out are: install it and Retry,
+  // or go Back and quit.
+  if (step === 2 && cliProbe && !cliProbe.installed) {
+    return (
+      <DialogOverlay style={OPAQUE_BACKDROP}>
+        <DialogPanel width="w-[672px]" labelledBy="setup-cli-missing-title">
+          <DialogBody className="space-y-4">
+            <SetupHero
+              titleId="setup-cli-missing-title"
+              mark="!"
+              title="Claude Code is not installed"
+              subtitle="AI Code Conductor runs the Claude Code CLI — it cannot set up, or run a single session, without it."
+            />
+
+            <DialogCallout
+              tone="danger"
+              role="alert"
+              title="Setup cannot continue"
+              testId="setup-cli-missing"
+            >
+              <p>
+                The <code style={{ color: 'var(--text-primary)' }}>claude</code> command was not found on this
+                PC. Every session AI Code Conductor launches is a Claude Code process, so there is nothing to
+                configure until it is installed.
+              </p>
+            </DialogCallout>
+
+            <div>
+              <p className="text-xs mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                Install it with Node.js 18 or newer, in a terminal:
+              </p>
+              <div className="flex gap-2">
+                <code
+                  className="flex-1 px-3 py-2 rounded-lg border font-mono text-xs select-all"
+                  style={{ background: 'var(--surface-stage)', borderColor: 'var(--border-subtle)', color: 'var(--brand)' }}
+                  data-testid="setup-cli-install-command"
+                >
+                  {INSTALL_COMMAND}
+                </code>
+                <DialogButton
+                  variant="secondary"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(INSTALL_COMMAND).then(() => {
+                      setCopied(true)
+                      setTimeout(() => setCopied(false), 1500)
+                    }).catch(() => { /* clipboard blocked — the text is select-all anyway */ })
+                  }}
+                  className="shrink-0"
+                  style={{ height: 'auto', alignSelf: 'stretch' }}
+                  testId="setup-cli-copy"
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </DialogButton>
+              </div>
+              <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
+                Then come back and press Retry. If you installed it in a terminal that was already open, the new{' '}
+                <code>PATH</code> may not have reached this app — restart AI Code Conductor and it will pick it up.
+              </p>
+            </div>
+
+            <p className="text-[11px]" style={{ color: 'var(--text-muted)' }} data-testid="setup-cli-probe-detail">
+              Checked with <code>{cliProbe.probe}</code>.
+            </p>
+          </DialogBody>
+
+          <DialogFooter
+            left={
+              <DialogButton variant="secondary" onClick={() => setStep(1)} testId="setup-cli-back">
+                Back
+              </DialogButton>
+            }
+          >
+            <DialogButton
+              variant="primary"
+              size="md"
+              onClick={() => { void probeCli() }}
+              disabled={probing}
+              testId="setup-cli-retry"
+            >
+              {probing ? 'Checking…' : 'Retry'}
+            </DialogButton>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogOverlay>
+    )
+  }
+
   // Step 2: Claude CLI Setup
   if (step === 2) {
     return (
@@ -206,20 +338,31 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
             />
             <div
               ref={termContainerRef}
-              className="rounded-lg overflow-hidden border"
+              className="rounded-lg overflow-hidden border relative"
               style={{ height: '400px', backgroundColor: 'var(--surface-stage)', borderColor: 'var(--border-subtle)' }}
-            />
+            >
+              {!cliProbe && (
+                <div className="absolute inset-0 flex items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }} data-testid="setup-cli-checking">
+                  Checking for the Claude Code CLI…
+                </div>
+              )}
+            </div>
           </DialogBody>
 
           <DialogFooter
             left={
-              <button
-                onClick={handleSkip}
-                className="text-xs underline transition-colors hover:text-[var(--text-secondary)]"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                Skip for now
-              </button>
+              /* Held back until the CLI is confirmed: while the probe is still
+                 out, Skip would be a way past a gate that has not decided yet. */
+              cliProbe?.installed ? (
+                <button
+                  onClick={handleSkip}
+                  className="text-xs underline transition-colors hover:text-[var(--text-secondary)]"
+                  style={{ color: 'var(--text-muted)' }}
+                  data-testid="setup-cli-skip"
+                >
+                  Skip for now
+                </button>
+              ) : undefined
             }
           >
             {/* The old green / purple fills each carried a `text-base` class
@@ -231,8 +374,9 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
               variant="primary"
               size="md"
               onClick={handleFinish}
-              disabled={!ptySpawned}
+              disabled={!ptySpawned || !cliProbe?.installed}
               style={ptyExited ? { background: 'var(--status-success)' } : undefined}
+              testId="setup-cli-finish"
             >
               {ptyExited ? 'Done' : 'Skip & Continue'}
             </DialogButton>

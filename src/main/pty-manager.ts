@@ -3,8 +3,11 @@ import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
 import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ssh-tmux'
+import { buildTmuxListCommand, parseTmuxLivenessOutput, computeLiveSessionIds, TMUX_LIVENESS_END } from './ssh-liveness'
 import { stripAnsiForSentinel } from './ansi-strip'
 import { randomId } from '../shared/id'
+import { composeRuntimeCommand, parseDockerPostCommand, isContainerRuntime } from '../shared/container-command'
+import type { SshRuntime, DetachedRemoteLiveness } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
@@ -21,7 +24,7 @@ import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
+import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
@@ -33,7 +36,7 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
 import { buildTerminalLaunchLine } from './terminal-launch-line'
-import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
+import { dispatchSSHStatuslineUpdate, cleanupStatusFile, sanitiseRemoteAccountEmail } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
 import { getGateway, isExactBindSourceActive } from './hooks'
@@ -43,12 +46,14 @@ import {
   removeLocalSessionSettings,
   writeLocalSessionMcpConfig,
   removeLocalSessionMcpConfig,
+  removeLocalSessionStatusUrl,
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
 import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
 import { designatedWorktreeDir } from './canvas/canvas-worktree'
 import { forgetSessionForCanvas } from './canvas/canvas-session-link'
+import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
@@ -235,8 +240,10 @@ export function parseTmuxSentinel(data: string, nonce: string): TmuxDetectionCla
  * Returns the sanitized descriptor, or `undefined` when the field is absent,
  * empty, undecodable, or fails the display charset (never throws).
  */
-const SSH_REMOTE_ACCOUNT_MAX = 254
-const SSH_REMOTE_ACCOUNT_DISPLAY_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
+// ADR-009: the max + display charset now live in ONE place
+// (sanitiseRemoteAccountEmail, statusline-watcher.ts) and gate BOTH deliveries
+// of this field -- this setup sentinel and the /status ingest, which used to
+// copy it verbatim and, because the renderer prefers its value, silently won.
 export function parseSetupAccountSentinel(data: string, nonce: string): string | undefined {
   // Same ConPTY-glue hazard as parseTmuxSentinel above (ansi-strip.ts).
   const m = stripAnsiForSentinel(data).match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(?:path|home|none) acct=([A-Za-z0-9+/=]*)(?=[\\r\\n])`))
@@ -247,10 +254,9 @@ export function parseSetupAccountSentinel(data: string, nonce: string): string |
   } catch {
     return undefined
   }
-  if (!decoded || decoded.length > SSH_REMOTE_ACCOUNT_MAX) return undefined
-  // Display-charset gate: an email address only. Anything else (a hostile
+  // Display gate: an email address only, length-capped. Anything else (a hostile
   // host trying to plant markup / control chars in the label) is dropped.
-  return SSH_REMOTE_ACCOUNT_DISPLAY_RE.test(decoded) ? decoded : undefined
+  return sanitiseRemoteAccountEmail(decoded)
 }
 
 /**
@@ -714,6 +720,9 @@ export interface SSHOptions {
   remotePath: string
   password?: string
   postCommand?: string
+  /** Structured container runtime (item e) — injected from the SAVED config by
+   *  spawn-credential-binding, composed into the effective post-command below. */
+  runtime?: SshRuntime
   sudoPassword?: string
   /**
    * #242 tier 5: true when this spawn respawns a session that had
@@ -839,7 +848,30 @@ function clearLastResumeTarget(sessionId: string): void {
 // in this main-process map exactly as long as the target itself (cleared on
 // deliberate close), is never IPC'd, logged or embedded in argv, and is only
 // ever WRITTEN to the End exec's own PTY in answer to a real password prompt.
-const sshTargetBySession = new Map<string, { username: string; host: string; port: number; password?: string }>()
+// Container runtime (#572 one hop deeper): `runtime` rides along so End knows
+// claude is NOT on the connected host but inside `<engine> exec <name>`, and
+// `sudoPassword` so a ROOTFUL container's kill can answer sudo's own prompt.
+// Both obey the same custody rule as `password` above — main-process only,
+// never IPC'd, never logged, never in argv.
+/**
+ * Everything the End exec needs to reach a host and clean up after one session.
+ *
+ * Captured at spawn into `sshTargetBySession` for a LIVE session, and — since
+ * Phase 3.5 — rebuildable from the SAVED config for a DETACHED one, which the
+ * map cannot hold (see endSshRemote's `fallbackTarget`). Both producers are
+ * main-process only: the renderer never supplies a field of this, it only names
+ * a session id and a config id.
+ */
+export interface SshEndTarget {
+  username: string
+  host: string
+  port: number
+  password?: string
+  runtime?: SshRuntime
+  sudoPassword?: string
+}
+
+const sshTargetBySession = new Map<string, SshEndTarget>()
 
 // SSH tmux enhancement (items 1/4): sessions whose launch actually wrapped in a
 // tmux persistence session (`tmuxWrapped` at writeClaudeCmd). The remote for
@@ -885,17 +917,126 @@ const sshTmuxWrappedBySession = new Set<string>()
  *
  * Returns the outcome so callers that care (the live matrix) can await it;
  * the IPC caller stays fire-and-forget.
+ *
+ * CONTAINER RUNTIME (#572, one hop deeper -- live-proven by T20,
+ * ssh-statusline-docker.live.ts, 2026-08-31): when the session's runtime is a
+ * container, claude runs INSIDE `<engine> exec <name> bash`, so the tmux kill
+ * above only drops the exec CLIENT and leaves claude alive in the container
+ * forever (three orphans measured after a single End). The container kill
+ * (buildContainerKillCommand -- scoped to THIS session by the
+ * `settings-<safeSid>` marker in the in-container argv, so a co-tenant session
+ * in the same container is untouched) is prepended to the same remote command,
+ * and it must run BEFORE the tmux kill: the tmux teardown drops the exec client
+ * the kill travels through.
+ *
+ * Which exec variant runs:
+ *
+ *   ssh auth | container | sudo | sudoPw |  variant             | prompts
+ *   ---------+-----------+------+--------+----------------------+---------
+ *   key      | no        |  -   |   -    | BatchMode execFile   | 0
+ *   password | no        |  -   |   -    | PTY                  | 1 (ssh)
+ *   key      | yes       | no   |   -    | BatchMode execFile   | 0
+ *   key      | yes       | yes  |  yes   | PTY                  | 1 (sudo)
+ *   key      | yes       | yes  |  no    | BatchMode (`sudo -n`)| 0
+ *   password | yes       | no   |   -    | PTY                  | 1 (ssh)
+ *   password | yes       | yes  |  yes   | PTY                  | 2 (ssh, sudo)
+ *   password | yes       | yes  |  no    | PTY (`sudo -n`)      | 1 (ssh)
+ *
+ * The PTY variant answers each prompt with the secret whose PROMPT SHAPE it
+ * matches -- never by arrival position (adversarial review, ADR-009).
+ *
+ * Position was the wrong key. It assumed the prompts arrive exactly as the table
+ * predicts, and two ordinary situations break that:
+ *
+ *   - A host configured with a password that now authenticates by KEY (a key was
+ *     added later; the password is still in the keychain). ssh never prompts, so
+ *     the FIRST prompt to arrive is sudo's -- and the positional rule fed it the
+ *     SSH password, sending one credential into a different authority's audit
+ *     log and its retry loop.
+ *   - A key-auth host whose key is refused, degrading to a password prompt. The
+ *     positional rule fed sshd the SUDO password: a credential for the remote
+ *     root path, typed at a prompt that, on a first connect under `accept-new`,
+ *     an on-path attacker can be the one presenting.
+ *
+ * Shape discriminates cleanly because CCC authors one of the two prompts:
+ * `sudo -S -p password:` (buildContainerKillCommand, ssh-shim.ts) forces sudo's
+ * to be exactly `password:` -- lowercase, bare, nothing before it (verified
+ * byte-for-byte on a real host: 9 bytes, no trailing space). ssh's own prompt is
+ * never that: the client prints `<user>@<host>'s password:` for the password
+ * method, and keyboard-interactive/PAM prints a capitalised `Password:`. So a
+ * BARE LOWERCASE `password:` is sudo's and nothing else; anything else that ends
+ * in a password prompt is ssh's.
+ *
+ * A prompt matching neither secret's shape is left UNANSWERED -- End then fails
+ * on its timeout with the cleanup incomplete, which is the correct trade against
+ * writing a credential to the wrong authority. Answering CONSUMES the rolling
+ * tail, so the just-answered prompt (which stays the last non-empty line until
+ * fresh output arrives) cannot re-trigger and burn the other secret.
  */
 const END_REMOTE_TIMEOUT_MS = 12000
 const END_REMOTE_PASSWORD_TIMEOUT_MS = 20000
-const END_REMOTE_PASSWORD_PROMPT_RE = /password[:?]\s*$/i
-export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' | 'no-target'> {
-  const target = sshTargetBySession.get(sessionId)
+/**
+ * sudo's prompt, forced to this exact shape by `-p password:`. Case-SENSITIVE
+ * and anchored at BOTH ends: the capitalised `Password:` that PAM/
+ * keyboard-interactive shows over ssh must NOT match here, and a prefixed
+ * `<user>@<host>'s password:` must not either.
+ */
+const END_REMOTE_SUDO_PROMPT_RE = /^password:\s*$/
+/**
+ * ssh's own password prompt: any line ending in a password prompt that is not
+ * sudo's bare lowercase form. Deliberately broad on this side -- the client's
+ * wording varies with the auth method and the server's PAM config -- because the
+ * one shape it must not swallow is already excluded above.
+ */
+const END_REMOTE_SSH_PROMPT_RE = /password[:?]\s*$/i
+export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<'completed' | 'failed' | 'no-target'> {
+  // Phase 3.5 — the DETACHED case. `sshTargetBySession` is captured at spawn and
+  // dropped by killPty, and "Leave running" IS a killPty: so for every remote in
+  // the resume registry the map is empty, and before this the End IPC resolved
+  // 'no-target' and left the remote tmux + claude alive forever. That is the
+  // #572 orphan class arriving by a different road — a user pressing Remove and
+  // being told nothing while ~350MB of their host stays spoken for.
+  //
+  // The fallback is rebuilt by the CALLER from the saved config + keychain (see
+  // the SSH_END_REMOTE handler), never from the renderer. A live target still
+  // WINS: it carries the session's real runtime and the credentials it actually
+  // authed with, which is strictly better evidence than the config on disk.
+  const target = sshTargetBySession.get(sessionId) ?? fallbackTarget
   if (!target) return Promise.resolve('no-target')
   const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
-  if (target.password) {
-    // Password-auth host: PTY + one answered prompt (see doc above).
-    logInfo(`[ssh] ${sessionId}: ending remote session (password host; kill exec under a dedicated PTY)`)
+  const hasSudoPassword = Boolean(target.sudoPassword)
+  const containerKill = buildContainerKillCommand(sessionId, target.runtime, { hasSudoPassword })
+  // Container kill FIRST, then the host tmux kill + sidecar cleanup.
+  const remoteCommand = containerKill
+    ? `${containerKill}; ${buildRemoteTmuxKillCommand(sessionId)}`
+    : buildRemoteTmuxKillCommand(sessionId)
+  // A rootful container whose sudo password we hold is the ONLY case that adds
+  // a second prompt; `sudo -n` (no saved password) never prompts at all.
+  const needsSudoPrompt = Boolean(containerKill && target.runtime?.sudo && hasSudoPassword)
+  if (containerKill) {
+    logInfo(`[ssh] ${sessionId}: end-remote includes an in-container kill (engine exec; sudo=${Boolean(target.runtime?.sudo)})`)
+  }
+  if (target.password || needsSudoPrompt) {
+    // Prompt-answering host and/or rootful container: PTY + answered prompts.
+    // Each secret carries the SHAPE of the prompt it is allowed to answer (see
+    // the doc comment above); nothing is keyed on arrival position.
+    const pending: Array<{ kind: 'ssh' | 'sudo'; secret: string; accepts: (line: string) => boolean }> = []
+    if (target.password) {
+      pending.push({
+        kind: 'ssh',
+        secret: target.password,
+        // ssh's prompt, and explicitly NOT sudo's bare lowercase `password:`.
+        accepts: (l) => END_REMOTE_SSH_PROMPT_RE.test(l) && !END_REMOTE_SUDO_PROMPT_RE.test(l),
+      })
+    }
+    if (needsSudoPrompt) {
+      pending.push({
+        kind: 'sudo',
+        secret: target.sudoPassword!,
+        accepts: (l) => END_REMOTE_SUDO_PROMPT_RE.test(l),
+      })
+    }
+    logInfo(`[ssh] ${sessionId}: ending remote session (kill exec under a dedicated PTY; ${pending.length} prompt(s) expected: ${pending.map((p) => p.kind).join(',')})`)
     return new Promise((resolve) => {
       let settled = false
       let child: pty.IPty | null = null
@@ -912,13 +1053,16 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
         // Argv build INSIDE the executor's try (adversarial pass): a sync throw
         // here must resolve 'failed' like every other failure, not escape as an
         // exception into a fire-and-forget IPC caller.
-        const args = buildSshExecArgs(target, buildRemoteTmuxKillCommand(sessionId), os.platform(), { batchMode: false })
+        const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
         child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
       } catch (err) {
         done('failed', `spawn: ${(err as Error)?.message ?? err}`)
         return
       }
-      let passwordSent = false
+      // Each secret is REMOVED from `pending` once used, so no amount of
+      // prompt-shaped output can extract more than the prompts this variant
+      // genuinely expects (1 for a password host, 2 when a rootful container's
+      // sudo prompt follows it) and none can be replayed.
       let tail = ''
       child.onData((d) => {
         // Bounded rolling tail; the prompt always sits at the end of it.
@@ -926,18 +1070,29 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
         // `settled` too (adversarial pass): after the timeout killed the child,
         // a final ConPTY flush ending in a prompt-shaped line must not write
         // into the dead PTY from inside the emitter.
-        if (settled || passwordSent) return
+        if (settled || pending.length === 0) return
         const lines = stripAnsiForSentinel(tail).split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0)
         const last = lines[lines.length - 1] ?? ''
-        if (END_REMOTE_PASSWORD_PROMPT_RE.test(last)) {
-          passwordSent = true
+        // Route by SHAPE: the secret answered is the one whose prompt this is,
+        // whatever order the prompts arrive in. A prompt matching no secret's
+        // shape is left alone -- End then times out with cleanup incomplete,
+        // which beats typing a credential at the wrong authority's prompt.
+        const idx = pending.findIndex((p) => p.accepts(last))
+        if (idx >= 0) {
+          const [{ secret, kind }] = pending.splice(idx, 1)
+          logInfo(`[ssh] ${sessionId}: end-remote answering the ${kind} prompt`)
+          // CONSUME the tail. ssh answers its own prompt with a bare newline,
+          // so the very next chunk would otherwise still end on that same
+          // (already-answered) prompt line and immediately burn the sudo secret
+          // into ssh's prompt. The next prompt must be re-proven by FRESH output.
+          tail = ''
           // CR/LF stripped: a saved password cannot legitimately contain one
           // (single-line field), and an embedded newline would otherwise split
           // this into extra PTY lines. try/catch: the exit/data race can leave
           // the PTY closed mid-callback, and a throw here is inside node-pty's
           // emitter — main-process uncaughtException territory.
           try {
-            child!.write(`${target.password!.replace(/[\r\n]/g, '')}\r`)
+            child!.write(`${secret.replace(/[\r\n]/g, '')}\r`)
           } catch {
             /* PTY already closed; onExit/timeout settles the outcome */
           }
@@ -946,11 +1101,11 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
       child.onExit(({ exitCode }) => done(exitCode === 0 ? 'completed' : 'failed', `exit=${exitCode}`))
     })
   }
-  // Key/agent host: the original fire-fast BatchMode exec, now with an
-  // awaitable outcome.
+  // Key/agent host with no prompt to answer (rootless container, or `sudo -n`):
+  // the original fire-fast BatchMode exec, now with an awaitable outcome.
   return new Promise((resolve) => {
     try {
-      const args = buildSshExecArgs(target, buildRemoteTmuxKillCommand(sessionId), os.platform())
+      const args = buildSshExecArgs(target, remoteCommand, os.platform())
       logInfo(`[ssh] ${sessionId}: ending remote session (tmux kill-session + sidecar cleanup over a separate exec)`)
       const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err) => {
         if (err) logInfo(`[ssh] ${sessionId}: end-remote exec exited non-zero (host was already gone, or refused key auth): ${err.message}`)
@@ -967,9 +1122,126 @@ export function endSshRemote(sessionId: string): Promise<'completed' | 'failed' 
   })
 }
 
+const LIVENESS_TIMEOUT_MS = 10000
+const LIVENESS_PASSWORD_TIMEOUT_MS = 15000
+
+/**
+ * SSH Persistent — probe whether the `ccc-<safeSid(id)>` tmux sessions for a set
+ * of DETACHED remotes are still alive on `target`'s host, so the resume flow never
+ * offers (or silently auto-resumes) a dead session.
+ *
+ * The connection target is built by the CALLER from the SAVED config (never the
+ * renderer), exactly like endSshRemote's — host/user/port + the same keychain
+ * password. This mirrors endSshRemote's two shapes: a key/agent host runs a
+ * fire-fast BatchMode `execFile`; a password host runs the same argv under a PTY
+ * and answers the ssh password prompt by SHAPE (END_REMOTE_SSH_PROMPT_RE), reusing
+ * that path's matcher. The remote command (buildTmuxListCommand) is a host-authored
+ * literal with no wire operand; the candidate ids are matched LOCALLY via safeSid.
+ *
+ * Outcome is fail-OPEN: any connection failure, auth failure, or a run with no
+ * completion sentinel returns 'unverified' (NOT "all dead"), so a host that is
+ * merely asleep does not wipe a user's reattachable sessions. Only a run that came
+ * back WITH the sentinel is 'verified', and only then are absent ids treated as
+ * dead. Never throws — every failure path resolves 'unverified'.
+ */
+export function probeTmuxLive(
+  target: { username: string; host: string; port: number; password?: string },
+  sessionIds: string[],
+): Promise<DetachedRemoteLiveness> {
+  const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
+  const remoteCommand = buildTmuxListCommand()
+  const unverified: DetachedRemoteLiveness = { outcome: 'unverified', liveSessionIds: [] }
+  // Turn captured output into a result. `connected` is the sentinel test done by
+  // the caller (execFile) OR here (parseTmuxLivenessOutput.completed).
+  const finish = (raw: string): DetachedRemoteLiveness => {
+    const parsed = parseTmuxLivenessOutput(raw)
+    if (!parsed.completed) return unverified
+    return { outcome: 'verified', liveSessionIds: computeLiveSessionIds(sessionIds, parsed.names) }
+  }
+
+  if (target.password) {
+    // Password host: PTY that answers the single ssh prompt with the saved
+    // password. We resolve as soon as the END sentinel arrives (don't wait for
+    // exit), and on timeout still parse whatever came back (a completed run that
+    // just didn't EOF cleanly is still verified).
+    return new Promise((resolve) => {
+      let settled = false
+      let child: pty.IPty | null = null
+      let out = ''
+      let tail = ''
+      let passwordSent = false
+      const done = (result: DetachedRemoteLiveness, why: string): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(deadline)
+        try { child?.kill() } catch { /* already gone */ }
+        logInfo(`[ssh] liveness probe (password) ${result.outcome} (${why}; ${result.liveSessionIds.length}/${sessionIds.length} live)`)
+        resolve(result)
+      }
+      const deadline = setTimeout(() => done(finish(out), 'timeout'), LIVENESS_PASSWORD_TIMEOUT_MS)
+      try {
+        // Argv build INSIDE the try (adversarial posture, as in endSshRemote): a
+        // sync throw here must resolve 'unverified', never escape the promise.
+        const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
+        child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+      } catch (err) {
+        done(unverified, `spawn: ${(err as Error)?.message ?? err}`)
+        return
+      }
+      child.onData((d) => {
+        out += d
+        tail = (tail + d).slice(-2048)
+        if (settled) return
+        // The command completed the moment the END sentinel appears.
+        if (out.includes(TMUX_LIVENESS_END)) { done(finish(out), 'sentinel'); return }
+        if (passwordSent) return
+        const lines = stripAnsiForSentinel(tail).split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0)
+        const last = lines[lines.length - 1] ?? ''
+        // Only the ssh password prompt is expected here (no sudo — a read-only
+        // `tmux ls` needs no elevation). Answer it once, then consume the tail so
+        // the just-answered prompt cannot re-fire.
+        if (END_REMOTE_SSH_PROMPT_RE.test(last)) {
+          passwordSent = true
+          tail = ''
+          try { child!.write(`${target.password!.replace(/[\r\n]/g, '')}\r`) } catch { /* PTY closed; exit/timeout settles */ }
+        }
+      })
+      child.onExit(() => done(finish(out), 'exit'))
+    })
+  }
+
+  // Key/agent host: fire-fast BatchMode exec, capture stdout, parse.
+  return new Promise((resolve) => {
+    try {
+      const args = buildSshExecArgs(target, remoteCommand, os.platform())
+      execFile(bin, args, { timeout: LIVENESS_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+        const raw = (stdout ?? '').toString()
+        // A non-zero exit is NOT a failure here: `tmux ls` exits non-zero when no
+        // server is running, yet the echo'd END sentinel still prints, so a
+        // completed-but-empty run is correctly 'verified' with zero live ids. Only
+        // the missing sentinel (connection/auth failure) yields 'unverified'.
+        const result = finish(raw)
+        logInfo(`[ssh] liveness probe ${result.outcome} (${err ? `exit err: ${err.message}` : 'ok'}; ${result.liveSessionIds.length}/${sessionIds.length} live)`)
+        resolve(result)
+      }).unref?.()
+    } catch (err) {
+      logError(`[ssh] liveness probe failed to dispatch: ${(err as Error)?.message ?? err}`)
+      resolve(unverified)
+    }
+  })
+}
+
 /** Test-only: seed an End target without a live spawn (unit tests for #572). */
-export function _setSshTargetForTest(sessionId: string, target: { username: string; host: string; port: number; password?: string }): void {
+export function _setSshTargetForTest(
+  sessionId: string,
+  target: { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string }
+): void {
   sshTargetBySession.set(sessionId, target)
+}
+
+/** Test-only: read back what the spawn captured for End (runtime + secrets). */
+export function _getSshTargetForTest(sessionId: string): { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string } | undefined {
+  return sshTargetBySession.get(sessionId)
 }
 
 // === SSH OSC sentinel parser ===
@@ -1231,7 +1503,41 @@ export function spawnPty(
     // ever installed on the remote) AND no wrap even if the host already has
     // tmux (writeClaudeCmd's gate), leaving a bare `claude` that resumes via
     // `--continue` on reconnect.
-    const persistenceEnabled = ssh.detachable !== false
+    // Container runtime (item e): the ladder is FORCED OFF for now. The wrap
+    // would run tmux INSIDE the container (hop 2), and that model is
+    // live-proven broken — claude runs but its statusline ticks never reach
+    // the app through the in-container tmux client (T23,
+    // ssh-statusline-docker.live.ts, 2026-08-31: states reach claude-running,
+    // updates=0). A silently dead statusline is worse than no persistence, so
+    // container sessions run a bare claude that resumes via `--continue`;
+    // persistence for containers is the hop-1 design follow-up (host tmux
+    // wrapping the exec client — the owner's stated model).
+    //
+    // EFFECTIVE runtime, derived once and used by every container-conditional
+    // decision below (adversarial review, ADR-009). A config written before the
+    // structured Runtime field existed says `postCommand: 'sudo docker exec -it
+    // <name> bash'` and carries no `runtime` at all — but claude still ends up
+    // one hop deeper, inside the container, exactly as a structured container
+    // session does. Keying only on `ssh.runtime` classed those sessions as plain
+    // hosts, and they got BOTH container defects the structured path had already
+    // fixed: the tmux ladder wrapped them at hop 2 (live-proven to leave the
+    // statusline dead), and End composed no in-container kill, so their claude
+    // orphaned in the container forever (#572).
+    //
+    // A structured `runtime` always wins; the parse is only consulted when there
+    // is none. This changes the persistence GATE and the End KILL only — the
+    // launch command for a legacy config is untouched, because its postCommand
+    // already enters the container and composeRuntimeCommand below still reads
+    // the structured field alone.
+    const effectiveRuntime = ssh.runtime ?? parseDockerPostCommand(ssh.postCommand ?? '') ?? undefined
+    const isContainerSession = isContainerRuntime(effectiveRuntime)
+    if (!ssh.runtime && isContainerSession) {
+      logInfo(`[ssh] ${sessionId}: legacy docker post-command detected — treating this session as a container runtime (persistence gate + End kill)`)
+    }
+    const persistenceEnabled = ssh.detachable !== false && !isContainerSession
+    if (ssh.detachable !== false && isContainerSession) {
+      logInfo(`[ssh] ${sessionId}: container runtime — tmux persistence skipped (hop-2 wrap breaks statusline delivery; hop-1 design pending)`)
+    }
     // Lift: SSH setup script + per-session settings path live on the
     // ClaudeProvider's SSH-capable surface (see providers/claude/ssh-shim.ts).
     const claudeProvider = getProvider('claude')
@@ -1335,7 +1641,21 @@ export function spawnPty(
     sshNonceBySession.set(sessionId, sshNonce)
     // item 4: remember this session's connection target so a deliberate End can
     // reach the host over a separate exec. Cleared in cleanupSessionResources.
-    sshTargetBySession.set(sessionId, { username: ssh.username, host: ssh.host, port: ssh.port, password: ssh.password })
+    // The structured runtime + sudo password ride along for the SAME reason the
+    // ssh password does (#572, one hop deeper): for a container runtime the End
+    // exec must also reach INSIDE the container to kill this session's claude,
+    // and a rootful container needs sudo's prompt answered to get there.
+    sshTargetBySession.set(sessionId, {
+      username: ssh.username,
+      host: ssh.host,
+      port: ssh.port,
+      password: ssh.password,
+      // The EFFECTIVE runtime (see above): a legacy free-text docker
+      // post-command gets an End container-kill too, instead of orphaning its
+      // claude inside the container.
+      runtime: effectiveRuntime,
+      sudoPassword: ssh.sudoPassword,
+    })
     // #242 round-3 correction (I3): which entry of buildTmuxLaunchCommand's
     // fixed literal table to use, once a 'setup ok'/stage/push sentinel
     // reports a usable tmux -- never a wire-reported path. `null` means "not
@@ -1448,6 +1768,46 @@ export function spawnPty(
       // --continue with no conversation to continue). A destroyed flow emits
       // nothing: it no longer exists as far as the renderer is concerned.
       if (destroyed) return
+      // Watchdog (#235, SSH): arm only once claude is actually RUNNING on the
+      // remote — not at spawn, as local does. At spawn an SSH PTY carries the
+      // handshake: banner/MOTD, password and sudo prompts, a bare remote
+      // shell. Those bytes are remote-controlled, and a rate-limit/safeguard
+      // pattern appearing in them could otherwise trip a retry send() into an
+      // auth prompt. The claude-running latch is the "claude prompt present"
+      // signal this flow already owns; every latch site funnels through here.
+      // Same eligibility as the spawn-time gate (never shell-only/Codex/Ask);
+      // startWatchdog itself tears down any prior entry, so a reconnect
+      // re-latching claude-running re-arms cleanly.
+      // `claudeSent` guard (adversarial pass, 2026-08-31): arm only once the
+      // flow has actually WRITTEN the claude command. detectClaudeUi's strict
+      // box-rule (`╭─{5,}`) matches in ANY phase regardless of claudeSent, so a
+      // hostile/odd remote can print box drawing in its pre-auth MOTD and drive
+      // the flow to claude-running while the pane is still a password prompt.
+      // claudeSent is false until writeClaudeCmd runs (on fresh launch AND
+      // reconnect), so it cleanly separates a genuine claude from a forged
+      // banner. (The send gate's positive-chrome precondition is the real
+      // safety net; this keeps the watchdog from even arming on a forge.)
+      // One source for both the guard and the payload, so a future edit cannot
+      // desync them (the manager's isWatchableClaudeSession is a real second
+      // gate, not fed a hard-coded false — adversarial pass MINOR).
+      const sshShellOnly = options?.shellOnly === true
+      const sshAsk = options?.isAsk === true
+      if (s === 'claude-running' && currentFlowState !== 'claude-running' && claudeSent
+          && !sshShellOnly && (options?.provider ?? 'claude') === 'claude' && !sshAsk) {
+        // LIVE geometry, not the spawn options: the handshake→claude-running
+        // gap can be long (tmux staging/push), noteResize no-ops before an
+        // entry exists, and the headless pane must wrap exactly like the real
+        // one for the line-anchored detectors to read true.
+        const livePty = ptySessions.get(sessionId)?.ptyProcess
+        getWatchdogManager()?.startWatchdog(sessionId, {
+          provider: options?.provider,
+          ssh: true,
+          shellOnly: sshShellOnly,
+          ask: sshAsk,
+          cols: livePty?.cols ?? options?.cols,
+          rows: livePty?.rows ?? options?.rows,
+        })
+      }
       currentFlowState = s
       currentFlowInfo = info
       logInfo(`[ssh] ${sessionId}: flow → ${s}${info ? ` (${info})` : ''}`)
@@ -1495,7 +1855,7 @@ export function spawnPty(
             return
           }
           logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms → advancing from connecting`)
-          if (ssh.postCommand) setFlowState('awaiting-postcommand', 'idle-fallback')
+          if (postCommand) setFlowState('awaiting-postcommand', 'idle-fallback')
           else if (options?.shellOnly) setFlowState('shell-only', 'idle-fallback')
           else setFlowState('awaiting-claude', 'host (fallback)')
           return
@@ -1668,7 +2028,27 @@ export function spawnPty(
       ? buildWindowsClaudeCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
       : [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
-    const postCommand = ssh.postCommand
+    // Item e (structured Runtime): the app composes the container command from
+    // the saved runtime block; a free-text postCommand (Advanced) is arbitrary
+    // PREP and runs first in the same stage. The flow machinery below is
+    // untouched — it keys on postCommand presence exactly as before.
+    let runtimeCmd: string | undefined
+    // Sticky: a container runtime the validator REJECTED must never degrade into
+    // a host launch. Failing the flow alone was not enough — the failed overlay
+    // offers "Retry Launch", which calls launchClaude(), and launchClaude has no
+    // 'failed' guard, so it would have run host setup + claude on the BARE HOST.
+    // The user asked for a container; silently handing them the host instead is
+    // the same silent-fallback class the tmux ladder refuses elsewhere in this
+    // file. Latch it and refuse every launch path for the life of the session.
+    let runtimeInvalid = false
+    try {
+      runtimeCmd = composeRuntimeCommand(ssh.runtime)
+    } catch (err) {
+      logError(`[ssh] ${sessionId}: container runtime invalid: ${(err as Error)?.message ?? err}`)
+      runtimeInvalid = true
+      setFlowState('failed', 'container runtime invalid')
+    }
+    const postCommand = [ssh.postCommand, runtimeCmd].filter(Boolean).join(' && ') || undefined
     const sudoPassword = ssh.sudoPassword
 
     // Tight password-prompt match: `password:` or `password?` at the trimmed
@@ -2376,10 +2756,19 @@ export function spawnPty(
         //     the user only wanted to enter the container.
         // Users who want claude on the bare HOST can use "Launch
         // Claude on host" instead, which DOES run host setup.
+        if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
         if (currentFlowState !== 'awaiting-postcommand') return
         writePostCommand()
       },
       launchClaude: () => {
+        // Item e: an unusable container runtime is terminal for this session.
+        // Without this, the failed overlay's "Retry Launch" button walks the
+        // host ladder (inInnerShell false, setupSent false -> writeHostSetupCmd)
+        // and starts claude OUTSIDE the container the config asked for. Re-emit
+        // so the overlay keeps saying why instead of appearing inert; the user's
+        // route out is Skip (an explicit choice to drive the raw shell) or
+        // fixing the config.
+        if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
         // #242 round-2 MAJOR fix: tier-3 staging can be in flight for up to
         // STAGE_TIMEOUT_MS (20s) while claudeSent is still false, a window
         // that didn't exist pre-#242 (claudeSent used to flip true in the
@@ -2482,6 +2871,15 @@ export function spawnPty(
       const data = extractSshOscSentinels(sessionId, rawData)
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
+      // Watchdog (#235, SSH): feed the SAME terminal bytes the renderer gets
+      // into the headless pane. No-op until this session arms its watchdog (at
+      // the claude-running latch, above) and when the feature is off. This is
+      // pure observation — like the renderer send it belongs ABOVE the
+      // flow-destroyed guard below — and is what makes the SSH watchdog live;
+      // the b515cbce claim that "feedData already flows for every session" was
+      // true only of the local branch, so silence detection and every banner
+      // detector read an empty pane over SSH until this line.
+      getWatchdogManager()?.feedData(sessionId, data)
 
       // Follow-up adversarial pass (lifecycle MAJOR): once the flow is
       // destroyed, terminal bytes still belong on the renderer's data channel
@@ -3505,11 +3903,17 @@ export function spawnPty(
 
   ptySessions.set(sessionId, { ptyProcess, sessionId })
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
-  // Watchdog (#235): local, interactive Claude sessions only — never SSH,
-  // Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
-  // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op
-  // when the feature is off.
-  if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
+  // Watchdog (#235): any interactive Claude session — LOCAL or SSH (owner
+  // 2026-08-31: it observes the PTY, which an SSH session has too; the headless
+  // xterm renders the escapes and the retry send() reaches the remote claude).
+  // LOCAL arms here at spawn (the PTY runs claude directly). SSH arms LATER, at
+  // the claude-running latch inside the SSH flow (see setFlowState) — at spawn
+  // its PTY carries the handshake (auth prompts, remote-controlled MOTD), which
+  // the watchdog must never be in a position to type into.
+  // Never Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
+  // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op when
+  // the feature is off (default). feedData already flows for every session.
+  if (!options?.shellOnly && !options?.ssh && (options?.provider ?? 'claude') === 'claude') {
     getWatchdogManager()?.startWatchdog(sessionId, {
       provider: options?.provider,
       ssh: false,
@@ -3671,6 +4075,9 @@ export function spawnPty(
       } catch { /* gateway may have already stopped during shutdown */ }
       removeLocalSessionSettings(sessionId)
       removeLocalSessionMcpConfig(sessionId)
+      // ADR-009 token custody: the status-URL sidecar carries this session's MCP
+      // token, so it is swept on the SAME teardown as the other two.
+      removeLocalSessionStatusUrl(sessionId)
       // P6: clear opt-in registration and per-session usage record.
       unregisterCodexReviewSession(sessionId)
       disposeCodexReviewUsage(sessionId)
@@ -3948,6 +4355,29 @@ function cleanupSessionResources(sessionId: string): void {
   // it re-registers), so a session that restarts into a home-rooted, SSH,
   // shell-only or Codex state inherits nothing.
   revokeCanvasUatRoots(sessionId)
+  // SECURITY (adversarial review, 2026-09-01 — HIGH): drop this session's
+  // canvas markers here, for the same per-spawn isolation invariant as the
+  // watchdog below.
+  //
+  // `forgetCanvasMarkers` was wired ONLY to the `pty:kill` IPC listener
+  // (pty-handlers.ts). That listener fires when the RENDERER closes a tab — it
+  // does not fire for the two paths that respawn a session UNDER THE SAME ID:
+  // Restart, and switch-account. So a marker queued against the old
+  // conversation ("Approved v7 on the canvas · canvas_version_verdict
+  // recorded") survived the teardown with `turnOpen` still true, and the NEW
+  // process's first `SessionStart` hook — an event this queue treats as a
+  // boundary and flushes on — wrote it straight into the fresh conversation.
+  // The agent is then told a verdict was filed on work it has never seen, in a
+  // line whose whole purpose is to trigger the canvas skill. A natural PTY exit
+  // reached neither the listener nor any other clear, so the marker simply sat
+  // there until something flushed it.
+  //
+  // Here it is covered by BOTH callers (killPty and the natural-exit block), and
+  // spawnPty calls killPty → here before a respawn, so the new session inherits
+  // nothing. Idempotent: a no-op for a session with no queue. The module holds
+  // no static import of pty-manager (its PTY end is injected at boot from
+  // index.ts), so importing it here introduces no cycle.
+  forgetCanvasMarkers(sessionId)
   // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
   // here too, for the identical per-spawn isolation invariant. This runs from
   // BOTH killPty (restart / deliberate close) and the natural-exit cleanup, and

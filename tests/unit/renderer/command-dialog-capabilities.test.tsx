@@ -372,33 +372,52 @@ describe('j. the preview draws the REAL chip, with its mark and band', () => {
     expect(chip().querySelector(`path[d="${PIN_PATH}"]`)).toBeNull()
   })
 
-  it('the band label follows the scope', () => {
+  // The bar retired its GLOBAL/SESSION wordmarks (05394840). A preview that
+  // still drew one was previewing a bar that no longer exists -- and it drew
+  // the cluster mark (the agent one is a star) with no user asking for it.
+  it('is WORDLESS: no band label, whatever the scope', () => {
     render({ capabilities: local, configId: 'cfg' })
     pick('prompt')
-    expect(byTest('command-preview-band')!.textContent).toBe('Session')
+    expect(byTest('command-preview-band')).toBeNull()
+    expect(byTest('command-preview')!.textContent).not.toContain('Session')
     click('command-scope-global')
-    expect(byTest('command-preview-band')!.textContent).toBe('Global')
+    expect(byTest('command-preview-band')).toBeNull()
+    expect(byTest('command-preview')!.textContent).not.toContain('Global')
   })
 
-  it('the target mark sits before the chip: partner for a shell line, agent for a prompt, page for a page', () => {
+  it('draws NO automatic cluster mark beside the chip, for any kind', () => {
     render({ capabilities: local, configId: 'cfg' })
     pick('shell')
-    const partner = within('command-preview', '[data-testid="command-cluster-partner"]')!
-    expect(partner).not.toBeNull()
-    expect(partner.compareDocumentPosition(chip()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    pick('prompt')
     expect(within('command-preview', '[data-testid="command-cluster-partner"]')).toBeNull()
-    expect(within('command-preview', '[data-testid="command-cluster-agent"]')).not.toBeNull()
+    pick('prompt')
+    expect(within('command-preview', '[data-testid="command-cluster-agent"]')).toBeNull()
     pick('page')
-    expect(within('command-preview', '[data-testid="command-cluster-page"]')).not.toBeNull()
+    expect(within('command-preview', '[data-testid="command-cluster-page"]')).toBeNull()
+    // The destination is still SAID, in words, so nothing is lost by dropping
+    // the glyph.
+    pick('prompt')
+    expect(byTest('command-preview')!.textContent).toContain('sends to')
   })
 
-  it('on SSH the partner mark wears the "this PC" badge', () => {
+  it('on SSH the preview carries no floating machine badge either', () => {
     render({ capabilities: sshClaude, configId: 'cfg' })
     pick('shell')
-    const badge = within('command-preview', '[data-testid="command-cluster-partner"] [data-testid="command-machine-badge"]')
-    expect(badge).not.toBeNull()
-    expect(badge!.textContent).toBe('this PC')
+    expect(within('command-preview', '[data-testid="command-machine-badge"]')).toBeNull()
+  })
+
+  it('shows a section label ONLY when the user named one', () => {
+    render({ capabilities: local, configId: 'cfg' })
+    pick('prompt')
+    // No section chosen: nothing is decorated on the user's behalf.
+    expect(byTest('command-preview-section')).toBeNull()
+    click('command-scope-global')
+    act(() => { choose(byTest<HTMLSelectElement>('command-section')!,'__new__') })
+    act(() => { type(byTest<HTMLInputElement>('command-new-section-name')!, 'Deploy') })
+    act(() => { byTest('command-new-section-create')!.click() })
+    expect(byTest('command-preview-section')!.textContent).toBe('Deploy')
+    // Dropping back to "No section" takes the label away again.
+    act(() => { choose(byTest<HTMLSelectElement>('command-section')!,'') })
+    expect(byTest('command-preview-section')).toBeNull()
   })
 })
 

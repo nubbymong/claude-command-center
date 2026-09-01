@@ -450,6 +450,38 @@ input[type="range"] {
   .working-pill { animation: none; }
 }
 
+/* Remote Resumable card (SSH Persistent Phase 3). The base fill is set inline
+   per card (`--rr-card-bg`) because a gone card carries a danger tint the
+   others do not — and an inline background beats any hover class, so the hover
+   has to lift the card's OWN base rather than name a fixed colour. Everything
+   else about the card is the mockup's: dim surface, subtle border, an identity
+   inset bar at 30% supplied inline. */
+.rr-card {
+  background: var(--rr-card-bg, var(--surface-base));
+  border: 1px solid var(--border-subtle);
+  transition: background 120ms, border-color 120ms;
+}
+.rr-card:hover {
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--rr-card-bg, var(--surface-base)));
+  border-color: var(--border-strong);
+}
+
+/* Remote Resumable host-check dot (SSH Persistent Phase 3, owner call on the
+   sidebar-replica canvas): while a tier-2 SSH verify is IN FLIGHT for a card,
+   the card keeps its LAST-KNOWN state pill and the only hint is this 5px dot
+   appended to the host line. Deliberately not a third pill and not a spinner —
+   a check is not a state, and a card that flickered "Checking" every focus
+   event read as broken. Slow (2.4s) so it reads as breathing, not as an alert.
+   Reduced motion: the dot just holds, still present, still meaning "checking". */
+.rr-host-check { animation: rr-host-check-beat 2.4s ease-in-out infinite; }
+@keyframes rr-host-check-beat {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.25; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rr-host-check { animation: none; }
+}
+
 /* Presence-chip fade (RC8): the moon and working pill enter/exit softly
    instead of popping. The FadeSlot wrapper fades opacity AND collapses width
    (overflow hidden) so neighbouring badges slide rather than jump; the 48px
@@ -1271,28 +1303,6 @@ input[type="range"] {
   border: 1px solid color-mix(in srgb, var(--status-danger) 50%, transparent);
 }
 .cqp-dismiss-confirm:hover:not(:disabled) { background: color-mix(in srgb, var(--status-danger) 25%, transparent); }
-
-/* ── SSH host pill (#570) ─────────────────────────────────────────────────
-   The remote host, docked bottom-left of the main terminal pane, riding just
-   above the statusline (canvas v4, approved). Quiet chip family colours; a
-   4px seat of air so the pill shape reads. pointer-events none is load-bearing:
-   the pill sits over the terminal's bottom-left corner and must never eat a
-   click or a selection drag. */
-.ssh-host-pill {
-  position: absolute;
-  left: 10px;
-  bottom: 4px;
-  z-index: 10;
-  padding: 2px 10px 3px;
-  border-radius: 99px;
-  font-size: 10.5px;
-  font-weight: 500;
-  white-space: nowrap;
-  pointer-events: none;
-  background: var(--surface-overlay);
-  border: 1px solid var(--border-strong);
-  color: var(--text-secondary);
-}
 
 /* ── Browser start page masthead ──────────────────────────────────────────
    The Agent Canvas front-page recipe (`.cfp-masthead`) on the browser's blank

@@ -85,7 +85,7 @@ test.describe('#480 durable session-conversation tracking (packaged app)', () =>
       await page.locator('[data-testid="new-menu-config"]').click()
       await expect(page.locator('text=New saved config')).toBeVisible({ timeout: 10000 })
       await page.locator('[role="radiogroup"][aria-label="Provider"] label:has(input[value="terminal"])').click()
-      await page.locator('[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="local"])').click()
+      await page.locator('[role="radiogroup"][aria-label="Connection"] label:has(input[value="local"])').click()
       await page.locator('input[placeholder*="home folder"]').first().fill(workDir)
       await page.locator('input[placeholder="e.g. App Dev"]').fill(SESSION_NAME)
       await page.locator('button:has-text("Create config")').click()

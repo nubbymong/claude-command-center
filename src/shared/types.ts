@@ -34,6 +34,31 @@ export interface GlobalVisionConfig {
 
 // ── SSH ──
 
+/**
+ * Structured runtime (config-modal redesign, harmonise-remote item e/i): where
+ * claude actually RUNS after the connection is up. 'host' = directly on the
+ * connected machine (default). 'container' = the app composes the exec command
+ * itself (`[sudo] <engine> exec -it [-w dir] <name> bash` or `start -ai`) —
+ * replacing the free-text post-command for the docker case, so the container
+ * hop is data the app understands (badges, delivery reachability, End-path
+ * in-container kill) rather than an opaque string. Free-text postCommand is
+ * still honoured forever (prep under Advanced); when both are set the prep
+ * runs first, then the runtime exec.
+ */
+export interface SshRuntime {
+  type: 'host' | 'container'
+  /** Container engine. Default 'docker'; RHEL-family hosts ship podman. */
+  engine?: 'docker' | 'podman'
+  /** Container name (required when type==='container'). */
+  container?: string
+  /** 'exec' = exec into a RUNNING container (default); 'start' = start a stopped one attached. */
+  mode?: 'exec' | 'start'
+  /** Prefix the engine command with sudo (the sudo password field belongs to this). */
+  sudo?: boolean
+  /** Optional working directory INSIDE the container (engine -w flag). */
+  containerDir?: string
+}
+
 export interface SshConfig {
   host: string
   port: number
@@ -43,6 +68,10 @@ export interface SshConfig {
   postCommand?: string
   hasSudoPassword?: boolean
   dockerContainer?: string
+  /** Structured runtime; when set with type 'container' the app composes the
+   *  container command itself. Legacy `dockerContainer` (badge-only hint) is
+   *  superseded by `runtime.container` but still read as a fallback. */
+  runtime?: SshRuntime
   /**
    * SSH tmux enhancement (item 3) — the remote OS. 'auto' (default) and 'unix'
    * both use the POSIX setup path unchanged (no regression). 'windows' uses a
@@ -193,10 +222,82 @@ export interface SavedSession {
   disableAutoMemory?: boolean
 }
 
+/**
+ * SSH Persistent — "Resume a Running Session" (Phase 1).
+ *
+ * A remote tmux session the user chose to LEAVE RUNNING (detach, reattach
+ * later) rather than end. Keyed by the CCC session id, so a later manual launch
+ * of the same config can reuse that id and land back on the exact tmux target
+ * (`ccc-<sessionId>`) the has-session→attach branch reattaches to.
+ *
+ * Persisted inside SessionState so it survives an app restart. DESCRIPTOR ONLY —
+ * `accountEmail` is the remote-reported oauth account (already charset/length
+ * capped host-side), never a credential.
+ */
+export interface DetachedRemote {
+  /** The CCC session id the detached remote was running under. Reused verbatim
+   *  on resume so the tmux target `ccc-<sessionId>` matches again. */
+  sessionId: string
+  /** The saved config this remote was launched from (`config.id`). Primary key
+   *  for the manual-launch match; host/user/remotePath is the fallback. */
+  configId?: string
+  host: string
+  username: string
+  remotePath: string
+  /** Multiplexer holding the session alive. Always 'tmux' today (psmux is the
+   *  Windows-only path and is NOT wired yet — the field is recorded for it). */
+  mux: 'tmux' | 'psmux'
+  /** Remote Claude account (oauthAccount.emailAddress), when known. Descriptor. */
+  accountEmail?: string
+  /** Display label at detach time (customName || config label). */
+  label: string
+  /** Epoch ms the remote was left running, for the "left running Xm ago" copy. */
+  detachedAt: number
+}
+
 export interface SessionState {
   sessions: SavedSession[]
   activeSessionId: string | null
   savedAt: number
+  /** SSH Persistent (Phase 1): remotes left running for a later reattach. Absent
+   *  on files written before this feature; round-trips untouched through the
+   *  main-side save/load (only `sessions` is migrated). */
+  detachedRemotes?: DetachedRemote[]
+}
+
+/**
+ * SSH Persistent — liveness result for a set of candidate detached remotes.
+ *
+ * Returned by the `ssh:checkDetachedLive` IPC after a main-side `tmux ls` over a
+ * separate ssh exec built from the SAVED config. `outcome`:
+ *   - 'verified'   — the host answered; `liveSessionIds` are the candidates whose
+ *                    `ccc-<sessionId>` tmux target is actually alive. Any queried
+ *                    id NOT in the list is confirmed DEAD.
+ *   - 'unverified' — the host could not be reached / auth failed / no completion
+ *                    sentinel came back. Distinct from "dead": the caller FAILS
+ *                    OPEN (still offers, marked "couldn't verify"), because a
+ *                    reattach self-heals if the remote really is gone.
+ */
+export interface DetachedRemoteLiveness {
+  outcome: 'verified' | 'unverified'
+  liveSessionIds: string[]
+}
+
+/**
+ * SSH Persistent — TIER 1 reachability result for one HOST (`ssh:pingHost`).
+ *
+ * `reachable` means the box answered an ICMP echo, or accepted a TCP connection
+ * on the SSH port when ICMP was filtered. It says NOTHING about any tmux session
+ * running on it — only DetachedRemoteLiveness can, and only a tier-2 SSH verify
+ * produces one. Consequently this result is used demote-only: consecutive
+ * failures mark a host's entries unreachable, a success never marks one live.
+ * `via` records which tier answered; `reason` is a short machine-readable why.
+ */
+export interface HostPingResult {
+  host: string
+  reachable: boolean
+  via: 'icmp' | 'tcp' | 'none'
+  reason?: string
 }
 
 // ── Statusline ──

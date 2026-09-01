@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, SSHOptions } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, probeTmuxLive, SSHOptions, SshEndTarget } from '../pty-manager'
+import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
@@ -8,11 +9,13 @@ import { isValidLegacyVersion } from '../../shared/legacy-version'
 import { loadCredential } from '../credential-store'
 import { readConfig } from '../config-manager'
 import { collectCommandSecrets } from '../command-secrets'
-import { bindSshToSavedConfig, argSecretAllowed } from '../spawn-credential-binding'
+import { bindSshToSavedConfig, argSecretAllowed, findSavedConfig } from '../spawn-credential-binding'
 import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
+import type { SshRuntime, DetachedRemoteLiveness, HostPingResult } from '../../shared/types'
+import { pingHost } from '../host-ping'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
 import {
   sanitizeRestoredSpawnOptions,
@@ -41,6 +44,11 @@ interface RendererSSHOptions {
   /** SSH tmux enhancement (item 3): remote OS. 'windows' selects the Windows
    *  setup path; 'auto'/'unix'/undefined use POSIX unchanged. */
   remoteOs?: 'auto' | 'unix' | 'windows'
+  /** Structured container runtime (item e). Declared so the type matches what
+   *  actually crosses the seam — the parse result is discarded, so this field
+   *  reaches spawnPty from the raw request on the no-configId branch. Shape and
+   *  bounds are enforced by `sshSchema` below. */
+  runtime?: SshRuntime
 }
 
 // host/username are fused into `${username}@${host}` and handed to ssh as
@@ -66,6 +74,30 @@ const sshSchema = z.object({
   reconnect: z.boolean().optional(),
   detachable: z.boolean().optional(),
   remoteOs: z.enum(['auto', 'unix', 'windows']).optional(),
+  // Structured container runtime. Declared here because the parse RESULT is
+  // discarded (see the spawn handler) -- `options` itself is forwarded to
+  // spawnPty, so an undeclared field is not stripped, it is waved through. On
+  // the no-configId branch this block therefore reached the container-command
+  // composer and the End kill-command builder straight off the IPC request, with
+  // its TypeScript types unenforced: a numeric or array `container` made
+  // `(runtime.container ?? '').trim()` throw a TypeError, and in endSshRemote
+  // that throw sat OUTSIDE the executor's try -- skipping the whole remote
+  // cleanup, container and tmux and sidecars alike (adversarial review, ADR-009).
+  //
+  // Types and bounds only. The container NAME/DIR charsets stay with
+  // composeRuntimeCommand so a bad value fails into the session's
+  // `runtimeInvalid` latch (which explains itself in the UI) rather than as a
+  // raw IPC rejection. `type` IS enumerated here: an unrecognised value must
+  // never reach a code path that could read it as "not a container" and launch
+  // on the bare host.
+  runtime: z.object({
+    type: z.enum(['host', 'container']),
+    engine: z.enum(['docker', 'podman']).optional(),
+    container: z.string().max(255).optional(),
+    mode: z.enum(['exec', 'start']).optional(),
+    sudo: z.boolean().optional(),
+    containerDir: z.string().max(4096).optional(),
+  }).optional(),
 }).optional()
 
 export const spawnOptionsSchema = z.object({
@@ -246,6 +278,155 @@ export const spawnOptionsSchema = z.object({
 // boundary contract is unit-tested against the real schema.
 export const sessionIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/, 'session id has invalid characters')
 
+// SSH Persistent (resume liveness) input. `configId` matches the credential-key
+// charset (the config's own id); `sessionIds` are bounded and each is a CCC id.
+// The ids are never interpolated into the remote command — safeSid sanitizes them
+// for LOCAL name matching — so this schema is a bound/DoS guard, and the
+// argv-injection defence lives at buildSshExecArgs (host/user from the saved
+// config only).
+// A saved config's own id (CSPRNG hex from shared/id.ts) and the credential-key
+// charset. One definition, shared by every handler that turns a renderer-named
+// configId into a keychain read + an ssh exec, so they cannot drift apart.
+const configIdSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9]+$/, 'configId has invalid characters')
+
+const checkDetachedLiveSchema = z.object({
+  configId: configIdSchema,
+  sessionIds: z.array(sessionIdSchema).max(64),
+})
+
+// SSH_END_REMOTE input, in two shapes (Phase 3.5).
+//
+//   'sess-abc'                            — a LIVE session: main already holds
+//                                           its target from spawn.
+//   { sessionId, configId? }              — a DETACHED remote from the resume
+//                                           registry: no live target exists, so
+//                                           the handler rebuilds one from the
+//                                           SAVED config named by `configId`.
+//
+// The bare-string form is kept because the End-vs-Leave dialog still sends it;
+// a union means one channel, one place the target is resolved, and one surface
+// to audit — rather than two handlers that could disagree about what may be
+// killed. Neither id ever reaches the remote command: the tmux target is
+// derived LOCALLY as `ccc-<safeSid(sessionId)>` (buildRemoteTmuxKillCommand),
+// and host/user/port come only from the saved config.
+const endRemoteSchema = z.union([
+  sessionIdSchema,
+  z.object({ sessionId: sessionIdSchema, configId: configIdSchema.optional() }),
+])
+
+// SSH Persistent (resume liveness, tier 1) input. A bound/DoS guard only — the
+// authoritative host validation is isValidPingHost inside host-ping.ts (charset,
+// leading-dash, length), which runs before any spawn and is what the unit tests
+// assert against. Both layers reject; neither sanitises-and-continues.
+const pingHostSchema = z.object({ host: z.string().min(1).max(255) })
+
+/**
+ * The hosts `ssh:pingHost` will probe: the host of some SAVED SSH config, and
+ * nothing else (adversarial review, 2026-09-01 — MAJOR/DoS).
+ *
+ * The charset gate (isValidPingHost) proves a host is safe to put in an argv.
+ * It does not answer whether this app has any business dialling it, and the
+ * pre-fix handler took the host straight off the renderer — so a compromised
+ * renderer had an unauthenticated outbound probe primitive: ICMP echo plus a
+ * TCP:22 knock at any address that passes a charset, i.e. an internal port
+ * scanner and a beacon, driven from the user's machine and their network
+ * position.
+ *
+ * The trust rule is not new; it is the one both SSH siblings on this channel
+ * already apply. `ssh:endRemote` and `ssh:checkDetachedLive` resolve host, user
+ * and port ONLY from `readConfig('configs')` — the renderer names an id and
+ * never a destination. Ping is keyed by HOST rather than by config id (several
+ * configs share one box and one echo serves them all), so it cannot take an id;
+ * matching the SET of saved hosts is the same rule expressed for that key.
+ *
+ * Case-insensitive, because DNS is and the same box may be saved as `Pi.local`
+ * in one config and `pi.local` in another. Fails CLOSED on a missing or
+ * malformed configs file: an empty allowlist means nothing is probed, which
+ * costs a pill and never a packet.
+ */
+function savedSshPingHosts(): Set<string> {
+  const out = new Set<string>()
+  const configs = readConfig('configs')
+  if (!Array.isArray(configs)) return out
+  for (const entry of configs) {
+    if (!entry || typeof entry !== 'object') continue
+    const cfg = entry as { sessionType?: unknown; sshConfig?: { host?: unknown } | null }
+    if (cfg.sessionType !== 'ssh') continue
+    const host = cfg.sshConfig?.host
+    if (typeof host === 'string' && host.length > 0) out.add(host.toLowerCase())
+  }
+  return out
+}
+
+/**
+ * Concurrency ceiling for tier-1 pings, counted across every caller.
+ *
+ * `pingHost` spawns `ping.exe`/`ping` — a real process, per call — and the
+ * pre-fix handler had no bound at all: a renderer loop was thousands of live
+ * subprocesses, which is a local DoS on the user's own machine well before it
+ * is anything else. Eight is comfortably above the legitimate load (the
+ * scheduler pings one DISTINCT HOST per 90s tick; a fleet of eight boxes left
+ * running is already an unusual registry) and far below the level at which
+ * process creation hurts.
+ */
+const PING_MAX_IN_FLIGHT = 8
+
+/**
+ * In-flight probes, keyed by lowercased host — the dedupe half of the bound.
+ *
+ * Two callers asking about the same box get the SAME probe rather than two
+ * subprocesses, which is both cheaper and more correct (they cannot disagree
+ * about one host at one instant). Only when eight DISTINCT hosts are already in
+ * flight does the ninth get refused, so the cap can never be reached by
+ * hammering one host.
+ */
+const pingInFlightByHost = new Map<string, Promise<HostPingResult>>()
+
+/** Test seam: the module-level in-flight map outlives a single handler call. */
+export function _resetPingInFlightForTest(): void {
+  pingInFlightByHost.clear()
+}
+
+/**
+ * Rebuild an End-remote target from the SAVED config on disk (Phase 3.5).
+ *
+ * The one place a DETACHED remote's connection details come from, and every
+ * field is read from main's own state: host/user/port from the config file,
+ * password and sudo password from that config's OWN keychain slots (the same
+ * `<id>` / `<id>_sudo` keys pty:spawn uses), the container runtime from the
+ * saved SSH block. The caller passes an id; it does not pass a host, a
+ * credential, or a command — the same trust rule as bindSshToSavedConfig, and
+ * the same shape SSH_CHECK_DETACHED_LIVE already relies on.
+ *
+ * `undefined` for an unknown id, a non-SSH config, or a config with no SSH
+ * block: End then has no target and no-ops, which is the correct fail-closed
+ * answer — there is no host to reach, so there is nothing to guess at.
+ *
+ * The runtime rides along deliberately. Without it a detached CONTAINER
+ * session's kill would drop the tmux client and leave claude running inside the
+ * container forever — #572's one-hop-deeper orphan, reached by the detached
+ * road instead of the live one.
+ */
+function endTargetFromSavedConfig(configId: string): SshEndTarget | undefined {
+  const saved = findSavedConfig(readConfig('configs'), configId)
+  if (!saved || saved.sessionType !== 'ssh' || !saved.sshConfig) return undefined
+  const s = saved.sshConfig
+  // host/user/port and the credential(s) are read for the SAME id here. What
+  // keeps the two in agreement is config-handlers' config:save guard: a renderer
+  // that rewrites this config's host/username/port has its `<id>` / `<id>_sudo`
+  // credentials dropped in that same save, so after a malicious rewrite these
+  // loadCredential calls return null and there is nothing to misdirect. No guard
+  // is needed HERE (the secret is simply gone); do not weaken that upstream drop.
+  return {
+    username: s.username,
+    host: s.host,
+    port: Number(s.port),
+    password: loadCredential(configId) ?? undefined,
+    runtime: s.runtime,
+    sudoPassword: loadCredential(configId + '_sudo') ?? undefined,
+  }
+}
+
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {
     cwd?: string
@@ -329,6 +510,11 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         logWarn(`[pty] SSH spawn refused: ${bound.reason}`)
         throw new Error(`SSH spawn refused: does not match a saved config (${bound.reason})`)
       }
+      // bindSshToSavedConfig pins the spawn to the SAVED config's host/user/port;
+      // the credential invalidation in config-handlers (config:save) is what keeps
+      // that saved identity honest, dropping `<id>` / `<id>_sudo` the moment a
+      // renderer rewrites the host/username/port. So a redirected credential is
+      // already gone before it could be loaded here — no extra guard at this read.
       const password = loadCredential(options.configId) ?? undefined
       const sudoPassword = loadCredential(options.configId + '_sudo') ?? undefined
       const sshWithCreds: SSHOptions = { ...bound.ssh, password, sudoPassword }
@@ -431,6 +617,9 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.on('pty:kill', (_event, sessionId: string) => {
     killPty(sessionId)
+    // #580: nothing left to deliver a queued canvas marker to. Logged loudly if
+    // any were still held, because that is a verdict the agent never heard.
+    forgetCanvasMarkers(sessionId)
   })
 
   ipcMain.on(IPC.PTY_INTEGRITY_REPORT, (_event, report: PtyIntegrityReport) => {
@@ -461,8 +650,99 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
   // SSH tmux enhancement (item 4): deliberately END a persistent remote session
   // (tmux kill-session + sidecar cleanup over a SEPARATE ssh exec). The renderer
   // still tears down the local PTY itself (killSessionPty) after this resolves.
-  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, sessionId: string) => {
-    sessionIdSchema.parse(sessionId)
-    endSshRemote(sessionId)
+  //
+  // Phase 3.5 adds the DETACHED branch: a remote the user LEFT RUNNING has no
+  // live target in main (killPty dropped it, and a restart never had one), so
+  // when the payload names a `configId` the target is rebuilt from the SAVED
+  // config exactly as SSH_CHECK_DETACHED_LIVE does — host/user/port off the
+  // config on disk, secrets straight from that config's own keychain slots. The
+  // renderer supplies two ids and nothing else; it can neither name a host nor
+  // name the tmux session to kill (that is `ccc-<safeSid(sessionId)>`, derived
+  // locally in buildRemoteTmuxKillCommand).
+  //
+  // Best-effort throughout: an unknown config, a non-SSH config, an unreachable
+  // host and an already-dead session all end the same way — nothing thrown at
+  // the renderer, which drops the registry entry regardless.
+  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, payload: unknown) => {
+    const parsed = endRemoteSchema.parse(payload)
+    const sessionId = typeof parsed === 'string' ? parsed : parsed.sessionId
+    const configId = typeof parsed === 'string' ? undefined : parsed.configId
+    endSshRemote(sessionId, configId ? endTargetFromSavedConfig(configId) : undefined)
+  })
+
+  // SSH Persistent (resume liveness): is a set of DETACHED `ccc-<sessionId>` tmux
+  // sessions still alive on a config's host? The connection target is built
+  // ENTIRELY from the SAVED config named by `configId` (host/user/port) with the
+  // password from that config's keychain slot — never from the renderer, which
+  // supplies only the config id and the candidate session ids. The ids reach the
+  // remote host only via safeSid-matched NAMES (probeTmuxLive), never the command.
+  // Fail-open: an unknown/non-SSH config, or any exec failure, returns
+  // 'unverified' (not "dead"), so a host that is merely asleep is never mistaken
+  // for a wiped session.
+  ipcMain.handle(IPC.SSH_CHECK_DETACHED_LIVE, async (_event, payload: unknown): Promise<DetachedRemoteLiveness> => {
+    const { configId, sessionIds } = checkDetachedLiveSchema.parse(payload)
+    const saved = findSavedConfig(readConfig('configs'), configId)
+    if (!saved || saved.sessionType !== 'ssh' || !saved.sshConfig) {
+      return { outcome: 'unverified', liveSessionIds: [] }
+    }
+    const s = saved.sshConfig
+    // Same guarantee as pty:spawn / endTargetFromSavedConfig: the config:save
+    // credential invalidation drops `<id>` when this config's host/username/port
+    // is rewritten, so a redirected password is gone before this read. No extra
+    // guard needed here.
+    const password = loadCredential(configId) ?? undefined
+    return probeTmuxLive({ username: s.username, host: s.host, port: Number(s.port), password }, sessionIds)
+  })
+
+  // SSH Persistent (resume liveness, TIER 1): is a host answering at all? No ssh,
+  // no auth, no credential read — one ICMP echo with a TCP:22 fallback. The
+  // renderer supplies the host because the reachability tier is keyed by HOST,
+  // not by config (several configs share one box, and one ping serves them all);
+  // nothing here is interpolated into a shell, and host-ping.ts refuses anything
+  // outside its strict charset before a process is spawned.
+  //
+  // TWO BOUNDS on top of that charset gate (adversarial review, 2026-09-01):
+  //
+  //  1. SCOPE. The host must be the host of some SAVED SSH config — the same
+  //     trust rule ssh:endRemote and ssh:checkDetachedLive already apply, which
+  //     resolve their destination from `readConfig('configs')` and never from
+  //     the payload. Without it a compromised renderer owns an outbound probe
+  //     primitive (ICMP + a TCP:22 knock at any charset-valid address) running
+  //     from the user's machine and network position. An unlisted host is
+  //     answered — not thrown at — because the caller is the reachability
+  //     scheduler and a throw there is an unhandled rejection every tick; the
+  //     `reason` names why so a log can tell it apart from a dead host.
+  //
+  //  2. CAP. `pingHost` spawns a real `ping` process per call and had no bound,
+  //     so a renderer loop was thousands of live subprocesses. Probes are
+  //     deduped by host (two callers asking about one box share one probe) and
+  //     the number of DISTINCT hosts in flight is capped; over the cap the call
+  //     is answered `busy` rather than spawning. Demote-only semantics make both
+  //     refusals safe: a not-reachable answer costs a pill, never data.
+  //
+  // See savedSshPingHosts / PING_MAX_IN_FLIGHT above.
+  ipcMain.handle(IPC.SSH_PING_HOST, async (_event, payload: unknown): Promise<HostPingResult> => {
+    const { host } = pingHostSchema.parse(payload)
+    const key = host.toLowerCase()
+    if (!savedSshPingHosts().has(key)) {
+      logWarn(`[host-ping] refused a host that is not in any saved SSH config — never spawned`)
+      return { host, reachable: false, via: 'none', reason: 'host-not-in-configs' }
+    }
+    const existing = pingInFlightByHost.get(key)
+    if (existing) return existing
+    if (pingInFlightByHost.size >= PING_MAX_IN_FLIGHT) {
+      return { host, reachable: false, via: 'none', reason: 'busy' }
+    }
+    // pingHost never throws by contract; the catch is the belt for a future
+    // regression, so one bad probe cannot leave a permanent entry in the map.
+    const probe = pingHost(host).catch((): HostPingResult => ({
+      host, reachable: false, via: 'none', reason: 'probe-failed',
+    }))
+    pingInFlightByHost.set(key, probe)
+    try {
+      return await probe
+    } finally {
+      pingInFlightByHost.delete(key)
+    }
   })
 }

@@ -120,13 +120,29 @@ const spawnMock = vi.fn(() => {
   return inst
 })
 vi.mock('node-pty', () => ({ spawn: spawnMock }))
+
+// Watchdog stub: pty-manager only ever reaches the manager through
+// getWatchdogManager() (null in tests otherwise). The stub records the calls so
+// the arming-point tests below can assert WHEN an SSH session's watchdog starts
+// (at the claude-running latch, never during the handshake) without pulling the
+// real manager (headless xterm) into this suite.
+const watchdogStub = {
+  startWatchdog: vi.fn(),
+  stopWatchdog: vi.fn(),
+  feedData: vi.fn(),
+  noteRedrawTrigger: vi.fn(),
+  noteResize: vi.fn(),
+}
+vi.mock('../../src/main/watchdog/watchdog-manager', () => ({
+  getWatchdogManager: () => watchdogStub,
+}))
 vi.mock('electron', () => ({
   BrowserWindow: class {},
   nativeTheme: { shouldUseDarkColors: false, on: () => {} },
   app: { getPath: () => '/tmp' },
 }))
 
-const { spawnPty, getSshFlow, killPty, gracefulExitPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest, _hasSshTargetForTest } = await import('../../src/main/pty-manager')
+const { spawnPty, getSshFlow, killPty, gracefulExitPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest, _hasSshTargetForTest, _getSshTargetForTest } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 // Pure module, no node-pty/electron deps -- safe to import directly (unlike
@@ -138,6 +154,9 @@ const { buildTmuxStageCommand, TMUX_STAGE_SHA256 } = await import('../../src/mai
 // to either token doesn't silently desync the test expectations from the
 // real value.
 const { ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR } = await import('../../src/main/ssh-tmux')
+// The End container-kill builder, so the derived-runtime capture can be proven
+// to actually produce a kill command (ADR-009 legacy-docker gating).
+const { buildContainerKillCommand } = await import('../../src/main/providers/claude/ssh-shim')
 registerProvider(new ClaudeProvider())
 
 const fakeWin = { webContents: { send: () => {} }, isDestroyed: () => false } as never
@@ -236,10 +255,85 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     expect(claudeWrite![0] as string).not.toContain('has-session')
   })
 
+  // Container runtime (item e): the ladder is FORCED OFF regardless of the
+  // Detachable toggle — the hop-2 wrap (tmux inside the container) is
+  // live-proven to break statusline delivery (T23, ssh-statusline-docker
+  // .live.ts, 2026-08-31). Bare claude in-container until the hop-1 design.
+  it('container runtime forces the ladder OFF: bare claude even on tmux=path, no staging, despite Detachable default-on', () => {
+    onDataListeners.length = 0
+    const sid = 's-container-no-tmux'
+    spawnPty(fakeWin, sid, { ssh: { ...SSH, runtime: { type: 'container', container: 'ccc-test' } } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500) // idle: connecting -> awaiting-postcommand
+    getSshFlow(sid)!.runPostCommand()
+    vi.advanceTimersByTime(300)
+    feedPtyData('user@container:~$ ') // inner shell -> awaiting-claude
+    getSshFlow(sid)!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite![0] as string).not.toContain('has-session')
+    expect(claudeWrite![0] as string).not.toMatch(/new-session\s+-s\s+ccc-/)
+  })
+
+  // ADR-009: a config written BEFORE the structured Runtime field existed says
+  // `postCommand: 'sudo docker exec -it <name> bash'` and carries no `runtime`
+  // at all — but claude still ends up inside the container. Keying the gate on
+  // `ssh.runtime` alone classed those sessions as plain hosts, so they got BOTH
+  // container defects the structured path had already fixed: tmux wrapped them
+  // at hop 2 (statusline dead) and End composed no in-container kill (#572).
+  // Mutation to prove this can fail: gate on `ssh.runtime?.type` again.
+  it('LEGACY docker post-command (no structured runtime) is gated as a container: bare claude, no staging', () => {
+    onDataListeners.length = 0
+    const sid = 's-legacy-docker'
+    spawnPty(fakeWin, sid, { ssh: { ...SSH, postCommand: 'sudo docker exec -it ccc-test bash' } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500) // idle: connecting -> awaiting-postcommand
+    getSshFlow(sid)!.runPostCommand()
+    vi.advanceTimersByTime(300)
+    feedPtyData('user@container:~$ ') // inner shell -> awaiting-claude
+    getSshFlow(sid)!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite![0] as string).not.toContain('has-session')
+    expect(claudeWrite![0] as string).not.toMatch(/new-session\s+-s\s+ccc-/)
+  })
+
+  it('a NON-docker post-command is still a plain host session (the parse must not over-match)', () => {
+    onDataListeners.length = 0
+    const sid = 's-plain-postcmd'
+    spawnPty(fakeWin, sid, { ssh: { ...SSH, postCommand: 'source ~/.venv/bin/activate' } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500)
+    getSshFlow(sid)!.runPostCommand()
+    vi.advanceTimersByTime(300)
+    feedPtyData('user@host:~$ ')
+    getSshFlow(sid)!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite![0] as string).toContain(`new-session -s ccc-${sid}`)
+  })
+
   it('detachable default (undefined) still wraps in tmux on tmux=path', () => {
     driveToClaudeWrite('s-detach-default', 'setup ok {NONCE} tmux=path\r\n')
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
-    expect((claudeWrite![0] as string)).toContain('has-session -t ccc-s-detach-default')
+    expect((claudeWrite![0] as string)).toContain('has-session -t =ccc-s-detach-default')
   })
 
   it('wraps claudeCmd in the tmux has-session wrapper when the setup sentinel reports tmux=path (tier 1, found on PATH)', () => {
@@ -539,7 +633,10 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     vi.advanceTimersByTime(300)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).toContain(ON_PATH_TMUX_BIN_EXPR)
+    // The genuine sentinel reported tmux=path, so the wrapper is built on the
+    // on-PATH token. Assert it STARTS the has-session wrapper (proves the tier
+    // was actually selected), not merely that the token appears somewhere.
+    expect((claudeWrite![0] as string).startsWith(`if ${ON_PATH_TMUX_BIN_EXPR} has-session`)).toBe(true)
   })
 
   // The second documented variant: a WRONG nonce, applies to EVERY SSH
@@ -562,11 +659,15 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     vi.advanceTimersByTime(300)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    // Genuine result was tmux=home (staged location) -- the spoofed
-    // tmux=path (which would have selected ON_PATH_TMUX_BIN_EXPR instead)
-    // never took effect.
-    expect((claudeWrite![0] as string)).toContain(STAGED_TMUX_BIN_EXPR)
-    expect((claudeWrite![0] as string)).not.toContain(ON_PATH_TMUX_BIN_EXPR)
+    // Genuine result was tmux=home (staged location) -- the spoofed tmux=path
+    // (which would have selected ON_PATH_TMUX_BIN_EXPR instead) never took
+    // effect. The wrapper STARTS with the staged token's has-session (which
+    // subsumes a bare `toContain(STAGED_TMUX_BIN_EXPR)`), and the primary-token
+    // session option (mouse off) follows the pick on the staged binary -- never
+    // `command tmux` against our session.
+    const launch = claudeWrite![0] as string
+    expect(launch.startsWith(`if ${STAGED_TMUX_BIN_EXPR} has-session`)).toBe(true)
+    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-s-f1-wrong-nonce mouse off`)
   })
 
   // #242 finding F1(a), round-2 correction, BLOCKER. The round-2 reviewer's
@@ -1258,6 +1359,120 @@ describe('spawnPty SSH branch — tmux tier-3 staging via the container/postComm
   })
 })
 
+// Config-modal redesign, item e (structured Runtime). The container hop used to
+// be a free-text post-command the user typed ("sudo docker exec -it ccc bash");
+// it is now a structured `SshRuntime` the APP composes via
+// composeRuntimeCommand, and pty-manager keys the whole SSH ladder on the
+// EFFECTIVE post-command -- `[ssh.postCommand, runtimeCmd].filter(Boolean).join(' && ')` --
+// rather than on `ssh.postCommand`. That is the one behavioural claim worth
+// pinning: a runtime-only config must drive the flow EXACTLY as the typed
+// string did (idle-fallback -> awaiting-postcommand -> runPostCommand writes the
+// composed command), and a config carrying BOTH must run the free-text prep
+// first, then the runtime hop, in one write.
+//
+// Mutation to prove this can fail: revert either use site in pty-manager.ts --
+// the idle-fallback gate at ~line 1503 (`if (postCommand)` back to
+// `if (ssh.postCommand)`) or `const postCommand = ssh.postCommand` at ~line 1687.
+// With the first reverted the runtime-only session advances to
+// 'awaiting-claude' and runPostCommand() no-ops (nothing is ever written, the
+// container is never entered, and claude silently runs on the HOST); with the
+// second reverted the composed command is dropped from the write.
+//
+// Modelled on driveToContainerStageWrite above (same fakes/timers style); the
+// only addition is a window that RECORDS the ssh:flowState emits, so the
+// 'awaiting-postcommand' half of the claim is asserted directly instead of
+// being inferred from runPostCommand's own state guard.
+function makeFlowRecordingWin(): { win: never; states: Array<{ state: string; info?: string }> } {
+  const states: Array<{ state: string; info?: string }> = []
+  const win = {
+    webContents: {
+      send: (channel: string, payload: unknown) => {
+        if (channel.startsWith('ssh:flowState:')) states.push(payload as { state: string; info?: string })
+      },
+    },
+    isDestroyed: () => false,
+  } as never
+  return { win, states }
+}
+
+const CCC_TEST_RUNTIME = { type: 'container' as const, container: 'ccc-test', sudo: true }
+
+describe('spawnPty SSH branch — structured container Runtime drives the post-command flow (item e)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('runtime-only (no postCommand) reaches awaiting-postcommand and writes the app-composed "sudo docker exec -it ccc-test bash"', () => {
+    const sessionId = 's-runtime-container'
+    const { win, states } = makeFlowRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win, sessionId, { ssh: { ...SSH, runtime: CCC_TEST_RUNTIME } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500) // idle: connecting -> awaiting-postcommand
+    expect(states.map((s) => s.state)).toContain('awaiting-postcommand')
+    getSshFlow(sessionId)!.runPostCommand() // no-ops unless the state really is awaiting-postcommand
+    vi.advanceTimersByTime(300) // writePostCommand's 200ms write delay
+    const postWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('docker exec'))
+    expect(postWrite).toBeDefined()
+    // Exact, including the trailing CR: the app builds this whole line, so a
+    // stray flag/quote/space regression is a defect, not a formatting nit.
+    expect(postWrite![0] as string).toBe('sudo docker exec -it ccc-test bash\r')
+  })
+
+  it('postCommand AND runtime compose as "<prep> && <runtime>" in a single post-command write', () => {
+    const sessionId = 's-runtime-with-prep'
+    const { win, states } = makeFlowRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win, sessionId, { ssh: { ...SSH, postCommand: 'echo prep', runtime: CCC_TEST_RUNTIME } } as never)
+    writeMock.mockClear()
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500)
+    expect(states.map((s) => s.state)).toContain('awaiting-postcommand')
+    getSshFlow(sessionId)!.runPostCommand()
+    vi.advanceTimersByTime(300)
+    const postWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('docker exec'))
+    expect(postWrite).toBeDefined()
+    expect(postWrite![0] as string).toBe('echo prep && sudo docker exec -it ccc-test bash\r')
+  })
+
+  // Fail-CLOSED, found reviewing this change: composeRuntimeCommand rejecting a
+  // container name failed the flow, but nothing stopped the launch paths. The
+  // failed overlay's own button is "Retry Launch" -> launchClaude(), which (with
+  // inInnerShell false and setupSent false) walked the HOST ladder and started
+  // claude on the bare host — the isolation the config asked for silently gone.
+  // Unreachable through the dialog (it validates the same charset before saving)
+  // but reachable from any hand-edited or older config file.
+  //
+  // Mutation to prove this can fail: drop the `if (runtimeInvalid)` guard from
+  // launchClaude in pty-manager.ts — the host setup write reappears and the
+  // second assertion fails.
+  it('an INVALID container runtime fails the flow and refuses every launch path (no silent host fallback)', () => {
+    const sessionId = 's-runtime-invalid'
+    const { win, states } = makeFlowRecordingWin()
+    onDataListeners.length = 0
+    // `evil;name` fails CONTAINER_NAME_RE — composeRuntimeCommand throws.
+    spawnPty(win, sessionId, { ssh: { ...SSH, runtime: { type: 'container', container: 'evil;name' } } } as never)
+    writeMock.mockClear()
+    expect(states.map((s) => s.info)).toContain('container runtime invalid')
+    feedPtyData('Welcome\r\n')
+    vi.advanceTimersByTime(1500)
+    // The auto-ladder never advances out of 'failed', so no stage is chained.
+    expect(states.map((s) => s.state)).not.toContain('awaiting-postcommand')
+    expect(states.map((s) => s.state)).not.toContain('awaiting-claude')
+    // ...and the overlay's own "Retry Launch" writes NOTHING: no host setup, no
+    // claude, and above all no container command built from the rejected name.
+    getSshFlow(sessionId)!.launchClaude()
+    getSshFlow(sessionId)!.runPostCommand()
+    vi.advanceTimersByTime(1500)
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(states[states.length - 1]).toEqual({ state: 'failed', info: 'container runtime invalid' })
+  })
+})
+
 // #242 round-3 REWORK finding (MAJOR): the container/postCommand flow
 // re-sends the IDENTICAL setup script with the IDENTICAL nonce and
 // sentinel shape as the host flow (see 'idle after container setup ok ->
@@ -1792,8 +2007,8 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     // Item 6: a LIVE reattach (`attach -t X` before its `|| <fresh>` backstop)
     // carries no --continue -- relaunching a running claude would be wrong.
     // Every fresh-create (the attach fallback AND the else) resumes with it.
-    expect(written).toContain('attach -t ccc-s-reconnect-tmux || ')
-    expect(written).not.toMatch(/attach -t ccc-s-reconnect-tmux --continue/)
+    expect(written).toContain('attach -t =ccc-s-reconnect-tmux || ')
+    expect(written).not.toMatch(/attach -t =ccc-s-reconnect-tmux --continue/)
     const creates = written.split('new-session -s ccc-s-reconnect-tmux ').slice(1)
     expect(creates.length).toBe(2)
     for (const c of creates) expect(c.startsWith(`'`)).toBe(true)
@@ -1925,7 +2140,7 @@ describe('killPty / gracefulExitPty — a tmux-persistent remote is DETACHED, ne
   it('killPty on a tmux-PERSISTENT SSH session writes NO in-band `rm` into the live Claude pane (detach only)', () => {
     driveToClaudeWrite('s-persist-close', 'setup ok {NONCE} tmux=path\r\n')
     // Confirm the launch actually wrapped in tmux (so the session is persistent).
-    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t ccc-s-persist-close'))).toBe(true)
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t =ccc-s-persist-close'))).toBe(true)
     writeMock.mockClear()
     killPty('s-persist-close')
     // The destructive `rm -f ~/.claude/...` would land in Claude's composer and
@@ -1973,6 +2188,62 @@ describe('endSshRemote target lifecycle — survives a drop, cleared on delibera
     // Deliberate close drops it.
     killPty('s-endtarget')
     expect(_hasSshTargetForTest('s-endtarget')).toBe(false)
+  })
+
+  // #572 one hop deeper: End also has to reach INSIDE a container runtime, so
+  // the SAME spawn-time capture carries the structured runtime and the sudo
+  // password alongside the connection target.
+  it('captures the structured container runtime AND the sudo password at spawn', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-endtarget-ctr', {
+      ssh: { ...SSH, runtime: { type: 'container', engine: 'podman', container: 'ccc-test', sudo: true }, sudoPassword: 'sudo-pw' },
+    } as never)
+    const t = _getSshTargetForTest('s-endtarget-ctr')
+    expect(t?.runtime).toEqual({ type: 'container', engine: 'podman', container: 'ccc-test', sudo: true })
+    expect(t?.sudoPassword).toBe('sudo-pw')
+    killPty('s-endtarget-ctr')
+    expect(_getSshTargetForTest('s-endtarget-ctr')).toBeUndefined()
+  })
+
+  it('a plain host session captures no runtime and no sudo password', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-endtarget-plain', { ssh: SSH } as never)
+    const t = _getSshTargetForTest('s-endtarget-plain')
+    expect(t?.runtime).toBeUndefined()
+    expect(t?.sudoPassword).toBeUndefined()
+    killPty('s-endtarget-plain')
+  })
+
+  // ADR-009, the End half of the legacy-docker gap: without an effective
+  // runtime these sessions captured `runtime: undefined`, so
+  // buildContainerKillCommand returned '' and their claude orphaned inside the
+  // container forever — #572, still open for exactly the population that had
+  // been entering containers the longest.
+  // Mutation to prove this can fail: capture `ssh.runtime` instead.
+  it('a LEGACY docker post-command captures a DERIVED container runtime so End can reach inside', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-endtarget-legacy', {
+      ssh: { ...SSH, postCommand: 'sudo docker exec -it ccc-test bash' },
+    } as never)
+    const t = _getSshTargetForTest('s-endtarget-legacy')
+    expect(t?.runtime).toEqual({ type: 'container', engine: 'docker', container: 'ccc-test', mode: 'exec', sudo: true })
+    expect(buildContainerKillCommand('s-endtarget-legacy', t?.runtime)).toContain(
+      "docker exec ccc-test bash -c '",
+    )
+    killPty('s-endtarget-legacy')
+  })
+
+  it('a structured runtime always WINS over a docker-shaped post-command', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-endtarget-both', {
+      ssh: {
+        ...SSH,
+        postCommand: 'sudo docker exec -it decoy bash',
+        runtime: { type: 'container', engine: 'podman', container: 'real-one' },
+      },
+    } as never)
+    expect(_getSshTargetForTest('s-endtarget-both')?.runtime).toEqual({ type: 'container', engine: 'podman', container: 'real-one' })
+    killPty('s-endtarget-both')
   })
 })
 
@@ -2052,7 +2323,7 @@ describe('spawnPty SSH branch — wrapped-launch watchdog falls back to the bare
     driveToWrappedLaunch('s-wd-refused', win)
     // Precondition: the launch really was tmux-wrapped (and announced as
     // persistent) before the refusal arrives.
-    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t ccc-s-wd-refused'))).toBe(true)
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t =ccc-s-wd-refused'))).toBe(true)
     expect(sends.some((s) => s.channel === 'ssh:sessionInfo:s-wd-refused' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === true)).toBe(true)
     writeMock.mockClear()
     sends.length = 0
@@ -2437,5 +2708,77 @@ describe('sentinel parsers — ConPTY glued-escape immunity (2026-08-27)', () =>
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-glue-e2e')
+  })
+})
+
+// Double Review W1 (2026-08-31, watchdog-over-SSH): an SSH session's watchdog
+// must arm at the claude-running latch, NEVER at spawn. At spawn the PTY
+// carries the ssh handshake — banner/MOTD, password and sudo prompts, a bare
+// remote shell — all remote-controlled bytes the watchdog's retry send() must
+// never be in a position to type into. The claude-running latch (every site
+// funnels through setFlowState) is the "claude prompt present" signal.
+describe('spawnPty SSH branch — watchdog arms at claude-running, not at spawn', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    watchdogStub.startWatchdog.mockClear()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('never arms during the handshake; arms exactly once when claude UI is detected, with ssh:true', () => {
+    const sessionId = 's-watchdog-defer'
+    driveToClaudeWrite(sessionId, 'setup ok {NONCE} tmux=path\r\n')
+    // Handshake + setup + claude write are all behind us — still not armed.
+    expect(watchdogStub.startWatchdog).not.toHaveBeenCalled()
+    // Claude's TUI paints (lenient post-claudeCmd detector: box drawing).
+    feedPtyData('\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u256e\r\n\u2502 \u276f \u2502\r\n')
+    expect(watchdogStub.startWatchdog).toHaveBeenCalledTimes(1)
+    expect(watchdogStub.startWatchdog).toHaveBeenCalledWith(sessionId, expect.objectContaining({ ssh: true, shellOnly: false, ask: false }))
+    // Re-painting claude UI later must not double-arm (the latch is edge-triggered).
+    feedPtyData('\u256d\u2500\u2500\u256e\r\n')
+    expect(watchdogStub.startWatchdog).toHaveBeenCalledTimes(1)
+    killPty(sessionId)
+  })
+
+  it('a shell-only SSH session never arms even when box-drawing output appears', () => {
+    const sessionId = 's-watchdog-shellonly'
+    onDataListeners.length = 0
+    spawnPty(fakeWin, sessionId, { ssh: SSH, shellOnly: true } as never)
+    vi.advanceTimersByTime(2000)
+    feedPtyData('\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u256e\r\n\u2502 \u276f \u2502\r\n')
+    vi.advanceTimersByTime(2000)
+    expect(watchdogStub.startWatchdog).not.toHaveBeenCalled()
+    killPty(sessionId)
+  })
+
+  // Adversarial pass MAJOR-1: detectClaudeUi's strict box-rule matches in ANY
+  // phase, so a hostile/odd remote could print box drawing in its pre-auth MOTD
+  // and drive the flow to claude-running while the pane is still an auth prompt.
+  // The `&& claudeSent` arm guard means the watchdog does NOT arm until the flow
+  // has actually written the claude command.
+  it('does NOT arm on box-drawing that appears BEFORE the claude command is written (forged MOTD)', () => {
+    const sessionId = 's-watchdog-forge'
+    onDataListeners.length = 0
+    spawnPty(fakeWin, sessionId, { ssh: SSH } as never)
+    // No launchClaude() \u2192 claudeSent stays false. A MOTD box-rule arrives.
+    feedPtyData('\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\r\nWelcome to prod\r\n\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\r\n')
+    // The flow may latch claude-running off the strict box-rule, but the
+    // watchdog must not arm without claudeSent.
+    expect(watchdogStub.startWatchdog).not.toHaveBeenCalled()
+    killPty(sessionId)
+  })
+
+  // Adversarial pass BLOCKER-1: the SSH branch must FEED the watchdog its PTY
+  // bytes (b515cbce shipped without this, so detection read an empty pane and
+  // silence latched a permanent sleep moon).
+  it('feeds SSH PTY output to the watchdog (feedData)', () => {
+    const sessionId = 's-watchdog-feed'
+    onDataListeners.length = 0
+    watchdogStub.feedData.mockClear()
+    spawnPty(fakeWin, sessionId, { ssh: SSH } as never)
+    feedPtyData('some remote output\r\n')
+    expect(watchdogStub.feedData).toHaveBeenCalledWith(sessionId, expect.stringContaining('some remote output'))
+    killPty(sessionId)
   })
 })

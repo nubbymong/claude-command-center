@@ -173,6 +173,10 @@ export interface ElectronAPI {
         remotePath: string
         postCommand?: string
         dockerContainer?: string
+        /** item e: structured container runtime (main rebuilds it from the
+         *  saved config via spawn-credential-binding; the request's copy is
+         *  informational only). */
+        runtime?: import('../../shared/types').SshRuntime
         /** #242 tier 5: respawning a session that previously reached
          *  claude-running -- drives `--continue` when no tmux persistence
          *  is available. See SSHOptions.reconnect in pty-manager.ts. */
@@ -234,7 +238,16 @@ export interface ElectronAPI {
     getState: (sessionId: string) => Promise<{ state: string; info?: string }>
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
     onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
-    endRemote: (sessionId: string) => Promise<void>
+    /** END a remote session. A bare id for a LIVE one (main holds its spawn
+     *  target); `{ sessionId, configId }` for a DETACHED one, which main
+     *  reconnects to from the SAVED config (Phase 3.5). */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
+    /** SSH Persistent (resume liveness): ask main whether a config's detached
+     *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
+    checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../../shared/types').DetachedRemoteLiveness>
+    /** SSH Persistent (resume liveness, tier 1): is a host answering at all?
+     *  ICMP + TCP:22 fallback, no ssh/auth. Demote-only — see host-ping.ts. */
+    pingHost: (payload: { host: string }) => Promise<import('../../shared/types').HostPingResult>
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
@@ -469,6 +482,7 @@ export interface ElectronAPI {
     /** The decision is REQUIRED — the user's word is version-level. */
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
+    agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' | 'unwired' | 'refused'; reason?: string }>
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
     /** The user puts a closed note back in play. With `reviewReopen`, one of the
      *  only two writes that may revive a settled round. */
@@ -543,6 +557,7 @@ export interface ElectronAPI {
     selectResourcesDir: () => Promise<string | null>
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
+    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
     spawnCliSetup: (cols: number, rows: number) => Promise<string>
     killCliSetup: () => Promise<boolean>
   }
@@ -577,6 +592,8 @@ export interface ElectronAPI {
     onEscapePressed: (handler: (sessionId: string) => void) => () => void
     /** Navigation state from the session's view: real URL, title, history flags, loading. */
     onNavigated: (handler: (state: { sessionId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean }) => void) => () => void
+    /** Agent push (open_in_app_browser MCP tool): { sessionId, url } — raises the Browser-tool pill; never navigates on its own. */
+    onAgentPush: (handler: (payload: { sessionId: string; url: string }) => void) => () => void
   }
   session: {
     save: (state: SessionState) => Promise<boolean>

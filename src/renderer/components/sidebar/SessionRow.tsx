@@ -1,6 +1,7 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { FadeSlot, MoonBadge, SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge, WorkingBadge } from './Badges'
+import { FadeSlot, MoonBadge, SessionTypeBadge, TransportBadge, WatchdogBadge, WorkingBadge } from './Badges'
+import { containerNameOf, resolveTransportBadge } from './transportBadge'
 import { isAsleep, useSleepStore } from '../../stores/sleepStore'
 import { useActiveStore } from '../../stores/activeStore'
 import { type SessionState } from '../ui/StatusDot'
@@ -90,15 +91,20 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   // Persistent account stamp -- resolved by LIVE email so a mid-session /login
   // that changes accountEmail immediately shows the right name/colour without
   // waiting for a respawn. Selector form (never destructure the whole store).
+  // Phase 3 (harmonise-remote): an SSH session's live email arrives on its
+  // /status ticks (accountEmail); the setup-sentinel snapshot
+  // (sshRemoteAccount) is the fallback until the first tick, so remote cards
+  // carry the same account line as local ones.
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
-  const accountName = session.accountEmail
-    ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
+  const accountEmail = session.accountEmail || session.sshRemoteAccount
+  const accountName = accountEmail
+    ? resolveAccountNameByEmail(accountEmail, profiles, accountAliases)
     : null
-  const accountDot = session.accountEmail
+  const accountDot = accountEmail
     ? resolveIdentityColor(
-        resolveAccountColourKey(session.accountEmail, accountColourOverrides, session.accountColour),
+        resolveAccountColourKey(accountEmail, accountColourOverrides, session.accountColour),
         theme,
       )
     : null
@@ -194,7 +200,18 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
             name and SSH had a text badge in the same spot: four treatments,
             with the common case as the odd one out. The name column gets its
             full width back. */}
-        {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
+        {/* ONE transport chip (phase 6): a container session shows the container
+            mark INSTEAD of an SSH one — it is a third transport, not a sticker
+            on top of the second. A LIVE card uses the remote's REPORTED wrap
+            (sshTmuxPersistent), not the config's intent. */}
+        <TransportBadge
+          kind={resolveTransportBadge({
+            isSsh: session.sessionType === 'ssh',
+            ssh: session.sshConfig,
+            persistent: session.sshTmuxPersistent === true,
+          })}
+          container={containerNameOf(session.sshConfig)}
+        />
         {/* Moon BESIDE the type badge (variant B): the type mark stays — the
             moon is additional Watchdog state, not a replacement identity. The
             working pill is its inverse and shares the slot (mutually exclusive:
@@ -247,9 +264,9 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
       {accountName && (
         <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '1 / 3', opacity: asleep ? 0.7 : undefined }} data-testid="card-line3">
           {accountDot && (
-            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={session.accountEmail} />
+            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={accountEmail} />
           )}
-          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={session.accountEmail} data-testid="account-name">
+          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={accountEmail} data-testid="account-name">
             {accountName}
           </span>
         </div>

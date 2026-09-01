@@ -63,6 +63,15 @@ export const IPC = {
   // item 4: renderer asks main to END the remote (tmux kill-session + sidecar
   // cleanup over a separate ssh exec) before/instead of a plain close.
   SSH_END_REMOTE: 'ssh:endRemote',
+  // SSH Persistent (resume liveness): renderer asks main whether a set of
+  // detached `ccc-<sessionId>` tmux sessions are still ALIVE on a config's host,
+  // via a `tmux ls` over a separate ssh exec. Returns DetachedRemoteLiveness.
+  SSH_CHECK_DETACHED_LIVE: 'ssh:checkDetachedLive',
+  // SSH Persistent (resume liveness, TIER 1): is a HOST answering at all? One
+  // ICMP echo with a TCP:22 fallback — no ssh, no auth, no credentials. Cheap
+  // enough to run on a slow timer, and DEMOTE-ONLY: a reachable host never
+  // promotes anything to live (only SSH_CHECK_DETACHED_LIVE can do that).
+  SSH_PING_HOST: 'ssh:pingHost',
 
   // Statusline
   STATUSLINE_UPDATE: 'statusline:update',
@@ -144,6 +153,7 @@ export const IPC = {
   SETUP_SELECT_RESOURCES_DIR: 'setup:selectResourcesDir',
   SETUP_SET_RESOURCES_DIR: 'setup:setResourcesDir',
   SETUP_IS_CLI_READY: 'setup:isCliReady',
+  SETUP_PROBE_CLI: 'setup:probeCli',
   SETUP_SPAWN_CLI_SETUP: 'setup:spawnCliSetup',
   SETUP_KILL_CLI_SETUP: 'setup:killCliSetup',
 
@@ -301,6 +311,7 @@ export const IPC = {
   WEBVIEW_NAVIGATE: 'webview:navigate',           // load a (validated http/https) URL in an EXISTING view -- the address bar
   WEBVIEW_OPEN_EXTERNAL: 'webview:openExternal',  // hand a (validated http/https) URL to the OS browser
   WEBVIEW_NAVIGATED: 'webview:navigated',         // main → renderer: { sessionId, url, title, canGoBack, canGoForward, loading }
+  WEBVIEW_AGENT_PUSH: 'webview:agentPush',        // main → renderer: { sessionId, url } — the agent pushed a page to the USER's in-app browser (raises the Browser-tool pill; never navigates the active view)
 
   // Per-account claude.ai web session (#216): sign in via the system browser,
   // hold the cookies in a per-account partition, open artifacts as that account.
@@ -417,6 +428,7 @@ export const IPC = {
   CANVAS_ANNOTATION_DELETE: 'canvas:annotationDelete', // renderer -> main: remove a draft note
   CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports); carries the decision (approve/reject) — required
   CANVAS_VERSION_VERDICT: 'canvas:versionVerdict',     // renderer -> main: zero-note verdict on a version { sessionId, versionId?, state, note? }; approve/reject also settles that artefact's earlier rounds, approve auto-completes
+  CANVAS_AGENT_MARKER: 'canvas:agentMarker',           // renderer -> main (#580): { sessionId, canvasId, line } -> the one chat line that TELLS the agent a verdict/review was filed; owner-only against the named canvas, control-stripped, queued while the agent's turn is open and flushed at the boundary, never written blind into a streaming TUI
   CANVAS_VERSION_REOPEN: 'canvas:versionReopen',       // renderer -> main: C1 reopen a version for review (later ready versions -> withdrawn); wakes no round
   CANVAS_ANNOTATION_REOPEN: 'canvas:annotationReopen', // renderer -> main: the USER puts a closed note back in play
   CANVAS_REVIEW_REOPEN: 'canvas:reviewReopen',         // renderer -> main: { sessionId, canvasId, reviewId } -> the USER puts a whole settled ROUND back in play (the only other revival there is)

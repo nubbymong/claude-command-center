@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { isSshPersistenceFailureReason, formatPersistenceUnavailableMessage } from '../../shared/ssh-tmux-persistence'
+import { parseDockerPostCommand, isContainerRuntime } from '../../shared/container-command'
 import { useSessionStore } from '../stores/sessionStore'
 import { DialogButton } from './ui/Dialog'
 
@@ -50,6 +51,20 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
   // Copilot review, #298: only a session main has REPORTED as tmux-wrapped has
   // something running on the far side to come back to.
   const isPersistent = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.sshTmuxPersistent) === true
+  // Persistence-unavailable warning gate (owner UX, 2026-08-31): only warn when
+  // persistence was actually WANTED. Main forces it OFF for a standard session
+  // (detachable === false) or a container runtime (runtime.type === 'container'),
+  // so probe=none is the NORMAL, expected outcome there — not a failure. Mirror
+  // main's gate (pty-manager writeClaudeCmd: detachable !== false && !container)
+  // so the overlay never alarms a session that never tried to persist.
+  const sshConfig = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.sshConfig)
+  // effectiveRuntime mirrors pty-manager's SSH spawn EXACTLY (incl. the #572
+  // legacy-docker fallback): a free-text `postCommand: 'sudo docker exec …'`
+  // with no structured runtime is ALSO a container session for which main
+  // forces persistence off — so probe=none is normal there too and must not
+  // alarm. Checking only runtime?.type missed that class.
+  const effectiveRuntime = sshConfig?.runtime ?? parseDockerPostCommand(sshConfig?.postCommand ?? '') ?? undefined
+  const wantedPersistence = sshConfig?.detachable !== false && !isContainerRuntime(effectiveRuntime)
   const [busy, setBusy] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
 
@@ -262,7 +277,7 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
           'running-claude' window before the idle-fallback latches
           claude-running and the whole overlay unmounts (see the hide check
           above) -- brief, but the alternative was never showing it at all. */}
-      {state === 'running-claude' && isSshPersistenceFailureReason(info) && (
+      {state === 'running-claude' && wantedPersistence && isSshPersistenceFailureReason(info) && (
         <div className="text-[11px] leading-snug mb-1" style={{ color: 'var(--status-warning)' }}>
           {formatPersistenceUnavailableMessage(info!)}
         </div>

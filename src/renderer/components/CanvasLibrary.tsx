@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import type { CanvasLibraryFilter, CanvasLibraryRow, CanvasLibraryTab, LibraryRowKind } from '../../shared/canvas'
+import { verdictOutcomeOf, type CanvasLibraryFilter, type CanvasLibraryRow, type CanvasLibraryTab, type LibraryRowKind } from '../../shared/canvas'
 import { trailClockTime } from '../../shared/canvas-review-serialize'
 import { useSessionStore } from '../stores/sessionStore'
 import { useArmedConfirm } from '../hooks/useArmedConfirm'
@@ -809,12 +809,16 @@ function VerdictBadge({ row }: { row: CanvasLibraryRow }): React.JSX.Element {
 }
 
 /** Which colour a verdict word wears. The WORDS come from the shared
- *  `verdictLabel` in main, so this maps rather than decides. */
+ *  `verdictLabel` in main, so this maps rather than decides — and it maps
+ *  through the shared classifier, which is the only thing that knows the whole
+ *  vocabulary (a plan's REVISIONS included). */
 function verdictTone(verdict: string): string {
-  if (verdict.startsWith('APPROVED') || verdict.startsWith('PASSED')) return 'var(--status-success)'
-  if (verdict.startsWith('REJECTED') || verdict.startsWith('FAILED')) return 'var(--status-danger)'
-  if (verdict === 'OPEN' || verdict === 'DRAFT') return 'var(--accent-tip)'
-  return 'var(--text-muted)'
+  switch (verdictOutcomeOf(verdict)) {
+    case 'ok': return 'var(--status-success)'
+    case 'bad': return 'var(--status-danger)'
+    case 'open': return 'var(--accent-tip)'
+    default: return 'var(--text-muted)'
+  }
 }
 
 /**
@@ -828,13 +832,16 @@ function verdictTone(verdict: string): string {
 function packNoteWords(row: CanvasLibraryRow): string {
   const n = row.noteCount
   if (n <= 0) return 'no notes'
-  if (row.verdict.startsWith('PASSED') || row.verdict.startsWith('APPROVED')) return `${n} observation${n === 1 ? '' : 's'}`
-  if (row.verdict.startsWith('FAILED') || row.verdict.startsWith('REJECTED')) return `${n} defect${n === 1 ? '' : 's'}`
+  // Drawn for PACK rows only (see the `packRow` guard at the call site), so the
+  // two outcomes here are PASSED and FAILED — the nouns stay Testing's own.
+  const outcome = verdictOutcomeOf(row.verdict)
+  if (outcome === 'ok') return `${n} observation${n === 1 ? '' : 's'}`
+  if (outcome === 'bad') return `${n} defect${n === 1 ? '' : 's'}`
   return `${n} note${n === 1 ? '' : 's'}`
 }
 
 function packNoteTone(row: CanvasLibraryRow): string {
-  return row.verdict.startsWith('FAILED') || row.verdict.startsWith('REJECTED') ? 'var(--accent-tip)' : 'var(--text-muted)'
+  return verdictOutcomeOf(row.verdict) === 'bad' ? 'var(--accent-tip)' : 'var(--text-muted)'
 }
 
 /**

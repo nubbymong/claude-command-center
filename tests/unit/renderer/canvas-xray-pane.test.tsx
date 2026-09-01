@@ -270,7 +270,7 @@ describe('x-ray STEALTH — resolved, but nothing drawn on the page', () => {
     expect(idle?.textContent).not.toContain('Hover the page')
   })
 
-  it('says so for Region too, and goes back to the invitation in Browse', async () => {
+  it('says so for Region too, and in Browse says nothing at all', async () => {
     await renderPane('stealth')
     await act(async () => {
       useCanvasReviewStore.getState().setMarqueeArmed(SID, true)
@@ -280,7 +280,11 @@ describe('x-ray STEALTH — resolved, but nothing drawn on the page', () => {
     await act(async () => {
       useCanvasReviewStore.getState().setMarqueeArmed(SID, false)
     })
-    expect(container.querySelector('[data-testid="canvas-xray-idle"]')?.textContent).toContain('Hover the page')
+    // De-fluff (owner spec, 2026-08-31): in Browse the strip owes no
+    // explanation — hovering is possible, nothing is under the pointer yet, and
+    // "Hover the page — what you point at is named here" was a tutorial line
+    // living permanently in the chrome.
+    expect(container.querySelector('[data-testid="canvas-xray-idle"]')?.textContent).toBe('—')
   })
 
   it('empties the readout when the pointer leaves the page', async () => {
@@ -288,7 +292,16 @@ describe('x-ray STEALTH — resolved, but nothing drawn on the page', () => {
     await hoverSaveButton()
     await act(async () => handlers().onPointer(null))
     expect(readout()!.textContent).not.toContain('button "Save"')
-    expect(readout()!.textContent).toContain('Hover the page')
+    expect(container.querySelector('[data-testid="canvas-xray-idle"]')?.textContent).toBe('—')
+  })
+
+  it('carries no standing explanation of the mode', async () => {
+    // The strip used to open with "stealth — nothing is drawn on the page"
+    // above the thing the user was pointing at: two lines of explanation over
+    // one line of content.
+    await renderPane('stealth')
+    await hoverSaveButton()
+    expect(readout()!.textContent).not.toContain('nothing is drawn')
   })
 
   it('keeps the frame reporting — stealth still needs the hit', async () => {
@@ -667,19 +680,90 @@ describe('the redesigned chrome (item C)', () => {
     expect(region.disabled).toBe(true)
   })
 
-  it('#449: a PLAN locks X-Ray to Stealth with a DRAWN padlock, never the emoji', async () => {
+  it('a PLAN shows no inspection apparatus at all — no X-Ray, no Sketch, no Region', async () => {
+    // Supersedes #449's padlock (owner spec, 2026-08-31). The switch used to sit
+    // here disabled behind a drawn padlock and a sentence explaining why it was
+    // locked — a control whose entire content was an apology for existing. A
+    // plan is reviewed by CONTENT, so the whole apparatus is gone rather than
+    // greyed out.
     const planState = {
       ...STATE,
-      versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'plan', entry: 'index.html' } }],
+      versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'design', entry: 'index.html' } }],
     } as CanvasState
     ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
     await renderPane('on')
-    const xray = container.querySelector('[data-testid="canvas-xray-mode"]')!
-    // The lock is an <svg>, and there is no astral-plane emoji in the group.
-    expect(xray.querySelector('svg')).toBeTruthy()
-    expect(/\u{1F512}/u.test(xray.textContent ?? '')).toBe(false)
-    // And the segments are inert on a plan.
-    expect((xray.querySelector('[data-testid="canvas-xray-off"]') as HTMLButtonElement).disabled).toBe(true)
+    expect(container.querySelector('[data-testid="canvas-xray-mode"]')).toBeNull()
+    expect(container.querySelector('[data-testid="canvas-inspect-capsule"]')).toBeNull()
+    expect(container.querySelector('[data-testid="canvas-tool-sketch"]')).toBeNull()
+    expect(container.querySelector('[data-testid="canvas-tool-region"]')).toBeNull()
+    // The hint names the one gesture that IS on this toolbar.
+    expect(container.querySelector('[data-testid="canvas-tool-hint"]')?.textContent).toContain('click a section')
+    // ...and no readout strip either — the last piece of the apparatus, and one
+    // that could only ever print its idle dash now a plan resolves no hover.
+    expect(readout()).toBeNull()
+  })
+
+  it('a PLAN pins the pointer to BROWSE — a sketch mode that outlived its mockup cannot trap the reviewer', async () => {
+    // Removing the Sketch/Region chips without pinning the state is what turns
+    // a removal into a trap: interactionMode is per-SESSION and outlives the
+    // version, so a user who was sketching over a mockup when the agent
+    // rendered a plan arrived with the glass still holding the pointer — unable
+    // to scroll, unable to click a section, and with no chip anywhere to give
+    // the pointer back.
+    await renderPane('stealth')
+    await act(async () => {
+      useCanvasStore.getState().setInteractionMode(SID, 'draw')
+      useCanvasReviewStore.getState().setMarqueeArmed(SID, true)
+    })
+    expect(container.querySelector('[data-testid="canvas-tool-hint"]')?.textContent).toContain('Esc cancels')
+
+    const planState = {
+      ...STATE,
+      versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'design', entry: 'index.html' } }],
+    } as CanvasState
+    ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
+    await renderPane('stealth')
+
+    // Browse, whatever the session state said — and the state itself is written
+    // back, so the stale mode cannot spring the glass open again later.
+    expect(container.querySelector('[data-testid="canvas-tool-hint"]')?.textContent).toContain('click a section')
+    expect(useCanvasStore.getState().bySessionId[SID]?.interactionMode).toBe('browse')
+    expect(useCanvasReviewStore.getState().bySessionId[SID]?.marqueeArmed).toBe(false)
+  })
+
+  it('a PLAN does NOT resolve HOVER (it corrupted/flashed the pane) — a section is named on CLICK instead', async () => {
+    // Owner 2026-08-31: live hover resolution turned a plan into a flashing,
+    // corrupting mess. A plan resolves no hover regardless of the user's mode,
+    // but a CLICK still selects the section (note anchoring by data-ux-id).
+    const planState = {
+      ...STATE,
+      versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'design', entry: 'index.html' } }],
+    } as CanvasState
+    ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
+    await renderPane('on') // the user's OWN setting is On; a plan overrides it
+    await hoverSaveButton()
+    // Hover names nothing on a plan — no per-mousemove resolution — and since
+    // nothing resolves, the readout strip is not rendered at all (phase 7 item
+    // D): a 26px row that could only ever print its idle dash was the last
+    // piece of X-Ray apparatus on a plan, and it pushed the composer up out of
+    // line with every other mode.
+    expect(readout()).toBeNull()
+    // A click still issues an inspect — the section is named when you click it.
+    askFrame.mockClear()
+    await act(async () => handlers().onContentClick(12, 44))
+    expect(askFrame.mock.calls.some((c) => ((c as unknown as unknown[])[2] as { type?: string })?.type === 'inspect')).toBe(true)
+  })
+
+  it('a PLAN asks the frame to STOP reporting hover (no per-mousemove work at all)', async () => {
+    const planState = {
+      ...STATE,
+      versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'design', entry: 'index.html' } }],
+    } as CanvasState
+    ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
+    await renderPane('on')
+    await act(async () => handlers().onReady())
+    // The frame is told hover reporting is OFF for a plan (false), not on.
+    expect(hoverReportingCalls().every((v) => v === false)).toBe(true)
   })
 
   it('carries the X-ray setting inside the Inspect group', async () => {

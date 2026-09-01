@@ -105,33 +105,38 @@ afterEach(() => {
 })
 
 describe('both scope bands are present whenever the session has a config', () => {
-  it('renders a labelled Global band and a labelled Session band -- no CLAUDE / SHELL row labels', () => {
+  it('renders both scope bands with NO GLOBAL/SESSION text labels (harmonise-remote removal) -- and no CLAUDE / SHELL row labels', () => {
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
-    expect(byTestId('command-band-label-global')?.textContent).toBe('Global')
-    expect(byTestId('command-band-label-config')?.textContent).toBe('Session')
-    // The old row model is gone: nothing on the bar reads as a pane row.
+    // Bands (drop targets / containers) still present…
+    expect(byTestId('command-band-global')).not.toBeNull()
+    expect(byTestId('command-band-config')).not.toBeNull()
+    // …but the GLOBAL/SESSION text labels are retired: the divider separates the
+    // bands, and each button carries its scope in its own tooltip/menu.
+    expect(byTestId('command-band-label-global')).toBeNull()
+    expect(byTestId('command-band-label-config')).toBeNull()
     const spans = Array.from(container.querySelectorAll('span')).map((s) => s.textContent?.trim())
+    expect(spans).not.toContain('Global')
+    expect(spans).not.toContain('Session')
     expect(spans).not.toContain('Claude')
     expect(spans).not.toContain('Shell')
     expect(spans).not.toContain('Commands')
   })
 
-  it('keeps the Session band as a drop target when NOTHING is scoped to it, but HIDES its label while idle (#430-followup)', () => {
+  it('keeps the Session band as a drop target when NOTHING is scoped to it (label retired, so nothing to hide)', () => {
     // The band DIV stays (the row height no longer changes under the pointer —
     // Add + core tools always hold the row open — and it is still the drop
-    // target that scopes a command Session-only). But an empty band's GLOBAL/
-    // SESSION label is just noise on the row, so it is hidden while idle (owner)
-    // and reappears during a drag (covered below).
+    // target that scopes a command Session-only). Its GLOBAL/SESSION text label
+    // is retired entirely, so there is never a label to show or hide.
     COMMANDS = ALL.filter((c) => c.scope !== 'config')
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
     const band = byTestId('command-band-config')
     expect(band).not.toBeNull()                                  // drop target still present
-    expect(byTestId('command-band-label-config')).toBeNull()     // label hidden while idle
+    expect(byTestId('command-band-label-config')).toBeNull()     // no text label, ever
     expect(allByTestId('command-chip', band!)).toHaveLength(0)
     expect(band!.querySelector('[data-testid^="command-cluster-"]')).toBeNull()
   })
 
-  it('hides the Global band label too when nothing is global', () => {
+  it('the Global band likewise has no text label', () => {
     COMMANDS = ALL.filter((c) => c.scope !== 'global')
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
     const band = byTestId('command-band-global')
@@ -140,18 +145,19 @@ describe('both scope bands are present whenever the session has a config', () =>
     expect(allByTestId('command-chip', band!)).toHaveLength(0)
   })
 
-  it('shows a non-empty band label as normal', () => {
+  it('a non-empty band still renders no GLOBAL/SESSION text label', () => {
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
-    expect(byTestId('command-band-label-global')?.textContent).toBe('Global')
-    expect(byTestId('command-band-label-config')?.textContent).toBe('Session')
+    expect(byTestId('command-band-label-global')).toBeNull()
+    expect(byTestId('command-band-label-config')).toBeNull()
   })
 
-  it('brings the empty band label back during a drag, so there is somewhere to drop (affordance preserved)', () => {
+  it('shows a NEUTRAL drop placeholder (not the GLOBAL/SESSION label) in an empty band during a drag', () => {
     COMMANDS = ALL.filter((c) => c.scope !== 'config')          // empty Session band
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
-    expect(byTestId('command-band-label-config')).toBeNull()     // idle: hidden
+    expect(byTestId('command-band-droptarget-config')).toBeNull()  // idle: nothing
+    expect(byTestId('command-band-label-config')).toBeNull()       // label retired
     // Start dragging a global chip: onDragStart sets dragId, which reveals every
-    // empty band's label as a drop target.
+    // empty band's neutral drop placeholder as a drop target.
     const chip = allByTestId('command-chip')[0]
     expect(chip).toBeTruthy()
     act(() => {
@@ -159,7 +165,11 @@ describe('both scope bands are present whenever the session has a config', () =>
       ev.dataTransfer = { setData: vi.fn(), setDragImage: vi.fn(), effectAllowed: '' }
       chip!.dispatchEvent(ev)
     })
-    expect(byTestId('command-band-label-config')?.textContent).toBe('Session')
+    // The drop zone is present, WORDLESS (no GLOBAL/SESSION text ever).
+    const dz = byTestId('command-band-droptarget-config')
+    expect(dz).not.toBeNull()
+    expect(dz?.textContent).toBe('')
+    expect(byTestId('command-band-label-config')).toBeNull()
   })
 
   it('draws no Session band at all when the session has no saved config', () => {

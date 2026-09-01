@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import type { TransportBadgeKind } from './transportBadge'
 
 /** How long an exiting chip stays mounted for its fade-out. Slightly over the
  *  220ms CSS animation so the last frame always paints before unmount. */
@@ -112,6 +113,86 @@ export function SshPersistentBadge() {
       SSH
     </div>
   )
+}
+
+// SSH Persistent (resume liveness): an AMBER counter of VERIFIED-live detached
+// sessions re-attachable for this config — i.e. sessions the user left running on
+// the host that a liveness probe has confirmed are still there. COMPOSES with the
+// SshPersistentBadge (it does not replace it). Rendered only when count > 0.
+export function SshReattachBadge({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <div
+      className="flex items-center justify-center h-4 px-1 gap-0.5 rounded shrink-0 bg-peach/15 text-peach"
+      title={`${count} running session${count === 1 ? '' : 's'} left on the host — resume from Remote Resumable, at the foot of the Running tab`}
+      style={{ fontSize: '8px', fontWeight: 700, letterSpacing: '0.5px' }}
+      data-testid="ssh-reattach-badge"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+        <path d="M3 3v5h5" />
+      </svg>
+      {count}
+    </div>
+  )
+}
+
+/** The tooltip a container transport chip carries everywhere. The engine's
+ *  brand name is deliberately absent from every user-visible string (owner
+ *  call, signed-off startup mockup): the app supports two engines and the
+ *  badge states the HOP, not the vendor. */
+export const CONTAINER_BADGE_TITLE = 'Container session over SSH'
+
+export function containerBadgeTitle(container?: string): string {
+  return container ? `${CONTAINER_BADGE_TITLE} — ${container}` : CONTAINER_BADGE_TITLE
+}
+
+/** The container mark, at the size each surface needs. Stroke-drawn cargo stack
+ *  over a wave — the signed-off startup mockup's glyph (`row-rocky-podman`),
+ *  which still reads at 11px where a filled whale silhouette mushed. */
+export function ContainerGlyph({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3.5" y="10" width="3.6" height="3.6" />
+      <rect x="8.6" y="10" width="3.6" height="3.6" />
+      <rect x="13.7" y="10" width="3.6" height="3.6" />
+      <rect x="8.6" y="4.9" width="3.6" height="3.6" />
+      <path d="M2 17.2c2.2 2.6 7 3.6 11 2.4 3.4-1 5.6-3 6.8-5.6 1 .2 1.9 0 2.2-.6" />
+    </svg>
+  )
+}
+
+// Container-over-SSH transport badge (phase 6; supersedes the composing
+// DockerBadge of harmonise-remote Phase 3). A session whose effective runtime
+// is a container REPLACES the SSH / SSH-Persistent chip with this one — it is a
+// third transport, not an extra sticker: main never tmux-wraps a container
+// session (pty-manager: `detachable !== false && !isContainerSession`), so the
+// old pairing could only ever read "SSH" + "container", two chips for one fact.
+// A 16px teal square, LOGO ONLY: teal keeps it clear of SSH's blue, tmux's
+// green and the terminal's sky, and the engine name appears nowhere in the UI.
+// The container name lives in the tooltip, not inline (row width).
+export function SshContainerBadge({ container }: { container?: string }) {
+  return (
+    <div
+      className="flex items-center justify-center w-4 h-4 rounded shrink-0 bg-teal/15 text-teal"
+      title={containerBadgeTitle(container)}
+      data-testid="ssh-container-badge"
+    >
+      <ContainerGlyph size={11} />
+    </div>
+  )
+}
+
+/**
+ * The SSH row's ONE transport chip, chosen by `resolveTransportBadge`. Every
+ * surface that shows transport renders this, so ConfigRow, Quick Start, the
+ * running-session cards and the startup page cannot drift apart again.
+ */
+export function TransportBadge({ kind, container }: { kind: TransportBadgeKind; container?: string }) {
+  if (kind === 'container') return <SshContainerBadge container={container} />
+  if (kind === 'persistent') return <SshPersistentBadge />
+  if (kind === 'ssh') return <SshBadge />
+  return null
 }
 
 export function CodexBadge() {

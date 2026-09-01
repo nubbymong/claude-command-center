@@ -23,8 +23,9 @@ interface PreviewElem {
 // Sample values match the mockup; the account element shows the user's real
 // signed-in email so the preview reads as THEIR status line, not a stock one.
 const ELEMS: PreviewElem[] = [
-  { k: 'showModel', label: 'Model', node: () => 'Opus 4.8' },
-  { k: 'showEffort', label: 'Effort level', node: () => <span className="mut">xhigh</span> },
+  // Account is far-LEFT to match the live SessionStatusStrip (owner UX,
+  // 2026-08-31), so the onboarding + Settings preview reads in the same order a
+  // running session's status line does.
   {
     k: 'showAccount',
     label: 'Account',
@@ -35,6 +36,8 @@ const ELEMS: PreviewElem[] = [
       </>
     ),
   },
+  { k: 'showModel', label: 'Model', node: () => 'Opus 4.8' },
+  { k: 'showEffort', label: 'Effort level', node: () => <span className="mut">xhigh</span> },
   { k: 'showTokens', label: 'Token usage', node: () => <span className="num">84k / 200k</span> },
   {
     k: 'showContextBar',

@@ -6,7 +6,6 @@ import SessionHeader from './components/SessionHeader'
 import TerminalView, { killSessionPty } from './components/TerminalView'
 import CommandBar from './components/CommandBar'
 import SessionStatusStrip from './components/SessionStatusStrip'
-import SshHostPill from './components/SshHostPill'
 import WebviewPane from './components/WebviewPane'
 import AgentCanvasPane from './components/AgentCanvasPane'
 import LogsPane from './components/LogsPane'
@@ -42,10 +41,17 @@ import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import SshCloseDialog from './components/SshCloseDialog'
+import SshReattachGoneNotice from './components/SshReattachGoneNotice'
+import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
+import { probeGoneSessions } from './stores/livenessStore'
+import { pingAllDetachedHosts } from './stores/hostReachability'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, DIALOG_INPUT_CLASS, DIALOG_INPUT_STYLE } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
+import { configsToEnableMultiSpawn } from './utils/multiSpawn'
+import { MultiSpawnStartupPage } from './components/MultiSpawnStartupPage'
+import { decideMultiSpawnIntro, markMultiSpawnIntroSeen } from './onboarding/multi-spawn-intro-gate'
 import { useCommandBarStore } from './stores/commandBarStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
@@ -54,7 +60,7 @@ import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
-import { bootWhatsNewSurface } from './onboarding/upgrade-flow'
+import { bootWhatsNewSurface, lastRunVersionOf } from './onboarding/upgrade-flow'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -145,6 +151,16 @@ export default function App() {
    *  completed the flow, but has not seen the notes for the build now running.
    *  Armed once in postConfigInit, cleared when the harness completes. */
   const [whatsNewOnly, setWhatsNewOnly] = useState(false)
+  /** The Allow Multi Spawn startup page is due this launch. Decided ONCE in
+   *  postConfigInit from meta read before anything stamps — by the time the
+   *  release-notes harness has closed, a first install is indistinguishable
+   *  from an upgrade. Cleared by either of the page's buttons. */
+  const [multiSpawnIntroDue, setMultiSpawnIntroDue] = useState(false)
+  /** Config ids the grandfathering migration turned on THIS START — the rows
+   *  the startup page marks "auto · N copies found". Accumulated because the
+   *  page mounts after the migration has already written `true`, at which point
+   *  a stored `true` no longer says who set it. */
+  const [multiSpawnAutoEnabled, setMultiSpawnAutoEnabled] = useState<string[]>([])
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
@@ -333,6 +349,18 @@ export default function App() {
     })
   }, [])
 
+  // The agent pushed a page to the USER's in-app browser (the
+  // open_in_app_browser MCP tool). Subscribed at the app root and never
+  // unmounted — like the Esc hook — so the notification pill is raised for ANY
+  // session, whether or not that session's tab/pane is currently mounted. The
+  // store records it as pending + unread; it deliberately does NOT navigate, so
+  // a page the user is actively viewing is never yanked out from under them.
+  useEffect(() => {
+    return window.electronAPI.webview.onAgentPush(({ sessionId, url }) => {
+      useWebviewStore.getState().pushAgentUrl(sessionId, url)
+    })
+  }, [])
+
   // Subscribe to main-process notification that a /login produced a previously
   // unseen account. The prompt lets the user name + save it as a profile.
   useEffect(() => {
@@ -442,6 +470,40 @@ export default function App() {
     return () => { cancelled = true }
   }, [configLoaded, logsWipeBytes])
 
+  // ── Allow Multi Spawn grandfathering (phase 4) ───────────────────────────
+  // Configs created before Allow Multi Spawn existed had no such limit, and
+  // some of them are legitimately running several copies right now. Turning the
+  // one-at-a-time rule on for them would suddenly refuse a launch they have
+  // always been allowed — so any config that DEMONSTRABLY runs more than one
+  // copy (live sessions + detached remotes that would reattach to it) gets the
+  // setting turned on, once, and persisted with the config.
+  //
+  // ENABLE-ONLY and idempotent, so it needs no one-shot flag: it runs on every
+  // start (and again whenever the session set or the registry moves, which is
+  // when the answer could change), and finds nothing to do the moment every
+  // multi-copy config is marked. `updateConfig` writes through to disk, so the
+  // re-render this triggers sees the flag already set and stops.
+  //
+  // It only ever touches a config whose setting is UNDEFINED (phase 4.1). A
+  // config the user explicitly turned OFF stores `false`, and running this on
+  // every start would otherwise revert that decision each launch for as long as
+  // two copies happened to be live.
+  const detachedRemoteEntries = useDetachedRemotesStore((s) => s.entries)
+  useEffect(() => {
+    if (!configLoaded) return
+    const ids = configsToEnableMultiSpawn(configs, sessions, detachedRemoteEntries)
+    if (ids.length === 0) return
+    const { updateConfig } = useConfigStore.getState()
+    for (const id of ids) updateConfig(id, { allowMultiSpawn: true })
+    // Remembered for the startup page (phase 5), which shows these rows a
+    // "auto · N copies found" chip. Appended only when something new appears —
+    // the write above flips the same configs to `true`, so the next pass
+    // returns nothing and this settles immediately.
+    setMultiSpawnAutoEnabled((prev) =>
+      ids.every((id) => prev.includes(id)) ? prev : [...new Set([...prev, ...ids])],
+    )
+  }, [configLoaded, configs, sessions, detachedRemoteEntries])
+
   // Post-config-load initialization
   useEffect(() => {
     if (!configLoaded || hasRestoredRef.current) return
@@ -478,6 +540,26 @@ export default function App() {
       // Only arm the notes-only mode when the harness is not already coming up
       // for its own reasons; there, whatsNewV2 is simply its first page.
       if (surface === 'tour' && !alreadyRunning) setWhatsNewOnly(true)
+
+      // Allow Multi Spawn's post-install page (phase 5). Decided from the SAME
+      // pre-stamp `appMeta` snapshot the release-notes decision above used, and
+      // for the same reason: the harness stamps `lastSeenVersion` when it
+      // closes, so a first install read after that is indistinguishable from an
+      // upgrade. Its own marker (`multiSpawnIntroVersion`) is separate — the two
+      // surfaces are dismissed independently, one after the other.
+      //
+      // The gate only ARMS it; `pickBootGate` holds it behind the release notes
+      // and the resume prompt (bootGates: it is last in the chain).
+      const introDecision = decideMultiSpawnIntro({
+        lastSeenVersion: appMeta.lastSeenVersion,
+        lastRunVersion: lastRunVersionOf(appMeta),
+        multiSpawnIntroVersion: appMeta.multiSpawnIntroVersion,
+        currentVersion: __APP_VERSION__,
+        configCount: useConfigStore.getState().configs.length,
+        channel: useSettingsStore.getState().settings.updateChannel,
+      })
+      if (introDecision.markSeen) markMultiSpawnIntroSeen()
+      if (introDecision.show) setMultiSpawnIntroDue(true)
 
       // Record that THIS build ran — AFTER the decision above has read the
       // previous value, which is the whole point of it. It is the witness
@@ -733,6 +815,20 @@ export default function App() {
       }
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
+      // SSH Persistent (Phase 1): rehydrate the left-running registry from the
+      // same persisted file BEFORE the save below (which folds it back in via
+      // buildSessionState). App-restart restore is otherwise UNCHANGED — the
+      // sessions that were open reattach by keeping their id; the registry only
+      // feeds the resume surface + the amber re-attachable counter, never the
+      // launch path (a config launch always starts new).
+      useDetachedRemotesStore.getState().hydrate(savedState.detachedRemotes)
+      // SSH Persistent (resume liveness, tier 1): ONE initial reachability pass
+      // over the distinct hosts we just rehydrated, so a box that is off at
+      // launch is already demoted before the user looks. A single pass, not an
+      // armed timer — the ~90s ping clock only runs while the Running tab is
+      // visible (Phase 3 arms it via armHostPings/disarmHostPings). Fire and
+      // forget: never blocks restore, never throws.
+      void pingAllDetachedHosts()
       // Per-session "hide this tool" entries key on session ids, which persist
       // across restarts; drop the ones whose session did not come back (ADR-018 M3).
       useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
@@ -747,6 +843,27 @@ export default function App() {
       } catch {
         /* best-effort: the debounced autosave rewrites on the next session-set change */
       }
+
+      // SSH Persistent (resume liveness): app-restart auto-reattach is UNCHANGED
+      // (each persistent SSH session already re-spawned above and reattaches
+      // optimistically). Reconcile ASYNC — never blocking restore: probe each
+      // restored persistent SSH session's own tmux target, and for any the host
+      // CONFIRMS is gone, flag it so the pane shows the "remote session ended"
+      // notice with Start new (rather than silently handing back a blank session
+      // that looks like the one left running). Unverified hosts flag nothing.
+      void (async () => {
+        const persistentSsh = restoredSessions.filter(
+          (s) => s.sessionType === 'ssh' && !!s.sshConfig && s.sshConfig.detachable !== false && !!s.configId,
+        )
+        if (persistentSsh.length === 0) return
+        const gone = await probeGoneSessions(persistentSsh.map((s) => ({ id: s.id, configId: s.configId })))
+        const store = useSessionStore.getState()
+        for (const id of gone) {
+          // Only flag a session still present (the user may have closed it in the
+          // window between restore and the probe returning).
+          if (store.getSession(id)) store.updateSession(id, { sshRemoteReattachGone: true })
+        }
+      })()
 
       if (sessionSummary.changed > 0) {
         const s = useSettingsStore.getState()
@@ -1041,11 +1158,13 @@ export default function App() {
                       provider={session.provider}
                       codexOptions={session.codexOptions}
                     />
-                    {/* #570: SSH sessions name their host here — docked above
-                        the statusline, never over the command buttons. Inside
-                        the MAIN terminal PaneFade so the canvas/browser/logs/
-                        partner surfaces structurally cannot show it (R4 a7). */}
-                    <SshHostPill host={session.sshConfig?.host} />
+                    {/* SSH Persistent (resume liveness): the app-restart "remote
+                        session ended" notice. Self-subscribes by id and renders
+                        nothing until a probe confirms the reattach target is gone
+                        (the flag is not a structural field the shell re-renders
+                        on). The PaneFade is `relative`, so it parks top-right of
+                        the pane like the flow overlay. */}
+                    {session.sessionType === 'ssh' && <SshReattachGoneNotice sessionId={session.id} />}
                   </PaneFade>
                   {hasPartner && (
                     <PaneFade
@@ -1227,6 +1346,7 @@ export default function App() {
     showMachineNamePrompt,
     loggingConsentSeen: Boolean(loggingConsentSeen),
     resumePending: pendingRestore !== null,
+    multiSpawnIntroDue,
     whatsNewDue: shouldShowWhatsNew(),
     trainingDue: shouldShowTraining() || isFirstInstall(),
     githubOnboardingDue: isGitHubOnboardingDue(),
@@ -1334,6 +1454,16 @@ export default function App() {
                 console.error('[App] Resume refresh failed:', err)
               }
             }}
+          />
+        )}
+
+        {/* Last in the boot chain (bootGates): the second page of one upgrade
+            story — release notes, then this — and its per-row copy counts read
+            the sessions the resume prompt has just brought back. */}
+        {bootGate === 'multiSpawnIntro' && (
+          <MultiSpawnStartupPage
+            autoEnabledIds={multiSpawnAutoEnabled}
+            onDone={() => setMultiSpawnIntroDue(false)}
           />
         )}
 

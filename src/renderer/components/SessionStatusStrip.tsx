@@ -31,6 +31,16 @@ interface SessionStatusStripProps {
   sessionId: string
 }
 
+/** Defense in depth for the extra-usage block: the main-process sanitiser
+ *  already drops a malformed rateLimitExtra, but this render reads
+ *  `.usedUsd.toFixed()` etc., so guard the numeric fields at the point of use
+ *  too -- a partial object (a hostile SSH host's `{enabled:true}`) must never
+ *  reach `.toFixed` and blank the window via the ErrorBoundary (ADR-009 R1). */
+function validExtraUsage(e: Session['rateLimitExtra']): e is NonNullable<Session['rateLimitExtra']> {
+  return !!e && e.enabled === true
+    && typeof e.utilization === 'number' && typeof e.usedUsd === 'number' && typeof e.limitUsd === 'number'
+}
+
 // Shared pill styling for the control cluster (Mode / Model / Compact /
 // Restart). Token-driven so it tracks both themes and reads as one system
 // with the CommandBar command chips. (UAT R2 Task 4.)
@@ -241,6 +251,62 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
       className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t border-b"
       style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)', ...statusType }}
     >
+      {/* Account — ALWAYS the far-left item of the strip (owner UX, live testing
+          2026-08-31). Rendered as the FIRST child, before the statusLineEnabled
+          split, so it sits at the absolute left whether or not the telemetry band
+          is on. One element, never doubled: the interactive switch pill when the
+          account is switchable (multi-account local — a control, so not gated on
+          sl.showAccount and the ToolbarPopup keeps its upward anchor), otherwise
+          the read-only chip (single-account / SSH — honours sl.showAccount).
+          Previously this was split between the telemetry cluster (chip) and the
+          controls cluster (pill), so the account jumped left/right by session. */}
+      {canSwitchAccount ? (
+        <div className="relative shrink-0">
+          <button
+            onClick={() => setOpenPicker(openPicker === 'account' ? null : 'account')}
+            className={CONTROL_PILL}
+            style={{
+              background: 'var(--surface-raised)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+            title="Switch account (respawns + resumes this session)"
+          >
+            <span className="flex items-center gap-1">
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ backgroundColor: accountDot }}
+                aria-hidden
+              />
+              <span className="truncate max-w-[16rem]">{accountName ?? 'Account'}</span>
+            </span>
+          </button>
+          {openPicker === 'account' && (
+            <ToolbarPopup
+              sections={[{ title: 'Switch account', items: accountItems }]}
+              onSelect={onSwitchAccount}
+              onClose={() => setOpenPicker(null)}
+            />
+          )}
+        </div>
+      ) : sl.showAccount && accountName ? (
+        <span
+          className="flex items-center gap-1 shrink-0"
+          style={{ color: 'var(--text-muted)' }}
+          title={session.accountEmail}
+          data-testid="account-chip"
+        >
+          <span
+            className="w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ backgroundColor: accountDot }}
+            aria-hidden
+          />
+          <span className="truncate max-w-[14rem]">{accountName}</span>
+        </span>
+      ) : null}
+
       {/* Telemetry. The whole strip (this cluster + the controls) scales as one
           via the Status-bars region on the Font & Size page (zoom on the outer
           wrapper), so there is no per-element font size here anymore -- that split
@@ -272,24 +338,8 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
             )}
           </span>
         )}
-        {/* Bug 6: when the interactive account-switch pill is shown (multi-account),
-            it already displays the account + dot, so this read-only chip would
-            double it. Single-account sessions (no switch pill) keep this chip. */}
-        {sl.showAccount && accountName && !canSwitchAccount && (
-          <span
-            className="flex items-center gap-1 shrink-0"
-            style={{ color: 'var(--text-muted)' }}
-            title={session.accountEmail}
-            data-testid="account-chip"
-          >
-            <span
-              className="w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ backgroundColor: accountDot }}
-              aria-hidden
-            />
-            <span className="truncate max-w-[14rem]">{accountName}</span>
-          </span>
-        )}
+        {/* Account moved to the far-left of the strip (first child, above) — it
+            is no longer part of the telemetry cluster. */}
         {sl.showTokens && session.inputTokens != null && session.contextWindowSize && (
           <span className="tabular-nums shrink-0">{formatTokens(session.inputTokens)} / {formatTokens(session.contextWindowSize)}</span>
         )}
@@ -320,13 +370,13 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           // return limits[]. Hidden-set keyed by label (see hiddenUsageBuckets).
           const shown = (session.usageBuckets ?? []).filter((b) => !hiddenBuckets.includes(b.label))
           if (session.usageBuckets && session.usageBuckets.length > 0) {
-            if (shown.length === 0 && !session.rateLimitExtra?.enabled) return null
+            if (shown.length === 0 && !validExtraUsage(session.rateLimitExtra)) return null
             return (
               <span className="flex items-center gap-3 shrink-0">
                 {shown.map((b) => (
                   <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} showReset={sl.showResetTime} />
                 ))}
-                {session.rateLimitExtra?.enabled && (
+                {validExtraUsage(session.rateLimitExtra) && (
                   <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
                 )}
               </span>
@@ -399,42 +449,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           danger-on-hover treatment. (UAT R2 Tasks 2 + 4.) */}
       {isClaude && (
         <div className="flex items-center gap-1 shrink-0">
-          {/* Account switch (multi-account only): respawns the session under the
-              chosen profile and resumes the transcript. Same pill styling as the
-              Mode/Model controls; opens upward (ToolbarPopup is bottom-anchored)
-              so it isn't clipped by the telemetry zone's overflow. */}
-          {canSwitchAccount && (
-            <div className="relative">
-              <button
-                onClick={() => setOpenPicker(openPicker === 'account' ? null : 'account')}
-                className={CONTROL_PILL}
-                style={{
-                  background: 'var(--surface-raised)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-secondary)',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
-                title="Switch account (respawns + resumes this session)"
-              >
-                <span className="flex items-center gap-1">
-                  <span
-                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                    style={{ backgroundColor: accountDot }}
-                    aria-hidden
-                  />
-                  <span className="truncate max-w-[16rem]">{accountName ?? 'Account'}</span>
-                </span>
-              </button>
-              {openPicker === 'account' && (
-                <ToolbarPopup
-                  sections={[{ title: 'Switch account', items: accountItems }]}
-                  onSelect={onSwitchAccount}
-                  onClose={() => setOpenPicker(null)}
-                />
-              )}
-            </div>
-          )}
+          {/* Account switch moved to the far-left of the strip (first child,
+              above) so the account sits in one consistent place for every
+              session type. The Model / Compact / Restart controls remain here. */}
           <div className="relative">
             <button
               onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}

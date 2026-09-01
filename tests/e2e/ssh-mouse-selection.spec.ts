@@ -62,7 +62,7 @@ test.describe('#546 SSH mouse-selection: fixed state in the real app', () => {
     // A Terminal-only local config → a real shell-only PTY with a mounted xterm.
     await openDialog()
     await page.locator('[role="radiogroup"][aria-label="Provider"] label:has(input[value="terminal"])').click()
-    await page.locator('[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="local"])').click()
+    await page.locator('[role="radiogroup"][aria-label="Connection"] label:has(input[value="local"])').click()
     await expect(page.locator('text=Terminal startup')).toBeVisible({ timeout: 10000 })
     await page.locator('input[placeholder="npm run dev"]').fill('echo ready')
     await page.locator('input[placeholder="e.g. App Dev"]').fill('E2E Mouse Sel')

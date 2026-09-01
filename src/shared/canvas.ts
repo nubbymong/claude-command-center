@@ -216,6 +216,24 @@ export interface CanvasVersion {
    *  overwritten and resurrected as approved. Newest last. */
   priorVerdicts?: CanvasVersionVerdict[]
   /**
+   * How many questions this PLAN version still leaves open (plan mode only).
+   *
+   * Counted from the rendered document at render time (`countOpenPlanQuestions`)
+   * and stored, so the pane can read it without opening the file. It gates ONE
+   * thing: Approve on a plan, which is blocked while a question stands — a plan
+   * with an unanswered question is not something a user can call perfect, and
+   * "approve with answers attached" is the move the state machine exists to stop
+   * (the answers go back as revisions, and the NEXT version is the one that can
+   * be approved).
+   *
+   * Absent = none. Fail-OPEN, deliberately: a plan authored before the marker
+   * existed, or by an agent that did not use it, must stay approvable rather
+   * than become permanently un-approvable by a document convention it never
+   * heard of. The second gate (any note blocks Approve) needs no convention at
+   * all and still applies, so an un-marked plan is not ungated.
+   */
+  openQuestions?: number
+  /**
    * What the user calls this TEST PACK (M3, testing mode).
    *
    * One build under test = one run = one round = one submission, and the pack IS
@@ -388,6 +406,49 @@ export type CanvasRenderSource =
  * the ONLY thing serving looks at; `version.mode` is 'design' | 'plan' | 'uat'
  * and is only ever a label.
  */
+
+/**
+ * The one marker a plan uses to say a question is still OPEN.
+ *
+ * `data-plan-question="open"` on the element that shows the question — the same
+ * element the user annotates, which is the point: the count and the thing the
+ * user is looking at cannot drift apart, because they are the same tag. Any
+ * other value ("parked", "answered") is a question that does not block, so a
+ * plan can carry a parked decision without holding its own approval hostage.
+ *
+ * Authored by the `canvas-plan` skill; see `.ccc-canvas/plan-remote-harmonise.html`
+ * for the reference shape.
+ */
+export const PLAN_OPEN_QUESTION_ATTR = 'data-plan-question'
+
+/** Ceiling on the stored open-question count. A plan with a hundred open
+ *  questions is not a plan, and the number only ever appears in a sentence — so
+ *  it is bounded rather than trusted, exactly like every other number this file
+ *  reads back from a document it did not write. */
+export const MAX_PLAN_OPEN_QUESTIONS = 99
+
+/**
+ * How many questions a plan document leaves open.
+ *
+ * A plain global match, not a parse: main must not build a DOM out of an
+ * agent-authored document to answer a question this small, and the expression
+ * has no alternation over a repeat, so it is linear in the input and cannot be
+ * made to backtrack. Counting stops at the cap.
+ */
+export function countOpenPlanQuestions(html: string): number {
+  if (typeof html !== 'string' || html.length === 0) return 0
+  const re = /data-plan-question\s*=\s*["']open["']/gi
+  let n = 0
+  while (n < MAX_PLAN_OPEN_QUESTIONS && re.exec(html) !== null) n += 1
+  return n
+}
+
+/** Is a stored open-question count OUR shape? A whole number in range, or
+ *  absent. A hand-edited value is not repaired — the version carrying it is
+ *  dropped, like every other field read back from disk. */
+export function isKeepableOpenQuestions(value: unknown): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_PLAN_OPEN_QUESTIONS)
+}
 
 // ── Anchoring (P3, spec §4) ─────────────────────────────────────────────────
 
@@ -1650,6 +1711,13 @@ export function sanitizeEvidence(value: unknown): AnnotationEvidence | undefined
  *
  * `observations` is how many notes rode an approval. They are recorded, not
  * owed, so an approval carrying them is still a pass — it just says so.
+ *
+ * A PLAN is the third vocabulary (owner spec, 2026-08-31). Its rejected state
+ * reads REVISIONS, because a plan has no Reject: the user asked for another
+ * turn of an iterative document, and a badge saying REJECTED in the Library
+ * contradicts the button they actually pressed. The STORED verdict is still
+ * `rejected` — this is a display mapping and nothing else, so the C1 machine,
+ * its transitions and its audit trail are untouched.
  */
 export function verdictLabel(version: CanvasVersion, opts?: { observations?: number }): string {
   const uat = version.mode === 'uat'
@@ -1659,8 +1727,36 @@ export function verdictLabel(version: CanvasVersion, opts?: { observations?: num
     const base = uat ? 'PASSED' : 'APPROVED'
     return (opts?.observations ?? 0) > 0 ? `${base} WITH OBSERVATIONS` : base
   }
-  if (state === 'rejected') return uat ? 'FAILED' : 'REJECTED'
+  if (state === 'rejected') return uat ? 'FAILED' : version.mode === 'plan' ? 'REVISIONS' : 'REJECTED'
   return state.toUpperCase()
+}
+
+/**
+ * Which TREATMENT a verdict label wears — the colour half of `verdictLabel`.
+ *
+ * It lives here, beside the function that mints the words, because the surfaces
+ * that paint a badge do not have the verdict: the Library composes its rows in
+ * MAIN and hands the renderer a finished string (`CanvasLibraryRow.verdict`), so
+ * three separate call sites each grew their own `startsWith('REJECTED')` ladder
+ * over the same vocabulary. Three copies of a mapping that only one file can
+ * change is a drift bug waiting for its third word — and 'REVISIONS' was that
+ * third word: every one of those ladders would have fallen through to the muted
+ * default and painted a plan revision grey.
+ *
+ * 'bad' is the same tone FAILED and REJECTED already wore. A revision requested
+ * is not a failure, but it IS the outcome that owes the agent another version,
+ * and giving it its own colour would say a plan's two outcomes are three.
+ *
+ * Prefix-matched because `verdictLabel` appends "WITH OBSERVATIONS".
+ */
+export type VerdictOutcome = 'ok' | 'bad' | 'open' | 'other'
+
+export function verdictOutcomeOf(label: string): VerdictOutcome {
+  const v = (label || '').toUpperCase()
+  if (v.startsWith('APPROVED') || v.startsWith('PASSED')) return 'ok'
+  if (v.startsWith('REJECTED') || v.startsWith('FAILED') || v.startsWith('REVISIONS')) return 'bad'
+  if (v === 'OPEN' || v === 'DRAFT') return 'open'
+  return 'other'
 }
 
 const PACK_NAME_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const

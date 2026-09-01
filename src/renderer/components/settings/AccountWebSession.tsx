@@ -29,9 +29,8 @@ import {
   type CliAuthMethod,
   type WebSignInMode,
 } from '../../../shared/account-web-session'
-import { useSessionStore } from '../../stores/sessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
-import { resolveArtifactsOpenTarget, resolveSignInOpenTarget, type ClaudeWebTarget } from '../../lib/claude-web-targets'
+import { paneHostSession, resolveArtifactsOpenTarget, resolveSignInOpenTarget, type ClaudeWebTarget } from '../../lib/claude-web-targets'
 
 interface Props {
   profileId: string
@@ -133,14 +132,16 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     // the default window flow runs so the button never dead-ends.
     let fallbackNotice = ''
     if (resolvedSignInTarget === 'pane') {
-      const sessions = useSessionStore.getState()
-      // Same gate as the pane's own claude.ai entry (#475): only a local,
-      // non-shell session can host the account surface — an SSH or shell-only
-      // tile would show a surface its own start page never offers.
-      const eligible = sessions.sessions.filter((s) => !s.shellOnly && s.sessionType === 'local')
-      const host = eligible.find((s) => s.id === sessions.activeSessionId) ?? eligible[0]
+      // One eligibility rule for pane hosting (paneHostSession): a non-shell
+      // Claude session, LOCAL or SSH — the pane is a local webview regardless
+      // of where the session's terminal runs. Sign-in has no specific vetted
+      // session, so requirePreferred stays off (its doc comment describes
+      // exactly this call). Previously this duplicated the filter and still
+      // hard-coded local-only, so with only SSH sessions open the pane setting
+      // silently fell back to the window here while artifacts honoured it.
+      const host = paneHostSession()
       if (host) {
-        window.dispatchEvent(new CustomEvent('app:openAccountPane', { detail: { sessionId: host.id, profileId } }))
+        window.dispatchEvent(new CustomEvent('app:openAccountPane', { detail: { sessionId: host, profileId } }))
         setError('')
         setNotice('The sign-in opened in that session’s browser pane — sign in there once, and this panel updates itself.')
         return

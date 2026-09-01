@@ -55,6 +55,7 @@ import {
   xrayClickSelects,
   xrayDrawsOnPage,
   xrayHoverIsLive,
+  xrayHoverResolves,
   xrayReadsOutInPanel,
   type CanvasXrayMode,
 } from '../canvas/xray-mode'
@@ -619,10 +620,19 @@ function CanvasSurface({
    */
   const viewingCompleted = viewingCompletedOwn || readOnly
   const sessionMode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
+  const isPlan = version.mode === 'plan'
   // A read-only surface is always BROWSE. The interaction mode is per-SESSION
   // state, so it belongs to the session's own canvas — a foreign document must
   // neither read it nor move it.
-  const mode = readOnly ? 'browse' : sessionMode
+  //
+  // A PLAN is always browse too, and for a sharper reason: the Sketch and
+  // Region chips are not on its toolbar (owner spec, 2026-08-31), and the mode
+  // outlives the version. A user who was sketching over a mockup when the agent
+  // rendered a plan would land on the plan with the glass still holding the
+  // pointer — unable to scroll, unable to click a section, and with no chip
+  // anywhere to give the pointer back. Removing the affordance without pinning
+  // the state is what turns a removal into a trap.
+  const mode = readOnly || isPlan ? 'browse' : sessionMode
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
   const setActiveVersion = useCanvasStore((s) => s.setActiveVersion)
 
@@ -632,8 +642,16 @@ function CanvasSurface({
   // A PLAN page is always 'stealth' (owner call, 2026-08-23): the boxes-on-page
   // x-ray adds nothing over a document of steps, and Off would break note
   // anchoring — the panel readout keeps working, the page stays clean.
+  //
+  // The X-Ray SWITCH is not on a plan's toolbar at all any more (owner spec,
+  // 2026-08-31): a plan is reviewed by content — sections referenced
+  // contextually — and the three-way mode control, Region and Sketch are website
+  // inspection apparatus that only invite the wrong kind of note. The MODE is
+  // still stealth, because that is what keeps CLICK selection (and therefore
+  // note anchoring by `data-ux-id`) alive while nothing is painted on the page
+  // — live hover resolution is off on a plan since d9bab703.
   const settingsXrayMode = resolveCanvasXrayMode(useSettingsStore((s) => s.settings.canvasXrayMode))
-  const xrayMode: CanvasXrayMode = version.mode === 'plan' ? 'stealth' : settingsXrayMode
+  const xrayMode: CanvasXrayMode = isPlan ? 'stealth' : settingsXrayMode
 
   // The review mirror is keyed by SESSION, so everything it holds describes the
   // session's OWN canvas. On a read-only surface that is a different canvas
@@ -643,7 +661,10 @@ function CanvasSurface({
   const ownFocus = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.focus ?? null)
   const focus = readOnly ? null : ownFocus
   const ownMarqueeArmed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.marqueeArmed ?? false)
-  const marqueeArmed = readOnly ? false : ownMarqueeArmed
+  // Plans included, for the same reason `mode` pins to browse above: an armed
+  // marquee that outlived the version it was armed on would put a region
+  // selection over a plan whose toolbar offers no way to cancel it.
+  const marqueeArmed = readOnly || isPlan ? false : ownMarqueeArmed
   const ownPanelHighlight = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.panelHighlight ?? null)
   const panelHighlight = readOnly ? null : ownPanelHighlight
   const ownReviewSession = useCanvasReviewStore((s) => s.bySessionId[sessionId])
@@ -658,11 +679,14 @@ function CanvasSurface({
   // READ-ONLY never runs it: `mode` is already forced to browse locally, and
   // writing the session's own interaction state while looking at somebody
   // else's canvas would silently change the mode of the canvas underneath.
+  // Plans join it: the pane already renders browse for them (see `mode`), and
+  // writing it back means the stale mode does not spring the glass open again
+  // the moment the surface stops being a plan.
   useEffect(() => {
-    if (readOnly || !viewingCompleted) return
+    if (readOnly || (!viewingCompleted && !isPlan)) return
     setInteractionMode(sessionId, 'browse')
     setMarqueeArmed(sessionId, false)
-  }, [readOnly, viewingCompleted, sessionId, setInteractionMode, setMarqueeArmed])
+  }, [readOnly, viewingCompleted, isPlan, sessionId, setInteractionMode, setMarqueeArmed])
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   /** The pane's root element — the scope of the HOST-side zoom gesture (#368):
@@ -706,6 +730,7 @@ function CanvasSurface({
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
   const modeRef = useRef(mode)
   const xrayModeRef = useRef(xrayMode)
+  const isPlanRef = useRef(isPlan)
   const versionIdRef = useRef(version.id)
   /**
    * What the CURRENT document says it is doing about hover reporting. A bridge
@@ -901,6 +926,7 @@ function CanvasSurface({
   viewportRef.current = viewport
   modeRef.current = mode
   xrayModeRef.current = xrayMode
+  isPlanRef.current = isPlan
   versionIdRef.current = version.id
   zoomRef.current = zoom
 
@@ -1452,7 +1478,9 @@ function CanvasSurface({
    * symptom, so nothing is allowed to wait for one (independent review, #405).
    */
   const syncHoverReporting = useCallback(() => {
-    const enabled = xrayHoverIsLive(xrayModeRef.current)
+    // A PLAN never runs live hover resolution: it corrupted/flashed the pane on
+    // every mousemove and its notes anchor on CLICK anyway (owner, 2026-08-31).
+    const enabled = xrayHoverResolves(xrayModeRef.current, { isPlan: isPlanRef.current })
     // Recorded BEFORE the nothing-to-do check, so that passing through a mode
     // the frame already agrees with still counts as changing the intent. Keyed
     // after it, "Off (gave up) -> On -> Off" read as the same intent as the
@@ -1588,7 +1616,9 @@ function CanvasSurface({
         // reports on and may ignore that request — or never have received it —
         // so the mode the user chose is applied to what actually arrives.
         onPointer: (hit) => {
-          if (!xrayHoverIsLive(xrayModeRef.current)) {
+          // Enforced host-side too (a page-realm bridge may report anyway): a
+          // plan resolves no hover, so a stray pointer draws/reads out nothing.
+          if (!xrayHoverResolves(xrayModeRef.current, { isPlan: isPlanRef.current })) {
             setHover(null)
             return
           }
@@ -2126,12 +2156,15 @@ function CanvasSurface({
   // "hover to inspect, click to select" would reasonably think it had failed.
   // The label carries the x-ray state (Inspect · Stealth) so the strip and the
   // chip agree on one glance.
+  //
+  // The stealth line used to explain the MODE here as well ("hovering names the
+  // element in the panel and draws nothing on the page"), which is the readout's
+  // own job and reads as a tutorial in a toolbar. The hint states the gestures;
+  // the strip beside the panel names what is under the pointer.
   const inspectHint =
     xrayMode === 'off'
       ? 'the page is live and plain — X-Ray is off, so hovering and clicking do nothing here'
-      : xrayMode === 'stealth'
-        ? 'hovering names the element in the panel and draws nothing on the page · click selects · ↑ parent · Esc clears'
-        : 'hover to inspect, click to select · ↑ parent · Esc clears'
+      : 'click selects · ↑ parent · Esc clears'
 
   const modeStrip = marqueeArmed
     ? { color: 'text-peach', label: 'Region', hint: 'drag a rectangle over the area — Esc cancels' }
@@ -2144,11 +2177,20 @@ function CanvasSurface({
           // to get the page back, which is the thing draw mode takes away.
           hint: 'drawing over the page — what you draw rides your next note · press Sketch again to use the page',
         }
-      : {
-          color: 'text-blue',
-          label: xrayMode === 'on' ? 'Inspect' : `Inspect · ${xrayMode === 'off' ? 'Off' : 'Stealth'}`,
-          hint: inspectHint,
-        }
+      : isPlan
+        ? {
+            // A plan is reviewed by CONTENT (owner spec, 2026-08-31): the
+            // inspection apparatus is not on this toolbar, so the hint names the
+            // one gesture that IS here — point a note at a section.
+            color: 'text-mauve',
+            label: 'Review',
+            hint: 'click a section to point a note at it · Esc clears',
+          }
+        : {
+            color: 'text-blue',
+            label: xrayMode === 'on' ? 'Inspect' : `Inspect · ${xrayMode === 'off' ? 'Off' : 'Stealth'}`,
+            hint: inspectHint,
+          }
 
   /** Per USER, so it is written straight to settings rather than to any canvas
    *  state (#367). Fire-and-forget: the store applies the change synchronously
@@ -2230,7 +2272,6 @@ function CanvasSurface({
   // Sketch and Region take the pointer off the content, so Inspect — and the
   // X-ray setting that only governs Inspect — visibly pause.
   const inspectPaused = !inspectActive
-  const planLocked = version.mode === 'plan'
 
   /** A tool chip: app-family pill, accented when it owns the pointer, dimmed
    *  when another tool has paused it. */
@@ -2546,6 +2587,11 @@ function CanvasSurface({
           their own label, the contextual hint inline where the old full-width
           mode strip was, and the artifact sign-off at the far right. */}
       <div className="flex items-center gap-2 px-3 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[11px] shrink-0" role="group" aria-label="Canvas tools" data-testid="canvas-tool-chips">
+        {/* NOT ON A PLAN. The three-way X-Ray switch used to sit here disabled,
+            with a padlock and a sentence explaining why it was locked (#449) —
+            a control whose whole content was an apology for existing. A plan is
+            reviewed by content, so the apparatus is gone rather than greyed. */}
+        {!isPlan && (
         <div
           // No overflow-hidden: .focus-ring is an outward box-shadow and
           // clipping it left keyboard focus invisible (review HIGH). The end
@@ -2560,7 +2606,6 @@ function CanvasSurface({
               role="group"
               aria-label="X-Ray mode"
               data-testid="canvas-xray-mode"
-              title={planLocked ? 'X-Ray is locked to Stealth on a plan — a document of steps needs no boxes on the page, and Off would break note anchoring.' : undefined}
             >
               <span
                 className="pl-2 pr-1 text-[9px] font-bold tracking-[0.08em] leading-none"
@@ -2580,10 +2625,9 @@ function CanvasSurface({
                       // tools release the pointer and the mode applies.
                       setMarqueeArmed(sessionId, false)
                       setInteractionMode(sessionId, 'browse')
-                      if (!planLocked) setXrayMode(option.value)
+                      setXrayMode(option.value)
                     }}
                     aria-pressed={selected}
-                    disabled={planLocked}
                     className="px-2 self-stretch rounded-none last:rounded-r-[5px] leading-none transition-colors focus-ring disabled:cursor-default"
                     style={selected
                       ? { background: 'color-mix(in srgb, var(--brand) 18%, transparent)', color: 'var(--brand)', fontWeight: 600 }
@@ -2595,25 +2639,19 @@ function CanvasSurface({
                   </button>
                 )
               })}
-              {planLocked && (
-                // A DRAWN padlock, not the lock emoji (#449): the repo's rule
-                // is no emoji in JSX — they render inconsistently across
-                // platforms and esbuild rejects the \u{...} escape form anyway.
-                <span className="px-1.5 inline-flex items-center" style={{ color: 'var(--text-muted)' }} aria-hidden>
-                  <svg width="9" height="11" viewBox="0 0 10 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="1.5" y="5" width="7" height="6" rx="1.2" />
-                    <path d="M3.2 5V3.4a1.8 1.8 0 0 1 3.6 0V5" />
-                  </svg>
-                </span>
-              )}
             </div>
           </div>
+          )}
           {/* MUTATIONS 4, 5 and 6 of 8 suppressed by read-only: Sketch, Tools
               and Region. The whole ANNOTATE group goes, label and all — a
               disabled chip still says "you could annotate this", and on
               somebody else's finished work that is not true. X-Ray stays: it
-              only reads the page. */}
-          {!readOnly && (
+              only reads the page.
+              A PLAN drops the same group for a different reason: Sketch and
+              Region point a note at PIXELS, and a plan's notes point at
+              sections. Clicking a section still targets a note — that is browse,
+              and it needs no chip. */}
+          {!readOnly && !isPlan && (
           <>
           <span aria-hidden className="w-px h-[16px] shrink-0" style={{ background: 'var(--border-subtle)' }} />
           <span className="text-[9px] font-bold tracking-[0.08em] shrink-0" style={{ color: 'var(--text-secondary)' }} aria-hidden>
@@ -3135,7 +3173,12 @@ function CanvasSurface({
                 }
               />
             </div>
-            {xrayReadsOutInPanel(xrayMode) && (
+            {/* Not on a plan: since d9bab703 a plan resolves no hover at all,
+                so this strip could only print its idle dash for ever — the last
+                bit of X-Ray apparatus on a surface the owner asked to have it
+                removed from, and 26px that pushed the plan's composer out of
+                line with every other mode's. */}
+            {xrayReadsOutInPanel(xrayMode, { isPlan }) && (
               <CanvasXrayReadout
                 hit={pointerOwner === 'content' ? (hover?.hit ?? null) : null}
                 label={hoverLabel}

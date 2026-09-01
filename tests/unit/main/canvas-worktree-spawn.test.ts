@@ -131,6 +131,7 @@ vi.mock('../../../src/main/hooks/per-session-settings', () => ({
   removeLocalSessionSettings: () => {},
   writeLocalSessionMcpConfig: () => null,
   removeLocalSessionMcpConfig: () => {},
+  removeLocalSessionStatusUrl: () => {},
 }))
 vi.mock('../../../src/main/claude-account-identity', () => ({
   captureClaudeAccount: () => {},

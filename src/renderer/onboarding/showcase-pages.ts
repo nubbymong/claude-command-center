@@ -25,7 +25,15 @@ import { releaseLine } from '../utils/versionLabel'
  * renders no chip, so the two files cannot drift into a dead button.
  */
 
-export type ShowcaseArtKind = 'canvas' | 'watchdog' | 'oneRow' | 'panel' | 'accounts'
+export type ShowcaseArtKind =
+  | 'canvas'
+  | 'watchdog'
+  | 'oneRow'
+  | 'panel'
+  | 'accounts'
+  | 'multiSpawn'
+  | 'remoteResume'
+  | 'sidebarMarks'
 
 export interface ShowcasePoint {
   /** Bold lead-in, ending in a full stop unless the rest continues the sentence. */
@@ -81,6 +89,45 @@ export const SHOWCASES_21: ShowcasePage[] = [
     ],
     where: { pre: 'Where: the ', em: 'left panel', post: ' — the tabs sit at the top of its sessions list.' },
     art: 'panel',
+  },
+  {
+    id: 'multiSpawn',
+    heading: 'Several copies of one config, on purpose',
+    tagline: 'A saved config runs one session at a time unless you say otherwise. Mark it Allow Multi Spawn and it gains a copy count, a batch launcher, and a firm stop on the accidental double.',
+    points: [
+      { lead: 'Off unless you ask.', rest: 'A running config that is not Multi Spawn declines a second launch, and offers to enable it.' },
+      { lead: 'A copy count on the row.', rest: 'Set it to 3, press once, three sessions start. It remembers the number you chose.' },
+      { lead: 'Select, then launch the lot.', rest: 'Tick boxes on Saved and Quick Start, with a bar that counts what you picked.' },
+      { lead: 'It reads what you already run.', rest: 'Configs you genuinely keep several copies of are switched on for you, once, after an update.' },
+    ],
+    where: { pre: "Where: a config's settings, under the ", em: 'connection cards', post: ' — then on the row itself.' },
+    art: 'multiSpawn',
+  },
+  {
+    id: 'remoteResume',
+    heading: 'Pick a remote session back up',
+    tagline: 'Leave a persistent SSH session running on its host and it waits for you in the sidebar. One click puts you back in the same Claude, in the same conversation.',
+    points: [
+      { lead: 'Docked at the foot of Running.', rest: 'A card each: the host, how long ago you left it, Resumable or Unreachable.' },
+      { lead: 'Click to resume.', rest: 'Same session, same work. Launching the config from Saved always starts something new.' },
+      { lead: 'Checked gently.', rest: 'A ping while you are looking; a real sign-in to the host only when there is a reason.' },
+      { lead: 'Right-click to Remove.', rest: 'It ends the session on the host too, so nothing keeps a Claude you have finished with.' },
+    ],
+    where: { pre: 'Where: the ', em: 'Remote Resumable', post: ' section, at the bottom of the Running tab.' },
+    art: 'remoteResume',
+  },
+  {
+    id: 'sidebarMarks',
+    heading: 'Read the sidebar at a glance',
+    tagline: 'Three kinds of remote session wear three different marks, the account dot leads every row, and nothing hides behind the buttons that appear on hover.',
+    points: [
+      { lead: 'Blue SSH.', rest: 'A plain remote session: the link dropping ends it.' },
+      { lead: 'Green SSH, with a chain link.', rest: 'Persistent, so it keeps running on the host without you.' },
+      { lead: 'A teal container mark.', rest: 'The session runs inside a container on that host, named on hover.' },
+      { lead: 'Identity first.', rest: 'The account dot leads the row, and loose configs sit under an Ungrouped heading that folds.' },
+    ],
+    where: { pre: 'Where: the ', em: 'Saved and Running tabs', post: ' — and the same three marks in the session header.' },
+    art: 'sidebarMarks',
   },
   {
     id: 'accounts',

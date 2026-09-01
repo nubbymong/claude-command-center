@@ -6,6 +6,7 @@ import * as pty from 'node-pty'
 import { logInfo } from '../debug-logger'
 import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
+import { probeClaudeCli } from '../claude-cli-probe'
 import {
   getDataDirectory,
   getResourcesDirectory,
@@ -112,6 +113,27 @@ export function registerSetupHandlers(): void {
 
   ipcMain.handle('setup:isCliReady', async () => {
     return isCliReady()
+  })
+
+  // Is the CLI INSTALLED at all? Distinct from isCliReady (which asks whether
+  // the install folder is trusted, and answers "no" identically for "missing
+  // binary" and "binary present, folder not trusted yet"). First-run setup
+  // hard-stops on this one. Fail CLOSED: a probe that throws reports "not
+  // installed" with the reason, and the step offers Retry.
+  // ASYNC and coalescing since the 2026-09-01 adversarial pass: the probe used
+  // to be `execFileSync`, so this ungated renderer channel blocked the main
+  // process for up to 24s (three sequential 8s probes) on demand. `probeClaudeCli`
+  // now runs on the event loop and collapses overlapping calls onto one probe;
+  // this handler must AWAIT it so a rejection still lands in the catch below
+  // rather than escaping as an unhandled rejection.
+  ipcMain.handle('setup:probeCli', async () => {
+    try {
+      return await probeClaudeCli()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      logInfo(`[setup] Claude CLI probe failed: ${message}`)
+      return { installed: false, probe: `probe failed: ${message}` }
+    }
   })
 
   ipcMain.handle('setup:spawnCliSetup', async (event, cols: number, rows: number) => {

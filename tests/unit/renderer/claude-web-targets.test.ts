@@ -78,11 +78,13 @@ describe('openArtifactsPerSetting', () => {
     expect(openArtifactsIpc).toHaveBeenCalledWith('profile-1')
   })
 
-  it('adv LOW-1: pane never hosts in a session other than the caller’s own — an ineligible preferred id → window, not another session', () => {
+  it('adv LOW-1: pane hosts in the caller’s OWN session (SSH included now) and never in a DIFFERENT session', () => {
     useSettingsStore.setState((st) => ({ settings: { ...st.settings, artifactsOpenTarget: 'pane' } }))
-    // The caller’s own session is SSH (ineligible); another local session
-    // (a DIFFERENT account) is active. The pane must NOT open account-1’s
-    // surface in that other session — it takes the window path instead.
+    // The caller’s own session is SSH (now eligible — the pane is a local
+    // webview and the SSH account maps to a local profile). Another local
+    // session (a DIFFERENT account) is active. requirePreferred still binds
+    // hosting to the caller’s OWN session, so the pane opens in s-mine-ssh and
+    // NEVER in s-other-local — the security property the test guards.
     useSessionStore.setState({
       sessions: [
         { id: 's-mine-ssh', shellOnly: false, sessionType: 'ssh' },
@@ -91,17 +93,20 @@ describe('openArtifactsPerSetting', () => {
       activeSessionId: 's-other-local',
     } as never)
     openArtifactsPerSetting('profile-1', 's-mine-ssh')
-    expect(openAccountPane).not.toHaveBeenCalled()
-    expect(openArtifactsIpc).toHaveBeenCalledWith('profile-1')
+    expect(openAccountPane).toHaveBeenCalledWith('s-mine-ssh', 'profile-1')
+    expect(openAccountPane).not.toHaveBeenCalledWith('s-other-local', expect.anything())
+    expect(openArtifactsIpc).not.toHaveBeenCalled()
   })
 
-  it('paneHostSession: preferred > active > any eligible; ssh and shell-only never host', () => {
+  it('paneHostSession: an SSH Claude session CAN host (setting respected for remote); shell-only never does', () => {
     expect(paneHostSession('s-local')).toBe('s-local')
-    expect(paneHostSession('s-ssh')).toBe('s-local') // preferred ineligible -> active
-    expect(paneHostSession()).toBe('s-local')
-    // requirePreferred binds to the caller's own session: ineligible → null.
-    expect(paneHostSession('s-ssh', true)).toBeNull()
+    // SSH is now eligible: a preferred SSH id wins, and requirePreferred returns it.
+    expect(paneHostSession('s-ssh')).toBe('s-ssh')
+    expect(paneHostSession('s-ssh', true)).toBe('s-ssh')
     expect(paneHostSession('s-local', true)).toBe('s-local')
+    expect(paneHostSession()).toBe('s-local') // active preferred over first-eligible
+    // Shell-only is still never a host.
+    expect(paneHostSession('s-shell', true)).toBeNull()
     useSessionStore.setState({ sessions: [], activeSessionId: null } as never)
     expect(paneHostSession()).toBeNull()
   })

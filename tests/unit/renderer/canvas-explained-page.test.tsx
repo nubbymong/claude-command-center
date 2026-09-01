@@ -78,6 +78,44 @@ describe('CanvasExplainedPage', () => {
     expect(text).not.toMatch(/glossary/i)
   })
 
+  it('draws the PLAN loop with the shipped model: Submit Revisions, no Reject, Approve gated on open questions', () => {
+    // The page shipped a plan loop offering "Reject — plan v2 answers your
+    // notes", which the plan review panel does not have and never did:
+    // decisionLabels() returns 'Submit Revisions' for mode 'plan', and
+    // planApproveBlock() holds Approve back while a question is open or a note
+    // is unsent. A user following the Feature Guide to this page met a diagram
+    // that disagreed with the buttons in front of them.
+    render()
+    const plan = container.querySelector('section[aria-labelledby="cxp-plan"]')
+    expect(plan, 'the Plan section is named by its heading id').toBeTruthy()
+    const text = plan!.textContent ?? ''
+
+    // The back arc carries the plan's own word for sending a version back, and
+    // the button that does not exist on a plan is offered nowhere on the
+    // diagram itself, in any casing — not on the arc, not inside a node.
+    expect(text).toContain('Submit Revisions')
+    const visible = text.replace(/Plan loop:[^]*/g, '')
+    expect(visible).not.toMatch(/reject/i)
+
+    // The accessible name is the one place the word may appear, because saying
+    // the affordance is ABSENT is exactly what a screen-reader user needs.
+    const planAria = Array.from(plan!.querySelectorAll('svg[role="img"]'))
+      .map((s) => s.getAttribute('aria-label') ?? '')
+    expect(planAria.length, 'both orientations render').toBe(2)
+    for (const label of planAria) {
+      expect(label).toMatch(/no Reject on a plan/i)
+      expect(label).toMatch(/submit revisions/i)
+    }
+
+    // The approval gate is drawn, not merely implied by the arrow.
+    expect(text).toContain('Approve blocked while one is open')
+
+    // Guard the other direction: a mockup DOES reject, so a change that simply
+    // deletes the word everywhere cannot pass this test.
+    const mockup = container.querySelector('section[aria-labelledby="cxp-mockup"]')
+    expect(mockup!.textContent ?? '').toMatch(/Reject/)
+  })
+
   it('shows the Testing evidence record with its parts, including the never-what-you-typed state rule', () => {
     render()
     const evidence = container.querySelector('[data-testid="canvas-explained-evidence"]')

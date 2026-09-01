@@ -14,6 +14,8 @@
  * handler is the only caller.
  */
 
+import type { SshRuntime } from '../shared/types'
+
 export interface SavedSshLike {
   host: string
   port: number
@@ -23,6 +25,7 @@ export interface SavedSshLike {
   dockerContainer?: string
   detachable?: boolean
   remoteOs?: 'auto' | 'unix' | 'windows'
+  runtime?: SshRuntime
 }
 
 export interface SavedConfigLike {
@@ -43,6 +46,9 @@ export interface RequestedSsh {
   reconnect?: boolean
   detachable?: boolean
   remoteOs?: 'auto' | 'unix' | 'windows'
+  /** Structured container runtime — NEVER taken from the request: the binding
+   *  injects the SAVED config's runtime, the same trust rule as postCommand. */
+  runtime?: SshRuntime
 }
 
 export type SshBinding =
@@ -86,6 +92,7 @@ export function bindSshToSavedConfig(requested: RequestedSsh, configId: string |
       username: s.username,
       remotePath: s.remotePath,
       ...(s.postCommand ? { postCommand: s.postCommand } : {}),
+      ...(s.runtime ? { runtime: s.runtime } : {}),
       ...(s.detachable !== undefined ? { detachable: s.detachable } : {}),
       ...(s.remoteOs !== undefined ? { remoteOs: s.remoteOs } : {}),
       ...(requested.reconnect !== undefined ? { reconnect: requested.reconnect } : {}),

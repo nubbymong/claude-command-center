@@ -741,3 +741,44 @@ export function canSendNow(text: string, nonDimText?: string): SendGateResult {
   }
   return { ok: true }
 }
+
+// Claude Code pins its FOOTER as the bottom-most line of the pane in every
+// state: "⏵⏵ accept edits on …", "? for shortcuts", or the working
+// "… (esc to interrupt)". `hasClaudeInputChrome` requires that footer to be the
+// LAST non-blank line — the bottom-anchored "this pane is Claude's, right now"
+// signal.
+//
+// It exists because canSendNow is a DENYLIST of Claude-chrome shapes it must not
+// type INTO — safe only when the pane is ALWAYS Claude's own renderer, which
+// holds for a LOCAL session but NOT for SSH, where the remote draws every byte
+// (a shell prompt, `[sudo] password:`, a `[y/N]` confirm, `less`, a REPL, a
+// full-screen TUI like lazygit/btop). An SSH watchdog requires THIS before it
+// may send.
+//
+// Bottom-anchored on purpose (adversarial pass round 2): an earlier version
+// scanned the whole 14-line window, so a Claude footer left in scrollback
+// vouched for a sudo prompt two lines below it, a `hasRule && hasBar` pairing
+// matched any rounded-border TUI, and a log line merely CONTAINING "esc to
+// interrupt" forged it. When claude exits to a shell, or the user runs any
+// program, or a log/pager/TUI is on screen, THAT is the last line — never
+// Claude's footer — so none of them vouch. Scoping precondition, not an
+// authenticator: a remote that renders Claude's exact footer as its literal
+// bottom line is forging Claude's UI and is out of scope (it already owns its
+// own shell); the cases this closes are the accidental ones.
+const CLAUDE_FOOTER_SIGNALS: RegExp[] = [
+  /^\s*⏵⏵/, // the mode footer ("⏵⏵ accept edits on …")
+  /^\s*\?\s+for\s+shortcuts\b/i, // the shortcuts footer hint — line-anchored (as
+  // CHROME_LINE has it) so a `git show`/`rg` line that merely CONTAINS the phrase
+  // mid-line does not vouch (adversarial pass, final round MINOR).
+  /esc to interrupt/i, // the working/streaming footer (only reachable while
+  // isWorking is true, which every send site defers on — kept for completeness)
+]
+
+export function hasClaudeInputChrome(text: string): boolean {
+  const nonBlank = stripAnsi(text)
+    .split('\n')
+    .map((l) => l.replace(/\s+$/, ''))
+    .filter((l) => l.length > 0)
+  const last = nonBlank[nonBlank.length - 1] ?? ''
+  return CLAUDE_FOOTER_SIGNALS.some((r) => r.test(last))
+}

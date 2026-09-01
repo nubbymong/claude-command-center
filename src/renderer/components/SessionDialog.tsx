@@ -8,7 +8,9 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { modelGroupsFromRegistry, effortsForModel, PERMISSION_MODES } from '../lib/claude-cli-options'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
+import { resolveAllowMultiSpawnOnSave } from '../utils/multiSpawn'
 import { secretValueProblem, secretPlacementProblem } from '../../shared/command-secret'
+import { parseDockerPostCommand } from '../../shared/container-command'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND } from './ui/Dialog'
 
 export type SessionType = 'local' | 'ssh'
@@ -126,6 +128,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [sshRemotePath, setSshRemotePath] = useState(initial?.sshConfig?.remotePath ?? '~')
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
   const [postCommand, setPostCommand] = useState(initial?.sshConfig?.postCommand ?? '')
+  // Allow Multi Spawn (phase 4): may this launcher run several copies at once?
+  // Absent/false = off, and a launch is then refused while one is live. The
+  // STORED field is tri-state (see resolveAllowMultiSpawnOnSave); the checkbox
+  // only needs the two visible states.
+  const [allowMultiSpawn, setAllowMultiSpawn] = useState(initial?.allowMultiSpawn === true)
   // SSH tmux enhancement (item 1): "Detachable" (persistent remote session).
   // DEFAULT ON -- only an explicit false disables it, so a config saved before
   // this field existed (undefined) opens ticked.
@@ -146,6 +153,18 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [sudoPassword, setSudoPassword] = useState('')
   const [storedSudo, setStoredSudo] = useState(initial?.sshConfig?.hasSudoPassword ?? false)
   const [saveSudo, setSaveSudo] = useState(true)
+  // ── Runtime (item e): where claude actually runs after the connection is up.
+  // 'host' = directly on the machine; 'container' = the app composes the
+  // docker/podman command itself. The sudo password field belongs HERE (it was
+  // always docker's); the free-text post-command survives under Advanced for
+  // arbitrary prep only.
+  const initialRuntime = initial?.sshConfig?.runtime
+  const [runtimeType, setRuntimeType] = useState<'host' | 'container'>(initialRuntime?.type ?? 'host')
+  const [rtEngine, setRtEngine] = useState<'docker' | 'podman'>(initialRuntime?.engine ?? 'docker')
+  const [rtContainer, setRtContainer] = useState(initialRuntime?.container ?? '')
+  const [rtMode, setRtMode] = useState<'exec' | 'start'>(initialRuntime?.mode ?? 'exec')
+  const [rtSudo, setRtSudo] = useState(initialRuntime?.sudo ?? false)
+  const [rtDir, setRtDir] = useState(initialRuntime?.containerDir ?? '')
 
   // ── Session startup (Claude Code)
   // Edit must not rewrite what's stored: a config saved with no model override
@@ -350,6 +369,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     }
     if (sessionType === 'ssh' && !sshHost.trim()) return 'Add a host to save'
     if (sessionType === 'ssh' && sshRemotePath.trim() && !safeRemotePath(sshRemotePath.trim())) return 'Remote directory can only use letters, numbers and _ . / - ~'
+    if (sessionType === 'ssh' && runtimeType === 'container') {
+      const name = rtContainer.trim()
+      if (!name) return 'Name the container to save'
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) return 'Container name can only use letters, numbers and _ . -'
+      if (rtDir.trim() && !/^[A-Za-z0-9_./~-]+$/.test(rtDir.trim())) return 'Container directory can only use letters, numbers and _ . / - ~'
+    }
     if (!label.trim()) return 'Add a label to save'
     return ''
   })()
@@ -438,7 +463,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     const keepStoredPw = storedPassword && !endpointChanged
     const keepStoredSudo = storedSudo && !endpointChanged
     const passwordSaved = isSsh && savePassword && (sshPassword.length > 0 || keepStoredPw)
-    const sudoSaved = isSsh && postCommand.trim().length > 0 && saveSudo && (sudoPassword.length > 0 || keepStoredSudo)
+    // Sudo secret is warranted by EITHER a container runtime that needs sudo
+    // (its real home, item e) or a legacy free-text prep command.
+    const sudoWarranted = (runtimeType === 'container' && rtSudo) || postCommand.trim().length > 0
+    const sudoSaved = isSsh && sudoWarranted && saveSudo && (sudoPassword.length > 0 || keepStoredSudo)
 
     const config: Omit<TerminalConfig, 'id'> = {
       provider,
@@ -461,11 +489,32 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
         hasPassword: passwordSaved,
         postCommand: postCommand.trim() || undefined,
         hasSudoPassword: sudoSaved,
+        // item e: structured runtime persists ONLY when the container choice is
+        // made; 'host' stores nothing (undefined = default, same shape rule as
+        // detachable below).
+        runtime: runtimeType === 'container' ? {
+          type: 'container',
+          engine: rtEngine,
+          container: rtContainer.trim(),
+          mode: rtMode,
+          sudo: rtSudo || undefined,
+          containerDir: rtDir.trim() || undefined,
+        } : undefined,
         // item 1: persist only the opt-OUT (false); ON is the default/undefined.
         detachable: detachable ? undefined : false,
       } : undefined,
       claudeOptions,
       codexOptions,
+      // Allow Multi Spawn (phase 4.1): TRI-STATE, not an opt-in-only flag.
+      // Turning it off on a config that had it on stores an explicit `false`,
+      // which the startup migration is forbidden to touch — otherwise the
+      // migration re-enables it next launch and the user's OFF never sticks.
+      allowMultiSpawn: resolveAllowMultiSpawnOnSave(allowMultiSpawn, initial?.allowMultiSpawn),
+      // The ×N control's remembered copy count belongs to the ROW, not this
+      // dialog. Carry it through untouched so editing a config never resets it
+      // (the field-by-field rebuild below the sshConfig spread is exactly how
+      // detachable and loggingEnabled were silently dropped before).
+      multiSpawnCount: initial?.multiSpawnCount,
       machineName: sessionType === 'ssh' && machineName.trim() ? machineName.trim() : undefined,
       // Account is no longer a config field -- it's chosen at launch by the
       // pre-spawn account gate. Preserve any pre-existing value on edit so older
@@ -541,16 +590,30 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     </label>
   )
 
-  const transportCard = (id: SessionType, title: string, sub: string, disabled: boolean) => (
-    <label className={cardCls(sessionType === id, disabled)}>
+  // Connection choice (config-modal redesign, item i): Local | SSH | SSH
+  // Persistent. The old "Detachable" checkbox is this third card — persistence
+  // is a connection KIND, not a tweak buried under the SSH fields. Maps onto
+  // the stored shape unchanged (sessionType + detachable), so a pre-redesign
+  // config with Detachable ticked (or unset — the old default) opens as SSH
+  // Persistent with no data migration.
+  type ConnectionChoice = 'local' | 'ssh' | 'ssh-persistent'
+  const connectionChoice: ConnectionChoice | null =
+    sessionType === null ? null : sessionType === 'local' ? 'local' : detachable ? 'ssh-persistent' : 'ssh'
+  const pickConnection = (id: ConnectionChoice) => {
+    if (id === 'local') { setSessionType('local'); return }
+    setSessionType('ssh')
+    setDetachable(id === 'ssh-persistent')
+  }
+  const connectionCard = (id: ConnectionChoice, title: string, sub: string, disabled: boolean) => (
+    <label className={cardCls(connectionChoice === id, disabled)}>
       <input
         type="radio"
         name="ccc-transport"
         className="sr-only"
         value={id}
-        checked={sessionType === id}
+        checked={connectionChoice === id}
         disabled={disabled}
-        onChange={() => setSessionType(id)}
+        onChange={() => pickConnection(id)}
       />
       <span className={`block text-sm font-medium ${disabled ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>{title}</span>
       <span className="block text-[10px] text-[var(--text-muted)] mt-0.5">{sub}</span>
@@ -620,13 +683,31 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
           )}
           {uiProvider !== null && (
             <>
-              <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Where it runs">
-                {transportCard('local', 'Local', 'Runs on this PC', false)}
-                {transportCard('ssh', 'SSH', 'Runs on another machine', uiProvider === 'codex')}
+              <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Connection">
+                {connectionCard('local', 'Local', 'Runs on this PC', false)}
+                {connectionCard('ssh', 'SSH', 'Another machine, plain session', uiProvider === 'codex')}
+                {connectionCard('ssh-persistent', 'SSH Persistent', 'Survives disconnects, reattaches', uiProvider === 'codex')}
               </div>
               {uiProvider === 'codex' && (
                 <p className="text-[11px] text-[var(--text-muted)] mt-1.5">Codex runs on this PC only — SSH isn't available.</p>
               )}
+              {/* Allow Multi Spawn (phase 4). Off by default: a launcher runs
+                  ONE session at a time, and every launch surface refuses the
+                  second copy (with a popover offering this very switch). Turn
+                  it on for a config you routinely want several of. */}
+              <label className="flex items-start gap-2 mt-2.5 cursor-pointer" data-testid="allow-multi-spawn-field">
+                <input
+                  type="checkbox"
+                  checked={allowMultiSpawn}
+                  onChange={(e) => setAllowMultiSpawn(e.target.checked)}
+                  className="mt-0.5 rounded border-[var(--border-subtle)] accent-[var(--brand)]"
+                  data-testid="allow-multi-spawn"
+                />
+                <span className="block">
+                  <span className="block text-sm text-[var(--text-secondary)]">Allow Multi Spawn</span>
+                  <span className="block text-[10px] text-[var(--text-muted)] mt-0.5">Launch several copies of this config at once</span>
+                </span>
+              </label>
             </>
           )}
 
@@ -774,83 +855,194 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                       <Hint k="mname">Optional display name, shown in logs and the status line so you can tell machines apart.</Hint>
                     </div>
                   </div>
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <label className="text-xs text-[var(--text-secondary)]">After connecting, run</label>
-                      <HelpBtn k="postcmd" label="About the post-connect command" />
-                    </div>
-                    <input
-                      value={postCommand}
-                      onChange={(e) => setPostCommand(e.target.value)}
-                      placeholder="sudo docker exec -it container bash"
-                      className={inputCls + ' font-mono text-xs'}
-                    />
-                    <Hint k="postcmd">
-                      Optional. A command to run once the connection is up — for example dropping into a Docker
-                      container. The Conductor gives you a button to run it, then a second button to launch the agent.
-                    </Hint>
+                </div>
+              )}
+
+              {/* ── 2b · RUNTIME (item e) — where claude actually runs after the
+                     connection is up. The app composes the container command
+                     itself; free-text prep survives under Advanced only. ── */}
+              {sessionType === 'ssh' && (
+                <>
+                  {sectionHead('Runtime', 'Any provider', 'runtime', 'About the runtime')}
+                  <Hint k="runtime">
+                    Where the session actually runs once connected. "In a Docker container" makes the app
+                    build and run the container command itself — no shell one-liners to maintain.
+                  </Hint>
+                  <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Runtime">
+                    <label className={cardCls(runtimeType === 'host', false)}>
+                      <input type="radio" name="ccc-runtime" className="sr-only" value="host"
+                        checked={runtimeType === 'host'} onChange={() => setRuntimeType('host')} />
+                      <span className="block text-sm font-medium text-[var(--text-primary)]">On the host</span>
+                      <span className="block text-[10px] text-[var(--text-muted)] mt-0.5">Directly on the machine you connect to</span>
+                    </label>
+                    <label className={cardCls(runtimeType === 'container', false)}>
+                      <input type="radio" name="ccc-runtime" className="sr-only" value="container"
+                        checked={runtimeType === 'container'} onChange={() => setRuntimeType('container')} data-testid="runtime-container" />
+                      <span className="block text-sm font-medium text-[var(--text-primary)]">In a Docker container</span>
+                      <span className="block text-[10px] text-[var(--text-muted)] mt-0.5">The app execs into the container for you</span>
+                    </label>
                   </div>
-                  {postCommand.trim() && (
-                    <div>
-                      <label className="block text-xs text-[var(--text-secondary)] mb-1">Sudo password</label>
-                      <input
-                        type="password"
-                        value={sudoPassword}
-                        onChange={(e) => setSudoPassword(e.target.value)}
-                        placeholder={storedSudo ? '(saved — enter new to change)' : 'Only needed if the command above uses sudo'}
-                        className={inputCls}
-                      />
-                      {(sudoPassword.length > 0 || storedSudo) && (
-                        <div className="flex items-center gap-3 mt-1.5">
-                          <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+                  {runtimeType === 'container' && (
+                    <div className="space-y-3 mt-3">
+                      <div className="grid grid-cols-[110px_1fr_150px] gap-2">
+                        <div>
+                          <label className="block text-xs text-[var(--text-secondary)] mb-1">Engine</label>
+                          <select value={rtEngine} onChange={(e) => setRtEngine(e.target.value as 'docker' | 'podman')} className={inputCls}>
+                            <option value="docker">docker</option>
+                            <option value="podman">podman</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-[var(--text-secondary)] mb-1">Container name <span className="text-[var(--status-warning)]">*</span></label>
+                          <input value={rtContainer} onChange={(e) => setRtContainer(e.target.value)}
+                            placeholder="claude-dev" className={inputCls + ' font-mono text-xs'} data-testid="runtime-container-name" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-[var(--text-secondary)] mb-1">Mode</label>
+                          <select value={rtMode} onChange={(e) => setRtMode(e.target.value as 'exec' | 'start')} className={inputCls}>
+                            <option value="exec">Exec into running</option>
+                            <option value="start">Start stopped</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <label className="text-xs text-[var(--text-secondary)]">Container directory</label>
+                          <HelpBtn k="rtdir" label="About the container directory" />
+                        </div>
+                        <input value={rtDir} onChange={(e) => setRtDir(e.target.value)}
+                          placeholder="Optional — where the session lands inside the container" className={inputCls} />
+                        <Hint k="rtdir">Working directory inside the container. Leave blank for the container's default.</Hint>
+                      </div>
+                      <div>
+                        <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+                          <input type="checkbox" checked={rtSudo} onChange={(e) => setRtSudo(e.target.checked)}
+                            className="rounded border-[var(--border-subtle)] accent-[var(--brand)]" data-testid="runtime-sudo" />
+                          The container engine needs sudo
+                        </label>
+                        {rtSudo && (
+                          <div className="mt-2">
+                            <label className="block text-xs text-[var(--text-secondary)] mb-1">Sudo password</label>
                             <input
-                              type="checkbox"
-                              checked={saveSudo}
-                              onChange={(e) => setSaveSudo(e.target.checked)}
-                              className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
+                              type="password"
+                              value={sudoPassword}
+                              onChange={(e) => setSudoPassword(e.target.value)}
+                              placeholder={storedSudo ? '(saved — enter new to change)' : 'Used to run the engine with sudo'}
+                              className={inputCls}
                             />
-                            Save password
-                          </label>
-                          {storedSudo && (
-                            <button
-                              type="button"
-                              onClick={() => { setStoredSudo(false); setSaveSudo(false); setSudoPassword('') }}
-                              className="text-[11px] text-[var(--brand)] underline underline-offset-2"
-                            >
-                              Remove stored password
-                            </button>
+                            {(sudoPassword.length > 0 || storedSudo) && (
+                              <div className="flex items-center gap-3 mt-1.5">
+                                <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={saveSudo}
+                                    onChange={(e) => setSaveSudo(e.target.checked)}
+                                    className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
+                                  />
+                                  Save password
+                                </label>
+                                {storedSudo && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { setStoredSudo(false); setSaveSudo(false); setSudoPassword('') }}
+                                    className="text-[11px] text-[var(--brand)] underline underline-offset-2"
+                                  >
+                                    Remove stored password
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {/* Migration affordance: a docker-shaped free-text post-command
+                      converts with one click — never silently. */}
+                  {runtimeType === 'host' && parseDockerPostCommand(postCommand) && (
+                    <div
+                      className="mt-3 px-3 py-2 rounded-lg text-[11.5px] leading-snug flex items-center justify-between gap-3"
+                      style={{
+                        color: 'var(--status-warning)',
+                        background: 'color-mix(in srgb, var(--status-warning) 9%, transparent)',
+                        border: '1px solid color-mix(in srgb, var(--status-warning) 40%, transparent)',
+                      }}
+                      data-testid="runtime-convert-offer"
+                    >
+                      <span>Your "after connecting" command looks like a container command. Convert it to a structured Runtime?</span>
+                      <DialogButton
+                        variant="secondary"
+                        onClick={() => {
+                          const parsed = parseDockerPostCommand(postCommand)!
+                          setRuntimeType('container')
+                          setRtEngine(parsed.engine ?? 'docker')
+                          setRtContainer(parsed.container ?? '')
+                          setRtMode(parsed.mode ?? 'exec')
+                          setRtSudo(Boolean(parsed.sudo))
+                          setPostCommand('')
+                        }}
+                      >
+                        Convert
+                      </DialogButton>
+                    </div>
+                  )}
+                  <details className="mt-3 group">
+                    <summary className="text-xs text-[var(--text-secondary)] cursor-pointer select-none">Advanced</summary>
+                    <div className="mt-2 space-y-3">
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <label className="text-xs text-[var(--text-secondary)]">After connecting, run</label>
+                          <HelpBtn k="postcmd" label="About the post-connect command" />
+                        </div>
+                        <input
+                          value={postCommand}
+                          onChange={(e) => setPostCommand(e.target.value)}
+                          placeholder="Arbitrary prep — runs before the Runtime command"
+                          className={inputCls + ' font-mono text-xs'}
+                        />
+                        <Hint k="postcmd">
+                          Optional prep run once the connection is up, before the Runtime command (if any).
+                          For entering a container, use the Runtime section instead — the app builds that
+                          command for you.
+                        </Hint>
+                      </div>
+                      {runtimeType === 'host' && postCommand.trim() && (
+                        <div>
+                          <label className="block text-xs text-[var(--text-secondary)] mb-1">Sudo password</label>
+                          <input
+                            type="password"
+                            value={sudoPassword}
+                            onChange={(e) => setSudoPassword(e.target.value)}
+                            placeholder={storedSudo ? '(saved — enter new to change)' : 'Only needed if the command above uses sudo'}
+                            className={inputCls}
+                          />
+                          {(sudoPassword.length > 0 || storedSudo) && (
+                            <div className="flex items-center gap-3 mt-1.5">
+                              <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={saveSudo}
+                                  onChange={(e) => setSaveSudo(e.target.checked)}
+                                  className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
+                                />
+                                Save password
+                              </label>
+                              {storedSudo && (
+                                <button
+                                  type="button"
+                                  onClick={() => { setStoredSudo(false); setSaveSudo(false); setSudoPassword('') }}
+                                  className="text-[11px] text-[var(--brand)] underline underline-offset-2"
+                                >
+                                  Remove stored password
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}
                     </div>
-                  )}
-                  {/* SSH tmux enhancement (item 1): Detachable (persistent
-                      remote session). Default ON. When on, CCC keeps the remote
-                      Claude alive in a tmux session so a dropped connection can
-                      reattach; if the host lacks tmux it installs a small static
-                      build (surfaced in the connect overlay, never silent). Off
-                      = a bare claude that resumes via --continue on reconnect. */}
-                  <div className="rounded-[9px] border border-[var(--border-subtle)] bg-[var(--surface-base)] px-3 py-2">
-                    <label className="flex items-start gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={detachable}
-                        onChange={(e) => setDetachable(e.target.checked)}
-                        className="mt-0.5 rounded border-[var(--border-subtle)] accent-[var(--brand)]"
-                        data-testid="ssh-detachable"
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-xs text-[var(--text-primary)] font-medium">Detachable (persistent remote session)</span>
-                        <span className="block text-[11px] text-[var(--text-secondary)] leading-snug">
-                          Keeps the remote session alive if the connection drops, so reconnecting
-                          resumes it in place. Needs tmux on the host — the app installs a lightweight
-                          copy if it's missing (you'll see it happen). Turn off to run a plain
-                          session that resumes with --continue instead.
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                </div>
+                  </details>
+                </>
               )}
 
               {/* ── 3 · SESSION STARTUP (Claude Code / Codex; a Terminal-only
@@ -1093,7 +1285,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                 <>
                   {sectionHead('Terminal startup', 'Terminal only')}
                   <p className="text-[11px] text-[var(--text-muted)] leading-snug">
-                    Over SSH, set the startup command in Workspace above — <span className="text-[var(--text-secondary)] font-medium">"After connecting, run"</span>.
+                    Over SSH, use the Runtime section above — or <span className="text-[var(--text-secondary)] font-medium">"After connecting, run"</span> under its Advanced fold for arbitrary prep.
                   </p>
                 </>
               )}

@@ -16,8 +16,13 @@ import { act } from 'react'
 
 const addSession = vi.fn()
 
+// `getState` is required from phase 4 on: useLaunchConfig's Allow Multi Spawn
+// backstop reads the live session set to count this config's copies. Empty
+// here — these tests are about field mapping, not the one-at-a-time rule.
 vi.mock('../../../src/renderer/stores/sessionStore', () => ({
-  useSessionStore: (sel: any) => sel({ addSession }),
+  useSessionStore: Object.assign((sel: any) => sel({ addSession }), {
+    getState: () => ({ addSession, sessions: [] }),
+  }),
 }))
 vi.mock('../../../src/renderer/stores/settingsStore', () => ({
   useSettingsStore: Object.assign((sel: any) => sel({ settings: { codexEnabled: true } }), {

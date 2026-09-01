@@ -191,7 +191,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Pin your most-used configs to Quick Start',
         title: 'Quick Start',
-        body: 'Right-click any config — or any running session — and choose **Pin to Quick Start**. Pinned configs appear in the Quick Start strip at the top of the **Running** tab with a one-click **Start**, so your daily drivers are always one click away.\n\nA pinned config whose session is already running steps aside until that session closes — no duplicates, no accidental second launch. Collapse the strip from its header if you want it out of the way.',
+        body: 'Right-click any config — or any running session — and choose **Pin to Quick Start**. Pinned configs appear in the Quick Start strip at the top of the **Running** tab with a one-click **Start**, so your daily drivers are always one click away.\n\nA pinned config **stays** in the strip while its session runs, wearing a count pill -- a config is a template, not the session it started. What **Start** does next is the config\'s call: one with **Allow Multi Spawn** gets a copy count and launches that many, and any other one tells you it is already running rather than quietly starting a duplicate. Collapse the strip from its header if you want it out of the way.',
       },
     },
   },
@@ -246,9 +246,25 @@ export const TIPS_LIBRARY: Tip[] = [
         body: 'Create a config with **SSH** as the session type, enter host/port/user/remote path, and Claude runs on the remote with full file access. Your terminal stays local.\n\nWhen the session connects, an in-pane overlay shows **Launch Claude / Skip** -- your click triggers the statusline injection and runs Claude. No prompt-detection magic, no setup blobs accidentally pasted into a running Claude.\n\nPasswords (if you don\'t use key auth) are encrypted with your OS credential store and only decrypted in the main process, never in the renderer.',
       },
       postUse: {
-        shortText: 'Run Claude inside a Docker container via SSH',
-        title: 'Docker-in-SSH (post-connect command)',
-        body: 'Edit your SSH config and set a **Post-connect command** like `sudo docker exec -it claude-dev bash`. After SSH login the overlay shows **Run post-connect command / Skip**; click it, and once the inner shell is ready a second overlay offers **Launch Claude / Skip**.\n\nGreat for reproducible builds and isolating Claude\'s file access from the host.',
+        shortText: 'A remote session shows its account and usage too',
+        title: 'What a Remote Session Reports Back',
+        body: 'A remote session is not a second-class one. It reports its status back over its own connection to the app, so it fills in the same places a local session does: the **account line** on the session card, the **account pill** in the header, and its own bars in the **multi-account strip** along the bottom -- 5-hour, weekly and the per-model ones. All of it is there the moment the session connects, not after a restart, and the header names the connection with a single **SSH** or **SSH-Persistent** pill carrying the host address.\n\nRun **`/login`** on the remote and the session moves to the right account within a few seconds; you do not have to relaunch it.\n\nThere is nothing to install on the host and no setup to re-run. It needs the **built-in tools** left on (Settings > General) because the status travels back through the connection they open -- so if a remote status line is the only one missing, look there first.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.ssh-account-tools',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 54,
+    requires: ['sessions.session-type'],
+    variants: {
+      primary: {
+        shortText: 'A remote session gets your local account\'s tools',
+        title: 'Account Tools on a Remote Session',
+        body: 'A session running on another machine over SSH can still reach the account tools that live **here** on yours. When the remote is signed in as one of the accounts you also use locally, the session header grows the same **claude.ai** and **Claude Code** pills a local session has -- each with a refresh -- and its **right-click menu** grows **Open artifacts** and the sign-in items.\n\nThey work because those checks and actions run on your own machine for that account identity, not on the remote. So the tools appear only when the remote account matches a local one; with no match the header just names the account, as before.\n\nOne thing stays local: **switching** a session\'s account. A remote session uses the login on its own host -- to change that, run **`/login`** over there.',
+        focusHint: 'A remote session\'s header pills, and its right-click menu in the sidebar',
       },
     },
   },
@@ -678,7 +694,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Ask for the plan as a flow, not a document',
         title: 'Plan Mode on the Canvas',
-        body: 'Nobody reads a long markdown plan. Ask your agent to **put the plan on the canvas** and it comes back as a visual flow with a summary: the steps, what each one touches, and what has to happen before what.\n\nA plan is stored and served exactly like a design, so everything you already know still works on it -- click a step to leave a **note**, walk the versions as the plan changes, and **approve or reject** the version in front of you. Approving it signs the plan off, and the canvas front page keeps a **View plan** jump to it, so the agreed version stays one click away while the work is being done.\n\nUse it before a big change rather than after: correcting a step on the canvas costs a click, correcting it in the code costs an afternoon.',
+        body: 'Nobody reads a long markdown plan. Ask your agent to **put the plan on the canvas** and it comes back as a visual flow with a summary: the steps, what each one touches, and what has to happen before what.\n\nA plan is reviewed as a plan, not as a mockup. The two buttons are **Approve** and **Submit Revisions** -- there is no Reject, because a plan is meant to go round again. Click a step to leave a **note**, and send the round.\n\n**Approve is deliberately hard to reach.** It stays unavailable while the plan carries an **open question**, or while you have a note you have not sent, and the panel names which: *"Approve is unavailable: 2 open questions -- answer them in a note and submit revisions"*. Answer them, submit revisions, and the next version is the one you can approve -- so an approval never arrives carrying work the agent has not seen. A round you sent back reads **REVISIONS** in History.\n\nApproving signs the plan off, and the canvas front page keeps a **View plan** jump to it. Use it before a big change: correcting a step on the canvas costs a click, correcting it in the code costs an afternoon.',
         focusHint: 'Session toolbar -- the Canvas button, once your agent has rendered a plan',
       },
     },
@@ -787,9 +803,73 @@ export const TIPS_LIBRARY: Tip[] = [
     variants: {
       primary: {
         shortText: 'Keep a remote session alive when the link drops',
-        title: 'Detachable SSH Sessions',
-        body: 'You run sessions over SSH -- so you have met the failure: the laptop sleeps, the VPN blinks, and the work on the other end dies with the connection.\n\nTurn on **Detachable** in the SSH config and the remote Claude runs inside a tmux session instead. The link dropping no longer kills it: reconnect and the session is reattached where it was, output and all.\n\nClosing a persistent session asks what you actually meant -- **End it** on the host, or **Leave it running** and come back later. The sidebar marks which of your sessions are persistent.',
-        focusHint: 'Session config -- SSH section, the "Detachable" toggle',
+        title: 'SSH Persistent Sessions',
+        body: 'You run sessions over SSH -- so you have met the failure: the laptop sleeps, the VPN blinks, and the work on the other end dies with the connection.\n\nHow a config connects is a choice of three cards, not a checkbox: **Local**, **SSH**, and **SSH Persistent**. Pick the third and the remote Claude runs inside a tmux session, so the link dropping no longer kills it -- reconnect and you are reattached where you were, output and all.\n\nClosing a persistent session asks what you actually meant -- **End it** on the host, or **Leave it running**, in which case it waits for you in the **Remote Resumable** section at the foot of the Running tab.\n\nThe sidebar tells the three kinds of remote session apart wherever they appear: a blue **SSH** mark for a plain one, a green **SSH** mark with a chain link for a persistent one, and a teal container mark for a session running inside a container.\n\n(If you set the old **Detachable** checkbox on a config, it already opens as SSH Persistent. Nothing to re-save.)',
+        focusHint: 'Session config -- the connection cards, the third one: "SSH Persistent"',
+      },
+    },
+  },
+
+  {
+    id: 'tip.remote-resumable',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 76,
+    requires: ['sessions.session-type'],
+    variants: {
+      primary: {
+        shortText: 'Pick up a remote session you left running',
+        title: 'Remote Resumable',
+        body: 'Close a persistent SSH session, choose **Leave it running**, and it does not disappear on you: it parks in a **Remote Resumable** section docked at the foot of the **Running** tab.\n\nEach card carries the host, how long ago you left it, and a pill reading **Resumable** or **Unreachable**. Click one and you are back in the same Claude, in the same conversation, with the work it was doing.\n\n**Right-click** a card for **Remove**. That ends the session on the host as well as forgetting the card, so a machine is never left quietly holding a Claude you have finished with.\n\nLaunching the config from **Saved** always starts something new -- resuming only ever happens from this section. The small amber counter with a refresh arrow on a saved config is the hint: it counts sessions of that config still live on their host. And the cards outlive the app, so what you left running today is still listed tomorrow.',
+        focusHint: 'The Running tab -- the Remote Resumable section docked at the bottom',
+      },
+    },
+  },
+
+  {
+    id: 'tip.multi-spawn',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 71,
+    requires: ['sessions.create-config'],
+    variants: {
+      primary: {
+        shortText: 'Run several copies of one config at once',
+        title: 'Allow Multi Spawn',
+        body: 'A saved config runs **one session at a time** unless you say otherwise, so a stray second click cannot start another Claude on the same project by accident.\n\nTick **Allow Multi Spawn** in the config, just under the connection cards, and its row swaps the play button for a **copy count**: set it to 3, press once, and three sessions start together. It remembers the number for next time.\n\nWithout it, clicking a config that is already running does not launch a second one. A small note says exactly that, and offers **Enable Multi Spawn & launch** if that is what you meant.\n\nAfter an update the app turns Multi Spawn on by itself for any config it already finds several copies of -- sessions left running on a remote host included -- and shows a one-time page so you can change any of it. A config you switch off stays off.',
+        focusHint: 'Session config -- the Allow Multi Spawn tick, below the connection cards',
+      },
+    },
+  },
+
+  {
+    id: 'tip.select-launch',
+    category: 'sessions',
+    complexity: 'simple',
+    priority: 57,
+    requires: ['sessions.create-config'],
+    variants: {
+      primary: {
+        shortText: 'Start several configs in one go with Select',
+        title: 'Select and Launch',
+        body: 'Press **Select** on the **Saved** tab, or in the **Quick Start** header, and every row becomes a tick box. Choose what you want and a bar along the bottom counts your selection and launches the lot in one press.\n\nIt is the quickest way back to a working set after a restart: the repo you are mid-change on, the one you are reviewing, the log tailer beside them.\n\nA config that is already running and is **not** a Multi Spawn one shows a padlock instead of a tick box. Click it and it says why, and offers to enable Multi Spawn. **Cancel** puts every row back the way it was.',
+        focusHint: 'The Saved tab toolbar, or the Quick Start header -- the Select button',
+      },
+    },
+  },
+
+  {
+    id: 'tip.container-runtime',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 72,
+    requires: ['sessions.session-type'],
+    variants: {
+      primary: {
+        shortText: 'Run a remote session inside a container',
+        title: 'Runtime: Run Claude in a Container',
+        body: 'An SSH config has a **Runtime** section that decides where the session lands once it has connected: **On the host**, or **In a Docker container**.\n\nPick the container option and you fill in fields instead of maintaining a shell one-liner: the **engine** (docker or podman), the **container name**, whether to **Exec into running** or **Start stopped**, an optional directory inside the container, and a tick if the engine needs **sudo** (that password goes to your OS credential store, like an SSH password). The app composes and runs the command.\n\nClaude runs *inside* the container with the statusline, account and usage all working, and ending the session stops that session\'s Claude in there -- another session sharing the container is left alone.\n\nAlready doing this with a hand-written command? The dialog spots a docker-shaped one and offers a one-click **Convert**. It never rewrites it silently, and **After connecting, run** stays under **Advanced** for prep that is not a container.',
+        focusHint: 'Session config -- the Runtime section, below the connection cards (SSH configs only)',
       },
     },
   },
@@ -921,7 +1001,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Auto-resume sessions after a rate limit resets',
         title: 'Session Watchdog',
-        body: 'Hit a usage limit at 4pm and the session just sits there until you notice. The **Session Watchdog** notices for you: it reads the limit banner, waits out the reset time, and types the retry itself -- so an overnight session picks itself back up instead of losing the hours.\n\nIt is careful about WHEN it types. Nothing is sent while a permission prompt or picker is open, or while your own unsubmitted draft is in the input box -- the retry defers rather than corrupting either. It also backs off on API overload errors, with capped attempts.\n\n**Off by default.** Turn it on under **Settings > General > Session Watchdog**, where you can also change the retry message. Local Claude sessions only.',
+        body: 'Hit a usage limit at 4pm and the session just sits there until you notice. The **Session Watchdog** notices for you: it reads the limit banner, waits out the reset time, and types the retry itself -- so an overnight session picks itself back up instead of losing the hours.\n\nIt is careful about WHEN it types. Nothing is sent while a permission prompt or picker is open, or while your own unsubmitted draft is in the input box -- the retry defers rather than corrupting either. It also backs off on API overload errors, with capped attempts.\n\n**Off by default.** Turn it on under **Settings > General > Session Watchdog**, where you can also change the retry message. Works for Claude sessions whether they run locally or over SSH -- on a remote session it only ever types when Claude\'s own prompt is on screen, never into a shell or an auth prompt.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
       },

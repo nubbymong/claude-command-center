@@ -404,6 +404,10 @@
 .ob-root .sv-blue { color: var(--ob); border-color: var(--ob-line); }
 .ob-root .sv-green { color: var(--status-success); border-color: color-mix(in srgb, var(--status-success) 40%, transparent); }
 .ob-root .sv-peach { color: var(--status-warning); border-color: color-mix(in srgb, var(--status-warning) 40%, transparent); }
+/* The container transport mark's own colour, so the sidebar-marks vignette
+   tells the same three-colour story the real badges do. Theme-aware via the
+   app token (light and dark carry different teals). */
+.ob-root .sv-teal { color: var(--color-teal); border-color: color-mix(in srgb, var(--color-teal) 40%, transparent); }
 .ob-root .sv-sep { width: 1px; height: 14px; background: var(--border-strong); }
 .ob-root .sv-body { display: flex; min-height: 300px; }
 .ob-root .sv-main { flex: 1; padding: 14px; min-width: 0; }

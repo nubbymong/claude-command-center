@@ -1,6 +1,7 @@
 import { useSessionStore } from './stores/sessionStore'
 import { useAccountGateStore } from './stores/accountGateStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Serialize the current sessionStore into the shape the main process persists.
@@ -39,6 +40,7 @@ export function buildSessionState(): SessionState {
           hasPassword: s.sshConfig.hasPassword,
           postCommand: s.sshConfig.postCommand,
           hasSudoPassword: s.sshConfig.hasSudoPassword,
+          runtime: s.sshConfig.runtime,
           detachable: s.sshConfig.detachable,
           remoteOs: s.sshConfig.remoteOs,
         }
@@ -73,6 +75,25 @@ export function buildSessionState(): SessionState {
     sessions,
     activeSessionId: state.activeSessionId,
     savedAt: Date.now(),
+    // SSH Persistent (Phase 1): fold the left-running registry into the same
+    // persisted file so a detached remote survives an app restart. Main round-
+    // trips this untouched (only `sessions` is migrated on load).
+    detachedRemotes: useDetachedRemotesStore.getState().entries,
+  }
+}
+
+/**
+ * Best-effort flush of the current session state to disk NOW, without waiting for
+ * the ~1s debounced autosave. Used by the SSH Persistent paths (Leave running /
+ * End remote / Resume) so a registry change is durable immediately even if the
+ * app closes in the debounce window. Never throws — the choice still lives in the
+ * store for this run if the write fails (preload absent, main refused, etc.).
+ */
+export async function persistSessionState(): Promise<void> {
+  try {
+    await window.electronAPI?.session?.save(buildSessionState())
+  } catch {
+    /* best-effort: the debounced autosave rewrites on the next session-set change */
   }
 }
 

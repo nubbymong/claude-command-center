@@ -17,9 +17,13 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
   useSettingsStore.getState = () => STATE
   return { useSettingsStore }
 })
-vi.mock('../../../src/renderer/hooks/useLaunchConfig', () => ({
+// Phase 4: the row now asks the REAL blocking rule (isMultiSpawnLaunchBlocked
+// and its copy helpers), so the module is only partially mocked — the hook is
+// stubbed to keep the store out, the pure rule stays honest.
+vi.mock('../../../src/renderer/hooks/useLaunchConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/renderer/hooks/useLaunchConfig')>()),
   CODEX_OFF_LAUNCH_REASON: 'Codex is off',
-  useLaunchConfig: () => () => {},
+  useLaunchConfig: () => () => '',
 }))
 
 const { default: ConfigRow } = await import('../../../src/renderer/components/sidebar/ConfigRow')
@@ -50,16 +54,21 @@ describe('ConfigRow — relaunch with a running-count indicator', () => {
       ...props,
     } as any)))
 
-  it('a running config can be LAUNCHED AGAIN — Launch and Edit live, only Delete refused', () => {
+  // Phase 4 narrows the 2026-08-24 revision: a config is still a template that
+  // may relaunch while running, but ONLY when it is marked Allow Multi Spawn.
+  // The one-at-a-time case is covered in multi-spawn-blocking.test.tsx.
+  it('a running MULTI SPAWN config can be LAUNCHED AGAIN — Edit live, only Delete refused', () => {
     const launched = vi.fn()
-    renderRow({ runningCount: 2, onLaunch: launched, onPin: () => {} })
+    renderRow({ config: { ...config, allowMultiSpawn: true }, runningCount: 2, onLaunchMany: launched, onPin: () => {} })
     const titles = Array.from(container.querySelectorAll('button')).map((b) => b.getAttribute('title'))
-    expect(titles).toContain('Launch')
     expect(titles).toContain('Edit')
     expect(titles).toContain(DELETE_WHILE_RUNNING_REASON) // Delete refused with the reason
     expect(titles).not.toContain('Delete')
-    const launch = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title') === 'Launch')!
-    act(() => { (launch as HTMLElement).click() })
+    // The plain play button is replaced by the ×N spawn control on a Multi
+    // Spawn row — one launch affordance, never two.
+    expect(titles).not.toContain('Launch')
+    const spawn = container.querySelector('[data-testid="config-row-multi-spawn-launch"]') as HTMLElement
+    act(() => { spawn.click() })
     expect(launched).toHaveBeenCalledTimes(1)
     const del = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title') === DELETE_WHILE_RUNNING_REASON)!
     expect((del as HTMLButtonElement).disabled).toBe(true)

@@ -180,6 +180,35 @@ describe('sessionStore', () => {
       const a = [makeSession({ id: 'a' })]
       expect(structuralSessionsEqual(a, a)).toBe(true)
     })
+
+    it('treats a profileId change as STRUCTURAL (the launch-gate choice must repaint the header pill)', () => {
+      // Found live on the WINDOWS_1 staging VM (2026-08-30): an account-less
+      // config's session gets profileId patched AFTER creation by the launch
+      // gate; with profileId excluded here the shell handed SessionHeader the
+      // stale record and the pill painted the PRIMARY profile — the wrong
+      // account — indefinitely. Mid-session account switch hits the same path.
+      const a = [makeSession({ id: 'a' })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], profileId: 'profile-real' }])).toBe(false)
+      const b = [makeSession({ id: 'b', profileId: 'profile-one' })]
+      expect(structuralSessionsEqual(b, [{ ...b[0], profileId: 'profile-two' }])).toBe(false)
+    })
+
+    it('treats an SSH account arriving as STRUCTURAL (the cold-connect top pill must repaint)', () => {
+      // Found live on the VM (2026-09-01): an SSH session has NO mapped profileId
+      // cold, so the top account/claude.ai/Claude Code pills resolve ONLY through
+      // accountEmail / sshRemoteAccount, which land on a single late tick. With
+      // them excluded here the shell's structural gate said "no change", App never
+      // re-rendered, and the header shimmered then went BLANK while the bottom bar
+      // (which self-subscribes) showed the account. Each identity field must flip
+      // the gate on the resolve tick.
+      const a = [makeSession({ id: 'a' })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], accountEmail: 'nicholas@live.co.uk' }])).toBe(false)
+      expect(structuralSessionsEqual(a, [{ ...a[0], sshRemoteAccount: 'nicholas@live.co.uk' }])).toBe(false)
+      expect(structuralSessionsEqual(a, [{ ...a[0], accountColour: 'orchid' }])).toBe(false)
+      // ...but a telemetry-only tick (unchanged identity) stays "no change".
+      const withAcct = [makeSession({ id: 'a', accountEmail: 'nicholas@live.co.uk' })]
+      expect(structuralSessionsEqual(withAcct, [{ ...withAcct[0], contextPercent: 42 }])).toBe(true)
+    })
   })
 
   describe('getSession', () => {

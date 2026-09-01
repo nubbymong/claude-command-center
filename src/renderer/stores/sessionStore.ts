@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
+import type { ProviderId, CodexOptions, TerminalOptions, SshRuntime } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
@@ -15,6 +15,7 @@ export interface SSHConfig {
   postCommand?: string
   hasSudoPassword?: boolean
   dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
+  runtime?: SshRuntime      // item e: structured container runtime
   detachable?: boolean      // item 1: "Detachable" persistent tmux session (default ON; only false disables)
   remoteOs?: 'auto' | 'unix' | 'windows'  // item 3: remote OS (windows = prototype Windows setup path)
 }
@@ -168,6 +169,13 @@ export interface Session {
    *  main's ssh:sessionInfo push on each spawn. undefined = not yet known;
    *  false = SSH but non-persistent (bare launch). */
   sshTmuxPersistent?: boolean
+  /** SSH Persistent (resume liveness): set true when, after an app-restart
+   *  auto-reattach, a liveness probe CONFIRMED the remote tmux this session was
+   *  reattaching to is gone — so the session came back as a fresh start, not the
+   *  one left running. Drives a small inline notice + "Start new". Ephemeral,
+   *  never persisted (not in session-persistence's allowlist); cleared on dismiss
+   *  / Start new. undefined = not gone (or not yet/ever probed). */
+  sshRemoteReattachGone?: boolean
   /** SSH tmux enhancement (item 10): the Claude account the REMOTE session is
    *  signed in as (oauthAccount.emailAddress from the remote ~/.claude.json),
    *  read off the nonce'd setup sentinel. DESCRIPTOR ONLY -- never a
@@ -309,6 +317,26 @@ export const STRUCTURAL_SESSION_FIELDS = [
   'legacyVersion', 'agentIds', 'effortLevel', 'permissionMode', 'extraArgs', 'disableAutoMemory',
   'enableCodexReview', 'loggingEnabled', 'model', 'provider', 'codexOptions',
   'identityColorKey', 'color', 'githubIntegration',
+  // profileId IS structural: the header's account pill resolves through it, and
+  // it changes exactly at the low-frequency moments a re-render is wanted (the
+  // launch-gate choice patching an account-less session, a mid-session account
+  // switch). Its omission meant the shell handed SessionHeader a STALE record
+  // after a gate choice, so the pill fell back to painting the PRIMARY profile
+  // — the wrong account — until some other structural field changed (found on
+  // the WINDOWS_1 staging VM, 2026-08-30, where the primary is a fake profile).
+  'profileId',
+  // accountEmail / sshRemoteAccount / accountColour are the SSH analogue of the
+  // same bug (found live on the VM 2026-09-01): an SSH session carries NO mapped
+  // profileId cold, so the header's account/claude.ai/Claude Code pills resolve
+  // ONLY through session.accountEmail || session.sshRemoteAccount. Those land on
+  // a single late tick (the first /status the remote reports, or the setup
+  // sentinel) — omitting them here made the shell's structural-equality gate
+  // return "no change", so App never re-rendered, SessionHeader kept a STALE
+  // record, and the top pill shimmered then gave up BLANK while the bottom bar
+  // and sidebar (which self-subscribe) showed the account. Listing them re-renders
+  // the shell on exactly that one resolve tick (the VALUE is unchanged on every
+  // telemetry tick, so no per-tick cascade returns).
+  'accountEmail', 'sshRemoteAccount', 'accountColour',
 ] as const
 
 /**

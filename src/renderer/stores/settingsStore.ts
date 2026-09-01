@@ -259,6 +259,11 @@ export interface AppSettings {
   /** Sessions panel: the Quick Start section on the Running tab is collapsed.
    *  Absent = expanded. Persisted so the choice survives restarts. */
   quickStartCollapsed?: boolean
+  /** Sessions panel: the Remote Resumable section docked at the bottom of the
+   *  Running tab is collapsed. Absent = expanded. Persisted like Quick Start's,
+   *  and read via resolveRemoteResumableCollapsed — never by comparing the
+   *  field, so an older settings file with no value opens expanded. */
+  remoteResumableCollapsed?: boolean
   /** #461: the expanded sidebar's width in px, set by the drag handle on its
    *  right edge. Absent = the built-in default. Read via resolveSidebarWidth,
    *  which clamps — never trust the raw number. */

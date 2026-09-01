@@ -55,6 +55,53 @@ export function canSwitchAccountForSession(opts: {
 }
 
 /**
+ * The local account profile whose email matches an SSH session's signed-in
+ * REMOTE account, or undefined.
+ *
+ * An SSH session runs `claude` on another host but delivers that host's
+ * signed-in account to the app via its /status POST (`accountEmail`; the
+ * setup-sentinel `sshRemoteAccount` snapshot is the fallback). When that email
+ * matches a LOCAL account profile on THIS machine, the account's local-machine
+ * affordances — the claude.ai web session, the Claude Code sign-in, Open
+ * artifacts — apply to the remote session too: they act on the account IDENTITY,
+ * which is the same identity locally (harmonise-remote), so remote-ness alone
+ * does not preclude them. This resolves that mapping.
+ *
+ * Returns undefined for a local / shell-only / non-Claude session, or an SSH
+ * session whose remote account has no matching local profile. Account SWITCHING
+ * stays disabled for SSH regardless (see canSwitchAccountForSession) — switching
+ * respawns under a different LOCAL profile, which cannot change the remote's.
+ */
+export function sshMappedProfileId(
+  session: {
+    shellOnly?: boolean
+    sessionType?: string
+    provider?: ProviderId
+    accountEmail?: string
+    sshRemoteAccount?: string
+    profileId?: string
+  },
+  profiles: ReadonlyArray<{ id: string; accountEmail?: string }>,
+): string | undefined {
+  if (session.shellOnly || session.sessionType !== 'ssh' || (session.provider ?? 'claude') !== 'claude') return undefined
+  // The live remote account (from /status; fallback the setup-sentinel
+  // snapshot) is the authority: once an email is known, ONLY an email match
+  // maps — a known remote identity that matches no local profile stays
+  // unmapped (account-only pills), never silently replaced by some other
+  // local account's affordances.
+  //
+  // Only while NO remote identity has arrived yet (the instant between a
+  // fresh connect and the first status tick — first-connect priming makes
+  // this short) does the session's own launch `profileId` stand in, so the
+  // pills resolve immediately instead of blank. In the normal same-identity
+  // case that is the SAME account; when /status lands the email mapping
+  // takes over (and corrects it if not).
+  const email = session.accountEmail || session.sshRemoteAccount
+  if (email) return profiles.find((p) => p.accountEmail === email)?.id
+  return session.profileId && profiles.some((p) => p.id === session.profileId) ? session.profileId : undefined
+}
+
+/**
  * How a RESUMED session (an app-relaunch restore) chooses its account (#446).
  *   - 'auto-last' (default): continue silently under the account the session
  *     ran under — restored sessions are marked predetermined, no gate.

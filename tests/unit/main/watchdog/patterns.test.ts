@@ -14,6 +14,7 @@ import {
   isInternalRetry,
   resumedAfterLimit,
   hasActiveMonitors,
+  hasClaudeInputChrome,
 } from '../../../../src/main/watchdog/patterns'
 
 // Mirrors upstream claude-auto-retry's DEFAULT_OVERLOAD.patterns / DEFAULT_SAFEGUARD.patterns
@@ -447,6 +448,48 @@ describe('interactive rate-limit-options menu', () => {
   it('ignores a menu only quoted above live work (tail-scoped)', () => {
     const pane = [...MENU_UPGRADE_FIRST.split('\n'), ...Array(10).fill('● unrelated work'), '❯ '].join('\n')
     expect(isRateLimitOptionsPrompt(pane, 6)).toBe(false)
+  })
+})
+
+describe('hasClaudeInputChrome (SSH send precondition) — bottom-anchored Claude footer', () => {
+  const RULE = '─────────────────────────────────────────'
+  const FOOTER = '  ⏵⏵ accept edits on (shift+tab to cycle) · ? for shortcuts'
+
+  it('true: a genuine Claude pane — the footer is the last non-blank line', () => {
+    expect(hasClaudeInputChrome(['Some output', RULE, '❯ ', RULE, FOOTER].join('\n'))).toBe(true)
+  })
+  it('true: the footer is the last line even with trailing blank lines', () => {
+    expect(hasClaudeInputChrome([RULE, '❯ ', RULE, FOOTER, '', ''].join('\n'))).toBe(true)
+  })
+  it('true: the working footer ("esc to interrupt") as the last line', () => {
+    expect(hasClaudeInputChrome('working…\n✻ Cogitating… (esc to interrupt)')).toBe(true)
+  })
+
+  // The whole point over SSH: any remote-drawn NON-Claude pane must read false,
+  // because ITS content — not Claude's footer — is the bottom line.
+  it.each([
+    ['bash prompt', 'nicholas@rocky:~$ '],
+    ['bash prompt with the user half-typed command', 'nicholas@rocky:~$ sudo rm -rf /tmp/build'],
+    ['ssh password prompt', "nicholas@rocky's password: "],
+    ['sudo password prompt', '[sudo] password for nicholas: '],
+    ['ssh key passphrase', 'Enter passphrase for key /home/n/.ssh/id_ed25519: '],
+    ['a [y/N] confirm', 'Force-push to origin/main? [Y/n] '],
+    ['the less/man pager', '(END)'],
+    ['a psql REPL', 'production=# SELECT 1;'],
+    ['a starship/zsh shell using ❯ as its own prompt', 'nicholas@rocky ~/src \n❯ '],
+    // Round-2 repros: residual Claude chrome must NOT vouch once the pane moved on.
+    ['claude exited to a shell (footer still in scrollback, sudo prompt at bottom)',
+      [RULE, '❯ ', RULE, FOOTER, '', 'nicholas@rocky:~/src$ sudo dnf upgrade', '[sudo] password for nicholas: '].join('\n')],
+    ['a stale footer with one shell line below it (the 1-line-gap attack)',
+      [FOOTER, 'nicholas@rocky:~$ '].join('\n')],
+    ['a rounded-border TUI (lazygit/gum) — rule + bar but no footer',
+      ['╭────────────────────────╮', '│ Drop the production DB? │', '╰────────────────────────╯'].join('\n')],
+    ['a tail -f log whose last line merely mentions the words', 'ERROR upstream API Error: 529 overloaded_error'],
+    // The footer phrase appears mid-line (a `git show`/`rg` of Claude source),
+    // not line-anchored — the anchored regex must NOT match it.
+    ['a source/grep line mentioning the footer text mid-line', "  const HINT = /\\?\\s+for shortcuts/  // the '? for shortcuts' footer"],
+  ])('false: %s', (_label, tail) => {
+    expect(hasClaudeInputChrome(tail)).toBe(false)
   })
 })
 

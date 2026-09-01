@@ -210,6 +210,57 @@ async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(binary)
 }
 
+/**
+ * Tell the agent that a verdict / review was filed (#580).
+ *
+ * Through the marker QUEUE in main, which writes the line now if the agent is
+ * at a prompt and holds it to the end of the turn if one is in flight. The old
+ * path wrote straight into the PTY, which is correct at a prompt and useless
+ * mid-turn: Claude Code is not reading a user line while it streams, so the
+ * marker was swallowed. That cost two live approvals outright — a clean
+ * approval creates no review record, so the marker is the entire delivery.
+ *
+ * NEVER THROWS, and never rejects. By the time this runs the verdict is already
+ * written; a failed notification must not take the submit down with it, nor
+ * surface as an unhandled rejection. A preload without the channel falls back
+ * to the pre-#580 direct write rather than delivering nothing at all.
+ *
+ * `canvasId` is the OWNERSHIP BINDING (adversarial review, 2026-09-01), not a
+ * convenience: main refuses a marker whose session does not own the named
+ * canvas, which it could not do while the payload was a session id and a string.
+ * It is the canvas this panel is mounted for, so the caller always has it.
+ */
+export function deliverAgentMarker(sessionId: string, canvasId: string, line: string): void {
+  try {
+    const canvas = window.electronAPI?.canvas as
+      | { agentMarker?: (a: { sessionId: string; canvasId: string; line: string }) => Promise<unknown> }
+      | undefined
+    if (typeof canvas?.agentMarker === 'function') {
+      void canvas.agentMarker({ sessionId, canvasId, line }).catch(() => { /* best effort */ })
+      return
+    }
+    window.electronAPI?.pty?.write?.(sessionId, line + '\r')
+  } catch { /* a marker is never worth an exception in the submit path */ }
+}
+
+/**
+ * How an UNAVAILABLE decision button looks.
+ *
+ * The review bar's failure mode was that "disabled" and "actionable" wore
+ * nearly the same clothes: a dead dark "Submit" beside a live red "Submit
+ * Revisions", and users clicked the dead one. Same recipe as `DialogButton`'s
+ * disabled state (opacity-40 + cursor-not-allowed come from the classes), plus
+ * a dashed edge and muted text so the button is legibly inert at a glance and
+ * not merely dim. Never carries a status colour: a disabled control must not
+ * borrow green or red, because that is the signal that says "this one".
+ */
+const DEAD_BUTTON: React.CSSProperties = {
+  background: 'transparent',
+  borderColor: 'var(--border-subtle)',
+  borderStyle: 'dashed',
+  color: 'var(--text-muted)',
+}
+
 /** "02:53" — when the round went out. */
 function reviewTime(review: { submittedAt?: string; createdAt: string }): string {
   const ms = Date.parse(review.submittedAt ?? review.createdAt)
@@ -232,11 +283,47 @@ export function decisionSubject(version: CanvasVersion): string {
   return version.id
 }
 
-/** The two decision buttons' words. */
+/**
+ * The two decision buttons' words.
+ *
+ * A PLAN has no Reject (owner spec, 2026-08-31). A plan is iterative: the thing
+ * that is not an approval is another turn of the loop, so the button says what
+ * the user is asking for — revisions — rather than passing judgement on work
+ * nobody has done yet. The DECISION underneath is still `reject`: it drives the
+ * identical machine (the version closes, the notes go back, the agent renders
+ * the next one), and inventing a third decision value for the same transition
+ * would fork the state machine to change a word.
+ */
 export function decisionLabels(version: CanvasVersion): { approve: string; reject: string } {
   const subject = decisionSubject(version)
   if (version.mode === 'uat') return { approve: `Pass build ${subject}`, reject: `Fail build ${subject}` }
+  if (version.mode === 'plan') return { approve: `Approve ${subject}`, reject: 'Submit Revisions' }
   return { approve: `Approve ${subject}`, reject: `Reject ${subject}` }
+}
+
+/**
+ * Why Approve is unavailable on a PLAN, or null when it is available.
+ *
+ * Two gates, and the order matters — the questions are the agent's, the notes
+ * are the user's, and a user who has both should be told about the one they can
+ * do nothing about first.
+ *
+ *  - an OPEN QUESTION blocks it. Answering a question is not approving a plan:
+ *    the answers go back as revisions and the NEXT version — the one written
+ *    knowing them — is the one that can be approved. "Approve with answers
+ *    attached" is exactly the one-step move this exists to prevent, and a
+ *    revision that raises new questions blocks it again.
+ *  - any NOTE blocks it. Approve on a plan means "this is perfect"; a note means
+ *    it is not. (This is where a plan parts company with a mockup, where notes
+ *    filed with an approval are observations the agent reads and owes nothing
+ *    on.)
+ */
+export function planApproveBlock(version: CanvasVersion, noteCount: number): string | null {
+  if (version.mode !== 'plan') return null
+  const open = version.openQuestions ?? 0
+  if (open > 0) return `${open} open question${open === 1 ? '' : 's'} — answer ${open === 1 ? 'it' : 'them'} in a note and submit revisions`
+  if (noteCount > 0) return `${noteCount} note${noteCount === 1 ? '' : 's'} to send — approve a plan only when there is nothing to say`
+  return null
 }
 
 /**
@@ -255,6 +342,9 @@ export function submitLabel(version: CanvasVersion, decision: 'approve' | 'rejec
     return noteCount > 0
       ? `Submit test — Pass, ${noteCount} ${noteCount === 1 ? 'observation' : 'observations'}`
       : 'Submit test — Pass'
+  }
+  if (version.mode === 'plan' && decision === 'reject') {
+    return `Submit revisions — ${noteCount} ${noteCount === 1 ? 'note' : 'notes'}`
   }
   const word = decision === 'approve' ? 'Approve' : 'Reject'
   if (noteCount === 0) return `Submit — ${word} ${subject}`
@@ -275,11 +365,17 @@ export function submitLabel(version: CanvasVersion, decision: 'approve' | 'rejec
  *    it says HOW it settled instead of inventing one.
  */
 export function roundOutcomeLabel(group: ReviewGroup, versions: readonly CanvasVersion[]): string {
-  const uat = versions.find((v) => v.id === group.review.versionId)?.mode === 'uat'
+  const mode = versions.find((v) => v.id === group.review.versionId)?.mode
+  const uat = mode === 'uat'
   const hasObservations = group.closedNotes.some((n) => n.state === 'observation')
   const decision = group.review.decision
   if (hasObservations || decision === undefined) return settledLabel(group, versions) ?? 'settled'
   if (decision === 'approve') return uat ? 'PASSED' : 'APPROVED'
+  // A plan was never rejected — the user asked for another turn. Same decision,
+  // same machine; the row says what the button said (see decisionLabels). The
+  // SAME word `verdictLabel` puts on the History and Library badges: one fact
+  // must not have two names depending on which panel is showing it.
+  if (mode === 'plan') return 'REVISIONS'
   return uat ? 'FAILED' : 'REJECTED'
 }
 
@@ -636,6 +732,17 @@ export default function CanvasNotesPanel({
   // second, and both are drawn, newest first.
   const liveGroups = useMemo(() => groups.filter((g) => g.waitingOn === 'agent'), [groups])
   const settledGroups = useMemo(() => groups.filter((g) => g.waitingOn === 'closed'), [groups])
+
+  /**
+   * Why Approve is unavailable on a PLAN, or null. Derived on every render from
+   * the two facts it is made of (the version's open questions, the notes in the
+   * composer), never latched — so a note added a moment AFTER the user picked
+   * Approve closes the gate rather than leaving a stale decision armed. It is
+   * computed here, above the submit path, because `doSubmit` re-checks it: the
+   * disabled button is the affordance, the refusal in the handler is the rule.
+   * Null for every other mode — a mockup's Approve still carries observations.
+   */
+  const approveBlock = planApproveBlock(version, draftNotes.length)
 
   /** Explicit user toggles only; a round's default fold state is derived (a
    *  settled round starts collapsed, the live one starts open). Keyed by CANVAS
@@ -1489,6 +1596,12 @@ export default function CanvasNotesPanel({
   const doSubmit = useCallback(async () => {
     if (submitting || !versionOpen || decision === null) return
     if (decision === 'reject' && draftNotes.length === 0) return // note mandated
+    // The plan gate, re-asserted where the write happens. The button is already
+    // disabled and the armed decision is already cleared when it closes, but an
+    // approval is the one submission that cannot be taken back — so it is
+    // refused here too rather than trusting two pieces of UI state to have kept
+    // up with each other.
+    if (decision === 'approve' && approveBlock !== null) return
     // The plain Approve with nothing written: no review record — just the
     // version's verdict. The store refresh brings the new state in.
     if (decision === 'approve' && (!draftReview || draftNotes.length === 0)) {
@@ -1505,7 +1618,12 @@ export default function CanvasNotesPanel({
           setSubmitError(r.error)
           return
         }
-        window.electronAPI.pty.write(sessionId, 'Approved ' + version.id + ' on the canvas · canvas_version_verdict recorded\r')
+        // #580: through the marker QUEUE, never straight into the PTY. This is
+        // the whole delivery for a clean approval — it creates no review record
+        // for `canvas_review` to fetch — and a raw write mid-turn is swallowed
+        // by the streaming TUI, which is exactly how two live approvals reached
+        // the agent as nothing at all.
+        deliverAgentMarker(sessionId, mountedCanvasIdRef.current, 'Approved ' + version.id + ' on the canvas · canvas_version_verdict recorded')
         setFiled({ decision: 'approve' })
         setDecision(null)
         void clearComposerDraft(sessionId, mountedCanvasIdRef.current)
@@ -1564,8 +1682,11 @@ export default function CanvasNotesPanel({
       }
       const count = review.annotationIds.length
       // The pull side of D10: one line in chat carries the id; the agent
-      // fetches the payload itself via canvas_review.
-      window.electronAPI.pty.write(sessionId, 'Review #' + review.id.slice(1) + ' — ' + count + ' notes · canvas_review ' + review.id + '\r')
+      // fetches the payload itself via canvas_review. #580: queued while the
+      // agent's turn is open — the RECORD survives either way here (unlike a
+      // clean approval), but a marker lost mid-turn still means the agent never
+      // learns there is one to fetch.
+      deliverAgentMarker(sessionId, mountedCanvasIdRef.current, 'Review #' + review.id.slice(1) + ' — ' + count + ' notes · canvas_review ' + review.id)
       setFiled({ decision, reviewId: review.id })
       setDecision(null)
       // Hand back to the session automatically (#478): submitting is the moment
@@ -1593,7 +1714,28 @@ export default function CanvasNotesPanel({
     closeComposerForSubmit,
     finishComposerSubmit,
     clearComposerDraft,
+    approveBlock,
   ])
+
+  /**
+   * An armed Approve does not survive the gate closing.
+   *
+   * The user can pick Approve on a plan with nothing written and then write a
+   * note — at which point the plan is no longer perfect and the decision they
+   * are holding is one they are not allowed to file. Leaving it selected would
+   * put a green, disabled Submit in front of them with no way to read why; so
+   * the decision goes back to undecided and the reason line under the buttons
+   * says what happened. Approve is simply pressed again when the note is gone.
+   *
+   * `composerRef` moves with it, because it is what every out-of-render save
+   * writes — a persisted draft still claiming `decision: 'approve'` would arm
+   * the gate again on the next mount.
+   */
+  useEffect(() => {
+    if (approveBlock === null || decision !== 'approve') return
+    composerRef.current.decision = null
+    setDecision(null)
+  }, [approveBlock, decision])
 
   /**
    * What the panel may say about ONE live note's anchor — and, as load-bearing
@@ -1969,11 +2111,13 @@ export default function CanvasNotesPanel({
       case 'rejected': {
         // Name the render that ANSWERED it when there is one — that is the thing
         // the user can go and look at — and only fall back to the wait when the
-        // agent has not made it yet.
+        // agent has not made it yet. A plan was never rejected: the user asked
+        // for revisions, and the line says the word the button said.
+        const word = version.mode === 'plan' ? 'went back for revisions' : 'was rejected'
         const answered = answeringVersion(canvasVersions, version.id)
         return answered
-          ? `${version.id} was rejected — ${answered.id} answers it.`
-          : `${version.id} was rejected — the agent is working on the next version.`
+          ? `${version.id} ${word} — ${answered.id} answers it.`
+          : `${version.id} ${word} — the agent is working on the next version.`
       }
       case 'dismissed':
         return `${version.id} was closed without a review.`
@@ -1985,7 +2129,33 @@ export default function CanvasNotesPanel({
   }
 
   const rejectNeedsNote = decision === 'reject' && draftNotes.length === 0
-  const submitDisabled = !versionOpen || decision === null || rejectNeedsNote || submitting
+  const submitDisabled =
+    !versionOpen || decision === null || rejectNeedsNote || submitting || (decision === 'approve' && approveBlock !== null)
+
+  /**
+   * WHY Submit is dead — one sentence, in the tooltip and the surface.
+   *
+   * A plan review stacks three buttons: Approve (often blocked), Submit
+   * Revisions (live), and a big Submit that is dead until a decision is picked.
+   * Two of the three were dark ghosts, so users read the word "Submit", clicked
+   * the dead one, and nothing happened. The reason has to be sayable.
+   */
+  const submitBlockReason: string | null =
+    !versionOpen ? 'This version is no longer open for review'
+      : submitting ? null
+        : decision === null
+          ? (version.mode === 'plan' ? 'Choose Approve or Submit Revisions first' : 'Choose Approve or Reject first')
+          : rejectNeedsNote
+            ? (version.mode === 'plan' ? 'Revisions need at least one note' : 'A reject needs at least one note')
+            : (decision === 'approve' && approveBlock) ? `Approve is unavailable: ${approveBlock}` : null
+
+  /**
+   * Submit Revisions is the ONLY live move: Approve is gated and no decision is
+   * picked yet. That is the exact moment the hierarchy was failing, so it is the
+   * exact moment the button is promoted to a primary — filled, ringed — instead
+   * of sitting as one more outline among dark ghosts.
+   */
+  const reviseIsOnlyMove = decision === null && approveBlock !== null
 
   return (
     <div
@@ -2429,25 +2599,36 @@ export default function CanvasNotesPanel({
               </div>
             )}
             <div className="flex gap-2" data-testid="decision-row">
-              <button
-                onClick={() => {
-                  const next = decision === 'approve' ? null : ('approve' as const)
-                  // The ref is the composer's truth for every save that fires
-                  // outside render, so it moves with the state, not after it.
-                  composerRef.current.decision = next
-                  dirtyRef.current = true
-                  setDecision(next)
-                }}
-                className="flex-1 text-center text-[12.5px] font-semibold rounded-[9px] py-2 border transition-colors focus-ring"
-                style={
-                  decision === 'approve'
-                    ? { background: 'var(--color-green)', borderColor: 'var(--color-green)', color: 'var(--surface-chrome)' }
-                    : { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
-                }
-                data-testid="decision-approve"
-              >
-                {labels.approve}
-              </button>
+              {/* The title rides the WRAPPER, not the button: a `disabled`
+                  button swallows pointer events in Chromium, so its own
+                  `title` never appears — which is how the "why" on a blocked
+                  Approve stayed invisible to everyone who hovered it. */}
+              <span className="flex-1 flex" title={approveBlock ?? undefined} data-testid="decision-approve-wrap">
+                <button
+                  onClick={() => {
+                    const next = decision === 'approve' ? null : ('approve' as const)
+                    // The ref is the composer's truth for every save that fires
+                    // outside render, so it moves with the state, not after it.
+                    composerRef.current.decision = next
+                    dirtyRef.current = true
+                    setDecision(next)
+                  }}
+                  disabled={approveBlock !== null}
+                  aria-disabled={approveBlock !== null || undefined}
+                  className="flex-1 text-center text-[12.5px] font-semibold rounded-[9px] py-2 border transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={
+                    decision === 'approve'
+                      ? { background: 'var(--color-green)', borderColor: 'var(--color-green)', color: 'var(--surface-chrome)' }
+                      : approveBlock !== null
+                        ? DEAD_BUTTON
+                        : { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
+                  }
+                  data-blocked={approveBlock !== null || undefined}
+                  data-testid="decision-approve"
+                >
+                  {labels.approve}
+                </button>
+              </span>
               <button
                 onClick={() => {
                   const next = decision === 'reject' ? null : ('reject' as const)
@@ -2459,8 +2640,20 @@ export default function CanvasNotesPanel({
                 style={
                   decision === 'reject'
                     ? { background: 'var(--color-red)', borderColor: 'var(--color-red)', color: 'var(--surface-chrome)' }
-                    : { borderColor: 'color-mix(in srgb, var(--color-red) 40%, transparent)', color: 'var(--color-red)' }
+                    : reviseIsOnlyMove
+                      // Promoted: the only live control on the bar should look
+                      // like one. Tinted fill + ring, but NOT the solid
+                      // selected fill -- it is still an unpicked toggle.
+                      ? {
+                          background: 'color-mix(in srgb, var(--color-red) 18%, transparent)',
+                          borderColor: 'var(--color-red)',
+                          color: 'var(--color-red)',
+                          boxShadow: '0 0 0 3px color-mix(in srgb, var(--color-red) 18%, transparent)',
+                        }
+                      : { borderColor: 'color-mix(in srgb, var(--color-red) 40%, transparent)', color: 'var(--color-red)' }
                 }
+                title={reviseIsOnlyMove ? `${labels.reject} — the move available here` : undefined}
+                data-primary={reviseIsOnlyMove || undefined}
                 data-testid="decision-reject"
               >
                 {labels.reject}
@@ -2468,24 +2661,44 @@ export default function CanvasNotesPanel({
             </div>
             {rejectNeedsNote && (
               <div className="text-[10.5px] font-semibold" style={{ color: 'var(--color-red)' }} data-testid="reject-needs-note">
-                A reject needs a note — tell the agent what&apos;s wrong.
+                {version.mode === 'plan'
+                  ? 'Revisions need a note — tell the agent what to change.'
+                  : "A reject needs a note — tell the agent what's wrong."}
+              </div>
+            )}
+            {/* WHY Approve is dead, on the surface rather than in a tooltip. A
+                disabled button with no sentence beside it is the one thing this
+                gate must not become. */}
+            {approveBlock && (
+              <div className="text-[10.5px]" style={{ color: 'var(--text-secondary)' }} data-testid="canvas-approve-blocked">
+                Approve is unavailable: {approveBlock}.
               </div>
             )}
             {/* APPROVE MEANS NOTHING OWED, said before the click rather than
                 discovered after it. Notes filed with an approval become
-                observations: the agent reads them, nothing comes back. */}
-            {decision === 'approve' && draftNotes.length > 0 && (
+                observations: the agent reads them, nothing comes back. Not on a
+                plan — there, a note blocks the approval outright. */}
+            {version.mode !== 'plan' && decision === 'approve' && draftNotes.length > 0 && (
               <div className="text-[10.5px]" style={{ color: 'var(--text-secondary)' }} data-testid="canvas-approve-observations-warning">
                 approve only if none needs work — they&apos;ll be recorded as observations
               </div>
             )}
+            {/* Same wrapper trick as Approve: a disabled button cannot show its
+                own tooltip, and "why is Submit dead?" is the question this
+                whole bar was failing to answer. */}
+            <span
+              className="block"
+              title={submitBlockReason ?? 'Send this review to the agent'}
+              data-testid="canvas-submit-wrap"
+            >
             <button
               onClick={() => void doSubmit()}
               disabled={submitDisabled}
+              aria-disabled={submitDisabled || undefined}
               className="w-full text-center text-[12.5px] font-bold rounded-[9px] py-2.5 border transition-all focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
               style={
                 submitDisabled
-                  ? { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
+                  ? DEAD_BUTTON
                   : decision === 'reject'
                     ? {
                         background: 'var(--color-red)',
@@ -2500,11 +2713,19 @@ export default function CanvasNotesPanel({
                         boxShadow: '0 0 0 3px color-mix(in srgb, var(--color-green) 22%, transparent)',
                       }
               }
-              title={decision === null ? 'Decide first — approve or reject' : 'Send this review to the agent'}
+              data-blocked={submitDisabled || undefined}
               data-testid="canvas-submit"
             >
               {submitting ? 'Submitting…' : submitLabel(version, decision, draftNotes.length)}
             </button>
+            </span>
+            {/* And on the surface, not only in the tooltip — the same rule the
+                blocked-Approve line already follows. */}
+            {submitBlockReason && !rejectNeedsNote && !(decision === 'approve' && approveBlock) && (
+              <div className="text-[10.5px]" style={{ color: 'var(--text-muted)' }} data-testid="canvas-submit-blocked">
+                {submitBlockReason}.
+              </div>
+            )}
           </div>
         </>
       )}
