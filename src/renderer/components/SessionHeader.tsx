@@ -9,6 +9,8 @@ import { useAccountAuthStore, type AccountAuthStatus } from '../stores/accountAu
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { BrandMark } from './BrandMark'
+import { ContainerGlyph, containerBadgeTitle } from './sidebar/Badges'
+import { containerNameOf, resolveTransportBadge } from './sidebar/transportBadge'
 import { useRestartSession } from '../hooks/useRestartSession'
 import { ASK_LABEL } from '../lib/askConductor'
 
@@ -178,25 +180,37 @@ function SessionGitHubPill({ session }: { session: Session }) {
 /**
  * The SSH connection as ONE title-bar-style pill carrying BOTH the connection
  * kind and the remote address -- replacing the old mauve "SSH: user@host" text
- * and the separate persistent / not-persistent pills. Green "SSH-Persistent"
- * when the session is tmux-wrapped (a dropped connection stays alive and
- * reconnecting resumes it in place); neutral "SSH" otherwise. The address
- * (user@host) reads inline, at a glance, not only on hover. A STANDARD SSH
- * session shows this pill too -- it just says "SSH". The docker/container pill
- * (rendered after this in the cluster) composes with it unchanged.
+ * and the separate persistent / not-persistent pills. THREE kinds now (phase 6,
+ * the same truth table the sidebar badges read): the teal container mark when
+ * claude runs a hop deeper inside a container, green "SSH-Persistent" when the
+ * session is tmux-wrapped (a dropped connection stays alive and reconnecting
+ * resumes it in place), neutral "SSH" otherwise. The kind slot is exclusive --
+ * a container session is never tmux-wrapped (main forces persistence off), so
+ * the old separate container pill beside an "SSH" one said one thing twice.
+ * The address (user@host) reads inline in EVERY kind, at a glance, not only on
+ * hover: this pill is what guarantees a standard SSH session is never headless.
  */
 function SshConnectionPill({ session }: { session: Session }) {
   const ssh = session.sshConfig
   if (!ssh) return null
-  const persistent = session.sshTmuxPersistent === true
+  const kind = resolveTransportBadge({
+    isSsh: session.sessionType === 'ssh',
+    ssh,
+    persistent: session.sshTmuxPersistent === true,
+  })
+  const container = kind === 'container' ? containerNameOf(ssh) : undefined
+  const persistent = kind === 'persistent'
   const pill = (
     <HeaderPill
-      label={persistent ? 'SSH-Persistent' : 'SSH'}
-      tone={persistent ? 'var(--status-success)' : 'var(--text-muted)'}
+      label={kind === 'container' ? <ContainerGlyph size={11} /> : persistent ? 'SSH-Persistent' : 'SSH'}
+      tone={kind === 'container' ? 'var(--color-teal)' : persistent ? 'var(--status-success)' : 'var(--text-muted)'}
+      dotOnly={kind === 'container'}
       title={
-        persistent
-          ? 'This remote session runs inside tmux — a dropped connection stays alive and reconnecting resumes it in place.'
-          : 'Remote session over SSH; a dropped connection ends it and reconnecting resumes via --continue.'
+        kind === 'container'
+          ? containerBadgeTitle(container)
+          : persistent
+            ? 'This remote session runs inside tmux — a dropped connection stays alive and reconnecting resumes it in place.'
+            : 'Remote session over SSH; a dropped connection ends it and reconnecting resumes via --continue.'
       }
       testId="ssh-connection-pill"
     >
@@ -205,13 +219,14 @@ function SshConnectionPill({ session }: { session: Session }) {
       </span>
     </HeaderPill>
   )
-  // The persistent variant also answers to the legacy `ssh-persistent-pill` hook
-  // (existing tests / the docker-composes assertion). One node can't carry two
+  // The persistent and container variants also answer to their legacy hooks
+  // (`ssh-persistent-pill` / `ssh-docker-pill`). One node can't carry two
   // data-testids, so a display:contents wrapper (no layout box of its own)
-  // carries that second hook around the pill; `ssh-connection-pill` stays on the
-  // pill itself in BOTH states.
-  return persistent ? (
-    <span style={{ display: 'contents' }} data-testid="ssh-persistent-pill">
+  // carries the second hook around the pill; `ssh-connection-pill` stays on the
+  // pill itself in ALL THREE states.
+  const legacyHook = kind === 'container' ? 'ssh-docker-pill' : persistent ? 'ssh-persistent-pill' : undefined
+  return legacyHook ? (
+    <span style={{ display: 'contents' }} data-testid={legacyHook}>
       {pill}
     </span>
   ) : (
@@ -547,23 +562,12 @@ export default function SessionHeader({ session }: Props) {
               address, styled like the account / GitHub HeaderPills (#291's
               title-bar-style pill system). Replaces the old mauve "SSH: user@host"
               text and the two separate persistence pills. */}
+          {/* Phase 6: the container runtime is now the connection pill's KIND,
+              not a second pill beside it — teal glyph, no word, the container
+              name on hover, and the user@host address kept. The old separate
+              `ssh-docker-pill` HeaderPill lived here; its testid rides the
+              connection pill's wrapper so nothing that queries it breaks. */}
           <SshConnectionPill session={session} />
-          {/* Docker/container runtime (harmonise-remote Phase 3): composes with
-              the connection pill above — an SSH-Persistent container session
-              shows both. Keyed on the structured docker field; the container
-              name is on hover, teal to match the sidebar badge. */}
-          {!!(session.sshConfig.runtime?.container || session.sshConfig.dockerContainer) && (
-            <HeaderPill
-              label={
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden><rect x="4" y="9" width="3.6" height="3.6" rx="0.4" /><rect x="8.2" y="9" width="3.6" height="3.6" rx="0.4" /><rect x="12.4" y="9" width="3.6" height="3.6" rx="0.4" /><rect x="8.2" y="4.8" width="3.6" height="3.6" rx="0.4" /><path d="M2 13.5h17.5c0 2.8-2.2 5-5 5H8a6 6 0 0 1-6-5z" /></svg>
-              }
-              tone="var(--color-teal)"
-              word="container"
-              dotOnly
-              title={`Runs in container: ${session.sshConfig.runtime?.container ?? session.sshConfig.dockerContainer}`}
-              testId="ssh-docker-pill"
-            />
-          )}
           {/* Phase 3 (harmonise-remote): the old mauve remote-account pill
               lived here (item 10, testId ssh-remote-account-pill). Retired —
               SessionAuthPills now renders the ACCOUNT pill for SSH sessions

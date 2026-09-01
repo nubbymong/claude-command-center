@@ -1,6 +1,7 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { SessionTypeBadge, SshBadge, SshPersistentBadge, SshReattachBadge } from './Badges'
+import { SessionTypeBadge, SshReattachBadge, TransportBadge } from './Badges'
+import { configIsPersistent, containerNameOf, resolveTransportBadge } from './transportBadge'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -11,7 +12,14 @@ import {
   flattenPopoverCopy,
   isMultiSpawnLaunchBlocked,
 } from '../../hooks/useLaunchConfig'
-import { DELETE_WHILE_RUNNING_REASON, runningCountLabel } from './sessionsPanelState'
+import {
+  DELETE_WHILE_RUNNING_REASON,
+  HOVER_STRIP_FADE,
+  HOVER_STRIP_FADE_PX,
+  HOVER_STRIP_SOLID,
+  hoverStripRightPx,
+  runningCountLabel,
+} from './sessionsPanelState'
 import { useDetachedRemotesStore } from '../../stores/detachedRemotesStore'
 import { useDetachedLivenessStore } from '../../stores/livenessStore'
 import { useHostReachabilityStore } from '../../stores/hostReachability'
@@ -54,10 +62,13 @@ interface ConfigRowProps {
 }
 
 export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, onContextMenu, runningCount = 0, onOpenSession, draggable, onDragStart, onDragOver, onDrop, onDragEnd, isDragOver, selectMode, selected, onToggleSelected, onLaunchMany, onSpawnCountChange, onBlockedLaunch, onBlockedSelect, onPromptHoverOut }: ConfigRowProps) {
-  // Icon order is the design's identity split: the session TYPE leads the row
-  // (the prominent mark — Claude / Codex / Shell), and the config's own colour
-  // is a small chip beside the name. The big coloured square read as an
-  // account icon; it is gone.
+  // Row anatomy (phase 6, signed-off replica): IDENTITY DOT far left, then the
+  // type badge, then the name. The list is scanned by account colour first and
+  // by type second, so the colour must be the leftmost thing on the row — it
+  // used to sit BEHIND the type mark, which put a peach/mauve/sky chip between
+  // the eye and the identity it was looking for. In select mode the tick box
+  // (or its lock) still comes before the dot: it is the row's mode, not its
+  // identity.
   const theme = useResolvedTheme()
   const chipColour = resolveIdentityColor(config.identityColorKey ?? bucketLegacyColorToKey(config.color), theme)
   // Codex configs can't launch while the Codex master is off (user decision
@@ -97,6 +108,15 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
   const spawnControlShown = multiSpawn && !selectMode
   const launchCopy = alreadyRunningLaunchCopy(config.label)
   const selectCopy = cannotSelectCopy(config.label)
+
+  // ONE transport chip, chosen by the shared truth table: container beats
+  // SSH-Persistent beats SSH. A saved config predicts persistence from its own
+  // `detachable` (the session's reported wrap does not exist yet).
+  const transport = resolveTransportBadge({
+    isSsh: config.sessionType === 'ssh',
+    ssh: config.sshConfig,
+    persistent: configIsPersistent(config.sshConfig),
+  })
 
   return (
     <div
@@ -148,12 +168,13 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           </svg>
         </button>
       ))}
-      <SessionTypeBadge kind={typeKind} />
       <span
         className="w-2 h-2 rounded-[3px] shrink-0"
         style={{ backgroundColor: chipColour }}
+        data-testid="config-row-identity-dot"
         aria-hidden
       />
+      <SessionTypeBadge kind={typeKind} />
       {/* Dimmed while select mode has this row locked — the name must read as
           "not available to tick", not as an ordinary row you keep missing. */}
       <span className={`text-xs truncate flex-1 ${launchBlocked || (selectMode && spawnBlocked) ? 'text-overlay0' : 'text-text'}`}>{config.label}</span>
@@ -165,11 +186,12 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           Codex off
         </span>
       )}
-      {/* Transport badge stays at the tail — the type now leads the row. A
+      {/* Transport badge stays at the tail — the type leads the row. Three-way:
+          a container config shows the container mark INSTEAD of an SSH chip; a
           persistent config (detachable, the SSH default) reads SSH-Persistent,
-          matching the running-session badge, so the two SSH kinds are told apart
-          before launch. */}
-      {config.sessionType === 'ssh' && (config.sshConfig?.detachable !== false ? <SshPersistentBadge /> : <SshBadge />)}
+          matching the running-session badge; a standard one reads SSH. So the
+          three remote kinds are told apart before launch, not after. */}
+      <TransportBadge kind={transport} container={containerNameOf(config.sshConfig)} />
       {config.sessionType === 'ssh' && <SshReattachBadge count={reattachCount} />}
       {runningCount > 0 && (
         <button
@@ -204,22 +226,30 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           positioning gives the label the full row at rest and still avoids the
           reflow that display:none would cause on hover. The backdrop keeps the
           buttons legible over the tail of a long label. */}
-      {/* When the count pill occupies the right edge, the hover strip parks to
-          ITS LEFT — anchored clear of the pill it would otherwise paint across,
-          leaving the pill visible and clickable (review HIGH: the overlay used
-          to swallow every mouse click aimed at the pill). Budget: right-12 is
-          3rem; minus the row's px-2 inset that leaves ~2.5rem of pill room —
-          measured clear for 1-2 digit counts across every UI font and the 0.8
-          scale (text-[8.5px] is a fixed px size, so small scales are the tight
-          case). No jsdom test can pin layout; re-measure if this moves.
-          Phase 4 keeps that budget and adds one more term: a Multi Spawn row
-          also holds the ×N control at the right edge (~69px + the row's 6px
-          gap), so the strip parks clear of BOTH. Expressed in px because the
-          offset is now a sum, not one of two Tailwind classes. */}
+      {/* When the count pill (and/or the ×N control) occupies the right edge,
+          the hover strip parks FLUSH against it — its right edge on the pill's
+          left edge, so the pill stays visible and clickable (the opaque core
+          would otherwise swallow every click aimed at it) and no sliver of
+          badge shows between the two. The offset is `hoverStripRightPx`, a
+          pure function pinned by unit tests: no jsdom test can measure layout.
+          Phase 6 also replaces the old `from-surface0` gradient core with the
+          OPAQUE hover composite — the gradient was translucent at every stop,
+          so the transport badges ghosted through the buttons (replica R1/a1).
+          Only the label side still fades, via the tongue below. */}
       <div
-        className="absolute flex gap-0.5 items-center rounded pl-2 bg-gradient-to-l from-surface0 via-surface0 to-transparent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity"
-        style={{ right: 8 + (runningCount > 0 ? 40 : 0) + (spawnControlShown ? 75 : 0) }}
+        className="absolute flex gap-0.5 items-center rounded pl-2 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity"
+        style={{ right: hoverStripRightPx(runningCount, spawnControlShown), background: HOVER_STRIP_SOLID }}
+        data-testid="config-row-hover-actions"
+        data-parked={runningCount > 0 || spawnControlShown ? 'clear' : 'edge'}
       >
+        {/* The fade tongue: the only translucent part, and it sits over the
+            label tail where there is nothing to ghost through. A sibling span
+            rather than a ::before so it needs no global stylesheet rule. */}
+        <span
+          aria-hidden
+          className="absolute top-0 h-full pointer-events-none"
+          style={{ right: '100%', width: HOVER_STRIP_FADE_PX, background: HOVER_STRIP_FADE }}
+        />
         {/* The plain play button. Three states now: Codex-off (inert, as
             before), Multi-Spawn-blocked (inert, but it EXPLAINS itself and
             offers the way out), and normal. A Multi Spawn config has no play

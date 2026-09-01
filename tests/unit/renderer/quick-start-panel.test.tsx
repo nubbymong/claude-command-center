@@ -156,4 +156,59 @@ describe('the #462 restyle — session-card language, no loud fill', () => {
     expect(start().className).toContain('cursor-not-allowed')
     expect(start().className).not.toContain('bg-blue')
   })
+
+  // Phase 6: Quick Start reads the SAME transport truth table as the Saved
+  // rows — it used to make its own two-way call and so could never show a
+  // container pin as anything but "SSH".
+  const sshPin = (id: string, ssh: Record<string, unknown>) =>
+    cfg(id, { sessionType: 'ssh', sshConfig: { host: 'h', username: 'u', remotePath: '~', ...ssh } })
+
+  it('shows the container badge (replacing the SSH one) for a container pin', () => {
+    render({ configs: [sshPin('a', { runtime: { type: 'container', container: 'rocky-dev' } })] })
+    const item = container.querySelector('[data-testid="quick-start-item"]')!
+    const badge = item.querySelector('[data-testid="ssh-container-badge"]') as HTMLElement
+    expect(badge).toBeTruthy()
+    expect(badge.title).toContain('Container session over SSH')
+    expect(item.querySelector('[data-testid="ssh-badge"]')).toBeNull()
+    expect(item.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
+  })
+
+  it('still shows SSH-Persistent / SSH for the other two kinds', () => {
+    render({ configs: [sshPin('a', {}), sshPin('b', { detachable: false })] })
+    const items = Array.from(container.querySelectorAll('[data-testid="quick-start-item"]'))
+    const a = items.find((el) => el.textContent!.includes('a'))!
+    const b = items.find((el) => el.textContent!.includes('b'))!
+    expect(a.querySelector('[data-testid="ssh-persistent-badge"]')).toBeTruthy()
+    expect(b.querySelector('[data-testid="ssh-badge"]')).toBeTruthy()
+    expect(b.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
+  })
+
+  // Phase 6 row anatomy: identity dot FAR LEFT, then the type badge.
+  it('renders the identity dot BEFORE the type badge', () => {
+    render({ configs: [cfg('a')] })
+    const item = container.querySelector('[data-testid="quick-start-item"]')!
+    const dot = item.querySelector('[data-testid="quick-start-identity-dot"]')!
+    const type = item.querySelector('[data-testid="type-badge-claude"]')!
+    expect(item.firstElementChild).toBe(dot)
+    expect(dot.compareDocumentPosition(type) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('in select mode the tick box stays ahead of the dot', () => {
+    render({ configs: [cfg('a')], selectMode: true, onToggleSelected: () => {} })
+    const item = container.querySelector('[data-testid="quick-start-item"]')!
+    const box = item.querySelector('[data-testid="quick-start-select-checkbox"]')!
+    const dot = item.querySelector('[data-testid="quick-start-identity-dot"]')!
+    expect(item.firstElementChild).toBe(box)
+    expect(box.compareDocumentPosition(dot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('has no absolutely-positioned hover strip to ghost through (its start button is inline)', () => {
+    // The ConfigRow defect this phase fixes cannot exist here: Quick Start's
+    // affordances are real flex children, not an overlay. Pinned so a future
+    // "make it match the Saved row" does not silently import the bug.
+    render({ configs: [cfg('a')] })
+    const item = container.querySelector('[data-testid="quick-start-item"]')!
+    expect(item.querySelector('.absolute')).toBeNull()
+    expect(item.className).not.toContain('relative')
+  })
 })

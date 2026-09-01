@@ -313,24 +313,78 @@ describe('SessionHeader', () => {
     expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).not.toBeNull()
   })
 
-  // Docker pill in the SSH cluster (harmonise-remote Phase 3): composes with the
-  // persistence pill, keyed on the structured docker field, container on hover.
-  it('SSH: shows the docker pill (naming the container) when the session runs in a container', () => {
+  // Container transport in the header (phase 6): the connection pill's KIND
+  // becomes the container mark — it no longer sits beside an "SSH" pill saying
+  // the same thing twice. The address stays, the legacy testid stays.
+  it('SSH: a container session shows the container pill (naming it on hover) and KEEPS the address', () => {
     render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } as any }))
-    const pill = container.querySelector('[data-testid="ssh-docker-pill"]')
+    const pill = container.querySelector('[data-testid="ssh-connection-pill"]')
     expect(pill).not.toBeNull()
-    expect(pill?.getAttribute('title')).toBe('Runs in container: ccc-test')
+    expect(pill?.getAttribute('title')).toContain('Container session over SSH')
+    expect(pill?.getAttribute('title')).toContain('ccc-test')
+    // Address still reads inline — this pill is the SSH session's only guarantee
+    // of a visible host in the top bar.
+    expect(pill?.textContent).toContain('u@h')
+    // Logo only: neither SSH word, and never the engine's brand name.
+    expect(pill?.textContent).not.toContain('SSH-Persistent')
+    expect(pill?.textContent?.toLowerCase()).not.toContain('docker')
+    expect(pill?.getAttribute('title')?.toLowerCase()).not.toContain('docker')
+    // The legacy hook still resolves (it now rides the connection pill).
+    expect(container.querySelector('[data-testid="ssh-docker-pill"]')).not.toBeNull()
   })
 
-  it('SSH: the docker pill composes with the persistence pill (both shown)', () => {
+  it('SSH: the container kind OUTRANKS persistence — one pill, not two', () => {
     render(makeSession({ provider: 'claude', sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } as any }))
     expect(container.querySelector('[data-testid="ssh-docker-pill"]')).not.toBeNull()
-    expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-pill"]')).toBeNull()
+    expect(container.querySelectorAll('[data-testid="ssh-connection-pill"]').length).toBe(1)
   })
 
-  it('SSH: no docker pill when the session is not a container', () => {
+  it('SSH: a structured container runtime is recognised too, not just the legacy hint', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', container: 'rocky-dev', engine: 'podman' } } as any }))
+    expect(container.querySelector('[data-testid="ssh-connection-pill"]')?.getAttribute('title')).toContain('rocky-dev')
+  })
+
+  it('SSH: no container pill when the session is not a container', () => {
     render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))
     expect(container.querySelector('[data-testid="ssh-docker-pill"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-connection-pill"]')?.textContent).toContain('SSH')
+  })
+
+  // Phase 6, item 2: a STANDARD SSH session with NEITHER a reported remote
+  // account NOR a mapped local profile renders no account pill at all — the
+  // account cluster is correctly empty. The connection pill must still show, or
+  // the top bar goes blank for exactly the session that most needs to say where
+  // it is. (Verified pre-existing behaviour; pinned here so it cannot regress
+  // the way the account cluster once did.)
+  it('SSH standard, no reported email and no mapped profile: the connection pill still shows the host', () => {
+    useAccountProfilesStore.setState({ profiles: [] })
+    render(makeSession({
+      provider: 'claude', sessionType: 'ssh',
+      accountEmail: undefined, sshRemoteAccount: undefined, profileId: undefined,
+      sshConfig: { host: '10.0.0.9', port: 22, username: 'pi', remotePath: '~' } as any,
+    }))
+    // The account cluster is empty...
+    expect(container.querySelector('[data-testid="session-pill-account"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    // ...and the connection pill is still there, naming the host.
+    const pill = container.querySelector('[data-testid="ssh-connection-pill"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.textContent).toContain('SSH')
+    expect(pill?.textContent).toContain('pi@10.0.0.9')
+  })
+
+  it('SSH standard with a launch profileId that matches NO profile: connection pill still shows', () => {
+    // The one remaining "neither" path: a stale launch profile id that resolves
+    // to nothing, so sshMappedProfileId returns undefined as well.
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-other', name: 'Other', accountEmail: 'x@y.z' } as any] })
+    render(makeSession({
+      provider: 'claude', sessionType: 'ssh', profileId: 'profile-gone',
+      sshConfig: { host: 'box', port: 22, username: 'u', remotePath: '~' } as any,
+    }))
+    expect(container.querySelector('[data-testid="session-pill-account"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-connection-pill"]')?.textContent).toContain('u@box')
+    useAccountProfilesStore.setState({ profiles: [] })
   })
 })
 

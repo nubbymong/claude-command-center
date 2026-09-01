@@ -15,7 +15,8 @@ import {
 import { markMultiSpawnIntroSeen } from '../onboarding/multi-spawn-intro-gate'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
-import { SessionTypeBadge, SshBadge, SshPersistentBadge, SshReattachBadge, DockerBadge } from './sidebar/Badges'
+import { SessionTypeBadge, SshReattachBadge, TransportBadge } from './sidebar/Badges'
+import { configIsPersistent, containerNameOf, resolveTransportBadge } from './sidebar/transportBadge'
 import { DialogOverlay, DialogPanel, DialogBody, DialogFooter, DialogButton, DialogCallout } from './ui/Dialog'
 
 /**
@@ -154,7 +155,13 @@ function StartupConfigRow({ config, state, checked, onToggle }: RowProps) {
     [detachedEntries, livenessMap, hostReach, config],
   )
 
-  const container = config.sshConfig?.runtime?.container || config.sshConfig?.dockerContainer
+  // ONE transport chip, from the shared truth table — the same call ConfigRow
+  // and Quick Start make, so this page cannot drift from the sidebar it mirrors.
+  const transport = resolveTransportBadge({
+    isSsh: config.sessionType === 'ssh',
+    ssh: config.sshConfig,
+    persistent: configIsPersistent(config.sshConfig),
+  })
 
   return (
     <div
@@ -167,8 +174,7 @@ function StartupConfigRow({ config, state, checked, onToggle }: RowProps) {
       <span className="w-2 h-2 rounded-[3px] shrink-0" style={{ backgroundColor: chipColour }} aria-hidden />
       <SessionTypeBadge kind={typeKind} />
       <span className="text-xs truncate flex-1 min-w-0" style={{ color: 'var(--text-primary)' }}>{config.label}</span>
-      {config.sessionType === 'ssh' && (config.sshConfig?.detachable !== false ? <SshPersistentBadge /> : <SshBadge />)}
-      {config.sessionType === 'ssh' && !!container && <DockerBadge container={container} />}
+      <TransportBadge kind={transport} container={containerNameOf(config.sshConfig)} />
       {config.sessionType === 'ssh' && <SshReattachBadge count={reattachCount} />}
       {state.auto && (
         <span

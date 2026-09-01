@@ -227,32 +227,52 @@ describe('SessionRow card', () => {
     expect((name as HTMLElement).title).toBe('live@x.com')
   })
 
-  // Docker session badge (harmonise-remote Phase 3): a SIBLING of the SSH
-  // transport badge — shown IN ADDITION, keyed on the structured docker field.
-  it('renders the docker badge for a container SSH session, composing with the SSH badge', () => {
+  // Container transport badge (phase 6; supersedes the composing DockerBadge of
+  // harmonise-remote Phase 3). The container mark REPLACES the SSH chip — main
+  // never tmux-wraps a container session, so the old pairing showed two chips
+  // for one fact.
+  it('renders the container badge for a container SSH session, REPLACING the SSH badge', () => {
     render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } })
-    const docker = container.querySelector('[data-testid="docker-badge"]')
-    expect(docker).not.toBeNull()
-    expect((docker as HTMLElement).title).toBe('Runs in container: ccc-test')
-    // Composes: the SSH transport badge is still there alongside it.
-    expect(container.querySelector('[data-testid="ssh-badge"]')).not.toBeNull()
+    const c = container.querySelector('[data-testid="ssh-container-badge"]')
+    expect(c).not.toBeNull()
+    expect((c as HTMLElement).title).toContain('Container session over SSH')
+    expect((c as HTMLElement).title).toContain('ccc-test')
+    // Replaces: neither SSH chip is rendered alongside it.
+    expect(container.querySelector('[data-testid="ssh-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
   })
 
-  it('composes the docker badge with the SSH-PERSISTENT badge (both shown)', () => {
+  it('the container badge OUTRANKS a reported tmux wrap (container wins)', () => {
     render(root, { sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } })
-    expect(container.querySelector('[data-testid="docker-badge"]')).not.toBeNull()
-    expect(container.querySelector('[data-testid="ssh-persistent-badge"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
   })
 
-  it('renders NO docker badge when dockerContainer is unset or empty', () => {
+  it('a structured container runtime also wins (not just the legacy hint)', () => {
+    render(root, { sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', container: 'rocky-dev', engine: 'podman' } } })
+    const c = container.querySelector('[data-testid="ssh-container-badge"]')
+    expect(c).not.toBeNull()
+    expect((c as HTMLElement).title).toContain('rocky-dev')
+    // Never the engine's brand name anywhere the user can read it.
+    expect((c as HTMLElement).title.toLowerCase()).not.toContain('docker')
+    expect((c as HTMLElement).title.toLowerCase()).not.toContain('podman')
+  })
+
+  it('renders NO container badge when no container is configured', () => {
     render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } })
-    expect(container.querySelector('[data-testid="docker-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-badge"]')).not.toBeNull()
     act(() => root.unmount()); root = createRoot(container)
     render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: '' } })
-    expect(container.querySelector('[data-testid="docker-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
     act(() => root.unmount()); root = createRoot(container)
-    // A local session never carries one.
+    // A runtime that explicitly runs on the HOST is not a container session.
+    render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'host' } } })
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
+    act(() => root.unmount()); root = createRoot(container)
+    // A local session never carries one — nor any transport chip.
     render(root, { sessionType: 'local' })
-    expect(container.querySelector('[data-testid="docker-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-badge"]')).toBeNull()
   })
 })

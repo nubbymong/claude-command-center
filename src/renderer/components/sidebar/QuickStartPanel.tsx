@@ -1,6 +1,7 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { SessionTypeBadge, SshBadge, SshPersistentBadge, SshReattachBadge } from './Badges'
+import { SessionTypeBadge, SshReattachBadge, TransportBadge } from './Badges'
+import { configIsPersistent, containerNameOf, resolveTransportBadge } from './transportBadge'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -190,8 +191,10 @@ export default function QuickStartPanel({
                 </svg>
               </button>
             ))}
+            {/* Identity dot FAR LEFT, then the type badge — the same anatomy
+                the Saved rows use (phase 6, signed-off replica). */}
+            <span className="w-2 h-2 rounded-[3px] shrink-0" style={{ backgroundColor: chipColour }} data-testid="quick-start-identity-dot" aria-hidden />
             <SessionTypeBadge kind={typeKind} />
-            <span className="w-2 h-2 rounded-[3px] shrink-0" style={{ backgroundColor: chipColour }} aria-hidden />
             <span className="text-xs font-medium truncate flex-1 text-[var(--text-primary)]">{config.label}</span>
             {liveCount > 0 && (
               <span
@@ -202,7 +205,15 @@ export default function QuickStartPanel({
                 {liveCount}
               </span>
             )}
-            {config.sessionType === 'ssh' && (config.sshConfig?.detachable !== false ? <SshPersistentBadge /> : <SshBadge />)}
+            {/* Same three-way transport chip as the Saved rows (phase 6). */}
+            <TransportBadge
+              kind={resolveTransportBadge({
+                isSsh: config.sessionType === 'ssh',
+                ssh: config.sshConfig,
+                persistent: configIsPersistent(config.sshConfig),
+              })}
+              container={containerNameOf(config.sshConfig)}
+            />
             {config.sessionType === 'ssh' && <SshReattachBadge count={verifiedLiveCount(matchDetachedRemotes(detachedEntries, config), livenessMap, hostReach)} />}
             {/* A Multi Spawn pin's start button IS the ×N control — one launch
                 affordance per row, never both (phase 4 / approved mockup). */}

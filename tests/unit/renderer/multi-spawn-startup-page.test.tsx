@@ -429,4 +429,26 @@ describe('MultiSpawnStartupPage — the real page', () => {
     expect(row.querySelector('[data-testid="ssh-persistent-badge"]')).toBeTruthy()
     expect(row.querySelector('[data-testid="ssh-reattach-badge"]')!.textContent).toContain('1')
   })
+
+  // Phase 6: the page inherits the sidebar's three-way transport chip, so a
+  // container config reads the same here as it does in the Saved list.
+  it('inherits the CONTAINER badge, replacing the SSH one', () => {
+    CONFIG.configs = [sshCfg('rocky', { sshConfig: { host: 'r', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', container: 'rocky-dev', engine: 'podman' } } })]
+    render()
+    const row = rowEl('rocky')
+    const badge = row.querySelector('[data-testid="ssh-container-badge"]') as HTMLElement
+    expect(badge).toBeTruthy()
+    expect(badge.title).toContain('Container session over SSH')
+    expect(badge.title).toContain('rocky-dev')
+    expect(row.querySelector('[data-testid="ssh-badge"]')).toBeNull()
+    expect(row.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
+  })
+
+  it('a non-detachable, non-container config still reads plain SSH', () => {
+    CONFIG.configs = [sshCfg('bare', { sshConfig: { host: 'b', port: 22, username: 'u', remotePath: '~', detachable: false } })]
+    render()
+    const row = rowEl('bare')
+    expect(row.querySelector('[data-testid="ssh-badge"]')).toBeTruthy()
+    expect(row.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
+  })
 })

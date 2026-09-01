@@ -35,6 +35,7 @@ import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
+import UngroupedConfigsHeader from './sidebar/UngroupedConfigsHeader'
 import { runningConfigCounts, sessionInstanceOrdinals } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import QuickStartPanel from './sidebar/QuickStartPanel'
@@ -143,6 +144,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const [ungroupedSessionsCollapsed, setUngroupedSessionsCollapsed] = useState<Record<string, boolean>>({})
   const toggleUngroupedSessionsCollapsed = (key: string) =>
     setUngroupedSessionsCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
+  // Phase 6: the SAVED tab's loose tail gets the same headed, collapsible
+  // treatment (one bucket, so a plain boolean rather than the sessions map).
+  const [ungroupedConfigsCollapsed, setUngroupedConfigsCollapsed] = useState(false)
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
   const [sessionRenameValue, setSessionRenameValue] = useState('')
   const [sessionContextMenu, setSessionContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null)
@@ -755,6 +759,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     (c) => (!c.groupId || !groups.some((g) => g.id === c.groupId)) &&
            (!c.sectionId || !sections.some((s) => s.id === c.sectionId))
   )
+  // Phase 6: the loose tail is DIVIDED AND HEADED, but only when something
+  // organised sits above it — a sidebar of nothing but loose configs needs
+  // neither a rule nor the word "Ungrouped" to explain itself.
+  const showUngroupedConfigsHeader =
+    unsectionedUngroupedConfigs.length > 0 && (sectionData.length > 0 || unsectionedGroups.length > 0)
 
   // Session organization mirrors config hierarchy
   const getSessionGroup = (session: Session): string | undefined => {
@@ -1230,17 +1239,31 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
         {/* Unsectioned ungrouped configs — the loose list. Divided from the
             organised part above so the eye stops reading it as the tail of
-            the last group; the rule only appears when there IS something above
-            it, so a sidebar of nothing but loose configs stays clean. */}
-        {unsectionedUngroupedConfigs.length > 0 && (sectionData.length > 0 || unsectionedGroups.length > 0) && (
-          <div
-            className="mx-2 mt-2 mb-1.5 border-t border-surface1"
-            role="separator"
-            aria-label="Configs not in a section or group"
-            data-testid="loose-configs-divider"
-          />
+            the last group, and (phase 6, signed-off replica) HEADED: the rule
+            alone said "something changed here" without saying what, leaving the
+            only rows on the tab with no heading of their own. Both the rule and
+            the header appear only when there IS something organised above, so a
+            sidebar of nothing but loose configs stays clean. */}
+        {showUngroupedConfigsHeader && (
+          <>
+            <div
+              className="mx-2 mt-2 mb-1.5 border-t border-surface1"
+              role="separator"
+              aria-label="Configs not in a section or group"
+              data-testid="loose-configs-divider"
+            />
+            <UngroupedConfigsHeader
+              collapsed={ungroupedConfigsCollapsed}
+              onToggleCollapse={() => setUngroupedConfigsCollapsed((c) => !c)}
+            />
+          </>
         )}
-        {unsectionedUngroupedConfigs.map(renderConfigRow)}
+        {/* The collapse only applies while its header is on screen: deleting the
+            last group hides the header, and a stale `true` would then strand the
+            loose rows with nothing left to expand from. Drag/drop and the
+            context menu ride renderConfigRow unchanged — a loose row is still a
+            drop target. */}
+        {(!showUngroupedConfigsHeader || !ungroupedConfigsCollapsed) && unsectionedUngroupedConfigs.map(renderConfigRow)}
       </div>
       {renderSelectBar()}
       </div>

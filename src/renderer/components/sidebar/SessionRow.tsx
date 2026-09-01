@@ -1,6 +1,7 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { DockerBadge, FadeSlot, MoonBadge, SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge, WorkingBadge } from './Badges'
+import { FadeSlot, MoonBadge, SessionTypeBadge, TransportBadge, WatchdogBadge, WorkingBadge } from './Badges'
+import { containerNameOf, resolveTransportBadge } from './transportBadge'
 import { isAsleep, useSleepStore } from '../../stores/sleepStore'
 import { useActiveStore } from '../../stores/activeStore'
 import { type SessionState } from '../ui/StatusDot'
@@ -199,14 +200,18 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
             name and SSH had a text badge in the same spot: four treatments,
             with the common case as the odd one out. The name column gets its
             full width back. */}
-        {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
-        {/* Docker/container runtime (harmonise-remote Phase 3): a SIBLING of the
-            transport badge, shown IN ADDITION to it — so an SSH-Persistent
-            container session carries both. Keyed on the structured docker
-            field, not the free-text post-command. */}
-        {!!(session.sshConfig?.runtime?.container || session.sshConfig?.dockerContainer) && (
-          <DockerBadge container={session.sshConfig.runtime?.container ?? session.sshConfig.dockerContainer!} />
-        )}
+        {/* ONE transport chip (phase 6): a container session shows the container
+            mark INSTEAD of an SSH one — it is a third transport, not a sticker
+            on top of the second. A LIVE card uses the remote's REPORTED wrap
+            (sshTmuxPersistent), not the config's intent. */}
+        <TransportBadge
+          kind={resolveTransportBadge({
+            isSsh: session.sessionType === 'ssh',
+            ssh: session.sshConfig,
+            persistent: session.sshTmuxPersistent === true,
+          })}
+          container={containerNameOf(session.sshConfig)}
+        />
         {/* Moon BESIDE the type badge (variant B): the type mark stays — the
             moon is additional Watchdog state, not a replacement identity. The
             working pill is its inverse and shares the slot (mutually exclusive:
