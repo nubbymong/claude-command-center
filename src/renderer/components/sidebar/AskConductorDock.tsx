@@ -3,8 +3,8 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTipsStore, countUnseenTips } from '../../stores/tipsStore'
 import { launchAskConductor, useAskErrorStore, ASK_LABEL, askSessionIsLive } from '../../lib/askConductor'
-import { BrandMark } from '../BrandMark'
 import { LightbulbMark } from '../ui/LightbulbMark'
+import askMarkUrl from '../../assets/aicc-code-conductor.svg'
 import DockRowMenu from './DockRowMenu'
 import HideDockFeatureDialog, { type DockFeature } from '../HideDockFeatureDialog'
 
@@ -172,7 +172,11 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
               border: '1px solid color-mix(in srgb, var(--brand) 42%, transparent)',
             }}
           >
-            <BrandMark className="w-4 h-4" />
+            {/* The aicc-code-conductor mark (owner branding, #586). Drawn a step
+                larger than the BrandMark it replaced: the master leaves wide
+                transparent padding around the art, so at the old 16px the
+                visible brackets shrank to ~10px. */}
+            <img src={askMarkUrl} alt="" aria-hidden className="w-6 h-6" draggable={false} />
             {running && (
               <span
                 className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
@@ -230,7 +234,7 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
               border: '1px solid color-mix(in srgb, var(--brand) 42%, transparent)',
             }}
           >
-            <BrandMark className="w-[17px] h-[17px] shrink-0" />
+            <img src={askMarkUrl} alt="" aria-hidden className="w-[24px] h-[24px] shrink-0 -my-0.5" draggable={false} />
             <span className="min-w-0 flex-1">
               <span className="block text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                 {ASK_LABEL}

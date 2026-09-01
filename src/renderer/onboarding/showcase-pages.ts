@@ -1,4 +1,5 @@
 import { releaseLine } from '../utils/versionLabel'
+import askMarkUrl from '../assets/aicc-code-conductor.svg'
 
 /**
  * The What's New feature showcase (owner-approved design, 2026-08-24; scope
@@ -34,6 +35,7 @@ export type ShowcaseArtKind =
   | 'multiSpawn'
   | 'remoteResume'
   | 'sidebarMarks'
+  | 'askConductor'
 
 export interface ShowcasePoint {
   /** Bold lead-in, ending in a full stop unless the rest continues the sentence. */
@@ -50,6 +52,9 @@ export interface ShowcasePage {
   /** The muted locator under the points: pre + emphasised + post. */
   where: { pre: string; em: string; post: string }
   art: ShowcaseArtKind
+  /** Optional brand-mark asset URL drawn beside the heading (#586). Only pages
+   *  with a mark of their own set it; the copy column is otherwise unchanged. */
+  mark?: string
 }
 
 export const SHOWCASES_21: ShowcasePage[] = [
@@ -152,6 +157,20 @@ export const SHOWCASES_21: ShowcasePage[] = [
     ],
     where: { pre: 'Where: ', em: 'Settings → General → Session Watchdog', post: '.' },
     art: 'watchdog',
+  },
+  {
+    id: 'askConductor',
+    heading: 'Ask Conductor',
+    tagline: 'A session that has read the manual. Ask how the app works — settings, accounts, remote sessions — in plain English.',
+    points: [
+      { lead: 'Always there.', rest: 'Docked at the foot of the sidebar; opens as a tab and behaves like any session.' },
+      { lead: 'Knows the app, not your code.', rest: "It answers for the Conductor and for Claude Code itself — and says which one you're asking about." },
+      { lead: 'It can install a helper skill.', rest: 'Say "install the skill" and every Claude session on this machine can answer Conductor questions itself — which settings file wins, how accounts share settings — without opening this tab.' },
+      { lead: 'Nothing happens without you.', rest: 'It explains and proposes; the one file the skill install writes goes through your approval, and so would any remote install.' },
+    ],
+    where: { pre: 'Where: the ', em: 'Ask Conductor', post: ' pill at the foot of the sidebar.' },
+    art: 'askConductor',
+    mark: askMarkUrl,
   },
 ]
 

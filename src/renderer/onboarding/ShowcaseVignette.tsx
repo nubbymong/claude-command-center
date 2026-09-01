@@ -1,4 +1,5 @@
 import type { ShowcaseArtKind } from './showcase-pages'
+import askMarkUrl from '../assets/aicc-code-conductor.svg'
 
 /**
  * The drawn illustrations for the What's New showcase pages — pure CSS
@@ -206,6 +207,38 @@ function SidebarMarksVignette() {
   )
 }
 
+function AskConductorVignette() {
+  return (
+    <div className="sv-mini" aria-hidden data-ux-id="showcase-art-askConductor">
+      <div className="sv-tb"><span className="sv-tl" /><span className="sv-tl" /><span className="sv-tl" /></div>
+      <div className="sv-split">
+        <div className="sv-rail">
+          <div className="sv-pn-row" />
+          <div className="sv-pn-row" />
+          <div className="sv-pn-row sv-pn-faint" />
+          <div className="sv-rail-gap" />
+          <div className="sv-askpill">
+            <img src={askMarkUrl} alt="" className="sv-askpill-mark" draggable={false} />
+            <span>
+              <span className="sv-askpill-t">Ask Conductor</span>
+              <span className="sv-askpill-s">Ask about the app</span>
+            </span>
+          </div>
+        </div>
+        <div className="sv-convo">
+          <div className="sv-msg sv-msg-q">I changed my output style but my sessions ignore it — why?</div>
+          <div className="sv-msg sv-msg-a">Settings are read when a session <b>starts</b>, and the nearest file wins. Check the project&apos;s own settings file — it overrides your personal one.</div>
+          <div className="sv-msg sv-msg-q">Useful — install the helper skill so my other sessions know this too.</div>
+          <div className="sv-permcard">
+            <span className="sv-permcard-t">Write file<i>~/.claude/skills/ask-conductor/SKILL.md</i></span>
+            <span className="sv-permcard-allow">Allow</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ShowcaseVignette({ kind }: { kind: ShowcaseArtKind }) {
   if (kind === 'canvas') return <CanvasVignette />
   if (kind === 'watchdog') return <WatchdogVignette />
@@ -214,5 +247,6 @@ export function ShowcaseVignette({ kind }: { kind: ShowcaseArtKind }) {
   if (kind === 'multiSpawn') return <MultiSpawnVignette />
   if (kind === 'remoteResume') return <RemoteResumeVignette />
   if (kind === 'sidebarMarks') return <SidebarMarksVignette />
+  if (kind === 'askConductor') return <AskConductorVignette />
   return <OneRowVignette />
 }

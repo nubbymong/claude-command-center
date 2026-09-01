@@ -377,6 +377,22 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.ask-conductor-skill',
+    category: 'productivity',
+    complexity: 'simple',
+    priority: 47,
+    variants: {
+      primary: {
+        shortText: 'Teach every session about this app',
+        title: 'The Ask Conductor Helper Skill',
+        body: 'Your ordinary sessions can\'t answer questions about this app -- why a setting didn\'t apply, which settings file wins, how accounts share settings. **Ask Conductor** can fix that: open it and say **"install the helper skill"**.\n\nIt copies one ready-made skill file into your Claude configuration (you approve the write), and from then on **any Claude session on this machine** can answer Conductor questions itself -- no need to switch to the Ask tab.\n\n• Always current: the skill reads the app\'s own regenerated docs.\n• Working over SSH? Ask about the **portable copy** for the remote machine.\n• Say "remove the helper skill" to uninstall it.',
+        actionLabel: 'Open Ask Conductor',
+        actionTarget: 'ask-conductor',
+      },
+    },
+  },
+
+  {
     id: 'tip.agent-browser-push',
     category: 'vision',
     complexity: 'simple',
