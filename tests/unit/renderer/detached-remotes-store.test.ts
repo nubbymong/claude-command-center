@@ -8,7 +8,8 @@
  * array round-trips untouched.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useDetachedRemotesStore } from '../../../src/renderer/stores/detachedRemotesStore'
+import { useDetachedRemotesStore, DETACHED_REMOTES_MAX } from '../../../src/renderer/stores/detachedRemotesStore'
+import { distinctHosts } from '../../../src/renderer/utils/detachedRemotesLiveness'
 import type { DetachedRemote, SessionState } from '../../../src/shared/types'
 
 const entry = (over: Partial<DetachedRemote> = {}): DetachedRemote => ({
@@ -82,5 +83,69 @@ describe('persist round-trip (survives the main-side JSON save/load)', () => {
     const legacy = JSON.parse(JSON.stringify({ sessions: [], activeSessionId: null, savedAt: 1 })) as SessionState
     useDetachedRemotesStore.getState().hydrate(legacy.detachedRemotes)
     expect(useDetachedRemotesStore.getState().entries).toEqual([])
+  })
+})
+
+// ── What comes off DISK is not a DetachedRemote[] just because it parsed ─────
+//
+// session-state.json round-trips this array UNTOUCHED by design (the main-side
+// loader migrates only `sessions`), so `hydrate` is a trust boundary and the old
+// `Array.isArray` check was the only thing at it. A `[null]` or a `{}` went
+// straight into the store and the first consumer threw: `distinctHosts` reads
+// `e.host` on every tick of the 90s reachability timer, so one malformed row was
+// an unhandled rejection a minute and a half, for ever. An oversized array was
+// separately an amplifier — one ping per distinct host, per tick.
+//
+// Mutation to prove these can fail: put `Array.isArray(entries) ? entries : []`
+// back in `hydrate` (detachedRemotesStore.ts).
+describe('hydrate is a trust boundary', () => {
+  it('drops malformed entries and keeps the valid ones', () => {
+    const good = entry({ sessionId: 'ok' })
+    useDetachedRemotesStore.getState().hydrate([null, {}, good] as unknown as DetachedRemote[])
+    expect(useDetachedRemotesStore.getState().entries).toEqual([good])
+  })
+
+  it('rejects every shape a hand-edited or truncated file can produce', () => {
+    const bad: unknown[] = [
+      null, undefined, 42, 'a string', [], true,
+      {},
+      entry({ sessionId: '' }),                                  // empty id
+      { ...entry(), sessionId: undefined },                       // missing id
+      { ...entry(), host: '' },                                   // empty host — the distinctHosts input
+      { ...entry(), host: 42 },                                   // wrong type
+      { ...entry(), username: '' },
+      { ...entry(), remotePath: null },
+      { ...entry(), mux: 'screen' },                              // outside the union
+      { ...entry(), label: 12 },
+      { ...entry(), detachedAt: 'yesterday' },
+      { ...entry(), detachedAt: Number.NaN },
+      { ...entry(), configId: 7 },                                // optional, but typed
+      { ...entry(), accountEmail: {} },
+    ]
+    useDetachedRemotesStore.getState().hydrate(bad as DetachedRemote[])
+    expect(useDetachedRemotesStore.getState().entries).toEqual([])
+  })
+
+  it('keeps the optional fields optional — absent is not malformed', () => {
+    const minimal = { ...entry() } as Record<string, unknown>
+    delete minimal.configId
+    delete minimal.accountEmail
+    useDetachedRemotesStore.getState().hydrate([minimal] as unknown as DetachedRemote[])
+    expect(useDetachedRemotesStore.getState().entries).toHaveLength(1)
+  })
+
+  it('caps the registry, so an oversized file cannot amplify the ping fan-out', () => {
+    const many = Array.from({ length: DETACHED_REMOTES_MAX + 500 }, (_, i) =>
+      entry({ sessionId: `s${i}`, host: `h${i}.local` }))
+    useDetachedRemotesStore.getState().hydrate(many)
+    expect(useDetachedRemotesStore.getState().entries).toHaveLength(DETACHED_REMOTES_MAX)
+    expect(distinctHosts(useDetachedRemotesStore.getState().entries)).toHaveLength(DETACHED_REMOTES_MAX)
+  })
+
+  it('distinctHosts never throws on a hydrated registry, whatever was on disk', () => {
+    const junk = [null, {}, { host: null }, 'x', entry({ sessionId: 'ok', host: 'pi.local' })]
+    useDetachedRemotesStore.getState().hydrate(junk as unknown as DetachedRemote[])
+    expect(() => distinctHosts(useDetachedRemotesStore.getState().entries)).not.toThrow()
+    expect(distinctHosts(useDetachedRemotesStore.getState().entries)).toEqual(['pi.local'])
   })
 })
