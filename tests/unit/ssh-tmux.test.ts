@@ -15,17 +15,7 @@
 // are deleted along with their tests -- there is no longer a wire-reported
 // path reaching this sink for either tier to validate.
 import { describe, it, expect } from 'vitest'
-import { buildTmuxLaunchCommand, buildSshClaudeFlags, shouldAddContinueFlag, ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR, STATUS_OFF_TMUX_BINS } from '../../src/main/ssh-tmux'
-
-// Mirror of the source's attach-branch options-off, built from the imported
-// constant so the exact-command assertions below stay in step with it (a
-// literal-value pin for STATUS_OFF_TMUX_BINS lives in its own test at the
-// bottom, so a change to the list's CONTENTS is still caught — the same
-// self-referential-plus-literal split the launch-token tests use).
-const statusSweepFor = (target: string) =>
-  STATUS_OFF_TMUX_BINS.map((b) => `${b} set-option -t ${target} status off 2>/dev/null`).join('; ')
-const attachOptionsOffFor = (t: string, target: string) =>
-  `${t} set-option -t ${target} mouse off 2>/dev/null; ${statusSweepFor(target)}`
+import { buildTmuxLaunchCommand, buildSshClaudeFlags, shouldAddContinueFlag, ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR } from '../../src/main/ssh-tmux'
 
 const base = {
   sessionId: 'sid-1',
@@ -38,16 +28,12 @@ describe('buildTmuxLaunchCommand', () => {
   it('builds the has-session wrapper (attach live, else fresh; attach falls through to fresh on a lost race) using ON_PATH_TMUX_BIN_EXPR for staged: false', () => {
     const cmd = buildTmuxLaunchCommand(base)
     const t = ON_PATH_TMUX_BIN_EXPR
-    // #546 + watchdog: the FRESH pane runs the launch token's own mouse/status
-    // off (its server is guaranteed inside the pane); the ATTACH branch runs
-    // mouse off + a status-off swept across every known tmux binary, because the
-    // session may have been created under a different tmux (see the dedicated
-    // status-off block below).
+    // #546: session-scoped mouse-off precedes claude in the fresh pane and
+    // precedes attach on reconnect (see the dedicated mouse-off block below).
     const mo = `${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null`
-    const attachOff = attachOptionsOffFor(t, '=ccc-sid-1')
     const fresh = `${t} new-session -s ccc-sid-1 '${mo}; ${base.innerCmd}'`
     expect(cmd).toBe(
-      `if ${t} has-session -t =ccc-sid-1 2>/dev/null; then ${attachOff}; ${t} attach -t =ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
+      `if ${t} has-session -t =ccc-sid-1 2>/dev/null; then ${mo}; ${t} attach -t =ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
     )
   })
 
@@ -55,12 +41,9 @@ describe('buildTmuxLaunchCommand', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
     const t = STAGED_TMUX_BIN_EXPR
     const mo = `${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null`
-    // The status-off sweep is FIXED (all known bins), independent of the primary
-    // token — so it is identical for staged: true and staged: false.
-    const attachOff = attachOptionsOffFor(t, '=ccc-sid-1')
     const fresh = `${t} new-session -s ccc-sid-1 '${mo}; ${base.innerCmd}'`
     expect(cmd).toBe(
-      `if ${t} has-session -t =ccc-sid-1 2>/dev/null; then ${attachOff}; ${t} attach -t =ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
+      `if ${t} has-session -t =ccc-sid-1 2>/dev/null; then ${mo}; ${t} attach -t =ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
     )
   })
 
@@ -203,9 +186,8 @@ describe('buildTmuxLaunchCommand forces session-scoped mouse off (#546)', () => 
     const cmd = buildTmuxLaunchCommand(base)
     const t = ON_PATH_TMUX_BIN_EXPR
     const opts = `${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null`
-    // Attach branch: mouse off + the status-off sweep, from the outer shell,
-    // before reattaching.
-    expect(cmd).toContain(`then ${attachOptionsOffFor(t, '=ccc-sid-1')}; ${t} attach`)
+    // Attach branch: session options from the outer shell before reattaching.
+    expect(cmd).toContain(`then ${opts}; ${t} attach`)
     // Fresh pane: the options are the first thing the pane command runs, before claude.
     expect(cmd).toContain(`new-session -s ccc-sid-1 '${opts}; `)
     // Never global — that would clobber the user's own tmux sessions.
@@ -220,11 +202,9 @@ describe('buildTmuxLaunchCommand forces session-scoped mouse off (#546)', () => 
     const cmd = buildTmuxLaunchCommand(base)
     const t = ON_PATH_TMUX_BIN_EXPR
     expect(cmd).toContain(`${t} set-option -t =ccc-sid-1 status off 2>/dev/null`)
-    // status off: the fresh pane appears twice (attach fallback + else) = 2, and
-    // the ATTACH branch now sweeps it across all STATUS_OFF_TMUX_BINS bins. So
-    // the count is 2 + STATUS_OFF_TMUX_BINS.length (watchdog hardening).
-    expect(cmd.split('status off 2>/dev/null').length - 1).toBe(2 + STATUS_OFF_TMUX_BINS.length)
-    // mouse off stays on the primary token: attach (1) + the two fresh panes (2) = 3.
+    // Attach branch + the fresh pane (which appears twice — attach fallback and
+    // else), so three occurrences, matching the mouse-off it rides beside.
+    expect(cmd.split('status off 2>/dev/null').length - 1).toBe(3)
     expect(cmd.split('mouse off 2>/dev/null').length - 1).toBe(3)
     expect(cmd).not.toContain('set-option -g status')
   })
@@ -233,9 +213,7 @@ describe('buildTmuxLaunchCommand forces session-scoped mouse off (#546)', () => 
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
     const t = STAGED_TMUX_BIN_EXPR
     const opts = `${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null`
-    // Attach branch uses the staged token's mouse-off + the fixed status sweep;
-    // the fresh pane uses the staged token for both.
-    expect(cmd).toContain(`then ${attachOptionsOffFor(t, '=ccc-sid-1')}; ${t} attach`)
+    expect(cmd).toContain(`then ${opts}; ${t} attach`)
     expect(cmd).toContain(`new-session -s ccc-sid-1 '${opts}; `)
   })
 })
@@ -299,19 +277,8 @@ describe('launch-token literals are alias/function-proof (fail-posture follow-up
     // live attach, and the fresh create used by both the attach fallback and
     // the else branch).
     expect(cmd.startsWith('if command tmux has-session -t =ccc-sid-1 ')).toBe(true)
-    // #546 + watchdog: mouse-off (primary token) then the status-off sweep across
-    // every known tmux binary, then attach — asserted as a LITERAL (not via the
-    // imported constant) so a regression INSIDE the token or the sweep list is
-    // caught, per this file's self-referential-plus-literal convention below.
-    expect(cmd).toContain(
-      'then command tmux set-option -t =ccc-sid-1 mouse off 2>/dev/null; ' +
-      'command tmux set-option -t =ccc-sid-1 status off 2>/dev/null; ' +
-      '/opt/homebrew/bin/tmux set-option -t =ccc-sid-1 status off 2>/dev/null; ' +
-      '/usr/local/bin/tmux set-option -t =ccc-sid-1 status off 2>/dev/null; ' +
-      '/usr/bin/tmux set-option -t =ccc-sid-1 status off 2>/dev/null; ' +
-      '"$HOME"/.claude/bin/tmux set-option -t =ccc-sid-1 status off 2>/dev/null; ' +
-      'command tmux attach -t =ccc-sid-1 || command tmux new-session -s ccc-sid-1 ',
-    )
+    // #546: the session options (same literal token) precede attach on this branch.
+    expect(cmd).toContain('then command tmux set-option -t =ccc-sid-1 mouse off 2>/dev/null; command tmux set-option -t =ccc-sid-1 status off 2>/dev/null; command tmux attach -t =ccc-sid-1 || command tmux new-session -s ccc-sid-1 ')
     expect(cmd).toContain('else command tmux new-session -s ccc-sid-1 ')
     // The alias-expandable substitution form must never come back, anywhere
     // in the command.
@@ -323,78 +290,6 @@ describe('launch-token literals are alias/function-proof (fail-posture follow-up
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
     expect(cmd.startsWith('if "$HOME"/.claude/bin/tmux has-session -t =ccc-sid-1 ')).toBe(true)
     expect(cmd).not.toContain('$(command -v')
-  })
-})
-
-// FIX 2 (watchdog, 2026-09-01): the tmux green STATUS BAR came back on an
-// SSH-Persistent session and repainted on status-interval, resetting the
-// watchdog's silence clock. The wrapper always used a single tmuxBinToken for
-// status-off, which is correct WITHIN one command (has-session / set-option /
-// attach / new-session all share the token — point (a) of the diagnosis holds,
-// the token is unified), but a session created on a PRIOR connect can be hosted
-// by a DIFFERENT tmux binary than this connect's probe picked (Homebrew vs
-// system vs the CCC-staged tier-2 binary), so a single-token set-option silently
-// no-ops (2>/dev/null) and the bar stays on. The ATTACH branch now sweeps
-// status-off across every known tmux location so whichever binary owns the
-// session's server turns it off.
-describe('FIX 2: attach-branch status-off is robust across tmux binaries (watchdog)', () => {
-  const attachSegment = (cmd: string) =>
-    cmd.slice(cmd.indexOf('then ') + 'then '.length, cmd.indexOf(' attach -t'))
-
-  // Mutation to prove this can fail: revert the attach branch to the single
-  // `${tmuxBinToken} set-option ... status off` — the Homebrew/system/staged
-  // entries then vanish from the attach segment and this loop fails.
-  it('runs status off through EVERY known tmux location on the ATTACH branch', () => {
-    const seg = attachSegment(buildTmuxLaunchCommand(base))
-    for (const bin of STATUS_OFF_TMUX_BINS) {
-      expect(seg).toContain(`${bin} set-option -t =ccc-sid-1 status off 2>/dev/null`)
-    }
-    // A real sweep, not just the single primary token.
-    expect(STATUS_OFF_TMUX_BINS.length).toBeGreaterThan(1)
-  })
-
-  // The sweep is FIXED (all bins), so BOTH the on-PATH and staged tokens turn the
-  // bar off regardless of which tier this connect chose — the cross-connect case.
-  it('includes both the on-PATH and staged tokens in the sweep, for staged:false and staged:true alike', () => {
-    for (const staged of [false, true]) {
-      const cmd = buildTmuxLaunchCommand({ ...base, staged })
-      expect(cmd).toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-sid-1 status off 2>/dev/null`)
-      expect(cmd).toContain(`${STAGED_TMUX_BIN_EXPR} set-option -t =ccc-sid-1 status off 2>/dev/null`)
-    }
-  })
-
-  // status off must be present on BOTH branches (attach + the fresh pane), so a
-  // fresh first-connect session ALSO starts with the bar off. Inside the pane the
-  // primary token's server is guaranteed, so the sweep is not needed there.
-  it('keeps status off on the fresh pane too (both branches carry it)', () => {
-    const t = ON_PATH_TMUX_BIN_EXPR
-    expect(buildTmuxLaunchCommand(base)).toContain(
-      `new-session -s ccc-sid-1 '${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null; `,
-    )
-  })
-
-  // The sweep never turns the bar off GLOBALLY (that would blank the user's own
-  // tmux sessions) and every operand keeps tmux's `=` exact-match prefix.
-  it('every swept set-option is session-scoped (-t =…), never -g, exact-match', () => {
-    const cmd = buildTmuxLaunchCommand({ ...base, sessionId: 'a' })
-    expect(cmd).not.toContain('set-option -g status')
-    for (const bin of STATUS_OFF_TMUX_BINS) {
-      expect(cmd).toContain(`${bin} set-option -t =ccc-a status off 2>/dev/null`)
-      expect(cmd).not.toContain(`${bin} set-option -t ccc-a status off`)
-    }
-  })
-
-  // Literal pin for the list itself: the exact-command tests above re-derive from
-  // STATUS_OFF_TMUX_BINS, so only this catches a change to its CONTENTS — the same
-  // self-referential-plus-literal split the ON_PATH/STAGED literal tests use.
-  it('STATUS_OFF_TMUX_BINS is exactly the known-locations list (login-shell form)', () => {
-    expect([...STATUS_OFF_TMUX_BINS]).toEqual([
-      'command tmux',
-      '/opt/homebrew/bin/tmux',
-      '/usr/local/bin/tmux',
-      '/usr/bin/tmux',
-      '"$HOME"/.claude/bin/tmux',
-    ])
   })
 })
 

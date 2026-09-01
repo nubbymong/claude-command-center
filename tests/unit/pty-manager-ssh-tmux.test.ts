@@ -633,7 +633,10 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     vi.advanceTimersByTime(300)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).toContain(ON_PATH_TMUX_BIN_EXPR)
+    // The genuine sentinel reported tmux=path, so the wrapper is built on the
+    // on-PATH token. Assert it STARTS the has-session wrapper (proves the tier
+    // was actually selected), not merely that the token appears somewhere.
+    expect((claudeWrite![0] as string).startsWith(`if ${ON_PATH_TMUX_BIN_EXPR} has-session`)).toBe(true)
   })
 
   // The second documented variant: a WRONG nonce, applies to EVERY SSH
@@ -656,19 +659,15 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     vi.advanceTimersByTime(300)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    // Genuine result was tmux=home (staged location) -- the spoofed
-    // tmux=path (which would have selected ON_PATH_TMUX_BIN_EXPR instead)
-    // never took effect. Assert on the SESSION-HOSTING verbs, not the bare
-    // token: the watchdog status-off sweep (2026-09-01) issues a harmless
-    // `command tmux set-option ... status off` on every launch, which does NOT
-    // host the session, so a bare `not.toContain('command tmux')` would now
-    // false-fail. has-session / attach / new-session must all stay staged.
+    // Genuine result was tmux=home (staged location) -- the spoofed tmux=path
+    // (which would have selected ON_PATH_TMUX_BIN_EXPR instead) never took
+    // effect. The wrapper STARTS with the staged token's has-session (which
+    // subsumes a bare `toContain(STAGED_TMUX_BIN_EXPR)`), and the primary-token
+    // session option (mouse off) follows the pick on the staged binary -- never
+    // `command tmux` against our session.
     const launch = claudeWrite![0] as string
-    expect(launch).toContain(STAGED_TMUX_BIN_EXPR)
     expect(launch.startsWith(`if ${STAGED_TMUX_BIN_EXPR} has-session`)).toBe(true)
-    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} has-session`)
-    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} attach`)
-    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session`)
+    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-s-f1-wrong-nonce mouse off`)
   })
 
   // #242 finding F1(a), round-2 correction, BLOCKER. The round-2 reviewer's
