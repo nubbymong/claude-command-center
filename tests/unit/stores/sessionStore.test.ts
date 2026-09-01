@@ -192,6 +192,23 @@ describe('sessionStore', () => {
       const b = [makeSession({ id: 'b', profileId: 'profile-one' })]
       expect(structuralSessionsEqual(b, [{ ...b[0], profileId: 'profile-two' }])).toBe(false)
     })
+
+    it('treats an SSH account arriving as STRUCTURAL (the cold-connect top pill must repaint)', () => {
+      // Found live on the VM (2026-09-01): an SSH session has NO mapped profileId
+      // cold, so the top account/claude.ai/Claude Code pills resolve ONLY through
+      // accountEmail / sshRemoteAccount, which land on a single late tick. With
+      // them excluded here the shell's structural gate said "no change", App never
+      // re-rendered, and the header shimmered then went BLANK while the bottom bar
+      // (which self-subscribes) showed the account. Each identity field must flip
+      // the gate on the resolve tick.
+      const a = [makeSession({ id: 'a' })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], accountEmail: 'nicholas@live.co.uk' }])).toBe(false)
+      expect(structuralSessionsEqual(a, [{ ...a[0], sshRemoteAccount: 'nicholas@live.co.uk' }])).toBe(false)
+      expect(structuralSessionsEqual(a, [{ ...a[0], accountColour: 'orchid' }])).toBe(false)
+      // ...but a telemetry-only tick (unchanged identity) stays "no change".
+      const withAcct = [makeSession({ id: 'a', accountEmail: 'nicholas@live.co.uk' })]
+      expect(structuralSessionsEqual(withAcct, [{ ...withAcct[0], contextPercent: 42 }])).toBe(true)
+    })
   })
 
   describe('getSession', () => {

@@ -325,6 +325,18 @@ export const STRUCTURAL_SESSION_FIELDS = [
   // — the wrong account — until some other structural field changed (found on
   // the WINDOWS_1 staging VM, 2026-08-30, where the primary is a fake profile).
   'profileId',
+  // accountEmail / sshRemoteAccount / accountColour are the SSH analogue of the
+  // same bug (found live on the VM 2026-09-01): an SSH session carries NO mapped
+  // profileId cold, so the header's account/claude.ai/Claude Code pills resolve
+  // ONLY through session.accountEmail || session.sshRemoteAccount. Those land on
+  // a single late tick (the first /status the remote reports, or the setup
+  // sentinel) — omitting them here made the shell's structural-equality gate
+  // return "no change", so App never re-rendered, SessionHeader kept a STALE
+  // record, and the top pill shimmered then gave up BLANK while the bottom bar
+  // and sidebar (which self-subscribe) showed the account. Listing them re-renders
+  // the shell on exactly that one resolve tick (the VALUE is unchanged on every
+  // telemetry tick, so no per-tick cascade returns).
+  'accountEmail', 'sshRemoteAccount', 'accountColour',
 ] as const
 
 /**
