@@ -593,6 +593,7 @@ export interface ElectronAPI {
     selectResourcesDir: () => Promise<string | null>
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
+    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
     spawnCliSetup: (cols: number, rows: number) => Promise<string>
     killCliSetup: () => Promise<boolean>
   }
@@ -1143,6 +1144,7 @@ const electronAPI: ElectronAPI = {
     selectResourcesDir: () => ipcRenderer.invoke(IPC.SETUP_SELECT_RESOURCES_DIR),
     setResourcesDir: (dir: string) => ipcRenderer.invoke(IPC.SETUP_SET_RESOURCES_DIR, dir),
     isCliReady: () => ipcRenderer.invoke(IPC.SETUP_IS_CLI_READY),
+    probeCli: () => ipcRenderer.invoke(IPC.SETUP_PROBE_CLI),
     spawnCliSetup: (cols: number, rows: number) => ipcRenderer.invoke(IPC.SETUP_SPAWN_CLI_SETUP, cols, rows),
     killCliSetup: () => ipcRenderer.invoke(IPC.SETUP_KILL_CLI_SETUP),
   },

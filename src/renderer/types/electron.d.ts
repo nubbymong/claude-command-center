@@ -556,6 +556,7 @@ export interface ElectronAPI {
     selectResourcesDir: () => Promise<string | null>
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
+    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
     spawnCliSetup: (cols: number, rows: number) => Promise<string>
     killCliSetup: () => Promise<boolean>
   }

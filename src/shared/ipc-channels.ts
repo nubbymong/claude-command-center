@@ -153,6 +153,7 @@ export const IPC = {
   SETUP_SELECT_RESOURCES_DIR: 'setup:selectResourcesDir',
   SETUP_SET_RESOURCES_DIR: 'setup:setResourcesDir',
   SETUP_IS_CLI_READY: 'setup:isCliReady',
+  SETUP_PROBE_CLI: 'setup:probeCli',
   SETUP_SPAWN_CLI_SETUP: 'setup:spawnCliSetup',
   SETUP_KILL_CLI_SETUP: 'setup:killCliSetup',
 
