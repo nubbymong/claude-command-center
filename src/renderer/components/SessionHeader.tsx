@@ -156,6 +156,82 @@ function HeaderPill({
 }
 
 /**
+ * How long the SSH-account shimmer waits for identity before giving up.
+ *
+ * A shimmer that never resolves is worse than blank (the bottom bar's own rule
+ * — see RateLimitBarPending / PendingDot in MultiAccountStatusline). First-connect
+ * priming makes identity arrive within a couple of ticks in the normal case, so
+ * this only covers the pathological "no account will ever come" session (a bare
+ * SSH host that never reports one), where after this bound the header falls back
+ * to exactly today's output — the GitHub tail, or nothing.
+ */
+const SSH_AUTH_PENDING_GIVE_UP_MS = 20_000
+
+/**
+ * One skeleton pill sized like a resolved HeaderPill (same chrome, a shimmer
+ * where the dot + label go), so the account · claude.ai · Claude Code cluster
+ * does not jump width when identity lands. Purely decorative (aria-hidden); the
+ * wrapper carries the accessible label.
+ */
+function SshAuthSkeletonPill({ width }: { width: number }) {
+  return (
+    <span
+      className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface0/60 bg-surface0/40 shrink-0"
+      data-testid="session-auth-skeleton"
+      aria-hidden
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-surface1" />
+      <span
+        // Same shimmer track the bottom bar's pending meter uses
+        // (statusline-pending-track / -sweep in styles.css), so the two read as
+        // one "coming" signal and prefers-reduced-motion is already honoured.
+        className="statusline-pending-track inline-block bg-surface1 rounded-sm"
+        style={{ width, height: 8 }}
+      />
+    </span>
+  )
+}
+
+/**
+ * FIX (owner request, 2026-09-01): while an SSH Claude session's identity is
+ * still in flight — no reported remote email AND no mapped local profile yet —
+ * the top bar used to be blank where the account · claude.ai · Claude Code pills
+ * will land. Show a loading shimmer there instead (plus the real GitHub pill when
+ * a repo slug is known), so the user reads "coming" rather than "nothing".
+ *
+ * The PARENT (SessionAuthPills) switches branches the instant identity arrives —
+ * this component unmounts and the real pills render — so this owns only the
+ * GIVE-UP: after SSH_AUTH_PENDING_GIVE_UP_MS from first render it falls back to
+ * exactly what this branch showed before (the GitHub tail, or nothing).
+ */
+function SshAuthPending({ gitHubTail }: { gitHubTail: React.ReactNode }) {
+  const [gaveUp, setGaveUp] = React.useState(false)
+  React.useEffect(() => {
+    const t = setTimeout(() => setGaveUp(true), SSH_AUTH_PENDING_GIVE_UP_MS)
+    return () => clearTimeout(t)
+  }, [])
+  if (gaveUp) return <>{gitHubTail}</>
+  return (
+    <>
+      <span
+        // gap-3 mirrors the header's own gap between the resolved pills, so the
+        // skeleton cluster occupies the same footprint the real trio will.
+        className="flex items-center gap-3 shrink-0"
+        role="status"
+        aria-label="Loading account"
+        data-testid="session-auth-pending"
+      >
+        {/* account · claude.ai · Claude Code — widths approximate the resolved labels. */}
+        <SshAuthSkeletonPill width={52} />
+        <SshAuthSkeletonPill width={46} />
+        <SshAuthSkeletonPill width={60} />
+      </span>
+      {gitHubTail}
+    </>
+  )
+}
+
+/**
  * The session's GitHub connection, as a title-bar-style pill. The repo slug is
  * shown ON HOVER (title), never inline -- the pill just reads "GitHub" with a
  * connection dot, so it sits quietly beside the Claude pills at the same weight.
@@ -396,9 +472,14 @@ function SessionAuthPills({ session }: { session: Session }) {
     // button resolves off). Gating the whole header on remoteEmail left a
     // standard SSH session blank at the top while its Artifacts button worked,
     // because the live remote /status email had not populated session.accountEmail
-    // yet even though the launch profile was known. Only a session with neither
-    // falls through to just the GitHub pill.
-    if (!remoteEmail && !sshProfileId) return gitHubTail
+    // yet even though the launch profile was known. A session with neither shows
+    // a loading shimmer (FIX 2026-09-01) where the account/claude.ai/Claude Code
+    // pills will land — resolved the instant identity arrives (this branch stops
+    // being taken), and self-limiting: after SSH_AUTH_PENDING_GIVE_UP_MS it falls
+    // back to exactly the prior output (the GitHub tail, or nothing).
+    if (!remoteEmail && !sshProfileId) return <SshAuthPending gitHubTail={gitHubTail} />
+
+
     // Identity to show: the reported/mapped remote email when known, else the
     // mapped profile's own email or name as a first-connect placeholder, so the
     // header paints immediately instead of waiting on the first remote tick.
