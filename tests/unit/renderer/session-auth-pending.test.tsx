@@ -78,10 +78,11 @@ describe('SSH account pending shimmer (SshAuthPending)', () => {
     expect(q('[data-testid="session-pill-claudeai"]')).toBeNull()
   })
 
-  it('replaces the shimmer with the real pills the instant the account arrives', () => {
+  it('replaces the shimmer with the real pills the instant the account arrives, and clears its give-up timer', () => {
+    vi.useFakeTimers()
     useAccountProfilesStore.setState({ profiles: [{ id: 'profile-ssh', name: 'Work', accountEmail: 'remote@x.com' } as any] })
     useAccountAuthStore.setState({ byProfile: { 'profile-ssh': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
-    // First frame: identity unknown -> shimmer.
+    // First frame: identity unknown -> shimmer (its give-up timer is now armed).
     render(sshNoIdentity())
     expect(q('[data-testid="session-auth-pending"]')).not.toBeNull()
     // The live tunnel /status delivers the account -> the parent switches branch.
@@ -89,6 +90,28 @@ describe('SSH account pending shimmer (SshAuthPending)', () => {
     expect(q('[data-testid="session-auth-pending"]')).toBeNull()
     expect(q('[data-testid="session-pill-account"]')).not.toBeNull()
     expect(q('[data-testid="session-pill-claudecode"]')).not.toBeNull()
+    // The shimmer unmounted, so its give-up timer must have been cleared. React 19
+    // does not warn on a setState after unmount, so assert the cleanup explicitly:
+    // the shimmer's timeout is the only timer this header arms, and a leak
+    // (mutation: drop the effect's clearTimeout) would leave the count above 0.
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('a switch to a DIFFERENT still-pending session gets its OWN give-up clock (keyed per session)', () => {
+    vi.useFakeTimers()
+    // Session A pending; let its 20s give-up clock run almost to the bound.
+    render(sshNoIdentity({ id: 'sA' }))
+    expect(q('[data-testid="session-auth-pending"]')).not.toBeNull()
+    act(() => { vi.advanceTimersByTime(19_000) })
+    expect(q('[data-testid="session-auth-pending"]')).not.toBeNull()
+    // Switch to a DIFFERENT still-pending session B. Without key={session.id} the
+    // shimmer stays mounted and B inherits A's 19s-elapsed clock; with the key it
+    // remounts with a fresh clock.
+    render(sshNoIdentity({ id: 'sB' }))
+    // 2s later is 21s into A (past its bound) but only 2s into B -- B must still
+    // shimmer. Fails without the per-session key (A's timer fires and blanks it).
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(q('[data-testid="session-auth-pending"]')).not.toBeNull()
   })
 
   it('gives up after the timeout and falls back to blank -- never shimmers forever', () => {

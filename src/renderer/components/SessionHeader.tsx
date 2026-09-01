@@ -186,7 +186,9 @@ function SshAuthSkeletonPill({ width }: { width: number }) {
         // (statusline-pending-track / -sweep in styles.css), so the two read as
         // one "coming" signal and prefers-reduced-motion is already honoured.
         className="statusline-pending-track inline-block bg-surface1 rounded-sm"
-        style={{ width, height: 8 }}
+        // height 10 (not 8) so the skeleton pill is the same ~14px tall as a
+        // resolved HeaderPill -- the cluster does not jump height when identity lands.
+        style={{ width, height: 10 }}
       />
     </span>
   )
@@ -477,9 +479,10 @@ function SessionAuthPills({ session }: { session: Session }) {
     // pills will land — resolved the instant identity arrives (this branch stops
     // being taken), and self-limiting: after SSH_AUTH_PENDING_GIVE_UP_MS it falls
     // back to exactly the prior output (the GitHub tail, or nothing).
-    if (!remoteEmail && !sshProfileId) return <SshAuthPending gitHubTail={gitHubTail} />
-
-
+    // key by session.id so switching between two still-pending SSH sessions
+    // remounts the shimmer with a FRESH give-up clock, instead of the second
+    // inheriting whatever was left of the first one's 20s timer.
+    if (!remoteEmail && !sshProfileId) return <SshAuthPending key={session.id} gitHubTail={gitHubTail} />
     // Identity to show: the reported/mapped remote email when known, else the
     // mapped profile's own email or name as a first-connect placeholder, so the
     // header paints immediately instead of waiting on the first remote tick.
