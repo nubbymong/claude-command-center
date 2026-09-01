@@ -701,16 +701,17 @@ describe('SSH statusline shim -- tmux client-tty bypass (#242)', () => {
 describe('buildRemoteTmuxKillCommand (item 4)', () => {
   it('kills the ccc-<safeSid> session across every known tmux location and removes both sidecars', () => {
     const cmd = buildRemoteTmuxKillCommand('sess-1')
-    // Targets the tmux session name, mirroring buildTmuxLaunchCommand.
-    expect(cmd).toContain('kill-session -t ccc-sess-1')
+    // Targets the tmux session name, mirroring buildTmuxLaunchCommand — with
+    // tmux's `=` EXACT-match prefix (see the exactness case below).
+    expect(cmd).toContain('kill-session -t =ccc-sess-1')
     // Tries PATH + both Homebrew prefixes (macOS non-login exec has a minimal
     // PATH, so `command -v tmux` alone would miss /opt/homebrew/bin) + system +
     // the CCC-staged tier-2 binary.
-    expect(cmd).toContain('tmux kill-session -t ccc-sess-1')
-    expect(cmd).toContain('/opt/homebrew/bin/tmux kill-session -t ccc-sess-1')
-    expect(cmd).toContain('/usr/local/bin/tmux kill-session -t ccc-sess-1')
-    expect(cmd).toContain('/usr/bin/tmux kill-session -t ccc-sess-1')
-    expect(cmd).toContain('"$HOME/.claude/bin/tmux" kill-session -t ccc-sess-1')
+    expect(cmd).toContain('tmux kill-session -t =ccc-sess-1')
+    expect(cmd).toContain('/opt/homebrew/bin/tmux kill-session -t =ccc-sess-1')
+    expect(cmd).toContain('/usr/local/bin/tmux kill-session -t =ccc-sess-1')
+    expect(cmd).toContain('/usr/bin/tmux kill-session -t =ccc-sess-1')
+    expect(cmd).toContain('"$HOME/.claude/bin/tmux" kill-session -t =ccc-sess-1')
     // Removes the two per-session sidecars.
     expect(cmd).toContain('rm -f ~/.claude/settings-sess-1.json ~/.claude/mcp-sess-1.json')
     // Every step best-effort; the whole exec still exits 0.
@@ -718,9 +719,37 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
   })
   it('sanitizes a session id with shell metacharacters into the -t argument', () => {
     const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
-    expect(cmd).toContain('kill-session -t ccc-a_b_c__x_')
+    expect(cmd).toContain('kill-session -t =ccc-a_b_c__x_')
     // No raw metacharacter reaches the target token.
     expect(cmd).not.toContain('ccc-a;b')
+  })
+
+  // ── EXACTNESS, not just charset (adversarial review, 2026-09-01) ───────────
+  //
+  // The two cases above prove the target is metacharacter-FREE. They do not
+  // prove it is NARROW, and that was the actual hole: `sessionIdSchema` has a
+  // floor of ONE character, so `{ sessionId: 'a' }` is a SCHEMA-VALID payload
+  // for `ssh:endRemote`, and tmux resolves a bare `-t ccc-a` by exact match,
+  // then PREFIX, then fnmatch — killing whichever other `ccc-…` session on the
+  // host starts with `a`.
+  //
+  // Mutation to prove these can fail: drop the leading `=` from `target` in
+  // buildRemoteTmuxKillCommand (ssh-shim.ts).
+  it('a schema-VALID one-character id yields an EXACT-match operand, never a bare (prefix-matching) name', () => {
+    const cmd = buildRemoteTmuxKillCommand('a')
+    const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
+    expect(operands.length).toBe(5)
+    for (const t of operands) expect(t).toBe('=ccc-a')
+    // The pre-fix form is GONE: no `-t` operand is the bare name that tmux
+    // would widen to a prefix/fnmatch search.
+    expect(cmd).not.toMatch(/kill-session -t ccc-a(\s|$)/)
+  })
+
+  it('the `=` rides the SANITISED id, so exactness and the charset gate compose', () => {
+    const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
+    const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
+    expect(operands.length).toBeGreaterThan(0)
+    for (const t of operands) expect(t).toMatch(/^=ccc-[A-Za-z0-9_-]+$/)
   })
 })
 
@@ -751,7 +780,7 @@ describe('buildContainerKillCommand (#572 in-container orphan)', () => {
   it('rootless podman: engine exec + marker-scoped kill + sidecar removal, exit-0 tail', () => {
     const cmd = buildContainerKillCommand('lv20abc', rootless)
     expect(cmd).toBe(
-      "podman exec ccc-test bash -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json ~/.claude/ccc-status-lv20abc.url 2>/dev/null; exec pkill -f settings-lv20abc' 2>/dev/null; true"
+      "podman exec ccc-test bash -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json ~/.claude/ccc-status-lv20abc.url 2>/dev/null; exec pkill -f \"/settings-lv20abc\\.json\"' 2>/dev/null; true"
     )
     // No sudo anywhere for a rootless container.
     expect(cmd).not.toContain('sudo')
@@ -773,22 +802,49 @@ describe('buildContainerKillCommand (#572 in-container orphan)', () => {
 
   it('scopes the kill to THIS session by the --settings marker, not to "claude"', () => {
     const cmd = buildContainerKillCommand('lv20abc', rootless)
-    expect(cmd).toContain('pkill -f settings-lv20abc')
+    expect(cmd).toContain('pkill -f "/settings-lv20abc\\.json"')
     // A blunt pkill would end a CO-TENANT session's claude in the same
     // container — the whole point of the marker. Proven live: killing
     // settings-lv20mtgp7kzo left a concurrent settings-lv20mtgpb4zx alive.
     expect(cmd).not.toMatch(/pkill -f claude\b/)
   })
 
+  // ── ANCHORING, not just charset (adversarial review, 2026-09-01) ───────────
+  //
+  // `pkill -f` matches an UNANCHORED regex anywhere in the cmdline, so the bare
+  // marker was a PREFIX match on every co-tenant claude in the container. With
+  // `sessionId: 'a'` — a schema-VALID payload, the id floor is one character —
+  // `settings-a` matches `--settings ~/.claude/settings-a1b2c3d4.json` and kills
+  // somebody else's live agent.
+  //
+  // Mutation to prove this can fail: put `pkill -f ${marker}` back in
+  // buildContainerKillCommand (ssh-shim.ts).
+  it('a schema-VALID one-character id yields an ANCHORED pattern that cannot match a longer id', () => {
+    const cmd = buildContainerKillCommand('a', rootless)
+    const pattern = /exec pkill -f "([^"]+)"/.exec(cmd)?.[1]
+    expect(pattern).toBe('/settings-a\\.json')
+    // The pattern really is a regex that refuses the co-tenant's filename.
+    const re = new RegExp(pattern!)
+    expect(re.test('claude --settings /root/.claude/settings-a.json')).toBe(true)
+    expect(re.test('claude --settings ~/.claude/settings-a.json')).toBe(true)
+    expect(re.test('claude --settings /root/.claude/settings-a1b2c3d4.json')).toBe(false)
+    // The pre-fix, unanchored form is GONE.
+    expect(cmd).not.toMatch(/pkill -f settings-a(\s|'|$)/)
+  })
+
   it('sanitizes a session id with shell metacharacters into the marker (safeSid is the ONLY free value)', () => {
     const cmd = buildContainerKillCommand('a;b c$(x)', rootless)
-    expect(cmd).toContain('pkill -f settings-a_b_c__x_')
+    expect(cmd).toContain('pkill -f "/settings-a_b_c__x_\\.json"')
     expect(cmd).toContain('rm -f ~/.claude/settings-a_b_c__x_.json ~/.claude/mcp-a_b_c__x_.json')
     // Nothing raw survives: no metacharacter, and no way out of the single
-    // quotes wrapping the inner script.
+    // quotes wrapping the inner script. The pattern's own quotes are DOUBLE, so
+    // the single-quote count is unchanged by the anchoring.
     expect(cmd).not.toContain(';b c')
     expect(cmd).not.toContain('$(x)')
     expect(cmd.match(/'/g)).toHaveLength(2)
+    // `\.` is the only regex metacharacter the pattern can ever carry.
+    const pattern = /exec pkill -f "([^"]+)"/.exec(cmd)?.[1]
+    expect(pattern).toMatch(/^\/settings-[A-Za-z0-9_-]+\\\.json$/)
   })
 
   it('rejects a container name that fails revalidation instead of interpolating it', () => {
@@ -806,7 +862,7 @@ describe('buildContainerKillCommand (#572 in-container orphan)', () => {
   it('removes the sidecars BEFORE the pkill, and execs the pkill (or the shell SIGTERMs itself)', () => {
     const cmd = buildContainerKillCommand('lv20abc', rootless)
     const rmAt = cmd.indexOf('rm -f ~/.claude/settings-lv20abc.json')
-    const killAt = cmd.indexOf('pkill -f settings-lv20abc')
+    const killAt = cmd.indexOf('pkill -f "/settings-lv20abc\\.json"')
     expect(rmAt).toBeGreaterThan(-1)
     expect(killAt).toBeGreaterThan(rmAt)
     // `exec` replaces the shell image, so the marker-bearing `bash -c` cmdline

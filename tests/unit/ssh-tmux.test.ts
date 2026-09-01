@@ -30,28 +30,28 @@ describe('buildTmuxLaunchCommand', () => {
     const t = ON_PATH_TMUX_BIN_EXPR
     // #546: session-scoped mouse-off precedes claude in the fresh pane and
     // precedes attach on reconnect (see the dedicated mouse-off block below).
-    const mo = `${t} set-option -t ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t ccc-sid-1 status off 2>/dev/null`
+    const mo = `${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null`
     const fresh = `${t} new-session -s ccc-sid-1 '${mo}; ${base.innerCmd}'`
     expect(cmd).toBe(
-      `if ${t} has-session -t ccc-sid-1 2>/dev/null; then ${mo}; ${t} attach -t ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
+      `if ${t} has-session -t =ccc-sid-1 2>/dev/null; then ${mo}; ${t} attach -t =ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
     )
   })
 
   it('uses STAGED_TMUX_BIN_EXPR for staged: true', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
     const t = STAGED_TMUX_BIN_EXPR
-    const mo = `${t} set-option -t ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t ccc-sid-1 status off 2>/dev/null`
+    const mo = `${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null`
     const fresh = `${t} new-session -s ccc-sid-1 '${mo}; ${base.innerCmd}'`
     expect(cmd).toBe(
-      `if ${t} has-session -t ccc-sid-1 2>/dev/null; then ${mo}; ${t} attach -t ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
+      `if ${t} has-session -t =ccc-sid-1 2>/dev/null; then ${mo}; ${t} attach -t =ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
     )
   })
 
   it('attaches an existing session and only creates fresh when it is gone', () => {
     const cmd = buildTmuxLaunchCommand(base)
     // Attach branch first (reattach a still-running claude), create second.
-    expect(cmd).toMatch(/has-session\s+-t\s+ccc-sid-1/)
-    expect(cmd).toMatch(/then\s+.*attach\s+-t\s+ccc-sid-1/)
+    expect(cmd).toMatch(/has-session\s+-t\s+=ccc-sid-1/)
+    expect(cmd).toMatch(/then\s+.*attach\s+-t\s+=ccc-sid-1/)
     expect(cmd).toMatch(/else\s+.*new-session\s+-s\s+ccc-sid-1/)
   })
 
@@ -62,7 +62,7 @@ describe('buildTmuxLaunchCommand', () => {
   it('falls the attach THROUGH to a fresh create when the reattach fails', () => {
     const cmd = buildTmuxLaunchCommand(base)
     // The live-reattach `attach -t X` is immediately backstopped by `|| <fresh>`.
-    expect(cmd).toContain('attach -t ccc-sid-1 || ')
+    expect(cmd).toContain('attach -t =ccc-sid-1 || ')
     // Two identical create paths: the attach fallback and the else branch.
     const creates = cmd.split('new-session -s ccc-sid-1 ').length - 1
     expect(creates).toBe(2)
@@ -75,20 +75,53 @@ describe('buildTmuxLaunchCommand', () => {
   // innerCmd unconditionally, or to the attach op -- the assertions below fail.
   it('adds --continue to every fresh-create branch, never to a live attach, on a reconnect', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, reconnect: true })
-    expect(cmd).toContain('attach -t ccc-sid-1 || ')
-    expect(cmd).not.toMatch(/attach -t ccc-sid-1 --continue/)
+    expect(cmd).toContain('attach -t =ccc-sid-1 || ')
+    expect(cmd).not.toMatch(/attach -t =ccc-sid-1 --continue/)
     const creates = cmd.split('new-session -s ccc-sid-1 ').slice(1)
     expect(creates.length).toBe(2)
     // #546: the fresh pane runs `<mouse-off>; <claude> --continue`, so --continue
     // still rides the fresh branch (never the live attach) — now after the
     // mouse-off prefix inside the quoted arg.
-    const mo = `${ON_PATH_TMUX_BIN_EXPR} set-option -t ccc-sid-1 mouse off 2>/dev/null; ${ON_PATH_TMUX_BIN_EXPR} set-option -t ccc-sid-1 status off 2>/dev/null`
+    const mo = `${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-sid-1 status off 2>/dev/null`
     for (const c of creates) expect(c.startsWith(`'${mo}; ${base.innerCmd} --continue'`)).toBe(true)
   })
 
   it('never adds --continue on a first connect (reconnect: false)', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, reconnect: false })
     expect(cmd).not.toContain('--continue')
+  })
+
+  // ── EXACTNESS: every `-t` operand, never the `-s` NAME ────────────────────
+  //
+  // safeSid proves the id is metacharacter-free. It does NOT prove it is narrow,
+  // and tmux resolves a bare `-t ccc-a` by exact match, then PREFIX, then
+  // fnmatch — so a one-character session id (schema-valid: the IPC id floor is
+  // 1) ATTACHES to whichever other `ccc-…` session on the host starts with `a`,
+  // handing the user somebody else's live agent. `=` is tmux's exact-match
+  // prefix; it belongs on a TARGET and never on `new-session -s`, where it would
+  // become part of the session's own name.
+  //
+  // Mutation to prove these can fail: set `const target = name` in
+  // buildTmuxLaunchCommand (ssh-tmux.ts), or put the `=` on the `-s` operand.
+  it('every -t operand carries tmux`s = EXACT-match prefix, for a one-character id too', () => {
+    const cmd = buildTmuxLaunchCommand({ ...base, sessionId: 'a' })
+    const targets = [...cmd.matchAll(/-t (\S+)/g)].map((m) => m[1])
+    expect(targets.length).toBeGreaterThan(0)
+    for (const t of targets) expect(t).toBe('=ccc-a')
+    // The pre-fix, prefix-matching form is gone from every target verb.
+    expect(cmd).not.toMatch(/(has-session|attach|set-option) -t ccc-a\b/)
+  })
+
+  it('the -s NAME stays bare — `=` is target syntax and would become part of the name', () => {
+    const cmd = buildTmuxLaunchCommand({ ...base, sessionId: 'a' })
+    const names = [...cmd.matchAll(/new-session -s (\S+)/g)].map((m) => m[1])
+    expect(names.length).toBe(2)
+    for (const n of names) expect(n).toBe('ccc-a')
+    expect(cmd).not.toContain('new-session -s =')
+    // ...and the name the fresh branch creates is exactly what the target
+    // resolves to, minus the prefix — a mismatch would mean a session that is
+    // created and then never found again.
+    expect(cmd).toContain('has-session -t =ccc-a ')
   })
 
   it('sanitizes a session id containing spaces/quotes into the tmux session name', () => {
@@ -107,7 +140,7 @@ describe('buildTmuxLaunchCommand', () => {
     // NOT sourced from this command line).
     const cmd = buildTmuxLaunchCommand(base)
     // #546: the quoted pane command is `<mouse-off>; <innerCmd>`.
-    const mo = `${ON_PATH_TMUX_BIN_EXPR} set-option -t ccc-sid-1 mouse off 2>/dev/null; ${ON_PATH_TMUX_BIN_EXPR} set-option -t ccc-sid-1 status off 2>/dev/null`
+    const mo = `${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-sid-1 status off 2>/dev/null`
     const quotedArg = `'${mo}; ${base.innerCmd}'`
     const idx = cmd.indexOf(quotedArg)
     expect(idx).toBeGreaterThan(-1)
@@ -136,7 +169,7 @@ describe('buildTmuxLaunchCommand', () => {
     const unescaped = quotedArg.slice(1, -1).split(`'\\''`).join(`'`)
     // #546: the pane runs `<mouse-off>; <innerCmd>`; the innerCmd's own quotes
     // still round-trip through the POSIX single-quote escaping intact.
-    const mo = `${ON_PATH_TMUX_BIN_EXPR} set-option -t ccc-sid-1 mouse off 2>/dev/null; ${ON_PATH_TMUX_BIN_EXPR} set-option -t ccc-sid-1 status off 2>/dev/null`
+    const mo = `${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-sid-1 status off 2>/dev/null`
     expect(unescaped).toBe(`${mo}; ${innerCmd}`)
   })
 })
@@ -152,7 +185,7 @@ describe('buildTmuxLaunchCommand forces session-scoped mouse off (#546)', () => 
   it('runs set-option mouse off in the fresh pane AND before attach, session-scoped, not global', () => {
     const cmd = buildTmuxLaunchCommand(base)
     const t = ON_PATH_TMUX_BIN_EXPR
-    const opts = `${t} set-option -t ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t ccc-sid-1 status off 2>/dev/null`
+    const opts = `${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null`
     // Attach branch: session options from the outer shell before reattaching.
     expect(cmd).toContain(`then ${opts}; ${t} attach`)
     // Fresh pane: the options are the first thing the pane command runs, before claude.
@@ -168,7 +201,7 @@ describe('buildTmuxLaunchCommand forces session-scoped mouse off (#546)', () => 
   it('also forces the tmux status bar off, session-scoped, on both branches', () => {
     const cmd = buildTmuxLaunchCommand(base)
     const t = ON_PATH_TMUX_BIN_EXPR
-    expect(cmd).toContain(`${t} set-option -t ccc-sid-1 status off 2>/dev/null`)
+    expect(cmd).toContain(`${t} set-option -t =ccc-sid-1 status off 2>/dev/null`)
     // Attach branch + the fresh pane (which appears twice — attach fallback and
     // else), so three occurrences, matching the mouse-off it rides beside.
     expect(cmd.split('status off 2>/dev/null').length - 1).toBe(3)
@@ -179,7 +212,7 @@ describe('buildTmuxLaunchCommand forces session-scoped mouse off (#546)', () => 
   it('uses the staged token for the session options on a staged tier', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
     const t = STAGED_TMUX_BIN_EXPR
-    const opts = `${t} set-option -t ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t ccc-sid-1 status off 2>/dev/null`
+    const opts = `${t} set-option -t =ccc-sid-1 mouse off 2>/dev/null; ${t} set-option -t =ccc-sid-1 status off 2>/dev/null`
     expect(cmd).toContain(`then ${opts}; ${t} attach`)
     expect(cmd).toContain(`new-session -s ccc-sid-1 '${opts}; `)
   })
@@ -243,9 +276,9 @@ describe('launch-token literals are alias/function-proof (fail-posture follow-up
     // All three invocation sites carry the literal token (has-session guard,
     // live attach, and the fresh create used by both the attach fallback and
     // the else branch).
-    expect(cmd.startsWith('if command tmux has-session -t ccc-sid-1 ')).toBe(true)
+    expect(cmd.startsWith('if command tmux has-session -t =ccc-sid-1 ')).toBe(true)
     // #546: the session options (same literal token) precede attach on this branch.
-    expect(cmd).toContain('then command tmux set-option -t ccc-sid-1 mouse off 2>/dev/null; command tmux set-option -t ccc-sid-1 status off 2>/dev/null; command tmux attach -t ccc-sid-1 || command tmux new-session -s ccc-sid-1 ')
+    expect(cmd).toContain('then command tmux set-option -t =ccc-sid-1 mouse off 2>/dev/null; command tmux set-option -t =ccc-sid-1 status off 2>/dev/null; command tmux attach -t =ccc-sid-1 || command tmux new-session -s ccc-sid-1 ')
     expect(cmd).toContain('else command tmux new-session -s ccc-sid-1 ')
     // The alias-expandable substitution form must never come back, anywhere
     // in the command.
@@ -255,7 +288,7 @@ describe('launch-token literals are alias/function-proof (fail-posture follow-up
 
   it('the staged (tier-2/3/4) launch command carries the literal `"$HOME"/.claude/bin/tmux` token and no `$(command -v` either', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
-    expect(cmd.startsWith('if "$HOME"/.claude/bin/tmux has-session -t ccc-sid-1 ')).toBe(true)
+    expect(cmd.startsWith('if "$HOME"/.claude/bin/tmux has-session -t =ccc-sid-1 ')).toBe(true)
     expect(cmd).not.toContain('$(command -v')
   })
 })

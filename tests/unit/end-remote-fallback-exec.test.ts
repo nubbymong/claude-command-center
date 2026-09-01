@@ -74,7 +74,7 @@ describe('endSshRemote — a fallback target reaches the host', () => {
   it('the tmux session it kills is ccc-<sessionId>, computed from the input', async () => {
     const sid = 'a1b2c3d4e5f6a1b2c3d4e5f6'
     await endSshRemote(sid, KEY_TARGET)
-    expect(remoteCommand()).toContain(`kill-session -t ccc-${sid}`)
+    expect(remoteCommand()).toContain(`kill-session -t =ccc-${sid}`)
     // ...and the sidecars for that same id, nothing wider.
     expect(remoteCommand()).toContain(`settings-${sid}.json`)
   })
@@ -93,12 +93,30 @@ describe('endSshRemote — a fallback target reaches the host', () => {
     const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
     expect(operands.length).toBeGreaterThan(0)
     for (const t of operands) {
-      expect(t).toBe('ccc-a__tmux_kill-server___')
-      expect(t).toMatch(/^ccc-[A-Za-z0-9_-]+$/)
+      expect(t).toBe('=ccc-a__tmux_kill-server___')
+      expect(t).toMatch(/^=ccc-[A-Za-z0-9_-]+$/)
     }
     // The injected command never becomes a command of its own.
     expect(cmd).not.toContain('; tmux kill-server')
     expect(cmd).not.toContain('ccc-a;')
+  })
+
+  // CHARSET IS NOT WIDTH (adversarial review, 2026-09-01). The case above proves
+  // the operand carries no metacharacter; it says nothing about how many
+  // sessions that operand names. `sessionIdSchema` (pty-handlers.ts) has a floor
+  // of ONE character, so `ssh:endRemote` accepts `{ sessionId: 'a' }` — and tmux
+  // resolves a bare `-t ccc-a` by exact match, then PREFIX, then fnmatch, so it
+  // would end whichever other `ccc-…` session on the host starts with `a`.
+  //
+  // Mutation to prove this can fail: drop the leading `=` from `target` in
+  // buildRemoteTmuxKillCommand (ssh-shim.ts).
+  it('a one-character id (schema-valid) still names EXACTLY one session, never a prefix', async () => {
+    await endSshRemote('a', KEY_TARGET)
+    const cmd = remoteCommand()
+    const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
+    expect(operands.length).toBeGreaterThan(0)
+    for (const t of operands) expect(t).toBe('=ccc-a')
+    expect(cmd).not.toMatch(/kill-session -t ccc-a(\s|$)/)
   })
 
   it('a key/agent target runs the fail-fast BatchMode exec (no password prompt to answer)', async () => {

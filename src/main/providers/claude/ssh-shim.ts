@@ -681,7 +681,26 @@ export function buildRemoteSessionCleanupCommand(sessionId: string): string {
  */
 export function buildRemoteTmuxKillCommand(sessionId: string): string {
   const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
-  const target = `ccc-${safeSid}`
+  // EXACT-match target (`=name`), never the bare name (adversarial review,
+  // 2026-09-01 — MAJOR).
+  //
+  // safeSid proves the id is metacharacter-FREE; it does not prove it is
+  // NARROW. `sessionIdSchema` at the IPC boundary has a floor of ONE character,
+  // so a compromised renderer may legitimately send `{ sessionId: 'a' }` to
+  // `ssh:endRemote`. tmux resolves a bare `-t ccc-a` in three widening steps —
+  // exact name, then PREFIX, then fnmatch — so that operand kills whichever
+  // OTHER `ccc-…` session on the host happens to start with `a`: someone else's
+  // live work, ended by a one-character payload. Nothing about the charset gate
+  // catches it, because nothing in the value is hostile; the WIDTH is.
+  //
+  // tmux's own answer is the `=` prefix ("If the session name is prefixed with
+  // an `=`, only an exact match is accepted"), standard target syntax on every
+  // tmux the fleet runs (3.x on Rocky/Pi/mac/Ubuntu, and the pinned static
+  // build tiers 3/4 stage). It applies to a `-t` TARGET only: `new-session -s`
+  // takes a NAME, where a leading `=` would become part of the name itself —
+  // see buildTmuxLaunchCommand (ssh-tmux.ts), which keeps the two apart for
+  // exactly this reason.
+  const target = `=ccc-${safeSid}`
   // The kill runs over a SEPARATE, NON-LOGIN ssh exec (endSshRemote), whose PATH
   // is minimal — `command -v tmux` alone MISSES a Homebrew tmux on macOS
   // (/opt/homebrew/bin is added only by a login shell), which would orphan the
@@ -784,13 +803,34 @@ export function buildContainerKillCommand(
   // The marker as it appears in the in-container claude argv. `settings-` is a
   // host-authored literal; safeSid is the only free value and is sanitized.
   const marker = `settings-${safeSid}`
+  // The pkill PATTERN is the marker ANCHORED to the whole filename (adversarial
+  // review, 2026-09-01 — MAJOR, the container-side sibling of the tmux `=` fix
+  // above).
+  //
+  // `pkill -f` takes an unanchored ERE and matches it anywhere in the cmdline,
+  // so the bare marker is a PREFIX match on every co-tenant session in the same
+  // container: with `sessionId: 'a'` (the IPC schema's one-character floor)
+  // `settings-a` matches `--settings ~/.claude/settings-a1b2c3d4.json` and kills
+  // somebody else's claude. Same shape as the tmux widening, one hop deeper —
+  // and here the blast radius is a live agent turn, not a detached session.
+  //
+  // `/settings-<safeSid>\.json` pins BOTH ends of the filename: the leading
+  // slash is present in every form the flag takes (`~/.claude/settings-x.json`
+  // and the shell-expanded `/root/.claude/settings-x.json` alike), and the
+  // escaped `.json` stops the prefix walk dead — `settings-a\.json` cannot match
+  // `settings-a1b2c3d4.json`. safeSid is `[A-Za-z0-9_-]` by construction, so the
+  // escaped `.` is the ONLY regex metacharacter in the pattern and there is
+  // nothing for a hostile id to smuggle in. Double-quoted (not single) because
+  // the whole inner script is already inside single quotes for the remote shell;
+  // inside double quotes `\.` passes through to pkill verbatim.
+  const killPattern = `"/${marker}\\.json"`
   const sudo = runtime.sudo ? (opts?.hasSudoPassword ? 'sudo -S -p password: ' : 'sudo -n ') : ''
   // stderr is kept ONLY when a sudo prompt has to reach the matcher (see 2 above).
   const quiet = runtime.sudo && opts?.hasSudoPassword ? '' : ' 2>/dev/null'
   // The status-URL sidecar (ADR-009 token custody) is removed here too. Its
   // name does NOT contain the `settings-<safeSid>` pkill marker, so adding it
   // cannot change which processes the `exec pkill` below matches.
-  const inner = `rm -f ~/.claude/${marker}.json ~/.claude/mcp-${safeSid}.json ~/.claude/ccc-status-${safeSid}.url 2>/dev/null; exec pkill -f ${marker}`
+  const inner = `rm -f ~/.claude/${marker}.json ~/.claude/mcp-${safeSid}.json ~/.claude/ccc-status-${safeSid}.url 2>/dev/null; exec pkill -f ${killPattern}`
   // No `-it`: this is a one-shot kill over a non-interactive exec, not a shell.
   // The inner script is single-quoted for the remote shell and, by the charset
   // rules above, cannot contain a quote to break out with.

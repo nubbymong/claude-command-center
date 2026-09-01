@@ -176,7 +176,7 @@ describe('endSshRemote (#572)', () => {
     expect(h.execFiles).toHaveLength(1)
     const args = h.execFiles[0].args
     expect(args).toContain('BatchMode=yes')
-    expect(args.join(' ')).toContain('kill-session -t ccc-sid-key')
+    expect(args.join(' ')).toContain('kill-session -t =ccc-sid-key')
   })
 
   it('password target: runs under a PTY without BatchMode, answers ONE glued prompt, resolves completed', async () => {
@@ -313,8 +313,11 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     expect(h.execFiles).toHaveLength(1)
     const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
     expect(remote).toContain("podman exec ccc-test bash -c '")
-    expect(remote).toContain('pkill -f settings-sid-ctr-key')
-    expect(remote).toContain('kill-session -t ccc-sid-ctr-key')
+    // The marker pattern is ANCHORED to the whole filename: a bare
+    // `settings-<sid>` is an unanchored pkill PREFIX match that would also kill
+    // a co-tenant session's claude in the same container.
+    expect(remote).toContain('pkill -f "/settings-sid-ctr-key\\.json"')
+    expect(remote).toContain('kill-session -t =ccc-sid-ctr-key')
     // ORDERING IS LOAD-BEARING: the tmux teardown drops the exec client the
     // container kill travels through, so the in-container claude must die
     // first or the kill never lands (and T20's measurement races).
@@ -325,7 +328,7 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     _setSshTargetForTest('sid-host-rt', { username: 'u', host: 'hH', port: 22, runtime: { type: 'host' } })
     await expect(endSshRemote('sid-host-rt')).resolves.toBe('completed')
     const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
-    expect(remote).toContain('kill-session -t ccc-sid-host-rt')
+    expect(remote).toContain('kill-session -t =ccc-sid-host-rt')
     expect(remote).not.toContain('exec ')
     expect(remote).not.toContain('pkill')
   })
@@ -359,7 +362,7 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     expect(remote).toContain('sudo -n podman exec ccc-test')
     expect(remote).not.toContain('-S')
     // The tmux kill still runs — a blocked sudo prompt would have starved it.
-    expect(remote).toContain('kill-session -t ccc-sid-ctr-sudo-nopw')
+    expect(remote).toContain('kill-session -t =ccc-sid-ctr-sudo-nopw')
   })
 
   // THE T21 SHAPE: password host + rootful container = two prompts, in order.
@@ -410,7 +413,7 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
     expect(remote).not.toContain('podman')
     expect(remote).not.toContain('rm -rf /')
-    expect(remote).toContain('kill-session -t ccc-sid-ctr-bad')
+    expect(remote).toContain('kill-session -t =ccc-sid-ctr-bad')
   })
 
   // ── ADR-009: prompt routing is by SHAPE, never by arrival position ─────────
