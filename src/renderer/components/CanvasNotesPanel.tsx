@@ -210,6 +210,24 @@ async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(binary)
 }
 
+/**
+ * How an UNAVAILABLE decision button looks.
+ *
+ * The review bar's failure mode was that "disabled" and "actionable" wore
+ * nearly the same clothes: a dead dark "Submit" beside a live red "Submit
+ * Revisions", and users clicked the dead one. Same recipe as `DialogButton`'s
+ * disabled state (opacity-40 + cursor-not-allowed come from the classes), plus
+ * a dashed edge and muted text so the button is legibly inert at a glance and
+ * not merely dim. Never carries a status colour: a disabled control must not
+ * borrow green or red, because that is the signal that says "this one".
+ */
+const DEAD_BUTTON: React.CSSProperties = {
+  background: 'transparent',
+  borderColor: 'var(--border-subtle)',
+  borderStyle: 'dashed',
+  color: 'var(--text-muted)',
+}
+
 /** "02:53" — when the round went out. */
 function reviewTime(review: { submittedAt?: string; createdAt: string }): string {
   const ms = Date.parse(review.submittedAt ?? review.createdAt)
@@ -2073,6 +2091,31 @@ export default function CanvasNotesPanel({
   const submitDisabled =
     !versionOpen || decision === null || rejectNeedsNote || submitting || (decision === 'approve' && approveBlock !== null)
 
+  /**
+   * WHY Submit is dead — one sentence, in the tooltip and the surface.
+   *
+   * A plan review stacks three buttons: Approve (often blocked), Submit
+   * Revisions (live), and a big Submit that is dead until a decision is picked.
+   * Two of the three were dark ghosts, so users read the word "Submit", clicked
+   * the dead one, and nothing happened. The reason has to be sayable.
+   */
+  const submitBlockReason: string | null =
+    !versionOpen ? 'This version is no longer open for review'
+      : submitting ? null
+        : decision === null
+          ? (version.mode === 'plan' ? 'Choose Approve or Submit Revisions first' : 'Choose Approve or Reject first')
+          : rejectNeedsNote
+            ? (version.mode === 'plan' ? 'Revisions need at least one note' : 'A reject needs at least one note')
+            : (decision === 'approve' && approveBlock) ? `Approve is unavailable: ${approveBlock}` : null
+
+  /**
+   * Submit Revisions is the ONLY live move: Approve is gated and no decision is
+   * picked yet. That is the exact moment the hierarchy was failing, so it is the
+   * exact moment the button is promoted to a primary — filled, ringed — instead
+   * of sitting as one more outline among dark ghosts.
+   */
+  const reviseIsOnlyMove = decision === null && approveBlock !== null
+
   return (
     <div
       ref={panelRef}
@@ -2515,27 +2558,36 @@ export default function CanvasNotesPanel({
               </div>
             )}
             <div className="flex gap-2" data-testid="decision-row">
-              <button
-                onClick={() => {
-                  const next = decision === 'approve' ? null : ('approve' as const)
-                  // The ref is the composer's truth for every save that fires
-                  // outside render, so it moves with the state, not after it.
-                  composerRef.current.decision = next
-                  dirtyRef.current = true
-                  setDecision(next)
-                }}
-                disabled={approveBlock !== null}
-                className="flex-1 text-center text-[12.5px] font-semibold rounded-[9px] py-2 border transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
-                style={
-                  decision === 'approve'
-                    ? { background: 'var(--color-green)', borderColor: 'var(--color-green)', color: 'var(--surface-chrome)' }
-                    : { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
-                }
-                title={approveBlock ?? undefined}
-                data-testid="decision-approve"
-              >
-                {labels.approve}
-              </button>
+              {/* The title rides the WRAPPER, not the button: a `disabled`
+                  button swallows pointer events in Chromium, so its own
+                  `title` never appears — which is how the "why" on a blocked
+                  Approve stayed invisible to everyone who hovered it. */}
+              <span className="flex-1 flex" title={approveBlock ?? undefined} data-testid="decision-approve-wrap">
+                <button
+                  onClick={() => {
+                    const next = decision === 'approve' ? null : ('approve' as const)
+                    // The ref is the composer's truth for every save that fires
+                    // outside render, so it moves with the state, not after it.
+                    composerRef.current.decision = next
+                    dirtyRef.current = true
+                    setDecision(next)
+                  }}
+                  disabled={approveBlock !== null}
+                  aria-disabled={approveBlock !== null || undefined}
+                  className="flex-1 text-center text-[12.5px] font-semibold rounded-[9px] py-2 border transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={
+                    decision === 'approve'
+                      ? { background: 'var(--color-green)', borderColor: 'var(--color-green)', color: 'var(--surface-chrome)' }
+                      : approveBlock !== null
+                        ? DEAD_BUTTON
+                        : { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
+                  }
+                  data-blocked={approveBlock !== null || undefined}
+                  data-testid="decision-approve"
+                >
+                  {labels.approve}
+                </button>
+              </span>
               <button
                 onClick={() => {
                   const next = decision === 'reject' ? null : ('reject' as const)
@@ -2547,8 +2599,20 @@ export default function CanvasNotesPanel({
                 style={
                   decision === 'reject'
                     ? { background: 'var(--color-red)', borderColor: 'var(--color-red)', color: 'var(--surface-chrome)' }
-                    : { borderColor: 'color-mix(in srgb, var(--color-red) 40%, transparent)', color: 'var(--color-red)' }
+                    : reviseIsOnlyMove
+                      // Promoted: the only live control on the bar should look
+                      // like one. Tinted fill + ring, but NOT the solid
+                      // selected fill -- it is still an unpicked toggle.
+                      ? {
+                          background: 'color-mix(in srgb, var(--color-red) 18%, transparent)',
+                          borderColor: 'var(--color-red)',
+                          color: 'var(--color-red)',
+                          boxShadow: '0 0 0 3px color-mix(in srgb, var(--color-red) 18%, transparent)',
+                        }
+                      : { borderColor: 'color-mix(in srgb, var(--color-red) 40%, transparent)', color: 'var(--color-red)' }
                 }
+                title={reviseIsOnlyMove ? `${labels.reject} — the move available here` : undefined}
+                data-primary={reviseIsOnlyMove || undefined}
                 data-testid="decision-reject"
               >
                 {labels.reject}
@@ -2578,13 +2642,22 @@ export default function CanvasNotesPanel({
                 approve only if none needs work — they&apos;ll be recorded as observations
               </div>
             )}
+            {/* Same wrapper trick as Approve: a disabled button cannot show its
+                own tooltip, and "why is Submit dead?" is the question this
+                whole bar was failing to answer. */}
+            <span
+              className="block"
+              title={submitBlockReason ?? 'Send this review to the agent'}
+              data-testid="canvas-submit-wrap"
+            >
             <button
               onClick={() => void doSubmit()}
               disabled={submitDisabled}
+              aria-disabled={submitDisabled || undefined}
               className="w-full text-center text-[12.5px] font-bold rounded-[9px] py-2.5 border transition-all focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
               style={
                 submitDisabled
-                  ? { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
+                  ? DEAD_BUTTON
                   : decision === 'reject'
                     ? {
                         background: 'var(--color-red)',
@@ -2599,17 +2672,19 @@ export default function CanvasNotesPanel({
                         boxShadow: '0 0 0 3px color-mix(in srgb, var(--color-green) 22%, transparent)',
                       }
               }
-              title={
-                decision === null
-                  ? version.mode === 'plan'
-                    ? 'Decide first — approve the plan, or submit revisions'
-                    : 'Decide first — approve or reject'
-                  : 'Send this review to the agent'
-              }
+              data-blocked={submitDisabled || undefined}
               data-testid="canvas-submit"
             >
               {submitting ? 'Submitting…' : submitLabel(version, decision, draftNotes.length)}
             </button>
+            </span>
+            {/* And on the surface, not only in the tooltip — the same rule the
+                blocked-Approve line already follows. */}
+            {submitBlockReason && !rejectNeedsNote && !(decision === 'approve' && approveBlock) && (
+              <div className="text-[10.5px]" style={{ color: 'var(--text-muted)' }} data-testid="canvas-submit-blocked">
+                {submitBlockReason}.
+              </div>
+            )}
           </div>
         </>
       )}

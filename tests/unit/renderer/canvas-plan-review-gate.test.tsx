@@ -284,3 +284,97 @@ describe('the revision words', () => {
     expect(line).not.toContain('rejected')
   })
 })
+
+// ── Phase 7 item C — Submit vs Submit Revisions hierarchy ────────────────────
+//
+// Live report: users could not tell which of the plan bar's three buttons was
+// actionable. A dead dark "Submit" sat under a live red "Submit Revisions" and
+// a blocked "Approve" whose reason was in a `title` that a disabled button can
+// never display. So: the dead ones must LOOK dead (no borrowed status colour,
+// dashed edge, aria-disabled), the reason must be reachable (wrapper title +
+// an on-surface line), and the one live control must read as the primary.
+
+describe('the actionable button is unmistakable', () => {
+  const approveWrap = () => q('decision-approve-wrap')!
+  const submitWrap = () => q('canvas-submit-wrap')!
+
+  it('a blocked Approve wears the dead recipe, not a dimmed green', async () => {
+    await render(plan({ openQuestions: 1 }))
+    expect(approve().disabled).toBe(true)
+    expect(approve().getAttribute('aria-disabled')).toBe('true')
+    expect(approve().dataset.blocked).toBe('true')
+    expect(approve().style.borderStyle).toBe('dashed')
+    expect(approve().style.color).toContain('--text-muted')
+    expect(approve().style.background).toBe('transparent')
+  })
+
+  it('the reason a blocked Approve is dead is REACHABLE — on the wrapper, which can be hovered', async () => {
+    await render(plan({ openQuestions: 2 }))
+    // The title cannot live on the button: a disabled button swallows the
+    // hover, so the tooltip never opens. It rides the wrapper instead.
+    expect(approveWrap().getAttribute('title')).toContain('2 open questions')
+    expect(approve().getAttribute('title')).toBeNull()
+  })
+
+  it('Submit Revisions is promoted to THE primary while it is the only live move', async () => {
+    await render(plan({ openQuestions: 1 }))
+    expect(revise().dataset.primary).toBe('true')
+    expect(revise().style.background).toContain('--color-red')
+    expect(revise().style.boxShadow).toContain('--color-red')
+    expect(revise().getAttribute('title')).toContain('Submit Revisions')
+  })
+
+  it('...and demoted again once a decision is picked, or once Approve is live', async () => {
+    await render(plan({ openQuestions: 1 }))
+    expect(revise().dataset.primary).toBe('true')
+    act(() => revise().click())
+    // Picked: it is now the solid selected fill, not the promoted outline.
+    expect(revise().dataset.primary).toBeUndefined()
+    // A clean plan needs no promotion — Approve is available, so there is a
+    // real choice and neither side may shout.
+    await render(plan({ id: 'v4' }))
+    expect(revise().dataset.primary).toBeUndefined()
+    expect(approve().disabled).toBe(false)
+  })
+
+  it('a dead Submit is legibly dead and says why, in the tooltip AND on the surface', async () => {
+    await render(plan({ openQuestions: 1 }))
+    expect(submit().disabled).toBe(true)
+    expect(submit().getAttribute('aria-disabled')).toBe('true')
+    expect(submit().dataset.blocked).toBe('true')
+    expect(submit().style.borderStyle).toBe('dashed')
+    // Never a dimmed green/red: a disabled control must not borrow the colour
+    // that means "this one".
+    expect(submit().style.background).toBe('transparent')
+    expect(submitWrap().getAttribute('title')).toBe('Choose Approve or Submit Revisions first')
+    expect(q('canvas-submit-blocked')!.textContent).toContain('Choose Approve or Submit Revisions first')
+  })
+
+  it('a LIVE Submit keeps its filled colour and loses the blocked line', async () => {
+    await render(plan())
+    act(() => approve().click())
+    expect(submit().disabled).toBe(false)
+    expect(submit().getAttribute('aria-disabled')).toBeNull()
+    expect(submit().style.background).toContain('--color-green')
+    expect(submit().style.borderStyle).not.toBe('dashed')
+    expect(q('canvas-submit-blocked')).toBeNull()
+    expect(submitWrap().getAttribute('title')).toBe('Send this review to the agent')
+  })
+
+  it('does not double up: the note gate speaks once, not twice', async () => {
+    await render(plan())
+    act(() => revise().click())
+    expect(q('reject-needs-note')).not.toBeNull()
+    expect(q('canvas-submit-blocked')).toBeNull()
+  })
+
+  it('the handlers and testids survive the restyle', async () => {
+    await render(plan())
+    act(() => approve().click())
+    expect(submit().textContent).toBe('Submit — Approve plan')
+    act(() => approve().click())
+    expect(submit().textContent).toBe('Submit')
+    act(() => revise().click())
+    expect(submit().textContent).toBe('Submit revisions — 0 notes')
+  })
+})
