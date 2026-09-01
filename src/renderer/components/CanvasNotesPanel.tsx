@@ -224,14 +224,19 @@ async function blobToBase64(blob: Blob): Promise<string> {
  * written; a failed notification must not take the submit down with it, nor
  * surface as an unhandled rejection. A preload without the channel falls back
  * to the pre-#580 direct write rather than delivering nothing at all.
+ *
+ * `canvasId` is the OWNERSHIP BINDING (adversarial review, 2026-09-01), not a
+ * convenience: main refuses a marker whose session does not own the named
+ * canvas, which it could not do while the payload was a session id and a string.
+ * It is the canvas this panel is mounted for, so the caller always has it.
  */
-export function deliverAgentMarker(sessionId: string, line: string): void {
+export function deliverAgentMarker(sessionId: string, canvasId: string, line: string): void {
   try {
     const canvas = window.electronAPI?.canvas as
-      | { agentMarker?: (a: { sessionId: string; line: string }) => Promise<unknown> }
+      | { agentMarker?: (a: { sessionId: string; canvasId: string; line: string }) => Promise<unknown> }
       | undefined
     if (typeof canvas?.agentMarker === 'function') {
-      void canvas.agentMarker({ sessionId, line }).catch(() => { /* best effort */ })
+      void canvas.agentMarker({ sessionId, canvasId, line }).catch(() => { /* best effort */ })
       return
     }
     window.electronAPI?.pty?.write?.(sessionId, line + '\r')
@@ -1618,7 +1623,7 @@ export default function CanvasNotesPanel({
         // for `canvas_review` to fetch — and a raw write mid-turn is swallowed
         // by the streaming TUI, which is exactly how two live approvals reached
         // the agent as nothing at all.
-        deliverAgentMarker(sessionId, 'Approved ' + version.id + ' on the canvas · canvas_version_verdict recorded')
+        deliverAgentMarker(sessionId, mountedCanvasIdRef.current, 'Approved ' + version.id + ' on the canvas · canvas_version_verdict recorded')
         setFiled({ decision: 'approve' })
         setDecision(null)
         void clearComposerDraft(sessionId, mountedCanvasIdRef.current)
@@ -1681,7 +1686,7 @@ export default function CanvasNotesPanel({
       // agent's turn is open — the RECORD survives either way here (unlike a
       // clean approval), but a marker lost mid-turn still means the agent never
       // learns there is one to fetch.
-      deliverAgentMarker(sessionId, 'Review #' + review.id.slice(1) + ' — ' + count + ' notes · canvas_review ' + review.id)
+      deliverAgentMarker(sessionId, mountedCanvasIdRef.current, 'Review #' + review.id.slice(1) + ' — ' + count + ' notes · canvas_review ' + review.id)
       setFiled({ decision, reviewId: review.id })
       setDecision(null)
       // Hand back to the session automatically (#478): submitting is the moment

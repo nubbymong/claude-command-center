@@ -482,7 +482,7 @@ export interface ElectronAPI {
     /** The decision is REQUIRED — the user's word is version-level. */
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
-    agentMarker: (args: { sessionId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' }>
+    agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' | 'unwired' | 'refused'; reason?: string }>
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
     /** The user puts a closed note back in play. With `reviewReopen`, one of the
      *  only two writes that may revive a settled round. */

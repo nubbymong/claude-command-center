@@ -105,6 +105,25 @@ export class CanvasMarkerQueue {
       this.write(sessionId, line)
       return 'sent'
     }
+    // COLLAPSE an identical pending line (adversarial review, 2026-09-01).
+    //
+    // The cap below drops the OLDEST, which is the right call for a queue of
+    // DISTINCT verdicts — but it makes the queue evictable by repetition. A
+    // re-render loop, a double-click, a panel effect that re-fires: 32 copies of
+    // one line and the approval this whole module exists to save is gone, silently
+    // (a warn line the user never sees). The markers are idempotent NOTIFICATIONS
+    // — "Approved v7", "Review #3 — 5 notes · canvas_review R3" — so a repeat
+    // carries no information the first copy did not, and delivering it twice would
+    // make the agent fetch the same round twice anyway.
+    //
+    // Dedupe against PENDING only, never against what has already been written: a
+    // second identical verdict in a LATER turn is a real event and must go out.
+    // The cap stays as the backstop for genuinely distinct floods.
+    if (s.pending.includes(line)) {
+      logInfo(`[canvas-marker] duplicate marker for ${sessionId} collapsed into the pending one`)
+      this.armFallback(sessionId, s)
+      return 'queued'
+    }
     if (s.pending.length >= MARKER_QUEUE_MAX) {
       // Drop the OLDEST: the newest verdict is the one that still describes
       // the canvas, and an unbounded queue on a wedged session is worse than a

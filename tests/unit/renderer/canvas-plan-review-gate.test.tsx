@@ -400,8 +400,13 @@ describe('the agent marker leaves through the queue', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
+    // The CANVAS rides the marker (adversarial review, 2026-09-01): main refuses
+    // a marker whose session does not own the named canvas, and it can only ask
+    // that question if the payload names one. Mutation to prove this can fail:
+    // drop `canvasId` from the deliverAgentMarker call in CanvasNotesPanel.
     expect(agentMarker).toHaveBeenCalledWith({
       sessionId: SID,
+      canvasId: CID,
       line: 'Approved v3 on the canvas · canvas_version_verdict recorded',
     })
     // No CR: what travels is a LINE. Main appends the submit key, so the queue
@@ -414,7 +419,7 @@ describe('the agent marker leaves through the queue', () => {
   it('never throws, and never leaves an unhandled rejection, if delivery fails', async () => {
     const api = (globalThis as any).window.electronAPI
     api.canvas.agentMarker = vi.fn(async () => { throw new Error('IPC gone') })
-    expect(() => deliverAgentMarker(SID, 'anything')).not.toThrow()
+    expect(() => deliverAgentMarker(SID, CID, 'anything')).not.toThrow()
     await new Promise((r) => setTimeout(r, 0))
     delete api.canvas.agentMarker
   })
@@ -423,7 +428,7 @@ describe('the agent marker leaves through the queue', () => {
     const api = (globalThis as any).window.electronAPI
     delete api.canvas.agentMarker
     api.pty.write.mockClear()
-    deliverAgentMarker(SID, 'Review #1 — 1 notes · canvas_review R1')
+    deliverAgentMarker(SID, CID, 'Review #1 — 1 notes · canvas_review R1')
     expect(api.pty.write).toHaveBeenCalledWith(SID, 'Review #1 — 1 notes · canvas_review R1\r')
   })
 })

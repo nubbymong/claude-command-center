@@ -35,10 +35,21 @@ vi.mock('../../../src/main/canvas/canvas-store', () => ({
   },
 }))
 
+// #580 markers are OWNER-ONLY against the canvas they name (adversarial review,
+// 2026-09-01). Ownership itself is exercised in canvas-marker-ipc-hardening and
+// canvas-readonly-boundary; here it is stubbed open so these cases keep testing
+// what they are about — registration, Zod rejection, and delegation.
+const linkMock = vi.hoisted(() => ({ allowed: vi.fn(() => ({ ok: true as const })) }))
+vi.mock('../../../src/main/canvas/canvas-session-link', async (importOriginal) => {
+  const real = (await importOriginal()) as Record<string, unknown>
+  return { ...real, canvasArtifactMutationAllowed: (...a: unknown[]) => linkMock.allowed(...(a as [])) }
+})
+
 const { registerCanvasHandlers } = await import('../../../src/main/ipc/canvas-handlers')
 const { requestCanvasSnapshot, _resetSnapshotBrokerForTest } = await import('../../../src/main/canvas/canvas-snapshot-broker')
 
 const SID = 'a1b2c3d4e5f6a7b8c9d0e1f2'
+const CID = 'c1c2c3c4c5c6c7c8c9c0d1d2'
 const invoke = (ch: string, args: unknown) => handlers.get(ch)!({} as never, args)
 
 let sent: Array<{ channel: string; payload: unknown }>
@@ -194,7 +205,7 @@ describe('canvas:agentMarker', () => {
   it('reports "unwired" rather than pretending, when boot never wired a queue', async () => {
     // The queue is wired at boot from src/main/index.ts; nothing wires it here,
     // so this also pins that the handler cannot throw without one.
-    await expect(marker({ sessionId: SID, line: 'Approved v3 · canvas_version_verdict recorded' }))
+    await expect(marker({ sessionId: SID, canvasId: CID, line: 'Approved v3 · canvas_version_verdict recorded' }))
       .resolves.toEqual({ delivery: 'unwired' })
   })
 
@@ -202,16 +213,18 @@ describe('canvas:agentMarker', () => {
     // A CR mid-string would submit the first half as its own message and leave
     // the rest typed at the prompt.
     const spy = vi.spyOn(await import('../../../src/main/canvas/canvas-marker-delivery'), 'deliverCanvasMarker')
-    await marker({ sessionId: SID, line: 'Review #3\r\nrm -rf something · canvas_review R3' })
+    await marker({ sessionId: SID, canvasId: CID, line: 'Review #3\r\nrm -rf something · canvas_review R3' })
     expect(spy).toHaveBeenCalledWith(SID, 'Review #3 rm -rf something · canvas_review R3')
     spy.mockRestore()
   })
 
   it('rejects an empty line, an over-long one, and unknown keys', async () => {
-    await expect(marker({ sessionId: SID, line: '' })).rejects.toThrow()
-    await expect(marker({ sessionId: SID, line: '\r\n  \r\n' })).rejects.toThrow()
-    await expect(marker({ sessionId: SID, line: 'x'.repeat(401) })).rejects.toThrow()
-    await expect(marker({ sessionId: SID, line: 'ok', extra: 1 })).rejects.toThrow()
-    await expect(marker({ sessionId: 'not-a-session-id!', line: 'ok' })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, canvasId: CID, line: '' })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, canvasId: CID, line: '\r\n  \r\n' })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, canvasId: CID, line: 'x'.repeat(401) })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, canvasId: CID, line: 'ok', extra: 1 })).rejects.toThrow()
+    await expect(marker({ sessionId: 'not-a-session-id!', canvasId: CID, line: 'ok' })).rejects.toThrow()
+    // The canvas is REQUIRED — the pre-2026-09-01 payload shape no longer parses.
+    await expect(marker({ sessionId: SID, line: 'ok' })).rejects.toThrow()
   })
 })

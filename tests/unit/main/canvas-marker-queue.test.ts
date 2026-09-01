@@ -240,6 +240,81 @@ describe('the cap', () => {
   })
 })
 
+// ── Repetition must not evict the thing this module exists to save ──────────
+//
+// Drop-oldest is right for a queue of DISTINCT verdicts, and it made the queue
+// EVICTABLE BY REPETITION: a re-render loop, a double-click, or a panel effect
+// that re-fires puts 32 copies of one line in front of the approval, and the
+// approval is dropped — silently, into a warn line the user never sees. The
+// markers are idempotent NOTIFICATIONS, so a repeat carries nothing the first
+// copy did not.
+//
+// Mutation to prove these can fail: remove the `s.pending.includes(line)`
+// collapse from CanvasMarkerQueue.deliver (canvas-marker-queue.ts).
+describe('duplicate collapse', () => {
+  it('collapses a repeated pending line instead of stacking copies', () => {
+    const q = makeQueue()
+    q.noteHookEvent(SID, 'UserPromptSubmit')
+    for (let i = 0; i < 100; i++) expect(q.deliver(SID, APPROVAL)).toBe('queued')
+    expect(q.pendingCount(SID)).toBe(1)
+    q.noteHookEvent(SID, 'Stop')
+    expect(written).toEqual([{ sessionId: SID, line: APPROVAL }])
+  })
+
+  it('a FLOOD of one line can no longer evict the approval behind it', () => {
+    const q = makeQueue()
+    q.noteHookEvent(SID, 'UserPromptSubmit')
+    q.deliver(SID, APPROVAL)
+    for (let i = 0; i < MARKER_QUEUE_MAX * 4; i++) q.deliver(SID, REVIEW)
+    q.noteHookEvent(SID, 'Stop')
+    // Both survive, in the order they were filed. Pre-fix the approval was
+    // pushed out by copy 33 of the review.
+    expect(written.map((w) => w.line)).toEqual([APPROVAL, REVIEW])
+  })
+
+  it('collapses only against PENDING — a genuinely distinct line still queues', () => {
+    const q = makeQueue()
+    q.noteHookEvent(SID, 'UserPromptSubmit')
+    q.deliver(SID, APPROVAL)
+    q.deliver(SID, REVIEW)
+    q.deliver(SID, APPROVAL)
+    expect(q.pendingCount(SID)).toBe(2)
+    q.noteHookEvent(SID, 'Stop')
+    expect(written.map((w) => w.line)).toEqual([APPROVAL, REVIEW])
+  })
+
+  it('is a COLLAPSE, not a memory: the same verdict filed in a LATER turn goes out again', () => {
+    const q = makeQueue()
+    q.noteHookEvent(SID, 'UserPromptSubmit')
+    q.deliver(SID, APPROVAL)
+    q.noteHookEvent(SID, 'Stop')
+    q.noteHookEvent(SID, 'UserPromptSubmit')
+    q.deliver(SID, APPROVAL)
+    q.noteHookEvent(SID, 'Stop')
+    expect(written.map((w) => w.line)).toEqual([APPROVAL, APPROVAL])
+  })
+
+  it('keeps the fallback armed, so a collapsed-only queue is still flushed if Stop never comes', () => {
+    const q = makeQueue()
+    q.noteHookEvent(SID, 'UserPromptSubmit')
+    q.deliver(SID, APPROVAL)
+    q.deliver(SID, APPROVAL)
+    expect(written).toHaveLength(0)
+    fireFallback()
+    expect(written).toEqual([{ sessionId: SID, line: APPROVAL }])
+  })
+
+  it('keeps sessions apart — one session`s pending line does not collapse another`s', () => {
+    const q = makeQueue()
+    q.noteHookEvent(SID, 'UserPromptSubmit')
+    q.noteHookEvent('session-2', 'UserPromptSubmit')
+    q.deliver(SID, APPROVAL)
+    q.deliver('session-2', APPROVAL)
+    expect(q.pendingCount(SID)).toBe(1)
+    expect(q.pendingCount('session-2')).toBe(1)
+  })
+})
+
 // ── The singleton around it ─────────────────────────────────────────────────
 describe('canvas-marker-delivery', () => {
   it('is honest before boot wires it, and routes through the queue after', async () => {

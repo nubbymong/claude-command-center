@@ -53,6 +53,7 @@ import { ensureCanvasPlugin } from './canvas/canvas-plugin'
 import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
 import { designatedWorktreeDir } from './canvas/canvas-worktree'
 import { forgetSessionForCanvas } from './canvas/canvas-session-link'
+import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
@@ -4354,6 +4355,29 @@ function cleanupSessionResources(sessionId: string): void {
   // it re-registers), so a session that restarts into a home-rooted, SSH,
   // shell-only or Codex state inherits nothing.
   revokeCanvasUatRoots(sessionId)
+  // SECURITY (adversarial review, 2026-09-01 — HIGH): drop this session's
+  // canvas markers here, for the same per-spawn isolation invariant as the
+  // watchdog below.
+  //
+  // `forgetCanvasMarkers` was wired ONLY to the `pty:kill` IPC listener
+  // (pty-handlers.ts). That listener fires when the RENDERER closes a tab — it
+  // does not fire for the two paths that respawn a session UNDER THE SAME ID:
+  // Restart, and switch-account. So a marker queued against the old
+  // conversation ("Approved v7 on the canvas · canvas_version_verdict
+  // recorded") survived the teardown with `turnOpen` still true, and the NEW
+  // process's first `SessionStart` hook — an event this queue treats as a
+  // boundary and flushes on — wrote it straight into the fresh conversation.
+  // The agent is then told a verdict was filed on work it has never seen, in a
+  // line whose whole purpose is to trigger the canvas skill. A natural PTY exit
+  // reached neither the listener nor any other clear, so the marker simply sat
+  // there until something flushed it.
+  //
+  // Here it is covered by BOTH callers (killPty and the natural-exit block), and
+  // spawnPty calls killPty → here before a respawn, so the new session inherits
+  // nothing. Idempotent: a no-op for a session with no queue. The module holds
+  // no static import of pty-manager (its PTY end is injected at boot from
+  // index.ts), so importing it here introduces no cycle.
+  forgetCanvasMarkers(sessionId)
   // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
   // here too, for the identical per-spawn isolation invariant. This runs from
   // BOTH killPty (restart / deliberate close) and the natural-exit cleanup, and
