@@ -97,9 +97,19 @@
 .ob-root .back { border: 1px solid var(--border-strong); background: transparent; color: var(--text-secondary); border-radius: 10px; padding: 11px 18px; font-size: 14px; cursor: pointer; }
 .ob-root .cta { margin-left: auto; border: 0; border-radius: 11px; padding: 12px 28px; font-size: 15px; font-weight: 680; cursor: pointer; background: linear-gradient(135deg, var(--ob-bright), var(--ob-deep)); color: var(--ob-on, #04121f); box-shadow: 0 8px 24px var(--ob-soft); }
 
-/* PAGE 2 — find Claude (the .p2 centred container is reused by later pages) */
-.ob-root .p2 { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px; }
-.ob-root .p2-inner { width: min(680px, 94vw); }
+/* PAGE 2 — find Claude (the .p2 centred container is reused by later pages).
+
+   Overflow contract (laptop bug, 2026-09-02): the root is position:fixed +
+   overflow:hidden, so a page taller than the viewport used to push the
+   footer's buttons clean off-screen with no scrollbar anywhere — a flex child
+   defaults to min-height:auto and refuses to shrink. `min-height: 0` +
+   `overflow-y: auto` make .p2 the scroll container instead, keeping .foot
+   on-screen always. Centring moves off justify-content onto the child's auto
+   margins: identical when content fits, but under overflow auto margins
+   collapse to 0 so scrolling reaches the TOP (justify-content: center clips
+   both ends unreachably — the classic centred-flex overflow trap). */
+.ob-root .p2 { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 10px 24px; }
+.ob-root .p2-inner { width: min(680px, 94vw); margin-top: auto; margin-bottom: auto; }
 .ob-root .h2 { font-family: var(--serif); font-size: 34px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 8px; text-align: center; }
 .ob-root .p2-sub { font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); text-align: center; margin: 0 auto 22px; max-width: 60ch; }
 .ob-root .checkrow { display: flex; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); margin-bottom: 10px; }
