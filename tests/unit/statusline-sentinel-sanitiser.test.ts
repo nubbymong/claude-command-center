@@ -20,10 +20,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 vi.mock('electron', () => ({ BrowserWindow: class {} }))
-vi.mock('../../src/main/ipc/setup-handlers', () => ({
-  getResourcesDirectory: () => '/res',
-  registerSetupHandlers: () => {},
-}))
+// A REAL, writable temp resources dir — NOT '/res'. startStatuslineWatcher
+// mkdirs <resourcesDir>/status at module load; '/res' is an unwritable
+// filesystem root in a clean CI runner (ENOENT on macOS/Linux; C:\res on
+// Windows), so the file threw at load and collected 0 tests. It only "passed"
+// locally because a stray res/ dir lingered from a prior run
+// ([[test-suite-scatters-mock-resources-to-drive-root]]).
+vi.mock('../../src/main/ipc/setup-handlers', () => {
+  const os = require('node:os')
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-statusline-sanitiser-'))
+  return { getResourcesDirectory: () => dir, registerSetupHandlers: () => {} }
+})
 vi.mock('../../src/main/account-color', () => ({ decorateStatuslineWithColour: (d: unknown) => d }))
 vi.mock('../../src/main/providers/claude/telemetry', () => ({ notifyClaudeTelemetry: () => {} }))
 vi.mock('../../src/main/sentinel/index', () => ({ sentinelObserve: () => {} }))
