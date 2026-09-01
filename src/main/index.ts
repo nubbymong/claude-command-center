@@ -694,7 +694,7 @@ function createWindow(): void {
   // CLAUDE.md + app-knowledge.md docs prime the session.
   ipcMain.handle('help:workspace', async () => {
     try {
-      return ensureHelpWorkspace(getResourcesDirectory())
+      return ensureHelpWorkspace(getResourcesDirectory(), { appVersion: app.getVersion() })
     } catch {
       return null
     }
@@ -740,6 +740,17 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    // Refresh the help workspace at boot (#586), not only on Ask launch: the
+    // installed helper skill's body POINTS at help/app-knowledge.md, so the
+    // docs must match the running app version before any session invokes the
+    // skill -- which can happen without Ask Conductor ever being opened.
+    // Best-effort: a failure here leaves the Ask-launch refresh as the
+    // fallback, exactly as before.
+    try {
+      const rd = getResourcesDirectory()
+      if (rd) ensureHelpWorkspace(rd, { appVersion: app.getVersion() })
+    } catch { /* fail-closed handled at Ask launch */ }
+
     // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
     // (powerMonitor; macOS/Linux) and SIGTERM (task-manager terminate / OS teardown)
     // can end the app without the window-close flow running. Persist sessions first.

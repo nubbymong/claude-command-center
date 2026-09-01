@@ -176,9 +176,15 @@ describe('the gates the library depends on', () => {
     // onNavigate, so a plausible-looking name that is not a view -- the Feature
     // Guide is `help`, not `feature-guide` -- gives the user a button that does
     // nothing at all. TypeScript cannot catch it: the field is a string.
+    //
+    // 'ask-conductor' is the one CUSTOM handler key (#586): TipCard branches on
+    // it BEFORE the ViewType cast and launches the Ask session instead of
+    // navigating. Adding another custom key here requires adding its branch in
+    // TipCard.handleAction first -- this list pins that pairing.
     const VIEWS = new Set([
       'cloud-agents', 'sessions', 'logs', 'settings', 'insights',
       'tokenomics', 'vision', 'memory', 'account-usage', 'help',
+      'ask-conductor',
     ])
     const bad: string[] = []
     for (const tip of TIPS_LIBRARY) {

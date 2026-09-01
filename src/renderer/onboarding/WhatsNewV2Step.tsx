@@ -92,7 +92,7 @@ const SECTIONS_21: WhatsNewSection[] = [
     items: [
       { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas' },
       { title: 'Session Watchdog.', desc: 'Waits out a rate limit and types the retry itself. Off by default.', seeIt: 'watchdog' },
-      { title: 'Ask Conductor.', desc: 'A session that has read the docs. Docked at the bottom of the sidebar.' },
+      { title: 'Ask Conductor.', desc: 'A session that has read the docs — and can install a helper skill for the rest.', seeIt: 'askConductor' },
     ],
   },
   {
@@ -171,7 +171,14 @@ function ShowcasePageView({ page, index, ofShowcases }: { page: ShowcasePage; in
               4" includes the summary. Named apart so the two denominators are
               never confused for each other. */}
           <div className="sc-eyebrow" data-ux-id="showcase-eyebrow">Feature showcase · {index} of {ofShowcases}</div>
-          <h2 className="sc-h" data-ux-id="showcase-heading">{page.heading}</h2>
+          {page.mark ? (
+            <div className="sc-hgroup">
+              <img src={page.mark} alt="" aria-hidden className="sc-mark" draggable={false} />
+              <h2 className="sc-h" data-ux-id="showcase-heading">{page.heading}</h2>
+            </div>
+          ) : (
+            <h2 className="sc-h" data-ux-id="showcase-heading">{page.heading}</h2>
+          )}
           <p className="sc-tagline" data-ux-id="showcase-tagline">{page.tagline}</p>
           <div className="sc-points" data-ux-id="showcase-points">
             {page.points.map((pt) => (

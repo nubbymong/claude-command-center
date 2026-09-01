@@ -241,7 +241,12 @@ export default function TipCard({ onClose, onNavigate, sidebarCollapsed }: Props
 
   const handleAction = () => {
     markTipActed(tip.id)
-    if (content.actionTarget && onNavigate) {
+    // 'ask-conductor' is a custom handler key, not a page: the Ask session is
+    // a TAB, so the action launches it and brings the sessions view forward
+    // (#586) -- the same pair AskConductorDock performs.
+    if (content.actionTarget === 'ask-conductor') {
+      void launchAskConductor().then((id) => { if (id && onNavigate) onNavigate('sessions') })
+    } else if (content.actionTarget && onNavigate) {
       onNavigate(content.actionTarget as ViewType)
     }
     onClose()
