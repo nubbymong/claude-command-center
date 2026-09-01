@@ -168,10 +168,10 @@ if(!ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}ca
 process.stdout.write(' ');
 };
 ${SHIM_STATUS_URL_JS}
-const deliver=function(){
+const deliver=function(noLegacy){
 if(statusUrl){
 let done=false;
-const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag);deliverLegacy();}};
+const fin=function(good,tag){if(done)return;done=true;if(good){trace('post-ok sid='+sid);process.stdout.write(' ');}else{trace('post-fail sid='+sid+' why='+tag+(noLegacy?' no-legacy':''));if(!noLegacy)deliverLegacy();}};
 try{
 const body=JSON.stringify(s);
 const u=new URL(statusUrl);
@@ -188,15 +188,21 @@ rq.end(body);
 // HTTPS GET to api.anthropic.com before its callback fires -- and the account
 // used to ride ONLY in that callback's deliver(). So the top-bar account pill
 // (which for SSH has no local profileId fallback) waited on a usage fetch it
-// does not need. Deliver ONCE now with the account (+ any warm-cache buckets,
-// which fetchUsage merges synchronously on a cache HIT), THEN again when usage
-// resolves. The store merges per field (useStatuslineSubscription copies each
-// key only when present), so the second POST adds usageBuckets without
-// clobbering the account and is safely idempotent. POST path ONLY -- the legacy
-// OSC ladder keeps its single delivery (deliverLegacy is never double-fired),
-// so this changes nothing for a tunnel-less session.
-if(statusUrl){deliver();}
-fetchUsage(function(lim){applyUsage(lim);deliver();});
+// does not need. Run fetchUsage FIRST: on a WARM cache its callback fires
+// SYNCHRONOUSLY (cache HIT, zero network), setting usageDone and delivering ONCE
+// with the buckets already applied -- so the guarded immediate deliver below is
+// skipped and a warm tick sends exactly ONE POST. On a COLD connect the callback
+// is async, usageDone stays false, so we POST the account immediately (no
+// buckets yet) and again when usage resolves -- TWO POSTs, only while cold. The
+// store merges per field (useStatuslineSubscription copies each key only when
+// present), so the later bucket POST never clobbers the account. Only the
+// usage-resolved deliver falls back to the legacy OSC ladder on a POST failure;
+// the immediate one just traces (deliver(true)), so a tunnel that is not up yet
+// never fires two legacy sentinels per tick. A tunnel-less session (no
+// statusUrl) delivers once through fetchUsage's callback, unchanged.
+var usageDone=false;
+fetchUsage(function(lim){applyUsage(lim);usageDone=true;deliver();});
+if(statusUrl&&!usageDone){deliver(true);}
 }catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}
 });
 `

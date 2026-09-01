@@ -96,8 +96,11 @@ describe('setup script plumbing', () => {
       expect(src).toContain('oauthAccount')
       expect(src).toContain('api.anthropic.com')
       expect(src).toContain('usageBuckets')
-      // gather runs BEFORE the delivery choice: fetchUsage wraps deliver()
-      expect(src).toContain('fetchUsage(function(lim){applyUsage(lim);deliver();})')
+      // gather runs BEFORE the delivery choice: fetchUsage's callback applies
+      // usage then delivers. The POSIX shim also flips `usageDone` here so the
+      // cold-connect immediate account POST is skipped once buckets are in (see
+      // ssh-shim.ts); the Windows shim keeps the plain form. Accept both.
+      expect(src).toMatch(/fetchUsage\(function\(lim\)\{applyUsage\(lim\);(usageDone=true;)?deliver\(\);\}\)/)
     }
   })
 

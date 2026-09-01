@@ -27,6 +27,11 @@ const NONCE = 'acctnonce123abc'
 // read) -- see SHIM_STATUS_URL_JS in statusline-gather.ts.
 const STATUS_URL = 'http://127.0.0.1:19333/status?cccSessionId=sid-acct&token=abc123'
 const REMOTE_EMAIL = 'cold@example.com'
+const USAGE_JSON = JSON.stringify({
+  limits: [
+    { group: 'weekly', kind: 'model', percent: 42, resets_at: '2026-09-02T00:00:00Z', severity: 'normal', scope: { model: { display_name: 'Fable' } } },
+  ],
+})
 
 /** Pull the shim's REAL source out of the REAL setup script (same technique as
  *  ssh-shim-runtime-harness.test.ts) so this test cannot drift from the bytes
@@ -51,18 +56,34 @@ interface RunResult {
    *  given usage JSON body; simulates api.anthropic.com finally answering. */
   resolveUsage: (usageJson: string) => void
   /** True once the fetchUsage HTTPS request has been issued (i.e. the shim
-   *  reached the cold-fetch path rather than short-circuiting). */
+   *  reached the cold-fetch path rather than short-circuiting on a warm cache). */
   httpsIssued: () => boolean
+  /** Every OSC `9999;CMSTATUS=` sentinel that reached a device via the legacy
+   *  ladder (deliverLegacy). Proof of whether a given deliver() fell back on a
+   *  POST failure; empty when only the tunnel POST path ran. */
+  legacySentinels: string[]
 }
 
 /**
- * Run the shim with a signed-in account, a valid OAuth token, and NO usage
- * cache -- the cold-connect shape. `require('https')` (fetchUsage) is captured
- * and left HANGING until the test chooses to resolve it, so any POST that fires
- * before then proves it did not wait on the usage fetch.
+ * Run the shim's REAL source with a signed-in account and a valid OAuth token.
+ *
+ * By default (cold connect) there is NO usage cache, so `require('https')`
+ * (fetchUsage) is captured and left HANGING until the test resolves it -- any
+ * POST that fires before then proves it did not wait on the usage fetch.
+ * `opts.warmCache` instead presents a FRESH on-disk cache, so fetchUsage's
+ * callback fires SYNCHRONOUSLY (no HTTPS at all) -- the warm path. `opts.httpStatus`
+ * is the status code the tunnel POST answers with (default 200); a >=300 value
+ * drives deliver()'s failure path so the legacy-ladder fallback (or its absence,
+ * for the immediate deliver) can be observed via `legacySentinels`.
  */
-function runShimColdConnect(shimSource: string): RunResult {
+function runShim(shimSource: string, opts: { warmCache?: boolean; httpStatus?: number } = {}): RunResult {
+  const httpStatus = opts.httpStatus ?? 200
   const posts: Array<Record<string, unknown>> = []
+  const legacySentinels: string[] = []
+  // deliverLegacy writes the OSC 9999;CMSTATUS= sentinel to a device (/dev/tty
+  // on this linux/no-TMUX harness) or, failing that, process.stderr. Capture
+  // either so a test can assert the ladder did (or did not) fire.
+  const captureLegacy = (v: unknown) => { const str = typeof v === 'string' ? v : ''; if (str.includes('9999;CMSTATUS=')) legacySentinels.push(str) }
   let httpsResCb: ((res: unknown) => void) | null = null
 
   const fakeFs = {
@@ -73,14 +94,22 @@ function runShimColdConnect(shimSource: string): RunResult {
     readFileSync: (p: string) => {
       if (p.endsWith('.claude.json')) return JSON.stringify({ oauthAccount: { emailAddress: REMOTE_EMAIL } })
       if (p.endsWith('.credentials.json')) return JSON.stringify({ claudeAiOauth: { accessToken: 'tok-abc' } })
+      // A WARM cache -> fetchUsage reads the fresh usage JSON straight off disk.
+      if (opts.warmCache && p.indexOf('ccc-usage-cache') >= 0) return USAGE_JSON
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
     },
-    // No usage cache on a cold connect -> fetchUsage falls through to the live
-    // HTTPS fetch.
-    lstatSync: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
+    // Cold connect (default): no usage cache -> fetchUsage falls through to the
+    // live HTTPS fetch. Warm: a FRESH, owned cache file -> a synchronous hit
+    // (no getuid in this harness, so `mineU` is true regardless of uid).
+    lstatSync: () => {
+      if (opts.warmCache) return { isFile: () => true, uid: 0, mtimeMs: Date.now() }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    },
     mkdirSync: () => {},
     rmSync: () => {},
-    writeFileSync: () => {},
+    // Capture any legacy OSC sentinel deliverLegacy writes to /dev/tty; other
+    // writes (the cache file, the url file) carry no sentinel and are ignored.
+    writeFileSync: (_p: string, content?: unknown) => { captureLegacy(content) },
     readlinkSync: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
   }
   const fakeHttp = {
@@ -91,10 +120,10 @@ function runShimColdConnect(shimSource: string): RunResult {
         destroy: () => {},
         end: (body?: string) => {
           if (body) posts.push(JSON.parse(body))
-          // Answer 200 so deliver()'s `fin` reports success (never falls to the
-          // OSC ladder), synchronously -- the immediate POST completes in the
-          // same tick it is issued.
-          cb({ resume: () => {}, statusCode: 200 })
+          // Answer synchronously (the POST completes in the same tick it is
+          // issued) with the configured status: 200 -> `fin` reports success;
+          // >=300 -> failure, driving deliver()'s legacy-fallback decision.
+          cb({ resume: () => {}, statusCode: httpStatus })
         },
       }
       return req
@@ -124,7 +153,7 @@ function runShimColdConnect(shimSource: string): RunResult {
     platform: 'linux',
     stdin: fakeStdin,
     stdout: { write: () => true },
-    stderr: { write: () => true },
+    stderr: { write: (chunk?: unknown) => { captureLegacy(chunk); return true } },
   }
   // eslint-disable-next-line no-new-func -- deliberate: this IS the harness.
   const runner = new Function('require', 'process', shimSource)
@@ -147,21 +176,16 @@ function runShimColdConnect(shimSource: string): RunResult {
     for (const h of dataHandlers) h(usageJson)
     for (const h of endHandlers) h()
   }
-  return { posts, resolveUsage, httpsIssued: () => httpsResCb !== null }
+  return { posts, resolveUsage, httpsIssued: () => httpsResCb !== null, legacySentinels }
 }
 
-const USAGE_JSON = JSON.stringify({
-  limits: [
-    { group: 'weekly', kind: 'model', percent: 42, resets_at: '2026-09-02T00:00:00Z', severity: 'normal', scope: { model: { display_name: 'Fable' } } },
-  ],
-})
-
 describe('SSH statusline shim -- account delivered before the cold usage fetch (tunnel POST)', () => {
-  // Mutation to prove this can fail: revert the fix (drop `if(statusUrl){deliver();}`
-  // so the only deliver() is inside the fetchUsage callback). With fetchUsage
-  // hanging, NO post fires -> posts.length is 0 and this assertion fails.
+  // Mutation to prove this can fail: drop the immediate
+  // `if(statusUrl&&!usageDone){deliver(true);}` so the only deliver() is inside
+  // the fetchUsage callback. With fetchUsage hanging (cold), NO post fires ->
+  // posts.length is 0 and this assertion fails.
   it('POSTs the account IMMEDIATELY, while the usage fetch is still hanging', () => {
-    const { posts, httpsIssued } = runShimColdConnect(extractShimSource())
+    const { posts, httpsIssued } = runShim(extractShimSource())
     // The cold-fetch path was actually taken (no cache -> live HTTPS issued)...
     expect(httpsIssued()).toBe(true)
     // ...and yet the account POST already fired, without waiting on it.
@@ -172,7 +196,7 @@ describe('SSH statusline shim -- account delivered before the cold usage fetch (
   })
 
   it('POSTs again when usage resolves, merging buckets WITHOUT clobbering the account (idempotent second POST)', () => {
-    const { posts, resolveUsage } = runShimColdConnect(extractShimSource())
+    const { posts, resolveUsage } = runShim(extractShimSource())
     expect(posts).toHaveLength(1) // the immediate account POST
     resolveUsage(USAGE_JSON)
     // The second POST fires only after usage lands...
@@ -185,5 +209,38 @@ describe('SSH statusline shim -- account delivered before the cold usage fetch (
     // so a first POST without usageBuckets never wipes the second's, and the
     // account is present in BOTH posts -- the merge is safe in either order.
     expect(posts[0].accountEmail).toBe(REMOTE_EMAIL)
+  })
+
+  // Mutation to prove this can fail: reorder to the pre-fix shape -- run the
+  // immediate `deliver()` BEFORE fetchUsage, or drop the `!usageDone` guard. On
+  // a warm cache fetchUsage's callback fires synchronously, so a second,
+  // bucket-less POST then fires and posts.length is 2, failing this assertion.
+  it('POSTs exactly ONCE on a WARM cache -- the sync cache hit delivers with buckets, so the immediate deliver is skipped', () => {
+    const { posts, httpsIssued } = runShim(extractShimSource(), { warmCache: true })
+    // A warm cache short-circuits fetchUsage synchronously -> no live HTTPS...
+    expect(httpsIssued()).toBe(false)
+    // ...and exactly ONE POST, already carrying the account AND the merged buckets.
+    expect(posts).toHaveLength(1)
+    expect(posts[0].accountEmail).toBe(REMOTE_EMAIL)
+    expect(Array.isArray(posts[0].usageBuckets)).toBe(true)
+    expect((posts[0].usageBuckets as unknown[]).length).toBe(1)
+  })
+
+  // The immediate (account-only) POST must NOT fall back to the legacy OSC
+  // ladder on failure: a tunnel that isn't up yet would otherwise emit a legacy
+  // sentinel every tick -- doubled once the usage-resolved deliver also fails.
+  // Only the usage-resolved deliver falls back, so the ladder fires exactly once.
+  it('a failed IMMEDIATE POST does not fire the legacy ladder; the usage-resolved deliver still does', () => {
+    const { posts, legacySentinels, resolveUsage, httpsIssued } = runShim(extractShimSource(), { httpStatus: 500 })
+    // Cold path taken; the immediate account POST was attempted and 500'd...
+    expect(httpsIssued()).toBe(true)
+    expect(posts).toHaveLength(1)
+    // ...and because it is the IMMEDIATE deliver, it did NOT emit a legacy sentinel.
+    expect(legacySentinels).toHaveLength(0)
+    // The usage-resolved deliver, by contrast, DOES fall back on a POST failure,
+    // so the OSC ladder still fires exactly once when the tunnel is genuinely down.
+    resolveUsage(USAGE_JSON)
+    expect(posts).toHaveLength(2)
+    expect(legacySentinels).toHaveLength(1)
   })
 })
