@@ -109,6 +109,54 @@ export const STAGED_TMUX_BIN_EXPR = '"$HOME"/.claude/bin/tmux'
 export const ON_PATH_TMUX_BIN_EXPR = 'command tmux'
 
 /**
+ * Every tmux binary the fleet might ACTUALLY host a CCC session under, so a
+ * `status off` reaches whichever tmux's server owns the session — the robust
+ * form used on the ATTACH branch (watchdog fix, 2026-09-01).
+ *
+ * Mirrors buildRemoteTmuxKillCommand's sweep (ssh-shim.ts), adapted for the
+ * LOGIN-shell context this launch command runs in: `command tmux` (the
+ * alias/function-proof PATH form, == ON_PATH_TMUX_BIN_EXPR) instead of the
+ * kill's bare `tmux`, and the partial-quoted `"$HOME"/.claude/bin/tmux`
+ * (== STAGED_TMUX_BIN_EXPR) instead of the kill's fully-quoted form. It
+ * therefore always contains BOTH tokens buildTmuxLaunchCommand can pick as its
+ * primary — so the sweep covers the primary binary regardless of tier.
+ *
+ * WHY A SWEEP AND NOT JUST tmuxBinToken: within ONE generated command
+ * tmuxBinToken is already used for has-session / set-option / attach /
+ * new-session alike, so status-off targets the SAME server attach does — the
+ * token IS unified, that is not the bug. The gap is ACROSS connects/binaries: a
+ * session created on a prior connect under one tmux (a Homebrew build, or the
+ * CCC-staged tier-2 binary, which a custom static build may compile with its
+ * own default socket) is only reachable to turn its status bar OFF by the
+ * binary whose server hosts it. If this connect's probe picked a different
+ * tier, a single-token set-option silently no-ops (`2>/dev/null`) and the green
+ * status bar keeps repainting on status-interval — and every repaint is PTY
+ * output that resets the watchdog's silence clock, so the sleep indicator never
+ * fires. All entries are host-authored literals; `target` is the only
+ * interpolated value and is safeSid-sanitized (see forceStatusOffAcrossBins),
+ * so the #242 no-wire-operand sink posture is unchanged. A wrong-server or
+ * missing-binary attempt is a silenced no-op that falls through to the next.
+ */
+export const STATUS_OFF_TMUX_BINS: readonly string[] = [
+  ON_PATH_TMUX_BIN_EXPR,
+  '/opt/homebrew/bin/tmux',
+  '/usr/local/bin/tmux',
+  '/usr/bin/tmux',
+  STAGED_TMUX_BIN_EXPR,
+]
+
+/**
+ * `set-option -t <target> status off` issued through EVERY known tmux binary,
+ * `;`-joined and each silenced, so whichever tmux hosts the session's server
+ * turns the bar off. Session-scoped (never `-g`), so it overrides the user's
+ * global for OUR session only. `target` carries tmux's `=` exact-match prefix
+ * and is safeSid-sanitized by the caller — no wire-reported operand here.
+ */
+function forceStatusOffAcrossBins(target: string): string {
+  return STATUS_OFF_TMUX_BINS.map((b) => `${b} set-option -t ${target} status off 2>/dev/null`).join('; ')
+}
+
+/**
  * Sanitize a CCC session id into a tmux-safe session name. Mirrors the
  * `safeSid` rule in ssh-shim.ts (generateRemoteSetupScript / getSshSettingsPath)
  * so the same sessionId maps to the same identifier everywhere it is
@@ -193,12 +241,17 @@ export interface TmuxLaunchInput {
  * conditional rather than `new-session -A`, so a reconnect can tell "the
  * session is still alive, attach to it" apart from "the session is gone
  * (remote reboot), create a fresh one and resume the conversation". Produces,
- * for a tier-1 (`staged: false`) binary (#546 mouse-off elided as `<mo>` =
- * `command tmux set-option -t =ccc-<sid> mouse off 2>/dev/null`):
+ * for a tier-1 (`staged: false`) binary, with `<opt>` = the launch token's own
+ * `set-option -t =ccc-<sid> mouse off 2>/dev/null; … status off 2>/dev/null`
+ * and `<attach-opt>` = that same mouse-off followed by a `status off` swept
+ * across EVERY known tmux binary (forceStatusOffAcrossBins — the watchdog fix):
  *   `if command tmux has-session -t =ccc-<sid> 2>/dev/null; then`
- *   ` <mo>; command tmux attach -t =ccc-<sid> || <fresh>;`
+ *   ` <attach-opt>; command tmux attach -t =ccc-<sid> || <fresh>;`
  *   ` else <fresh>; fi`   where <fresh> =
- *   ` command tmux new-session -s ccc-<sid> '<mo>; <innerCmd[ --continue]>'`
+ *   ` command tmux new-session -s ccc-<sid> '<opt>; <innerCmd[ --continue]>'`
+ * The fresh pane uses `<opt>` (its own server is guaranteed inside the pane);
+ * the ATTACH branch uses `<attach-opt>` because the session was created on a
+ * prior connect and may be hosted by a different tmux binary than this token.
  * Every `-t` operand carries tmux's `=` EXACT-match prefix; the `-s` NAME does
  * not (see `name` / `target` below).
  * and for a tier-2/3/4 (`staged: true`) binary the identical shape with
@@ -288,9 +341,29 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   // would never fire over a tmux-wrapped SSH session. Session-scoped
   // (`-t ${target}`, no `-g`) and error-swallowed, exactly like the mouse-off
   // beside it, and independent of the `attach` that follows (a `;`, not `&&`).
+  // FRESH-pane options: applied through tmuxBinToken from INSIDE the pane, where
+  // $TMUX guarantees the session is hosted by exactly this binary's server (the
+  // pane was just created by it) — so a single-token set-option is definitively
+  // correct here, no sweep needed. Mouse off (#546) + status off (watchdog).
   const mouseOff =
     `${tmuxBinToken} set-option -t ${target} mouse off 2>/dev/null; ` +
     `${tmuxBinToken} set-option -t ${target} status off 2>/dev/null`
+  // ATTACH-branch options (watchdog fix, 2026-09-01): the session was created on
+  // a PRIOR connect and may be hosted by a DIFFERENT tmux than this connect's
+  // tmuxBinToken (a Homebrew build, or the CCC-staged tier-2 binary). A
+  // single-token `status off` then silently no-ops and the green status bar
+  // keeps repainting on status-interval, which resets the watchdog's silence
+  // clock. So force status off through EVERY known tmux location — whichever
+  // one owns the session's server turns the bar off. Mouse-off stays on the
+  // primary token: a wrong-binary mouse-off is only a cosmetic drag-select
+  // miss, not a watchdog defeater. See forceStatusOffAcrossBins /
+  // STATUS_OFF_TMUX_BINS. NB attach() blocks the shell until detach, so this
+  // pre-attach application (the session is addressable — has-session just
+  // returned 0) is the "once the session is definitely addressable" point; the
+  // fresh branch's in-pane application is its equivalent.
+  const attachOptionsOff =
+    `${tmuxBinToken} set-option -t ${target} mouse off 2>/dev/null; ` +
+    `${forceStatusOffAcrossBins(target)}`
   // Fresh-create branch only: resume the prior conversation on a reconnect
   // where the remote session was gone. Appended to innerCmd BEFORE quoting so
   // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.
@@ -313,7 +386,7 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   // forced mouse-off.
   return (
     `if ${tmuxBinToken} has-session -t ${target} 2>/dev/null; ` +
-    `then ${mouseOff}; ${tmuxBinToken} attach -t ${target} || ${fresh}; ` +
+    `then ${attachOptionsOff}; ${tmuxBinToken} attach -t ${target} || ${fresh}; ` +
     `else ${fresh}; fi`
   )
 }

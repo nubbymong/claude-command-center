@@ -658,9 +658,17 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     expect(claudeWrite).toBeDefined()
     // Genuine result was tmux=home (staged location) -- the spoofed
     // tmux=path (which would have selected ON_PATH_TMUX_BIN_EXPR instead)
-    // never took effect.
-    expect((claudeWrite![0] as string)).toContain(STAGED_TMUX_BIN_EXPR)
-    expect((claudeWrite![0] as string)).not.toContain(ON_PATH_TMUX_BIN_EXPR)
+    // never took effect. Assert on the SESSION-HOSTING verbs, not the bare
+    // token: the watchdog status-off sweep (2026-09-01) issues a harmless
+    // `command tmux set-option ... status off` on every launch, which does NOT
+    // host the session, so a bare `not.toContain('command tmux')` would now
+    // false-fail. has-session / attach / new-session must all stay staged.
+    const launch = claudeWrite![0] as string
+    expect(launch).toContain(STAGED_TMUX_BIN_EXPR)
+    expect(launch.startsWith(`if ${STAGED_TMUX_BIN_EXPR} has-session`)).toBe(true)
+    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} has-session`)
+    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} attach`)
+    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session`)
   })
 
   // #242 finding F1(a), round-2 correction, BLOCKER. The round-2 reviewer's
