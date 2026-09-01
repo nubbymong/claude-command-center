@@ -43,4 +43,23 @@ describe('onboarding step overflow contract', () => {
     expect(inner).toContain('margin-top: auto')
     expect(inner).toContain('margin-bottom: auto')
   })
+
+  it('.hero (welcome/finish) carries the same contract, via first/last-child auto margins (it has no single inner wrapper)', () => {
+    const hero = rule('.hero')
+    expect(hero).toContain('min-height: 0')
+    expect(hero).toContain('overflow-y: auto')
+    expect(hero).not.toContain('justify-content: center')
+    expect(css).toContain('.ob-root .hero > :first-child { margin-top: auto; }')
+    expect(css).toContain('.ob-root .hero > :last-child { margin-bottom: auto; }')
+  })
+
+  it('.sl-stage (status line step) carries the same contract', () => {
+    const stage = rule('.sl-stage')
+    expect(stage).toContain('min-height: 0')
+    expect(stage).toContain('overflow-y: auto')
+    expect(stage).not.toContain('justify-content: center')
+    const inner = rule('.sl-inner')
+    expect(inner).toContain('margin-top: auto')
+    expect(inner).toContain('margin-bottom: auto')
+  })
 })
