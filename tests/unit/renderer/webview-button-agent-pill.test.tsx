@@ -101,6 +101,9 @@ describe('agent-push notification pill', () => {
       // promise "view it"; a click here goes back to the terminal.
       expect(btn().title).toContain('terminal')
       expect(btn().title).not.toContain('click to view it')
+      // The queued page is LABELLED: two bare URLs (pending + current) with
+      // nothing saying which is which was the rc.13 tooltip nit.
+      expect(btn().title).toContain('Waiting: https://agent.test/')
 
       act(() => { btn().click() })
 

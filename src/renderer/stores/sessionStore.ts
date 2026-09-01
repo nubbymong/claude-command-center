@@ -341,6 +341,13 @@ export const STRUCTURAL_SESSION_FIELDS = [
   // the shell on exactly that one resolve tick (the VALUE is unchanged on every
   // telemetry tick, so no per-tick cascade returns).
   'accountEmail', 'sshRemoteAccount', 'accountColour',
+  // sshTmuxPersistent is the same masking class: the header's SshConnectionPill
+  // reads it to caption SSH-Persistent vs plain SSH, and it lands on the same
+  // late ssh:sessionInfo push as the account fields. Omitting it let a
+  // tmux-refusal downgrade (persistent → plain) arrive with no other structural
+  // change, so the header kept promising "SSH-Persistent" while the
+  // self-subscribing sidebar showed the truth.
+  'sshTmuxPersistent',
 ] as const
 
 /**
