@@ -182,6 +182,20 @@ rq.end(body);
 }catch(e6){fin(false,'ex');}
 }else{deliverLegacy();}
 };
+// First-connect decoupling (2026-09-01): the account is already in \`s\` from
+// SHIM_GATHER_JS (a zero-network read of ~/.claude.json), but on a COLD connect
+// there is no ~/.claude/ccc-usage-cache-*.json, so fetchUsage does a live 5 s
+// HTTPS GET to api.anthropic.com before its callback fires -- and the account
+// used to ride ONLY in that callback's deliver(). So the top-bar account pill
+// (which for SSH has no local profileId fallback) waited on a usage fetch it
+// does not need. Deliver ONCE now with the account (+ any warm-cache buckets,
+// which fetchUsage merges synchronously on a cache HIT), THEN again when usage
+// resolves. The store merges per field (useStatuslineSubscription copies each
+// key only when present), so the second POST adds usageBuckets without
+// clobbering the account and is safely idempotent. POST path ONLY -- the legacy
+// OSC ladder keeps its single delivery (deliverLegacy is never double-fired),
+// so this changes nothing for a tunnel-less session.
+if(statusUrl){deliver();}
 fetchUsage(function(lim){applyUsage(lim);deliver();});
 }catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}
 });
