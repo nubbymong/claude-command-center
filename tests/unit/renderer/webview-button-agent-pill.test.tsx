@@ -95,28 +95,32 @@ describe('agent-push notification pill', () => {
     // close click neither may fire — that is the whole precedence fix.
     const navigateSpy = vi.spyOn(useWebviewStore.getState(), 'navigate')
     const consumeSpy = vi.spyOn(useWebviewStore.getState(), 'consumeAgentPush')
-    render()
-    // While open the button is the CLOSE affordance — its tooltip must not
-    // promise "view it"; a click here goes back to the terminal.
-    expect(btn().title).toContain('terminal')
-    expect(btn().title).not.toContain('click to view it')
+    try {
+      render()
+      // While open the button is the CLOSE affordance — its tooltip must not
+      // promise "view it"; a click here goes back to the terminal.
+      expect(btn().title).toContain('terminal')
+      expect(btn().title).not.toContain('click to view it')
 
-    act(() => { btn().click() })
+      act(() => { btn().click() })
 
-    const st = useWebviewStore.getState().bySessionId['s1']
-    // The close never navigates the pane to the agent URL — the key invariant.
-    expect(st.currentUrl).toBe('https://user-here.test/')
-    expect(st.isOpen).toBe(false)                    // the click closed the pane
-    // The pill is untouched: it stays raised for the next open.
-    expect(st.unread).toBe(true)
-    expect(st.pendingAgentUrl).toBe('https://agent.test/')
-    expect(pill()).not.toBeNull()
-    expect(btn().getAttribute('data-agent-unread')).toBe('1')
-    // Mutation-check: reverting the `!isOpen` guard would fire both of these.
-    expect(navigateSpy).not.toHaveBeenCalled()
-    expect(consumeSpy).not.toHaveBeenCalled()
-    navigateSpy.mockRestore()
-    consumeSpy.mockRestore()
+      const st = useWebviewStore.getState().bySessionId['s1']
+      // The close never navigates the pane to the agent URL — the key invariant.
+      expect(st.currentUrl).toBe('https://user-here.test/')
+      expect(st.isOpen).toBe(false)                  // the click closed the pane
+      // The pill is untouched: it stays raised for the next open.
+      expect(st.unread).toBe(true)
+      expect(st.pendingAgentUrl).toBe('https://agent.test/')
+      expect(pill()).not.toBeNull()
+      expect(btn().getAttribute('data-agent-unread')).toBe('1')
+      // Mutation-check: reverting the `!isOpen` guard would fire both of these.
+      expect(navigateSpy).not.toHaveBeenCalled()
+      expect(consumeSpy).not.toHaveBeenCalled()
+    } finally {
+      // A failing expect must not leak the spies into later tests.
+      navigateSpy.mockRestore()
+      consumeSpy.mockRestore()
+    }
   })
 
   it('the raised pill stays actionable: after closing, the next click (pane now CLOSED) opens + navigates + consumes', () => {
