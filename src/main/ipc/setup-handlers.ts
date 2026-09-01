@@ -120,9 +120,15 @@ export function registerSetupHandlers(): void {
   // binary" and "binary present, folder not trusted yet"). First-run setup
   // hard-stops on this one. Fail CLOSED: a probe that throws reports "not
   // installed" with the reason, and the step offers Retry.
+  // ASYNC and coalescing since the 2026-09-01 adversarial pass: the probe used
+  // to be `execFileSync`, so this ungated renderer channel blocked the main
+  // process for up to 24s (three sequential 8s probes) on demand. `probeClaudeCli`
+  // now runs on the event loop and collapses overlapping calls onto one probe;
+  // this handler must AWAIT it so a rejection still lands in the catch below
+  // rather than escaping as an unhandled rejection.
   ipcMain.handle('setup:probeCli', async () => {
     try {
-      return probeClaudeCli()
+      return await probeClaudeCli()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       logInfo(`[setup] Claude CLI probe failed: ${message}`)

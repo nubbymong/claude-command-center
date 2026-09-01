@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process'
+import { execFile } from 'child_process'
 import * as os from 'os'
 import { logInfo } from './debug-logger'
 
@@ -26,6 +26,17 @@ import { logInfo } from './debug-logger'
  *     nvm, asdf and friends. A plain `which` from Electron's own environment
  *     would report "missing" for a CLI the login shell can see perfectly well.
  *     `which` is only the fallback if the login shell probe cannot run.
+ *
+ * ASYNC, and that is a security property rather than a style choice
+ * (adversarial review, 2026-09-01 — DoS). This used to be `execFileSync`: up to
+ * THREE sequential 8s probes, each of which BLOCKS the main process outright —
+ * no IPC served, no PTY data pumped, no window repainted, for up to 24 seconds.
+ * `setup:probeCli` is an ungated renderer channel, so any renderer could freeze
+ * the whole app on demand simply by invoking it; and even in normal use a
+ * hanging login shell (a slow network mount in an rc file is the classic) stalls
+ * the app rather than one dialog. `execFile` answers the same question on the
+ * event loop, and overlapping calls coalesce onto ONE probe (see `inFlight`), so
+ * a loop of invocations costs one process set instead of three per call.
  */
 export interface ClaudeCliProbe {
   /** True only when a probe actually resolved a path. Fail-closed on error. */
@@ -42,46 +53,83 @@ function firstLine(out: string | Buffer): string | null {
   return line || null
 }
 
-export function probeClaudeCli(): ClaudeCliProbe {
-  // stdio pipes stderr so a probe miss does not leak "INFO: Could not find
-  // files..." into whatever terminal launched the app.
-  const opts: Parameters<typeof execFileSync>[2] = {
-    encoding: 'utf-8',
-    timeout: 8000,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }
+/**
+ * Run one probe candidate and resolve its first output line, or null.
+ *
+ * Never rejects: a non-zero exit (the `where`/`command -v` miss), a missing
+ * binary, a timeout kill and a synchronous spawn throw are all the same answer
+ * to this function's question — "no". stderr is captured by execFile rather than
+ * inherited, so a probe miss cannot leak "INFO: Could not find files..." into
+ * whatever terminal launched the app (the job the old `stdio` option did).
+ */
+function probeOnce(bin: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        bin,
+        args,
+        { encoding: 'utf-8', timeout: 8000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : firstLine(stdout ?? '')),
+      )
+    } catch {
+      resolve(null)
+    }
+  })
+}
 
+async function runProbe(): Promise<ClaudeCliProbe> {
   if (os.platform() === 'win32') {
     for (const bin of ['claude.exe', 'claude.cmd', 'claude']) {
-      try {
-        const found = firstLine(execFileSync('where', [bin], opts))
-        if (found) {
-          logInfo(`[setup] Claude CLI found: ${found} (where ${bin})`)
-          return { installed: true, path: found, probe: `where ${bin}` }
-        }
-      } catch { /* try the next candidate */ }
+      const found = await probeOnce('where', [bin])
+      if (found) {
+        logInfo(`[setup] Claude CLI found: ${found} (where ${bin})`)
+        return { installed: true, path: found, probe: `where ${bin}` }
+      }
     }
     logInfo('[setup] Claude CLI NOT found (where claude.exe / claude.cmd / claude all missed)')
     return { installed: false, probe: 'where claude' }
   }
 
   const shell = process.env.SHELL || '/bin/zsh'
-  try {
-    const found = firstLine(execFileSync(shell, ['-lc', 'command -v claude'], opts))
-    if (found) {
-      logInfo(`[setup] Claude CLI found: ${found} (${shell} -lc "command -v claude")`)
-      return { installed: true, path: found, probe: `${shell} -lc 'command -v claude'` }
-    }
-  } catch { /* fall through to `which` */ }
+  const viaLoginShell = await probeOnce(shell, ['-lc', 'command -v claude'])
+  if (viaLoginShell) {
+    logInfo(`[setup] Claude CLI found: ${viaLoginShell} (${shell} -lc "command -v claude")`)
+    return { installed: true, path: viaLoginShell, probe: `${shell} -lc 'command -v claude'` }
+  }
 
-  try {
-    const found = firstLine(execFileSync('which', ['claude'], opts))
-    if (found) {
-      logInfo(`[setup] Claude CLI found: ${found} (which claude)`)
-      return { installed: true, path: found, probe: 'which claude' }
-    }
-  } catch { /* not installed */ }
+  const viaWhich = await probeOnce('which', ['claude'])
+  if (viaWhich) {
+    logInfo(`[setup] Claude CLI found: ${viaWhich} (which claude)`)
+    return { installed: true, path: viaWhich, probe: 'which claude' }
+  }
 
   logInfo('[setup] Claude CLI NOT found (login shell and `which` both missed)')
   return { installed: false, probe: 'command -v claude' }
+}
+
+/**
+ * The single probe a set of overlapping callers share.
+ *
+ * `setup:probeCli` is invoked from a dialog that can be clicked repeatedly (and
+ * from an effect that can re-fire), so without this a user — or a renderer loop —
+ * multiplies the process count by the call count for an answer that cannot
+ * change between two calls a millisecond apart. Cleared on settle, so the NEXT
+ * call after an install genuinely re-probes; this coalesces concurrent work, it
+ * does not cache a result.
+ */
+let inFlight: Promise<ClaudeCliProbe> | null = null
+
+export function probeClaudeCli(): Promise<ClaudeCliProbe> {
+  if (inFlight) return inFlight
+  const run = runProbe().then(
+    (result) => { inFlight = null; return result },
+    (err) => { inFlight = null; throw err },
+  )
+  inFlight = run
+  return run
+}
+
+/** Test seam: drop a probe still in flight so cases cannot bleed into each other. */
+export function _resetClaudeCliProbeForTest(): void {
+  inFlight = null
 }

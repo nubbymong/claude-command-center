@@ -321,6 +321,73 @@ const endRemoteSchema = z.union([
 const pingHostSchema = z.object({ host: z.string().min(1).max(255) })
 
 /**
+ * The hosts `ssh:pingHost` will probe: the host of some SAVED SSH config, and
+ * nothing else (adversarial review, 2026-09-01 — MAJOR/DoS).
+ *
+ * The charset gate (isValidPingHost) proves a host is safe to put in an argv.
+ * It does not answer whether this app has any business dialling it, and the
+ * pre-fix handler took the host straight off the renderer — so a compromised
+ * renderer had an unauthenticated outbound probe primitive: ICMP echo plus a
+ * TCP:22 knock at any address that passes a charset, i.e. an internal port
+ * scanner and a beacon, driven from the user's machine and their network
+ * position.
+ *
+ * The trust rule is not new; it is the one both SSH siblings on this channel
+ * already apply. `ssh:endRemote` and `ssh:checkDetachedLive` resolve host, user
+ * and port ONLY from `readConfig('configs')` — the renderer names an id and
+ * never a destination. Ping is keyed by HOST rather than by config id (several
+ * configs share one box and one echo serves them all), so it cannot take an id;
+ * matching the SET of saved hosts is the same rule expressed for that key.
+ *
+ * Case-insensitive, because DNS is and the same box may be saved as `Pi.local`
+ * in one config and `pi.local` in another. Fails CLOSED on a missing or
+ * malformed configs file: an empty allowlist means nothing is probed, which
+ * costs a pill and never a packet.
+ */
+function savedSshPingHosts(): Set<string> {
+  const out = new Set<string>()
+  const configs = readConfig('configs')
+  if (!Array.isArray(configs)) return out
+  for (const entry of configs) {
+    if (!entry || typeof entry !== 'object') continue
+    const cfg = entry as { sessionType?: unknown; sshConfig?: { host?: unknown } | null }
+    if (cfg.sessionType !== 'ssh') continue
+    const host = cfg.sshConfig?.host
+    if (typeof host === 'string' && host.length > 0) out.add(host.toLowerCase())
+  }
+  return out
+}
+
+/**
+ * Concurrency ceiling for tier-1 pings, counted across every caller.
+ *
+ * `pingHost` spawns `ping.exe`/`ping` — a real process, per call — and the
+ * pre-fix handler had no bound at all: a renderer loop was thousands of live
+ * subprocesses, which is a local DoS on the user's own machine well before it
+ * is anything else. Eight is comfortably above the legitimate load (the
+ * scheduler pings one DISTINCT HOST per 90s tick; a fleet of eight boxes left
+ * running is already an unusual registry) and far below the level at which
+ * process creation hurts.
+ */
+const PING_MAX_IN_FLIGHT = 8
+
+/**
+ * In-flight probes, keyed by lowercased host — the dedupe half of the bound.
+ *
+ * Two callers asking about the same box get the SAME probe rather than two
+ * subprocesses, which is both cheaper and more correct (they cannot disagree
+ * about one host at one instant). Only when eight DISTINCT hosts are already in
+ * flight does the ninth get refused, so the cap can never be reached by
+ * hammering one host.
+ */
+const pingInFlightByHost = new Map<string, Promise<HostPingResult>>()
+
+/** Test seam: the module-level in-flight map outlives a single handler call. */
+export function _resetPingInFlightForTest(): void {
+  pingInFlightByHost.clear()
+}
+
+/**
  * Rebuild an End-remote target from the SAVED config on disk (Phase 3.5).
  *
  * The one place a DETACHED remote's connection details come from, and every
@@ -618,8 +685,49 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
   // not by config (several configs share one box, and one ping serves them all);
   // nothing here is interpolated into a shell, and host-ping.ts refuses anything
   // outside its strict charset before a process is spawned.
+  //
+  // TWO BOUNDS on top of that charset gate (adversarial review, 2026-09-01):
+  //
+  //  1. SCOPE. The host must be the host of some SAVED SSH config — the same
+  //     trust rule ssh:endRemote and ssh:checkDetachedLive already apply, which
+  //     resolve their destination from `readConfig('configs')` and never from
+  //     the payload. Without it a compromised renderer owns an outbound probe
+  //     primitive (ICMP + a TCP:22 knock at any charset-valid address) running
+  //     from the user's machine and network position. An unlisted host is
+  //     answered — not thrown at — because the caller is the reachability
+  //     scheduler and a throw there is an unhandled rejection every tick; the
+  //     `reason` names why so a log can tell it apart from a dead host.
+  //
+  //  2. CAP. `pingHost` spawns a real `ping` process per call and had no bound,
+  //     so a renderer loop was thousands of live subprocesses. Probes are
+  //     deduped by host (two callers asking about one box share one probe) and
+  //     the number of DISTINCT hosts in flight is capped; over the cap the call
+  //     is answered `busy` rather than spawning. Demote-only semantics make both
+  //     refusals safe: a not-reachable answer costs a pill, never data.
+  //
+  // See savedSshPingHosts / PING_MAX_IN_FLIGHT above.
   ipcMain.handle(IPC.SSH_PING_HOST, async (_event, payload: unknown): Promise<HostPingResult> => {
     const { host } = pingHostSchema.parse(payload)
-    return pingHost(host)
+    const key = host.toLowerCase()
+    if (!savedSshPingHosts().has(key)) {
+      logWarn(`[host-ping] refused a host that is not in any saved SSH config — never spawned`)
+      return { host, reachable: false, via: 'none', reason: 'host-not-in-configs' }
+    }
+    const existing = pingInFlightByHost.get(key)
+    if (existing) return existing
+    if (pingInFlightByHost.size >= PING_MAX_IN_FLIGHT) {
+      return { host, reachable: false, via: 'none', reason: 'busy' }
+    }
+    // pingHost never throws by contract; the catch is the belt for a future
+    // regression, so one bad probe cannot leave a permanent entry in the map.
+    const probe = pingHost(host).catch((): HostPingResult => ({
+      host, reachable: false, via: 'none', reason: 'probe-failed',
+    }))
+    pingInFlightByHost.set(key, probe)
+    try {
+      return await probe
+    } finally {
+      pingInFlightByHost.delete(key)
+    }
   })
 }
