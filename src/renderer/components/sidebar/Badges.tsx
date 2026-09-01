@@ -124,7 +124,7 @@ export function SshReattachBadge({ count }: { count: number }) {
   return (
     <div
       className="flex items-center justify-center h-4 px-1 gap-0.5 rounded shrink-0 bg-peach/15 text-peach"
-      title={`${count} running session${count === 1 ? '' : 's'} left on the host — launch to reattach`}
+      title={`${count} running session${count === 1 ? '' : 's'} left on the host — resume from Remote Resumable, at the foot of the Running tab`}
       style={{ fontSize: '8px', fontWeight: 700, letterSpacing: '0.5px' }}
       data-testid="ssh-reattach-badge"
     >

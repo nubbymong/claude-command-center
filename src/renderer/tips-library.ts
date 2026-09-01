@@ -191,7 +191,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Pin your most-used configs to Quick Start',
         title: 'Quick Start',
-        body: 'Right-click any config — or any running session — and choose **Pin to Quick Start**. Pinned configs appear in the Quick Start strip at the top of the **Running** tab with a one-click **Start**, so your daily drivers are always one click away.\n\nA pinned config whose session is already running steps aside until that session closes — no duplicates, no accidental second launch. Collapse the strip from its header if you want it out of the way.',
+        body: 'Right-click any config — or any running session — and choose **Pin to Quick Start**. Pinned configs appear in the Quick Start strip at the top of the **Running** tab with a one-click **Start**, so your daily drivers are always one click away.\n\nA pinned config **stays** in the strip while its session runs, wearing a count pill -- a config is a template, not the session it started. What **Start** does next is the config\'s call: one with **Allow Multi Spawn** gets a copy count and launches that many, and any other one tells you it is already running rather than quietly starting a duplicate. Collapse the strip from its header if you want it out of the way.',
       },
     },
   },
@@ -804,8 +804,56 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Keep a remote session alive when the link drops',
         title: 'SSH Persistent Sessions',
-        body: 'You run sessions over SSH -- so you have met the failure: the laptop sleeps, the VPN blinks, and the work on the other end dies with the connection.\n\nHow a config connects is a choice of three cards, not a checkbox: **Local**, **SSH**, and **SSH Persistent**. Pick the third and the remote Claude runs inside a tmux session, so the link dropping no longer kills it -- reconnect and you are reattached where you were, output and all.\n\nClosing a persistent session asks what you actually meant -- **End it** on the host, or **Leave it running** and come back later. The sidebar marks which of your sessions are persistent.\n\n(If you set the old **Detachable** checkbox on a config, it already opens as SSH Persistent. Nothing to re-save.)',
+        body: 'You run sessions over SSH -- so you have met the failure: the laptop sleeps, the VPN blinks, and the work on the other end dies with the connection.\n\nHow a config connects is a choice of three cards, not a checkbox: **Local**, **SSH**, and **SSH Persistent**. Pick the third and the remote Claude runs inside a tmux session, so the link dropping no longer kills it -- reconnect and you are reattached where you were, output and all.\n\nClosing a persistent session asks what you actually meant -- **End it** on the host, or **Leave it running**, in which case it waits for you in the **Remote Resumable** section at the foot of the Running tab.\n\nThe sidebar tells the three kinds of remote session apart wherever they appear: a blue **SSH** mark for a plain one, a green **SSH** mark with a chain link for a persistent one, and a teal container mark for a session running inside a container.\n\n(If you set the old **Detachable** checkbox on a config, it already opens as SSH Persistent. Nothing to re-save.)',
         focusHint: 'Session config -- the connection cards, the third one: "SSH Persistent"',
+      },
+    },
+  },
+
+  {
+    id: 'tip.remote-resumable',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 76,
+    requires: ['sessions.session-type'],
+    variants: {
+      primary: {
+        shortText: 'Pick up a remote session you left running',
+        title: 'Remote Resumable',
+        body: 'Close a persistent SSH session, choose **Leave it running**, and it does not disappear on you: it parks in a **Remote Resumable** section docked at the foot of the **Running** tab.\n\nEach card carries the host, how long ago you left it, and a pill reading **Resumable** or **Unreachable**. Click one and you are back in the same Claude, in the same conversation, with the work it was doing.\n\n**Right-click** a card for **Remove**. That ends the session on the host as well as forgetting the card, so a machine is never left quietly holding a Claude you have finished with.\n\nLaunching the config from **Saved** always starts something new -- resuming only ever happens from this section. The small amber counter with a refresh arrow on a saved config is the hint: it counts sessions of that config still live on their host. And the cards outlive the app, so what you left running today is still listed tomorrow.',
+        focusHint: 'The Running tab -- the Remote Resumable section docked at the bottom',
+      },
+    },
+  },
+
+  {
+    id: 'tip.multi-spawn',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 71,
+    requires: ['sessions.create-config'],
+    variants: {
+      primary: {
+        shortText: 'Run several copies of one config at once',
+        title: 'Allow Multi Spawn',
+        body: 'A saved config runs **one session at a time** unless you say otherwise, so a stray second click cannot start another Claude on the same project by accident.\n\nTick **Allow Multi Spawn** in the config, just under the connection cards, and its row swaps the play button for a **copy count**: set it to 3, press once, and three sessions start together. It remembers the number for next time.\n\nWithout it, clicking a config that is already running does not launch a second one. A small note says exactly that, and offers **Enable Multi Spawn & launch** if that is what you meant.\n\nAfter an update the app turns Multi Spawn on by itself for any config it already finds several copies of -- sessions left running on a remote host included -- and shows a one-time page so you can change any of it. A config you switch off stays off.',
+        focusHint: 'Session config -- the Allow Multi Spawn tick, below the connection cards',
+      },
+    },
+  },
+
+  {
+    id: 'tip.select-launch',
+    category: 'sessions',
+    complexity: 'simple',
+    priority: 57,
+    requires: ['sessions.create-config'],
+    variants: {
+      primary: {
+        shortText: 'Start several configs in one go with Select',
+        title: 'Select and Launch',
+        body: 'Press **Select** on the **Saved** tab, or in the **Quick Start** header, and every row becomes a tick box. Choose what you want and a bar along the bottom counts your selection and launches the lot in one press.\n\nIt is the quickest way back to a working set after a restart: the repo you are mid-change on, the one you are reviewing, the log tailer beside them.\n\nA config that is already running and is **not** a Multi Spawn one shows a padlock instead of a tick box. Click it and it says why, and offers to enable Multi Spawn. **Cancel** puts every row back the way it was.',
+        focusHint: 'The Saved tab toolbar, or the Quick Start header -- the Select button',
       },
     },
   },

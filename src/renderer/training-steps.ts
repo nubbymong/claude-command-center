@@ -56,11 +56,13 @@ export const trainingSteps: TrainingStep[] = [
       '**Starting effort** is a config field (low, medium, high, xhigh, max, ultracode); change it live in Claude with `/effort`. The card shows the current level',
       'Connection is three cards, not a checkbox: **Local**, **SSH**, **SSH Persistent** -- one config form, full Claude support on all three',
       'An SSH config also has a **Runtime** section: run on the host, or **in a Docker container** the app execs into for you (engine, name, optional directory, sudo)',
+      '**Allow Multi Spawn** decides whether the config can run more than one session at a time. Off by default: its row then gets a copy count you can launch several at once from, and without it a running config declines a second launch and says so',
     ],
     howToTrigger: [
       { label: 'Create', value: 'Saved tab → + New → Config' },
       { label: 'Edit', value: 'Hover a config → pencil icon' },
       { label: 'Pin', value: 'Right-click a config → Pin to Quick Start' },
+      { label: 'Launch several', value: 'Select (Saved toolbar or Quick Start header) → tick → Launch' },
     ],
     proTip:
       'Drag a folder onto the sidebar to create a working-directory config in one drop -- fastest way to bootstrap a new project session.',
