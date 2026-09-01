@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.13] - 2026-09-01
+
+> A housekeeping release: the loose ends of rc.12, closed. The remote-session header stops re-playing its loading shimmer, never overstates persistence, and the browser button says which page is waiting for you.
+
+### Changed
+- The browser button's tooltip says which page is waiting. With the pane open on your own page and an agent-pushed page queued behind it, the tooltip stacked two bare addresses with nothing saying which was which. The queued one is now labelled "Waiting:".
+- The Feature Guide and Ask Conductor catch up with the browser push. Both now explain how Claude hands you a page (the pill on the Browser button; nothing loads until you click), and the known-issues list gains an entry for the stray characters a plain SSH connection can occasionally leave in Claude's input on connect — what they are, why tmux sessions never see them, and that deleting them is the whole fix.
+
+### Fixed
+- The account shimmer plays once, not on every visit. When a remote session's account genuinely never arrives, the header's loading shimmer bows out after twenty seconds — but switching away and back re-mounted it with a fresh clock, so a chronically silent session greeted every return with another twenty seconds of shimmering. The header now remembers per session that the wait already ran its course and stays quiet on a revisit; the moment an account does arrive, the real pill shows, exactly as before.
+- The header never overstates persistence. When a host refuses the persistence wrapper (no tmux on the remote, say), the session downgrades to a plain connection — but the header could keep reading SSH-Persistent because the downgrade arrived without anything else it repaints for. The connection pill now repaints on that downgrade, so what the header promises about surviving a dropped link is always the truth.
+
 ## [2.1.0-rc.12] - 2026-08-31
 
 > A remote session stops being a second-class one. Local and remote sessions now report their status the same way, over the same channel, so an SSH session shows its account and its full usage — including the per-model bars — exactly like a session on your own machine. That also fixes the one host the status line never worked on: a Windows remote. The config dialog answers "where does this run?" properly for the first time: Connection is a choice of three (Local, SSH, SSH Persistent), and a new Runtime section runs the session inside a Docker or Podman container without you maintaining a shell one-liner. And a plan on the canvas is reviewed as a plan: Approve or Submit Revisions, with approval held back while a question is still open. A remote session you left running on a host is no longer out of sight either: it waits in a Remote Resumable section at the foot of the Running tab, one click from the same Claude and the same conversation, while launching a config always starts something new. And a config can be marked Allow Multi Spawn, so the ones you genuinely want several copies of get a copy-count control and a Select mode that launches a batch, and everything else is protected from a stray second launch.
@@ -1469,6 +1481,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.13]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.13
 [2.1.0-rc.12]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.12
 [2.1.0-rc.11]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.11
 [2.1.0-rc.10]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.10
