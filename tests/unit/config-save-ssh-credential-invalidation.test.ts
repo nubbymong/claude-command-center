@@ -92,6 +92,10 @@ beforeEach(() => {
   h.deleteReturns = true
   mkdirSync(join(tmp, 'CONFIG'), { recursive: true })
   configsPath = join(getConfigDir(), 'configs.json')
+  // Fresh per test: the resources dir is shared for the whole file (config-manager
+  // caches the CONFIG path), so a configs.json left by a prior test would become
+  // the next test's `prev`.
+  rmSync(configsPath, { force: true })
   registerConfigHandlers()
 })
 
@@ -217,6 +221,36 @@ describe('Part 2 — the configs payload is shape-validated (defence in depth)',
   })
 })
 
+describe('closing the two config:save bypasses (independent review)', () => {
+  it('Bypass A — a duplicate-id payload is rejected by Part 2 and never written', async () => {
+    saveConfig('configs', [sshCfg('cfgAAAA', { host: 'goodhost' })])
+    const before = readFileSync(configsPath, 'utf-8')
+    // EVIL first (the entry findSavedConfig would connect with), the original
+    // GOOD last (what a last-entry comparison would read as unchanged).
+    const dup = [sshCfg('cfgAAAA', { host: 'evilhost' }), sshCfg('cfgAAAA', { host: 'goodhost' })]
+    expect(await save('configs', dup)).toBe(false)
+    // saveConfig NOT called: the malicious duplicate never reaches disk.
+    expect(readFileSync(configsPath, 'utf-8')).toBe(before)
+    expect(h.deleted).toEqual([])
+    expect(h.warns.some((w) => w.includes('not a well-formed config array'))).toBe(true)
+  })
+
+  it('Bypass B — deleting an SSH config drops its credential on the DELETE save, so a re-add of the id cannot reuse it', async () => {
+    // Prev: an SSH config that has a stored password (by id).
+    saveConfig('configs', [sshCfg('cfgAAAA', { host: 'goodhost' })])
+    // Save 1 — remove it. The disappearance drops the connection-bound slots.
+    h.deleted = []
+    expect(await save('configs', [])).toBe(true)
+    expect(h.deleted).toEqual(['cfgAAAA', 'cfgAAAA_sudo'])
+    // Save 2 — re-add the SAME id pointed at an attacker host. Prev on disk is now
+    // empty so there is nothing new to drop, and — the point — the slot is already
+    // gone, so the re-added config has no password to send anywhere.
+    h.deleted = []
+    expect(await save('configs', [sshCfg('cfgAAAA', { host: 'evilhost' })])).toBe(true)
+    expect(h.deleted).toEqual([])
+  })
+})
+
 describe('the other renderer keys are unaffected by the configs-only guards', () => {
   it('saves commands/settings unchanged, even a shape the configs schema would reject', async () => {
     expect(await save('commands', [{ id: 'c1', label: 'y' }])).toBe(true)
@@ -241,8 +275,22 @@ describe('sshCredentialKeysToInvalidate — pure function edge cases', () => {
     expect(keys).toEqual(['aaaa', 'aaaa_sudo'])
   })
 
-  it('does not drop a deleted config (absent from next)', () => {
-    expect(sshCredentialKeysToInvalidate([sshCfg('aaaa')], [])).toEqual([])
+  it('drops a deleted SSH config so its orphaned keychain slots cannot be reused', () => {
+    expect(sshCredentialKeysToInvalidate([sshCfg('aaaa')], [])).toEqual(['aaaa', 'aaaa_sudo'])
+  })
+
+  it('does not drop a deleted NON-SSH config (nothing was connection-bound)', () => {
+    expect(sshCredentialKeysToInvalidate([localCfg('aaaa')], [])).toEqual([])
+  })
+
+  it('matches an id to its FIRST occurrence in next (as findSavedConfig does)', () => {
+    // prev good; next has EVIL first (what a spawn would connect with) and the
+    // original GOOD last. First-match => EVIL => changed => drop.
+    const keys = sshCredentialKeysToInvalidate(
+      [sshCfg('aaaa', { host: 'goodhost' })],
+      [sshCfg('aaaa', { host: 'evilhost' }), sshCfg('aaaa', { host: 'goodhost' })],
+    )
+    expect(keys).toEqual(['aaaa', 'aaaa_sudo'])
   })
 
   it('skips non-object entries and entries without a string id', () => {
@@ -272,5 +320,10 @@ describe('isValidConfigsPayload — pure function', () => {
     expect(isValidConfigsPayload([{ id: 5 }])).toBe(false)
     expect(isValidConfigsPayload([{ id: 'a', sshConfig: 'nope' }])).toBe(false)
     expect(isValidConfigsPayload(Array.from({ length: 1001 }, (_, i) => ({ id: 'c' + i })))).toBe(false)
+  })
+
+  it('rejects duplicate ids (the spawn-reader vs. guard divergence, Bypass A)', () => {
+    expect(isValidConfigsPayload([{ id: 'x' }, { id: 'x' }])).toBe(false)
+    expect(isValidConfigsPayload([sshCfg('x', { host: 'evil' }), sshCfg('x', { host: 'good' })])).toBe(false)
   })
 })

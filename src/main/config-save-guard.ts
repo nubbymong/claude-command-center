@@ -57,12 +57,30 @@ const configItemSchema = z
   })
   .passthrough()
 
-const configsPayloadSchema = z.array(configItemSchema).max(MAX_CONFIGS)
+// Ids must be UNIQUE across the array. Every spawn-time reader resolves a config
+// by findSavedConfig (spawn-credential-binding.ts), which returns the FIRST array
+// entry with a given id — so a duplicate id lets the entry a spawn CONNECTS with
+// differ from the entry this module's invalidation compares, and that divergence
+// IS a credential redirect: `[{id:X, host:EVIL}, {id:X, host:GOOD_original}]`
+// reads as "unchanged" to a last-entry comparison (nothing dropped) while a spawn
+// takes the first entry (EVIL) with the surviving password. No legitimate save
+// has duplicate ids — duplicateConfig mints a fresh one — so rejecting them is
+// safe AND realigns this gate with the first-match assumption every reader makes.
+const configsPayloadSchema = z
+  .array(configItemSchema)
+  .max(MAX_CONFIGS)
+  .refine(
+    (arr) => {
+      const ids = arr.map((c) => c.id)
+      return new Set(ids).size === ids.length
+    },
+    { message: 'configs must not contain duplicate ids' },
+  )
 
 /**
  * True when `value` is a well-formed `configs` payload (Part 2): an array,
- * within the length bound, of objects each carrying a string `id` and (if
- * present) an object `sshConfig`. Everything else about each config is
+ * within the length bound, of objects each carrying a string, UNIQUE `id` and
+ * (if present) an object `sshConfig`. Everything else about each config is
  * intentionally not inspected.
  */
 export function isValidConfigsPayload(value: unknown): boolean {
@@ -117,11 +135,16 @@ function sshIdentityOf(cfg: unknown): SshIdentity | null {
  * port. remotePath and everything else are NOT part of the identity: they do
  * not decide which host a stored password is offered to.
  *
+ * A config present in `prev` but GONE from `next` is a deletion, and it drops
+ * too: removeConfig (configStore.ts) never deletes the keychain slots, so a
+ * deleted SSH config's `<id>` / `<id>_sudo` would otherwise survive orphaned and
+ * be silently reused by a later delete-then-re-add of the same id pointed at a
+ * new host. Dropping a deleted SSH config's password is correct regardless.
+ *
  * Both arguments may be anything (a missing or garbled configs.json reads as
  * null): a non-array on either side yields no drops. Non-object entries and
- * entries without a string id are skipped. A config present in `prev` but absent
- * from `next` is a DELETION and out of scope here — its credential lifecycle is
- * the delete path's, not this comparison's.
+ * entries without a string id are skipped. An id is matched to its FIRST
+ * occurrence in `next`, the same rule findSavedConfig uses.
  */
 export function sshCredentialKeysToInvalidate(prevConfigs: unknown, nextConfigs: unknown): string[] {
   if (!Array.isArray(prevConfigs) || !Array.isArray(nextConfigs)) return []
@@ -130,7 +153,12 @@ export function sshCredentialKeysToInvalidate(prevConfigs: unknown, nextConfigs:
   for (const c of nextConfigs) {
     if (!c || typeof c !== 'object') continue
     const id = (c as { id?: unknown }).id
-    if (typeof id === 'string' && id.length > 0) nextById.set(id, c)
+    // FIRST entry wins, matching findSavedConfig (spawn-credential-binding.ts) —
+    // the entry a spawn would actually connect with. isValidConfigsPayload
+    // already rejects duplicate ids at the IPC boundary; keeping the pure
+    // comparison first-match too holds the line on any legacy on-disk array that
+    // still carries one.
+    if (typeof id === 'string' && id.length > 0 && !nextById.has(id)) nextById.set(id, c)
   }
 
   const keys: string[] = []
@@ -142,16 +170,23 @@ export function sshCredentialKeysToInvalidate(prevConfigs: unknown, nextConfigs:
 
     const prevIdentity = sshIdentityOf(prev)
     if (!prevIdentity) continue // nothing connection-bound to protect for this id
-    if (!nextById.has(id)) continue // deleted — out of scope here
 
-    const nextIdentity = sshIdentityOf(nextById.get(id))
-    // A next config that is no longer SSH (nextIdentity === null) has lost the
-    // host the credential was bound to: that is an identity change too, so drop.
-    const changed =
-      !nextIdentity ||
-      prevIdentity.host !== nextIdentity.host ||
-      prevIdentity.username !== nextIdentity.username ||
-      prevIdentity.port !== nextIdentity.port
+    let changed: boolean
+    if (!nextById.has(id)) {
+      // DELETED: the id is gone from the saved set, so its keychain slots are
+      // orphaned and a later re-add of the same id could reuse them for a new
+      // host. Drop them now (see the function note).
+      changed = true
+    } else {
+      const nextIdentity = sshIdentityOf(nextById.get(id))
+      // A next config that is no longer SSH (nextIdentity === null) has lost the
+      // host the credential was bound to: that is an identity change too, so drop.
+      changed =
+        !nextIdentity ||
+        prevIdentity.host !== nextIdentity.host ||
+        prevIdentity.username !== nextIdentity.username ||
+        prevIdentity.port !== nextIdentity.port
+    }
     if (!changed) continue
 
     dropped.add(id)
