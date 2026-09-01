@@ -66,7 +66,13 @@ export default function WebviewButton({ sessionId }: Props) {
   }
 
   const titleParts = [
-    unread ? 'A page is waiting for you — click to view it' : (isOpen ? 'Back to the terminal (closes the browser pane)' : 'Open the browser pane'),
+    // isOpen decides first: while the pane is open the button CLOSES it, so it
+    // must not promise "click to view" — a click here goes back to the
+    // terminal and leaves the pushed page waiting. The pending URL still
+    // surfaces on the line below so the user knows a page is queued.
+    isOpen
+      ? 'Back to the terminal (closes the browser pane)'
+      : (unread ? 'A page is waiting for you — click to view it' : 'Open the browser pane'),
     unread && state?.pendingAgentUrl ? `\n${state.pendingAgentUrl}` : '',
     state?.currentUrl ? `\n${state.currentUrl}` : '',
     isPending && state?.watchUrl ? `\nWatching ${state.watchUrl}…` : '',
@@ -85,11 +91,22 @@ export default function WebviewButton({ sessionId }: Props) {
   return (
     <button
       onClick={() => {
-        // An unread agent push takes priority: answer the pill by loading the
-        // pushed page and opening the pane. This is the user's explicit action,
-        // so it is not a "yank" — the page never loaded on its own. Consume
-        // clears the pill; navigate opens the pane and points it at the page.
-        if (unread) {
+        // Click precedence is deliberate. An unread agent push is answered
+        // ONLY from a CLOSED pane: a click on the shut Browser button
+        // unambiguously means "show me the page the agent left", so consume
+        // the pill, open the pane and point it at that page. This is the
+        // user's explicit action, so it is not a "yank" — the page never
+        // loaded on its own. Consume clears the pill; navigate opens the pane
+        // and points it at the page.
+        //
+        // When the pane is already OPEN this same button is the CLOSE
+        // affordance (it reads "Terminal"), and a click means "put the
+        // terminal back" — it must NOT navigate the open pane to the agent's
+        // URL. Consuming the pill on a close would overload the affordance
+        // into a surprise navigation and break the never-yank promise on the
+        // close gesture. So the pill is left raised for the next time the
+        // pane is opened; only an open-from-closed answers it.
+        if (unread && !isOpen) {
           const url = consumeAgentPush(sessionId)
           if (url) {
             trackUsage('webview.opened')
