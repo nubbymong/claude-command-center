@@ -146,3 +146,28 @@ describe('the mode is remembered per USER', () => {
     expect(resolveCanvasXrayMode(useSettingsStore.getState().settings.canvasXrayMode)).toBe('on')
   })
 })
+
+// ── Phase 7 item D — a plan reads out nothing, because it resolves nothing ───
+describe('a PLAN surface', () => {
+  it('reads nothing out in the panel, in every mode', () => {
+    for (const mode of CANVAS_XRAY_MODES) {
+      expect(xrayReadsOutInPanel(mode, { isPlan: true })).toBe(false)
+    }
+  })
+
+  it('leaves a NON-plan surface exactly as it was', () => {
+    for (const mode of CANVAS_XRAY_MODES) {
+      expect(xrayReadsOutInPanel(mode, { isPlan: false })).toBe(xrayReadsOutInPanel(mode))
+    }
+  })
+
+  it('never reads out what it does not resolve — the two predicates move together', () => {
+    for (const mode of CANVAS_XRAY_MODES) {
+      for (const isPlan of [true, false]) {
+        if (!xrayHoverResolves(mode, { isPlan })) {
+          expect(xrayReadsOutInPanel(mode, { isPlan })).toBe(false)
+        }
+      }
+    }
+  })
+})

@@ -698,6 +698,37 @@ describe('the redesigned chrome (item C)', () => {
     expect(container.querySelector('[data-testid="canvas-tool-region"]')).toBeNull()
     // The hint names the one gesture that IS on this toolbar.
     expect(container.querySelector('[data-testid="canvas-tool-hint"]')?.textContent).toContain('click a section')
+    // ...and no readout strip either — the last piece of the apparatus, and one
+    // that could only ever print its idle dash now a plan resolves no hover.
+    expect(readout()).toBeNull()
+  })
+
+  it('a PLAN pins the pointer to BROWSE — a sketch mode that outlived its mockup cannot trap the reviewer', async () => {
+    // Removing the Sketch/Region chips without pinning the state is what turns
+    // a removal into a trap: interactionMode is per-SESSION and outlives the
+    // version, so a user who was sketching over a mockup when the agent
+    // rendered a plan arrived with the glass still holding the pointer — unable
+    // to scroll, unable to click a section, and with no chip anywhere to give
+    // the pointer back.
+    await renderPane('stealth')
+    await act(async () => {
+      useCanvasStore.getState().setInteractionMode(SID, 'draw')
+      useCanvasReviewStore.getState().setMarqueeArmed(SID, true)
+    })
+    expect(container.querySelector('[data-testid="canvas-tool-hint"]')?.textContent).toContain('Esc cancels')
+
+    const planState = {
+      ...STATE,
+      versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'design', entry: 'index.html' } }],
+    } as CanvasState
+    ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
+    await renderPane('stealth')
+
+    // Browse, whatever the session state said — and the state itself is written
+    // back, so the stale mode cannot spring the glass open again later.
+    expect(container.querySelector('[data-testid="canvas-tool-hint"]')?.textContent).toContain('click a section')
+    expect(useCanvasStore.getState().bySessionId[SID]?.interactionMode).toBe('browse')
+    expect(useCanvasReviewStore.getState().bySessionId[SID]?.marqueeArmed).toBe(false)
   })
 
   it('a PLAN does NOT resolve HOVER (it corrupted/flashed the pane) — a section is named on CLICK instead', async () => {
@@ -711,10 +742,12 @@ describe('the redesigned chrome (item C)', () => {
     ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
     await renderPane('on') // the user's OWN setting is On; a plan overrides it
     await hoverSaveButton()
-    // Hover names nothing on a plan — no per-mousemove resolution.
-    expect(readout()!.textContent).not.toContain('button "Save"')
-    expect(readout()!.textContent).toContain('POINTING AT')
-    expect(readout()!.textContent).not.toContain('X-RAY')
+    // Hover names nothing on a plan — no per-mousemove resolution — and since
+    // nothing resolves, the readout strip is not rendered at all (phase 7 item
+    // D): a 26px row that could only ever print its idle dash was the last
+    // piece of X-Ray apparatus on a plan, and it pushed the composer up out of
+    // line with every other mode.
+    expect(readout()).toBeNull()
     // A click still issues an inspect — the section is named when you click it.
     askFrame.mockClear()
     await act(async () => handlers().onContentClick(12, 44))

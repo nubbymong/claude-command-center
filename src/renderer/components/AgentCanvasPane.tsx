@@ -620,10 +620,19 @@ function CanvasSurface({
    */
   const viewingCompleted = viewingCompletedOwn || readOnly
   const sessionMode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
+  const isPlan = version.mode === 'plan'
   // A read-only surface is always BROWSE. The interaction mode is per-SESSION
   // state, so it belongs to the session's own canvas — a foreign document must
   // neither read it nor move it.
-  const mode = readOnly ? 'browse' : sessionMode
+  //
+  // A PLAN is always browse too, and for a sharper reason: the Sketch and
+  // Region chips are not on its toolbar (owner spec, 2026-08-31), and the mode
+  // outlives the version. A user who was sketching over a mockup when the agent
+  // rendered a plan would land on the plan with the glass still holding the
+  // pointer — unable to scroll, unable to click a section, and with no chip
+  // anywhere to give the pointer back. Removing the affordance without pinning
+  // the state is what turns a removal into a trap.
+  const mode = readOnly || isPlan ? 'browse' : sessionMode
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
   const setActiveVersion = useCanvasStore((s) => s.setActiveVersion)
 
@@ -638,9 +647,9 @@ function CanvasSurface({
   // 2026-08-31): a plan is reviewed by content — sections referenced
   // contextually — and the three-way mode control, Region and Sketch are website
   // inspection apparatus that only invite the wrong kind of note. The MODE is
-  // still stealth, because that is what keeps hover resolution (and therefore
-  // note anchoring by `data-ux-id`) alive while nothing is painted on the page.
-  const isPlan = version.mode === 'plan'
+  // still stealth, because that is what keeps CLICK selection (and therefore
+  // note anchoring by `data-ux-id`) alive while nothing is painted on the page
+  // — live hover resolution is off on a plan since d9bab703.
   const settingsXrayMode = resolveCanvasXrayMode(useSettingsStore((s) => s.settings.canvasXrayMode))
   const xrayMode: CanvasXrayMode = isPlan ? 'stealth' : settingsXrayMode
 
@@ -652,7 +661,10 @@ function CanvasSurface({
   const ownFocus = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.focus ?? null)
   const focus = readOnly ? null : ownFocus
   const ownMarqueeArmed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.marqueeArmed ?? false)
-  const marqueeArmed = readOnly ? false : ownMarqueeArmed
+  // Plans included, for the same reason `mode` pins to browse above: an armed
+  // marquee that outlived the version it was armed on would put a region
+  // selection over a plan whose toolbar offers no way to cancel it.
+  const marqueeArmed = readOnly || isPlan ? false : ownMarqueeArmed
   const ownPanelHighlight = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.panelHighlight ?? null)
   const panelHighlight = readOnly ? null : ownPanelHighlight
   const ownReviewSession = useCanvasReviewStore((s) => s.bySessionId[sessionId])
@@ -667,11 +679,14 @@ function CanvasSurface({
   // READ-ONLY never runs it: `mode` is already forced to browse locally, and
   // writing the session's own interaction state while looking at somebody
   // else's canvas would silently change the mode of the canvas underneath.
+  // Plans join it: the pane already renders browse for them (see `mode`), and
+  // writing it back means the stale mode does not spring the glass open again
+  // the moment the surface stops being a plan.
   useEffect(() => {
-    if (readOnly || !viewingCompleted) return
+    if (readOnly || (!viewingCompleted && !isPlan)) return
     setInteractionMode(sessionId, 'browse')
     setMarqueeArmed(sessionId, false)
-  }, [readOnly, viewingCompleted, sessionId, setInteractionMode, setMarqueeArmed])
+  }, [readOnly, viewingCompleted, isPlan, sessionId, setInteractionMode, setMarqueeArmed])
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   /** The pane's root element — the scope of the HOST-side zoom gesture (#368):
@@ -3158,14 +3173,16 @@ function CanvasSurface({
                 }
               />
             </div>
-            {xrayReadsOutInPanel(xrayMode) && (
+            {/* Not on a plan: since d9bab703 a plan resolves no hover at all,
+                so this strip could only print its idle dash for ever — the last
+                bit of X-Ray apparatus on a surface the owner asked to have it
+                removed from, and 26px that pushed the plan's composer out of
+                line with every other mode's. */}
+            {xrayReadsOutInPanel(xrayMode, { isPlan }) && (
               <CanvasXrayReadout
                 hit={pointerOwner === 'content' ? (hover?.hit ?? null) : null}
                 label={hoverLabel}
                 pointerOwner={pointerOwner}
-                // A plan's toolbar has no X-Ray switch, so the strip is named
-                // for what it does rather than for a control that is not there.
-                heading={isPlan ? 'Pointing at' : 'X-Ray'}
               />
             )}
           </div>

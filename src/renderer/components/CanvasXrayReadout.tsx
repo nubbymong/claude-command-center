@@ -40,10 +40,6 @@ interface Props {
   /** Which layer the pointer is on, so the empty state can be honest about
    *  whether hovering the content is even possible. */
   pointerOwner: CanvasPointerOwner
-  /** What this strip is CALLED. 'X-Ray' everywhere the X-Ray switch exists; a
-   *  plan has no such switch on its toolbar, so naming the strip after it would
-   *  re-introduce the apparatus by the back door. */
-  heading?: string
 }
 
 /** Page coordinates, rounded — a sub-pixel box is noise in a readout. */
@@ -80,7 +76,7 @@ function idleText(pointerOwner: CanvasPointerOwner): string {
  * (`--surface-chrome`, `--border-subtle`, …) rather than raw palette classes, so
  * it matches the toolbar it belongs to instead of the terminal.
  */
-export default function CanvasXrayReadout({ hit, label, pointerOwner, heading = 'X-Ray' }: Props) {
+export default function CanvasXrayReadout({ hit, label, pointerOwner }: Props) {
   return (
     <div
       className="w-full shrink-0 flex items-center gap-2 px-3 h-[26px] text-[11px]"
@@ -93,7 +89,7 @@ export default function CanvasXrayReadout({ hit, label, pointerOwner, heading = 
       data-testid="canvas-xray-readout"
     >
       <span className="shrink-0 text-[9px] font-bold tracking-[0.08em]" style={{ color: 'var(--text-secondary)' }} aria-hidden>
-        {heading.toUpperCase()}
+        X-RAY
       </span>
       {hit ? (
         <>

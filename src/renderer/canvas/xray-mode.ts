@@ -93,8 +93,19 @@ export function xrayDrawsOnPage(mode: CanvasXrayMode): boolean {
   return mode === 'on'
 }
 
-/** Is the hovered element read out in the side panel instead of on the page? */
-export function xrayReadsOutInPanel(mode: CanvasXrayMode): boolean {
+/**
+ * Is the hovered element read out in the side panel instead of on the page?
+ *
+ * NOT on a plan, for the same reason `xrayHoverResolves` is false there: a plan
+ * resolves no hover, so the strip could only ever print its idle dash. Leaving
+ * it was leaving the last piece of X-Ray apparatus on a surface the owner asked
+ * to have it removed from — 26px of chrome that structurally cannot say
+ * anything, and which pushed the plan's note composer up out of line with every
+ * other mode's. The two predicates move together by construction: if nothing
+ * resolves, nothing reads out.
+ */
+export function xrayReadsOutInPanel(mode: CanvasXrayMode, opts?: { isPlan?: boolean }): boolean {
+  if (opts?.isPlan) return false
   return mode === 'stealth'
 }
 
