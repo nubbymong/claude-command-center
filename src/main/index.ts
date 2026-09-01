@@ -1176,7 +1176,7 @@ if (!gotTheLock) {
     // settings rewrite the mcpServers URL to this instance's actual port
     // (see per-session-settings.ts).
     const mcpPort = resolveConductorMcpPort(isPackagedApp())
-    startConductorMcpServer(mcpPort).catch(err => {
+    startConductorMcpServer(mcpPort, getWindow).catch(err => {
       logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
     })
 

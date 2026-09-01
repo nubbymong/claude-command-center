@@ -311,6 +311,7 @@ export const IPC = {
   WEBVIEW_NAVIGATE: 'webview:navigate',           // load a (validated http/https) URL in an EXISTING view -- the address bar
   WEBVIEW_OPEN_EXTERNAL: 'webview:openExternal',  // hand a (validated http/https) URL to the OS browser
   WEBVIEW_NAVIGATED: 'webview:navigated',         // main → renderer: { sessionId, url, title, canGoBack, canGoForward, loading }
+  WEBVIEW_AGENT_PUSH: 'webview:agentPush',        // main → renderer: { sessionId, url } — the agent pushed a page to the USER's in-app browser (raises the Browser-tool pill; never navigates the active view)
 
   // Per-account claude.ai web session (#216): sign in via the system browser,
   // hold the cookies in a per-account partition, open artifacts as that account.

@@ -40,6 +40,8 @@ import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getInstallSecret } from './install-secret'
 import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
+import { isAllowedBrowserUrl } from '../shared/browser-url'
+import { pushAgentUrlToWebview } from './webview-manager'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
@@ -662,7 +664,59 @@ function imageFileToMcpContent(filename: string) {
   }
 }
 
-export async function startMcpServer(port: number, getVisionManager: GetVisionManager): Promise<void> {
+/**
+ * Decide whether — and for which session — an `open_in_app_browser` MCP call may
+ * push a URL to the USER's in-app browser pane. Pure (strings in, decision out)
+ * so the security-relevant branches are unit-testable without an http.Server or
+ * a live window; the thin tool wrapper below turns an `ok` decision into the one
+ * main-side side effect (pushAgentUrlToWebview → the renderer pill).
+ *
+ * The rules, each fail-closed:
+ *   - a session is REQUIRED. `authedSession` is the id the transport's token
+ *     proved (GHSA-q83v-phcc-hgv4); an empty one refuses. The tool acts only on
+ *     the authenticated session — exactly the vision/canvas stance.
+ *   - a model-supplied `sessionId` may only NAME that same session. Anything
+ *     else is refused rather than silently retargeted, so the model can never
+ *     push a page into a session it did not authenticate as.
+ *   - the URL must be http/https, carry no embedded credentials, and fit the
+ *     shared length cap — `isAllowedBrowserUrl`, the one rule every webview door
+ *     shares. file:, javascript:, data:, about:, chrome:, blob:, a bare word:
+ *     all refused here, before anything reaches the window.
+ * On success the URL is normalised to its parsed href (the canonical form the
+ * pane and the pill display).
+ */
+export type AgentBrowserPushDecision =
+  | { ok: true; sessionId: string; url: string }
+  | { ok: false; error: string }
+
+export function decideAgentBrowserPush(
+  authedSession: string,
+  url: unknown,
+  requestedSessionId?: string,
+): AgentBrowserPushDecision {
+  if (!authedSession) {
+    return { ok: false, error: 'No authenticated session — the in-app browser push acts only on the calling session.' }
+  }
+  if (requestedSessionId !== undefined && requestedSessionId !== authedSession) {
+    return { ok: false, error: 'sessionId does not match this session; the in-app browser push acts only on the authenticated session.' }
+  }
+  if (typeof url !== 'string' || !isAllowedBrowserUrl(url)) {
+    return { ok: false, error: 'Only http and https URLs can be opened in the in-app browser (file:, javascript:, data:, about: and the like are refused).' }
+  }
+  let href: string
+  try {
+    href = new URL(url).href
+  } catch {
+    return { ok: false, error: 'That is not a URL the in-app browser can open.' }
+  }
+  return { ok: true, sessionId: authedSession, url: href }
+}
+
+export async function startMcpServer(
+  port: number,
+  getVisionManager: GetVisionManager,
+  getWindow: () => import('electron').BrowserWindow | null = () => null,
+): Promise<void> {
   if (httpServer) {
     logInfo('[vision-mcp] Server already running, stopping first')
     stopMcpServer()
@@ -890,6 +944,37 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       return withVision({ command: 'setViewport', args })
     })
     } // end if (toolOn('vision'))
+
+    // ── In-app browser push (the USER's visible browser, not vision) ────────
+    // A separate capability from the vision_* tools: those drive the agent's OWN
+    // headless Chrome; THIS hands a URL to the pane the user is looking at, the
+    // same as pasting a link in chat. It raises a notification pill on the
+    // session's Browser tool and NEVER navigates a page the user is viewing —
+    // the page loads only when the user opens the pane / clicks the pill. No
+    // approval, by design (owner's framing). Gated on the Conductor-tools master
+    // only (it is neither a vision nor a canvas sub-tool); not advertised to
+    // Codex, matching the vision/canvas Claude-only stance. Binds to the
+    // transport's authenticated session and refuses a mismatched model-supplied
+    // id — see decideAgentBrowserPush.
+    if (toolsMaster && source !== 'codex') server.tool(
+      'open_in_app_browser',
+      'Show the USER a web page in their in-app browser pane for this session (http/https only). Use it when you have a URL worth the user seeing — a preview, a PR, docs, a built site — the same as pasting the link in chat. A notification pill appears on their Browser tool; the page loads when they open the pane or click the pill, and it never interrupts a page they are already viewing. This is the user\'s VISIBLE browser, NOT the vision_* automation browser (which only you see).',
+      {
+        url: z.string().describe('The http or https URL to show the user'),
+        sessionId: z.string().optional().describe('Defaults to this session. If given, it must be this session — the tool only acts on the authenticated session.'),
+      },
+      async ({ url, sessionId }: { url: string; sessionId?: string }) => {
+        const decision = decideAgentBrowserPush(boundSessionId ?? '', url, sessionId)
+        if (!decision.ok) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: decision.error }) }], isError: true }
+        }
+        const pushed = pushAgentUrlToWebview(getWindow(), decision.sessionId, decision.url)
+        if (!pushed) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: 'The app window was not available to receive the page.' }) }], isError: true }
+        }
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, pushedTo: decision.sessionId, url: decision.url }) }] }
+      }
+    )
 
     // P6.9: codex_review is intentionally NOT advertised to Codex sessions.
     // Codex calling itself would be confusing UX in v1.5; v1.5.x can
@@ -1391,14 +1476,17 @@ let conductorMcpPort: number = 0
  * call time whether browser automation is available.
  */
 export async function startConductorMcpServer(
-  preferredPort?: number
+  preferredPort?: number,
+  getWindow: () => import('electron').BrowserWindow | null = () => null,
 ): Promise<void> {
   const port = preferredPort || DEFAULT_MCP_PORT
   if (conductorMcpPort === port) {
     logInfo(`[mcp] Conductor MCP server already running on port ${port}`)
     return
   }
-  await startMcpServer(port, () => getGlobalManager())
+  // getWindow lets the open_in_app_browser tool reach the renderer to raise the
+  // Browser-tool pill; the vision manager stays the vision tools' dependency.
+  await startMcpServer(port, () => getGlobalManager(), getWindow)
   conductorMcpPort = port
   // U3: CCC sessions get the conductor MCP per-session via --mcp-config
   // (writeLocalSessionMcpConfig); we no longer write it into the global

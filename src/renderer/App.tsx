@@ -349,6 +349,18 @@ export default function App() {
     })
   }, [])
 
+  // The agent pushed a page to the USER's in-app browser (the
+  // open_in_app_browser MCP tool). Subscribed at the app root and never
+  // unmounted — like the Esc hook — so the notification pill is raised for ANY
+  // session, whether or not that session's tab/pane is currently mounted. The
+  // store records it as pending + unread; it deliberately does NOT navigate, so
+  // a page the user is actively viewing is never yanked out from under them.
+  useEffect(() => {
+    return window.electronAPI.webview.onAgentPush(({ sessionId, url }) => {
+      useWebviewStore.getState().pushAgentUrl(sessionId, url)
+    })
+  }, [])
+
   // Subscribe to main-process notification that a /login produced a previously
   // unseen account. The prompt lets the user name + save it as a profile.
   useEffect(() => {

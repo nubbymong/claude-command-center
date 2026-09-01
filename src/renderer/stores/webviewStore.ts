@@ -80,6 +80,17 @@ export interface WebviewSessionState {
    * poll win the race and clobber the newer state.
    */
   activationId: number
+  /**
+   * The AGENT PUSH (the open_in_app_browser MCP tool). The agent handed the
+   * user a page worth looking at; `pendingAgentUrl` is that page and `unread`
+   * raises the notification pill on the Browser tool. Set by the
+   * WEBVIEW_AGENT_PUSH event only — never by a navigation the user drove — and
+   * it deliberately does NOT touch `currentUrl`/`isOpen`/`navSeq`, so a page the
+   * user is actively viewing is never yanked. The user opening the pane /
+   * clicking the pill consumes it (navigate to it, then clear both fields).
+   */
+  pendingAgentUrl: string | null
+  unread: boolean
 }
 
 interface State {
@@ -116,6 +127,20 @@ interface Actions {
    *  home and "open a page" commands all come through here. The caller has
    *  already normalised + validated (shared/browser-url). */
   navigate: (sessionId: string, url: string) => void
+  /**
+   * The agent pushed a page (the open_in_app_browser MCP tool). Records it as
+   * pending and raises the unread pill. Deliberately does NOT set currentUrl,
+   * open the pane, or bump navSeq — the never-yank rule: the page loads only
+   * when the user consumes it. http/https only (defence in depth; main
+   * validated already at the IPC boundary).
+   */
+  pushAgentUrl: (sessionId: string, url: string) => void
+  /**
+   * The user answered the pill (opened the pane / clicked it). Returns the
+   * pending agent URL and clears pending + unread; the caller navigates to it.
+   * Returns null when there was nothing pending.
+   */
+  consumeAgentPush: (sessionId: string) => string | null
   /** Clear the pane back to its start page (#481): drops the requested URL and
    *  the page report, keeps the pane open. The caller closes the native view. */
   clearPage: (sessionId: string) => void
@@ -152,6 +177,8 @@ const defaultState = (): WebviewSessionState => ({
   atStartPage: false,
   accountPane: null,
   activationId: 0,
+  pendingAgentUrl: null,
+  unread: false,
 })
 
 export const useWebviewStore = create<State & Actions>((set, get) => ({
@@ -264,6 +291,32 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
         [sessionId]: { ...cur, currentUrl: url, navSeq: cur.navSeq + 1, isOpen: true, atStartPage: false },
       },
     }))
+  },
+  pushAgentUrl: (sessionId, url) => {
+    // Defence in depth: main already validated at the IPC boundary, but the
+    // store is a door the pill/UX read from, so it enforces the same rule.
+    if (!isAllowedBrowserUrl(url)) return
+    const cur = get().bySessionId[sessionId] || defaultState()
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        // NOT currentUrl / isOpen / navSeq: the never-yank rule. Only the
+        // pending URL and the unread pill move; the page loads on consume.
+        [sessionId]: { ...cur, pendingAgentUrl: url, unread: true },
+      },
+    }))
+  },
+  consumeAgentPush: (sessionId) => {
+    const cur = get().bySessionId[sessionId]
+    if (!cur) return null
+    const url = cur.pendingAgentUrl
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, pendingAgentUrl: null, unread: false },
+      },
+    }))
+    return url
   },
   clearPage: (sessionId) => {
     const cur = get().bySessionId[sessionId]

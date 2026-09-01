@@ -592,6 +592,8 @@ export interface ElectronAPI {
     onEscapePressed: (handler: (sessionId: string) => void) => () => void
     /** Navigation state from the session's view: real URL, title, history flags, loading. */
     onNavigated: (handler: (state: { sessionId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean }) => void) => () => void
+    /** Agent push (open_in_app_browser MCP tool): { sessionId, url } — raises the Browser-tool pill; never navigates on its own. */
+    onAgentPush: (handler: (payload: { sessionId: string; url: string }) => void) => () => void
   }
   session: {
     save: (state: SessionState) => Promise<boolean>

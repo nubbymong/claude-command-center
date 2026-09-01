@@ -519,6 +519,11 @@ export interface ElectronAPI {
     /** Subscribe to navigation state from the session's view: the page it is
      *  actually on, its title, whether back/forward are possible, loading. */
     onNavigated: (handler: (state: WebviewNavState) => void) => () => void
+    /** Subscribe to an AGENT PUSH: the agent asked to show the user a page in
+     *  this in-app browser (the open_in_app_browser MCP tool). Carries
+     *  { sessionId, url }; the store records it as pending and raises the
+     *  Browser-tool pill. It NEVER navigates on its own. Returns an unsubscribe fn. */
+    onAgentPush: (handler: (payload: { sessionId: string; url: string }) => void) => () => void
   }
   session: {
     save: (state: unknown) => Promise<boolean>
@@ -1186,6 +1191,11 @@ const electronAPI: ElectronAPI = {
       const fn = (_e: unknown, state: WebviewNavState) => handler(state)
       ipcRenderer.on(IPC.WEBVIEW_NAVIGATED, fn)
       return () => ipcRenderer.removeListener(IPC.WEBVIEW_NAVIGATED, fn)
+    },
+    onAgentPush: (handler: (payload: { sessionId: string; url: string }) => void) => {
+      const fn = (_e: unknown, payload: { sessionId: string; url: string }) => handler(payload)
+      ipcRenderer.on(IPC.WEBVIEW_AGENT_PUSH, fn)
+      return () => ipcRenderer.removeListener(IPC.WEBVIEW_AGENT_PUSH, fn)
     },
   },
   session: {

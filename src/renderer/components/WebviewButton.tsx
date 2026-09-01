@@ -32,6 +32,8 @@ interface Props {
 export default function WebviewButton({ sessionId }: Props) {
   const state = useWebviewStore((s) => s.bySessionId[sessionId])
   const togglePane = useWebviewStore((s) => s.togglePane)
+  const navigate = useWebviewStore((s) => s.navigate)
+  const consumeAgentPush = useWebviewStore((s) => s.consumeAgentPush)
 
   const status = state?.status ?? 'idle'
   const isOpen = state?.isOpen ?? false
@@ -39,6 +41,9 @@ export default function WebviewButton({ sessionId }: Props) {
   const isAvailable = status === 'available'
   const isFailed = status === 'failed'
   const watching = isPending || isAvailable || isFailed
+  // The agent left a page for the user (open_in_app_browser). A notification
+  // pill, separate from the watch dot; consumed when the button is clicked.
+  const unread = state?.unread ?? false
 
   // Catppuccin-leaning accent palette — green for ready, red for
   // unreachable. Border colour does the heavy lifting; the dot is a
@@ -61,7 +66,8 @@ export default function WebviewButton({ sessionId }: Props) {
   }
 
   const titleParts = [
-    isOpen ? 'Back to the terminal (closes the browser pane)' : 'Open the browser pane',
+    unread ? 'A page is waiting for you — click to view it' : (isOpen ? 'Back to the terminal (closes the browser pane)' : 'Open the browser pane'),
+    unread && state?.pendingAgentUrl ? `\n${state.pendingAgentUrl}` : '',
     state?.currentUrl ? `\n${state.currentUrl}` : '',
     isPending && state?.watchUrl ? `\nWatching ${state.watchUrl}…` : '',
     isAvailable && state?.watchUrl ? `\n${state.watchUrl} is responding` : '',
@@ -79,15 +85,28 @@ export default function WebviewButton({ sessionId }: Props) {
   return (
     <button
       onClick={() => {
+        // An unread agent push takes priority: answer the pill by loading the
+        // pushed page and opening the pane. This is the user's explicit action,
+        // so it is not a "yank" — the page never loaded on its own. Consume
+        // clears the pill; navigate opens the pane and points it at the page.
+        if (unread) {
+          const url = consumeAgentPush(sessionId)
+          if (url) {
+            trackUsage('webview.opened')
+            navigate(sessionId, url)
+            return
+          }
+        }
         // tips-library gates the freeze/annotate tip on `webview.opened`.
         // Recorded on open only: closing the pane is not discovering it.
         if (!isOpen) trackUsage('webview.opened')
         togglePane(sessionId)
       }}
-      className={`flex items-center gap-1.5 px-2 h-7 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${classes}`}
+      className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${classes}`}
       title={titleParts.join('').trim()}
       data-testid="browser-toggle"
       data-watch-status={status}
+      data-agent-unread={unread ? '1' : undefined}
     >
       {isOpen ? (
         <svg
@@ -118,6 +137,20 @@ export default function WebviewButton({ sessionId }: Props) {
           className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${dotClass} ${dotPulseClass}`}
           aria-hidden
         />
+      )}
+      {/* Agent-push notification pill (open_in_app_browser): a mauve corner
+          badge, deliberately distinct from the green/red/blue WATCH dot, that
+          says the agent left a page to look at. Clicking the button consumes
+          it. Rendered only while unread, so an idle button stays clean. */}
+      {unread && (
+        <span
+          className="absolute -top-1 -right-1 inline-flex"
+          data-testid="browser-agent-pill"
+          aria-label="A page is waiting for you in the browser"
+        >
+          <span className="absolute inline-flex h-2.5 w-2.5 rounded-full bg-mauve/60 animate-ping" aria-hidden />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-mauve ring-2 ring-[var(--surface-chrome)]" aria-hidden />
+        </span>
       )}
     </button>
   )
