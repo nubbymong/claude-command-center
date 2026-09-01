@@ -73,7 +73,9 @@ export default function WebviewButton({ sessionId }: Props) {
     isOpen
       ? 'Back to the terminal (closes the browser pane)'
       : (unread ? 'A page is waiting for you — click to view it' : 'Open the browser pane'),
-    unread && state?.pendingAgentUrl ? `\n${state.pendingAgentUrl}` : '',
+    // Label the queued page: with the pane open the tooltip otherwise stacks
+    // two bare URLs (pending + current) with nothing saying which is which.
+    unread && state?.pendingAgentUrl ? `\nWaiting: ${state.pendingAgentUrl}` : '',
     state?.currentUrl ? `\n${state.currentUrl}` : '',
     isPending && state?.watchUrl ? `\nWatching ${state.watchUrl}…` : '',
     isAvailable && state?.watchUrl ? `\n${state.watchUrl} is responding` : '',

@@ -20,9 +20,10 @@ vi.mock('../../../src/renderer/hooks/useThemeController', () => ({ useResolvedTh
 vi.mock('../../../src/renderer/hooks/useTypography', () => ({ useRegionTypography: () => ({}) }))
 
 const { default: SessionHeader } = await import('../../../src/renderer/components/SessionHeader')
-import type { Session } from '../../../src/renderer/stores/sessionStore'
+import { useSessionStore, type Session } from '../../../src/renderer/stores/sessionStore'
 import { useAccountAuthStore, _resetAccountAuthForTest } from '../../../src/renderer/stores/accountAuthStore'
 import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
+import { sshAuthGiveUpMemory, _resetSshAuthGiveUpForTest } from '../../../src/renderer/stores/sshAuthGiveUp'
 
 const SSH_CFG = { host: 'h', port: 22, username: 'u', remotePath: '~' } as any
 
@@ -48,6 +49,7 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   _resetAccountAuthForTest()
+  _resetSshAuthGiveUpForTest()
   useAccountProfilesStore.setState({ profiles: [] })
   ;(globalThis as any).window.electronAPI = {
     accountWeb: { status: vi.fn(async () => ({ ok: true, cli: { authenticated: false }, web: { status: 'none' } })) },
@@ -125,6 +127,46 @@ describe('SSH account pending shimmer (SshAuthPending)', () => {
     act(() => { vi.advanceTimersByTime(2_000) })
     expect(q('[data-testid="session-auth-pending"]')).toBeNull()
     expect(q('[data-testid="session-pill-github"]')).toBeNull()
+  })
+
+  it('a given-up session STAYS blank on re-activation -- the shimmer must not re-arm on remount (rc.13)', () => {
+    vi.useFakeTimers()
+    // Session gives up (20s elapses while it is the active tab).
+    render(sshNoIdentity({ id: 'sA' }))
+    act(() => { vi.advanceTimersByTime(21_000) })
+    expect(q('[data-testid="session-auth-pending"]')).toBeNull()
+    // Switch away (different session) and back: keyed remount of the pending
+    // branch. Pre-fix this re-armed a fresh 20s shimmer; now the recorded
+    // give-up renders blank immediately and arms NO new timer.
+    render(sshNoIdentity({ id: 'sB' }))
+    render(sshNoIdentity({ id: 'sA' }))
+    expect(q('[data-testid="session-auth-pending"]')).toBeNull()
+    // sB's pending timer was cleared on ITS unmount, and given-up sA armed no
+    // new one -- zero timers proves the remount is inert.
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('identity arriving clears the give-up memory, so a later identity LOSS may shimmer afresh', () => {
+    vi.useFakeTimers()
+    render(sshNoIdentity())
+    act(() => { vi.advanceTimersByTime(21_000) })
+    expect(sshAuthGiveUpMemory.has('s1')).toBe(true)
+    // The remote reports its account -> real pill, and the memory is cleared.
+    render(sshNoIdentity({ accountEmail: 'remote@x.com' }))
+    expect(q('[data-testid="session-pill-account"]')).not.toBeNull()
+    expect(sshAuthGiveUpMemory.has('s1')).toBe(false)
+    // Identity gone again (e.g. reconnect from scratch) -> fresh shimmer.
+    render(sshNoIdentity())
+    expect(q('[data-testid="session-auth-pending"]')).not.toBeNull()
+  })
+
+  it('removing the session clears its give-up memory (no stale blank for a reused id)', () => {
+    vi.useFakeTimers()
+    render(sshNoIdentity())
+    act(() => { vi.advanceTimersByTime(21_000) })
+    expect(sshAuthGiveUpMemory.has('s1')).toBe(true)
+    useSessionStore.getState().removeSession('s1')
+    expect(sshAuthGiveUpMemory.has('s1')).toBe(false)
   })
 
   it('the GitHub pill rides the pending set only when a repo slug is set', () => {

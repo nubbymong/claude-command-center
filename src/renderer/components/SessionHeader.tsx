@@ -13,6 +13,7 @@ import { ContainerGlyph, containerBadgeTitle } from './sidebar/Badges'
 import { containerNameOf, resolveTransportBadge } from './sidebar/transportBadge'
 import { useRestartSession } from '../hooks/useRestartSession'
 import { ASK_LABEL } from '../lib/askConductor'
+import { sshAuthGiveUpMemory } from '../stores/sshAuthGiveUp'
 
 declare const __APP_VERSION__: string
 
@@ -205,13 +206,24 @@ function SshAuthSkeletonPill({ width }: { width: number }) {
  * this component unmounts and the real pills render — so this owns only the
  * GIVE-UP: after SSH_AUTH_PENDING_GIVE_UP_MS from first render it falls back to
  * exactly what this branch showed before (the GitHub tail, or nothing).
+ *
+ * The give-up is remembered PER SESSION outside the component
+ * (sshAuthGiveUpMemory): this is keyed by session.id, so re-activating a
+ * chronically identity-less session remounts it — without the memory that
+ * meant a fresh 20s shimmer on every tab switch back. A remembered give-up
+ * renders the fallback immediately; the memory is cleared when identity
+ * arrives (parent effect) or the session is removed.
  */
-function SshAuthPending({ gitHubTail }: { gitHubTail: React.ReactNode }) {
-  const [gaveUp, setGaveUp] = React.useState(false)
+function SshAuthPending({ sessionId, gitHubTail }: { sessionId: string; gitHubTail: React.ReactNode }) {
+  const [gaveUp, setGaveUp] = React.useState(() => sshAuthGiveUpMemory.has(sessionId))
   React.useEffect(() => {
-    const t = setTimeout(() => setGaveUp(true), SSH_AUTH_PENDING_GIVE_UP_MS)
+    if (sshAuthGiveUpMemory.has(sessionId)) return
+    const t = setTimeout(() => {
+      sshAuthGiveUpMemory.markGaveUp(sessionId)
+      setGaveUp(true)
+    }, SSH_AUTH_PENDING_GIVE_UP_MS)
     return () => clearTimeout(t)
-  }, [])
+  }, [sessionId])
   if (gaveUp) return <>{gitHubTail}</>
   return (
     <>
@@ -452,6 +464,14 @@ function SessionAuthPills({ session }: { session: Session }) {
     if ((applies || isSshClaude) && !isAsk && profileId) void refresh(profileId)
   }, [applies, isSshClaude, isAsk, profileId, refresh, session.id])
 
+  React.useEffect(() => {
+    // Identity arrived → forget any recorded shimmer give-up for this session,
+    // so a LATER loss of identity (e.g. a reconnect that starts from scratch)
+    // may shimmer afresh instead of being pinned blank forever. No-op for
+    // non-SSH sessions (both inputs undefined).
+    if (remoteEmail || sshProfileId) sshAuthGiveUpMemory.clear(session.id)
+  }, [remoteEmail, sshProfileId, session.id])
+
   // Never a GitHub pill on the Ask session (#465) — structural, so even a
   // stray githubIntegration on the record (there is no path that sets one,
   // the auto-detect banner is gated) could not paint it.
@@ -481,8 +501,10 @@ function SessionAuthPills({ session }: { session: Session }) {
     // back to exactly the prior output (the GitHub tail, or nothing).
     // key by session.id so switching between two still-pending SSH sessions
     // remounts the shimmer with a FRESH give-up clock, instead of the second
-    // inheriting whatever was left of the first one's 20s timer.
-    if (!remoteEmail && !sshProfileId) return <SshAuthPending key={session.id} gitHubTail={gitHubTail} />
+    // inheriting whatever was left of the first one's 20s timer. A session that
+    // already gave up once renders the fallback immediately on remount
+    // (sshAuthGiveUpMemory) — re-activation must not re-arm the shimmer.
+    if (!remoteEmail && !sshProfileId) return <SshAuthPending key={session.id} sessionId={session.id} gitHubTail={gitHubTail} />
     // Identity to show: the reported/mapped remote email when known, else the
     // mapped profile's own email or name as a first-connect placeholder, so the
     // header paints immediately instead of waiting on the first remote tick.

@@ -209,6 +209,15 @@ describe('sessionStore', () => {
       const withAcct = [makeSession({ id: 'a', accountEmail: 'nicholas@live.co.uk' })]
       expect(structuralSessionsEqual(withAcct, [{ ...withAcct[0], contextPercent: 42 }])).toBe(true)
     })
+
+    it('treats an sshTmuxPersistent flip as STRUCTURAL (the header connection pill must repaint)', () => {
+      // Same masking class as the identity fields: a tmux-refusal downgrade
+      // (persistent -> plain) arrives on the late ssh:sessionInfo push, often
+      // with no other structural change, and the header must not keep promising
+      // SSH-Persistent.
+      const a = [makeSession({ id: 'a', sshTmuxPersistent: true })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], sshTmuxPersistent: false }])).toBe(false)
+    })
   })
 
   describe('getSession', () => {

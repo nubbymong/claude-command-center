@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ProviderId, CodexOptions, TerminalOptions, SshRuntime } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
+import { sshAuthGiveUpMemory } from './sshAuthGiveUp'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
 export type SessionType = 'local' | 'ssh'
@@ -226,6 +227,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   removeSession: (id) =>
     set((state) => {
+      // A removed session's shimmer give-up memory must not outlive it (the id
+      // would leak, and a reused id would inherit a stale "stay blank").
+      sshAuthGiveUpMemory.clear(id)
       const sessions = state.sessions.filter((s) => s.id !== id)
       const activeSessionId =
         state.activeSessionId === id
@@ -337,6 +341,13 @@ export const STRUCTURAL_SESSION_FIELDS = [
   // the shell on exactly that one resolve tick (the VALUE is unchanged on every
   // telemetry tick, so no per-tick cascade returns).
   'accountEmail', 'sshRemoteAccount', 'accountColour',
+  // sshTmuxPersistent is the same masking class: the header's SshConnectionPill
+  // reads it to caption SSH-Persistent vs plain SSH, and it lands on the same
+  // late ssh:sessionInfo push as the account fields. Omitting it let a
+  // tmux-refusal downgrade (persistent → plain) arrive with no other structural
+  // change, so the header kept promising "SSH-Persistent" while the
+  // self-subscribing sidebar showed the truth.
+  'sshTmuxPersistent',
 ] as const
 
 /**

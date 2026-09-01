@@ -377,6 +377,20 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.agent-browser-push',
+    category: 'vision',
+    complexity: 'simple',
+    priority: 48,
+    variants: {
+      primary: {
+        shortText: 'Claude can hand you a page to look at',
+        title: 'Agent Pushes to Your Browser',
+        body: 'Claude can send you a link worth seeing -- a dev-server preview, a PR, a built site -- straight to the session\'s **Browser** pane. A small pill appears on the **Browser** button; nothing loads until you act.\n\n• Button closed? Click it and the pane opens straight onto the waiting page.\n• Pane already open on your own page? The pushed page waits behind the pill -- it never yanks what you\'re viewing.\n\nThis is your visible browser, not the Vision browser only Claude sees. Try: "show me the preview in my browser". Needs the built-in Conductor tools on (Settings, General); Claude sessions only.',
+      },
+    },
+  },
+
+  {
     id: 'tip.artifacts-button',
     category: 'productivity',
     complexity: 'simple',
