@@ -394,6 +394,8 @@ export interface ElectronAPI {
      *  An approve or reject also settles that artefact's earlier rounds; an
      *  approve auto-completes when nothing else is owed. */
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
+    /** #580: the chat line that tells the agent a verdict/review was filed. Queued while the agent's turn is open. */
+    agentMarker: (args: { sessionId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' }>
     /** C1: reopen a version for review; later ready versions become withdrawn.
      *  Wakes no ROUND — settled stays settled. */
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
@@ -1067,6 +1069,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_VERDICT, args),
+    agentMarker: (args: { sessionId: string; line: string }) => ipcRenderer.invoke(IPC.CANVAS_AGENT_MARKER, args),
     versionReopen: (args: { sessionId: string; versionId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_REOPEN, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>

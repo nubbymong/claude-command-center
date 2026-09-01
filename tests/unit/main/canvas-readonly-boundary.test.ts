@@ -451,6 +451,14 @@ describe('the enumeration cannot rot', () => {
     // renderer -> main REPLY to a main-initiated request, correlated by an
     // id main minted. It names no canvas and mutates nothing.
     IPC.CANVAS_SNAPSHOT_RESULT,
+    // #580. Names NO canvas -- its arguments are a sessionId and one line of
+    // text -- and touches no canvas state: it hands a chat line to the marker
+    // queue, which writes it into that session's own terminal now or at the end
+    // of its turn. The read-only boundary is about mutating somebody else's
+    // canvas, and there is no canvas here to mutate. It adds no reach either:
+    // `pty:write` already lets the renderer write to any session, and this is
+    // strictly narrower (400 chars, newlines stripped, one line).
+    IPC.CANVAS_AGENT_MARKER,
   ])
 
   it('covers every CANVAS_* channel that a renderer can invoke', () => {

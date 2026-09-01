@@ -178,3 +178,40 @@ describe('change push', () => {
     expect(sent).toEqual([])
   })
 })
+
+// ── #580: the agent-marker channel ──────────────────────────────────────────
+//
+// The line that tells the agent a verdict was filed. It reaches a PTY, so its
+// shape is guarded before it gets anywhere near one: one line, bounded, and
+// never split into several submitted messages by a stray newline.
+describe('canvas:agentMarker', () => {
+  const marker = (args: unknown) => invoke(IPC.CANVAS_AGENT_MARKER, args)
+
+  it('is registered', () => {
+    expect(handlers.has(IPC.CANVAS_AGENT_MARKER)).toBe(true)
+  })
+
+  it('reports "unwired" rather than pretending, when boot never wired a queue', async () => {
+    // The queue is wired at boot from src/main/index.ts; nothing wires it here,
+    // so this also pins that the handler cannot throw without one.
+    await expect(marker({ sessionId: SID, line: 'Approved v3 · canvas_version_verdict recorded' }))
+      .resolves.toEqual({ delivery: 'unwired' })
+  })
+
+  it('collapses newlines — one marker can never become several submitted messages', async () => {
+    // A CR mid-string would submit the first half as its own message and leave
+    // the rest typed at the prompt.
+    const spy = vi.spyOn(await import('../../../src/main/canvas/canvas-marker-delivery'), 'deliverCanvasMarker')
+    await marker({ sessionId: SID, line: 'Review #3\r\nrm -rf something · canvas_review R3' })
+    expect(spy).toHaveBeenCalledWith(SID, 'Review #3 rm -rf something · canvas_review R3')
+    spy.mockRestore()
+  })
+
+  it('rejects an empty line, an over-long one, and unknown keys', async () => {
+    await expect(marker({ sessionId: SID, line: '' })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, line: '\r\n  \r\n' })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, line: 'x'.repeat(401) })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, line: 'ok', extra: 1 })).rejects.toThrow()
+    await expect(marker({ sessionId: 'not-a-session-id!', line: 'ok' })).rejects.toThrow()
+  })
+})

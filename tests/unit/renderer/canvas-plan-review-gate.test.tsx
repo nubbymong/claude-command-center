@@ -23,7 +23,7 @@ vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 
 import { paneSketchProps } from './canvas-panel-harness'
 const CanvasNotesPanel = (await import('../../../src/renderer/components/CanvasNotesPanel')).default
-const { planApproveBlock, decisionLabels } = await import('../../../src/renderer/components/CanvasNotesPanel')
+const { planApproveBlock, decisionLabels, deliverAgentMarker } = await import('../../../src/renderer/components/CanvasNotesPanel')
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 
 const SID = 'session-1'
@@ -376,5 +376,54 @@ describe('the actionable button is unmistakable', () => {
     expect(submit().textContent).toBe('Submit')
     act(() => revise().click())
     expect(submit().textContent).toBe('Submit revisions — 0 notes')
+  })
+})
+
+// ── Phase 7 item E (#580) — the marker must not be written blind at the PTY ──
+//
+// Live: a clean APPROVAL filed while the agent was mid-turn delivered NOTHING.
+// The panel wrote the marker straight into the terminal, which Claude Code is
+// not reading while it streams. A clean approval creates no review record for
+// canvas_review to fetch either, so the marker IS the whole delivery.
+
+describe('the agent marker leaves through the queue', () => {
+  it('a clean approval sends its marker via canvas.agentMarker, not pty.write', async () => {
+    const agentMarker = vi.fn(async () => ({ delivery: 'queued' as const }))
+    const api = (globalThis as any).window.electronAPI
+    api.canvas.agentMarker = agentMarker
+    api.pty.write.mockClear()
+
+    await render(plan())
+    act(() => approve().click())
+    await act(async () => {
+      submit().click()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(agentMarker).toHaveBeenCalledWith({
+      sessionId: SID,
+      line: 'Approved v3 on the canvas · canvas_version_verdict recorded',
+    })
+    // No CR: what travels is a LINE. Main appends the submit key, so the queue
+    // holds messages rather than keystrokes.
+    expect(agentMarker.mock.calls[0][0].line).not.toContain('\r')
+    expect(api.pty.write).not.toHaveBeenCalled()
+    delete api.canvas.agentMarker
+  })
+
+  it('never throws, and never leaves an unhandled rejection, if delivery fails', async () => {
+    const api = (globalThis as any).window.electronAPI
+    api.canvas.agentMarker = vi.fn(async () => { throw new Error('IPC gone') })
+    expect(() => deliverAgentMarker(SID, 'anything')).not.toThrow()
+    await new Promise((r) => setTimeout(r, 0))
+    delete api.canvas.agentMarker
+  })
+
+  it('falls back to the pre-#580 direct write when the channel is absent', async () => {
+    const api = (globalThis as any).window.electronAPI
+    delete api.canvas.agentMarker
+    api.pty.write.mockClear()
+    deliverAgentMarker(SID, 'Review #1 — 1 notes · canvas_review R1')
+    expect(api.pty.write).toHaveBeenCalledWith(SID, 'Review #1 — 1 notes · canvas_review R1\r')
   })
 })

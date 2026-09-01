@@ -211,6 +211,34 @@ async function blobToBase64(blob: Blob): Promise<string> {
 }
 
 /**
+ * Tell the agent that a verdict / review was filed (#580).
+ *
+ * Through the marker QUEUE in main, which writes the line now if the agent is
+ * at a prompt and holds it to the end of the turn if one is in flight. The old
+ * path wrote straight into the PTY, which is correct at a prompt and useless
+ * mid-turn: Claude Code is not reading a user line while it streams, so the
+ * marker was swallowed. That cost two live approvals outright — a clean
+ * approval creates no review record, so the marker is the entire delivery.
+ *
+ * NEVER THROWS, and never rejects. By the time this runs the verdict is already
+ * written; a failed notification must not take the submit down with it, nor
+ * surface as an unhandled rejection. A preload without the channel falls back
+ * to the pre-#580 direct write rather than delivering nothing at all.
+ */
+export function deliverAgentMarker(sessionId: string, line: string): void {
+  try {
+    const canvas = window.electronAPI?.canvas as
+      | { agentMarker?: (a: { sessionId: string; line: string }) => Promise<unknown> }
+      | undefined
+    if (typeof canvas?.agentMarker === 'function') {
+      void canvas.agentMarker({ sessionId, line }).catch(() => { /* best effort */ })
+      return
+    }
+    window.electronAPI?.pty?.write?.(sessionId, line + '\r')
+  } catch { /* a marker is never worth an exception in the submit path */ }
+}
+
+/**
  * How an UNAVAILABLE decision button looks.
  *
  * The review bar's failure mode was that "disabled" and "actionable" wore
@@ -1585,7 +1613,12 @@ export default function CanvasNotesPanel({
           setSubmitError(r.error)
           return
         }
-        window.electronAPI.pty.write(sessionId, 'Approved ' + version.id + ' on the canvas · canvas_version_verdict recorded\r')
+        // #580: through the marker QUEUE, never straight into the PTY. This is
+        // the whole delivery for a clean approval — it creates no review record
+        // for `canvas_review` to fetch — and a raw write mid-turn is swallowed
+        // by the streaming TUI, which is exactly how two live approvals reached
+        // the agent as nothing at all.
+        deliverAgentMarker(sessionId, 'Approved ' + version.id + ' on the canvas · canvas_version_verdict recorded')
         setFiled({ decision: 'approve' })
         setDecision(null)
         void clearComposerDraft(sessionId, mountedCanvasIdRef.current)
@@ -1644,8 +1677,11 @@ export default function CanvasNotesPanel({
       }
       const count = review.annotationIds.length
       // The pull side of D10: one line in chat carries the id; the agent
-      // fetches the payload itself via canvas_review.
-      window.electronAPI.pty.write(sessionId, 'Review #' + review.id.slice(1) + ' — ' + count + ' notes · canvas_review ' + review.id + '\r')
+      // fetches the payload itself via canvas_review. #580: queued while the
+      // agent's turn is open — the RECORD survives either way here (unlike a
+      // clean approval), but a marker lost mid-turn still means the agent never
+      // learns there is one to fetch.
+      deliverAgentMarker(sessionId, 'Review #' + review.id.slice(1) + ' — ' + count + ' notes · canvas_review ' + review.id)
       setFiled({ decision, reviewId: review.id })
       setDecision(null)
       // Hand back to the session automatically (#478): submitting is the moment

@@ -42,6 +42,7 @@ import {
   type CaptureImage,
 } from '../canvas/canvas-evidence'
 import { setCanvasFrameNavigatedSink } from '../canvas/ccc-ux-protocol'
+import { deliverCanvasMarker } from '../canvas/canvas-marker-delivery'
 import {
   MAX_SKETCH_PNG_BYTES,
   clearComposerDraft,
@@ -644,6 +645,24 @@ const reviewSubmitSchema = z
  * earlier round of the artefact — it would close the user's own outstanding
  * feedback while saying why to nobody.
  */
+/**
+ * The marker line (#580). Single-line by construction: CR/LF are stripped, so a
+ * renderer bug (or a canvas title carrying a newline) cannot turn one marker
+ * into several submitted messages. Length-capped like every other renderer
+ * string that reaches a PTY.
+ */
+const agentMarkerSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    line: z
+      .string()
+      .min(1)
+      .max(400)
+      .transform((s) => s.replace(/[\r\n]+/g, ' ').trim())
+      .refine((s) => s.length > 0, { message: 'marker line is empty' }),
+  })
+  .strict()
+
 const versionVerdictSchema = z
   .object({
     sessionId: sessionIdSchema,
@@ -983,6 +1002,25 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     }
     if (state === 'approved') autoCompleteAfterUserApproval(result.canvasId, sessionId)
     return result
+  })
+
+  /**
+   * #580 — the marker line that TELLS the agent a verdict/review was filed.
+   *
+   * The panel used to write this straight into the PTY. That is correct at a
+   * prompt and useless mid-turn: Claude Code is not reading a user line while it
+   * streams, so a verdict filed during an agent turn was swallowed and the agent
+   * was never told. It bit hardest on a CLEAN APPROVAL, which by design creates
+   * no review record at all (`submitReview` refuses a round with no notes) --
+   * the marker is the entire delivery, so losing it loses the approval.
+   *
+   * Routed through the queue instead: written now if the turn is closed, held
+   * and flushed at the next `Stop` if it is open. The CR is appended there, not
+   * here, so what travels over IPC is a LINE and not keystrokes.
+   */
+  ipcMain.handle(IPC.CANVAS_AGENT_MARKER, async (_e, args: unknown) => {
+    const { sessionId, line } = agentMarkerSchema.parse(args)
+    return { delivery: deliverCanvasMarker(sessionId, line) }
   })
 
   ipcMain.handle(IPC.CANVAS_VERSION_REOPEN, async (_e, args: unknown) => {
