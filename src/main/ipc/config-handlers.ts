@@ -3,7 +3,9 @@
  */
 
 import { ipcMain } from 'electron'
-import { loadAllConfig, saveConfig, migrateFromLocalStorage, isRendererConfigKey } from '../config-manager'
+import { loadAllConfig, saveConfig, migrateFromLocalStorage, isRendererConfigKey, readConfig } from '../config-manager'
+import { deleteCredential } from '../credential-store'
+import { isValidConfigsPayload, sshCredentialKeysToInvalidate } from '../config-save-guard'
 import { logInfo, logWarn } from '../debug-logger'
 import { refreshTokenomicsConfigs } from '../tokenomics/tokenomics-service'
 
@@ -30,6 +32,42 @@ export function registerConfigHandlers(hooks: ConfigHandlerHooks = {}): void {
     if (!isRendererConfigKey(key)) {
       logWarn(`[config-handlers] config:save refused for key ${JSON.stringify(typeof key === 'string' ? key.slice(0, 64) : typeof key)}`)
       return false
+    }
+    // The 'configs' value gets two extra guards the other renderer keys don't
+    // need. Both are scoped to this key only; every other key saves exactly as
+    // before (see saveConfig below).
+    if (key === 'configs') {
+      // Part 2 (defence in depth): reject a value that is not a well-formed
+      // config array before it can reach disk, the invalidation comparison, or
+      // the load-time migrations. Like the bad-key path: false + one warning,
+      // and the data is never echoed.
+      if (!isValidConfigsPayload(data)) {
+        logWarn('[config-handlers] config:save refused: \'configs\' value is not a well-formed config array')
+        return false
+      }
+      // Part 1 (load-bearing): a saved SSH config's credentials are keyed by the
+      // config's ID, not pinned to its host, so a renderer that rewrites a saved
+      // config's sshConfig.host/username/port while keeping the id would redirect
+      // the stored password to a new destination on the next connect. Drop the
+      // connection-bound credential slots of any config whose SSH identity
+      // changed, in the SAME save. A legitimate edit re-prompts; a silent rewrite
+      // is left with nothing to send. See config-save-guard.ts and the audit
+      // comments at each loadCredential-then-connect site in pty-handlers.ts.
+      const toDrop = sshCredentialKeysToInvalidate(readConfig('configs'), data)
+      if (toDrop.length > 0) {
+        let allDropped = true
+        for (const credKey of toDrop) {
+          if (!deleteCredential(credKey)) allDropped = false
+        }
+        // Fail CLOSED: if a connection-bound credential could not be dropped (an
+        // unreadable/locked keychain file), do NOT persist the identity change —
+        // the secret would otherwise stay recoverable by id and bound to the new
+        // host. The old config is left intact; the renderer sees a failed save.
+        if (!allDropped) {
+          logWarn('[config-handlers] config:save refused: could not invalidate the SSH credential(s) for a config whose host/username/port changed; not persisting a change that would leave a stored secret bound to a new destination')
+          return false
+        }
+      }
     }
     const result = saveConfig(key, data)
     // Keep the tokenomics worker's cwd->config attribution dimension fresh when

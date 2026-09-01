@@ -411,6 +411,12 @@ function endTargetFromSavedConfig(configId: string): SshEndTarget | undefined {
   const saved = findSavedConfig(readConfig('configs'), configId)
   if (!saved || saved.sessionType !== 'ssh' || !saved.sshConfig) return undefined
   const s = saved.sshConfig
+  // host/user/port and the credential(s) are read for the SAME id here. What
+  // keeps the two in agreement is config-handlers' config:save guard: a renderer
+  // that rewrites this config's host/username/port has its `<id>` / `<id>_sudo`
+  // credentials dropped in that same save, so after a malicious rewrite these
+  // loadCredential calls return null and there is nothing to misdirect. No guard
+  // is needed HERE (the secret is simply gone); do not weaken that upstream drop.
   return {
     username: s.username,
     host: s.host,
@@ -504,6 +510,11 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         logWarn(`[pty] SSH spawn refused: ${bound.reason}`)
         throw new Error(`SSH spawn refused: does not match a saved config (${bound.reason})`)
       }
+      // bindSshToSavedConfig pins the spawn to the SAVED config's host/user/port;
+      // the credential invalidation in config-handlers (config:save) is what keeps
+      // that saved identity honest, dropping `<id>` / `<id>_sudo` the moment a
+      // renderer rewrites the host/username/port. So a redirected credential is
+      // already gone before it could be loaded here — no extra guard at this read.
       const password = loadCredential(options.configId) ?? undefined
       const sudoPassword = loadCredential(options.configId + '_sudo') ?? undefined
       const sshWithCreds: SSHOptions = { ...bound.ssh, password, sudoPassword }
@@ -675,6 +686,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       return { outcome: 'unverified', liveSessionIds: [] }
     }
     const s = saved.sshConfig
+    // Same guarantee as pty:spawn / endTargetFromSavedConfig: the config:save
+    // credential invalidation drops `<id>` when this config's host/username/port
+    // is rewritten, so a redirected password is gone before this read. No extra
+    // guard needed here.
     const password = loadCredential(configId) ?? undefined
     return probeTmuxLive({ username: s.username, host: s.host, port: Number(s.port), password }, sessionIds)
   })
