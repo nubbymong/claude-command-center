@@ -57,11 +57,24 @@ export function decorateTerminalLinks(
 }
 
 /**
+ * The class the hover control toggles for the hand cursor. APP-OWNED, and its
+ * name is load-bearing: it must NEVER contain the substring "xterm-cursor".
+ * Claude sessions carry a full-nuke stylesheet
+ * (`.claude-session [class*="xterm-cursor"]` -> display:none !important,
+ * terminalTheme.ts) that hides Claude's redundant terminal caret — and it
+ * catches xterm's own `xterm-cursor-pointer` link class too. That collision is
+ * what made the pre-fix hover flicker so VISIBLE: xterm strobed its pointer
+ * class on the screen element at render cadence, and each strobe display:noned
+ * the whole screen. terminalTheme.ts pairs this class with the cursor rule.
+ */
+export const LINK_HOVER_CLASS = 'ccc-link-hover'
+
+/**
  * Owns the link-hover UI state OUTSIDE xterm's churn (2026-09-02 flicker fix):
- * the hand cursor (xterm's own `xterm-cursor-pointer` class, on the element
- * xterm would have toggled it on) and the URI the context menu's "Copy link
- * address" reads. `hover` applies both instantly; `leave` only after
- * `delayMs`, so the leave->re-hover cycle xterm fires on every viewport
+ * the hand cursor (LINK_HOVER_CLASS on the terminal root — deliberately NOT
+ * xterm's `xterm-cursor-pointer`, see above) and the URI the context menu's
+ * "Copy link address" reads. `hover` applies both instantly; `leave` only
+ * after `delayMs`, so the leave->re-hover cycle xterm fires on every viewport
  * re-render (spinner/statusline frames) never reaches the screen — a real
  * departure from the link is a single leave with nothing to cancel it, and the
  * cursor reverts after the short delay. The debounced URI also closes a latent
@@ -85,13 +98,13 @@ export function createLinkHoverControl(
   const cancel = () => { if (timer !== null) { clearTimeout(timer); timer = null } }
   const clear = () => {
     uri = null
-    getElement()?.classList.remove('xterm-cursor-pointer')
+    getElement()?.classList.remove(LINK_HOVER_CLASS)
   }
   return {
     hover: (u) => {
       cancel()
       uri = u
-      getElement()?.classList.add('xterm-cursor-pointer')
+      getElement()?.classList.add(LINK_HOVER_CLASS)
     },
     leave: () => {
       cancel()

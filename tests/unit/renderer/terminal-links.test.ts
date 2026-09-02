@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { ILink } from '@xterm/xterm'
-import { decorateTerminalLinks, createLinkHoverControl } from '../../../src/renderer/components/terminal/terminalLinks'
+import { decorateTerminalLinks, createLinkHoverControl, LINK_HOVER_CLASS } from '../../../src/renderer/components/terminal/terminalLinks'
 
 // The decorator ignores the event arg (handlers key off the URI), so a plain
 // cast avoids needing a DOM environment for MouseEvent.
@@ -70,9 +70,27 @@ describe('createLinkHoverControl (2026-09-02 hover-flicker fix)', () => {
           remove: (c: string) => { classes.delete(c) },
         },
       } as unknown as HTMLElement,
-      has: () => classes.has('xterm-cursor-pointer'),
+      has: () => classes.has(LINK_HOVER_CLASS),
     }
   }
+
+  it('the hover class stays OUT of the claude-session cursor-nuke net (never contains "xterm-cursor")', () => {
+    // terminalTheme.ts hides any element matching [class*="xterm-cursor"]
+    // inside a Claude session (display:none !important) — reusing xterm's own
+    // xterm-cursor-pointer here display:noned the ENTIRE terminal on hover
+    // (review blocker, 2026-09-02), and xterm strobing that class per render
+    // is what made the original flicker so visible. App-owned name only.
+    expect(LINK_HOVER_CLASS).not.toMatch(/xterm-cursor/)
+    // ...and the injected stylesheet actually pairs a cursor rule with it.
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const theme = fs.readFileSync(
+      path.resolve(__dirname, '../../../src/renderer/components/terminal/terminalTheme.ts'),
+      'utf-8',
+    )
+    expect(theme).toContain('LINK_HOVER_CLASS}')
+    expect(theme).toContain('cursor: pointer !important')
+  })
 
   it('hover applies the hand cursor and records the URI immediately', () => {
     const f = fakeEl()
