@@ -20,7 +20,7 @@ describe('registry-derived option lists', () => {
     expect(modelsFromRegistry(reg).slice(0, 5)).toEqual([
       { label: 'Opus', value: 'opus', hint: 'Latest Opus (200k context)' },
       { label: 'Opus 1M', value: 'opus[1m]', hint: 'Latest Opus (1M context)' },
-      { label: 'Fable 5', value: 'fable', hint: 'Most capable · ~2x faster than Opus' },
+      { label: 'Fable', value: 'fable', hint: 'Latest Fable · most capable, ~2x faster than Opus' },
       { label: 'Sonnet', value: 'sonnet', hint: 'Latest Sonnet' },
       { label: 'Haiku', value: 'haiku', hint: 'Latest Haiku' },
     ])

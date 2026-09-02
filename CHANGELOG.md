@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.14] - 2026-09-02
+
+> Ask Conductor learns to teach: ask it to install a helper skill and every Claude session on this machine can answer questions about this app — which settings file wins, how accounts share settings — without opening the Ask tab. It gets its own page in the setup tour, wearing the new conductor mark that now also sits on its sidebar button. And three paper cuts are gone: hovering a link no longer flickers the terminal, a setup page taller than your screen scrolls instead of hiding its buttons, and Fable 5.1 is in the model picker.
+
+### Added
+- Ask Conductor can install a helper skill for all your sessions. Say "install the helper skill" in the Ask tab and it copies one ready-made skill file into your Claude configuration — you approve the single write — after which any Claude session on this machine can answer Conductor questions itself: why a setting did not apply, which settings file wins, how accounts share settings. The skill reads the app's own regenerated documentation, so it never goes stale; say "remove the helper skill" to uninstall it, and ask about the portable copy if you want a remote machine to have it too. It acts only when you ask.
+- Ask Conductor has a page of its own in the setup tour, shown on first install and after updates, with the new conductor mark beside the heading — the same mark that now sits on the Ask Conductor button at the foot of the sidebar. The What's New summary line grew its "See it" chip to jump there.
+
+### Changed
+- Links in the terminal have been clickable since rc.10 — this note is the announcement that release missed. Click an https link to open it in your browser; right-click any http or https link for Copy link address. Works in local and remote sessions alike.
+- Fable 5.1 is in the model picker. The registry and the shipped model list now carry claude-fable-5-1 from Anthropic's Claude Code model configuration, so it appears in both pickers, and the "Fable" row always means the newest Fable.
+
+### Fixed
+- Hovering a link no longer flickers. The terminal's link detector re-checks the link under your cursor every time the screen repaints — and a Claude session repaints constantly — so the hover state strobed at that pace; worse, the strobe drove the app's own cursor-hiding style, so in a busy session the flicker you saw was the screen itself blinking. The hand cursor is now managed outside that churn: it appears instantly, holds steady through repaints, and the right-click menu's Copy link address no longer randomly goes missing mid-animation.
+- A setup page taller than your screen now scrolls. On a smaller display, the "What you're getting" page (and any other tall setup step, the Welcome and Status Line pages included) could push its only buttons off the bottom edge with no scrollbar anywhere, leaving the tour stuck. Every step now scrolls within the page while the buttons stay put.
+- Sentinel stopped crying wolf about new models. A notice that Anthropic published a model your picker does not offer yet was displayed as "1 severe breaking change" with a red breaking badge — alarming words for something that breaks nothing you are running. Findings are now labelled by their actual severity: real breaking changes keep the red treatment, and housekeeping notices read as compatibility notices, in the panel and in the copied report text alike.
+
 ## [2.1.0-rc.13] - 2026-09-01
 
 > A housekeeping release: the loose ends of rc.12, closed. The remote-session header stops re-playing its loading shimmer, never overstates persistence, and the browser button says which page is waiting for you.
@@ -1481,6 +1498,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.14]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.14
 [2.1.0-rc.13]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.13
 [2.1.0-rc.12]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.12
 [2.1.0-rc.11]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.11

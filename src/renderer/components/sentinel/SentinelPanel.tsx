@@ -45,16 +45,20 @@ function CopyButton({
   )
 }
 
-// ── One severe breaking change ────────────────────────────────────────────────
-// Every finding here is, by construction, a severe break (the AI pass and the
-// deterministic backstop both emit kind 'compat'/'high'), so there is one flat
-// list — no severity chips, no info/warn wall, no proposed-fix apply flow.
+// ── Findings ─────────────────────────────────────────────────────────────────
+// NOT all findings here are severe breaks (2026-09-02): the AI pass and the
+// deterministic backstop emit 'compat'/'high', but the model-coverage check
+// deliberately emits 'compat'/'warn' ("a new model exists" breaks nothing
+// running — sentinel-models.ts says so in as many words). The chip and the
+// header read the SEVERITY, so a housekeeping notice no longer impersonates a
+// severe breaking change. One flat list still; no apply flow.
 
 function BreakingRow({ finding }: { finding: SentinelFinding }) {
   const handleMute = () => {
     void window.electronAPI.sentinel.setStatus(finding.id, 'muted')
   }
   const sfc = surfaceLabel(finding.surface)
+  const severe = finding.severity === 'high'
 
   return (
     <div className="py-2.5 border-b last:border-0" style={{ borderColor: 'var(--border-subtle)' }}>
@@ -63,11 +67,11 @@ function BreakingRow({ finding }: { finding: SentinelFinding }) {
           <span
             className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0"
             style={{
-              background: 'color-mix(in srgb, var(--status-danger) 16%, transparent)',
-              color: 'var(--status-danger)',
+              background: `color-mix(in srgb, ${severe ? 'var(--status-danger)' : 'var(--status-warning)'} 16%, transparent)`,
+              color: severe ? 'var(--status-danger)' : 'var(--status-warning)',
             }}
           >
-            breaking
+            {severe ? 'breaking' : 'notice'}
           </span>
           <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
             {finding.title}
@@ -190,26 +194,36 @@ export default function SentinelPanel() {
             </div>
           )}
 
-          {breaking.length > 0 && (
+          {breaking.length > 0 && (() => {
+            // Severity-honest header (2026-09-02): only 'high' findings are
+            // severe breaks; 'warn' findings are compatibility notices, and a
+            // notice-only panel must not shout in red.
+            const severeCount = breaking.filter((f) => f.severity === 'high').length
+            const noticeCount = breaking.length - severeCount
+            const tone = severeCount > 0 ? 'var(--status-danger)' : 'var(--status-warning)'
+            const parts: string[] = []
+            if (severeCount > 0) parts.push(`${severeCount} severe breaking change${severeCount === 1 ? '' : 's'}`)
+            if (noticeCount > 0) parts.push(`${noticeCount} compatibility notice${noticeCount === 1 ? '' : 's'}`)
+            return (
             <section>
               <div className="flex items-center gap-1.5 mb-2">
                 <svg
                   width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"
-                  style={{ color: 'var(--status-danger)' }}
+                  style={{ color: tone }}
                 >
                   <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
                   <line x1="12" y1="9" x2="12" y2="13" />
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
-                <h3 className="text-xs font-semibold" style={{ color: 'var(--status-danger)' }}>
-                  {breaking.length} severe breaking change{breaking.length === 1 ? '' : 's'}
+                <h3 className="text-xs font-semibold" style={{ color: tone }} data-ux-id="sentinel-findings-heading">
+                  {parts.join(' · ')}
                 </h3>
               </div>
               <div
                 className="rounded-lg border px-3"
                 style={{
-                  borderColor: 'color-mix(in srgb, var(--status-danger) 30%, transparent)',
+                  borderColor: `color-mix(in srgb, ${tone} 30%, transparent)`,
                   background: 'var(--surface-sunken)',
                 }}
               >
@@ -218,7 +232,8 @@ export default function SentinelPanel() {
                 ))}
               </div>
             </section>
-          )}
+            )
+          })()}
         </DialogBody>
       </DialogPanel>
     </DialogOverlay>
