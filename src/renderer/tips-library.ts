@@ -377,6 +377,20 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.terminal-links',
+    category: 'productivity',
+    complexity: 'simple',
+    priority: 44,
+    variants: {
+      primary: {
+        shortText: 'Links in the terminal are clickable',
+        title: 'Terminal Links',
+        body: 'Any URL printed in a session is a real link. **Click an https link** to open it in your default browser -- Claude pastes a PR, a preview, a docs page, and one click gets you there.\n\n**Right-click any link** (http or https) for **Copy link address** -- handy when the URL wraps across lines and selecting it by hand is fiddly.\n\nWorks in local and SSH sessions alike. Opening is https-only by design; http links are still copyable.',
+      },
+    },
+  },
+
+  {
     id: 'tip.ask-conductor-skill',
     category: 'productivity',
     complexity: 'simple',

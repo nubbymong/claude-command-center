@@ -14,8 +14,9 @@
     "Sentinel reports a stale snapshot after 90 days; keep fetchedAt honest."
   ],
   "source": "https://support.claude.com/en/articles/11940350-claude-code-model-configuration",
-  "fetchedAt": "2026-08-22",
+  "fetchedAt": "2026-09-02",
   "models": [
+    { "label": "Fable 5.1", "id": "claude-fable-5-1" },
     { "label": "Opus 5", "id": "claude-opus-5" },
     { "label": "Sonnet 5", "id": "claude-sonnet-5" },
     { "label": "Fable 5", "id": "claude-fable-5" },

@@ -37,10 +37,14 @@ export function selectBreakingFindings(
   return (snap?.findings ?? []).filter((f) => f.status === 'open' && findingReachesUser(f, ctx))
 }
 
-/** One finding as copyable plain text: title (+ surface), what breaks, evidence. */
+/** One finding as copyable plain text: title (+ surface), what breaks, evidence.
+ *  The prefix reads the severity (2026-09-02): only 'high' is a severe break;
+ *  'warn' findings (the model-coverage arm) are compatibility notices, and the
+ *  copyable text must not shout [BREAKING] about a model that breaks nothing. */
 export function formatFindingText(finding: SentinelFinding): string {
   const sfc = surfaceLabel(finding.surface)
-  const lines = [`[BREAKING] ${finding.title}${sfc ? ` (${sfc})` : ''}`]
+  const prefix = finding.severity === 'high' ? '[BREAKING]' : '[NOTICE]'
+  const lines = [`${prefix} ${finding.title}${sfc ? ` (${sfc})` : ''}`]
   if (finding.badgeText) lines.push(finding.badgeText)   // whatBreaks
   if (finding.evidence) lines.push(finding.evidence)
   return lines.join('\n')

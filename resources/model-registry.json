@@ -1,6 +1,9 @@
 {
   "models": [
-    { "id": "claude-fable-5", "patterns": ["fable"], "aliases": ["fable"], "family": "fable", "label": "Fable 5",
+    { "id": "claude-fable-5-1", "patterns": ["fable"], "aliases": ["fable"], "family": "fable", "label": "Fable 5.1",
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultracode"],
+      "fallbackPricing": { "input": 10, "output": 50, "cacheRead": 1.0, "cacheWrite": 12.5 } },
+    { "id": "claude-fable-5", "patterns": ["fable-5"], "family": "fable", "label": "Fable 5",
       "efforts": ["low", "medium", "high", "xhigh", "max", "ultracode"],
       "fallbackPricing": { "input": 10, "output": 50, "cacheRead": 1.0, "cacheWrite": 12.5 } },
     { "id": "claude-opus-5", "patterns": ["opus"], "aliases": ["opus", "opus[1m]"], "family": "opus", "label": "Opus 5",
@@ -47,12 +50,12 @@
     { "value": "high", "label": "High" },
     { "value": "xhigh", "label": "Extra high" },
     { "value": "max", "label": "Max" },
-    { "value": "ultracode", "label": "Ultracode", "hint": "xhigh + automatic dynamic workflows (Opus 4.8 / Fable 5)" }
+    { "value": "ultracode", "label": "Ultracode", "hint": "xhigh + automatic dynamic workflows (Opus 4.8 / Fable 5 and newer)" }
   ],
   "dropdown": [
     { "value": "opus", "label": "Opus", "hint": "Latest Opus (200k context)" },
     { "value": "opus[1m]", "label": "Opus 1M", "hint": "Latest Opus (1M context)" },
-    { "value": "fable", "label": "Fable 5", "hint": "Most capable · ~2x faster than Opus" },
+    { "value": "fable", "label": "Fable", "hint": "Latest Fable · most capable, ~2x faster than Opus" },
     { "value": "sonnet", "label": "Sonnet", "hint": "Latest Sonnet" },
     { "value": "haiku", "label": "Haiku", "hint": "Latest Haiku" }
   ]
