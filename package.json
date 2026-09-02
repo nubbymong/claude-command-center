@@ -46,7 +46,7 @@
     "dompurify": "^3.4.13",
     "electron-screenshots": "^0.6.2",
     "marked": "^18.0.5",
-    "node-pty": "1.2.0-beta.14",
+    "node-pty": "1.2.0-beta.15",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "ws": "^8.21.3",
