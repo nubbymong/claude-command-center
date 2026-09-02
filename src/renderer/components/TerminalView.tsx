@@ -4,7 +4,7 @@ import { Terminal, type ILinkProvider } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { decorateTerminalLinks } from './terminal/terminalLinks'
+import { decorateTerminalLinks, createLinkHoverControl, type LinkHoverControl } from './terminal/terminalLinks'
 import { installWebglWithRecovery, createAtlasResync, type WebglHandle } from './terminal/terminalWebgl'
 import { atlasCoordinator } from './terminal/atlasCoordinator'
 import {
@@ -146,10 +146,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // Whether #145 input diagnostics are on, readable from the init effect's
   // long-lived onData closure.
   const inputDiagRef = useRef(false)
-  // #21: the http/https URI under the cursor, recorded by the link provider's
-  // hover/leave, so the right-click menu can offer "Copy link address" for the
-  // exact link the linkifier matched. null = cursor is not over a link.
-  const hoveredLinkRef = useRef<string | null>(null)
+  // #21: the http/https link under the cursor, owned by a LinkHoverControl
+  // (terminalLinks.ts) rather than xterm's own decorations: xterm clears and
+  // re-asks the hovered link on every viewport re-render, which strobed the
+  // hand cursor at render cadence in a busy Claude session (2026-09-02 fix).
+  // The control debounces the leave, and the context menu reads current().
+  const linkHoverRef = useRef<LinkHoverControl | null>(null)
   // Explicit right-click menu (Copy/Paste). Opened by the contextmenu handler
   // whenever a blind copy-or-paste decision would be unsafe; null = closed.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSelection: boolean; linkUri?: string } | null>(null)
@@ -560,14 +562,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       fitAddon = new FitAddon()
       term.loadAddon(fitAddon)
       // #21: WebLinksAddon detects http/https URLs (wrapped-line + wide-char
-      // aware) but registers them with the hover underline ON, which churns the
-      // WebGL underline overlay on every selection-drag mousemove over a link →
-      // high-speed flicker. The addon has no decorations option and its matcher
-      // is not exported, so wrap registerLinkProvider for the duration of
-      // loadAddon and pass each produced link set through decorateTerminalLinks:
-      // underline OFF (kills the flicker), pointer cursor kept, activation routed
-      // to the OS browser (the addon's default window.open is denied), and the
-      // hovered URI recorded for the context menu. Restored immediately after.
+      // aware) but registers them with xterm-owned hover decorations, which
+      // xterm strobes at render cadence (it clears + re-asks the hovered link
+      // on every viewport re-render). The addon has no decorations option and
+      // its matcher is not exported, so wrap registerLinkProvider for the
+      // duration of loadAddon and pass each produced link set through
+      // decorateTerminalLinks: BOTH decorations off (underline: the #562
+      // selection flicker; pointerCursor: the 2026-09-02 hover flicker),
+      // activation routed to the OS browser (the addon's default window.open
+      // is denied), and hover/leave feeding the LinkHoverControl below, which
+      // owns the hand cursor + Copy-link URI. Restored immediately after.
+      // Hand cursor + hovered-URI state live OUTSIDE xterm (hover-flicker fix,
+      // 2026-09-02): xterm's leave/re-hover churn on every viewport re-render
+      // routes through this control, whose debounced leave keeps both stable.
+      const linkHover = createLinkHoverControl(() => term?.element ?? null)
+      linkHoverRef.current = linkHover
       const originalRegister = term.registerLinkProvider.bind(term)
       ;(term as unknown as { registerLinkProvider: (p: ILinkProvider) => { dispose(): void } }).registerLinkProvider = (
         provider: ILinkProvider,
@@ -578,8 +587,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               cb(
                 decorateTerminalLinks(links, {
                   open: (uri) => { void window.electronAPI.shell.openExternal(uri) },
-                  onHover: (uri) => { hoveredLinkRef.current = uri },
-                  onLeave: () => { hoveredLinkRef.current = null },
+                  onHover: (uri) => linkHover.hover(uri),
+                  onLeave: () => linkHover.leave(),
                 }),
               ),
             ),
@@ -1259,7 +1268,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // #21: right-clicking an http/https link with nothing selected opens the
         // menu so "Copy link address" is available (instead of a blind paste).
         // A live selection still copies the selection (action==='copy') and wins.
-        const linkUri = hoveredLinkRef.current
+        const linkUri = linkHoverRef.current?.current() ?? null
         if (linkUri && action !== 'copy') {
           setCtxMenu({ x: e.clientX, y: e.clientY, hasSelection: !!term.getSelection(), linkUri })
           return
@@ -1340,6 +1349,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         try { window.electronAPI.pty.resize(sessionId, lastSentCols, lastSentRows) } catch { /* main gone */ }
       }
       disposeKeybindings?.()
+      linkHoverRef.current?.dispose()
+      linkHoverRef.current = null
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)

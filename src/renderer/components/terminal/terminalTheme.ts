@@ -3,6 +3,8 @@
 // Hex literals are kept as the dark-mode fallback for the rare case
 // where computed styles aren't available (e.g. unit tests under jsdom
 // without our `:root` block applied).
+import { LINK_HOVER_CLASS } from './terminalLinks'
+
 const FALLBACK_DARK = {
   background: '#171e27',
   foreground: '#eef2f7',
@@ -147,6 +149,17 @@ const STYLE_TEXT = `
   .claude-session {
     --cursor-color: transparent !important;
     --xterm-cursor-color: transparent !important;
+  }
+
+  /* Link hover hand cursor (2026-09-02 flicker fix). ${LINK_HOVER_CLASS} is
+     the APP-OWNED class LinkHoverControl toggles on the terminal root: it must
+     never be xterm's own xterm-cursor-pointer, because the full-nuke net above
+     ([class*="xterm-cursor"]) display:nones any element wearing that — which is
+     exactly what made xterm's per-render class strobe flicker the whole screen.
+     !important beats xterm.css's own '.xterm { cursor: text }'. */
+  .${LINK_HOVER_CLASS},
+  .${LINK_HOVER_CLASS} .xterm-screen {
+    cursor: pointer !important;
   }
 `
 export function injectGlobalStyles() {
