@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { ILink } from '@xterm/xterm'
-import { decorateTerminalLinks } from '../../../src/renderer/components/terminal/terminalLinks'
+import { decorateTerminalLinks, createLinkHoverControl } from '../../../src/renderer/components/terminal/terminalLinks'
 
 // The decorator ignores the event arg (handlers key off the URI), so a plain
 // cast avoids needing a DOM environment for MouseEvent.
@@ -19,10 +19,13 @@ describe('decorateTerminalLinks (#21)', () => {
     expect(decorateTerminalLinks(undefined, { open: () => {}, onHover: () => {}, onLeave: () => {} })).toBeUndefined()
   })
 
-  it('turns the hover underline OFF (the flicker fix) but keeps the pointer cursor', () => {
+  it('turns BOTH hover decorations OFF (underline: #562 selection flicker; pointerCursor: 2026-09-02 hover flicker)', () => {
+    // xterm clears + re-asks the hovered link on every viewport re-render, so
+    // any decoration it owns strobes at render cadence in a busy session. The
+    // hand cursor is managed by createLinkHoverControl instead.
     const [d] = decorateTerminalLinks([fakeLink('https://x.dev')], { open: () => {}, onHover: () => {}, onLeave: () => {} })!
     expect(d.decorations?.underline).toBe(false)
-    expect(d.decorations?.pointerCursor).toBe(true)
+    expect(d.decorations?.pointerCursor).toBe(false)
   })
 
   it('routes activate through open() with the matched URI (both http and https)', () => {
@@ -52,5 +55,95 @@ describe('decorateTerminalLinks (#21)', () => {
     const [d] = decorateTerminalLinks([src], { open: () => {}, onHover: () => {}, onLeave: () => {} })!
     expect(d.text).toBe('https://x.dev/path')
     expect(d.range).toEqual(src.range)
+  })
+})
+
+describe('createLinkHoverControl (2026-09-02 hover-flicker fix)', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  function fakeEl() {
+    const classes = new Set<string>()
+    return {
+      el: {
+        classList: {
+          add: (c: string) => { classes.add(c) },
+          remove: (c: string) => { classes.delete(c) },
+        },
+      } as unknown as HTMLElement,
+      has: () => classes.has('xterm-cursor-pointer'),
+    }
+  }
+
+  it('hover applies the hand cursor and records the URI immediately', () => {
+    const f = fakeEl()
+    const c = createLinkHoverControl(() => f.el)
+    c.hover('https://x.dev')
+    expect(f.has()).toBe(true)
+    expect(c.current()).toBe('https://x.dev')
+  })
+
+  it("xterm's re-render churn (leave then immediate re-hover) never drops the cursor or the URI", () => {
+    // The bug: xterm clears + re-asks the hovered link on every viewport
+    // re-render, so leave/hover fired at render cadence and the hand cursor
+    // strobed. The debounced leave makes the gap invisible.
+    vi.useFakeTimers()
+    const f = fakeEl()
+    const c = createLinkHoverControl(() => f.el, 150)
+    c.hover('https://x.dev')
+    for (let i = 0; i < 10; i++) {
+      c.leave()
+      vi.advanceTimersByTime(20) // re-provide lands well inside the debounce
+      c.hover('https://x.dev')
+      expect(f.has()).toBe(true)
+      expect(c.current()).toBe('https://x.dev')
+    }
+    // ...and a right-click inside a churn gap still sees the URI (latent race).
+    c.leave()
+    vi.advanceTimersByTime(100)
+    expect(c.current()).toBe('https://x.dev')
+  })
+
+  it('a real departure clears the cursor and the URI after the delay', () => {
+    vi.useFakeTimers()
+    const f = fakeEl()
+    const c = createLinkHoverControl(() => f.el, 150)
+    c.hover('https://x.dev')
+    c.leave()
+    vi.advanceTimersByTime(151)
+    expect(f.has()).toBe(false)
+    expect(c.current()).toBeNull()
+  })
+
+  it('moving between two links keeps the cursor and swaps the URI', () => {
+    vi.useFakeTimers()
+    const f = fakeEl()
+    const c = createLinkHoverControl(() => f.el, 150)
+    c.hover('https://a.dev')
+    c.leave()
+    c.hover('https://b.dev')
+    vi.advanceTimersByTime(500)
+    expect(f.has()).toBe(true)
+    expect(c.current()).toBe('https://b.dev')
+  })
+
+  it('dispose cancels a pending leave and clears state at once', () => {
+    vi.useFakeTimers()
+    const f = fakeEl()
+    const c = createLinkHoverControl(() => f.el, 150)
+    c.hover('https://x.dev')
+    c.leave()
+    c.dispose()
+    expect(f.has()).toBe(false)
+    expect(c.current()).toBeNull()
+    vi.advanceTimersByTime(500) // the cancelled timer must not fire anything
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('tolerates a missing element (terminal not yet opened / already disposed)', () => {
+    const c = createLinkHoverControl(() => null)
+    c.hover('https://x.dev')
+    expect(c.current()).toBe('https://x.dev')
+    c.dispose()
+    expect(c.current()).toBeNull()
   })
 })
