@@ -44,8 +44,12 @@
 .ob-root .page { flex: 1; display: none; flex-direction: column; min-height: 0; }
 .ob-root .page.active { display: flex; }
 
-/* PAGE 1 — welcome */
-.ob-root .hero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px; text-align: center; }
+/* PAGE 1 — welcome. Same overflow contract as .p2 (see there): shrinkable
+   scroll container; .hero has MULTIPLE direct children (no single inner
+   wrapper), so centring rides first/last-child auto margins instead. */
+.ob-root .hero { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 10px 24px; text-align: center; }
+.ob-root .hero > :first-child { margin-top: auto; }
+.ob-root .hero > :last-child { margin-bottom: auto; }
 .ob-root .mark { width: 70px; height: 70px; margin-bottom: 6px; filter: drop-shadow(0 4px 16px var(--ob-soft)); }
 .ob-root .mark line { stroke: var(--ob); stroke-width: 3.2; stroke-linecap: round; }
 .ob-root .word { font-family: var(--serif); font-weight: 600; font-size: 58px; line-height: 1; letter-spacing: -.01em; margin: 0; }
@@ -97,9 +101,19 @@
 .ob-root .back { border: 1px solid var(--border-strong); background: transparent; color: var(--text-secondary); border-radius: 10px; padding: 11px 18px; font-size: 14px; cursor: pointer; }
 .ob-root .cta { margin-left: auto; border: 0; border-radius: 11px; padding: 12px 28px; font-size: 15px; font-weight: 680; cursor: pointer; background: linear-gradient(135deg, var(--ob-bright), var(--ob-deep)); color: var(--ob-on, #04121f); box-shadow: 0 8px 24px var(--ob-soft); }
 
-/* PAGE 2 — find Claude (the .p2 centred container is reused by later pages) */
-.ob-root .p2 { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px; }
-.ob-root .p2-inner { width: min(680px, 94vw); }
+/* PAGE 2 — find Claude (the .p2 centred container is reused by later pages).
+
+   Overflow contract (laptop bug, 2026-09-02): the root is position:fixed +
+   overflow:hidden, so a page taller than the viewport used to push the
+   footer's buttons clean off-screen with no scrollbar anywhere — a flex child
+   defaults to min-height:auto and refuses to shrink. `min-height: 0` +
+   `overflow-y: auto` make .p2 the scroll container instead, keeping .foot
+   on-screen always. Centring moves off justify-content onto the child's auto
+   margins: identical when content fits, but under overflow auto margins
+   collapse to 0 so scrolling reaches the TOP (justify-content: center clips
+   both ends unreachably — the classic centred-flex overflow trap). */
+.ob-root .p2 { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 10px 24px; }
+.ob-root .p2-inner { width: min(680px, 94vw); margin-top: auto; margin-bottom: auto; }
 .ob-root .h2 { font-family: var(--serif); font-size: 34px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 8px; text-align: center; }
 .ob-root .p2-sub { font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); text-align: center; margin: 0 auto 22px; max-width: 60ch; }
 .ob-root .checkrow { display: flex; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); margin-bottom: 10px; }
@@ -289,9 +303,11 @@
 .ob-root .gh-detail { transition: opacity .18s; }
 .ob-root .gh-detail.off { opacity: .32; pointer-events: none; filter: grayscale(.45); }
 
-/* PAGE 4 — status line (mock terminal scene + spotlit strip + switch columns) */
-.ob-root .sl-stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px; }
-.ob-root .sl-inner { width: min(1140px, 97vw); }
+/* PAGE 4 — status line (mock terminal scene + spotlit strip + switch columns).
+   Same overflow contract as .p2 (see there): single inner child, auto-margin
+   centring, scrolls when taller than the viewport. */
+.ob-root .sl-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 10px 24px; }
+.ob-root .sl-inner { width: min(1140px, 97vw); margin-top: auto; margin-bottom: auto; }
 .ob-root .sl-sub { font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); text-align: center; margin: 0 auto 18px; max-width: 66ch; }
 .ob-root .sl-scene { position: relative; border: 1px solid var(--border-subtle); border-radius: 14px; overflow: hidden; background: #0a0f16; }
 .ob-root .sl-spot { position: absolute; left: 50%; bottom: 0; width: 78%; height: 330px; transform: translateX(-50%); background: radial-gradient(52% 100% at 50% 100%, var(--ob-soft) 0%, rgba(0,0,0,0) 70%); pointer-events: none; z-index: 0; }
