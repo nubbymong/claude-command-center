@@ -562,14 +562,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       fitAddon = new FitAddon()
       term.loadAddon(fitAddon)
       // #21: WebLinksAddon detects http/https URLs (wrapped-line + wide-char
-      // aware) but registers them with the hover underline ON, which churns the
-      // WebGL underline overlay on every selection-drag mousemove over a link →
-      // high-speed flicker. The addon has no decorations option and its matcher
-      // is not exported, so wrap registerLinkProvider for the duration of
-      // loadAddon and pass each produced link set through decorateTerminalLinks:
-      // underline OFF (kills the flicker), pointer cursor kept, activation routed
-      // to the OS browser (the addon's default window.open is denied), and the
-      // hovered URI recorded for the context menu. Restored immediately after.
+      // aware) but registers them with xterm-owned hover decorations, which
+      // xterm strobes at render cadence (it clears + re-asks the hovered link
+      // on every viewport re-render). The addon has no decorations option and
+      // its matcher is not exported, so wrap registerLinkProvider for the
+      // duration of loadAddon and pass each produced link set through
+      // decorateTerminalLinks: BOTH decorations off (underline: the #562
+      // selection flicker; pointerCursor: the 2026-09-02 hover flicker),
+      // activation routed to the OS browser (the addon's default window.open
+      // is denied), and hover/leave feeding the LinkHoverControl below, which
+      // owns the hand cursor + Copy-link URI. Restored immediately after.
       // Hand cursor + hovered-URI state live OUTSIDE xterm (hover-flicker fix,
       // 2026-09-02): xterm's leave/re-hover churn on every viewport re-render
       // routes through this control, whose debounced leave keeps both stable.

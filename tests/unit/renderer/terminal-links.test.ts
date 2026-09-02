@@ -119,6 +119,12 @@ describe('createLinkHoverControl (2026-09-02 hover-flicker fix)', () => {
     c.leave()
     vi.advanceTimersByTime(100)
     expect(c.current()).toBe('https://x.dev')
+    // Run the debounce out (Copilot nit: no pending fake timer left behind) —
+    // which also pins the other half: an UNCANCELLED leave does clear.
+    vi.advanceTimersByTime(51)
+    expect(c.current()).toBeNull()
+    expect(f.has()).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('a real departure clears the cursor and the URI after the delay', () => {
