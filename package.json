@@ -78,7 +78,7 @@
     "rollup": "^4.59.0",
     "@tootallnate/once": "^3.0.1",
     "nanoid": "^5.1.11",
-    "fast-uri": "^3.1.2",
+    "fast-uri": "^3.1.7",
     "mermaid": "^11.15.0",
     "qs": "^6.15.2",
     "uuid": "^11.1.1",
