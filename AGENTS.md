@@ -26,6 +26,17 @@ worktree you own; `CCC_SESSION_GUARD=off` is the escape hatch. See
 
 ## Ticket creation & premise review — policy
 
+**Where tickets live (durable governance).** Internal tickets, work items, and
+plans are filed in the private planning workspace
+[`nubbymong/aicc_planning`](https://github.com/nubbymong/aicc_planning) (its
+Issues + Planning Project) — NOT in this repository's issue tracker, which is
+reserved for public error reporting (external/user-filed bugs) and public
+interfacing. Implementation still lands here (code, PRs, releases); a code PR
+references its governing `aicc_planning` ticket by URL (cross-repo — link it; it
+does not auto-close). This rule is durable and is mirrored in the planning
+repo's `AGENTS.md`. The premise-review policy below applies wherever the ticket
+is filed.
+
 **Every repo change starts from a GitHub issue, and every issue carries a premise
 review.** Two standing gates bracket a change: a *premise* review at creation, and
 an *adversarial* review before merge (ADR-009). This is the first one.
