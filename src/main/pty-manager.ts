@@ -628,7 +628,17 @@ const MAX_SETUP_LINE_BUFFER = 4096
  * Sharing a buffer would let one sentinel's resolve-and-clear discard the
  * other's partial line.
  */
-type SshLineBufferKind = 'setup' | 'stage' | 'arch'
+type SshLineBufferKind = 'setup' | 'stage' | 'arch' | 'runtime'
+
+/**
+ * What docker / podman print when `<engine> exec -it <name> <shell>` cannot
+ * enter the container (rc.14 review F1, aicc_planning#45): stopped or missing
+ * container, engine down, engine not installed, runtime refusing the exec.
+ * Matched against the ANSI-stripped, line-buffered output of the post-command
+ * ONLY (container sessions, after the post-command is sent and before the
+ * inner shell is accepted), so a banner or a log line elsewhere cannot trip it.
+ */
+export const CONTAINER_ENTRY_ERROR_RE = /Error response from daemon|No such container|is not running|Cannot connect to (?:the )?(?:Docker|Podman)|(?:docker|podman): (?:command )?not found|command not found: (?:docker|podman)|Error: no container with name|OCI runtime exec failed|unable to start container process/i
 const sshLineBuffers = new Map<string, string>()
 const sshLineBufferKey = (sessionId: string, kind: SshLineBufferKind): string => `${sessionId}:${kind}`
 
@@ -1152,7 +1162,10 @@ export function probeTmuxLive(
   const remoteCommand = buildTmuxListCommand()
   const unverified: DetachedRemoteLiveness = { outcome: 'unverified', liveSessionIds: [] }
   // Turn captured output into a result. `connected` is the sentinel test done by
-  // the caller (execFile) OR here (parseTmuxLivenessOutput.completed).
+  // the caller (execFile) OR here (parseTmuxLivenessOutput.completed). Since
+  // rc.14 review F11 `completed` also requires that at least one tmux binary
+  // actually ran (the FOUND marker): END without FOUND is a host whose tmux
+  // lives outside every candidate path, and that is unverified, never death.
   const finish = (raw: string): DetachedRemoteLiveness => {
     const parsed = parseTmuxLivenessOutput(raw)
     if (!parsed.completed) return unverified
@@ -1218,8 +1231,9 @@ export function probeTmuxLive(
         const raw = (stdout ?? '').toString()
         // A non-zero exit is NOT a failure here: `tmux ls` exits non-zero when no
         // server is running, yet the echo'd END sentinel still prints, so a
-        // completed-but-empty run is correctly 'verified' with zero live ids. Only
-        // the missing sentinel (connection/auth failure) yields 'unverified'.
+        // completed-but-empty run is correctly 'verified' with zero live ids. A
+        // missing END sentinel (connection/auth failure) yields 'unverified', and
+        // so does END without any FOUND marker (no tmux binary could be run).
         const result = finish(raw)
         logInfo(`[ssh] liveness probe ${result.outcome} (${err ? `exit err: ${err.message}` : 'ok'}; ${result.liveSessionIds.length}/${sessionIds.length} live)`)
         resolve(result)
@@ -1613,6 +1627,9 @@ export function spawnPty(
     let setupDone = false
     let setupShellReady = false
     let postCommandSent = false
+    // rc.14 review F1: the post-command (container entry) printed an engine
+    // failure. The host prompt that follows is NOT the inner shell.
+    let runtimeEntryFailed = false
     let postCommandShellReady = false
     let containerSetupSent = false
     let containerSetupDone = false
@@ -1888,6 +1905,7 @@ export function spawnPty(
           currentFlowState === 'running-postcommand'
           && postCommandSent
           && !postCommandShellReady
+          && !runtimeEntryFailed
         ) {
           postCommandShellReady = true
           inInnerShell = true
@@ -2769,6 +2787,10 @@ export function spawnPty(
         // route out is Skip (an explicit choice to drive the raw shell) or
         // fixing the config.
         if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
+        // rc.14 review F1: same shape for a container the engine could not enter.
+        // inInnerShell is still false here, so without this guard Retry Launch
+        // would take the host ladder and start claude on the host.
+        if (runtimeEntryFailed) { setFlowState('failed', 'container entry failed'); return }
         // #242 round-2 MAJOR fix: tier-3 staging can be in flight for up to
         // STAGE_TIMEOUT_MS (20s) while claudeSent is still false, a window
         // that didn't exist pre-#242 (claudeSent used to flip true in the
@@ -3143,6 +3165,25 @@ export function spawnPty(
         }
       }
 
+      // rc.14 review F1 (aicc_planning#45): a container entry that FAILED returns
+      // to the HOST shell, whose next prompt used to be read as the inner shell
+      // (the transition further down, and the idle fallback), so Launch Claude
+      // wrote the container setup and the claude command to the host. Watch the
+      // post-command's own output for the engines' failure shapes and fail the
+      // flow instead; both inner-shell transitions are also gated on the flag,
+      // and launchClaude() re-emits the failure rather than walking the host
+      // ladder. Skip stays available as the explicit way onto the raw host shell.
+      if (isContainerSession && postCommandSent && !postCommandShellReady && !runtimeEntryFailed) {
+        const recent = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
+        if (CONTAINER_ENTRY_ERROR_RE.test(recent)) {
+          runtimeEntryFailed = true
+          clearSshLineBuffer(sessionId, 'runtime')
+          logInfo(`[ssh] ${sessionId}: container entry failed (engine error after the post-command) -- staying on the host shell, not marking inner`)
+          setFlowState('failed', 'container entry failed')
+          return
+        }
+      }
+
       // The current chunk's prompt-shaped last line, computed once for the
       // password check, the sudo check, and the stage transitions below. The
       // STICKY copy (lastPromptLineSeen) feeds the idle fallback's auth-prompt
@@ -3153,8 +3194,13 @@ export function spawnPty(
       if (promptLineNow !== '') lastPromptLineSeen = promptLineNow
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
-      // line containing the word.
-      if (!passwordSent && password && PASSWORD_PROMPT_RE.test(promptLineNow)) {
+      // line containing the word -- and only while still AUTHENTICATING (rc.14
+      // review F13, aicc_planning#57): once the post-command has gone out the
+      // connection is up, so a prompt shaped like a bare `Password:` is sudo's
+      // (the macOS shape), not sshd's. Key auth leaves `passwordSent` false, so
+      // without this gate the saved SSH secret was typed into sudo and the
+      // handler returned before the sudo branch below could act.
+      if (!passwordSent && password && !postCommandSent && PASSWORD_PROMPT_RE.test(promptLineNow)) {
         passwordSent = true
         setTimeout(() => {
           ptyProcess.write(password + '\r')
@@ -3228,6 +3274,7 @@ export function spawnPty(
         && !postCommandShellReady
         && sawShellPrompt
         && (!sudoPassword || sudoPasswordSent)
+        && !runtimeEntryFailed
       ) {
         postCommandShellReady = true
         inInnerShell = true
