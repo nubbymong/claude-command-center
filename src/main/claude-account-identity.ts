@@ -5,7 +5,7 @@
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs, { promises as fsp } from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
-import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles, isValidProfileId } from './account-profiles'
+import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles, isValidProfileId, backupProfileHomeToCanonical } from './account-profiles'
 import { hasTransientProfileConsumer } from './profile-consumers'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
@@ -83,6 +83,12 @@ export function pushAccountIdentity(sessionId: string): void {
 
 const watched = new Map<string, string | undefined>() // sessionId -> profileId
 const lastMtimeMs = new Map<string, number>()         // sessionId -> last seen identity-file mtime
+// sessionId -> last seen `.credentials.json` mtime of the session's PROFILE home
+// (rc.14 review F6). A change with the email unchanged is a token ROTATION, and
+// the canonical backup must follow it: it used to be refreshed only at exit, so
+// a capture/restore mid-session could put a pre-rotation (spent) refresh token
+// back and strand the account. Only ever observed by stat; never read here.
+const lastCredsMtimeMs = new Map<string, number>()
 // profileId -> the email we last broadcast a "new account detected" prompt for.
 // Sessions sharing a profile home all observe the same /login, so this dedups the
 // prompt to one per (profile, email) instead of one per session.
@@ -232,6 +238,7 @@ async function recheckAllAsyncInner(): Promise<void> {
     // or reject this promise (it's void'd in a setInterval -> would be an unhandled
     // rejection). One bad session is skipped; the rest still poll.
     try {
+      if (profileId) await followCredentialRotation(sessionId, profileId)
       const before = bySession.get(sessionId) ?? null
       const changed = await recheckSessionIdentityAsync(sessionId, profileId)
       if (!changed) continue
@@ -249,6 +256,24 @@ async function recheckAllAsyncInner(): Promise<void> {
   }
 }
 
+/**
+ * Keep the canonical backup current through a mid-session token rotation
+ * (rc.14 review F6, aicc_planning#50). Stat-only: the first observation just
+ * records the mtime; every later change re-snapshots the profile home into
+ * canonical. `backupProfileHomeToCanonical` is itself EMAIL-GUARDED, so a
+ * /login that switched the home to a different account is refused there --
+ * this only ever lands rotations of the profile's own account.
+ */
+async function followCredentialRotation(sessionId: string, profileId: string): Promise<void> {
+  const file = path.join(getProfileConfigDir(profileId), '.claude', '.credentials.json')
+  let mtime: number
+  try { mtime = (await fsp.stat(file)).mtimeMs } catch { return }
+  const last = lastCredsMtimeMs.get(sessionId)
+  lastCredsMtimeMs.set(sessionId, mtime)
+  if (last === undefined || last === mtime) return
+  try { backupProfileHomeToCanonical(profileId) } catch { /* best-effort, like the exit-time backup */ }
+}
+
 /** Start polling a live session's identity file for mid-session account changes. */
 export function startWatchingAccountIdentity(sessionId: string, profileId: string | undefined): void {
   watched.set(sessionId, profileId)
@@ -263,6 +288,7 @@ export function startWatchingAccountIdentity(sessionId: string, profileId: strin
 export function stopWatchingAccountIdentity(sessionId: string): void {
   watched.delete(sessionId)
   lastMtimeMs.delete(sessionId)
+  lastCredsMtimeMs.delete(sessionId)
   if (watched.size === 0 && pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
@@ -291,6 +317,7 @@ export function _resetClaudeAccounts(): void {
   profileBySession.clear()
   watched.clear()
   lastMtimeMs.clear()
+  lastCredsMtimeMs.clear()
   detectedByProfile.clear()
   recheckInFlight = false
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
