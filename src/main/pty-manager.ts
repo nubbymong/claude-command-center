@@ -1946,7 +1946,12 @@ export function spawnPty(
             // fired, so no line since the post-command matched SHELL_PROMPT_RE.
             // Three readings of that, in order:
             // (1) the host shell said the engine binary does not exist and its
-            //     own (unmatched -- a zsh `%`) prompt came back: a failed entry;
+            //     own (unmatched -- a zsh `%`) prompt came back: a failed entry.
+            //     Only where the identity check could not have caught it
+            //     (hostPromptLine ''): with a known host prompt, its NOT coming
+            //     back means we are not on the host, so the line came from an
+            //     rc file inside the container and the inner shell simply has
+            //     a prompt the regex does not know -- promote, as always;
             // (2) nothing beyond the command's echo has come back: the engine
             //     is hung or the container is still starting. Hold, bounded;
             //     a container that never prints anything is not one claude
@@ -1960,7 +1965,7 @@ export function spawnPty(
             //     '') must delay, never wedge.
             // Anything else -- an inner shell whose prompt the regex does not
             // know -- promotes exactly as it always has.
-            if (entrySuspect) {
+            if (entrySuspect && hostPromptLine === '') {
               runtimeEntryFailed = true
               clearSshLineBuffer(sessionId, 'runtime')
               logInfo(`[ssh] ${sessionId}: idle after postCommand with an engine-not-found line and no inner prompt -- container entry failed`)
@@ -2241,6 +2246,19 @@ export function spawnPty(
           setFlowState('failed', 'host setup error')
         }
       }, 200)
+    }
+
+    /** Is this stripped, trimmed output line nothing but (a fragment of) the
+     *  post-command's own echo -- alone, or with the host prompt repainted in
+     *  front of it? Anything else is the entry answering. */
+    const isPostCommandEcho = (line: string): boolean => {
+      if (!postCommand) return false
+      if (postCommand.includes(line)) return true
+      if (hostPromptLine !== '' && line.startsWith(hostPromptLine)) {
+        const rest = line.slice(hostPromptLine.length).trim()
+        return rest === '' || postCommand.includes(rest)
+      }
+      return false
     }
 
     const writePostCommand = () => {
@@ -3296,9 +3314,11 @@ export function spawnPty(
       if (promptLineNow !== '') lastPromptLineSeen = promptLineNow
       // rc.14 review F1 round 2: remember the HOST shell's prompt while we are
       // still on the host, so the entry watch below can recognise it coming
-      // back. Frozen by postCommandSent (nothing after the click is the host's
-      // prompt for this purpose).
-      if (isContainerSession && !postCommandSent && promptLineNow !== '' && SHELL_PROMPT_RE.test(promptLineNow)) {
+      // back. Frozen once the post-command has been written (nothing after that
+      // is the host's prompt for this purpose) -- and live again while the entry
+      // is FAILED, since the user is back on the host then and may `cd` before
+      // Run again: the second attempt is judged against the prompt as it stands.
+      if (isContainerSession && (!postCommandWritten || runtimeEntryFailed) && promptLineNow !== '' && SHELL_PROMPT_RE.test(promptLineNow)) {
         hostPromptLine = promptLineNow
       }
 
@@ -3336,9 +3356,11 @@ export function spawnPty(
           entrySuspect = true
           logInfo(`[ssh] ${sessionId}: post-command output says the engine binary was not found -- suspect entry, waiting for the prompt to decide`)
         }
-        // The command's own echo (possibly fragmented) does not count as the
-        // entry answering; anything else does.
-        if (!entryOutputSeen && postCommand && lines.some((l) => l !== '' && !postCommand.includes(l))) {
+        // The command's own echo (possibly fragmented, possibly repainted by
+        // readline/ConPTY together with the host prompt in front of it: `\r` +
+        // `user@host:~$ docker exec ...`) does not count as the entry
+        // answering; anything else does.
+        if (!entryOutputSeen && postCommand && lines.some((l) => l !== '' && !isPostCommandEcho(l))) {
           entryOutputSeen = true
         }
       }

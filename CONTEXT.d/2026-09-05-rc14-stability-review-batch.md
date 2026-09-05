@@ -115,6 +115,19 @@ host prompt's identity is the ticket's own fix shape: a narrowing of the review'
 "positive evidence from inside the runtime", which would need the composed entry
 command to carry a marker and cannot cover a hand-written post-command.
 
+**Spec review of round 2 (Tier B)** found one MAJOR and three minors, fixed in the
+follow-up commit: readline/ConPTY can repaint the host prompt in front of the echoed
+command (`` + `user@host:~$ docker exec ...`), which the silence hold had counted as
+"output", so a hung engine still promoted -- a line is echo when it is the command (or a
+fragment) alone or with the host prompt in front of it; `hostPromptLine` is captured again
+while the entry is FAILED, so Run again after a `cd` on the host is judged against the
+prompt as it stands; the not-found suspicion fails an idle entry only where the identity
+check could not have caught it (`hostPromptLine` ''), so a healthy container whose rc
+file prints the not-found line and whose prompt the regex does not know still promotes;
+and (accepted, documented in the known issues) a session whose container runtime is
+invalid is `failed` from spawn, never `connecting`, so its SSH password is no longer
+typed for it. Three more mutations, each caught.
+
 **Deferred / not changed.** The review's INCIDENT assessment needs no code; the
 `existsSync` vs `isFile` hardening from the earlier adversarial pass is still deferred.
 Tier C (F4 + F5 consumer coordinator, F10 destination identity) is 2.2 work, tickets
