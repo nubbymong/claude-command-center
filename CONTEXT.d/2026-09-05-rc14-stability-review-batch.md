@@ -84,8 +84,8 @@ backstop; an end-to-end F6 test now drives the real backup/restore over a temp r
   walking the host ladder. The idle fallback in `running-postcommand` now holds
   (bounded) instead of promoting while nothing beyond the command's echo has come back
   (a hung engine or a still-starting container; the cap fails the entry) or while a
-  password prompt is on screen (a human typing a sudo password; the cap advances as
-  before). `runPostCommand()` accepts the failed-entry state as the one re-entry: it
+  password prompt is on screen (a human typing a sudo password; the cap FAILS the
+  entry -- a prompt unanswered after ~61s is still the host). `runPostCommand()` accepts the failed-entry state as the one re-entry: it
   resets the entry watch and the sudo latch and writes the post-command again; the
   overlay's failed card offers Run again for that reason (Retry Launch would only
   re-emit). Skip stays the explicit route to the raw host shell. Positive controls: a
@@ -131,10 +131,9 @@ typed for it. Three more mutations, each caught.
 **Quality review of round 2 (Tier B)** found one MAJOR and four minors, fixed in the
 next commit: the identity check read the UNTERMINATED trailing line, so a repaint chunk
 that ended right after the prompt (readline writes a carriage return + prompt, and the echoed command
-can arrive in the next chunk) failed a healthy entry -- a trailing host prompt is now
-PENDING (`entryHostPromptPending`): the prompt path refuses it as an inner shell and the
-idle fallback fails it only if nothing followed in 1.5s, while a TERMINATED host prompt
-line still fails at once; nothing armed the idle timer when the post-command was written,
+can arrive in the next chunk) failed a healthy entry -- the host prompt back on
+screen is decided by the idle fallback (`isHostBackLine` on the sticky trailing line),
+not judged in the chunk, since readline repaints the prompt and then the echoed command; nothing armed the idle timer when the post-command was written,
 so a flow the idle path had carried to awaiting-postcommand could sit in
 running-postcommand forever against a remote that never echoes -- `writePostCommand`
 arms it; echo was matched by substring, so a terse genuine line (`bash`) read as echo --
@@ -146,6 +145,20 @@ counters instead of one shared, the prompt hold reads the buffer's live trailing
 rather than the sticky (a starship inner prompt no longer keeps a sudo prompt "on screen"
 for a minute), the host prompt is captured through the same stripper the watch reads
 with, `failureText` has a direct test. Seven more mutations, each caught.
+
+**Review round 2c (spec + quality) -- final.** Two more MAJORs, then the host-back
+decision was moved fully onto the accumulated terminal: `hostPromptLine` captured from
+the line-buffered host output (a split login prompt no longer defeats it); `visibleLines`
+collapses carriage-return repaints and strips C0 bytes (a BEL), `lastVisible` reads past
+empty/eol-only chunks, so a repaint/BEL/CSI chunk or the user typing at the returned
+prompt cannot erase the read; `isHostBackLine` (host prompt alone or with non-echo
+activity after it, but not the command echo) is the single test the prompt path and the
+idle fallback share; the password-prompt hold reads the live trailing line and its cap
+FAILS; the `Sorry, user` alternative is bounded `[^\r\n]{0,200}`. A follow-up added an
+`entryHostSeen` latch (set on host-back, cleared by our own command echo -- the readline
+repaint) so that once the host prompt has returned, an intervening prompt-shaped line the
+user types is never promoted. `entryHostPromptPending`/`hostPromptCompleted` are gone.
+Thirteen more mutations across the two files, each caught; full unit suite green (10476).
 
 **Deferred / not changed.** The review's INCIDENT assessment needs no code; the
 `existsSync` vs `isFile` hardening from the earlier adversarial pass is still deferred.
