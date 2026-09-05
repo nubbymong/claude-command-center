@@ -231,6 +231,79 @@ describe('a signed-off subject is done, not resumable', () => {
   })
 })
 
+// A canvas is a HISTORY of artifact runs (item C): approve run A, archive it,
+// and the next render starts run B. The gate above must read the NEWEST run,
+// not the flat version list — a reverse-find over the whole history skipped
+// B's draft and landed on A's approval, so run B was stranded: omitted from
+// the list AND refused by the action.
+describe('signed off is judged on the NEWEST RUN, not the whole history', () => {
+  const html = '<!doctype html><p>next</p>'
+
+  it('REGRESSION: an approved-then-archived run followed by a fresh OPEN run leaves the canvas resumable', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    store.setArtifactArchived(canvasId, 'v1', true)
+    expect(store.renderVersion(OWNER, { mode: 'design', html }).versionId).toBe('v2') // run B
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
+    expect(link.resumeCanvasFromSession(ASKER, canvasId, OWNER, [])).toEqual({ ok: true, canvasId })
+  })
+
+  it('REGRESSION: a fresh run that is only SHOW-AND-TELL so far is undecided — an earlier run\'s approval does not reach across', () => {
+    // Show-and-tell owes no review, so the anchor skips it; a flat scan over the
+    // whole history then lands on run A's approval and reads run B as done.
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    store.setArtifactArchived(canvasId, 'v1', true)
+    expect(store.renderVersion(OWNER, { mode: 'design', html, intent: 'show' }).versionId).toBe('v2')
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
+  })
+
+  it('REGRESSION: a DRAFT rendered after the archived approval is the next run starting — not done', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    store.setArtifactArchived(canvasId, 'v1', true)
+    expect(store.renderVersion(OWNER, { mode: 'design', html, ready: false }).draft).toBe(true)
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
+    expect(link.resumeCanvasFromSession(ASKER, canvasId, OWNER, []).ok).toBe(true)
+  })
+
+  it('a draft after an approval in the SAME run (nothing archived) is unfinished work too', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    expect(store.renderVersion(OWNER, { mode: 'design', html, ready: false }).draft).toBe(true)
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
+  })
+
+  it('the newest run decides: once run B is approved too, the canvas is done', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    store.setArtifactArchived(canvasId, 'v1', true)
+    const v2 = store.renderVersion(OWNER, { mode: 'design', html }).versionId
+    store.setVersionVerdict(OWNER, v2, { state: 'approved' }, 'user')
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
+    expect(link.resumeCanvasFromSession(ASKER, canvasId, OWNER, [])).toEqual({ ok: false, reason: 'completed' })
+  })
+
+  it('an approved run that was archived with nothing after it is done — archiving does not un-decide it', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    store.setArtifactArchived(canvasId, 'v1', true)
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
+  })
+})
+
 describe('what the row is given to tell candidates apart', () => {
   it('falls back to the conversation short id when nothing else names the work', () => {
     const first = renderAs(OWNER, PROJECT, CONV)

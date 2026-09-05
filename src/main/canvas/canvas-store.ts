@@ -2215,23 +2215,38 @@ function isLiveOrUnknown(sessionId: string, isSessionLive: (sid: string) => bool
  */
 /**
  * Signed off is DONE, not resumable (owner, 2026-09-06: "if something was
- * signed off then it should be done"). The newest version the user would act
- * on — skipping drafts (the agent's own review), show-and-tell (owes no
- * review) and 'withdrawn' stamps, the same anchor rule `artifactPhaseOf` and
- * the Library use — carries a terminal decision:
+ * signed off then it should be done"). Judged on the NEWEST ARTIFACT RUN only
+ * (`artifactRuns`, the grouping the Library and archive use): a canvas is a
+ * history of runs, and an earlier run's approval says nothing about the work
+ * that came after it — approve run A, archive it, render run B, and a flat
+ * reverse-find over every version lands on A's approval and strands B. Within
+ * that run, the newest version the user would act on — skipping show-and-tell
+ * (owes no review) and 'withdrawn' stamps, the anchor rule `openVersionOf`
+ * uses — carries a terminal decision:
  *   - 'approved' / 'dismissed' → the user decided; the subject is finished and
  *     must not keep nagging as resumable.
  *   - 'rejected' → a rejection asks for another round, so the work is NOT done;
  *     it stays resumable.
  *   - no verdict (an OPEN version) → the user's to decide; stays resumable.
- * A completed canvas is already excluded above; this covers the far more common
- * "reviewed and approved but never formally Marked complete" case, which was
- * surfacing every signed-off canvas as resumable.
+ * A DRAFT rendered after the newest run's last ready version is the agent
+ * starting the next round or run (#366): unfinished work, so not signed off —
+ * a session that died mid-draft after an approval must not strand it.
+ *
+ * Two readings of "signed off" coexist on purpose. The Library's Signed-off
+ * chip (canvas-library-rows) means the canvas was MARKED COMPLETE (#476); this
+ * gate means the newest run carries a user verdict. Both callers check
+ * `completed` first; this covers the far more common "reviewed and approved
+ * but never formally Marked complete" case, which was surfacing every
+ * signed-off canvas as resumable.
  */
 function isSignedOff(record: CanvasRecord): boolean {
-  const anchor = [...record.versions].reverse().find(
-    (v) => !v.draft && !v.show && v.verdict?.state !== 'withdrawn',
-  )
+  const { versions } = record
+  const run = artifactRuns(versions).at(-1)
+  if (!run) return false // drafts only, or nothing: nothing has been decided
+  // Every ready version belongs to some run, so a version after the newest
+  // run's last member can only be a draft — the next round starting.
+  if (versions[versions.length - 1]?.id !== run[run.length - 1].id) return false
+  const anchor = [...run].reverse().find((v) => !v.show && v.verdict?.state !== 'withdrawn')
   const state = anchor?.verdict?.state
   return state === 'approved' || state === 'dismissed'
 }
