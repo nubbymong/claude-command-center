@@ -17,6 +17,12 @@
  *   - Cookies are injected into `persist:claude-web-<profileId>` and nowhere
  *     else; one partition per account is the isolation boundary.
  *   - CCC never reads the user's normal browser profile.
+ *   - The browser binary is resolved from the system-wide install locations
+ *     first and, on Windows, the per-user %LOCALAPPDATA% install last
+ *     (aicc_planning#43). That last location is user-writable, which adds no
+ *     principal boundary: whoever can plant a binary there already runs as this
+ *     user, and the app never runs elevated or as a service with a borrowed
+ *     environment. No shell is involved -- the path goes to spawn() as argv[0].
  *
  * No default export (project convention).
  */

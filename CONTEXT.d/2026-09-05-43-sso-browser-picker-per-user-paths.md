@@ -34,3 +34,17 @@ design follow-up SSBN raised (surface which browser will be used, and why the
 picker is hidden) is a separate ticket, not an rc fix. The Windows `App Paths`
 registry lookup for non-standard install roots is also left out: `browser-paths`
 is deliberately pure and dependency-free, and no report needs it yet.
+
+**Adversarial pass (ADR-009), one round, two lenses -- PASS.** The thesis under attack
+was the one no test can assert: that resolving a browser binary from a user-writable
+location adds no trust boundary. It held: LOCALAPPDATA is never set or forwarded by the
+app, there is no elevated / service / installer launch that keeps a borrowed environment,
+and both consumers call `spawn()` without a shell (empirically: `&`, `%VAR%`, quotes and
+a doubled separator in the value all either ENOENT or normalise harmlessly). Minor
+findings, closed here: the resolver tie-break (system beats per-user) and the dual
+per-user machine were correct but unasserted -- now tested; the sign-in SECURITY NOTES
+record the delta. Deferred hardening, not an rc fix: `resolveBrowserBinary` /
+`launchBrowser` accept any `existsSync` hit, so a DIRECTORY named `chrome.exe` under
+%LOCALAPPDATA% would be chosen and fail at spawn instead of falling back to Edge
+(same-user-only, previously unreachable without admin); an `isFile()` check closes it
+but needs the node:fs mocks in six account-web tests extended, so it is a follow-up.
