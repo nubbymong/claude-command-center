@@ -88,3 +88,23 @@ describe('canonical backup follows a credential rotation', () => {
     identity.stopWatchingAccountIdentity('s3')
   })
 })
+
+describe('one rotation costs one backup, however many sessions share the account', () => {
+  it('two watched sessions on the same profile: a rotation triggers exactly one canonical snapshot', async () => {
+    writeCreds('rt-10')
+    identity.startWatchingAccountIdentity('a1', 'profile-aaa111')
+    identity.startWatchingAccountIdentity('a2', 'profile-aaa111')
+    await identity.recheckAllAsync()
+    expect(backup).not.toHaveBeenCalled()
+    writeCreds('rt-11')
+    await identity.recheckAllAsync()
+    expect(backup).toHaveBeenCalledTimes(1)
+    // Closing one session keeps the profile's stamp (the other still watches);
+    // closing the last one drops it, so a later session observes afresh.
+    identity.stopWatchingAccountIdentity('a1')
+    writeCreds('rt-12')
+    await identity.recheckAllAsync()
+    expect(backup).toHaveBeenCalledTimes(2)
+    identity.stopWatchingAccountIdentity('a2')
+  })
+})

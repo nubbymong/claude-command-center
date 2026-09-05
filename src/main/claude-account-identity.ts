@@ -83,12 +83,14 @@ export function pushAccountIdentity(sessionId: string): void {
 
 const watched = new Map<string, string | undefined>() // sessionId -> profileId
 const lastMtimeMs = new Map<string, number>()         // sessionId -> last seen identity-file mtime
-// sessionId -> last seen `.credentials.json` mtime of the session's PROFILE home
-// (rc.14 review F6). A change with the email unchanged is a token ROTATION, and
-// the canonical backup must follow it: it used to be refreshed only at exit, so
-// a capture/restore mid-session could put a pre-rotation (spent) refresh token
-// back and strand the account. Only ever observed by stat; never read here.
-const lastCredsMtimeMs = new Map<string, number>()
+// profileId -> last seen `.credentials.json` mtime of that PROFILE home (rc.14
+// review F6). A change with the email unchanged is a token ROTATION, and the
+// canonical backup must follow it: it used to be refreshed only at exit, so a
+// capture/restore mid-session could put a pre-rotation (spent) refresh token
+// back and strand the account. Keyed by PROFILE, not session: several sessions
+// on one account share one credential file, and one rotation must cost one
+// backup, not one per session. Only ever observed by stat; never read here.
+const lastCredsMtimeByProfile = new Map<string, number>()
 // profileId -> the email we last broadcast a "new account detected" prompt for.
 // Sessions sharing a profile home all observe the same /login, so this dedups the
 // prompt to one per (profile, email) instead of one per session.
@@ -238,7 +240,7 @@ async function recheckAllAsyncInner(): Promise<void> {
     // or reject this promise (it's void'd in a setInterval -> would be an unhandled
     // rejection). One bad session is skipped; the rest still poll.
     try {
-      if (profileId) await followCredentialRotation(sessionId, profileId)
+      if (profileId) await followCredentialRotation(profileId)
       const before = bySession.get(sessionId) ?? null
       const changed = await recheckSessionIdentityAsync(sessionId, profileId)
       if (!changed) continue
@@ -264,12 +266,12 @@ async function recheckAllAsyncInner(): Promise<void> {
  * /login that switched the home to a different account is refused there --
  * this only ever lands rotations of the profile's own account.
  */
-async function followCredentialRotation(sessionId: string, profileId: string): Promise<void> {
+async function followCredentialRotation(profileId: string): Promise<void> {
   const file = path.join(getProfileConfigDir(profileId), '.claude', '.credentials.json')
   let mtime: number
   try { mtime = (await fsp.stat(file)).mtimeMs } catch { return }
-  const last = lastCredsMtimeMs.get(sessionId)
-  lastCredsMtimeMs.set(sessionId, mtime)
+  const last = lastCredsMtimeByProfile.get(profileId)
+  lastCredsMtimeByProfile.set(profileId, mtime)
   if (last === undefined || last === mtime) return
   try { backupProfileHomeToCanonical(profileId) } catch { /* best-effort, like the exit-time backup */ }
 }
@@ -286,9 +288,12 @@ export function startWatchingAccountIdentity(sessionId: string, profileId: strin
 
 /** Stop polling a session (called alongside clearClaudeAccount on PTY exit). */
 export function stopWatchingAccountIdentity(sessionId: string): void {
+  const profileId = watched.get(sessionId)
   watched.delete(sessionId)
   lastMtimeMs.delete(sessionId)
-  lastCredsMtimeMs.delete(sessionId)
+  // The rotation stamp is per profile: drop it only when no watched session is
+  // left on that profile, so the next session starts with a fresh observation.
+  if (profileId && ![...watched.values()].includes(profileId)) lastCredsMtimeByProfile.delete(profileId)
   if (watched.size === 0 && pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
@@ -317,7 +322,7 @@ export function _resetClaudeAccounts(): void {
   profileBySession.clear()
   watched.clear()
   lastMtimeMs.clear()
-  lastCredsMtimeMs.clear()
+  lastCredsMtimeByProfile.clear()
   detectedByProfile.clear()
   recheckInFlight = false
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
