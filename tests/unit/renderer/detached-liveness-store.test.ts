@@ -87,6 +87,54 @@ describe('refreshDetachedLiveness', () => {
   })
 })
 
+// #54: the pruning seam. An entry whose config was EDITED to point elsewhere must
+// not be probed through that config (it would ask the new host about the old
+// session) and must never be pruned by the answer.
+describe('refreshDetachedLiveness — a retargeted entry is never probed or pruned (#54)', () => {
+  const recorded = (id: string): DetachedRemote => ({ ...entry(id), port: 22, runtime: { type: 'host' } })
+  const edited: any = { id: 'cfg-1', sessionType: 'ssh', sshConfig: { host: 'other.box', port: 22, username: 'mong', remotePath: '~/work' } }
+
+  it('files NO probe for the edited config and leaves the entry and its liveness untouched', async () => {
+    useDetachedRemotesStore.setState({ entries: [recorded('a')] })
+    checkDetachedLive.mockResolvedValue({ outcome: 'verified', liveSessionIds: [] }) // the new host has no such session
+
+    await refreshDetachedLiveness(edited)
+
+    expect(checkDetachedLive).not.toHaveBeenCalled()
+    expect(useDetachedRemotesStore.getState().entries.map((e) => e.sessionId)).toEqual(['a'])
+    expect(useDetachedLivenessStore.getState().bySession).toEqual({})
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('still probes and prunes through the UNCHANGED config (the guard is on the edit, not on the feature)', async () => {
+    useDetachedRemotesStore.setState({ entries: [recorded('a')] })
+    checkDetachedLive.mockResolvedValue({ outcome: 'verified', liveSessionIds: [] })
+
+    await refreshDetachedLiveness(sshConfig)
+
+    expect(checkDetachedLive).toHaveBeenCalledWith({ configId: 'cfg-1', sessionIds: ['a'] })
+    expect(useDetachedRemotesStore.getState().entries).toEqual([])
+  })
+
+  it('a re-created config at the recorded destination probes the entry under ITS id', async () => {
+    useDetachedRemotesStore.setState({ entries: [recorded('a')] })
+    checkDetachedLive.mockResolvedValue({ outcome: 'verified', liveSessionIds: ['a'] })
+    const recreated: any = { ...sshConfig, id: 'cfg-recreated' }
+
+    await refreshDetachedLiveness(recreated)
+
+    expect(checkDetachedLive).toHaveBeenCalledWith({ configId: 'cfg-recreated', sessionIds: ['a'] })
+    expect(useDetachedLivenessStore.getState().bySession).toEqual({ a: 'live' })
+  })
+
+  it('a PRE-#54 entry (no port/runtime) beside its unchanged config is still probed', async () => {
+    useDetachedRemotesStore.setState({ entries: [entry('a')] })
+    checkDetachedLive.mockResolvedValue({ outcome: 'verified', liveSessionIds: ['a'] })
+    await refreshDetachedLiveness(sshConfig)
+    expect(checkDetachedLive).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('probeGoneSessions (app-restart notice)', () => {
   it('returns the confirmed-gone ids, grouped by config', async () => {
     checkDetachedLive.mockImplementation(async ({ configId, sessionIds }) => {

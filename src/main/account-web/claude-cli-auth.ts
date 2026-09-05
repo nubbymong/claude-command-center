@@ -30,7 +30,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo } from '../debug-logger'
 import { getProfileConfigDir, getProfilesRoot } from '../account-profiles'
-import { acquireProfileConsumer } from '../profile-consumers'
+import { acquireProfileConsumer, pendingProfileRefresh } from '../profile-consumers'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
 const execFileAsync = promisify(execFile)
@@ -154,6 +154,17 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
   //    usage page's auto token-refresh — which gates on isProfileInUseByLiveSession
   //    and knows only about PTY sessions — could rotate the same token
   //    concurrently and strand the account (log it out). See profile-consumers.ts.
+  //
+  //    And the other ordering (#49): if that refresh is ALREADY in flight when the
+  //    probe starts, registering now is too late to stop the POST -- the CLI would
+  //    read the pre-rotation credential file and could later redeem the same
+  //    single-use refresh token. So wait for the rotation to land first, then
+  //    acquire with nothing awaited in between (no new rotation can start in
+  //    the gap), then spawn. Awaited ONLY when a rotation is actually in flight:
+  //    the common path stays synchronous up to the spawn, which is what lets
+  //    overlapping probes for one profile share a single subprocess.
+  const rotation = pendingProfileRefresh(profileId)
+  if (rotation) await rotation
   const release = acquireProfileConsumer(profileId)
   try {
     const home = join(getProfilesRoot(), profileId)

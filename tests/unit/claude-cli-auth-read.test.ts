@@ -32,7 +32,7 @@ vi.mock('../../src/main/account-profiles', () => ({
 }))
 
 const { readClaudeCliAuth } = await import('../../src/main/account-web/claude-cli-auth')
-const { hasTransientProfileConsumer } = await import('../../src/main/profile-consumers')
+const { hasTransientProfileConsumer, noteProfileRefreshInFlight, _resetProfileConsumersForTest } = await import('../../src/main/profile-consumers')
 
 const ID = 'profile-abc-123'
 const NOW = 1_700_000_000_000
@@ -49,6 +49,7 @@ function writeCredFile(id: string, relDir: string) {
 beforeEach(() => {
   root = fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-auth-'))
   execFileImpl = (_cmd, _args, _opts, cb) => cb(new Error('no cli'))
+  _resetProfileConsumersForTest()
 })
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })
@@ -143,5 +144,41 @@ describe('readClaudeCliAuth — CLI probe preferred, and registered as a consume
     expect(calls).toBe(2)
     pending!(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' })
     await p3
+  })
+})
+
+// #49 (rc.14 review F5): the probe is the consumer the ticket names. Registering
+// as a consumer stops a LATER refresh; it cannot stop one already in flight, and
+// a CLI spawned mid-rotation reads the pre-rotation credential file. So the probe
+// waits for the rotation to land before it spawns.
+describe('readClaudeCliAuth — starting mid-rotation waits for the refresh (#49)', () => {
+  const tick = async (n = 4) => { for (let i = 0; i < n; i++) await Promise.resolve() }
+
+  it('does not spawn the CLI until the in-flight refresh settles, then probes and releases as usual', async () => {
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    let execCalls = 0
+    execFileImpl = (_cmd, _args, _opts, cb) => { execCalls++; cb(new Error('no cli')) }
+    let settle!: (v: unknown) => void
+    noteProfileRefreshInFlight(ID, new Promise((resolve) => { settle = resolve }))
+
+    const probe = readClaudeCliAuth(ID)
+    await tick()
+    expect(execCalls).toBe(0)                          // not spawned: the file is mid-rotation
+    expect(hasTransientProfileConsumer(ID)).toBe(false) // and nothing held yet
+
+    settle({ accessToken: 'new' })
+    const r = await probe
+    expect(execCalls).toBe(1)
+    expect(r.authenticated).toBe(false)                // (no CLI, no file) -- the probe still completed
+    expect(hasTransientProfileConsumer(ID)).toBe(false) // released in the finally
+  })
+
+  it('a refresh of another profile does not delay the probe', async () => {
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    let execCalls = 0
+    execFileImpl = (_cmd, _args, _opts, cb) => { execCalls++; cb(new Error('no cli')) }
+    noteProfileRefreshInFlight('profile-other-9', new Promise(() => { /* never settles */ }))
+    await readClaudeCliAuth(ID)
+    expect(execCalls).toBe(1)
   })
 })
