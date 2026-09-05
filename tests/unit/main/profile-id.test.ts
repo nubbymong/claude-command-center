@@ -33,10 +33,15 @@ describe('isValidProfileId', () => {
 })
 
 describe('profileIdFromHome', () => {
-  it('recovers the id from a profile home on either separator', () => {
+  it('recovers the id from a profile home on the platform separator (Windows accepts either)', () => {
     expect(profileIdFromHome(path.join('F:', 'res', PROFILES_ROOT_DIRNAME, 'profile-a1b2-ff'))).toBe('profile-a1b2-ff')
     expect(profileIdFromHome('/home/pi/res/account-profiles/profile-a1b2-ff')).toBe('profile-a1b2-ff')
-    expect(profileIdFromHome('F:\\res\\account-profiles\\profile-a1b2-ff')).toBe('profile-a1b2-ff')
+    // A backslash is a separator only on Windows. On POSIX it is a filename
+    // character — the basename is the whole string and fails the id charset —
+    // and the app never builds a profile home that way there: the inverse is
+    // platform-native, exactly like getProfileConfigDir. (Asserting the id on
+    // every platform is what kept the macOS CI lane red.)
+    expect(profileIdFromHome('F:\\res\\account-profiles\\profile-a1b2-ff')).toBe(process.platform === 'win32' ? 'profile-a1b2-ff' : null)
   })
 
   it('round-trips through the REAL getProfileConfigDir -- the root dirname is one constant, not a copy', () => {
