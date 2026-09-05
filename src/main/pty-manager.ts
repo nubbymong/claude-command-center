@@ -4122,7 +4122,14 @@ export function spawnPty(
       // function documents.
       forgetSessionForCanvas(sessionId)
     } else {
-      logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
+      // Skip the renderer notification too (rc.14 review F8): the event below
+      // is keyed by session id only, so TerminalView would mark the LIVE
+      // replacement as exited (ptyExited + spawn tracker cleared), Ask
+      // Conductor would treat a healthy session as dead and respawn it, and a
+      // remount would spawn yet again. The exit that matters -- the current
+      // PTY's -- still reaches the renderer through the branch above.
+      logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup and exit notification`)
+      return
     }
 
     if (win.isDestroyed()) {
