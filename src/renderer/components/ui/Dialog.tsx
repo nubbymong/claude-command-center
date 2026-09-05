@@ -1,4 +1,5 @@
 import React from 'react'
+import { useOccludesNativePanes } from '../../stores/paneOcclusionStore'
 
 /**
  * E5 dialog primitives (#360).
@@ -78,6 +79,11 @@ export function scrim(dim: number): string {
  * CLICK — deliberately no `onClick` prop exists on it.
  */
 export function DialogOverlay({ children, position = 'fixed', z = 'z-50', dim = 0.6, className = '', style, testId, onKeyDown, id }: DialogOverlayProps) {
+  // A window-covering backdrop must also cover the NATIVE panes (browser,
+  // claude.ai account), which main paints above all HTML: while this overlay
+  // is mounted those panes hide. An `absolute` overlay covers only its own
+  // ancestor and is left to that ancestor.
+  useOccludesNativePanes(position === 'fixed')
   return (
     <div
       id={id}

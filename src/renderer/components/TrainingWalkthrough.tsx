@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import {
   trainingSteps,
@@ -76,6 +77,10 @@ const ICON_BTN_CLASS =
   'text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors'
 
 export default function TrainingWalkthrough({ onClose, showAll = false, mode = 'first-run' }: Props) {
+  // Whole-window overlay for its entire life (its own spotlight layer sits
+  // outside the dialog backdrops it also uses): the native browser / account
+  // panes must not paint over it.
+  useOccludesNativePanes()
   const steps = showAll
     ? trainingSteps
     : getNewSteps(useAppMetaStore.getState().meta.lastTrainingVersion)

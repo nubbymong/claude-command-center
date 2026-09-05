@@ -11,6 +11,7 @@ import AgentCanvasPane from './components/AgentCanvasPane'
 import LogsPane from './components/LogsPane'
 import { PaneFade } from './components/PaneFade'
 import { useWebviewStore } from './stores/webviewStore'
+import { usePaneOcclusionStore } from './stores/paneOcclusionStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
 import { setupCanvasListener } from './stores/canvasStore'
 import { setupCanvasReviewListener } from './stores/canvasReviewStore'
@@ -109,6 +110,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [viewRaw, setViewRaw] = useState<ViewType>('sessions')
   const view = viewRaw
+  // The native panes (browser, claude.ai account) are painted by main above all
+  // HTML, so they have to be TOLD when a page tab is on top of the session
+  // area; this is the one publication of the active tab they read.
+  useEffect(() => { usePaneOcclusionStore.getState().setActiveView(view) }, [view])
   // Pages (Tokenomics, Logs, Feature Guide, …) open as TABS in the main strip
   // alongside sessions, in open order, and persist until closed. `view` is the
   // active tab: 'sessions' means a session tab is active, any other value means

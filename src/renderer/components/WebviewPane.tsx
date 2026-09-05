@@ -3,6 +3,7 @@ import { useWebviewStore } from '../stores/webviewStore'
 import { useBrowserStore } from '../stores/browserStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useNativePanesOccluded } from '../stores/paneOcclusionStore'
 import { normaliseBrowserInput, shortUrlLabel } from '../../shared/browser-url'
 import heroUrl from '../assets/aicc-browser-http.svg'
 
@@ -16,6 +17,10 @@ interface Props {
    * still attached to the BrowserWindow's contentView and would draw
    * over the active session. We toggle it via setVisible IPC instead of
    * relying on bounds=0 (which has flicker + reliability issues).
+   *
+   * Session-level ONLY. Whether something else is on top of the session area
+   * -- a page tab such as Settings, a dialog, the tour -- comes from
+   * `paneOcclusionStore`; the two are folded into `shown` below.
    */
   isActive: boolean
 }
@@ -104,11 +109,18 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   const home = state?.homeUrl ?? persistedHome
   const isFav = !!shownUrl && favourites.some((f) => f.url === shownUrl)
 
-  // Track latest isActive in a ref so the bounds-reporting helpers and the
+  // May the native view paint? The session must be the active tab AND nothing
+  // may be on top of the session area: a page tab (Settings, Tokenomics, ...),
+  // a dialog, the tour -- `paneOcclusionStore`. Native views ignore CSS
+  // stacking, so this one flag is what parks an open and what hides a view.
+  const occluded = useNativePanesOccluded()
+  const shown = isActive && !occluded
+
+  // Track latest `shown` in a ref so the bounds-reporting helpers and the
   // rAF retry loop can read it without re-firing the lifecycle effect on
-  // session switch.
-  const isActiveRef = useRef(isActive)
-  useEffect(() => { isActiveRef.current = isActive }, [isActive])
+  // session switch or occlusion change.
+  const shownRef = useRef(shown)
+  useEffect(() => { shownRef.current = shown }, [shown])
 
   // Keep the address bar showing where the page IS, unless the user is
   // typing in it.
@@ -162,7 +174,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       if (st?.accountPane) return
       const url = st?.currentUrl
       if (!url) return
-      if (!isActiveRef.current) return // parked; retried when the session becomes active
+      if (!shownRef.current) return // parked; retried when the pane may show
       const b = measure()
       if (!b || b.width < 1 || b.height < 1) {
         rafId = requestAnimationFrame(tryOpen)
@@ -229,11 +241,12 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     }).catch(() => { /* noop */ })
   }, [sessionId, currentUrl, navSeq])
 
-  // When isActive flips true after the lifecycle parked tryOpen (because the
-  // session was inactive at mount), re-trigger the open.
+  // When `shown` flips true after the lifecycle parked tryOpen (the session
+  // was inactive at mount, or a page tab / overlay was on top), re-trigger
+  // the open.
   useEffect(() => {
-    if (isActive) tryOpenRef.current?.()
-  }, [isActive])
+    if (shown) tryOpenRef.current?.()
+  }, [shown])
 
   // ── Account surface lifecycle (#439/#475) ─────────────────────────────
   // While `accountPane` is set the rectangle belongs to the claude.ai view on
@@ -267,7 +280,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     let inFlight = false
     const tryOpenAccount = () => {
       if (cancelled || accountReadyRef.current || inFlight) return
-      if (!isActiveRef.current) return // parked; retried when the session activates
+      if (!shownRef.current) return // parked; retried when the pane may show
       const b = measure()
       if (!b || b.width < 1 || b.height < 1) {
         rafId = requestAnimationFrame(tryOpenAccount)
@@ -307,10 +320,10 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     }
   }, [sessionId, accountModeProfileId, measure, closeAccountPaneStore, setAccountPaneState])
 
-  // Parked account open retries when the session becomes active.
+  // Parked account open retries when the pane may show again.
   useEffect(() => {
-    if (isActive) accountTryOpenRef.current?.()
-  }, [isActive])
+    if (shown) accountTryOpenRef.current?.()
+  }, [shown])
 
   // Live auth pushes for the strip (sign-in completing inside the pane).
   useEffect(() => {
@@ -330,7 +343,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   // Bounds + visibility for the account view — same mechanics as the ordinary
   // view; native views ignore CSS.
   useEffect(() => {
-    if (!isActive || !accountModeProfileId) return
+    if (!shown || !accountModeProfileId) return
     const el = containerRef.current
     if (!el) return
     let last: { x: number; y: number; width: number; height: number } | null = null
@@ -352,20 +365,20 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       window.removeEventListener('resize', onResize)
       window.clearInterval(tick)
     }
-  }, [sessionId, isActive, accountModeProfileId, measure])
+  }, [sessionId, shown, accountModeProfileId, measure])
 
   useEffect(() => {
     if (!state?.isOpen || !accountModeProfileId) return
-    const visible = isActive && !frozenImage
+    const visible = shown && !frozenImage
     void window.electronAPI.accountWeb?.paneVisible?.({ sessionId, visible }).catch(() => { /* noop */ })
-  }, [sessionId, isActive, state?.isOpen, accountModeProfileId, frozenImage])
+  }, [sessionId, shown, state?.isOpen, accountModeProfileId, frozenImage])
 
   // ── Bounds tracking ───────────────────────────────────────────────────
   // ResizeObserver + window resize for real size changes, plus a 500 ms
   // safety-net tick for parent-flex shifts (sidebar collapse, GitHub panel)
   // that fire neither. Only sends when the rect actually changed.
   useEffect(() => {
-    if (!isActive || !currentUrl) return
+    if (!shown || !currentUrl) return
     const el = containerRef.current
     if (!el) return
     let last: Bounds | null = null
@@ -391,18 +404,20 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     // frozenImage in the deps: the freeze modal is fixed-inset (no ResizeObserver
     // fire) and shrinks the native view to 1x1 on hide, so a re-measure must run
     // when it clears or the pane comes back at 1x1.
-  }, [sessionId, isActive, currentUrl, measure, frozenImage])
+  }, [sessionId, shown, currentUrl, measure, frozenImage])
 
-  // Show/hide on session-active changes. Without this, the WebContentsView
-  // from an inactive session keeps drawing over the active session's content
-  // (display:none on the React parent doesn't reach the native view layer).
-  // While the freeze-annotate modal is up we ALSO force the live view hidden
-  // — native WebContentsView always paints above HTML.
+  // Show/hide on session-active and occlusion changes. Without this, the
+  // WebContentsView from an inactive session keeps drawing over the active
+  // session's content (display:none on the React parent doesn't reach the
+  // native view layer), and a view whose session IS active paints over any
+  // page tab or dialog on top of it. While the freeze-annotate modal is up we
+  // ALSO force the live view hidden — native WebContentsView always paints
+  // above HTML.
   useEffect(() => {
     if (!state?.isOpen || !currentUrl) return
-    const visible = isActive && !frozenImage
+    const visible = shown && !frozenImage
     window.electronAPI.webview.setVisible(sessionId, visible).catch(() => { /* noop */ })
-  }, [sessionId, isActive, state?.isOpen, currentUrl, frozenImage])
+  }, [sessionId, shown, state?.isOpen, currentUrl, frozenImage])
 
   if (!state || !state.isOpen) return null
 
