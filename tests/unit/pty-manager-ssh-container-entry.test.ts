@@ -76,6 +76,11 @@ function enterContainer(id: string, container = 'ccc-test', extra: Partial<Runti
   return cmd
 }
 
+/** The host prompt as the unterminated trailing line is PENDING (readline may
+ *  still repaint the echoed command after it); 1.5s of silence confirms the
+ *  host is back. Tests that end on the returned prompt take this step. */
+const settle = () => vi.advanceTimersByTime(1600)
+
 beforeEach(() => {
   vi.useFakeTimers()
   onDataListeners.length = 0
@@ -145,6 +150,8 @@ describe('round 2: the host prompt itself coming back is a failed entry', () => 
     feed('[sudo] password for user: ')
     expect(getSshFlow(id)?.getState().state).toBe('running-postcommand')
     feed(`^C\r\n${HOST_PROMPT}`)
+    expect(states(id)).not.toContain('awaiting-claude') // the host prompt is never the inner shell
+    settle()
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
     getSshFlow(id)!.launchClaude()
     vi.advanceTimersByTime(301)
@@ -176,18 +183,52 @@ describe('round 2: the host prompt itself coming back is a failed entry', () => 
     expect(getSshFlow(id)?.getState().state).toBe('failed')
   })
 
-  it('a bare host prompt with no text before it (an unknown refusal) fails the entry', () => {
+  it('a bare host prompt with no text before it (an unknown refusal) fails the entry once nothing follows it', () => {
     const id = 'entry-bare-return'
     enterContainer(id)
     feed(`\r\n${HOST_PROMPT}`)
+    expect(getSshFlow(id)?.getState().state).toBe('running-postcommand') // pending, not yet decided
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+    expect(states(id)).not.toContain('awaiting-claude')
+  })
+
+  it('a TERMINATED host prompt line (followed by a newline) needs no wait: text no regex lists, then the prompt, then more', () => {
+    const id = 'entry-mid-chunk'
+    enterContainer(id)
+    feed(`Some refusal in words we do not list\r\n${HOST_PROMPT}\r\n`)
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
   })
 
-  it('the host prompt coming back mid-chunk (followed by more output) is still seen', () => {
-    const id = 'entry-mid-chunk'
-    enterContainer(id)
-    feed(`sudo: a password is required\r\n${HOST_PROMPT}\r\n`)
-    expect(getSshFlow(id)?.getState().state).toBe('failed')
+  it('REGRESSION (quality review): a repaint chunk that ends right after the prompt, then the echo, then the inner prompt, is a HEALTHY entry', () => {
+    const id = 'entry-split-repaint'
+    const cmd = enterContainer(id)
+    feed(`\r${HOST_PROMPT}`) // readline redraws the prompt; the chunk ends here
+    expect(getSshFlow(id)?.getState().state).toBe('running-postcommand') // pending, not failed
+    feed(`${cmd}\r\n`) // the echoed command arrives in the next chunk
+    feed(INNER_PROMPT)
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
+  })
+
+  it('the same split repaint followed by silence is a hang: held, then failed, never promoted', () => {
+    const id = 'entry-split-repaint-hang'
+    const cmd = enterContainer(id)
+    feed(`\r${HOST_PROMPT}`)
+    feed(`${cmd}\r\n`)
+    vi.advanceTimersByTime(6000)
+    expect(getSshFlow(id)?.getState().state).toBe('running-postcommand')
+    vi.advanceTimersByTime(20000)
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+    expect(states(id)).not.toContain('awaiting-claude')
+  })
+
+  it('a double repaint inside ONE line (`prompt \\r prompt cmd`) is still only the echo', () => {
+    const id = 'entry-double-repaint'
+    const cmd = enterContainer(id)
+    feed(`${HOST_PROMPT}\r${HOST_PROMPT}${cmd}\r\n`)
+    vi.advanceTimersByTime(20000)
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+    expect(states(id)).not.toContain('awaiting-claude')
   })
 
   it('the host prompt is re-read from the LAST prompt before the click, so a cd on the host first is fine', () => {
@@ -199,7 +240,8 @@ describe('round 2: the host prompt itself coming back is a failed entry', () => 
     getSshFlow(id)!.runPostCommand()
     vi.advanceTimersByTime(201)
     writeMock.mockClear()
-    feed('Error: no such container\r\nuser@host:~/proj$ ') // unknown text; the CURRENT host prompt returns
+    feed('Some refusal in words we do not list\r\nuser@host:~/proj$ ') // the CURRENT host prompt returns
+    settle()
     expect(getSshFlow(id)?.getState().state).toBe('failed')
   })
 
@@ -222,6 +264,7 @@ describe('round 2: the engine-not-found line is a suspicion the prompt decides',
     const id = 'entry-nf-host'
     enterContainer(id)
     feed(`bash: docker: command not found\r\n${HOST_PROMPT}`)
+    settle()
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
   })
 
@@ -303,6 +346,50 @@ describe('round 2: the idle fallback over a silent or waiting entry', () => {
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
   })
 
+  it('REGRESSION (quality review): a remote that never even echoes, on a flow the idle path carried to awaiting-postcommand, still hits the silence cap', () => {
+    const id = 'entry-no-echo'
+    ids.push(id)
+    spawnPty(win, id, { ssh: { ...ssh, runtime: { type: 'container', engine: 'docker', container: 'ccc-test' } } } as never)
+    feed('user@mac ~ % ')
+    vi.advanceTimersByTime(1600) // idle path -> awaiting-postcommand; no timer left pending
+    expect(getSshFlow(id)?.getState().state).toBe('awaiting-postcommand')
+    getSshFlow(id)!.runPostCommand()
+    vi.advanceTimersByTime(201)
+    // nothing ever comes back
+    vi.advanceTimersByTime(20000)
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+  })
+
+  it('a partial echo (chunk ends mid-command) is still only the echo', () => {
+    const id = 'entry-partial-echo'
+    const cmd = enterContainer(id)
+    feed(cmd.slice(0, 12))
+    feed(`${cmd.slice(12)}\r\n`)
+    vi.advanceTimersByTime(20000)
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+  })
+
+  it('a terse genuine line that is a WORD of the command (`bash`) counts as output: the container is not failed', () => {
+    const id = 'entry-terse-output'
+    const cmd = enterContainer(id)
+    feed(`${cmd}\r\nbash\r\n❯ `) // a container that prints its shell name, then a starship prompt
+    vi.advanceTimersByTime(1600)
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
+  })
+
+  it('echo is a PREFIX of the command, not any substring: a line that is a word from the middle of it is output', () => {
+    // Synthetic: a container printing only words that occur inside the command
+    // and a prompt (`-it `) that is itself a substring. Pins the rule so a terse
+    // container is never mistaken for silence.
+    const id = 'entry-substring-output'
+    const cmd = enterContainer(id)
+    feed(`${cmd}
+bash
+-it `)
+    vi.advanceTimersByTime(1600)
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
+  })
+
   it('a slow container start that then prints its prompt still lands on the inner shell', () => {
     const id = 'entry-slow-start'
     const cmd = enterContainer(id)
@@ -330,6 +417,16 @@ describe('round 2: the idle fallback over a silent or waiting entry', () => {
     expect(getSshFlow(id)?.getState().state).toBe('running-postcommand')
     expect(states(id)).not.toContain('awaiting-claude')
     feed(`\r\n${INNER_PROMPT}`) // the user typed it; the entry succeeded
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
+  })
+
+  it('a sudo prompt the inner shell has since replaced (starship, strips to nothing for the sticky) does NOT hold: promoted at the first idle', () => {
+    const id = 'entry-sudo-then-starship'
+    enterContainer(id, 'ccc-test', { sudo: true, sudoPassword: 'synthetic-sudo' })
+    feed('[sudo] password for user: ')
+    vi.advanceTimersByTime(101)
+    feed('\r\n~/proj on main \r\n❯ ')
+    vi.advanceTimersByTime(1600)
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
   })
 
@@ -366,6 +463,7 @@ describe('round 2: Run again after a failed entry', () => {
     feed('[sudo] password for user: ')
     vi.advanceTimersByTime(101)
     feed(`\r\n^C\r\n${HOST_PROMPT}`)
+    settle()
     expect(getSshFlow(id)?.getState().state).toBe('failed')
     writeMock.mockClear()
     getSshFlow(id)!.runPostCommand()
@@ -384,6 +482,7 @@ describe('round 2: Run again after a failed entry', () => {
     getSshFlow(id)!.runPostCommand()
     vi.advanceTimersByTime(201)
     feed('Some refusal in words we do not list\r\nuser@host:~/proj$ ')
+    settle()
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
     expect(states(id).filter((s) => s === 'awaiting-claude')).toEqual([])
   })
@@ -392,6 +491,7 @@ describe('round 2: Run again after a failed entry', () => {
     const id = 'entry-run-again-fail'
     enterContainer(id)
     feed(`\r\n${HOST_PROMPT}`)
+    settle()
     getSshFlow(id)!.runPostCommand()
     vi.advanceTimersByTime(201)
     feed(`Error response from daemon: No such container: ccc-test\r\n${HOST_PROMPT}`)
@@ -476,6 +576,7 @@ describe('the failure shapes', () => {
       'user is not in the sudoers file.  This incident will be reported.',
       "Sorry, user user is not allowed to execute '/usr/bin/docker exec -it x bash' as root on host.",
       'sudo: docker: command not found',
+      'x\rsudo: docker: command not found', // a ConPTY \r repaint counts as a line start
     ]) expect(CONTAINER_ENTRY_ERROR_RE.test(line), line).toBe(true)
   })
   it('CONTAINER_ENTRY_ERROR_RE does not match a prompt, a benign mention, the bare shell not-found line, or "is not running" alone', () => {

@@ -110,14 +110,14 @@ as above, plus the minors: the runtime buffer's teardown and success clears; the
 narrowed (standalone `is not running` dropped, the shell not-found shapes moved to the
 suspect regex); the changelog's "keeps refusing until the container is fixed" replaced
 by an actual in-session Run again; F12's gate tightened. Every new test was
-mutation-checked (ten mutations, each caught). Recognising failure shapes plus the
+mutation-checked (ten mutations across the two files, each caught). Recognising failure shapes plus the
 host prompt's identity is the ticket's own fix shape: a narrowing of the review's
 "positive evidence from inside the runtime", which would need the composed entry
 command to carry a marker and cannot cover a hand-written post-command.
 
 **Spec review of round 2 (Tier B)** found one MAJOR and three minors, fixed in the
 follow-up commit: readline/ConPTY can repaint the host prompt in front of the echoed
-command (`` + `user@host:~$ docker exec ...`), which the silence hold had counted as
+command (a carriage return, then `user@host:~$ docker exec ...`), which the silence hold had counted as
 "output", so a hung engine still promoted -- a line is echo when it is the command (or a
 fragment) alone or with the host prompt in front of it; `hostPromptLine` is captured again
 while the entry is FAILED, so Run again after a `cd` on the host is judged against the
@@ -127,6 +127,25 @@ file prints the not-found line and whose prompt the regex does not know still pr
 and (accepted, documented in the known issues) a session whose container runtime is
 invalid is `failed` from spawn, never `connecting`, so its SSH password is no longer
 typed for it. Three more mutations, each caught.
+
+**Quality review of round 2 (Tier B)** found one MAJOR and four minors, fixed in the
+next commit: the identity check read the UNTERMINATED trailing line, so a repaint chunk
+that ended right after the prompt (readline writes `` + prompt, and the echoed command
+can arrive in the next chunk) failed a healthy entry -- a trailing host prompt is now
+PENDING (`entryHostPromptPending`): the prompt path refuses it as an inner shell and the
+idle fallback fails it only if nothing followed in 1.5s, while a TERMINATED host prompt
+line still fails at once; nothing armed the idle timer when the post-command was written,
+so a flow the idle path had carried to awaiting-postcommand could sit in
+running-postcommand forever against a remote that never echoes -- `writePostCommand`
+arms it; echo was matched by substring, so a terse genuine line (`bash`) read as echo --
+it is now a PREFIX of the command (a partial echo is always a prefix), with `` repaints
+within a line collapsed to the visible text (`visibleLines`); the definitive regex's doc
+comment was stale (rewritten) and its `sudo:` shape now anchors on `` too; one test was
+confounded by a regex shape and now uses text no regex lists. Also from the nits: two hold
+counters instead of one shared, the prompt hold reads the buffer's live trailing line
+rather than the sticky (a starship inner prompt no longer keeps a sudo prompt "on screen"
+for a minute), the host prompt is captured through the same stripper the watch reads
+with, `failureText` has a direct test. Seven more mutations, each caught.
 
 **Deferred / not changed.** The review's INCIDENT assessment needs no code; the
 `existsSync` vs `isFile` hardening from the earlier adversarial pass is still deferred.

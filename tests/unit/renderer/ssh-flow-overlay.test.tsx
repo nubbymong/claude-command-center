@@ -16,7 +16,7 @@ import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const { default: SshFlowOverlay } = await import('../../../src/renderer/components/SshFlowOverlay')
+const { default: SshFlowOverlay, failureText, CONTAINER_ENTRY_FAILED } = await import('../../../src/renderer/components/SshFlowOverlay')
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
 import type { Session } from '../../../src/renderer/stores/sessionStore'
 
@@ -87,6 +87,12 @@ describe('SshFlowOverlay failed container entry', () => {
     await act(async () => { again!.click() })
     expect((globalThis as any).window.electronAPI.ssh.runPostCommand).toHaveBeenCalledWith('s1')
     expect((globalThis as any).window.electronAPI.ssh.launchClaude).not.toHaveBeenCalled()
+  })
+
+  it('failureText: the container reason gets the sentence, any other reason is shown as sent, none falls back to the log pointer', () => {
+    expect(failureText(CONTAINER_ENTRY_FAILED)).toContain('run the post-connect command again')
+    expect(failureText('host setup timeout')).toBe('host setup timeout')
+    expect(failureText(undefined)).toBe('See app.log for details.')
   })
 
   it('any other setup failure keeps Retry Launch', async () => {
