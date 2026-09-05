@@ -60,22 +60,60 @@ without FOUND parses as unverified (never death); the rotation stamp was per ses
 backstop; an end-to-end F6 test now drives the real backup/restore over a temp root.
 
 **Tier B (live-host findings), same PR.**
-- F13 `pty-manager.ts`: the SSH-password branch is closed once `postCommandSent` -- a
-  bare `Password:` after key auth is sudo's; the sudo branch answers with the sudo
-  secret, or leaves the prompt to the user when none is saved. Auth-stage prompts
-  (including a bare `Password:` before any post-command) still get the SSH secret.
-- F1 `pty-manager.ts`: `CONTAINER_ENTRY_ERROR_RE` (the engines' failure shapes) is
-  matched against the line-buffered, ANSI-stripped post-command output of a container
-  session; a hit sets `runtimeEntryFailed`, fails the flow (`container entry failed`),
-  gates both inner-shell transitions (prompt and idle fallback) and makes
-  `launchClaude()` re-emit the failure instead of walking the host ladder. Skip stays
-  the explicit route to the raw host shell. Positive control: a real inner prompt still
-  reaches `awaiting-claude / inner`.
+- F13 `pty-manager.ts`: the SSH-password branch is open only while the flow is still
+  `connecting` -- once the first shell prompt (or the idle fallback) has carried the
+  flow past login, a password prompt is sudo's: the sudo branch answers a post-command's
+  sudo with the saved sudo secret, and a sudo the user ran by hand is left to them.
+  Auth-stage prompts (including a bare `Password:` before login completes) still get
+  the SSH secret. Accepted edge: a host that pauses longer than the idle window between
+  its pre-auth banner and its password prompt has already left `connecting`, and that
+  password is typed by hand (app-knowledge known issue).
+- F1 `pty-manager.ts`: three signals on the line-buffered, ANSI-stripped post-command
+  output of a container session, watched only from the moment the command was actually
+  written (`postCommandWritten`; the 200ms defer used to let a host prompt repaint be
+  read as the inner shell -- the prompt-path transition now requires it too):
+  `CONTAINER_ENTRY_ERROR_RE` (engine, socket, podman and sudo failure shapes:
+  definitive); the host shell's own prompt line coming back (`hostPromptLine`, the last
+  prompt-shaped line seen before the click: definitive, and what catches Ctrl-C at the
+  sudo prompt or any message the regex does not list); the shell's engine-not-found line
+  (`CONTAINER_ENGINE_NOT_FOUND_RE`: a suspicion, since an rc file inside a healthy
+  container can print it -- the prompt that follows decides, and the idle fallback fails
+  a suspect entry that never showed a prompt, which is how a zsh host is covered). A hit
+  sets `runtimeEntryFailed`, fails the flow (`container entry failed`), gates both
+  inner-shell transitions and makes `launchClaude()` re-emit the failure instead of
+  walking the host ladder. The idle fallback in `running-postcommand` now holds
+  (bounded) instead of promoting while nothing beyond the command's echo has come back
+  (a hung engine or a still-starting container; the cap fails the entry) or while a
+  password prompt is on screen (a human typing a sudo password; the cap advances as
+  before). `runPostCommand()` accepts the failed-entry state as the one re-entry: it
+  resets the entry watch and the sudo latch and writes the post-command again; the
+  overlay's failed card offers Run again for that reason (Retry Launch would only
+  re-emit). Skip stays the explicit route to the raw host shell. Positive controls: a
+  real inner prompt, a slow start, an unrecognised (starship) inner prompt and an rc-file
+  not-found line all still reach `awaiting-claude / inner`. The runtime line buffer is
+  cleared on both success transitions and in `clearAllSshLineBuffers`.
 - F12 `sshCloseStore.ts`: a container session's close calls `ssh.endRemote` (session +
   config id) before the local kill, no dialog; legacy docker post-command sessions
-  count; plain and persistent SSH sessions unchanged.
+  count; plain and persistent SSH sessions unchanged. The gate is
+  `isContainerRuntime(effectiveSshRuntime(cfg))`, the runtime main actually uses -- not
+  `isContainerSsh`, which also accepts the badge-only `dockerContainer` hint and would
+  spawn an end exec for a session that never took the container hop.
 - Both pty-manager changes sit in the SSH-flow blast radius: the live SSH matrix + a
   Docker host run are recorded in the PR before merge (the "connectivity suite").
+
+**Review round 2 (Tier B).** Spec + quality reviews of the first Tier B round found two
+MAJORs: F1 only recognised engine error text, so a sudo refusal, Ctrl-C at the sudo
+prompt, a socket permission error, podman's stopped-container message or plain silence
+still promoted the host prompt to inner; F13 gated on `postCommandSent`, which left the
+common no-post-command session typing the SSH secret into a hand-run sudo. Both fixed
+as above, plus the minors: the runtime buffer's teardown and success clears; the regex
+narrowed (standalone `is not running` dropped, the shell not-found shapes moved to the
+suspect regex); the changelog's "keeps refusing until the container is fixed" replaced
+by an actual in-session Run again; F12's gate tightened. Every new test was
+mutation-checked (ten mutations, each caught). Recognising failure shapes plus the
+host prompt's identity is the ticket's own fix shape: a narrowing of the review's
+"positive evidence from inside the runtime", which would need the composed entry
+command to carry a marker and cannot cover a hand-written post-command.
 
 **Deferred / not changed.** The review's INCIDENT assessment needs no code; the
 `existsSync` vs `isFile` hardening from the earlier adversarial pass is still deferred.
