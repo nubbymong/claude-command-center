@@ -51,6 +51,17 @@ export function closeOtherAltPanes(sessionId: string, keep: AltPaneKind): void {
 }
 
 /**
+ * Open `kind` and close the other two, whatever the current state (NOT a
+ * toggle). For paths that open a surface unconditionally — a canvas resumed
+ * from the queue, a "page" command that opens the browser — so the
+ * one-surface rule holds there as it does for the toggle buttons.
+ */
+export function openAltPane(sessionId: string, kind: AltPaneKind): void {
+  closeOtherAltPanes(sessionId, kind)
+  setPaneOpen(kind, sessionId, true)
+}
+
+/**
  * The toggle a surface button fires: if that surface is already open, close it
  * (back to the terminal); otherwise open it and close the other two. Keyed per
  * session — each session carries its own open surface.

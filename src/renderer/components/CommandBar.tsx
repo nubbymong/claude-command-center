@@ -17,6 +17,7 @@ import LogsButton from './LogsButton'
 import WebviewButton from './WebviewButton'
 import PasteHint from './PasteHint'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
+import { closeOtherAltPanes } from '../stores/altPane'
 import { generateId } from '../utils/id'
 import { buildCommandLine, commandSecretRef, commandSecretKey } from '../../shared/command-secret'
 import { isAllowedBrowserUrl } from '../../shared/browser-url'
@@ -402,7 +403,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     if (cmd.kind === 'page') {
       if (!isAllowedBrowserUrl(cmd.pageUrl)) { console.warn('[CommandBar] page command has no usable URL:', cmd.label); return }
       trackUsage('webview.opened')
-      useWebviewStore.getState().navigate(webviewKey, cmd.pageUrl)
+      useWebviewStore.getState().navigate(webviewKey, cmd.pageUrl) // opens the browser pane...
+      closeOtherAltPanes(webviewKey, 'browser') // ...so evict canvas/logs (one surface at a time)
       return
     }
     if (withArgsAt && (cmd.defaultArgs?.length || cmd.lastCustomArgs?.length)) {
