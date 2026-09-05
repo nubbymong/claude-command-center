@@ -63,19 +63,37 @@ is reverted:
   the whole delete and not only its first instant.
 - The rotation backup snapshotted on the first poll after a credential change; a
   /login writes the credential and identity files separately, and a snapshot between
-  the two mixed one account's identity with another's token. It now waits until both
-  stamps are unchanged on a following poll.
+  the two mixed one account's identity with another's token. It now snapshots only
+  once the credential stamp is unchanged on the poll after it moved, which gives the
+  identity write a whole poll to land before the email guard judges it. The identity
+  file is deliberately not part of the stamp (the quality review caught the first
+  version keying on it): the CLI rewrites `.claude.json` on ordinary turns, and
+  waiting for it to go quiet would have starved the backup for as long as the user
+  was working.
 - An empty or non-string host never agrees as a detached destination; the #54 guard's
   threat model (a stale or edited config, not a hostile renderer) is stated where the
   guard lives.
 
-Coverage: the preload's private per-call channel (real preload, electron mocked), the
-credential stamp's shape on a real profile dir and the handler's validate-before-read,
-the delete guard through the real handler, the shell-only hold after a throwing
-spawn, stat-only rotation following, the Q1b path with a LAPSED token, index.ts
-wiring by shape, the endRemote refusal preceding the keychain read, both browser
-spawn sites shell-free by shape, and every Sidebar edit entry point on a mounted
-Sidebar. Three control mutations on already-asserted theses went red as expected.
+Coverage: all thirteen guarantees the pass found unasserted now have a test that goes
+red when the guard is removed -- the preload's private per-call channel (real preload,
+electron mocked); the credential stamp's shape on a real profile dir and the handler's
+validate-before-read; the delete guard through the real handler; the shell-only hold
+after a throwing spawn; stat-only rotation following; the Q1b path with a LAPSED
+token; the statusline sink and the window-created reset in index.ts, by shape; the
+endRemote refusal preceding the keychain read; both browser spawn sites shell-free by
+shape; and every Sidebar edit entry point on a mounted Sidebar. Three control
+mutations on already-asserted theses went red as expected.
+
+**Re-attack (fresh attacker against the patched code): PASS, 0 blockers, 0 majors.**
+Every fix held against its original attack and every regression test went red under
+its mutation. Its minors, closed in the same round: a junctioned `account-profiles`
+root (target named otherwise) had started reading as "not a profile" -- the text and
+the on-disk name are now EITHER/OR; `render-process-gone` with reason `clean-exit`
+(a reload, not a death) no longer waives the close dialog; `closeWindow` guards a
+destroyed window; a duplicate `window:allowClose` closes and quits once; a delete
+refused after the awaited web-session clear now drops the cleared session's record
+and says so. Spec review: PASS. Quality review: one major (the identity-file stamp
+above), fixed; its nits (timer-ordering and shape-regex comments) addressed.
 
 **Not changed, on purpose.** A detached row written before #54 (no recorded port)
 still matches any port on the same host/user/path -- the upgrade-without-orphans

@@ -90,8 +90,8 @@ const lastMtimeMs = new Map<string, number>()         // sessionId -> last seen 
 // back and strand the account. Keyed by PROFILE, not session: several sessions
 // on one account share one credential file, and one rotation must cost one
 // backup, not one per session. Only ever observed by stat; never read here.
-// profileId -> the last credential/identity stamp seen, and whether it changed
-// on the previous poll (armed = "back up once it stops moving").
+// profileId -> the last credential stamp seen, and whether it changed on the
+// previous poll (armed = "back up once it has stopped moving").
 const rotationStampByProfile = new Map<string, { last: string; armed: boolean }>()
 // profileId -> the email we last broadcast a "new account detected" prompt for.
 // Sessions sharing a profile home all observe the same /login, so this dedups the
@@ -262,17 +262,15 @@ async function recheckAllAsyncInner(): Promise<void> {
 
 /**
  * The stat stamp the rotation follower compares between polls: the credential
- * file's mtime and the identity file's (`.claude.json`, the email the backup
- * guard reads). Stat-only -- neither file's CONTENTS are read here. null when
- * there is no credential file to follow.
+ * file's mtime. Stat-only -- the file's CONTENTS are never read here. null when
+ * there is no credential file to follow. Deliberately NOT the identity file
+ * (`.claude.json`) as well: that is the CLI's general state file, rewritten on
+ * ordinary turns, and a stamp that included it would keep moving for as long
+ * as the user is working -- starving the very backup this exists to deliver
+ * (quality review of the #598 pass).
  */
 async function credentialRotationStamp(profileId: string): Promise<string | null> {
-  const home = getProfileConfigDir(profileId)
-  let creds: number
-  try { creds = (await fsp.stat(path.join(home, '.claude', '.credentials.json'))).mtimeMs } catch { return null }
-  let identity = 'none'
-  try { identity = String((await fsp.stat(path.join(home, '.claude.json'))).mtimeMs) } catch { /* no identity file yet */ }
-  return `${creds}:${identity}`
+  try { return String((await fsp.stat(path.join(getProfileConfigDir(profileId), '.claude', '.credentials.json'))).mtimeMs) } catch { return null }
 }
 
 /**
@@ -284,13 +282,15 @@ async function credentialRotationStamp(profileId: string): Promise<string | null
  * this only ever lands rotations of the profile's own account.
  *
  * SETTLED, not merely changed (adversarial pass on #598): a change is backed up
- * only once the same stamp has been seen on two consecutive polls. The CLI's
- * /login rewrites `.credentials.json` and `.claude.json` as two separate
- * writes, and a poll landing between them saw the profile's own email beside
- * another account's token -- the one state the email guard cannot see through,
- * and a snapshot of it would have restored a mixed identity later. Waiting one
- * poll for both files to stop moving hands the guard the finished picture. A
- * rotation (one file, one write) costs the same single backup, one poll later.
+ * only once the same stamp has been seen on the poll AFTER it appeared. The
+ * CLI's /login rewrites `.credentials.json` and `.claude.json` (the email the
+ * guard reads) as two separate writes, and a poll landing between them saw the
+ * profile's own email beside another account's token -- the one state the
+ * email guard cannot see through, and a snapshot of it would have restored a
+ * mixed identity later. Never snapshotting on the poll that first sees the
+ * credential move gives the identity write a whole poll to land, so the guard
+ * judges the finished picture. A rotation (one file, one write) costs the same
+ * single backup, one poll later.
  */
 async function followCredentialRotation(profileId: string): Promise<void> {
   const stamp = await credentialRotationStamp(profileId)

@@ -151,9 +151,12 @@ export function registerAccountProfilesHandlers(): void {
     // The clear above was awaited, and a session can spawn on this profile in
     // that time: check again before anything destructive, so the guard covers
     // the whole delete and not only its first instant. Fails closed: the web
-    // session is gone, the account is not.
+    // session is gone, the account is not -- and its record goes with the
+    // session it described, so the account does not survive claiming a web
+    // session whose partition was just wiped.
     if (isProfileInUseByLiveSession(p.id)) {
-      return { ok: false, error: 'This account is in use by an open session. Close its sessions and try again.' }
+      removeWebSession(p.id)
+      return { ok: false, error: 'This account is in use by an open session. Its claude.ai sign-in was cleared; close its sessions and try again.' }
     }
     // Drop the record next to the clear that made it meaningless, rather than
     // after the teardown below: if that throws, the account survives with a

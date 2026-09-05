@@ -91,8 +91,11 @@ export function createCloseCoordinator(deps: CloseCoordinatorDeps): CloseCoordin
   // goes, and if the exit began as a quit, the quit is re-issued -- re-entering
   // before-quit finds no live window (or allowClose set) and runs the teardown.
   // On Windows window-all-closed would quit anyway; calling it here is
-  // idempotent and makes macOS behave the same.
+  // idempotent and makes macOS behave the same. Once only: a duplicate
+  // window:allowClose (a renderer racing its own dialog) or a renderer dying
+  // after it already allowed must not close or quit a second time.
   const allow = () => {
+    if (allowClose) return
     allowClose = true
     deps.closeWindow()
     if (quitRequested) deps.quit()

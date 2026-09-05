@@ -6,11 +6,14 @@
 // only at exit (and at add-account), while the CLI rotates the single-use
 // refresh token during a long session -- so a restore mid-session installed a
 // pre-rotation, already-spent token and stranded the account. The identity
-// poll now watches the profile's `.credentials.json` (and `.claude.json`) stamp
-// and re-snapshots canonical once a change has SETTLED: seen unchanged on the
-// poll after it appeared (adversarial pass on #598 -- a /login writes the two
-// files separately, and a snapshot taken between the writes mixed one account's
-// identity with another's token). Stat only.
+// poll now watches the profile's `.credentials.json` mtime and re-snapshots
+// canonical once a change has SETTLED: seen unchanged on the poll after it
+// appeared (adversarial pass on #598 -- a /login writes the credential and
+// identity files separately, and a snapshot taken between the writes mixed one
+// account's identity with another's token). The identity file itself is NOT
+// part of the stamp: the CLI rewrites it on ordinary turns, and waiting for it
+// to go quiet would starve the backup for as long as the user is working.
+// Stat only.
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -85,7 +88,7 @@ describe('canonical backup follows a credential rotation', () => {
     identity.stopWatchingAccountIdentity('s1')
   })
 
-  it('REGRESSION (adversarial pass on #598): a /login that rewrites the two files one poll apart is backed up only once BOTH have stopped moving', async () => {
+  it('REGRESSION (adversarial pass on #598): the poll that first sees the credential move never snapshots, so a /login\'s identity write has a poll to land', async () => {
     writeCreds('rt-5')
     writeIdentity('same@account.test')
     identity.startWatchingAccountIdentity('s4', 'profile-aaa111')
@@ -93,13 +96,43 @@ describe('canonical backup follows a credential rotation', () => {
 
     writeCreds('rt-6') // the CLI wrote the new credentials first...
     await poll()
-    expect(backup).not.toHaveBeenCalled()
-    writeIdentity('same@account.test') // ...and the identity file a poll later
+    expect(backup).not.toHaveBeenCalled() // ...and nothing was snapshotted beside the OLD identity file
+    writeIdentity('same@account.test') // ...the identity file lands before the next poll
     await poll()
-    expect(backup).not.toHaveBeenCalled() // still moving
-    await poll()
-    expect(backup).toHaveBeenCalledTimes(1) // both settled: the guard now sees the finished picture
+    expect(backup).toHaveBeenCalledTimes(1) // the (email-guarded) backup judges the finished picture
     identity.stopWatchingAccountIdentity('s4')
+  })
+
+  it('REGRESSION (quality review of the #598 pass): an identity file rewritten on every poll never starves the backup', async () => {
+    writeCreds('rt-7')
+    writeIdentity('same@account.test')
+    identity.startWatchingAccountIdentity('s6', 'profile-aaa111')
+    await poll()
+
+    writeCreds('rt-8')
+    writeIdentity('same@account.test') // the CLI touches .claude.json on ordinary turns
+    await poll()
+    writeIdentity('same@account.test')
+    await poll()
+    expect(backup).toHaveBeenCalledTimes(1) // the credential file settled; the identity churn is irrelevant
+    writeIdentity('same@account.test')
+    await poll()
+    expect(backup).toHaveBeenCalledTimes(1) // and churn alone never re-snapshots
+    identity.stopWatchingAccountIdentity('s6')
+  })
+
+  it('a change that keeps moving is not snapshotted until it stops', async () => {
+    writeCreds('rt-30')
+    identity.startWatchingAccountIdentity('s7', 'profile-aaa111')
+    await poll()
+    writeCreds('rt-31')
+    await poll()
+    writeCreds('rt-32') // moved again before the settle poll
+    await poll()
+    expect(backup).not.toHaveBeenCalled()
+    await poll()
+    expect(backup).toHaveBeenCalledTimes(1)
+    identity.stopWatchingAccountIdentity('s7')
   })
 
   it('a missing credentials file is simply not observed (no throw, no backup)', async () => {

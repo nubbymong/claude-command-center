@@ -229,4 +229,14 @@ describe('a renderer that cannot answer', () => {
     c.onRendererGone()
     expect(deps.closeWindow).toHaveBeenCalledTimes(1)
   })
+
+  it('a duplicate window:allowClose (a renderer racing its own dialog) closes and quits once, and a later renderer death adds nothing', () => {
+    const c = make()
+    c.onBeforeQuit(preventDefault)
+    c.onAllowClose()
+    c.onAllowClose()
+    c.onRendererGone()
+    expect(deps.closeWindow).toHaveBeenCalledTimes(1)
+    expect(deps.quit).toHaveBeenCalledTimes(1)
+  })
 })

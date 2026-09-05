@@ -242,7 +242,7 @@ let quitTeardown: () => void = () => {}
 const closeCoordinator = createCloseCoordinator({
   hasWindow: () => !!mainWindow && !mainWindow.isDestroyed(),
   askRenderer: () => { mainWindow?.webContents.send('window:closeRequested') },
-  closeWindow: () => { mainWindow?.close() },
+  closeWindow: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close() },
   quit: () => { app.quit() },
   teardown: () => { quitTeardown() },
 })
@@ -717,8 +717,10 @@ function createWindow(): void {
     sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
     // A renderer that is gone can never answer window:closeRequested: a close
     // or quit already held on it would otherwise hold forever, and a later one
-    // would hang the same way (adversarial pass on #598).
-    closeCoordinator.onRendererGone()
+    // would hang the same way (adversarial pass on #598). A clean exit is the
+    // renderer going away on purpose (a reload, a navigation), not a death:
+    // the next renderer in this window can still be asked.
+    if (details?.reason !== 'clean-exit') closeCoordinator.onRendererGone()
   })
 
   // Process-global IPC (window controls, dialogs, clipboard, session state, CLI

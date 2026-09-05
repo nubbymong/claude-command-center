@@ -152,6 +152,9 @@ describe('Sidebar — every config-edit entry point goes through the #54 guard c
   })
 })
 
+// Shape checks over the source. Deliberately loose: a reformat that moves a
+// brace fails them LOUDLY (red), never silently -- widen the window or the
+// pattern, do not delete the check.
 describe('Sidebar source shape: no entry point opens the editor around the chokepoint', () => {
   const src = readFileSync(resolve(__dirname, '../../../src/renderer/components/Sidebar.tsx'), 'utf8').replace(/\r\n/g, '\n')
 

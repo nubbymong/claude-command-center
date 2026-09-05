@@ -39,10 +39,11 @@ function isProfilesRootName(name: string): boolean {
 
 /**
  * The name `dir` has ON DISK when it exists -- a Windows 8.3 short form
- * (`ACCOUN~1`) expands to the long name it stands for, and stored case wins
- * over the case in the string -- and the segment as written otherwise. Never
- * throws: a path that does not exist, or a junction that cannot be resolved,
- * is judged on its text.
+ * (`ACCOUN~1`) expands to the long name it stands for -- and the segment as
+ * written otherwise. Never throws: a path that does not exist, or a junction
+ * that cannot be resolved, is judged on its text. Only ever consulted AFTER the
+ * text failed to match (see profileIdFromHome), so a junctioned profiles root
+ * whose target is called something else keeps matching on its text.
  */
 function onDiskName(dir: string): string {
   try { return path.basename(fs.realpathSync.native(dir)) } catch { return path.basename(dir) }
@@ -62,12 +63,16 @@ function onDiskName(dir: string): string {
  * on #598): a home handed back as `...\Account-Profiles\<id>` or through an 8.3
  * short name names the SAME directory, and reading it as "not a profile" would
  * silently skip the consumer registration (#48) and the rotation wait (#49) --
- * the exact stranding those exist to prevent. The id itself stays exact: it is
+ * the exact stranding those exist to prevent. EITHER the text or the on-disk
+ * name may match: the text first (no I/O, and a junctioned root whose target
+ * has another name must keep matching -- re-attack finding), the on-disk name
+ * only when the text did not (the 8.3 case). The id itself stays exact: it is
  * CCC-generated lowercase, and a differently-cased id is not one.
  */
 export function profileIdFromHome(home: string | null | undefined): string | null {
   if (typeof home !== 'string' || home.length === 0) return null
   const base = path.basename(home)
   if (!isValidProfileId(base)) return null
-  return isProfilesRootName(onDiskName(path.dirname(home))) ? base : null
+  const parent = path.dirname(home)
+  return isProfilesRootName(path.basename(parent)) || isProfilesRootName(onDiskName(parent)) ? base : null
 }

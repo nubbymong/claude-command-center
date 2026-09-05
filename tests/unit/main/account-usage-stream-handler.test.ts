@@ -136,6 +136,9 @@ describe('accountUsage:fetchAllStream — one stream per caller (adversarial pas
     const ev1 = fakeEvent(7)
     const ev2 = fakeEvent(7) // the same webContents, invoking again
     const first = runStream(ev1, { channel: CH })
+    // Real zero-delay timers, on purpose: Node fires equal-delay timers in the
+    // order they were armed, so the source's timer (armed first) delivers 'a'
+    // before this one returns and the second stream is opened -- deterministic.
     await tick() // the first stream has delivered 'a' and is pacing toward 'b'
     const second = runStream(ev2, { channel: CH })
     await Promise.all([first, second])
@@ -213,11 +216,14 @@ describe('accountProfiles:delete — the in-use guard', () => {
     expect(h.safeTeardownProfile).not.toHaveBeenCalled()
   })
 
-  it('a session that spawns on the profile DURING the web-session clear still stops the teardown', async () => {
+  it('a session that spawns on the profile DURING the web-session clear still stops the teardown; the cleared session\'s record goes with it', async () => {
     h.clearWebSession.mockImplementation(async () => { h.inUse.mockImplementation(() => true) })
-    expect(await del('profile-racing')).toEqual(REFUSED)
+    const r = await del('profile-racing')
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/in use by an open session/)
+    expect(r.error).toMatch(/sign-in was cleared/) // the user is told what did happen
     expect(h.clearWebSession).toHaveBeenCalledTimes(1)
-    expect(h.removeWebSession).not.toHaveBeenCalled()
+    expect(h.removeWebSession).toHaveBeenCalledWith('profile-racing') // no record claiming a wiped partition survives
     expect(h.safeTeardownProfile).not.toHaveBeenCalled()
   })
 

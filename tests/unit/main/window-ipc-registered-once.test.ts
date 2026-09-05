@@ -77,6 +77,13 @@ describe('index.ts wiring pinned by shape', () => {
     expect(gone).toBeGreaterThanOrEqual(0)
     const handler = body.slice(gone, body.indexOf('\n  })', gone))
     expect(handler).toContain('closeCoordinator.onRendererGone()')
+    // ...but not for a clean exit (a reload or navigation), which is not a death:
+    // the next renderer in the same window can still be asked.
+    expect(handler).toMatch(/reason !== 'clean-exit'\) closeCoordinator\.onRendererGone\(\)/)
+  })
+
+  it('closeWindow never calls close() on a destroyed window', () => {
+    expect(src).toContain('closeWindow: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close() }')
   })
 
   it('the statusline usage sink feeds the open-account figure the usage page reuses (plan P2)', () => {

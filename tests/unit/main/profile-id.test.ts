@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { execFileSync } from 'node:child_process'
 
 vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
 
@@ -97,5 +98,40 @@ describe('profileIdFromHome compares the parent segment the way the filesystem d
 
   it('the id itself stays exact: a differently-cased id is not a profile', () => {
     expect(profileIdFromHome(path.join('F:', 'res', PROFILES_ROOT_DIRNAME, 'Profile-A1B2'))).toBeNull()
+  })
+
+  it('REGRESSION (re-attack on #598): a profiles root that is a junction to a differently named directory still names its profiles', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-pid-junction-'))
+    try {
+      const target = path.join(root, 'profiles-elsewhere')
+      fs.mkdirSync(path.join(target, 'profile-a1b2-ff'), { recursive: true })
+      const link = path.join(root, PROFILES_ROOT_DIRNAME)
+      fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+      // The on-disk name of the parent is `profiles-elsewhere`; the TEXT still says
+      // account-profiles, and either is enough.
+      expect(profileIdFromHome(path.join(link, 'profile-a1b2-ff'))).toBe('profile-a1b2-ff')
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.runIf(process.platform === 'win32')('a Windows 8.3 short name for the profiles root resolves through its on-disk name', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-pid-short-'))
+    try {
+      const long = path.join(root, PROFILES_ROOT_DIRNAME)
+      fs.mkdirSync(path.join(long, 'profile-a1b2-ff'), { recursive: true })
+      const short = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${long}').ShortPath`],
+        { encoding: 'utf8', windowsHide: true },
+      ).trim()
+      // 8.3 name generation can be disabled for a volume; then the "short" path IS
+      // the long one and there is nothing to exercise here.
+      if (path.basename(short).toLowerCase() === PROFILES_ROOT_DIRNAME) return
+      expect(path.basename(short)).toContain('~')
+      expect(profileIdFromHome(path.join(short, 'profile-a1b2-ff'))).toBe('profile-a1b2-ff')
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })
