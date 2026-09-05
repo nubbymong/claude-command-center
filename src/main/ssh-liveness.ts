@@ -38,11 +38,31 @@ export const TMUX_LIVENESS_END = '__CCC_TMUX_LIVE_END__'
  * (computeLiveSessionIds) against the returned names via safeSid, so no untrusted
  * value ever reaches the remote shell.
  */
+/**
+ * Every place a tmux binary can live on a host we support, as HOST-AUTHORED
+ * LITERALS (rc.14 review F11, aicc_planning#55). The probe runs over a
+ * NON-LOGIN ssh exec whose PATH is minimal: on macOS a Homebrew tmux lives in
+ * /opt/homebrew/bin (arm64) or /usr/local/bin (intel), which only a login shell
+ * adds to PATH -- so `command tmux` alone came back empty there, the probe
+ * still printed its completion sentinel, and a VERIFIED-EMPTY answer pruned
+ * live Remote Resumable entries. The End command (buildRemoteTmuxKillCommand in
+ * providers/claude/ssh-shim.ts) already tries these same locations for the
+ * same reason; a test pins the two lists to each other so they cannot drift
+ * apart again.
+ */
+export const TMUX_LIVENESS_BIN_EXPRS: readonly string[] = [
+  ON_PATH_TMUX_BIN_EXPR,
+  '/opt/homebrew/bin/tmux',
+  '/usr/local/bin/tmux',
+  '/usr/bin/tmux',
+  STAGED_TMUX_BIN_EXPR,
+]
+
 export function buildTmuxListCommand(): string {
+  const lists = TMUX_LIVENESS_BIN_EXPRS.map((bin) => `${bin} ls -F '#{session_name}' 2>/dev/null; `).join('')
   return (
     `echo ${TMUX_LIVENESS_BEGIN}; ` +
-    `${ON_PATH_TMUX_BIN_EXPR} ls -F '#{session_name}' 2>/dev/null; ` +
-    `${STAGED_TMUX_BIN_EXPR} ls -F '#{session_name}' 2>/dev/null; ` +
+    lists +
     `echo ${TMUX_LIVENESS_END}`
   )
 }
