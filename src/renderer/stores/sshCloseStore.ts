@@ -5,6 +5,7 @@ import { useDetachedRemotesStore } from './detachedRemotesStore'
 import { killSessionPty } from '../ptyTracker'
 import { buildDetachedRemote } from '../utils/detachedRemotes'
 import { persistSessionState } from '../session-persistence'
+import { isContainerSsh } from '../components/sidebar/transportBadge'
 
 // SSH tmux enhancement (item 4): a one-slot store for the "you're closing a
 // PERSISTENT remote session" confirmation. Any close call site (tab close,
@@ -80,6 +81,21 @@ export function requestCloseSession(sessionId: string): void {
       host: session.sshConfig ? `${session.sshConfig.username}@${session.sshConfig.host}` : undefined,
     })
     return
+  }
+  // rc.14 review F12 (aicc_planning#56): a CONTAINER session never gets the
+  // dialog (persistence is off for it by design), but its claude runs inside
+  // the container, one hop past the connection we are about to drop, and
+  // dropping the exec client does not reliably end it (the #572 orphan class,
+  // measured live on the Rocky host). End it the way "End remote" would --
+  // best-effort, session-scoped, over its own exec -- then close as before.
+  // Invoked BEFORE the local kill so main resolves the target while the
+  // session record still holds it; IPC order from one renderer is preserved.
+  if (session && session.sessionType === 'ssh' && isContainerSsh(session.sshConfig)) {
+    try {
+      void Promise.resolve(window.electronAPI?.ssh?.endRemote?.({ sessionId, configId: session.configId })).catch(() => {})
+    } catch {
+      /* preload not available (tests, early boot) -- the tab still closes */
+    }
   }
   killSessionPty(sessionId)
   forgetSessionBrowserProfile(sessionId)
