@@ -1631,6 +1631,27 @@ function readFileMaybe(file: string): string | undefined {
  *
  * Returns what it did (for logging/tests).
  */
+/**
+ * A profile's credential GENERATION, for the re-auth poll (rc.14 review F7):
+ * `stamp` changes whenever `.credentials.json` is rewritten (a /login, a
+ * rotation), `signedIn` says whether it currently holds an access or refresh
+ * token. Deliberately stat + presence only -- no token, expiry or email leaves
+ * this function, so it is safe to expose over IPC. Absent file: null stamp,
+ * not signed in.
+ */
+export function readProfileCredentialStamp(id: string): { stamp: string | null; signedIn: boolean } {
+  const file = path.join(getProfileConfigDir(id), '.claude', '.credentials.json')
+  let st: fs.Stats
+  try { st = fs.statSync(file) } catch { return { stamp: null, signedIn: false } }
+  let signedIn = false
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { claudeAiOauth?: { accessToken?: unknown; refreshToken?: unknown } }
+    const o = raw?.claudeAiOauth
+    signedIn = !!(o && ((typeof o.accessToken === 'string' && o.accessToken) || (typeof o.refreshToken === 'string' && o.refreshToken)))
+  } catch { signedIn = false }
+  return { stamp: `${Math.round(st.mtimeMs)}:${st.size}`, signedIn }
+}
+
 export function syncPrimaryCredentialsWithGlobal(): PrimaryCredentialSyncResult {
   try {
     const primaryId = getPrimaryProfileId()

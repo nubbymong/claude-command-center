@@ -387,6 +387,9 @@ export const IPC = {
   ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
   ACCOUNT_PROFILES_AUTH_INFO: 'accountProfiles:authInfo',
   ACCOUNT_PROFILES_CAPTURE_DETECTED: 'accountProfiles:captureDetected',
+  /** Read-only credential GENERATION for a profile (file stamp + signed-in), no token contents:
+   *  the re-auth poll completes on a credential change, not on the pre-existing email (rc.14 review F7). */
+  ACCOUNT_PROFILES_CREDENTIAL_STAMP: 'accountProfiles:credentialStamp',
   ACCOUNT_GLOBAL_EMAIL_GET: 'accountProfiles:globalEmail',
 
   // All-accounts usage overview (fetch each profile's usage without a session)

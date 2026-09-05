@@ -5,6 +5,7 @@ import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
   captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileHomeFromCanonical,
+  readProfileCredentialStamp,
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
@@ -143,6 +144,15 @@ export function registerAccountProfilesHandlers(): void {
       backupProfileHomeToCanonical(p.id)
     }
     return { ok: true, email, configDir: getProfileConfigDir(p.id) }
+  })
+  // rc.14 review F7: the re-auth poll needs to know whether the CREDENTIALS
+  // changed, not whether an email exists -- an expired account still has its
+  // email on disk, so refreshIdentity alone "completed" a login that never
+  // happened. This returns a generation stamp (stat) and a signed-in flag;
+  // token contents never cross the bridge.
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, (_e, p: { id: string }) => {
+    if (!p || !isValidProfileId(p.id)) return { ok: false, stamp: null, signedIn: false }
+    return { ok: true, ...readProfileCredentialStamp(p.id) }
   })
   ipcMain.handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
   ipcMain.handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sessionId: string; name?: string }) => {
