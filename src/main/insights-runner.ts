@@ -16,6 +16,7 @@ import { BrowserWindow } from 'electron'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveClaudeForPty, withProfileHome } from './pty-manager'
 import { spawnClaudeHeadless } from './claude-headless'
+import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
@@ -919,11 +920,25 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
   // above it, so a transient failure there (a scanner losing us the catalogue
   // rename, a full disk) left `key` in `inFlight` forever and every later run
   // for that account reported "Insights already running" with nothing running.
+  let releaseAccount: (() => void) | null = null
   try {
     ensureDir(archiveDir)
     upsertRun(run)
     notifyRenderer(getWindow, run)
     logInfo(`[insights] Run ${id} account=${account.accountEmail ?? '(default)'} home=${account.home ?? 'global'}`)
+
+    // #48/#49: the whole run -- the interactive /insights PTY and the headless
+    // KPI extraction -- reads this account's credential home. If the usage page
+    // is rotating this token right now, wait for the new lineage to land before
+    // the first read; then hold the profile as a consumer from here to the
+    // `finally` (which always runs, so the ref needs no leak clock). Wait THEN
+    // acquire with nothing awaited between, so no rotation can start in the
+    // gap; and both AFTER the catalogue publish above, which callers observe
+    // synchronously (the run is "running" the instant it is asked for).
+    if (account.profileId) {
+      await waitForProfileRefresh(account.profileId)
+      releaseAccount = acquireProfileConsumer(account.profileId, { maxAgeMs: Infinity })
+    }
 
     // Step 1: Run /insights via interactive PTY
     run.statusMessage = 'Step 1/3: Generating report...'
@@ -989,6 +1004,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     upsertRun(run)
     notifyRenderer(getWindow, run)
   } finally {
+    releaseAccount?.()
     inFlight.delete(key)
   }
 

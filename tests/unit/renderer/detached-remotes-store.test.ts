@@ -8,7 +8,7 @@
  * array round-trips untouched.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useDetachedRemotesStore, DETACHED_REMOTES_MAX } from '../../../src/renderer/stores/detachedRemotesStore'
+import { useDetachedRemotesStore, DETACHED_REMOTES_MAX, sanitizeRestoredDetachedRemotes } from '../../../src/renderer/stores/detachedRemotesStore'
 import { distinctHosts } from '../../../src/renderer/utils/detachedRemotesLiveness'
 import type { DetachedRemote, SessionState } from '../../../src/shared/types'
 
@@ -147,5 +147,30 @@ describe('hydrate is a trust boundary', () => {
     useDetachedRemotesStore.getState().hydrate(junk as unknown as DetachedRemote[])
     expect(() => distinctHosts(useDetachedRemotesStore.getState().entries)).not.toThrow()
     expect(distinctHosts(useDetachedRemotesStore.getState().entries)).toEqual(['pi.local'])
+  })
+})
+
+// #54: the destination fields are optional on disk (pre-#54 files have neither)
+// but drive the orphan decision when present, so a malformed one is a bad row.
+describe('hydrate — the #54 destination fields', () => {
+  it('keeps an entry with a numeric port and a known runtime, and one with neither', () => {
+    const withDest = entry({ sessionId: 'a', port: 2222, runtime: { type: 'container', engine: 'podman', container: 'dev' } })
+    const legacy = entry({ sessionId: 'b' })
+    expect(sanitizeRestoredDetachedRemotes([withDest, legacy])).toEqual([withDest, legacy])
+  })
+
+  it('drops an entry whose port or runtime is malformed', () => {
+    expect(sanitizeRestoredDetachedRemotes([entry({ port: '22' as unknown as number })])).toEqual([])
+    expect(sanitizeRestoredDetachedRemotes([entry({ port: Number.NaN })])).toEqual([])
+    expect(sanitizeRestoredDetachedRemotes([entry({ runtime: 'container' as unknown as DetachedRemote['runtime'] })])).toEqual([])
+    expect(sanitizeRestoredDetachedRemotes([entry({ runtime: { type: 'vm' } as unknown as DetachedRemote['runtime'] })])).toEqual([])
+  })
+
+  it('round-trips port and runtime through the JSON save/load', () => {
+    const original = [entry({ sessionId: 'a', port: 2222, runtime: { type: 'host' } })]
+    const state: SessionState = { sessions: [], activeSessionId: null, savedAt: 1, detachedRemotes: original }
+    const back = JSON.parse(JSON.stringify(state)) as SessionState
+    useDetachedRemotesStore.getState().hydrate(back.detachedRemotes)
+    expect(useDetachedRemotesStore.getState().entries).toEqual(original)
   })
 })

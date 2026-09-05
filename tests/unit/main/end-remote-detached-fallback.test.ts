@@ -44,6 +44,9 @@ vi.mock('../../../src/main/config-manager', () => ({
 }))
 const vault: Record<string, string> = {}
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => vault[k] ?? null }))
+// #54: the persisted resume registry main compares the saved config against.
+let registryOnDisk: unknown[] = []
+vi.mock('../../../src/main/session-state', () => ({ readDetachedRemotesRegistry: () => registryOnDisk }))
 
 const { registerPtyHandlers } = await import('../../../src/main/ipc/pty-handlers')
 registerPtyHandlers(() => ({} as never))
@@ -59,6 +62,7 @@ const called = () => endSshRemote.mock.calls[0] as [string, unknown]
 beforeEach(() => {
   endSshRemote.mockClear()
   configsOnDisk = null
+  registryOnDisk = []
   for (const k of Object.keys(vault)) delete vault[k]
 })
 
@@ -220,5 +224,60 @@ describe('ssh:endRemote — the LIVE-session caller is unchanged', () => {
   it('a bare id outside the charset is still refused', async () => {
     await expect(endRemote({}, 'a; rm -rf /')).rejects.toThrow()
     expect(endSshRemote).not.toHaveBeenCalled()
+  })
+})
+
+// #54: the config id names a host to dial. If the registry recorded THIS session
+// at a different destination than the config reaches now, the config was edited
+// after the session was left running — and End through it would kill
+// `ccc-<sid>` on the NEW host while the real remote kept running on the old one.
+describe('ssh:endRemote — refuses a config that no longer points where the session was left (#54)', () => {
+  const recordedAt = (over: Record<string, unknown> = {}) => ({
+    sessionId: SID, configId: 'cfgA', host: 'pi.local', username: 'mong', remotePath: '~/work',
+    port: 2222, runtime: { type: 'host' }, mux: 'tmux', label: 'Pi', detachedAt: 1, ...over,
+  })
+
+  it('yields NO target when the saved config\'s host was edited away from the recorded one', async () => {
+    configsOnDisk = [sshCfg('cfgA', { host: 'other.box' })]
+    vault['cfgA'] = 'pw-A'
+    registryOnDisk = [recordedAt()]
+    await endRemote({}, { sessionId: SID, configId: 'cfgA' })
+    expect(called()).toEqual([SID, undefined])
+  })
+
+  it('yields NO target on a port, user, path or runtime edit', async () => {
+    for (const edit of [{ port: 22 }, { username: 'root' }, { remotePath: '/srv' }, { runtime: { type: 'container', container: 'dev' } }]) {
+      endSshRemote.mockClear()
+      configsOnDisk = [sshCfg('cfgA', edit)]
+      registryOnDisk = [recordedAt()]
+      await endRemote({}, { sessionId: SID, configId: 'cfgA' })
+      expect(called(), JSON.stringify(edit)).toEqual([SID, undefined])
+    }
+  })
+
+  it('still builds the target when the config matches the recorded destination', async () => {
+    configsOnDisk = [sshCfg('cfgA')] // SSH fixture: pi.local:2222 mong ~/work, host runtime
+    vault['cfgA'] = 'pw-A'
+    registryOnDisk = [recordedAt()]
+    await endRemote({}, { sessionId: SID, configId: 'cfgA' })
+    expect((called()[1] as { host: string }).host).toBe('pi.local')
+  })
+
+  it('a session the registry does not know is not checked (the config-only rule applies, as before)', async () => {
+    configsOnDisk = [sshCfg('cfgA', { host: 'other.box' })]
+    registryOnDisk = [recordedAt({ sessionId: 'b1b2c3d4e5f6a1b2c3d4e5f6' })]
+    await endRemote({}, { sessionId: SID, configId: 'cfgA' })
+    expect((called()[1] as { host: string }).host).toBe('other.box')
+  })
+
+  it('a PRE-#54 registry entry (no port/runtime) is checked on host/user/path only', async () => {
+    registryOnDisk = [recordedAt({ port: undefined, runtime: undefined })]
+    configsOnDisk = [sshCfg('cfgA', { port: 22, runtime: { type: 'container', container: 'x' } })]
+    await endRemote({}, { sessionId: SID, configId: 'cfgA' })
+    expect((called()[1] as { host: string }).host).toBe('pi.local') // port/runtime unknown -> not an edit we can see
+    endSshRemote.mockClear()
+    configsOnDisk = [sshCfg('cfgA', { host: 'other.box' })]
+    await endRemote({}, { sessionId: SID, configId: 'cfgA' })
+    expect(called()).toEqual([SID, undefined]) // a host edit still is
   })
 })

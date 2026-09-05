@@ -17,6 +17,7 @@ import * as path from 'path'
 import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { isProfileInUseByLiveSession } from '../claude-account-identity'
+import { noteProfileRefreshInFlight } from '../profile-consumers'
 import { parseUsage } from './usage-buckets'
 import { loadSnapshots, saveSnapshots, type UsageSnapshot } from './usage-snapshots'
 import type { AccountUsage, UsageBucket, CreditsInfo } from '../../shared/usage-types'
@@ -283,6 +284,12 @@ async function refreshProfileToken(profileId: string, refreshToken: string, cred
     return { accessToken: parsed.accessToken, expiresAt: parsed.expiresAt }
   })()
   refreshInFlight.set(profileId, run)
+  // #49: publish the rotation so a consumer that starts NOW (a session, a
+  // headless run, a cloud agent) waits for the new lineage to land instead of
+  // reading a credential file whose refresh token this POST is about to spend.
+  // Registered synchronously with the guard check that let us get here, so no
+  // consumer can slip between "not in use" and "rotating".
+  noteProfileRefreshInFlight(profileId, run)
   try { return await run } finally { refreshInFlight.delete(profileId) }
 }
 
@@ -397,11 +404,16 @@ export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: 
   //    Non-primary profiles live in CCC-managed isolated homes, so their only
   //    consumers are things CCC knows about, and the live-session guard below
   //    covers them.
-  //  - isProfileInUseByLiveSession covers interactive sessions, the profile-pinned
-  //    shell-only login shells (re-auth / add-account) whose in-flight /login a
-  //    refresh could clobber, AND — since #258 — the `claude auth status` probe,
-  //    which registers as a transient consumer while it runs (profile-consumers.ts)
-  //    because it too reads and can rotate the profile's token.
+  //  - isProfileInUseByLiveSession covers interactive sessions (the identity
+  //    maps) AND every registered consumer in profile-consumers.ts: the
+  //    `claude auth status` probe (#258), and since #48 the headless spawner,
+  //    Insights runs, cloud agents and the profile-pinned shell-only shells
+  //    (plain shells + the add-account /login shell) -- each of which reads,
+  //    and can rotate, the profile's token for as long as it runs.
+  //  - The other ordering (#49) is closed by the refresh itself: it publishes
+  //    its in-flight promise (noteProfileRefreshInFlight) and a consumer that
+  //    starts mid-rotation waits for it (waitForProfileRefresh) before reading
+  //    the credential file.
   if (!opts?.noRefresh && !tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
     const refreshed = await refreshProfileToken(profileId, creds.refreshToken, creds.credsPath)
     if (refreshed) {

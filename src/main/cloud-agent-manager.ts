@@ -13,6 +13,7 @@ import { resolveVersionBinary, isVersionInstalled, installVersion } from './lega
 import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
+import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { randomId } from '../shared/id'
 
 export interface CloudAgentData {
@@ -232,22 +233,40 @@ export async function dispatchAgent(params: {
   const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
   const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin}${permFlag}`
 
-  const child = spawn(shellCmd, [], {
-    cwd: params.projectPath,
-    shell: true,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: spawnEnvVars,
-  })
+  // #49: if the usage page is rotating this profile's token right now, let the
+  // new lineage land before the agent's claude reads the credential file.
+  if (resolvedProfileId) await waitForProfileRefresh(resolvedProfileId)
+  // #48: the agent runs in the profile's credential home for as long as its
+  // process lives, so the profile reads as in-use for exactly that long (the
+  // usage refresh and the account delete defer to it). Acquired with nothing
+  // awaited between the wait above and the spawn below, so no rotation can
+  // start in the gap. Released on 'close' and on 'error' -- one of which always
+  // fires for a spawned child -- so the ref needs no leak clock; an agent that
+  // runs for an hour is in use for an hour.
+  const releaseProfile = resolvedProfileId ? acquireProfileConsumer(resolvedProfileId, { maxAgeMs: Infinity }) : () => { /* default home: nothing held */ }
+  let child: ChildProcess
+  try {
+    child = spawn(shellCmd, [], {
+      cwd: params.projectPath,
+      shell: true,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: spawnEnvVars,
+    })
+  } catch (e) {
+    // spawn() itself throws only synchronously (bad argv); a hold with no child
+    // to release it would otherwise outlive the failure.
+    releaseProfile()
+    cleanupTmpFileFor(tmpFile)
+    throw e
+  }
 
   activeProcesses.set(agent.id, child)
   logInfo(`[cloud-agent] Dispatched agent ${agent.id} (${agent.name}) pid=${child.pid} profile=${resolvedProfileId ?? '(default/global)'} account=${accountEmail ?? '(none)'}`)
   logInfo(`[cloud-agent] Shell cmd: ${shellCmd}`)
   logInfo(`[cloud-agent] CWD: ${params.projectPath}, prompt length: ${params.description.length}`)
 
-  const cleanupTmpFile = (): void => {
-    try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
-  }
+  const cleanupTmpFile = (): void => cleanupTmpFileFor(tmpFile)
 
   child.stdout?.on('data', (data: Buffer) => {
     const chunk = data.toString()
@@ -283,6 +302,7 @@ export async function dispatchAgent(params: {
   })
 
   child.on('close', (code) => {
+    releaseProfile()
     cleanupTmpFile()
     activeProcesses.delete(agent.id)
     const agentRef = agents.find(a => a.id === agent.id)
@@ -305,6 +325,7 @@ export async function dispatchAgent(params: {
   })
 
   child.on('error', (err) => {
+    releaseProfile()
     cleanupTmpFile()
     activeProcesses.delete(agent.id)
     const agentRef = agents.find(a => a.id === agent.id)
@@ -320,6 +341,10 @@ export async function dispatchAgent(params: {
   })
 
   return agent
+}
+
+function cleanupTmpFileFor(tmpFile: string): void {
+  try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
 }
 
 function parseCostFromOutput(agent: CloudAgentData): void {

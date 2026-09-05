@@ -12,6 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { isValidProfileId } from './profile-id'
 import { atomicWriteFileSync } from './atomic-write'
 import { logWarn } from './debug-logger'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -22,18 +23,13 @@ import type { AccountProfile, AccountProfilesConfig } from '../shared/account-ty
 // are deliberately NOT here -- they stay private per profile.
 export const SHARED_DIR_NAMES = ['projects', 'memory', 'agents', 'skills', 'commands', 'plugins'] as const
 
-// Profile ids are CCC-generated, lowercase-alphanumeric + hyphen. Validating
-// here is the primary defense against a malicious/buggy renderer-supplied id
-// (e.g. "..\\..\\.claude") escaping the profiles root in teardown.
-const PROFILE_ID_RE = /^[a-z0-9][a-z0-9-]*$/
-
-// `unknown` in, type-guard out: the id can arrive over IPC, where it is not
-// necessarily a string. `RE.test(x)` would stringify a non-string first, so a
-// crafted `{ toString: () => 'ok' }` used to pass. Length-capped like
-// isValidNoteId so a pathological id can't be used to build a huge path.
-export function isValidProfileId(id: unknown): id is string {
-  return typeof id === 'string' && id.length > 0 && id.length <= 128 && PROFILE_ID_RE.test(id)
-}
+// Profile ids are CCC-generated, lowercase-alphanumeric + hyphen. Validating is
+// the primary defense against a malicious/buggy renderer-supplied id (e.g.
+// "..\\..\\.claude") escaping the profiles root in teardown. The predicate lives
+// in profile-id.ts (dependency-free, so claude-headless can recover a profile
+// id from a HOME path without importing this module's electron graph, #48) and
+// is re-exported here so every existing import keeps working.
+export { isValidProfileId } from './profile-id'
 
 let rootsOverride: { resourcesDir: string; sharedRoot: string } | null = null
 /** Test seam: inject temp roots so we never touch ~/.claude. */

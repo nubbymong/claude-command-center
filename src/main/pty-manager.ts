@@ -58,6 +58,7 @@ import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
+import { acquireProfileConsumer } from './profile-consumers'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
@@ -841,6 +842,18 @@ function emitSshSessionInfo(win: BrowserWindow, sessionId: string, info: { tmuxP
 }
 
 const ptySessions = new Map<string, PtySession>()
+
+// #48: a shell-only session pinned to a profile (a plain shell, or the
+// add-account /login shell) runs in that profile's credential home for its whole
+// life, but by design never captures an identity (B3), so it was invisible to
+// isProfileInUseByLiveSession -- the usage page could rotate the token under a
+// /login in progress, and the account could be deleted under an open shell.
+// Each such session holds a transient-consumer ref instead, keyed by session id.
+// Re-established per spawn (spawnPty opens with killPty -> cleanupSessionResources,
+// which releases the previous hold) and released on both exit paths through
+// cleanupSessionResources. Interactive Claude sessions are NOT here: the
+// identity maps already cover them.
+const shellOnlyProfileHolds = new Map<string, () => void>()
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
 const codexTelemetrySources = new Map<string, TelemetrySource>()
@@ -3775,6 +3788,14 @@ export function spawnPty(
         useConpty: true
       })
 
+      // #48: hold the profile for this shell's life (see shellOnlyProfileHolds).
+      // Only after pty.spawn succeeded, mirroring B3 for the identity capture:
+      // a spawn throw must not leave a ref nothing will ever release.
+      if (resolvedProfileId) {
+        shellOnlyProfileHolds.get(sessionId)?.()
+        shellOnlyProfileHolds.set(sessionId, acquireProfileConsumer(resolvedProfileId, { maxAgeMs: Infinity }))
+      }
+
       // Explicitly cd to ensure the shell is in the right directory
       // (PowerShell profiles can change cwd before the user sees the prompt)
       const isWin = os.platform() === 'win32'
@@ -4633,6 +4654,12 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
  * naturally-exiting sessions.
  */
 function cleanupSessionResources(sessionId: string): void {
+  // #48: release the shell-only profile hold. No-op for every other session.
+  const profileHold = shellOnlyProfileHolds.get(sessionId)
+  if (profileHold) {
+    shellOnlyProfileHolds.delete(sessionId)
+    profileHold()
+  }
   pendingWrites.delete(sessionId)
   launchPendingSessions.delete(sessionId)
   recentWrites.delete(sessionId)
