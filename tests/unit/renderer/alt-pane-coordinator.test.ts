@@ -68,6 +68,29 @@ describe('alt-pane coordinator — one session surface at a time', () => {
     expect(openState()).toEqual({ canvas: false, browser: true, logs: false })
   })
 
+  it('REGRESSION: openAccountPane (the Artifacts button, Settings sign-in) evicts canvas/logs AT THE SOURCE', () => {
+    // Reachable without any button: CommandBar "Artifacts" -> openArtifactsPerSetting,
+    // and Settings -> Account internal-browser sign-in. Neither went through the
+    // coordinator, so the canvas stayed flagged open under the browser.
+    toggleAltPane(SID, 'canvas')
+    useWebviewStore.getState().openAccountPane(SID, 'profile-a1b2')
+    expect(openState()).toEqual({ canvas: false, browser: true, logs: false })
+    expect(useWebviewStore.getState().bySessionId[SID]?.accountPane?.profileId).toBe('profile-a1b2')
+    toggleAltPane(SID, 'logs')
+    useWebviewStore.getState().openAccountPane(SID, 'profile-a1b2')
+    expect(openState()).toEqual({ canvas: false, browser: true, logs: false })
+  })
+
+  it('REGRESSION: navigate (agent push, "page" command) evicts canvas/logs AT THE SOURCE — no caller has to', () => {
+    toggleAltPane(SID, 'logs')
+    useWebviewStore.getState().navigate(SID, 'http://127.0.0.1:5173/')
+    expect(openState()).toEqual({ canvas: false, browser: true, logs: false })
+    expect(useWebviewStore.getState().bySessionId[SID]?.currentUrl).toBe('http://127.0.0.1:5173/')
+    toggleAltPane(SID, 'canvas')
+    useWebviewStore.getState().navigate(SID, 'http://127.0.0.1:5173/next')
+    expect(openState()).toEqual({ canvas: false, browser: true, logs: false })
+  })
+
   it('is per session — one session\'s surface does not touch another\'s', () => {
     toggleAltPane('sess-A', 'canvas')
     toggleAltPane('sess-B', 'browser')

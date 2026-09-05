@@ -1,6 +1,6 @@
 import React from 'react'
 import { useWebviewStore } from '../stores/webviewStore'
-import { toggleAltPane, closeOtherAltPanes } from '../stores/altPane'
+import { toggleAltPane } from '../stores/altPane'
 import { trackUsage } from '../stores/tipsStore'
 import { ReservedLabel } from './command-bar/chips'
 
@@ -112,8 +112,7 @@ export default function WebviewButton({ sessionId }: Props) {
           const url = consumeAgentPush(sessionId)
           if (url) {
             trackUsage('webview.opened')
-            navigate(sessionId, url) // opens the pane itself...
-            closeOtherAltPanes(sessionId, 'browser') // ...so evict canvas/logs here too
+            navigate(sessionId, url) // opens the pane; the store evicts canvas/logs itself
             return
           }
         }

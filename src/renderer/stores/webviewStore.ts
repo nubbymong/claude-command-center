@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 import { isAllowedBrowserUrl, type WebviewNavState } from '../../shared/browser-url'
+// A deliberate import cycle (altPane reads this store too): the one-surface
+// rule is enforced HERE, at the two writes that open the pane, so no caller can
+// bypass it. Only ever called inside actions, never at module evaluation.
+import { closeOtherAltPanes } from './altPane'
 
 /**
  * Per-session state for the browser pane (the "webview").
@@ -285,6 +289,10 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   },
   navigate: (sessionId, url) => {
     const cur = get().bySessionId[sessionId] || defaultState()
+    // One session surface at a time: opening the pane evicts the canvas and
+    // logs. Done at the source so the agent-push open, a "page" command and any
+    // future caller honour it without having to remember to.
+    closeOtherAltPanes(sessionId, 'browser')
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
@@ -332,6 +340,10 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   },
   openAccountPane: (sessionId, profileId) => {
     const cur = get().bySessionId[sessionId] || defaultState()
+    // Opens the pane too (the Artifacts button, Settings' internal-browser
+    // sign-in), so it evicts the canvas and logs exactly as `navigate` does —
+    // this was the third path that left two surfaces flagged open.
+    closeOtherAltPanes(sessionId, 'browser')
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
