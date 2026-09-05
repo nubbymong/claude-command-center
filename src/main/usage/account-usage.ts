@@ -576,21 +576,32 @@ export async function fetchAllAccountsUsage(): Promise<AccountUsage[]> {
  * fills each row when its result lands -- open accounts resolve instantly (no call),
  * closed ones as their staggered calls arrive. `onResult` is called once per account,
  * in listProfiles order; a throw in it is the caller's problem, not this loop's.
+ * `shouldContinue`, when given, is asked before each account's stagger and
+ * again before its call: a caller that no longer wants the rest (its window
+ * closed, or it opened a newer stream) stops the loop there rather than after a
+ * fan-out nobody will read (adversarial pass on #598). Accounts already
+ * delivered are not affected; the promise still resolves.
  */
-export async function fetchAllAccountsUsageStreaming(onResult: (usage: AccountUsage) => void): Promise<void> {
+export async function fetchAllAccountsUsageStreaming(
+  onResult: (usage: AccountUsage) => void,
+  opts: { shouldContinue?: () => boolean } = {},
+): Promise<void> {
   // Hydrate BEFORE the stagger decision: accountUsageWillNetwork reads lastGoodUsage
   // (a prior fetch's cached credits force an open account onto the GET path, Q1b),
   // and fetchAccountUsage only hydrates on its first call -- so without this the
   // first page-open of the process would mis-pace a cached-credits account.
   hydrateSnapshots()
   const profiles = listProfiles()
+  const wanted = () => !opts.shouldContinue || opts.shouldContinue()
   let networkedCount = 0
   for (const p of profiles) {
+    if (!wanted()) return
     // An OPEN account served from its delivered figure (plan P2) makes no request,
     // so -- like a parked account -- it must not consume a stagger slot, or N open
     // accounts would add N*STAGGER_MS of dead wait before a closed one loads.
     const willNetwork = accountUsageWillNetwork(p)
     if (willNetwork && networkedCount > 0) await sleep(STAGGER_MS)
+    if (!wanted()) return
     onResult(await fetchAccountUsage(p.id))
     if (willNetwork) networkedCount++
   }

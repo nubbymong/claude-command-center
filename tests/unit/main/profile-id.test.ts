@@ -3,6 +3,7 @@
 // The inverse is structural (`<...>/account-profiles/<id>`), never a guess: the
 // real user home has a basename that passes the id charset and must map to null.
 import { describe, it, expect, vi } from 'vitest'
+import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -65,5 +66,36 @@ describe('profileIdFromHome', () => {
     expect(profileIdFromHome('/res/account-profiles/../profile-a1b2-ff')).toBeNull()
     // An invalid id under the right parent is still invalid.
     expect(profileIdFromHome('/res/account-profiles/Profile-X')).toBeNull()
+  })
+})
+
+// Adversarial pass on #598: Windows and macOS hand a path back in whatever case
+// it was asked with (Windows also in 8.3 short form); the directory is the same
+// one, and reading it as "not a profile" silently dropped the consumer
+// registration (#48) and the rotation wait (#49).
+describe('profileIdFromHome compares the parent segment the way the filesystem does', () => {
+  const caseInsensitive = process.platform === 'win32' || process.platform === 'darwin'
+
+  it('a differently-cased profiles-root segment maps to the id on a case-insensitive platform, to null elsewhere', () => {
+    expect(profileIdFromHome(path.join('F:', 'res', 'Account-Profiles', 'profile-a1b2-ff'))).toBe(caseInsensitive ? 'profile-a1b2-ff' : null)
+    expect(profileIdFromHome('/res/ACCOUNT-PROFILES/profile-a1b2-ff')).toBe(caseInsensitive ? 'profile-a1b2-ff' : null)
+  })
+
+  it('an EXISTING parent is judged by its on-disk name; a missing one by its text, without throwing', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-pid-case-'))
+    try {
+      fs.mkdirSync(path.join(root, PROFILES_ROOT_DIRNAME, 'profile-a1b2-ff'), { recursive: true })
+      // The same directory asked for in another case resolves through its real path.
+      expect(profileIdFromHome(path.join(root, PROFILES_ROOT_DIRNAME.toUpperCase(), 'profile-a1b2-ff'))).toBe(caseInsensitive ? 'profile-a1b2-ff' : null)
+      // A parent that does not exist is judged on its text.
+      expect(profileIdFromHome(path.join(root, 'nowhere', PROFILES_ROOT_DIRNAME, 'profile-a1b2-ff'))).toBe('profile-a1b2-ff')
+      expect(profileIdFromHome(path.join(root, 'nowhere', 'elsewhere', 'profile-a1b2-ff'))).toBeNull()
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('the id itself stays exact: a differently-cased id is not a profile', () => {
+    expect(profileIdFromHome(path.join('F:', 'res', PROFILES_ROOT_DIRNAME, 'Profile-A1B2'))).toBeNull()
   })
 })

@@ -158,15 +158,17 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
   //    And the other ordering (#49): if that refresh is ALREADY in flight when the
   //    probe starts, registering now is too late to stop the POST -- the CLI would
   //    read the pre-rotation credential file and could later redeem the same
-  //    single-use refresh token. So wait for the rotation to land first, then
-  //    acquire with nothing awaited in between (no new rotation can start in
-  //    the gap), then spawn. Awaited ONLY when a rotation is actually in flight:
-  //    the common path stays synchronous up to the spawn, which is what lets
-  //    overlapping probes for one profile share a single subprocess.
-  const rotation = pendingProfileRefresh(profileId)
-  if (rotation) await rotation
+  //    single-use refresh token. So acquire FIRST (from here on no new rotation
+  //    can start), then wait for the in-flight one to land, then spawn. The
+  //    other order left a microtask between the wait settling and the acquire
+  //    in which a fresh rotation could begin (adversarial pass on #598).
+  //    Awaited ONLY when a rotation is actually in flight: the common path
+  //    stays synchronous up to the spawn, which is what lets overlapping probes
+  //    for one profile share a single subprocess.
   const release = acquireProfileConsumer(profileId)
   try {
+    const rotation = pendingProfileRefresh(profileId)
+    if (rotation) await rotation
     const home = join(getProfilesRoot(), profileId)
     if (existsSync(home)) {
       const { stdout } = await execFileAsync('claude', ['auth', 'status'], {

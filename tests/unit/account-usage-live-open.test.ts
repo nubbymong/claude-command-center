@@ -76,14 +76,16 @@ const profile = (over: Partial<AccountProfile>): AccountProfile => ({
 const bucket = (over: Partial<UsageBucket> = {}): UsageBucket =>
   ({ key: 'session:', label: '5h', group: 'session', percent: 12, resetsAt: '', severity: 'normal', ...over })
 
-/** A fresh, non-lapsed credentials file so a fall-through GET has a usable token. */
-function writeFreshCreds(): void {
+/** A credentials file so a fall-through GET has a token: fresh (non-lapsed) by
+ *  default; pass a past `expiresAt` for a token the closed-account path would refresh. */
+function writeCreds(expiresAt = Date.now() + 3_600_000): void {
   const dir = path.join(tmpHome, '.claude')
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, '.credentials.json'), JSON.stringify({
-    claudeAiOauth: { accessToken: 'live-token', refreshToken: 'r', expiresAt: Date.now() + 3_600_000 },
+    claudeAiOauth: { accessToken: 'live-token', refreshToken: 'r', expiresAt },
   }))
 }
+const writeFreshCreds = (): void => writeCreds()
 
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-live-open-'))
@@ -126,6 +128,24 @@ describe('fetchAccountUsage — an OPEN account reuses its delivered figure (no 
     await fetchAccountUsage('profile-x-1')
     expect(requestedHosts).toContain(USAGE_HOST)   // one GET to fill the credits row
     expect(requestedHosts).not.toContain(REFRESH_HOST) // never a rotation while in use
+  })
+
+  it('REGRESSION (adversarial pass on #598): the Q1b GET never rotates even when the live token has LAPSED', async () => {
+    // The fixture above is fresh, so "never a rotation" was unreachable there;
+    // an expired token is the case in which the closed-account path WOULD refresh.
+    writeCreds(Date.now() - 60_000)
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket()], /* hasCredits */ true)
+
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).not.toContain(REFRESH_HOST)
+  })
+
+  it('control: the same lapsed token on a CLOSED account does go to the refresh endpoint', async () => {
+    writeCreds(Date.now() - 60_000)
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(REFRESH_HOST)
   })
 
   it('falls through to a GET when a prior fetch cached credits the delivered figure cannot carry (Q1b)', async () => {

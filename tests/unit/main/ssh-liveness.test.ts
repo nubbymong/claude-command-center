@@ -85,6 +85,31 @@ describe('parseTmuxLivenessOutput', () => {
   })
 })
 
+// Adversarial pass on #598: BEGIN is matched as the LAST one before the END, so
+// text a host-side actor can print BEFORE the probe runs (a banner, a MOTD)
+// cannot forge the FOUND marker and a session name into the body.
+describe('parseTmuxLivenessOutput — forged sentinels printed before the probe', () => {
+  const banner = `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND}\nccc-forged\n`
+
+  it('REGRESSION: a banner that prints BEGIN/FOUND/<name> ahead of a real, empty run does not make that name live', () => {
+    const parsed = parseTmuxLivenessOutput(banner + wrapNoTmux())
+    expect(parsed).toEqual({ completed: false, shellCompleted: true, tmuxFound: false, names: [] })
+    expect(computeLiveSessionIds(['forged'], parsed.names)).toEqual([])
+  })
+
+  it('a banner ahead of a real run that DID find tmux contributes nothing to its names', () => {
+    const parsed = parseTmuxLivenessOutput(banner + wrap('ccc-real'))
+    expect(parsed.completed).toBe(true)
+    expect(parsed.names).toEqual(['ccc-real'])
+  })
+
+  it('a session NAMED like the BEGIN sentinel empties the body: unverified, never a false live', () => {
+    const parsed = parseTmuxLivenessOutput(wrap(TMUX_LIVENESS_BEGIN))
+    expect(parsed.completed).toBe(false)
+    expect(parsed.names).toEqual([])
+  })
+})
+
 describe('computeLiveSessionIds', () => {
   it('returns the queried ids whose ccc-<safeSid> target is in the reported names', () => {
     // The deliverable case: names ccc-a, ccc-b, other; candidates a, b, z.

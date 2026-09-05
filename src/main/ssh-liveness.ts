@@ -100,7 +100,14 @@ export function parseTmuxLivenessOutput(raw: string): { completed: boolean; shel
   const lines = clean.split(/\r?\n/).map((l) => l.trim())
   const endIdx = lines.lastIndexOf(TMUX_LIVENESS_END)
   if (endIdx === -1) return { completed: false, shellCompleted: false, tmuxFound: false, names: [] }
-  const beginIdx = lines.indexOf(TMUX_LIVENESS_BEGIN)
+  // The LAST BEGIN before that END, not the first in the buffer (adversarial
+  // pass on #598): BEGIN and END are matched symmetrically, so text printed
+  // BEFORE the command ran -- a login banner, a MOTD, anything a host-side
+  // actor can author -- cannot contribute a forged FOUND marker and session
+  // names to the body. Only what the shell printed between the probe's own
+  // sentinels counts. (A session NAMED like the BEGIN sentinel empties the body
+  // and reads as unverified -- fail-open, never a false "live".)
+  const beginIdx = lines.lastIndexOf(TMUX_LIVENESS_BEGIN, endIdx)
   const from = beginIdx === -1 ? 0 : beginIdx + 1
   const body = lines.slice(from, endIdx)
   const tmuxFound = body.includes(TMUX_LIVENESS_FOUND)

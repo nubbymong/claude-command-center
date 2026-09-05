@@ -715,6 +715,10 @@ function createWindow(): void {
   // graceful save. Persist the last-known session state so the sessions survive.
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
     sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
+    // A renderer that is gone can never answer window:closeRequested: a close
+    // or quit already held on it would otherwise hold forever, and a later one
+    // would hang the same way (adversarial pass on #598).
+    closeCoordinator.onRendererGone()
   })
 
   // Process-global IPC (window controls, dialogs, clipboard, session state, CLI

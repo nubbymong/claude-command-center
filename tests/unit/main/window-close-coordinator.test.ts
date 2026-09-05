@@ -165,3 +165,68 @@ describe('a second window in the same process (macOS dock reopen)', () => {
     expect(deps.teardown).toHaveBeenCalledTimes(1)
   })
 })
+
+// Adversarial pass on #598: a request the renderer can never answer must not
+// hold the app forever. Two exits: the renderer is GONE (render-process-gone --
+// definitive), or it is merely not answering, in which case a REPEATED quit
+// overrides, exactly as a second Alt+F4 already overrides the window's dialog.
+describe('a renderer that cannot answer', () => {
+  it('REGRESSION: Cmd+Q held on a renderer that then dies: the window closes, the quit goes through, teardown once', () => {
+    const c = make()
+    c.onBeforeQuit(preventDefault)
+    expect(deps.teardown).not.toHaveBeenCalled()
+    c.onRendererGone() // webContents 'render-process-gone'
+    expect(deps.closeWindow).toHaveBeenCalledTimes(1)
+    expect(deps.quit).toHaveBeenCalledTimes(1)
+    c.onBeforeQuit(preventDefault) // the re-issued quit
+    expect(prevented).toBe(1)
+    expect(deps.teardown).toHaveBeenCalledTimes(1)
+  })
+
+  it('a window close held on a renderer that then dies closes the window (no forced quit)', () => {
+    const c = make()
+    c.onWindowClose(preventDefault)
+    c.onRendererGone()
+    expect(deps.closeWindow).toHaveBeenCalledTimes(1)
+    expect(deps.quit).not.toHaveBeenCalled()
+  })
+
+  it('a renderer that dies with nothing outstanding: the next quit proceeds without asking', () => {
+    const c = make()
+    c.onRendererGone()
+    c.onBeforeQuit(preventDefault)
+    expect(prevented).toBe(0)
+    expect(deps.askRenderer).not.toHaveBeenCalled()
+    expect(deps.teardown).toHaveBeenCalledTimes(1)
+  })
+
+  it('a SECOND Cmd+Q while the first is held (a frozen renderer, or the user overriding the dialog) proceeds, tearing down once', () => {
+    const c = make()
+    c.onBeforeQuit(preventDefault)
+    expect(prevented).toBe(1)
+    c.onBeforeQuit(preventDefault)
+    expect(prevented).toBe(1) // not held again
+    expect(deps.teardown).toHaveBeenCalledTimes(1)
+    c.onWindowClose(preventDefault) // Electron closes the window on its way out
+    expect(prevented).toBe(1)
+  })
+
+  it('a quit joining an open CLOSE dialog is still held; only a repeated quit overrides', () => {
+    const c = make()
+    c.onWindowClose(preventDefault)
+    c.onBeforeQuit(preventDefault) // joins the dialog already up
+    expect(prevented).toBe(2)
+    expect(deps.teardown).not.toHaveBeenCalled()
+    c.onBeforeQuit(preventDefault) // repeated: override
+    expect(prevented).toBe(2)
+    expect(deps.teardown).toHaveBeenCalledTimes(1)
+  })
+
+  it('a dead-renderer allow is idempotent', () => {
+    const c = make()
+    c.onWindowClose(preventDefault)
+    c.onRendererGone()
+    c.onRendererGone()
+    expect(deps.closeWindow).toHaveBeenCalledTimes(1)
+  })
+})

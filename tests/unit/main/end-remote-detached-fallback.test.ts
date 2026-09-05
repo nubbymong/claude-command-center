@@ -43,7 +43,8 @@ vi.mock('../../../src/main/config-manager', () => ({
   readConfig: (key: string) => (key === 'configs' ? configsOnDisk : null),
 }))
 const vault: Record<string, string> = {}
-vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => vault[k] ?? null }))
+const loadCredential = vi.fn((k: string) => vault[k] ?? null)
+vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => loadCredential(k) }))
 // #54: the persisted resume registry main compares the saved config against.
 let registryOnDisk: unknown[] = []
 vi.mock('../../../src/main/session-state', () => ({ readDetachedRemotesRegistry: () => registryOnDisk }))
@@ -279,5 +280,16 @@ describe('ssh:endRemote — refuses a config that no longer points where the ses
     configsOnDisk = [sshCfg('cfgA', { host: 'other.box' })]
     await endRemote({}, { sessionId: SID, configId: 'cfgA' })
     expect(called()).toEqual([SID, undefined]) // a host edit still is
+  })
+
+  it('the refusal comes BEFORE the keychain read: a moved destination never has its credential loaded (adversarial pass on #598)', async () => {
+    configsOnDisk = [sshCfg('cfgA', { host: 'other.box' })]
+    vault['cfgA'] = 'pw-A'
+    vault['cfgA_sudo'] = 'sudo-A'
+    registryOnDisk = [recordedAt()]
+    loadCredential.mockClear()
+    await endRemote({}, { sessionId: SID, configId: 'cfgA' })
+    expect(called()).toEqual([SID, undefined])
+    expect(loadCredential).not.toHaveBeenCalled()
   })
 })

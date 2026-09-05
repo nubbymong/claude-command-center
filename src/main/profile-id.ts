@@ -9,6 +9,7 @@
  * import keeps working and there is ONE definition of the charset -- a second,
  * hand-copied regex is exactly the drift the cloud-agent tests warn about.
  */
+import fs from 'node:fs'
 import path from 'node:path'
 
 // Profile ids are CCC-generated, lowercase-alphanumeric + hyphen. Validating
@@ -28,19 +29,45 @@ export function isValidProfileId(id: unknown): id is string {
  *  `<resources>/account-profiles`, and every profile home sits directly under it. */
 export const PROFILES_ROOT_DIRNAME = 'account-profiles'
 
+/** Windows and (by default) macOS filesystems are case-insensitive: a path can
+ *  come back in a case other than the literal the app built it with. */
+const CASE_INSENSITIVE_PATHS = process.platform === 'win32' || process.platform === 'darwin'
+
+function isProfilesRootName(name: string): boolean {
+  return CASE_INSENSITIVE_PATHS ? name.toLowerCase() === PROFILES_ROOT_DIRNAME : name === PROFILES_ROOT_DIRNAME
+}
+
+/**
+ * The name `dir` has ON DISK when it exists -- a Windows 8.3 short form
+ * (`ACCOUN~1`) expands to the long name it stands for, and stored case wins
+ * over the case in the string -- and the segment as written otherwise. Never
+ * throws: a path that does not exist, or a junction that cannot be resolved,
+ * is judged on its text.
+ */
+function onDiskName(dir: string): string {
+  try { return path.basename(fs.realpathSync.native(dir)) } catch { return path.basename(dir) }
+}
+
 /**
  * The profile a HOME path belongs to, or null for the default (global) home.
  *
  * `getProfileConfigDir(id)` is `join(getProfilesRoot(), id)` -- the id is the
  * last path segment, and the segment above it is always `account-profiles` --
- * so the inverse needs no filesystem and no resources-directory lookup. Both
- * halves are required: the real user home (`C:\Users\nicho`, `/home/pi`) has a
- * basename that passes the id charset, and it must map to null, not to a
- * phantom profile. A null answer means "nothing to register", never a guess.
+ * so the inverse needs no resources-directory lookup. Both halves are required:
+ * the real user home (`C:\Users\nicho`, `/home/pi`) has a basename that passes
+ * the id charset, and it must map to null, not to a phantom profile. A null
+ * answer means "nothing to register", never a guess.
+ *
+ * The parent segment is compared the way the filesystem would (adversarial pass
+ * on #598): a home handed back as `...\Account-Profiles\<id>` or through an 8.3
+ * short name names the SAME directory, and reading it as "not a profile" would
+ * silently skip the consumer registration (#48) and the rotation wait (#49) --
+ * the exact stranding those exist to prevent. The id itself stays exact: it is
+ * CCC-generated lowercase, and a differently-cased id is not one.
  */
 export function profileIdFromHome(home: string | null | undefined): string | null {
   if (typeof home !== 'string' || home.length === 0) return null
   const base = path.basename(home)
   if (!isValidProfileId(base)) return null
-  return path.basename(path.dirname(home)) === PROFILES_ROOT_DIRNAME ? base : null
+  return isProfilesRootName(onDiskName(path.dirname(home))) ? base : null
 }

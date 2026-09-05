@@ -62,3 +62,24 @@ describe('window IPC is registered once per process', () => {
     expect(src).not.toMatch(/app\.on\('before-quit', \(\) => \{/)
   })
 })
+
+// Wiring in index.ts that a unit test cannot execute (the module boots the app)
+// but which the adversarial pass on #598 found unpinned: each is a one-line call
+// a refactor could drop with no test going red.
+describe('index.ts wiring pinned by shape', () => {
+  it('a (re)created window resets the close decision (rc.14 review F3)', () => {
+    expect(bodyOf('function createWindow(): void {')).toContain('closeCoordinator.onWindowCreated()')
+  })
+
+  it('a renderer that dies releases any close or quit held on it (render-process-gone -> onRendererGone)', () => {
+    const body = bodyOf('function createWindow(): void {')
+    const gone = body.indexOf("webContents.on('render-process-gone'")
+    expect(gone).toBeGreaterThanOrEqual(0)
+    const handler = body.slice(gone, body.indexOf('\n  })', gone))
+    expect(handler).toContain('closeCoordinator.onRendererGone()')
+  })
+
+  it('the statusline usage sink feeds the open-account figure the usage page reuses (plan P2)', () => {
+    expect(src).toContain('setStatuslineUsageSink(recordLiveUsageForSession)')
+  })
+})

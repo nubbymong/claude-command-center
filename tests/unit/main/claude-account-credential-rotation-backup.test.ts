@@ -6,8 +6,11 @@
 // only at exit (and at add-account), while the CLI rotates the single-use
 // refresh token during a long session -- so a restore mid-session installed a
 // pre-rotation, already-spent token and stranded the account. The identity
-// poll now watches the profile's `.credentials.json` mtime and re-snapshots
-// canonical on every change after the first observation. Stat only.
+// poll now watches the profile's `.credentials.json` (and `.claude.json`) stamp
+// and re-snapshots canonical once a change has SETTLED: seen unchanged on the
+// poll after it appeared (adversarial pass on #598 -- a /login writes the two
+// files separately, and a snapshot taken between the writes mixed one account's
+// identity with another's token). Stat only.
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -35,45 +38,74 @@ import * as identity from '../../../src/main/claude-account-identity'
 
 const credsDir = path.join(tmp, '.claude')
 const credsFile = path.join(credsDir, '.credentials.json')
+const identityFile = path.join(tmp, '.claude.json')
 let clock = Date.now()
+/** A deterministic, strictly later mtime: coarse filesystem clocks could
+ *  otherwise make two writes in one tick look like no change. */
+function stamp(file: string) {
+  clock += 5000
+  fs.utimesSync(file, new Date(clock), new Date(clock))
+}
 function writeCreds(refreshToken: string) {
   fs.mkdirSync(credsDir, { recursive: true })
   fs.writeFileSync(credsFile, JSON.stringify({ claudeAiOauth: { accessToken: 'at', refreshToken } }))
-  // A deterministic, strictly later mtime: coarse filesystem clocks could
-  // otherwise make two writes in one tick look like no change.
-  clock += 5000
-  fs.utimesSync(credsFile, new Date(clock), new Date(clock))
+  stamp(credsFile)
 }
+function writeIdentity(email: string) {
+  fs.writeFileSync(identityFile, JSON.stringify({ oauthAccount: { emailAddress: email } }))
+  stamp(identityFile)
+}
+const poll = () => identity.recheckAllAsync()
 
 beforeEach(() => {
   identity._resetForTest()
   backup.mockClear()
+  fs.rmSync(identityFile, { force: true })
 })
 afterAll(() => {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch { /* best-effort */ }
 })
 
 describe('canonical backup follows a credential rotation', () => {
-  it('first observation records the mtime and backs nothing up; a rotation then re-snapshots canonical once', async () => {
+  it('first observation records the stamp and backs nothing up; a rotation re-snapshots canonical once it has settled', async () => {
     writeCreds('rt-1')
     identity.startWatchingAccountIdentity('s1', 'profile-aaa111')
-    await identity.recheckAllAsync()
+    await poll()
     expect(backup).not.toHaveBeenCalled()
 
     writeCreds('rt-2') // the CLI rotated the refresh token mid-session
-    await identity.recheckAllAsync()
-    expect(backup).toHaveBeenCalledTimes(1)
+    await poll()
+    expect(backup).not.toHaveBeenCalled() // seen once: the file may still be moving
+    await poll()
+    expect(backup).toHaveBeenCalledTimes(1) // seen unchanged: settled
     expect(backup).toHaveBeenCalledWith('profile-aaa111')
 
-    await identity.recheckAllAsync() // nothing changed since
+    await poll() // nothing changed since
     expect(backup).toHaveBeenCalledTimes(1)
     identity.stopWatchingAccountIdentity('s1')
+  })
+
+  it('REGRESSION (adversarial pass on #598): a /login that rewrites the two files one poll apart is backed up only once BOTH have stopped moving', async () => {
+    writeCreds('rt-5')
+    writeIdentity('same@account.test')
+    identity.startWatchingAccountIdentity('s4', 'profile-aaa111')
+    await poll()
+
+    writeCreds('rt-6') // the CLI wrote the new credentials first...
+    await poll()
+    expect(backup).not.toHaveBeenCalled()
+    writeIdentity('same@account.test') // ...and the identity file a poll later
+    await poll()
+    expect(backup).not.toHaveBeenCalled() // still moving
+    await poll()
+    expect(backup).toHaveBeenCalledTimes(1) // both settled: the guard now sees the finished picture
+    identity.stopWatchingAccountIdentity('s4')
   })
 
   it('a missing credentials file is simply not observed (no throw, no backup)', async () => {
     fs.rmSync(credsFile, { force: true })
     identity.startWatchingAccountIdentity('s2', 'profile-aaa111')
-    await expect(identity.recheckAllAsync()).resolves.toBeUndefined()
+    await expect(poll()).resolves.toBeUndefined()
     expect(backup).not.toHaveBeenCalled()
     identity.stopWatchingAccountIdentity('s2')
   })
@@ -81,11 +113,32 @@ describe('canonical backup follows a credential rotation', () => {
   it('a session with no profile (default home) is never stat-ed for a profile credential file', async () => {
     writeCreds('rt-3')
     identity.startWatchingAccountIdentity('s3', undefined)
-    await identity.recheckAllAsync()
+    await poll()
     writeCreds('rt-4')
-    await identity.recheckAllAsync()
+    await poll()
+    await poll()
     expect(backup).not.toHaveBeenCalled()
     identity.stopWatchingAccountIdentity('s3')
+  })
+
+  it('is stat-only: the credential file\'s CONTENTS are never read by the follower', async () => {
+    writeCreds('rt-20')
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+    const readFileSync = vi.spyOn(fs, 'readFileSync')
+    try {
+      identity.startWatchingAccountIdentity('s5', 'profile-aaa111')
+      await poll()
+      writeCreds('rt-21')
+      await poll()
+      await poll()
+      expect(backup).toHaveBeenCalledTimes(1)
+      const touched = [...readFile.mock.calls, ...readFileSync.mock.calls].map((c) => String(c[0]))
+      expect(touched.filter((p) => p.endsWith('.credentials.json'))).toEqual([])
+    } finally {
+      readFile.mockRestore()
+      readFileSync.mockRestore()
+      identity.stopWatchingAccountIdentity('s5')
+    }
   })
 })
 
@@ -94,16 +147,18 @@ describe('one rotation costs one backup, however many sessions share the account
     writeCreds('rt-10')
     identity.startWatchingAccountIdentity('a1', 'profile-aaa111')
     identity.startWatchingAccountIdentity('a2', 'profile-aaa111')
-    await identity.recheckAllAsync()
+    await poll()
     expect(backup).not.toHaveBeenCalled()
     writeCreds('rt-11')
-    await identity.recheckAllAsync()
+    await poll()
+    await poll()
     expect(backup).toHaveBeenCalledTimes(1)
     // Closing one session keeps the profile's stamp (the other still watches);
     // closing the last one drops it, so a later session observes afresh.
     identity.stopWatchingAccountIdentity('a1')
     writeCreds('rt-12')
-    await identity.recheckAllAsync()
+    await poll()
+    await poll()
     expect(backup).toHaveBeenCalledTimes(2)
     identity.stopWatchingAccountIdentity('a2')
   })

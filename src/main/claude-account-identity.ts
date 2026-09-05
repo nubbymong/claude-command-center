@@ -90,7 +90,9 @@ const lastMtimeMs = new Map<string, number>()         // sessionId -> last seen 
 // back and strand the account. Keyed by PROFILE, not session: several sessions
 // on one account share one credential file, and one rotation must cost one
 // backup, not one per session. Only ever observed by stat; never read here.
-const lastCredsMtimeByProfile = new Map<string, number>()
+// profileId -> the last credential/identity stamp seen, and whether it changed
+// on the previous poll (armed = "back up once it stops moving").
+const rotationStampByProfile = new Map<string, { last: string; armed: boolean }>()
 // profileId -> the email we last broadcast a "new account detected" prompt for.
 // Sessions sharing a profile home all observe the same /login, so this dedups the
 // prompt to one per (profile, email) instead of one per session.
@@ -259,20 +261,45 @@ async function recheckAllAsyncInner(): Promise<void> {
 }
 
 /**
+ * The stat stamp the rotation follower compares between polls: the credential
+ * file's mtime and the identity file's (`.claude.json`, the email the backup
+ * guard reads). Stat-only -- neither file's CONTENTS are read here. null when
+ * there is no credential file to follow.
+ */
+async function credentialRotationStamp(profileId: string): Promise<string | null> {
+  const home = getProfileConfigDir(profileId)
+  let creds: number
+  try { creds = (await fsp.stat(path.join(home, '.claude', '.credentials.json'))).mtimeMs } catch { return null }
+  let identity = 'none'
+  try { identity = String((await fsp.stat(path.join(home, '.claude.json'))).mtimeMs) } catch { /* no identity file yet */ }
+  return `${creds}:${identity}`
+}
+
+/**
  * Keep the canonical backup current through a mid-session token rotation
  * (rc.14 review F6, aicc_planning#50). Stat-only: the first observation just
- * records the mtime; every later change re-snapshots the profile home into
+ * records the stamp; a later change re-snapshots the profile home into
  * canonical. `backupProfileHomeToCanonical` is itself EMAIL-GUARDED, so a
  * /login that switched the home to a different account is refused there --
  * this only ever lands rotations of the profile's own account.
+ *
+ * SETTLED, not merely changed (adversarial pass on #598): a change is backed up
+ * only once the same stamp has been seen on two consecutive polls. The CLI's
+ * /login rewrites `.credentials.json` and `.claude.json` as two separate
+ * writes, and a poll landing between them saw the profile's own email beside
+ * another account's token -- the one state the email guard cannot see through,
+ * and a snapshot of it would have restored a mixed identity later. Waiting one
+ * poll for both files to stop moving hands the guard the finished picture. A
+ * rotation (one file, one write) costs the same single backup, one poll later.
  */
 async function followCredentialRotation(profileId: string): Promise<void> {
-  const file = path.join(getProfileConfigDir(profileId), '.claude', '.credentials.json')
-  let mtime: number
-  try { mtime = (await fsp.stat(file)).mtimeMs } catch { return }
-  const last = lastCredsMtimeByProfile.get(profileId)
-  lastCredsMtimeByProfile.set(profileId, mtime)
-  if (last === undefined || last === mtime) return
+  const stamp = await credentialRotationStamp(profileId)
+  if (stamp === null) return
+  const seen = rotationStampByProfile.get(profileId)
+  if (!seen) { rotationStampByProfile.set(profileId, { last: stamp, armed: false }); return }
+  if (stamp !== seen.last) { seen.last = stamp; seen.armed = true; return } // still moving: look again next poll
+  if (!seen.armed) return
+  seen.armed = false
   try { backupProfileHomeToCanonical(profileId) } catch { /* best-effort, like the exit-time backup */ }
 }
 
@@ -293,7 +320,7 @@ export function stopWatchingAccountIdentity(sessionId: string): void {
   lastMtimeMs.delete(sessionId)
   // The rotation stamp is per profile: drop it only when no watched session is
   // left on that profile, so the next session starts with a fresh observation.
-  if (profileId && ![...watched.values()].includes(profileId)) lastCredsMtimeByProfile.delete(profileId)
+  if (profileId && ![...watched.values()].includes(profileId)) rotationStampByProfile.delete(profileId)
   if (watched.size === 0 && pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
@@ -322,7 +349,7 @@ export function _resetClaudeAccounts(): void {
   profileBySession.clear()
   watched.clear()
   lastMtimeMs.clear()
-  lastCredsMtimeByProfile.clear()
+  rotationStampByProfile.clear()
   detectedByProfile.clear()
   recheckInFlight = false
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }

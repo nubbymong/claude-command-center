@@ -110,15 +110,20 @@ export function spawnClaudeHeadless(
   // The spawn stays SYNCHRONOUS when nothing is pending (the common case, and
   // what the timeout tests drive); it defers only behind a real in-flight
   // refresh for this profile.
+  //
+  // The hold is taken BEFORE the wait (adversarial pass on #598): it is what
+  // stops a new rotation from starting, and acquiring only after the in-flight
+  // one settled left a microtask in which a fresh refresh could begin and
+  // rotate the token this run is about to read. The wait itself is bounded by
+  // the refresh's own socket timeout, well inside the ref's grace.
   const profileId = profileIdFromHome(home)
-  const run = (): Promise<{ code: number; stdout: string; stderr: string }> => {
-    const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
-    const p = spawnNow(args, timeoutMs, stdinData, home, signal)
-    if (release) p.then(release, release)
-    return p
-  }
+  const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
   const pending = profileId ? pendingProfileRefresh(profileId) : null
-  return pending ? pending.then(run) : run()
+  const p = pending
+    ? pending.then(() => spawnNow(args, timeoutMs, stdinData, home, signal))
+    : spawnNow(args, timeoutMs, stdinData, home, signal)
+  if (release) p.then(release, release)
+  return p
 }
 
 function spawnNow(

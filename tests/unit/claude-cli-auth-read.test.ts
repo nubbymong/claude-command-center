@@ -164,7 +164,9 @@ describe('readClaudeCliAuth — starting mid-rotation waits for the refresh (#49
     const probe = readClaudeCliAuth(ID)
     await tick()
     expect(execCalls).toBe(0)                          // not spawned: the file is mid-rotation
-    expect(hasTransientProfileConsumer(ID)).toBe(false) // and nothing held yet
+    // ...but already HELD (adversarial pass on #598): the hold is what stops a
+    // NEW rotation from starting in the gap between this one settling and the spawn.
+    expect(hasTransientProfileConsumer(ID)).toBe(true)
 
     settle({ accessToken: 'new' })
     const r = await probe

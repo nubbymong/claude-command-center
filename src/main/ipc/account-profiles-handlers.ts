@@ -41,12 +41,28 @@ export function registerAccountProfilesHandlers(): void {
   // no other window -- but it is prefix-checked so a stray value cannot address an
   // unrelated ipcRenderer listener in this same renderer. The invoke resolves when
   // every account has been sent, so the caller knows the stream is complete.
+  //
+  // ONE stream per caller at a time (adversarial pass on #598): a renderer that
+  // opens the usage page again while the previous stream is still pacing its
+  // closed accounts has already discarded the old results (its gen-ref), so the
+  // old loop stops at its next account instead of finishing a fan-out nobody
+  // will read -- N reopenings were N parallel fan-outs against an endpoint that
+  // rate-limits by IP. A destroyed sender stops its loop the same way.
+  const streamGenBySender = new Map<number, number>()
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, async (event, p: { channel?: unknown }) => {
     const channel = p?.channel
     if (typeof channel !== 'string' || !channel.startsWith('accountUsage:result:') || channel.length > 128) return
-    await fetchAllAccountsUsageStreaming((usage) => {
-      if (!event.sender.isDestroyed()) event.sender.send(channel, usage)
-    })
+    const senderId = event.sender.id
+    const gen = (streamGenBySender.get(senderId) ?? 0) + 1
+    streamGenBySender.set(senderId, gen)
+    const live = () => !event.sender.isDestroyed() && streamGenBySender.get(senderId) === gen
+    try {
+      await fetchAllAccountsUsageStreaming((usage) => {
+        if (live()) event.sender.send(channel, usage)
+      }, { shouldContinue: live })
+    } finally {
+      if (streamGenBySender.get(senderId) === gen) streamGenBySender.delete(senderId)
+    }
   })
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>
     // `!!p.noRefresh`, not `=== true` (adversarial review): a hostile/garbled
@@ -131,6 +147,13 @@ export function registerAccountProfilesHandlers(): void {
         ok: false,
         error: `The account's claude.ai session could not be cleared, so the account was not removed: ${err instanceof Error ? err.message : String(err)}`,
       }
+    }
+    // The clear above was awaited, and a session can spawn on this profile in
+    // that time: check again before anything destructive, so the guard covers
+    // the whole delete and not only its first instant. Fails closed: the web
+    // session is gone, the account is not.
+    if (isProfileInUseByLiveSession(p.id)) {
+      return { ok: false, error: 'This account is in use by an open session. Close its sessions and try again.' }
     }
     // Drop the record next to the clear that made it meaningless, rather than
     // after the teardown below: if that throws, the account survives with a

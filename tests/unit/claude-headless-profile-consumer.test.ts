@@ -125,7 +125,9 @@ describe('spawnClaudeHeadless — starting mid-rotation waits for the refresh (#
     const p = spawnClaudeHeadless(['-p'], 10_000, undefined, HOME)
     await tick()
     expect(spawnCalls).toHaveLength(0) // not spawned: it would read a file mid-rotation
-    expect(hasTransientProfileConsumer(PROFILE)).toBe(false) // and holds nothing yet
+    // ...but already HELD (adversarial pass on #598): the hold is what stops a
+    // NEW rotation from starting in the gap between this one settling and the spawn.
+    expect(hasTransientProfileConsumer(PROFILE)).toBe(true)
 
     settle({ accessToken: 'new' })
     await tick()

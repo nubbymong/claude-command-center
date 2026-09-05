@@ -233,19 +233,23 @@ export async function dispatchAgent(params: {
   const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
   const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin}${permFlag}`
 
-  // #49: if the usage page is rotating this profile's token right now, let the
-  // new lineage land before the agent's claude reads the credential file.
-  if (resolvedProfileId) await waitForProfileRefresh(resolvedProfileId)
   // #48: the agent runs in the profile's credential home for as long as its
   // process lives, so the profile reads as in-use for exactly that long (the
-  // usage refresh and the account delete defer to it). Acquired with nothing
-  // awaited between the wait above and the spawn below, so no rotation can
-  // start in the gap. Released on 'close' and on 'error' -- one of which always
-  // fires for a spawned child -- so the ref needs no leak clock; an agent that
-  // runs for an hour is in use for an hour.
+  // usage refresh and the account delete defer to it). ACQUIRED FIRST: the hold
+  // is what stops a new rotation from starting, and taking it before the wait
+  // below closes the microtask between "the in-flight rotation settled" and
+  // "we are registered" in which a fresh refresh could otherwise begin and
+  // rotate the token this agent is about to read (adversarial pass on #598).
+  // Released on 'close' and on 'error' -- one of which always fires for a
+  // spawned child -- so the ref needs no leak clock; an agent that runs for an
+  // hour is in use for an hour.
   const releaseProfile = resolvedProfileId ? acquireProfileConsumer(resolvedProfileId, { maxAgeMs: Infinity }) : () => { /* default home: nothing held */ }
   let child: ChildProcess
   try {
+    // #49: if the usage page is rotating this profile's token right now, let
+    // the new lineage land before the agent's claude reads the credential file.
+    // The hold above means no OTHER rotation can begin while we wait.
+    if (resolvedProfileId) await waitForProfileRefresh(resolvedProfileId)
     child = spawn(shellCmd, [], {
       cwd: params.projectPath,
       shell: true,

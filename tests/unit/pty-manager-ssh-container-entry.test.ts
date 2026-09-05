@@ -702,3 +702,41 @@ describe('the failure shapes', () => {
     ]) expect(CONTAINER_ENGINE_NOT_FOUND_RE.test(line), line).toBe(false)
   })
 })
+
+// Adversarial pass on #598: the saved sudo secret exists for the post-command's
+// own `sudo <engine> exec`, which prompts on the HOST. Once the flow is in the
+// inner shell, a sudo-shaped prompt is printed by something INSIDE the container
+// (a MOTD, a .bashrc, a process the user ran), and typing the host's secret into
+// it hands that secret to the container.
+describe('the saved sudo secret never reaches the container', () => {
+  const SECRET = 'synthetic-sudo-secret'
+
+  it('REGRESSION: a sudo prompt printed inside an ENTERED container (idle-fallback promotion) is not answered', () => {
+    const id = 'sudo-inside-container'
+    // No runtime.sudo: the host never prompts, so the secret is still "unsent"
+    // when the inner shell appears -- and the idle fallback promotes regardless.
+    const cmd = enterContainer(id, 'ccc-test', { sudoPassword: SECRET })
+    feed(`${cmd}\r\n${INNER_PROMPT}`)
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
+    feed('[sudo] password for root: ')
+    vi.advanceTimersByTime(200)
+    expect(writes()).toEqual([])
+    expect(wrote(SECRET)).toBe(false)
+  })
+
+  it('positive control: the HOST sudo prompt raised by the post-command itself is answered, once, and never again inside', () => {
+    const id = 'sudo-on-host'
+    enterContainer(id, 'ccc-test', { sudo: true, sudoPassword: SECRET })
+    feed('[sudo] password for user: ')
+    vi.advanceTimersByTime(200)
+    expect(writes()).toEqual([`${SECRET}\r`])
+    writeMock.mockClear()
+    feed(`\r\n${INNER_PROMPT}`)
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
+    feed('[sudo] password for root: ')
+    vi.advanceTimersByTime(200)
+    expect(writes()).toEqual([])
+  })
+})

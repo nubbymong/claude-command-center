@@ -3506,7 +3506,15 @@ export function spawnPty(
       // emits: `[sudo] password for X:`, `password for X:`, `Password:`.
       // End-of-line match avoids false-triggering on a log message that
       // happens to mention `[sudo]` or `password for`.
-      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent) {
+      // And only BEFORE the inner shell (adversarial pass on #598): the saved
+      // secret exists for the post-command's own `sudo docker exec`, which
+      // prompts on the HOST before the container shell appears. Once the flow
+      // is in the inner shell -- by prompt, or by the idle fallback, which
+      // promotes even with the secret unsent -- a `[sudo] password for` line is
+      // printed by something INSIDE the container (a MOTD, a .bashrc, a process
+      // the user ran), and typing the host's sudo secret into it hands that
+      // secret to the container. Same shape as the SSH-password gate above.
+      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent && !inInnerShell) {
         const promptLine = promptLineNow
         if (promptLine && SUDO_PROMPT_RE.test(promptLine)) {
           sudoPasswordSent = true

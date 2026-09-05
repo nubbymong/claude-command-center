@@ -89,7 +89,10 @@ export function detachedDestinationAgrees(
   ssh: SshDestinationSource | undefined | null,
 ): boolean {
   if (!ssh) return false
-  if (normalizeHost(entry.host) !== normalizeHost(ssh.host)) return false
+  // An empty (or non-string) host on either side never agrees: two entries
+  // with no host are not the same destination, they are no destination.
+  const host = normalizeHost(entry.host)
+  if (!host || host !== normalizeHost(ssh.host)) return false
   if (entry.username !== ssh.username) return false
   if (entry.remotePath !== ssh.remotePath) return false
   if (entry.port !== undefined && normalizeSshPort(entry.port) !== normalizeSshPort(ssh.port)) return false

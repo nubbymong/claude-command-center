@@ -123,6 +123,9 @@ describe('an Insights run starting mid-rotation waits for the refresh (#49)', ()
     await tick()
     expect(h.ptySpawns).toBe(0)
     expect(isRunning('a')).toBe(true) // the lock is taken first, so a second run is still refused
+    // Held BEFORE the wait (adversarial pass on #598): no NEW rotation can start
+    // in the gap between this one settling and the first credential read.
+    expect(hasTransientProfileConsumer('a')).toBe(true)
 
     settle({ accessToken: 'new' })
     await run

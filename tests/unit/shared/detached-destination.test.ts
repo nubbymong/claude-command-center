@@ -106,6 +106,15 @@ describe('detachedDestinationAgrees', () => {
     expect(detachedDestinationAgrees(recorded(), undefined)).toBe(false)
     expect(detachedDestinationAgrees(recorded(), null)).toBe(false)
   })
+
+  it('an empty or non-string host on either side never agrees, even with the other (fails closed, no throw)', () => {
+    expect(detachedDestinationAgrees(recorded({ host: '' }), ssh({ host: '' }))).toBe(false)
+    expect(detachedDestinationAgrees(recorded({ host: '   ' }), ssh({ host: '' }))).toBe(false)
+    expect(detachedDestinationAgrees(recorded({ host: 42 }), ssh({ host: 42 }))).toBe(false)
+    expect(detachedDestinationAgrees(recorded({ host: undefined }), ssh({ host: undefined }))).toBe(false)
+    expect(detachedDestinationAgrees(recorded({ host: undefined }), ssh())).toBe(false)
+    expect(detachedDestinationAgrees(recorded(), ssh({ host: undefined }))).toBe(false)
+  })
 })
 
 describe('describeDestination', () => {

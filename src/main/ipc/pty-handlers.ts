@@ -399,6 +399,14 @@ export function _resetPingInFlightForTest(): void {
  * does not know is not checked -- there is nothing to compare, and the guard is
  * strictly additive to the config-only trust rule. Callers checking several
  * sessions pass one `registry` read so the file is parsed once, not per id.
+ *
+ * Threat model, stated plainly (adversarial pass on #598): the registry is the
+ * renderer's OWN persisted state, so this guards against a STALE or EDITED
+ * config -- the user changed where a saved config points after leaving a
+ * session running on it -- not against a hostile renderer, which could name any
+ * host it likes through pty:spawn regardless. What stays true against any
+ * caller is the credential rule below: the secret dialled is always the named
+ * config's own, never another config's.
  */
 function recordedDestinationMoved(
   sessionId: string,

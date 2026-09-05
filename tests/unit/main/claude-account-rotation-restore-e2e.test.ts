@@ -59,12 +59,14 @@ describe('capture B, restore A, after A rotated mid-session', () => {
 
     // The CLI rotates A's refresh token mid-session (email unchanged).
     writeHome(a.id, 'a@corp.test', 'rt-new')
-    await identity.recheckAllAsync()
+    await identity.recheckAllAsync() // the change is seen...
+    await identity.recheckAllAsync() // ...and, seen again unchanged, has settled (adversarial pass on #598)
     expect(canonicalRefreshToken(a.id)).toBe('rt-new') // the fix: canonical followed the rotation
 
     // /login inside that session switches the SHARED home to B (A's current token is overwritten).
     writeHome(a.id, 'b@corp.test', 'rt-b')
-    await identity.recheckAllAsync() // the email changed: the guarded backup must NOT back B up over A
+    await identity.recheckAllAsync()
+    await identity.recheckAllAsync() // settled -- and the email changed: the guarded backup must NOT back B up over A
     expect(canonicalRefreshToken(a.id)).toBe('rt-new')
 
     // Capture of B ends with restoring A's home from canonical.

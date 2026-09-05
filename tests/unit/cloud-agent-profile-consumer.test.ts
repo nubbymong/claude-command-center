@@ -150,6 +150,9 @@ describe('cloud agent — starting mid-rotation waits for the refresh (#49)', ()
     const p = dispatch()
     await tick()
     expect(mockSpawn).not.toHaveBeenCalled()
+    // Held BEFORE the wait (adversarial pass on #598): no NEW rotation can start
+    // in the gap between this one settling and the spawn.
+    expect(hasTransientProfileConsumer(PROFILE)).toBe(true)
 
     settle({ accessToken: 'new' })
     await p

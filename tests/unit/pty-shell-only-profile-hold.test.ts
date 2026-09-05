@@ -32,6 +32,7 @@ class FakePty {
   clear() {}
 }
 const ptys: FakePty[] = []
+const ptyMocks = vi.hoisted(() => ({ throwNext: false }))
 vi.mock('electron', () => ({
   BrowserWindow: Object.assign(class {}, { getAllWindows: () => [] }),
   nativeTheme: { shouldUseDarkColors: false, on: () => {} },
@@ -39,6 +40,10 @@ vi.mock('electron', () => ({
 }))
 vi.mock('node-pty', () => ({
   spawn: () => {
+    if (ptyMocks.throwNext) {
+      ptyMocks.throwNext = false
+      throw new Error('spawn failed (synthetic)')
+    }
     const p = new FakePty()
     ptys.push(p)
     return p
@@ -133,6 +138,20 @@ describe('shell-only sessions hold their profile (#48)', () => {
     ptys[0].exitCb!({ exitCode: 0 })
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(true)
     ptys[1].exitCb!({ exitCode: 0 })
+    expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)
+  })
+
+  // Adversarial pass on #598: the hold is taken only AFTER pty.spawn succeeded. A
+  // spawn that throws must leave no ref behind -- nothing would ever release it,
+  // and the profile would read as in use (undeletable, never refreshed) forever.
+  it('a spawn that THROWS leaves no hold behind, and the next spawn on the id holds and releases cleanly', () => {
+    ptyMocks.throwNext = true
+    try { spawnPty(fakeWin, 'sidshellhold5', { shellOnly: true, profileId: PROFILE, cwd: homedir() }) } catch { /* the throw is the point */ }
+    expect(ptys).toHaveLength(0)
+    expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)
+    spawnPty(fakeWin, 'sidshellhold5', { shellOnly: true, profileId: PROFILE, cwd: homedir() })
+    expect(isProfileInUseByLiveSession(PROFILE)).toBe(true)
+    exitLatest()
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)
   })
 })

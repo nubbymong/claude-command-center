@@ -60,6 +60,16 @@ export interface CloseCoordinator {
    * window would close (or quit) without ever asking.
    */
   onWindowCreated: () => void
+  /**
+   * The renderer process is gone (crashed, OOM-killed, exited) while the window
+   * object still exists. It can never answer `window:closeRequested`, so
+   * nothing is asked of it again: a request already outstanding is treated as
+   * allowed (the window closes and, if the exit began as a quit, the quit goes
+   * through), and a later close or quit proceeds without asking. Without this
+   * a quit held on a crashed renderer was held forever (adversarial pass on
+   * #598).
+   */
+  onRendererGone: () => void
   /** Test seam / diagnostics. */
   state: () => { allowClose: boolean; closeRequestedOnce: boolean; quitRequested: boolean; tornDown: boolean }
 }
@@ -77,6 +87,17 @@ export function createCloseCoordinator(deps: CloseCoordinatorDeps): CloseCoordin
     deps.askRenderer()
   }
 
+  // The renderer allowed the close (or can no longer be asked): the window
+  // goes, and if the exit began as a quit, the quit is re-issued -- re-entering
+  // before-quit finds no live window (or allowClose set) and runs the teardown.
+  // On Windows window-all-closed would quit anyway; calling it here is
+  // idempotent and makes macOS behave the same.
+  const allow = () => {
+    allowClose = true
+    deps.closeWindow()
+    if (quitRequested) deps.quit()
+  }
+
   return {
     onWindowClose(preventDefault) {
       if (allowClose) return // the renderer already decided: let it close
@@ -90,12 +111,21 @@ export function createCloseCoordinator(deps: CloseCoordinatorDeps): CloseCoordin
 
     onBeforeQuit(preventDefault) {
       if (deps.hasWindow() && !allowClose) {
-        // macOS Cmd+Q / menu Quit (or any app.quit() with the window still up):
-        // hold the quit, ask the renderer, and remember to quit once allowed.
-        quitRequested = true
-        preventDefault()
-        ask()
-        return
+        if (!quitRequested) {
+          // macOS Cmd+Q / menu Quit (or any app.quit() with the window still
+          // up): hold the quit, ask the renderer (joining a close dialog that
+          // is already up), and remember to quit once allowed.
+          quitRequested = true
+          preventDefault()
+          ask()
+          return
+        }
+        // A SECOND quit while one is already held: the renderer froze or died
+        // before it could answer, or the user is overriding their own dialog --
+        // the rule the window's close event already applies to a second
+        // Alt+F4. Nothing has been torn down, so the quit proceeds: Electron
+        // closes the window on its way out, and onWindowClose sees allowClose.
+        allowClose = true
       }
       if (tornDown) return // a second before-quit after the real one: nothing left to do
       tornDown = true
@@ -103,13 +133,16 @@ export function createCloseCoordinator(deps: CloseCoordinatorDeps): CloseCoordin
     },
 
     onAllowClose() {
+      allow()
+    },
+
+    onRendererGone() {
+      if (allowClose) return
+      // A request is outstanding and this is the only answer it will get.
+      if (closeRequestedOnce) { allow(); return }
+      // Nothing outstanding: the dead renderer cannot show a dialog, so the
+      // next close or quit goes straight through.
       allowClose = true
-      deps.closeWindow()
-      // The exit began as a quit: now that the window is going, quit for real.
-      // Re-entering before-quit finds no live window (or allowClose set) and
-      // runs the teardown. On Windows window-all-closed would quit anyway;
-      // calling it here is idempotent and makes macOS behave the same.
-      if (quitRequested) deps.quit()
     },
 
     onCancelClose() {
