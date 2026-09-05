@@ -68,6 +68,10 @@ export function buildSessionState(): SessionState {
       // mode and extra CLI args (previously dropped on save, so relaunch lost them).
       permissionMode: s.permissionMode,
       extraArgs: s.extraArgs,
+      // rc.14 review F14: the per-session indexing opt-out. Restore reads it
+      // from here and the run-registration gate treats a missing value as
+      // enabled, so dropping it on save indexed a session the user excluded.
+      loggingEnabled: s.loggingEnabled,
     } : undefined,
     codexOptions: s.codexOptions,
   }))
