@@ -35,12 +35,15 @@ function pollForReauth(profileId: string, sessionId: string, onDone: () => void)
     if (!exists) { clearInterval(timer); return } // session closed -> stop
     try {
       const res = await window.electronAPI.accountProfiles.refreshIdentity(profileId)
-      if (res && res.email) {
-        if (stampApi) {
-          const now = await stampApi(profileId)
-          // Unchanged credentials (or a baseline not yet read) = still pending.
-          if (!now || !now.signedIn || baseline === undefined || now.stamp === baseline) return
-        }
+      // Unchanged credentials (or a baseline not yet read) = still pending. Falls
+      // through to the attempt backstop below rather than returning, so an
+      // abandoned login tab stops polling after ~20 min like any other.
+      let pending = false
+      if (res && res.email && stampApi) {
+        const now = await stampApi(profileId)
+        pending = !now || !now.signedIn || baseline === undefined || now.stamp === baseline
+      }
+      if (res && res.email && !pending) {
         clearInterval(timer)
         await useAccountProfilesStore.getState().hydrate()
         useSessionStore.getState().updateSession(sessionId, { needsLogin: false, label: res.email })

@@ -125,3 +125,26 @@ describe('useReauthAccount completion', () => {
     expect(onDone).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('an abandoned re-auth tab still stops polling', () => {
+  it('after the attempt backstop, no further identity/stamp reads happen even though the login stayed pending', async () => {
+    vi.useFakeTimers()
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false } as never)
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-aaa111', name: 'Work', accountEmail: 'work@corp.com', createdAt: 1 }] } as never)
+    refreshIdentityMock.mockReset()
+    credentialStampMock.mockReset()
+    api.accountProfiles.credentialStamp = credentialStampMock
+    refreshIdentityMock.mockResolvedValue({ ok: true, email: 'work@corp.com', configDir: '/p/work' })
+    credentialStampMock.mockResolvedValue({ ok: true, stamp: '100:50', signedIn: true })
+    const { result, unmount } = renderHook(() => useReauthAccount())
+    await act(async () => { result.current({ id: 'profile-aaa111', name: 'Work' }); for (let i = 0; i < 4; i++) await Promise.resolve() })
+    for (let i = 0; i < 300; i++) await tick()
+    const calls = refreshIdentityMock.mock.calls.length
+    expect(calls).toBeGreaterThanOrEqual(300)
+    await tick(); await tick()
+    expect(refreshIdentityMock.mock.calls.length).toBe(calls)
+    expect(session()?.needsLogin).toBe(true)
+    unmount()
+    vi.useRealTimers()
+  })
+})
