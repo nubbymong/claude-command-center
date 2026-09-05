@@ -19,6 +19,7 @@
  * over, so they are told rather than left to discover it. (Review MINOR-3.)
  */
 import { useEffect, useRef, useState } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 import type { CapturedRunExit } from '../../shared/gui-exe'
 import { scrim } from './ui/Dialog'
 
@@ -40,6 +41,9 @@ interface Line {
 }
 
 export default function CapturedRunModal({ runId, label, command, exePath, startError, onClose }: CapturedRunModalProps) {
+  // Window-covering modal with its own backdrop (not DialogOverlay): hold the
+  // native panes hidden while mounted, or the browser pane paints over it.
+  useOccludesNativePanes()
   const [chunks, setChunks] = useState<Line[]>([])
   const [exit, setExit] = useState<CapturedRunExit | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)

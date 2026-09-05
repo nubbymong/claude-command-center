@@ -196,6 +196,11 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
             return
           }
           viewReadyRef.current = true
+          // Occlusion that arrived DURING the round trip: main attaches the
+          // view on create, and a hide sent before the view existed was a
+          // no-op there -- so a Settings tab clicked mid-open would end up
+          // under the view. Re-send the hide now that the view is registered.
+          if (!shownRef.current) window.electronAPI.webview.setVisible(sessionId, false).catch(() => { /* noop */ })
           // Clear-then-navigate inside this one round trip: the view this open
           // created was destroyed by the Clear, so the compensating navigate
           // fails — fall back to a fresh open instead of discarding the result.
@@ -294,6 +299,10 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
           if (cancelled) return
           if (r.ok) {
             accountReadyRef.current = true
+            // Same mid-open race as the ordinary view: a hide sent before main
+            // registered this view was a no-op, so re-send it if the pane may
+            // no longer show.
+            if (!shownRef.current) void paneApi.paneVisible?.({ sessionId, visible: false }).catch(() => { /* noop */ })
             // Seed the strip with whatever main already knows (a partition that
             // is signed in shows its dot immediately, not on the next push).
             void paneApi.paneGetState(sessionId).then((s) => {

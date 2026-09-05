@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
@@ -112,8 +112,10 @@ export default function App() {
   const view = viewRaw
   // The native panes (browser, claude.ai account) are painted by main above all
   // HTML, so they have to be TOLD when a page tab is on top of the session
-  // area; this is the one publication of the active tab they read.
-  useEffect(() => { usePaneOcclusionStore.getState().setActiveView(view) }, [view])
+  // area; this is the one publication of the active tab they read. A LAYOUT
+  // effect, so the store update is flushed before the browser paints the new
+  // tab -- a passive effect would let one frame show the pane over the page.
+  useLayoutEffect(() => { usePaneOcclusionStore.getState().setActiveView(view) }, [view])
   // Pages (Tokenomics, Logs, Feature Guide, …) open as TABS in the main strip
   // alongside sessions, in open order, and persist until closed. `view` is the
   // active tab: 'sessions' means a session tab is active, any other value means

@@ -31,7 +31,16 @@ vi.mock('../../../src/renderer/stores/sessionStore', () => {
   return { useSessionStore }
 })
 
-;(globalThis as any).ResizeObserver = class { observe() {} unobserve() {} disconnect() {} }
+// The real observer delivers one notification on observe(); the pane's bounds
+// effect relies on that to re-send bounds after a re-attach (main shrinks a
+// hidden view to 1x1), so the stub does the same.
+;(globalThis as any).ResizeObserver = class {
+  private cb: (entries: unknown[]) => void
+  constructor(cb: (entries: unknown[]) => void) { this.cb = cb }
+  observe() { this.cb([]) }
+  unobserve() {}
+  disconnect() {}
+}
 const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
   x: 0, y: 0, left: 10, top: 20, width: 640, height: 480, right: 650, bottom: 500, toJSON: () => ({}),
 } as DOMRect)
@@ -168,5 +177,74 @@ describe('the claude.ai account view (artifacts) under a page tab', () => {
     setView('sessions')
     await flush()
     expect(acct.paneOpen).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Two things a hide/re-show must ALSO get right, both found by review:
+// main shrinks a hidden view to 1x1, so a re-show without a bounds send is a
+// speck; and main attaches a view on create, so a hide sent while the open
+// round trip is in flight is a no-op there and must be re-sent afterwards.
+describe('what a hide and a re-show must also do', () => {
+  it('re-sends the bounds after un-occlusion (main left the hidden view at 1x1)', async () => {
+    openPage()
+    render()
+    await flush()
+    setView('settings')
+    await flush()
+    const before = api.setBounds.mock.calls.length
+    setView('sessions')
+    await flush()
+    expect(api.setBounds.mock.calls.length).toBeGreaterThan(before)
+    expect(api.setBounds.mock.calls.at(-1)?.[0]).toBe('s1')
+  })
+
+  it('re-sends the ACCOUNT view bounds after un-occlusion', async () => {
+    act(() => {
+      useWebviewStore.getState().setOpen('s1', true)
+      useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111')
+    })
+    render()
+    await flush()
+    setView('settings')
+    await flush()
+    const before = acct.paneBounds.mock.calls.length
+    setView('sessions')
+    await flush()
+    expect(acct.paneBounds.mock.calls.length).toBeGreaterThan(before)
+  })
+
+  it('a page tab clicked while the open is IN FLIGHT: the hide is re-sent once the view exists', async () => {
+    let resolveOpen: (ok: boolean) => void = () => {}
+    api.open.mockImplementation(() => new Promise<boolean>((r) => { resolveOpen = r }))
+    openPage()
+    render()
+    await flush()
+    expect(api.open).toHaveBeenCalledTimes(1)
+    // Settings arrives mid-round-trip: the hide sent now reaches main before
+    // the view is registered there, and is dropped.
+    setView('settings')
+    await flush()
+    const before = api.setVisible.mock.calls.length
+    await act(async () => { resolveOpen(true); await new Promise((r) => setTimeout(r, 30)) })
+    const after = api.setVisible.mock.calls.slice(before)
+    expect(after.some((c: unknown[]) => c[1] === false)).toBe(true)
+  })
+
+  it('same for the ACCOUNT view: a hide that raced the open is re-sent', async () => {
+    let resolveOpen: (r: { ok: boolean }) => void = () => {}
+    acct.paneOpen.mockImplementation(() => new Promise<{ ok: boolean }>((r) => { resolveOpen = r }))
+    act(() => {
+      useWebviewStore.getState().setOpen('s1', true)
+      useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111')
+    })
+    render()
+    await flush()
+    expect(acct.paneOpen).toHaveBeenCalledTimes(1)
+    setView('help')
+    await flush()
+    const before = acct.paneVisible.mock.calls.length
+    await act(async () => { resolveOpen({ ok: true }); await new Promise((r) => setTimeout(r, 30)) })
+    const after = acct.paneVisible.mock.calls.slice(before)
+    expect(after.some((c: any[]) => c[0]?.visible === false)).toBe(true)
   })
 })
