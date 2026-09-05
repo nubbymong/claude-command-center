@@ -638,7 +638,18 @@ type SshLineBufferKind = 'setup' | 'stage' | 'arch' | 'runtime'
  * ONLY (container sessions, after the post-command is sent and before the
  * inner shell is accepted), so a banner or a log line elsewhere cannot trip it.
  */
-export const CONTAINER_ENTRY_ERROR_RE = /Error response from daemon|No such container|is not running|Cannot connect to (?:the )?(?:Docker|Podman)|(?:docker|podman): (?:command )?not found|command not found: (?:docker|podman)|Error: no container with name|OCI runtime exec failed|unable to start container process/i
+export const CONTAINER_ENTRY_ERROR_RE = /Error response from daemon|No such container|Cannot connect to (?:the )?(?:Docker|Podman)|permission denied while trying to connect to the (?:Docker|Podman) daemon|(?:^|\n)sudo: (?:docker|podman): command not found|Error: no container with name|can only create exec sessions on running containers|OCI runtime exec failed|unable to start container process|sudo: \d+ incorrect password attempts|sudo: a password is required|sudo: no password was provided|is not in the sudoers file|Sorry, user .+ is not allowed to execute/i
+/**
+ * The SHELL's "no such command" for the engine binary. Definitive when the HOST
+ * shell printed it (no engine installed: the entry failed), but the same line
+ * can come from inside a healthy container whose rc file calls `docker` (a
+ * completion hook, say), so it is only a SUSPICION here (rc.14 review F1
+ * round 2): the prompt that follows decides. The host's own prompt returning
+ * confirms the failure; a different prompt is the inner shell; no prompt at
+ * all by the time the pane goes idle is also a failure (a zsh host whose `%`
+ * prompt never matches SHELL_PROMPT_RE reaches the idle path only).
+ */
+export const CONTAINER_ENGINE_NOT_FOUND_RE = /(?:^|\n)[^\n]{0,40}(?:docker|podman): (?:command )?not found\s*(?:\r|$)|(?:^|\n)[^\n]{0,40}command not found: (?:docker|podman)\s*(?:\r|$)/im
 const sshLineBuffers = new Map<string, string>()
 const sshLineBufferKey = (sessionId: string, kind: SshLineBufferKind): string => `${sessionId}:${kind}`
 
@@ -689,7 +700,7 @@ function clearSetupLineBuffer(sessionId: string): void {
  *  cleanupSessionResources -- a per-kind clear on resolve is not enough,
  *  because a session can die with a sentinel still unresolved. */
 function clearAllSshLineBuffers(sessionId: string): void {
-  for (const kind of ['setup', 'stage', 'arch'] as const) clearSshLineBuffer(sessionId, kind)
+  for (const kind of ['setup', 'stage', 'arch', 'runtime'] as const) clearSshLineBuffer(sessionId, kind)
 }
 
 /** Test-only: read the current length of `sessionId`'s setup-line buffer
@@ -1628,8 +1639,31 @@ export function spawnPty(
     let setupShellReady = false
     let postCommandSent = false
     // rc.14 review F1: the post-command (container entry) printed an engine
-    // failure. The host prompt that follows is NOT the inner shell.
+    // failure, or the HOST shell's own prompt came back (round 2). The prompt
+    // that follows is NOT the inner shell.
     let runtimeEntryFailed = false
+    // rc.14 review F1 round 2 (aicc_planning#45): the post-command has actually
+    // been WRITTEN (writePostCommand defers the write 200ms behind its state
+    // change). The entry watch buffers output only from here, so a host prompt
+    // repaint in flight during that window is never read as the prompt coming
+    // BACK.
+    let postCommandWritten = false
+    // The host shell's prompt as last seen before the post-command went out
+    // (the chunk-final line that matched SHELL_PROMPT_RE). That exact line
+    // reappearing in the post-command's output means the entry fell back to the
+    // host shell -- sudo refused or was cancelled, the socket denied us, an
+    // engine message CONTAINER_ENTRY_ERROR_RE does not know. '' when no such
+    // line was ever seen (an odd PS1 the idle fallback carried), which disables
+    // the identity check and leaves the regex fast path alone.
+    let hostPromptLine = ''
+    // CONTAINER_ENGINE_NOT_FOUND_RE hit in the post-command's output: suspect
+    // until the prompt that follows decides (see its doc comment).
+    let entrySuspect = false
+    // Anything beyond the command's own echo has come back since the post-
+    // command was written. Until it has, the pane going idle is a hang or a
+    // still-starting container, not an inner shell with an unrecognised
+    // prompt, and the idle fallback holds instead of promoting.
+    let entryOutputSeen = false
     let postCommandShellReady = false
     let containerSetupSent = false
     let containerSetupDone = false
@@ -1907,8 +1941,55 @@ export function spawnPty(
           && !postCommandShellReady
           && !runtimeEntryFailed
         ) {
+          if (isContainerSession) {
+            // rc.14 review F1 round 2 (aicc_planning#45). The prompt path never
+            // fired, so no line since the post-command matched SHELL_PROMPT_RE.
+            // Three readings of that, in order:
+            // (1) the host shell said the engine binary does not exist and its
+            //     own (unmatched -- a zsh `%`) prompt came back: a failed entry;
+            // (2) nothing beyond the command's echo has come back: the engine
+            //     is hung or the container is still starting. Hold, bounded;
+            //     a container that never prints anything is not one claude
+            //     can be launched in, so the cap FAILS the entry (Run again /
+            //     Skip on the overlay) rather than promoting the host;
+            // (3) the last line on screen is a password prompt (sudo waiting
+            //     for the user with no saved secret, or a refused saved one):
+            //     the pane is idle because a human is typing. Hold, bounded
+            //     like the connect-time auth hold; at the cap advance as
+            //     before, since a stale sticky (a `❯` inner prompt strips to
+            //     '') must delay, never wedge.
+            // Anything else -- an inner shell whose prompt the regex does not
+            // know -- promotes exactly as it always has.
+            if (entrySuspect) {
+              runtimeEntryFailed = true
+              clearSshLineBuffer(sessionId, 'runtime')
+              logInfo(`[ssh] ${sessionId}: idle after postCommand with an engine-not-found line and no inner prompt -- container entry failed`)
+              setFlowState('failed', 'container entry failed')
+              return
+            }
+            if (!entryOutputSeen) {
+              if (entryHoldFires < MAX_ENTRY_SILENT_HOLD_FIRES) {
+                entryHoldFires++
+                if (entryHoldFires === 1) logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms after postCommand but nothing beyond its echo has come back -- holding (bounded)`)
+                armIdleFallback()
+                return
+              }
+              runtimeEntryFailed = true
+              clearSshLineBuffer(sessionId, 'runtime')
+              logError(`[ssh] ${sessionId}: no output from the container entry for ${(MAX_ENTRY_SILENT_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms -- container entry failed`)
+              setFlowState('failed', 'container entry failed')
+              return
+            }
+            if ((PASSWORD_PROMPT_RE.test(lastPromptLineSeen) || SUDO_PROMPT_RE.test(lastPromptLineSeen)) && entryHoldFires < MAX_ENTRY_PROMPT_HOLD_FIRES) {
+              entryHoldFires++
+              if (entryHoldFires === 1) logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms after postCommand but a password prompt is waiting -- holding (bounded)`)
+              armIdleFallback()
+              return
+            }
+          }
           postCommandShellReady = true
           inInnerShell = true
+          clearSshLineBuffer(sessionId, 'runtime')
           logInfo(`[ssh] ${sessionId}: idle after postCommand → inner shell ready`)
           // User decides next via overlay (Launch Claude vs Skip).
           setFlowState('awaiting-claude', 'inner')
@@ -2075,6 +2156,11 @@ export function spawnPty(
     // 30 days" — the password then gets written into the PTY as stray input
     // before the real prompt arrives, leaking it visibly into the terminal.
     const PASSWORD_PROMPT_RE = /password[:?]\s*$/i
+    // The shapes sudo prompts with: `[sudo] password for X:`, `password for X:`,
+    // `Password:` (macOS). End-of-line anchored so a log line that mentions
+    // `[sudo]` or `password for` cannot trip it. Used by the sudo auto-type
+    // branch and (rc.14 review F1 round 2) by the post-command idle hold.
+    const SUDO_PROMPT_RE = /(\[sudo\].*password.*:|password for .+:|^password:)\s*$/i
     // Shell prompt match for the cd/setup gate. Real bash PS1s usually end
     // `$`/`#`/`>`/`~` with no whitespace before the sigil (e.g. `user@h:~$ `),
     // so we can't require pre-whitespace — but we DO exclude lines containing
@@ -2101,6 +2187,15 @@ export function spawnPty(
     // so a stale sticky delays a quiet host but can never wedge it.
     let authHoldFires = 0
     const MAX_AUTH_HOLD_FIRES = 8
+    // rc.14 review F1 round 2: consecutive idle fires spent holding in
+    // running-postcommand (container sessions only; see the idle branch). Reset
+    // by every data chunk, like authHoldFires. Silence cap: (10+1) x 1.5s =
+    // ~16.5s with NOTHING back from the entry -> failed. Prompt cap: a human
+    // typing a sudo password gets (40+1) x 1.5s = ~61s before the fallback
+    // advances anyway.
+    let entryHoldFires = 0
+    const MAX_ENTRY_SILENT_HOLD_FIRES = 10
+    const MAX_ENTRY_PROMPT_HOLD_FIRES = 40
 
     /**
      * Writers for the four discrete SSH stages. The manual
@@ -2153,7 +2248,11 @@ export function spawnPty(
       postCommandSent = true
       setFlowState('running-postcommand')
       logInfo(`[ssh] ${sessionId}: writing post-command`)
-      setTimeout(() => ptyProcess.write(postCommand + '\r'), 200)
+      setTimeout(() => {
+        if (destroyed) return
+        postCommandWritten = true
+        ptyProcess.write(postCommand + '\r')
+      }, 200)
     }
 
     const writeContainerSetupCmd = () => {
@@ -2775,6 +2874,27 @@ export function spawnPty(
         // Users who want claude on the bare HOST can use "Launch
         // Claude on host" instead, which DOES run host setup.
         if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
+        // rc.14 review F1 round 2 (aicc_planning#45): a FAILED container entry
+        // can be run again in-session -- the user starts the container (or
+        // fixes sudo / the engine) elsewhere, then clicks Run again on the
+        // failed overlay. Everything the entry watch latched is reset so the
+        // second attempt is judged on its own output; sudoPasswordSent too, so
+        // a saved sudo secret is offered to the new prompt. Still refused from
+        // any other state: this is the one re-entry, not a general reset.
+        if (currentFlowState === 'failed' && runtimeEntryFailed) {
+          runtimeEntryFailed = false
+          postCommandSent = false
+          postCommandWritten = false
+          postCommandShellReady = false
+          entrySuspect = false
+          entryOutputSeen = false
+          entryHoldFires = 0
+          sudoPasswordSent = false
+          clearSshLineBuffer(sessionId, 'runtime')
+          logInfo(`[ssh] ${sessionId}: re-running the post-command after a failed container entry`)
+          writePostCommand()
+          return
+        }
         if (currentFlowState !== 'awaiting-postcommand') return
         writePostCommand()
       },
@@ -2934,6 +3054,7 @@ export function spawnPty(
         // CONSECUTIVE quiet fallback fires, so a genuinely waiting prompt that
         // repaints keeps its full hold window.
         authHoldFires = 0
+        entryHoldFires = 0
         armIdleFallback()
       }
 
@@ -3165,25 +3286,6 @@ export function spawnPty(
         }
       }
 
-      // rc.14 review F1 (aicc_planning#45): a container entry that FAILED returns
-      // to the HOST shell, whose next prompt used to be read as the inner shell
-      // (the transition further down, and the idle fallback), so Launch Claude
-      // wrote the container setup and the claude command to the host. Watch the
-      // post-command's own output for the engines' failure shapes and fail the
-      // flow instead; both inner-shell transitions are also gated on the flag,
-      // and launchClaude() re-emits the failure rather than walking the host
-      // ladder. Skip stays available as the explicit way onto the raw host shell.
-      if (isContainerSession && postCommandSent && !postCommandShellReady && !runtimeEntryFailed) {
-        const recent = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
-        if (CONTAINER_ENTRY_ERROR_RE.test(recent)) {
-          runtimeEntryFailed = true
-          clearSshLineBuffer(sessionId, 'runtime')
-          logInfo(`[ssh] ${sessionId}: container entry failed (engine error after the post-command) -- staying on the host shell, not marking inner`)
-          setFlowState('failed', 'container entry failed')
-          return
-        }
-      }
-
       // The current chunk's prompt-shaped last line, computed once for the
       // password check, the sudo check, and the stage transitions below. The
       // STICKY copy (lastPromptLineSeen) feeds the idle fallback's auth-prompt
@@ -3192,6 +3294,54 @@ export function spawnPty(
       // screen through those.
       const promptLineNow = lastPromptLineForClaude(data)
       if (promptLineNow !== '') lastPromptLineSeen = promptLineNow
+      // rc.14 review F1 round 2: remember the HOST shell's prompt while we are
+      // still on the host, so the entry watch below can recognise it coming
+      // back. Frozen by postCommandSent (nothing after the click is the host's
+      // prompt for this purpose).
+      if (isContainerSession && !postCommandSent && promptLineNow !== '' && SHELL_PROMPT_RE.test(promptLineNow)) {
+        hostPromptLine = promptLineNow
+      }
+
+      // rc.14 review F1 (aicc_planning#45): a container entry that FAILED returns
+      // to the HOST shell, whose next prompt used to be read as the inner shell
+      // (the transition further down, and the idle fallback), so Launch Claude
+      // wrote the container setup and the claude command to the host. Watch the
+      // post-command's own output and fail the flow instead; both inner-shell
+      // transitions are also gated on the flag, and launchClaude() re-emits the
+      // failure rather than walking the host ladder. Skip stays available as the
+      // explicit way onto the raw host shell; Run again re-enters (runPostCommand).
+      // Round 2: three signals, on the line-buffered ANSI-stripped output --
+      //  - an engine / sudo failure shape (CONTAINER_ENTRY_ERROR_RE): definitive;
+      //  - the host's own prompt line back on screen (hostPromptLine): definitive,
+      //    and the one that catches what no regex lists -- Ctrl-C at the sudo
+      //    prompt, a refusal in a language or engine version we do not know;
+      //  - the shell's engine-not-found line (CONTAINER_ENGINE_NOT_FOUND_RE):
+      //    suspect only, decided by the prompt that follows (rc files inside a
+      //    healthy container can print it).
+      // Only from the moment the command has actually been WRITTEN
+      // (postCommandWritten), so a host prompt repaint still in flight during
+      // writePostCommand's 200ms defer is not mistaken for the prompt returning.
+      if (isContainerSession && postCommandWritten && !postCommandShellReady && !runtimeEntryFailed) {
+        const recent = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
+        const lines = recent.split(/\r?\n/).map((l) => l.trim())
+        const hostPromptReturned = hostPromptLine !== '' && lines.includes(hostPromptLine)
+        if (CONTAINER_ENTRY_ERROR_RE.test(recent) || hostPromptReturned) {
+          runtimeEntryFailed = true
+          clearSshLineBuffer(sessionId, 'runtime')
+          logInfo(`[ssh] ${sessionId}: container entry failed (${hostPromptReturned ? 'the host prompt came back' : 'engine error after the post-command'}) -- staying on the host shell, not marking inner`)
+          setFlowState('failed', 'container entry failed')
+          return
+        }
+        if (!entrySuspect && CONTAINER_ENGINE_NOT_FOUND_RE.test(recent)) {
+          entrySuspect = true
+          logInfo(`[ssh] ${sessionId}: post-command output says the engine binary was not found -- suspect entry, waiting for the prompt to decide`)
+        }
+        // The command's own echo (possibly fragmented) does not count as the
+        // entry answering; anything else does.
+        if (!entryOutputSeen && postCommand && lines.some((l) => l !== '' && !postCommand.includes(l))) {
+          entryOutputSeen = true
+        }
+      }
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
       // line containing the word -- and only while still AUTHENTICATING (rc.14
@@ -3214,7 +3364,7 @@ export function spawnPty(
       // happens to mention `[sudo]` or `password for`.
       if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent) {
         const promptLine = promptLineNow
-        if (promptLine && /(\[sudo\].*password.*:|password for .+:|^password:)\s*$/i.test(promptLine)) {
+        if (promptLine && SUDO_PROMPT_RE.test(promptLine)) {
           sudoPasswordSent = true
           setTimeout(() => {
             ptyProcess.write(sudoPassword + '\r')
@@ -3269,8 +3419,12 @@ export function spawnPty(
       // Inner shell prompt after postCommand → emit awaiting-claude.
       // User picks Launch Claude (→ container setup → claudeCmd) or
       // Skip (→ drops to inner shell).
+      // postCommandWritten (rc.14 review F1 round 2): the command goes out
+      // 200ms after the click; a host prompt repaint landing inside that window
+      // is not the inner shell -- nothing has been asked of the host yet.
       if (
         postCommandSent
+        && postCommandWritten
         && !postCommandShellReady
         && sawShellPrompt
         && (!sudoPassword || sudoPasswordSent)
@@ -3278,6 +3432,7 @@ export function spawnPty(
       ) {
         postCommandShellReady = true
         inInnerShell = true
+        clearSshLineBuffer(sessionId, 'runtime')
         setFlowState('awaiting-claude', 'inner')
         return
       }

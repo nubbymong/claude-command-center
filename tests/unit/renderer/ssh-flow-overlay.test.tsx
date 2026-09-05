@@ -68,6 +68,37 @@ const mount = () =>
   act(() => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand={false} shellOnly={false} enabled />) })
 const push = (msg: { state: string; info?: string }) => act(() => { flowCb?.(msg) })
 
+// rc.14 review F1 round 2 (aicc_planning#45): a failed container entry offers
+// Run again (the post-command re-run main accepts from this exact state), not
+// Retry Launch (which main answers by re-emitting the failure).
+describe('SshFlowOverlay failed container entry', () => {
+  const containerCfg = { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', engine: 'docker', container: 'ccc-test' } }
+
+  it('shows Run again wired to runPostCommand, plus Skip; no Retry Launch', async () => {
+    setSession(containerCfg)
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'failed', info: 'container entry failed' }) })
+    const again = container.querySelector('[data-testid="ssh-run-post-command-again"]') as HTMLButtonElement | null
+    expect(again).not.toBeNull()
+    expect(again!.textContent).toBe('Run again')
+    expect(container.textContent).not.toContain('Retry Launch')
+    expect(container.textContent).toContain('Skip')
+    expect(container.textContent).toContain('run the post-connect command again')
+    await act(async () => { again!.click() })
+    expect((globalThis as any).window.electronAPI.ssh.runPostCommand).toHaveBeenCalledWith('s1')
+    expect((globalThis as any).window.electronAPI.ssh.launchClaude).not.toHaveBeenCalled()
+  })
+
+  it('any other setup failure keeps Retry Launch', async () => {
+    setSession(containerCfg)
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'failed', info: 'container setup timeout' }) })
+    expect(container.querySelector('[data-testid="ssh-run-post-command-again"]')).toBeNull()
+    expect(container.textContent).toContain('Retry Launch')
+    expect(container.textContent).toContain('container setup timeout')
+  })
+})
+
 describe('SshFlowOverlay persistence-unavailable warning gate', () => {
   it('does NOT warn on a standard session (detachable:false) with probe=none', () => {
     setSession({ host: 'h', port: 22, username: 'u', remotePath: '~', detachable: false })
