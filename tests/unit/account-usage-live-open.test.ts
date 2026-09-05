@@ -215,4 +215,32 @@ describe('fetchAllAccountsUsage — open accounts make no call and take no stagg
     expect(rows[0].buckets[0].percent).toBe(10)
     expect(rows[1].buckets[0].percent).toBe(20)
   })
+
+  // The stagger exists to space out NETWORK calls; an open account makes none, so
+  // it must not trigger one -- otherwise the page waits STAGGER_MS per open row
+  // for calls that never happen, the opposite of the "instant open rows" goal.
+  it('an all-open fetchAll issues ZERO stagger sleeps', async () => {
+    profiles = [
+      profile({ id: 'profile-open-1' }), profile({ id: 'profile-open-2' }), profile({ id: 'profile-open-3' }),
+    ]
+    for (let i = 1; i <= 3; i++) {
+      inUse.add(`profile-open-${i}`)
+      profileBySession.set(`s${i}`, `profile-open-${i}`)
+      recordLiveUsageForSession(`s${i}`, [bucket()], false)
+    }
+    const timeoutSpy = vi.spyOn(global, 'setTimeout')
+    await fetchAllAccountsUsage()
+    // STAGGER_MS is 300; no networked account, so no stagger sleep is scheduled.
+    expect(timeoutSpy.mock.calls.filter((c) => c[1] === 300)).toHaveLength(0)
+    expect(requestedHosts).toEqual([])
+    timeoutSpy.mockRestore()
+  })
+
+  it('two CLOSED accounts DO stagger once between them (the control for the zero above)', async () => {
+    profiles = [profile({ id: 'profile-a' }), profile({ id: 'profile-b' })] // neither in use -> both network
+    const timeoutSpy = vi.spyOn(global, 'setTimeout')
+    await fetchAllAccountsUsage()
+    expect(timeoutSpy.mock.calls.filter((c) => c[1] === 300)).toHaveLength(1)
+    timeoutSpy.mockRestore()
+  })
 })
