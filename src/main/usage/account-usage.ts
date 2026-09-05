@@ -561,6 +561,11 @@ export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: 
  *  at once (the old Promise.all) drew 429s on otherwise-valid tokens. Order
  *  matches listProfiles (primary first is the store's responsibility). */
 export async function fetchAllAccountsUsage(): Promise<AccountUsage[]> {
+  // Hydrate BEFORE the stagger decision: accountUsageWillNetwork reads lastGoodUsage
+  // (a prior fetch's cached credits force an open account onto the GET path, Q1b),
+  // and fetchAccountUsage only hydrates on its first call -- so without this the
+  // first page-open of the process would mis-pace a cached-credits account.
+  hydrateSnapshots()
   const profiles = listProfiles()
   const out: AccountUsage[] = []
   // Stagger only between accounts that actually hit the network. A parked

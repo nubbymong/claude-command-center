@@ -243,4 +243,23 @@ describe('fetchAllAccountsUsage — open accounts make no call and take no stagg
     expect(timeoutSpy.mock.calls.filter((c) => c[1] === 300)).toHaveLength(1)
     timeoutSpy.mockRestore()
   })
+
+  it('on the FIRST fetchAll, an open cached-credits account is counted toward the stagger (hydrate before the decision)', async () => {
+    // The account is open and its current tick has no credits, but a prior fetch
+    // cached credits -> it must take the GET path (Q1b) AND be paced with the
+    // closed account. fetchAll must hydrate the snapshot BEFORE deciding, or the
+    // stagger decision reads an empty cache and skips the slot -> two un-paced GETs.
+    seededSnapshots = { 'profile-cc': { buckets: [bucket()], credits: { currency: 'USD', used: 1, limit: null, remaining: null, enabled: true }, fetchedAt: Date.now() - 1000 } }
+    profiles = [profile({ id: 'profile-cc' }), profile({ id: 'profile-closed' })]
+    inUse.add('profile-cc')
+    profileBySession.set('sc', 'profile-cc')
+    recordLiveUsageForSession('sc', [bucket()], false) // delivered tick: no credits
+    const timeoutSpy = vi.spyOn(global, 'setTimeout')
+    await fetchAllAccountsUsage()
+    // Both hit the usage endpoint (the cached credits force the open one to GET)...
+    expect(requestedHosts.filter((h) => h === USAGE_HOST)).toHaveLength(2)
+    // ...and they are paced: exactly one stagger between the two networked accounts.
+    expect(timeoutSpy.mock.calls.filter((c) => c[1] === 300)).toHaveLength(1)
+    timeoutSpy.mockRestore()
+  })
 })
