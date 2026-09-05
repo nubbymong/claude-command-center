@@ -92,7 +92,7 @@ import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState, SavedSession } from './types/electron'
-import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState } from './session-persistence'
 import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
 import { useAccountGateStore } from './stores/accountGateStore'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
@@ -599,10 +599,17 @@ export default function App() {
       try {
         const savedState = await window.electronAPI.session.load() as SessionState | null
         if (savedState && savedState.sessions.length > 0) setPendingRestore(savedState)
-        // Nothing to restore: every per-session tool hide from the last run is
-        // for a session that no longer exists. (The restore path sweeps after
-        // it knows which sessions came back.)
-        else useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
+        else {
+          // rc.14 review F9: no attached sessions to restore, but the file may
+          // still carry the left-running registry (the last tab was left
+          // running, then the app closed). The restore path hydrates it only
+          // when it has sessions to bring back, so do it here.
+          if (hydrateDetachedFromSavedState(savedState) > 0) void pingAllDetachedHosts()
+          // Nothing to restore: every per-session tool hide from the last run is
+          // for a session that no longer exists. (The restore path sweeps after
+          // it knows which sessions came back.)
+          useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
+        }
       } catch (err) {
         console.error('[App] Failed to load saved sessions:', err)
       }
@@ -929,8 +936,10 @@ export default function App() {
       // #397 round-2: kill any pending debounced autosave first, so it cannot fire
       // after the clear and rewrite the set the user just chose to discard.
       cancelSessionAutosave()
-      await window.electronAPI.session.clear()
-      console.log('[App] Session state cleared')
+      // rc.14 review F9: "Don't save" discards the cards, not the remotes left
+      // running on their hosts -- those stay in the file on their own.
+      await persistDetachedOnlyOrClear()
+      console.log('[App] Session state cleared (left-running registry kept if any)')
       if (isUpdate) {
         await window.electronAPI.update.installAndRestart()
       } else {
@@ -972,8 +981,10 @@ export default function App() {
         // the user closed (the file/cache could still hold the last non-empty set
         // in the sub-second window before the empty autosave would have fired).
         cancelSessionAutosave()
+        // rc.14 review F9: keep the left-running registry (Remote Resumable)
+        // when the last tab was left running -- only the session set is empty.
         void flushPendingConfigSaves()
-          .then(() => window.electronAPI.session.clear())
+          .then(() => persistDetachedOnlyOrClear())
           .catch(() => { /* best-effort: the empty store still yields no card next launch */ })
           .finally(() => window.electronAPI.window.allowClose())
         return
@@ -1441,6 +1452,7 @@ export default function App() {
               void restoreSavedSessions(saved)
             }}
             onDontOpen={() => {
+              const saved = pendingRestore
               setPendingRestore(null)
               useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
@@ -1448,7 +1460,11 @@ export default function App() {
               // #397 round-2: cancel a pending autosave first so it can't rewrite
               // the discarded set into the file after the clear.
               cancelSessionAutosave()
-              void window.electronAPI.session.clear()
+              // rc.14 review F9: declining the CARDS must not forget the remotes
+              // still running on their hosts -- hydrate the registry from the
+              // declined state and persist it on its own.
+              if (hydrateDetachedFromSavedState(saved) > 0) void pingAllDetachedHosts()
+              void persistDetachedOnlyOrClear()
             }}
             onRefresh={async () => {
               // The list is a boot-time snapshot; re-read the saved set so a

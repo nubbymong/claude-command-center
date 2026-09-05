@@ -102,6 +102,41 @@ export async function persistSessionState(): Promise<void> {
 }
 
 /**
+ * rc.14 review F9 (aicc_planning#53): the left-running registry must outlive the
+ * attached session set. Three exits used to `session.clear()` the whole file --
+ * the zero-tab close, "Don't open" on the resume prompt, "Don't save" on the
+ * close dialog -- and took the Remote Resumable entries with it, although the
+ * remote work they point at is still running; the next launch of that config
+ * then started NEW work instead of reattaching. With a non-empty registry this
+ * writes a state with NO sessions and the registry; with an empty one it clears
+ * as before. Either way the discarded sessions cannot come back: the saved set
+ * is empty, so the exit-time flush re-asserts nothing.
+ */
+export async function persistDetachedOnlyOrClear(): Promise<'saved' | 'cleared'> {
+  const detachedRemotes = useDetachedRemotesStore.getState().entries
+  if (detachedRemotes.length === 0) {
+    await window.electronAPI?.session?.clear()
+    return 'cleared'
+  }
+  await window.electronAPI?.session?.save({ sessions: [], activeSessionId: null, savedAt: Date.now(), detachedRemotes })
+  return 'saved'
+}
+
+/**
+ * Hydrate the left-running registry from a saved state on its own, for the boot
+ * paths that restore NO attached sessions (nothing saved, or the user declined
+ * the resume prompt). Returns how many entries the store holds afterwards, so
+ * the caller can start the reachability pass only when there is something to
+ * ping. Same sanitising hydrate the restore path uses.
+ */
+export function hydrateDetachedFromSavedState(saved: Pick<SessionState, 'detachedRemotes'> | null | undefined): number {
+  const entries = saved?.detachedRemotes
+  if (!Array.isArray(entries) || entries.length === 0) return 0
+  useDetachedRemotesStore.getState().hydrate(entries)
+  return useDetachedRemotesStore.getState().entries.length
+}
+
+/**
  * T8b (bug #5): build the persisted session state AND enrich each live Claude
  * session with its exact-conversation resume target (resumeUuid/resumeCwd) so an
  * app-relaunch resumes the SAME conversation, not the newest in the cwd's folder.
