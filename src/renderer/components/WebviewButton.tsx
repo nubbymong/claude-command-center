@@ -1,5 +1,6 @@
 import React from 'react'
 import { useWebviewStore } from '../stores/webviewStore'
+import { toggleAltPane, closeOtherAltPanes } from '../stores/altPane'
 import { trackUsage } from '../stores/tipsStore'
 import { ReservedLabel } from './command-bar/chips'
 
@@ -31,7 +32,6 @@ interface Props {
  */
 export default function WebviewButton({ sessionId }: Props) {
   const state = useWebviewStore((s) => s.bySessionId[sessionId])
-  const togglePane = useWebviewStore((s) => s.togglePane)
   const navigate = useWebviewStore((s) => s.navigate)
   const consumeAgentPush = useWebviewStore((s) => s.consumeAgentPush)
 
@@ -112,14 +112,17 @@ export default function WebviewButton({ sessionId }: Props) {
           const url = consumeAgentPush(sessionId)
           if (url) {
             trackUsage('webview.opened')
-            navigate(sessionId, url)
+            navigate(sessionId, url) // opens the pane itself...
+            closeOtherAltPanes(sessionId, 'browser') // ...so evict canvas/logs here too
             return
           }
         }
         // tips-library gates the freeze/annotate tip on `webview.opened`.
         // Recorded on open only: closing the pane is not discovering it.
         if (!isOpen) trackUsage('webview.opened')
-        togglePane(sessionId)
+        // One session surface at a time: opening the browser closes the
+        // canvas/logs; clicking it while open returns to the terminal.
+        toggleAltPane(sessionId, 'browser')
       }}
       className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${classes}`}
       title={titleParts.join('').trim()}

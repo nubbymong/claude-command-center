@@ -1,5 +1,6 @@
 import React from 'react'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
+import { toggleAltPane } from '../stores/altPane'
 import { useCanvasStore } from '../stores/canvasStore'
 import { ReservedLabel } from './command-bar/chips'
 import { useCanvasReviewStore } from '../stores/canvasReviewStore'
@@ -28,7 +29,6 @@ interface Props {
  */
 export default function AgentCanvasButton({ sessionId }: Props) {
   const isOpen = useExcalidrawStore((s) => !!s.bySessionId[sessionId]?.isOpen)
-  const togglePane = useExcalidrawStore((s) => s.togglePane)
   // #478: while the submit-triggered hand-back is in flight it is the only
   // driver of pane state — this toggle disables for the beat, then reads
   // "Canvas" again once the landing closes the pane.
@@ -99,7 +99,9 @@ export default function AgentCanvasButton({ sessionId }: Props) {
           // toggle that recorded both would make the count meaningless. This is
           // what retires the canvas tip and unlocks the plan-mode one.
           if (!isOpen) trackUsage('canvas.opened')
-          togglePane(sessionId)
+          // One session surface at a time: opening the canvas closes the
+          // browser/logs; clicking it while open returns to the terminal.
+          toggleAltPane(sessionId, 'canvas')
         }}
         disabled={returning}
         className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border whitespace-nowrap shrink-0 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
