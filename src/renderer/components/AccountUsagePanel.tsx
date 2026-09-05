@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useReauthAccount } from '../hooks/useReauthAccount'
 import { resolveAccountColourKey } from '../../shared/account-chip-color'
 import { resolveIdentityColor } from '../../shared/identity-colors'
@@ -43,28 +43,47 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   const [profiles, setProfiles] = useState<AccountProfile[] | null>(null)
   const [usageByProfile, setUsageByProfile] = useState<Record<string, AccountUsage>>({})
   const [authInfo, setAuthInfo] = useState<Record<string, ProfileAuthInfo>>({})
+  // True while a stream is in flight: a profile with no result yet reads as a
+  // skeleton WHILE streaming, and as a terminal "couldn't load" row once the
+  // stream has settled — so a failed load never shimmers forever.
+  const [streaming, setStreaming] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  // Generation guard: a Refresh supersedes any in-flight load, so a late result
+  // from the previous stream (or its settle) is ignored rather than repopulating
+  // a row the new load has just reset.
+  const genRef = useRef(0)
 
   const load = useCallback(async () => {
+    const gen = ++genRef.current
     // Clear usage so every row returns to a skeleton, then re-stream. The account
     // list and the credential state are both local file reads, so they resolve at
     // once and independently of the network usage fetch — one slow account must
     // not hold back the others' rows or the forced-login countdown.
     setUsageByProfile({})
+    setLoadError(false)
+    setStreaming(true)
     try {
       const [profs, auth] = await Promise.all([
         window.electronAPI.accountProfiles.list(),
         window.electronAPI.accountProfiles.authInfo().catch(() => [] as ProfileAuthInfo[]),
       ])
+      if (genRef.current !== gen) return // a newer Refresh took over
       setProfiles(profs)
       setAuthInfo(Object.fromEntries(auth.map((a) => [a.profileId, a])))
       // Stream each account's usage in as it resolves (plan P3): an OPEN account
       // snaps in instantly from its live figure (no call), a CLOSED one fills in
       // as its staggered call lands. No all-or-nothing "Loading…" gate.
       await window.electronAPI.accountUsage.fetchAllStream((usage) => {
+        if (genRef.current !== gen) return // ignore a superseded stream's result
         setUsageByProfile((prev) => ({ ...prev, [usage.profileId]: usage }))
       })
     } catch {
-      setProfiles((prev) => prev ?? [])
+      // A rejected list()/stream (a corrupt profiles read, say) must not leave the
+      // page shimmering: record the error so unresolved rows show a terminal state
+      // and an empty list reads as an error rather than "No accounts found".
+      if (genRef.current === gen) { setLoadError(true); setProfiles((prev) => prev ?? []) }
+    } finally {
+      if (genRef.current === gen) setStreaming(false)
     }
   }, [])
 
@@ -101,12 +120,16 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
           // or two before it resolves, so the page never flashes empty.
           ? [0, 1].map((i) => <UsageSkeletonCard key={`sk-${i}`} />)
           : profiles.length === 0
-            ? <p className="text-[0.8125rem] text-overlay0">No accounts found.</p>
+            ? <p className="text-[0.8125rem] text-overlay0">{loadError ? 'Couldn’t load account usage. Use Refresh to try again.' : 'No accounts found.'}</p>
             : profiles.map((p) => {
                 const usage = usageByProfile[p.id]
-                return usage
-                  ? <AccountCard key={p.id} row={usage} auth={authInfo[p.id]} theme={theme} onSignIn={() => onSignIn(usage)} />
-                  : <UsageSkeletonCard key={p.id} />
+                if (usage) return <AccountCard key={p.id} row={usage} auth={authInfo[p.id]} theme={theme} onSignIn={() => onSignIn(usage)} />
+                // No result yet: a skeleton while the stream runs; once it has
+                // settled without one (a rare stream-level failure), a terminal
+                // row with a per-account retry rather than an endless shimmer.
+                return streaming
+                  ? <UsageSkeletonCard key={p.id} />
+                  : <UsageUnavailableRow key={p.id} onRetry={() => void refreshOne(p.id)} />
               })}
         <p className="text-[0.6875rem] text-overlay0 leading-relaxed pt-1">
           Usage is read live from each account, no session required. Signing in refreshes only that account.
@@ -146,6 +169,23 @@ function UsageSkeletonCard() {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// Terminal state for a row whose usage never arrived because the stream itself
+// failed (rare — a per-account fetch resolves to an error-status row, not a
+// missing one). Shown instead of an endless skeleton, with a per-account retry.
+function UsageUnavailableRow({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="rounded-xl border border-surface0/70 px-4 py-3.5 bg-surface0/20 flex items-center justify-between gap-2" data-testid="account-usage-unavailable">
+      <span className="text-[0.8125rem] text-overlay0">Couldn’t load this account’s usage.</span>
+      <button
+        onClick={onRetry}
+        className="text-[0.75rem] px-2 py-0.5 rounded border border-surface1 text-overlay1 hover:text-text hover:border-blue/40 transition-colors shrink-0"
+      >
+        Retry
+      </button>
     </div>
   )
 }
