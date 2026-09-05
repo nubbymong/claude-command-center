@@ -3345,12 +3345,20 @@ export function spawnPty(
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
       // line containing the word -- and only while still AUTHENTICATING (rc.14
-      // review F13, aicc_planning#57): once the post-command has gone out the
-      // connection is up, so a prompt shaped like a bare `Password:` is sudo's
-      // (the macOS shape), not sshd's. Key auth leaves `passwordSent` false, so
-      // without this gate the saved SSH secret was typed into sudo and the
-      // handler returned before the sudo branch below could act.
-      if (!passwordSent && password && !postCommandSent && PASSWORD_PROMPT_RE.test(promptLineNow)) {
+      // review F13, aicc_planning#57): `connecting` ends with the first shell
+      // prompt (or the idle fallback carrying the flow past it), and from then
+      // on the connection is up, so a prompt shaped like a bare `Password:` is
+      // sudo's (the macOS shape), not sshd's -- whether or not this session has
+      // a post-command to send (round 2: the first version gated on
+      // postCommandSent, which left the common no-post-command session open to
+      // typing the SSH secret into a sudo the user ran by hand). Key auth leaves
+      // `passwordSent` false, so without this gate the saved SSH secret was typed
+      // into sudo and the handler returned before the sudo branch below could
+      // act. Accepted edge: a host that pauses more than the idle window between
+      // its pre-auth output and its password prompt (a banner, then a slow PAM)
+      // has already carried the flow out of `connecting`, and that password is
+      // typed by hand.
+      if (!passwordSent && password && currentFlowState === 'connecting' && PASSWORD_PROMPT_RE.test(promptLineNow)) {
         passwordSent = true
         setTimeout(() => {
           ptyProcess.write(password + '\r')
