@@ -88,7 +88,10 @@ export function getSignInState(): SignInState {
   return current
 }
 
-/** Resolve the first system browser binary that exists. */
+/**
+ * Resolve the first installed browser binary that exists -- system-wide or, on
+ * Windows, the per-user install under %LOCALAPPDATA% (aicc_planning#43).
+ */
 export function resolveBrowserBinary(preferred: AuthBrowser = DEFAULT_AUTH_BROWSER): { browser: AuthBrowser; path: string } | null {
   for (const b of [preferred, preferred === 'chrome' ? 'edge' : 'chrome'] as AuthBrowser[]) {
     for (const p of getBrowserPaths(b)) {

@@ -21,6 +21,14 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.15',
+    date: '2026-09-05',
+    highlights: 'One fix: the Sign-in browser choice for an SSO account (Edge or Chrome) had gone missing on managed machines where Chrome is installed just for you rather than for everyone. The app now finds per-user browser installs, so the choice is back.',
+    changes: [
+      { type: 'fix', description: 'The SSO Sign-in browser picker is back on machines with a per-user Chrome. On a managed workstation where you cannot install software for everyone, Chrome (and sometimes Edge) lives in your own AppData folder rather than under Program Files, and the app only ever looked under Program Files. A machine with both browsers therefore looked like it had one, and the Sign-in browser picker on an SSO account, which only appears when there is a genuine choice to make, stayed hidden: Edge could not be chosen. Both per-user locations are now checked as well, after the system-wide ones. The same lookup drives the vision browser, so a per-user Chrome now serves that too.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.14',
     date: '2026-09-02',
     highlights: 'Ask Conductor learns to teach: ask it to install a helper skill and every Claude session on this machine can answer questions about this app — which settings file wins, how accounts share settings — without opening the Ask tab. It gets its own page in the setup tour, wearing the new conductor mark that now also sits on its sidebar button. And three paper cuts are gone: hovering a link no longer flickers the terminal, a setup page taller than your screen scrolls instead of hiding its buttons, and Fable 5.1 is in the model picker.',

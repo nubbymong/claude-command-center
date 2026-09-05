@@ -36,19 +36,59 @@ describe('vision getBrowserPaths', () => {
   })
 
   it('windows and macOS lists are unchanged by the linux addition', () => {
-    expect(getBrowserPaths('chrome', 'win32')).toEqual([
+    // An empty env pins the historical Windows lists exactly: no %LOCALAPPDATA%,
+    // no per-user entry.
+    expect(getBrowserPaths('chrome', 'win32', {})).toEqual([
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
       'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
     ])
     expect(getBrowserPaths('chrome', 'darwin')).toEqual([
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     ])
-    expect(getBrowserPaths('edge', 'win32')).toEqual([
+    expect(getBrowserPaths('edge', 'win32', {})).toEqual([
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
     ])
     expect(getBrowserPaths('edge', 'darwin')).toEqual([
       '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     ])
+  })
+
+  // aicc_planning#43 -- a managed machine's no-admin Chrome lives under
+  // %LOCALAPPDATA%, not Program Files. The list must include it, AFTER the
+  // system-wide candidates so an existing system install keeps winning.
+  describe('windows per-user installs (%LOCALAPPDATA%)', () => {
+    const env = { LOCALAPPDATA: 'C:\\Users\\jo\\AppData\\Local' }
+
+    it('chrome: the per-user path is appended after the system paths', () => {
+      expect(getBrowserPaths('chrome', 'win32', env)).toEqual([
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Users\\jo\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
+      ])
+    })
+
+    it('edge: the per-user path is appended after the system paths', () => {
+      expect(getBrowserPaths('edge', 'win32', env)).toEqual([
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Users\\jo\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe',
+      ])
+    })
+
+    it('no %LOCALAPPDATA% means no per-user entry -- never an "undefined" path', () => {
+      for (const b of ['chrome', 'edge'] as const) {
+        const paths = getBrowserPaths(b, 'win32', { LOCALAPPDATA: '' })
+        expect(paths).toHaveLength(2)
+        expect(paths.some((p) => /undefined|^\\/.test(p))).toBe(false)
+      }
+    })
+
+    it('per-user entries are windows-only: linux and macOS ignore the variable', () => {
+      for (const b of ['chrome', 'edge'] as const) {
+        expect(getBrowserPaths(b, 'linux', env).some((p) => p.includes('AppData'))).toBe(false)
+        expect(getBrowserPaths(b, 'darwin', env).some((p) => p.includes('AppData'))).toBe(false)
+      }
+    })
   })
 })

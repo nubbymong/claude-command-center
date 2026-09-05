@@ -22,9 +22,14 @@ export type CdpBrowser = 'chrome' | 'edge'
  * Candidate executable paths for a browser, best first.
  *
  * `platform` is a parameter rather than read from `process` so the per-OS answers
- * are testable on any host.
+ * are testable on any host; `env` likewise, because the Windows per-user
+ * location hangs off `%LOCALAPPDATA%`.
  */
-export function getBrowserPaths(browser: CdpBrowser, platform: NodeJS.Platform = process.platform): string[] {
+export function getBrowserPaths(
+  browser: CdpBrowser,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   if (platform === 'darwin') {
     if (browser === 'edge') return ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge']
     return ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
@@ -47,12 +52,23 @@ export function getBrowserPaths(browser: CdpBrowser, platform: NodeJS.Platform =
       '/usr/bin/chromium-browser',
     ]
   }
+  // Windows: the system-wide installs first, then the PER-USER install under
+  // %LOCALAPPDATA% (aicc_planning#43). On a managed machine where the user has no
+  // admin rights, Chrome -- and sometimes Edge -- installs there and nowhere under
+  // Program Files. Without this entry a per-user Chrome was invisible:
+  // `resolveBrowserBinary('chrome')` fell back to Edge, `detectAuthBrowsers()`
+  // reported one browser, and the SSO "Sign-in browser" picker hid itself by
+  // design -- "we lost the Edge choice". The same list feeds the vision browser,
+  // so a per-user Chrome now drives vision too.
+  const local = env.LOCALAPPDATA
   if (browser === 'edge') return [
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    ...(local ? [`${local}\\Microsoft\\Edge\\Application\\msedge.exe`] : []),
   ]
   return [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    ...(local ? [`${local}\\Google\\Chrome\\Application\\chrome.exe`] : []),
   ]
 }

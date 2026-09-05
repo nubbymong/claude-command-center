@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.15] - 2026-09-05
+
+> One fix: the Sign-in browser choice for an SSO account (Edge or Chrome) had gone missing on managed machines where Chrome is installed just for you rather than for everyone. The app now finds per-user browser installs, so the choice is back.
+
+### Fixed
+- The SSO Sign-in browser picker is back on machines with a per-user Chrome. On a managed workstation where you cannot install software for everyone, Chrome (and sometimes Edge) lives in your own AppData folder rather than under Program Files, and the app only ever looked under Program Files. A machine with both browsers therefore looked like it had one, and the Sign-in browser picker on an SSO account, which only appears when there is a genuine choice to make, stayed hidden: Edge could not be chosen. Both per-user locations are now checked as well, after the system-wide ones. The same lookup drives the vision browser, so a per-user Chrome now serves that too.
+
 ## [2.1.0-rc.14] - 2026-09-02
 
 > Ask Conductor learns to teach: ask it to install a helper skill and every Claude session on this machine can answer questions about this app — which settings file wins, how accounts share settings — without opening the Ask tab. It gets its own page in the setup tour, wearing the new conductor mark that now also sits on its sidebar button. And three paper cuts are gone: hovering a link no longer flickers the terminal, a setup page taller than your screen scrolls instead of hiding its buttons, and Fable 5.1 is in the model picker.
@@ -1498,6 +1505,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.15]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.15
 [2.1.0-rc.14]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.14
 [2.1.0-rc.13]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.13
 [2.1.0-rc.12]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.12
