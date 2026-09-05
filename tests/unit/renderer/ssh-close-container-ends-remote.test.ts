@@ -35,6 +35,12 @@ const plainSshSession = {
   ...base, id: 'p1',
   sshConfig: { host: 'pi.local', port: 22, username: 'mong', remotePath: '~' },
 } as never
+// The pre-structured badge-only hint: the sidebar chip reads it, main never
+// composes a container hop from it, so there is no in-container claude to end.
+const badgeHintOnlySession = {
+  ...base, id: 'h1',
+  sshConfig: { host: 'pi.local', port: 22, username: 'mong', remotePath: '~', dockerContainer: 'ccc-test' },
+} as never
 const persistentSession = { ...plainSshSession, id: 'pp1', sshTmuxPersistent: true } as never
 
 beforeEach(() => {
@@ -61,6 +67,13 @@ describe('requestCloseSession on a container session', () => {
     requestCloseSession('c2')
     expect(endRemote).toHaveBeenCalledWith({ sessionId: 'c2', configId: 'cfg-c' })
     expect(kill).toHaveBeenCalledWith('c2')
+  })
+
+  it('a session with only the badge-only dockerContainer hint (no runtime, no docker post-command) closes as before: no End remote', () => {
+    useSessionStore.setState({ sessions: [badgeHintOnlySession] } as never)
+    requestCloseSession('h1')
+    expect(endRemote).not.toHaveBeenCalled()
+    expect(kill).toHaveBeenCalledWith('h1')
   })
 
   it('a plain (non-persistent, non-container) SSH session closes as before: no End remote', () => {

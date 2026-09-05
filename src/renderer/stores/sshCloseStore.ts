@@ -5,7 +5,8 @@ import { useDetachedRemotesStore } from './detachedRemotesStore'
 import { killSessionPty } from '../ptyTracker'
 import { buildDetachedRemote } from '../utils/detachedRemotes'
 import { persistSessionState } from '../session-persistence'
-import { isContainerSsh } from '../components/sidebar/transportBadge'
+import { effectiveSshRuntime } from '../components/sidebar/transportBadge'
+import { isContainerRuntime } from '../../shared/container-command'
 
 // SSH tmux enhancement (item 4): a one-slot store for the "you're closing a
 // PERSISTENT remote session" confirmation. Any close call site (tab close,
@@ -90,7 +91,11 @@ export function requestCloseSession(sessionId: string): void {
   // best-effort, session-scoped, over its own exec -- then close as before.
   // Invoked BEFORE the local kill so main resolves the target while the
   // session record still holds it; IPC order from one renderer is preserved.
-  if (session && session.sessionType === 'ssh' && isContainerSsh(session.sshConfig)) {
+  // The runtime main actually USES (structured block, or the legacy docker
+  // post-command it parses) -- not `isContainerSsh`, which also accepts the
+  // badge-only `dockerContainer` hint and would spawn an end exec for a
+  // session that never took the container hop.
+  if (session && session.sessionType === 'ssh' && isContainerRuntime(effectiveSshRuntime(session.sshConfig))) {
     try {
       void Promise.resolve(window.electronAPI?.ssh?.endRemote?.({ sessionId, configId: session.configId })).catch(() => {})
     } catch {
