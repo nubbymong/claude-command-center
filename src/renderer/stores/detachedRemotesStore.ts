@@ -52,8 +52,19 @@ function isUsableDetachedRemote(value: unknown): value is DetachedRemote {
     typeof e.label === 'string' &&
     typeof e.detachedAt === 'number' && Number.isFinite(e.detachedAt) &&
     (e.configId === undefined || typeof e.configId === 'string') &&
-    (e.accountEmail === undefined || typeof e.accountEmail === 'string')
+    (e.accountEmail === undefined || typeof e.accountEmail === 'string') &&
+    // #54 destination fields: optional (absent on pre-#54 files), but when
+    // present they drive the orphan decision, so a malformed one is a bad row.
+    (e.port === undefined || (typeof e.port === 'number' && Number.isFinite(e.port))) &&
+    (e.runtime === undefined || isUsableRuntime(e.runtime))
   )
+}
+
+/** A recorded runtime we can compare: an object whose `type` this build knows. */
+function isUsableRuntime(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const t = (value as { type?: unknown }).type
+  return t === 'host' || t === 'container'
 }
 
 /** Drop what cannot be used, then bound what is left. Exported so the boundary

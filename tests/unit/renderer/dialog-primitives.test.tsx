@@ -264,3 +264,34 @@ describe('a whole dialog assembled from the primitives', () => {
     expect(paletteSurvivors(c)).toEqual([])
   })
 })
+
+// A window-covering backdrop must also cover the NATIVE panes (the browser and
+// claude.ai account views main paints above all HTML). The overlay holds the
+// occlusion flag for exactly its mounted life; an `absolute` overlay covers
+// only its own ancestor and holds nothing.
+const { usePaneOcclusionStore } = await import('../../../src/renderer/stores/paneOcclusionStore')
+
+describe('DialogOverlay and the native panes', () => {
+  it('a fixed overlay occludes the native panes while mounted, and releases on unmount', () => {
+    usePaneOcclusionStore.setState({ activeView: 'sessions', overlays: 0 })
+    const h = document.createElement('div')
+    document.body.appendChild(h)
+    const r = createRoot(h)
+    act(() => { r.render(<DialogOverlay><div>hi</div></DialogOverlay>) })
+    expect(usePaneOcclusionStore.getState().overlays).toBe(1)
+    act(() => { r.unmount() })
+    h.remove()
+    expect(usePaneOcclusionStore.getState().overlays).toBe(0)
+  })
+
+  it('an absolute overlay leaves the native panes alone', () => {
+    usePaneOcclusionStore.setState({ activeView: 'sessions', overlays: 0 })
+    const h = document.createElement('div')
+    document.body.appendChild(h)
+    const r = createRoot(h)
+    act(() => { r.render(<DialogOverlay position="absolute"><div>hi</div></DialogOverlay>) })
+    expect(usePaneOcclusionStore.getState().overlays).toBe(0)
+    act(() => { r.unmount() })
+    h.remove()
+  })
+})

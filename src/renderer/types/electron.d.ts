@@ -122,6 +122,8 @@ export interface ElectronAPI {
     setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    /** Credential generation (stat stamp + signed-in), never token contents (rc.14 review F7). */
+    credentialStamp?: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>
     /** Per-profile credential state: forced-login countdown + identity cross-check. */
     authInfo: () => Promise<import('../../shared/account-auth').ProfileAuthInfo[]>
     create: (name?: string) => Promise<import('../../shared/account-types').AccountProfile>
@@ -131,6 +133,7 @@ export interface ElectronAPI {
   }
   accountUsage: {
     fetchAll: () => Promise<import('../../shared/usage-types').AccountUsage[]>
+    fetchAllStream: (onResult: (usage: import('../../shared/usage-types').AccountUsage) => void) => Promise<void>
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => Promise<import('../../shared/usage-types').AccountUsage | null>
   }
   window: {

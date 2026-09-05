@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 import { CustomCommand, CommandSection, CommandReviewReason, useCommandStore } from '../stores/commandStore'
 import { generateId } from '../utils/id'
 import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN, secretValueProblem, secretPlacementProblem } from '../../shared/command-secret'
@@ -139,6 +140,9 @@ function Field({ label, small, children, hint, right, testId }: { label: React.R
 }
 
 export default function CommandDialog({ onConfirm, onCancel, initial, configId, capabilities, mainPaneIsShell = false, presetScope, presetSectionId, configName }: Props) {
+  // Window-covering modal with its own backdrop (not DialogOverlay): hold the
+  // native panes hidden while mounted, or the browser pane paints over it.
+  useOccludesNativePanes()
   const isEdit = !!initial
   const caps = capabilities ?? sessionCapabilities({ provider: 'claude', sessionType: 'local', shellOnly: mainPaneIsShell, configId } as never)
   const agentName = caps.agentName || 'Claude'

@@ -9,7 +9,7 @@ import { readFileSync, existsSync, unlinkSync, renameSync, copyFileSync } from '
 import { getConfigDir, ensureConfigDir, migrateConfigToProviderShape } from './config-manager'
 import { logInfo, logError } from './debug-logger'
 import { atomicWriteFileSync } from './atomic-write'
-import type { SavedSession, SessionState } from '../shared/types'
+import type { DetachedRemote, SavedSession, SessionState } from '../shared/types'
 
 export type { SavedSession, SessionState }
 
@@ -68,6 +68,33 @@ function atomicWriteSessionState(filePath: string, state: SessionState): void {
   // Staging, exclusive create, retry and cleanup all live in atomic-write.ts
   // (#233). Still rethrows, so the caller's contract is unchanged.
   atomicWriteFileSync(filePath, JSON.stringify(state, null, 2))
+}
+
+/**
+ * The detached-remote registry as PERSISTED, for main-side consistency checks
+ * (#54: does the saved config a renderer names still reach the destination the
+ * registry recorded for a session?). Deliberately NOT `loadSessionState()`: that
+ * carries the read-failure latch and the unparseable-file move-aside, and a
+ * check inside an IPC handler must never change what the next real load sees.
+ * Fail-open to [] on any failure -- the check is additive, so "no record" means
+ * "nothing to compare", and the caller falls back to the config-only rule.
+ */
+export function readDetachedRemotesRegistry(): DetachedRemote[] {
+  try {
+    const file = getSessionStateFile()
+    if (!existsSync(file)) return []
+    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { detachedRemotes?: unknown } | null
+    const list = parsed?.detachedRemotes
+    if (!Array.isArray(list)) return []
+    return list.filter((e): e is DetachedRemote =>
+      !!e && typeof e === 'object' && !Array.isArray(e)
+      && typeof (e as DetachedRemote).sessionId === 'string'
+      && typeof (e as DetachedRemote).host === 'string'
+      && typeof (e as DetachedRemote).username === 'string'
+      && typeof (e as DetachedRemote).remotePath === 'string')
+  } catch {
+    return []
+  }
 }
 
 /**

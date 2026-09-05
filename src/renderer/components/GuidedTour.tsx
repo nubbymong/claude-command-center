@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 
 // Anchored coach-mark tour over the LIVE app (not a modal wizard). Each step
 // spotlights a real element by a data-tour selector and floats a callout beside
@@ -86,6 +87,9 @@ function useAnchorRect(selector: string | null): DOMRect | null {
 }
 
 export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig: () => void; onClose: () => void }) {
+  // The tour floats over the live app, session area included; the native
+  // browser / account panes would paint over its spotlight and callouts.
+  useOccludesNativePanes()
   const [i, setI] = useState(0)
   const step = STEPS[i]
   const rect = useAnchorRect(step.selector)

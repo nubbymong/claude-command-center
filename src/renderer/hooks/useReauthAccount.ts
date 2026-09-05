@@ -17,13 +17,33 @@ const MAX_ATTEMPTS = 300 // ~20 min backstop; the session-gone check is the real
 
 function pollForReauth(profileId: string, sessionId: string, onDone: () => void): void {
   let attempts = 0
+  // rc.14 review F7 (aicc_planning#51): an EXPIRED account still has its email
+  // on disk, so "refreshIdentity returned an email" is true on the very first
+  // tick and used to complete a re-auth that had not happened -- the login
+  // guidance vanished after 4 s and a later real login was never observed.
+  // Completion now also needs the CREDENTIALS to have changed since the shell
+  // opened, and to read as signed in. The stamp is stat-only (no token crosses
+  // the bridge). An older preload without the stamp API keeps the old rule.
+  const stampApi = window.electronAPI.accountProfiles.credentialStamp
+  let baseline: string | null | undefined // undefined until the first read returns
+  if (stampApi) {
+    stampApi(profileId).then((r) => { baseline = r ? r.stamp : null }).catch(() => { baseline = null })
+  }
   const timer = setInterval(async () => {
     attempts++
     const exists = useSessionStore.getState().sessions.some((s) => s.id === sessionId)
     if (!exists) { clearInterval(timer); return } // session closed -> stop
     try {
       const res = await window.electronAPI.accountProfiles.refreshIdentity(profileId)
-      if (res && res.email) {
+      // Unchanged credentials (or a baseline not yet read) = still pending. Falls
+      // through to the attempt backstop below rather than returning, so an
+      // abandoned login tab stops polling after ~20 min like any other.
+      let pending = false
+      if (res && res.email && stampApi) {
+        const now = await stampApi(profileId)
+        pending = !now || !now.signedIn || baseline === undefined || now.stamp === baseline
+      }
+      if (res && res.email && !pending) {
         clearInterval(timer)
         await useAccountProfilesStore.getState().hydrate()
         useSessionStore.getState().updateSession(sessionId, { needsLogin: false, label: res.email })

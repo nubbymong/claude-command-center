@@ -571,3 +571,84 @@ describe('Remote Resumable — wiring', () => {
     expect(q('[data-testid="remote-resumable-count"]')?.textContent).toBe('1')
   })
 })
+
+/* ── #54: the saved config was EDITED to point elsewhere ───────────────────── */
+
+describe('Remote Resumable — retargeted saved config (#54)', () => {
+  const recorded = () => entry({ port: 22, runtime: { type: 'host' } })
+  const movedAway = () => cfg({ sshConfig: { host: 'other.box', port: 2222, username: 'mong', remotePath: '~/work' } })
+
+  beforeEach(() => {
+    useConfigStore.setState({ configs: [movedAway()] })
+    useDetachedRemotesStore.setState({ entries: [recorded()] })
+  })
+
+  it('renders the card as retargeted and never asks the NEW host about the OLD session', async () => {
+    await mountThen({})
+    expect(cards()).toHaveLength(1)
+    expect(cards()[0].dataset.pairing).toBe('retargeted')
+    expect(cards()[0].getAttribute('aria-label')).toMatch(/points elsewhere/)
+    // The section-open verify must not have filed a probe for this config: the
+    // edited config no longer reaches the session, and a verified-empty answer
+    // from the new host would have PRUNED a session that is alive elsewhere.
+    expect(checkDetachedLive).not.toHaveBeenCalled()
+  })
+
+  it('a click opens the retargeted dialog naming where it was left and where the config points now', async () => {
+    await mountThen({})
+    await click(cards()[0])
+    const dialog = q('[data-testid="rr-retargeted-dialog"]')
+    expect(dialog).toBeTruthy()
+    expect(dialog!.textContent).toMatch(/mong@pi\.local/)          // was
+    expect(dialog!.textContent).toMatch(/mong@other\.box:2222/)    // now (non-default port shown)
+    expect(dialog!.textContent).toMatch(/tmux kill-session -t ccc-det-1/)
+    expect(q('[data-testid="rr-retargeted-remove"]')).toBeTruthy()
+    expect(q('[data-testid="rr-dead-start-new"]')).toBeNull()      // no resume, no start-new
+    expect(addSession).not.toHaveBeenCalled()
+  })
+
+  it('Remove from the dialog forgets the card WITHOUT ending through the edited config', async () => {
+    await mountThen({})
+    await click(cards()[0])
+    await click(q('[data-testid="rr-retargeted-remove"]'))
+    expect(endRemote).not.toHaveBeenCalled() // would have killed ccc-det-1 on other.box
+    expect(useDetachedRemotesStore.getState().entries).toEqual([])
+    expect(persistSessionState).toHaveBeenCalled()
+    expect(q('[data-testid="rr-retargeted-dialog"]')).toBeNull()
+  })
+
+  it('Cancel keeps the card and the entry', async () => {
+    await mountThen({})
+    await click(cards()[0])
+    await click(q('[data-testid="rr-retargeted-cancel"]'))
+    expect(useDetachedRemotesStore.getState().entries).toHaveLength(1)
+    expect(cards()).toHaveLength(1)
+  })
+
+  it('context menu: Resume is disabled with the retargeted reason; Remove forgets without an end call', async () => {
+    await mountThen({})
+    await rightClick(cards()[0])
+    const resume = q('[data-testid="rr-ctx-resume"]') as HTMLButtonElement
+    expect(resume.disabled).toBe(true)
+    expect(resume.title).toMatch(/different destination/)
+    await click(q('[data-testid="rr-ctx-remove"]'))
+    expect(endRemote).not.toHaveBeenCalled()
+    expect(useDetachedRemotesStore.getState().entries).toEqual([])
+  })
+
+  it('a RE-CREATED config at the recorded destination pairs and resumes, even beside the edited one', async () => {
+    useConfigStore.setState({ configs: [movedAway(), cfg({ id: 'cfg-recreated', label: 'Pi again' })] })
+    await mountThen({ liveness: { 'det-1': 'live' } })
+    expect(cards()[0].dataset.pairing).toBe('paired')
+    await click(cards()[0])
+    expect(addSession).toHaveBeenCalledTimes(1)
+    expect(addSession.mock.calls[0][0]).toMatchObject({ id: 'det-1', configId: 'cfg-recreated' })
+  })
+
+  it('a PRE-#54 entry (no port/runtime recorded) beside its unchanged config still pairs', async () => {
+    useConfigStore.setState({ configs: [cfg()] })
+    useDetachedRemotesStore.setState({ entries: [entry()] })
+    await mountThen({})
+    expect(cards()[0].dataset.pairing).toBe('paired')
+  })
+})

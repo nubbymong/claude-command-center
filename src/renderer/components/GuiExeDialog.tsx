@@ -13,6 +13,7 @@
  * carries the dialog role, and the recommended action is autofocused.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 import { shellOperatorsIn } from '../../shared/gui-exe'
 import { scrim } from './ui/Dialog'
 
@@ -28,6 +29,9 @@ export interface GuiExeDialogProps {
 }
 
 export default function GuiExeDialog({ label, command, exePath, onChoose, onCancel }: GuiExeDialogProps) {
+  // Window-covering modal with its own backdrop (not DialogOverlay): hold the
+  // native panes hidden while mounted, or the browser pane paints over it.
+  useOccludesNativePanes()
   const [remember, setRemember] = useState(false)
   const captureRef = useRef<HTMLButtonElement>(null)
   // Capturing runs the program directly, with no shell, so anything the shell

@@ -14,9 +14,13 @@ import {
   computeLiveSessionIds,
   TMUX_LIVENESS_BEGIN,
   TMUX_LIVENESS_END,
+  TMUX_LIVENESS_FOUND,
 } from '../../../src/main/ssh-liveness'
 
-const wrap = (body: string) => `${TMUX_LIVENESS_BEGIN}\n${body}\n${TMUX_LIVENESS_END}\n`
+// A run in which at least one tmux binary existed and answered (FOUND), then the
+// listed names. `wrapNoTmux` is the shell reaching END with no binary found.
+const wrap = (body: string) => `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND}\n${body}\n${TMUX_LIVENESS_END}\n`
+const wrapNoTmux = () => `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_END}\n`
 
 describe('buildTmuxListCommand', () => {
   const cmd = buildTmuxListCommand()
@@ -51,11 +55,24 @@ describe('parseTmuxLivenessOutput', () => {
     expect(names).toEqual([])
   })
 
+  it('rc.14 review F11: END reached but NO tmux binary ran => NOT completed (unverified, never death)', () => {
+    // A host whose tmux lives where none of the candidates look (MacPorts, nix,
+    // snap): the shell ran the whole command and no binary printed FOUND. This
+    // used to parse as verified-empty and prune every live entry.
+    const r = parseTmuxLivenessOutput(wrapNoTmux())
+    expect(r.completed).toBe(false)
+    expect(r.shellCompleted).toBe(true)
+    expect(r.tmuxFound).toBe(false)
+    expect(r.names).toEqual([])
+  })
+
+  it('the FOUND marker never leaks into the names, however many binaries printed it', () => {
+    const raw = `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND}\nccc-a\n${TMUX_LIVENESS_FOUND}\nccc-a\nccc-b\n${TMUX_LIVENESS_END}\n`
+    expect(parseTmuxLivenessOutput(raw)).toMatchObject({ completed: true, tmuxFound: true, names: ['ccc-a', 'ccc-b'] })
+  })
+
   it('no END sentinel => NOT completed (a connection/auth failure — unverified)', () => {
-    expect(parseTmuxLivenessOutput('ssh: connect to host pi.local port 22: Connection refused')).toEqual({
-      completed: false,
-      names: [],
-    })
+    expect(parseTmuxLivenessOutput('ssh: connect to host pi.local port 22: Connection refused')).toEqual({ completed: false, shellCompleted: false, tmuxFound: false, names: [] })
   })
 
   it('dedupes names reported by both tmux tiers', () => {
@@ -63,8 +80,33 @@ describe('parseTmuxLivenessOutput', () => {
   })
 
   it('tolerates a login banner before BEGIN, ANSI escapes and CRLF', () => {
-    const raw = `Last login: today\r\n\x1b[32m${TMUX_LIVENESS_BEGIN}\x1b[0m\r\nccc-a\r\nccc-b\r\n${TMUX_LIVENESS_END}\r\n`
+    const raw = `Last login: today\r\n\x1b[32m${TMUX_LIVENESS_BEGIN}\x1b[0m\r\n${TMUX_LIVENESS_FOUND}\r\nccc-a\r\nccc-b\r\n${TMUX_LIVENESS_END}\r\n`
     expect(parseTmuxLivenessOutput(raw).names).toEqual(['ccc-a', 'ccc-b'])
+  })
+})
+
+// Adversarial pass on #598: BEGIN is matched as the LAST one before the END, so
+// text a host-side actor can print BEFORE the probe runs (a banner, a MOTD)
+// cannot forge the FOUND marker and a session name into the body.
+describe('parseTmuxLivenessOutput — forged sentinels printed before the probe', () => {
+  const banner = `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND}\nccc-forged\n`
+
+  it('REGRESSION: a banner that prints BEGIN/FOUND/<name> ahead of a real, empty run does not make that name live', () => {
+    const parsed = parseTmuxLivenessOutput(banner + wrapNoTmux())
+    expect(parsed).toEqual({ completed: false, shellCompleted: true, tmuxFound: false, names: [] })
+    expect(computeLiveSessionIds(['forged'], parsed.names)).toEqual([])
+  })
+
+  it('a banner ahead of a real run that DID find tmux contributes nothing to its names', () => {
+    const parsed = parseTmuxLivenessOutput(banner + wrap('ccc-real'))
+    expect(parsed.completed).toBe(true)
+    expect(parsed.names).toEqual(['ccc-real'])
+  })
+
+  it('a session NAMED like the BEGIN sentinel empties the body: unverified, never a false live', () => {
+    const parsed = parseTmuxLivenessOutput(wrap(TMUX_LIVENESS_BEGIN))
+    expect(parsed.completed).toBe(false)
+    expect(parsed.names).toEqual([])
   })
 })
 

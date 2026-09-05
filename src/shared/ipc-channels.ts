@@ -387,10 +387,17 @@ export const IPC = {
   ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
   ACCOUNT_PROFILES_AUTH_INFO: 'accountProfiles:authInfo',
   ACCOUNT_PROFILES_CAPTURE_DETECTED: 'accountProfiles:captureDetected',
+  /** Read-only credential GENERATION for a profile (file stamp + signed-in), no token contents:
+   *  the re-auth poll completes on a credential change, not on the pre-existing email (rc.14 review F7). */
+  ACCOUNT_PROFILES_CREDENTIAL_STAMP: 'accountProfiles:credentialStamp',
   ACCOUNT_GLOBAL_EMAIL_GET: 'accountProfiles:globalEmail',
 
   // All-accounts usage overview (fetch each profile's usage without a session)
   ACCOUNT_USAGE_FETCH_ALL: 'accountUsage:fetchAll',
+  // Streaming variant: emits each account's usage as it resolves (open accounts
+  // instantly, closed ones as their staggered calls land) so the page can fill
+  // per-account skeleton rows in load order instead of waiting for the whole set.
+  ACCOUNT_USAGE_FETCH_ALL_STREAM: 'accountUsage:fetchAllStream',
   ACCOUNT_USAGE_FETCH_ONE: 'accountUsage:fetchOne',
 
   // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)

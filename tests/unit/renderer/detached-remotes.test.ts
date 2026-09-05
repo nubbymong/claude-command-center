@@ -14,6 +14,7 @@ import {
   filterLiveEntries,
   resumableRemotesForConfig,
   configForDetachedEntry,
+  pairDetachedEntry,
   describeDetachedAge,
   type DetachableSession,
   type LaunchableConfig,
@@ -50,7 +51,7 @@ const sshConfig = (over: Partial<LaunchableConfig> = {}): LaunchableConfig => ({
 })
 
 describe('buildDetachedRemote', () => {
-  it('builds an entry from a persistent SSH session (mux tmux, account descriptor, id preserved)', () => {
+  it('builds an entry from a persistent SSH session (mux tmux, account descriptor, id preserved, full destination)', () => {
     const e = buildDetachedRemote(sshSession(), 4242)
     expect(e).toEqual({
       sessionId: 'sess-1',
@@ -58,11 +59,24 @@ describe('buildDetachedRemote', () => {
       host: 'pi.local',
       username: 'mong',
       remotePath: '~/work',
+      // #54: the destination is recorded in full — port, and the runtime the
+      // session actually ran under (a plain host session records host, not
+      // "nothing", so absence can mean "pre-#54 entry").
+      port: 22,
+      runtime: { type: 'host' },
       mux: 'tmux',
       accountEmail: 'mong@example.com',
       label: 'Pi',
       detachedAt: 4242,
     })
+  })
+
+  it('records the container runtime a session ran under, structured or from a legacy docker post-command (#54)', () => {
+    const structured = { type: 'container' as const, engine: 'podman' as const, container: 'dev' }
+    expect(buildDetachedRemote(sshSession({ sshConfig: { host: 'pi.local', port: 2222, username: 'mong', remotePath: '~/work', runtime: structured } }), 0))
+      .toMatchObject({ port: 2222, runtime: structured })
+    const legacy = buildDetachedRemote(sshSession({ sshConfig: { host: 'pi.local', port: 22, username: 'mong', remotePath: '~/work', postCommand: 'sudo docker exec -it web bash' } }), 0)
+    expect(legacy?.runtime).toMatchObject({ type: 'container', container: 'web' })
   })
 
   it('prefers the customName over the config label', () => {
@@ -99,9 +113,104 @@ describe('matchDetachedRemotes', () => {
     expect(matchDetachedRemotes(entries, sshConfig({ id: 'cfg-new' }))).toEqual([])
   })
 
+  it('the fallback key includes the PORT — two boxes behind one hostname are not one box (#54)', () => {
+    const entries = [entry({ sessionId: 'a', configId: 'gone', port: 2222 })]
+    expect(matchDetachedRemotes(entries, sshConfig({ id: 'cfg-new' }))).toEqual([]) // config is on 22
+    expect(matchDetachedRemotes(entries, sshConfig({ id: 'cfg-new', sshConfig: { host: 'pi.local', port: 2222, username: 'mong', remotePath: '~/work' } })).map((e) => e.sessionId)).toEqual(['a'])
+  })
+
   it('returns [] for a non-SSH config even if an entry shares its id (SSH-only)', () => {
     const entries = [entry({ sessionId: 'a', configId: 'cfg-1' })]
     expect(matchDetachedRemotes(entries, sshConfig({ sessionType: 'local' }))).toEqual([])
+  })
+
+  it('returns [] for an SSH config with no ssh block, even on an id match — nothing to compare against', () => {
+    const entries = [entry({ sessionId: 'a', configId: 'cfg-1' })]
+    expect(matchDetachedRemotes(entries, sshConfig({ sshConfig: undefined }))).toEqual([])
+  })
+})
+
+// #54: editing a saved SSH config used to RETARGET its detached sessions — the
+// id still matched, so liveness asked the NEW host about the OLD session (and a
+// verified-empty answer pruned it), and Resume / End acted on the new host. The
+// id is the strong key only while the config still points where the session
+// was left; otherwise the entry is an orphan of the edit.
+describe('matchDetachedRemotes — destination keying (#54)', () => {
+  const recorded = () => entry({ sessionId: 'a', configId: 'cfg-1', port: 22, runtime: { type: 'host' } })
+  const edited = (ssh: Partial<NonNullable<LaunchableConfig['sshConfig']>>) =>
+    sshConfig({ sshConfig: { host: 'pi.local', port: 22, username: 'mong', remotePath: '~/work', ...ssh } })
+
+  it('an id match whose HOST was edited is no match (never retargeted at the new host)', () => {
+    expect(matchDetachedRemotes([recorded()], edited({ host: 'other.box' }))).toEqual([])
+  })
+
+  it('an id match whose PORT was edited is no match', () => {
+    expect(matchDetachedRemotes([recorded()], edited({ port: 2222 }))).toEqual([])
+  })
+
+  it('an id match whose USER or PATH was edited is no match', () => {
+    expect(matchDetachedRemotes([recorded()], edited({ username: 'root' }))).toEqual([])
+    expect(matchDetachedRemotes([recorded()], edited({ remotePath: '/srv/other' }))).toEqual([])
+  })
+
+  it('an id match whose RUNTIME moved (host -> container, or another container) is no match', () => {
+    expect(matchDetachedRemotes([recorded()], edited({ runtime: { type: 'container', container: 'dev' } }))).toEqual([])
+    const inDev = entry({ sessionId: 'c', configId: 'cfg-1', port: 22, runtime: { type: 'container', container: 'dev' } })
+    expect(matchDetachedRemotes([inDev], edited({ runtime: { type: 'container', container: 'other' } }))).toEqual([])
+    expect(matchDetachedRemotes([inDev], edited({ runtime: { type: 'container', container: 'dev' } })).map((e) => e.sessionId)).toEqual(['c'])
+  })
+
+  it('the same container reached through sudo / another mode is still the same destination', () => {
+    // sudo, mode and containerDir are how you get in, not where you land.
+    const inDev = entry({ sessionId: 'c', configId: 'cfg-1', port: 22, runtime: { type: 'container', container: 'dev' } })
+    expect(matchDetachedRemotes([inDev], edited({ runtime: { type: 'container', container: 'dev', sudo: true, mode: 'start', containerDir: '/app' } })).map((e) => e.sessionId)).toEqual(['c'])
+  })
+
+  it('a host edit that only changes case is the same box (DNS is case-insensitive)', () => {
+    expect(matchDetachedRemotes([recorded()], edited({ host: 'Pi.LOCAL' })).map((e) => e.sessionId)).toEqual(['a'])
+  })
+
+  it('a PRE-#54 entry (no port, no runtime recorded) still matches its unchanged config by id', () => {
+    // An old registry must not turn into a page of orphans on upgrade.
+    const legacy = entry({ sessionId: 'old', configId: 'cfg-1' })
+    expect(legacy.port).toBeUndefined()
+    expect(legacy.runtime).toBeUndefined()
+    expect(matchDetachedRemotes([legacy], sshConfig()).map((e) => e.sessionId)).toEqual(['old'])
+    expect(matchDetachedRemotes([legacy], edited({ port: 2222, runtime: { type: 'container', container: 'x' } })).map((e) => e.sessionId)).toEqual(['old'])
+    // ...but a host edit is still an edit.
+    expect(matchDetachedRemotes([legacy], edited({ host: 'elsewhere' }))).toEqual([])
+  })
+
+  it('an orphaned entry is not matched to the edited config, but a RE-CREATED config at the old destination still finds it', () => {
+    const entries = [recorded()]
+    const editedAway = edited({ host: 'other.box' })
+    const recreated = sshConfig({ id: 'cfg-recreated' })
+    expect(matchDetachedRemotes(entries, editedAway)).toEqual([])
+    expect(matchDetachedRemotes(entries, recreated).map((e) => e.sessionId)).toEqual(['a'])
+  })
+})
+
+describe('configForDetachedEntry / pairDetachedEntry — the orphan row (#54)', () => {
+  const recorded = () => entry({ sessionId: 'a', configId: 'cfg-1', port: 22, runtime: { type: 'host' } })
+  const movedAway = () => sshConfig({ sshConfig: { host: 'other.box', port: 22, username: 'mong', remotePath: '~/work' } })
+
+  it('an exact id whose destination moved is NOT the entry\'s config any more', () => {
+    expect(configForDetachedEntry(recorded(), [movedAway()])).toBeUndefined()
+  })
+
+  it('...unless a re-created config still reaches the recorded destination — that one pairs', () => {
+    expect(configForDetachedEntry(recorded(), [movedAway(), sshConfig({ id: 'cfg-recreated' })])?.id).toBe('cfg-recreated')
+  })
+
+  it('pairs: unchanged config -> paired; edited config -> retargeted (Remove only); no config -> deleted', () => {
+    expect(pairDetachedEntry(recorded(), [sshConfig()])).toEqual({ kind: 'paired', config: sshConfig() })
+    expect(pairDetachedEntry(recorded(), [movedAway()])).toEqual({ kind: 'retargeted', config: movedAway() })
+    expect(pairDetachedEntry(recorded(), [])).toEqual({ kind: 'deleted' })
+    expect(pairDetachedEntry(entry({ configId: 'gone' }), [movedAway()])).toEqual({ kind: 'deleted' })
+  })
+
+  it('a config switched from SSH to local is retargeted too (it exists, and points nowhere the session is)', () => {
+    expect(pairDetachedEntry(recorded(), [sshConfig({ sessionType: 'local' })]).kind).toBe('retargeted')
   })
 })
 

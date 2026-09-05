@@ -21,7 +21,8 @@ import {
   installCanvasPermissionGuard,
 } from './canvas/ccc-ux-protocol'
 
-import { startStatuslineWatcher, setTranscriptPathSink, healGlobalStatusline } from './statusline-watcher'
+import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
+import { recordLiveUsageForSession } from './usage/account-usage'
 import { registerProvider, getProvider } from './providers'
 import { ClaudeProvider } from './providers/claude'
 import { CodexProvider } from './providers/codex'
@@ -108,6 +109,7 @@ import { CSP_POLICY } from '../shared/csp-policy'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
+import { createCloseCoordinator } from './window-close-coordinator'
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
@@ -231,6 +233,19 @@ function saveWindowStateFor(win: BrowserWindow): void {
 }
 
 let mainWindow: BrowserWindow | null = null
+// rc.14 review F2/F3: ONE decision for "may the app go away", shared by the
+// window's close event and the app's before-quit (window-close-coordinator.ts).
+// The teardown body is assigned where the app wiring lives (see before-quit);
+// the coordinator exists before any window so its IPC listeners can be
+// registered once per process (registerMainWindowIpc).
+let quitTeardown: () => void = () => {}
+const closeCoordinator = createCloseCoordinator({
+  hasWindow: () => !!mainWindow && !mainWindow.isDestroyed(),
+  askRenderer: () => { mainWindow?.webContents.send('window:closeRequested') },
+  closeWindow: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close() },
+  quit: () => { app.quit() },
+  teardown: () => { quitTeardown() },
+})
 let splashWindow: BrowserWindow | null = null
 // Unconditional backstop so the splash can never orphan. It is normally
 // closed by the main window's ready-to-show; if that never fires (renderer
@@ -405,103 +420,24 @@ function clampToVisibleDisplay(state: WindowState): WindowState {
   }
 }
 
-function createWindow(): void {
-  const state = clampToVisibleDisplay(loadWindowState())
-
-  mainWindow = new BrowserWindow({
-    width: state.width,
-    height: state.height,
-    x: state.x,
-    y: state.y,
-    minWidth: 1280,
-    minHeight: 720,
-    // Windows: fully frameless with custom controls in the TitleBar.
-    // macOS: keep the native traffic lights (hiddenInset) — frame:false there
-    // removes them entirely and the custom right-docked controls read as a
-    // broken window to Mac users. The renderer hides its custom controls and
-    // left-pads the drag region on darwin (TitleBar.tsx).
-    ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const }
-      : { frame: false }),
-    backgroundColor: '#1E1E2E',
-    show: false,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  })
-
-  // Prevent navigation away from the app
-  mainWindow.webContents.on('will-navigate', (event) => {
-    event.preventDefault()
-  })
-
-  // ...and the SUBFRAME half, which `will-navigate` does not cover: an Agent
-  // Canvas frame may never leave the canvas+version it was mounted for. See
-  // installCanvasFrameNavigationGuard for the two primitives that closes.
-  installCanvasFrameNavigationGuard(mainWindow.webContents)
-
-  mainWindow.webContents.setWindowOpenHandler(() => {
-    return { action: 'deny' }
-  })
-
-  mainWindow.on('ready-to-show', () => {
-    if (process.env.E2E_HEADLESS === '1') {
-      mainWindow!.setPosition(-10000, -10000)
-      mainWindow!.showInactive()
-      closeSplashWindow()
-    } else {
-      // Hold the splash until its lockup has formed AND for a beat after the
-      // window is ready, so the finished brand mark is clearly shown before the
-      // reveal (the main window stays hidden behind the splash during the hold).
-      const elapsed = Date.now() - splashShownAt
-      const wait = Math.max(0, SPLASH_MIN_MS - elapsed) + SPLASH_POST_READY_MS
-      setTimeout(() => {
-        // Maximize BEFORE show to avoid flash of non-maximized window
-        if (state.isMaximized) mainWindow!.maximize()
-        mainWindow!.show()
-        closeSplashWindow()
-      }, wait)
-    }
-  })
-
-  // Track if we're allowing close (after graceful shutdown)
-  let allowClose = false
-  let closeRequestedOnce = false
-
-  mainWindow.on('close', (e) => {
-    if (mainWindow) saveWindowStateFor(mainWindow)
-
-    // If not yet allowed to close, prevent and notify renderer
-    if (!allowClose) {
-      // Second close attempt (e.g. from NSIS installer retry) — allow immediately
-      if (closeRequestedOnce) {
-        return
-      }
-      closeRequestedOnce = true
-      e.preventDefault()
-      mainWindow?.webContents.send('window:closeRequested')
-    }
-  })
-
-  // #397 Group 2: a renderer crash / OOM kills the window before it can run its
-  // graceful save. Persist the last-known session state so the sessions survive.
-  mainWindow.webContents.on('render-process-gone', (_e, details) => {
-    sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
-  })
-
+// rc.14 review F3 (aicc_planning#47): everything in here registers a
+// PROCESS-GLOBAL ipcMain listener. On macOS the app outlives its last window
+// and the dock click calls createWindow() again; a second ipcMain.handle() for
+// a channel THROWS (Electron rejects duplicate handlers), which left the
+// reopened window hidden and unloaded -- or crashed the app through the
+// rethrowing uncaught-exception handler. So this runs ONCE per process, not
+// once per window. Every handler reaches the window through the module-level
+// `mainWindow` (never a closure over one createWindow() call), and the
+// close-dialog state lives in `closeCoordinator` for the same reason.
+let windowIpcRegistered = false
+function registerMainWindowIpc(): void {
+  if (windowIpcRegistered) return
+  windowIpcRegistered = true
   // Renderer calls this after saving sessions and graceful exit
-  ipcMain.on('window:allowClose', () => {
-    allowClose = true
-    mainWindow?.close()
-  })
+  ipcMain.on('window:allowClose', () => closeCoordinator.onAllowClose())
 
   // Renderer calls this when user cancels the close dialog
-  ipcMain.on('window:cancelClose', () => {
-    closeRequestedOnce = false
-  })
+  ipcMain.on('window:cancelClose', () => closeCoordinator.onCancelClose())
 
   // Window control IPC
   ipcMain.on('window:minimize', () => mainWindow?.minimize())
@@ -699,6 +635,97 @@ function createWindow(): void {
       return null
     }
   })
+}
+
+function createWindow(): void {
+  const state = clampToVisibleDisplay(loadWindowState())
+
+  mainWindow = new BrowserWindow({
+    width: state.width,
+    height: state.height,
+    x: state.x,
+    y: state.y,
+    minWidth: 1280,
+    minHeight: 720,
+    // Windows: fully frameless with custom controls in the TitleBar.
+    // macOS: keep the native traffic lights (hiddenInset) — frame:false there
+    // removes them entirely and the custom right-docked controls read as a
+    // broken window to Mac users. The renderer hides its custom controls and
+    // left-pads the drag region on darwin (TitleBar.tsx).
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const }
+      : { frame: false }),
+    backgroundColor: '#1E1E2E',
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+
+  // rc.14 review F3: a (re)created window starts with a fresh close decision --
+  // the previous window's Save left `allowClose` set in the shared coordinator.
+  closeCoordinator.onWindowCreated()
+
+  // Prevent navigation away from the app
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
+
+  // ...and the SUBFRAME half, which `will-navigate` does not cover: an Agent
+  // Canvas frame may never leave the canvas+version it was mounted for. See
+  // installCanvasFrameNavigationGuard for the two primitives that closes.
+  installCanvasFrameNavigationGuard(mainWindow.webContents)
+
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
+  })
+
+  mainWindow.on('ready-to-show', () => {
+    if (process.env.E2E_HEADLESS === '1') {
+      mainWindow!.setPosition(-10000, -10000)
+      mainWindow!.showInactive()
+      closeSplashWindow()
+    } else {
+      // Hold the splash until its lockup has formed AND for a beat after the
+      // window is ready, so the finished brand mark is clearly shown before the
+      // reveal (the main window stays hidden behind the splash during the hold).
+      const elapsed = Date.now() - splashShownAt
+      const wait = Math.max(0, SPLASH_MIN_MS - elapsed) + SPLASH_POST_READY_MS
+      setTimeout(() => {
+        // Maximize BEFORE show to avoid flash of non-maximized window
+        if (state.isMaximized) mainWindow!.maximize()
+        mainWindow!.show()
+        closeSplashWindow()
+      }, wait)
+    }
+  })
+
+
+  mainWindow.on('close', (e) => {
+    if (mainWindow) saveWindowStateFor(mainWindow)
+    // Ask-before-close lives in the coordinator, shared with before-quit so
+    // Cmd+Q on macOS gets the same dialog BEFORE any teardown (rc.14 review F2).
+    closeCoordinator.onWindowClose(() => e.preventDefault())
+  })
+
+  // #397 Group 2: a renderer crash / OOM kills the window before it can run its
+  // graceful save. Persist the last-known session state so the sessions survive.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
+    // A renderer that is gone can never answer window:closeRequested: a close
+    // or quit already held on it would otherwise hold forever, and a later one
+    // would hang the same way (adversarial pass on #598). A clean exit is the
+    // renderer going away on purpose (a reload, a navigation), not a death:
+    // the next renderer in this window can still be asked.
+    if (details?.reason !== 'clean-exit') closeCoordinator.onRendererGone()
+  })
+
+  // Process-global IPC (window controls, dialogs, clipboard, session state, CLI
+  // probes): registered once, see registerMainWindowIpc.
+  registerMainWindowIpc()
 
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('window:maximized-changed', true)
@@ -1232,6 +1259,9 @@ if (!gotTheLock) {
     // binder sink first so the continuous, exact transcript path carried by each
     // status JSON feeds discovery (lazy getter — no-op when logging is disabled).
     setTranscriptPathSink(routeTranscriptPath)
+    // Plan P2: harvest each live session's delivered usage so the account-usage
+    // page can reuse an OPEN account's figure rather than making a redundant call.
+    setStatuslineUsageSink(recordLiveUsageForSession)
     startStatuslineWatcher(getWindow)
 
     // Start polling Anthropic service status
@@ -1256,7 +1286,13 @@ if (!gotTheLock) {
     } catch { /* dialog unavailable (very early failure) */ }
   })
 
-  app.on('before-quit', () => {
+  // rc.14 review F2 (aicc_planning#46): on macOS, Cmd+Q emits before-quit
+  // BEFORE any window close, so this body used to run -- every PTY, MCP,
+  // logging, the watchdog -- and only then did the close dialog appear; Cancel
+  // restored nothing. The coordinator now holds the first before-quit while a
+  // window is up, asks the renderer, and re-issues the quit once the close is
+  // allowed; this body runs on THAT pass, exactly once.
+  quitTeardown = () => {
     logInfo('App quitting...')
     // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
     // transcript binder down — flushing after that would lose the resume targets.
@@ -1296,7 +1332,8 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
      // settings-<sid>.json before claude could read it).
     try { getGateway()?.stop().catch(() => { /* ignore shutdown error */ }) } catch { /* gateway never started */ }
     closeDebugLogger()
-  })
+  }
+  app.on('before-quit', (e) => closeCoordinator.onBeforeQuit(() => e.preventDefault()))
 
   app.on('window-all-closed', () => {
     // On macOS, apps conventionally stay running when all windows are closed.
