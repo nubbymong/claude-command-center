@@ -7,7 +7,7 @@
  * which no mainstream distro ships. Net effect: `spawn chrome ENOENT` and
  * vision permanently disabled on Linux.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { getBrowserPaths } from '../../src/main/vision-manager'
 
 describe('vision getBrowserPaths', () => {
@@ -76,11 +76,33 @@ describe('vision getBrowserPaths', () => {
       ])
     })
 
-    it('no %LOCALAPPDATA% means no per-user entry -- never an "undefined" path', () => {
-      for (const b of ['chrome', 'edge'] as const) {
-        const paths = getBrowserPaths(b, 'win32', { LOCALAPPDATA: '' })
-        expect(paths).toHaveLength(2)
-        expect(paths.some((p) => /undefined|^\\/.test(p))).toBe(false)
+    it('no %LOCALAPPDATA% (absent or empty) means no per-user entry -- never a bare or "undefined" path', () => {
+      for (const noLocal of [{}, { LOCALAPPDATA: '' }]) {
+        for (const b of ['chrome', 'edge'] as const) {
+          const paths = getBrowserPaths(b, 'win32', noLocal)
+          // The shape check first: a `!== undefined` guard would let an empty
+          // variable through as `\Google\Chrome\...`, which this catches before
+          // the length assertion can mask it.
+          expect(paths.some((p) => /undefined|^\\/.test(p))).toBe(false)
+          expect(paths).toHaveLength(2)
+        }
+      }
+    })
+
+    it('reads %LOCALAPPDATA% from process.env by default -- the wiring production relies on', () => {
+      // Every other case passes an explicit env; this is the only one that
+      // proves the default parameter is process.env and the key is spelled
+      // the way Windows spells it.
+      vi.stubEnv('LOCALAPPDATA', 'C:\\Users\\jo\\AppData\\Local')
+      try {
+        expect(getBrowserPaths('chrome', 'win32')).toContain(
+          'C:\\Users\\jo\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
+        )
+        expect(getBrowserPaths('edge', 'win32')).toContain(
+          'C:\\Users\\jo\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe',
+        )
+      } finally {
+        vi.unstubAllEnvs()
       }
     })
 

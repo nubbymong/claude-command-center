@@ -603,7 +603,10 @@ export function tryReconnectGlobalVision(): void { if (globalManager) globalMana
 // === Browser launching (unchanged) ===
 
 /** Candidate executable paths per browser. Pure + exported for unit testing —
- *  `platform` is a parameter because process.platform is baked at test runtime.
+ *  `platform` is a parameter because process.platform is baked at test runtime,
+ *  and `env` likewise because the Windows list is environment-dependent: the
+ *  per-user install hangs off %LOCALAPPDATA% (aicc_planning#43), so a win32
+ *  list is three entries when that variable is set, two when it is not.
  *
  *  Moved to ./browser-paths so a caller wanting one list of paths does not pull
  *  this module (and conductor-mcp-server -> update-watcher -> app.isPackaged) in
