@@ -192,6 +192,45 @@ describe('a closed app leaves work RESUMABLE, not stranded (the M4 change)', () 
   })
 })
 
+// Owner, 2026-09-06: "if something was signed off then it should be done." A
+// canvas the user decided (approved/dismissed) must drop out of the resumable
+// list — otherwise every reviewed-but-never-formally-completed canvas keeps
+// nagging as resumable, which is what the dot was showing.
+describe('a signed-off subject is done, not resumable', () => {
+  it('an APPROVED canvas is not offered as resumable', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
+    // and the resume ACTION refuses it too, so the list and the action agree.
+    expect(link.resumeCanvasFromSession(ASKER, canvasId, OWNER, []).ok).toBe(false)
+  })
+
+  it('a DISMISSED canvas is not offered as resumable either', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'dismissed' }, 'user')
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
+  })
+
+  it('a REJECTED canvas STAYS resumable — a rejection asks for another round', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'rejected', note: 'redo it' }, 'user')
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
+  })
+
+  it('an UNVERDICTED (open) canvas stays resumable — it still awaits a decision', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
+  })
+})
+
 describe('what the row is given to tell candidates apart', () => {
   it('falls back to the conversation short id when nothing else names the work', () => {
     const first = renderAs(OWNER, PROJECT, CONV)

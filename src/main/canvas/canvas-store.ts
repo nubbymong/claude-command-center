@@ -2213,10 +2213,34 @@ function isLiveOrUnknown(sessionId: string, isSessionLive: (sid: string) => bool
  *
  * Fails safe: an oracle that throws counts as live, and live means untouchable.
  */
+/**
+ * Signed off is DONE, not resumable (owner, 2026-09-06: "if something was
+ * signed off then it should be done"). The newest version the user would act
+ * on — skipping drafts (the agent's own review), show-and-tell (owes no
+ * review) and 'withdrawn' stamps, the same anchor rule `artifactPhaseOf` and
+ * the Library use — carries a terminal decision:
+ *   - 'approved' / 'dismissed' → the user decided; the subject is finished and
+ *     must not keep nagging as resumable.
+ *   - 'rejected' → a rejection asks for another round, so the work is NOT done;
+ *     it stays resumable.
+ *   - no verdict (an OPEN version) → the user's to decide; stays resumable.
+ * A completed canvas is already excluded above; this covers the far more common
+ * "reviewed and approved but never formally Marked complete" case, which was
+ * surfacing every signed-off canvas as resumable.
+ */
+function isSignedOff(record: CanvasRecord): boolean {
+  const anchor = [...record.versions].reverse().find(
+    (v) => !v.draft && !v.show && v.verdict?.state !== 'withdrawn',
+  )
+  const state = anchor?.verdict?.state
+  return state === 'approved' || state === 'dismissed'
+}
+
 function isResumeCandidate(record: CanvasRecord, sessionId: string, query: CanvasLivenessQuery): boolean {
   if (record.sessionId === sessionId) return false
   if (record.versions.length === 0) return false // nothing to inherit
   if (record.completed) return false
+  if (isSignedOff(record)) return false // a signed-off subject is done, not resumable
   try {
     if (query.isSessionLive(record.sessionId)) return false
   } catch {
@@ -2458,6 +2482,11 @@ export function resumeCanvasForSession(
   if (record.sessionId === sessionId) return { ok: false, reason: 'changed' }
   if (record.sessionId !== expectedOwnerSessionId) return { ok: false, reason: 'changed' }
   if (record.completed) return { ok: false, reason: 'completed' }
+  // Signed off is done (owner, 2026-09-06): a decided subject is not resumable,
+  // so the action refuses it exactly as the list (isResumeCandidate) omits it —
+  // the two must agree. 'completed' is the honest reason: from the caller's
+  // view the subject is finished.
+  if (isSignedOff(record)) return { ok: false, reason: 'completed' }
   // Reported as 'gone', deliberately: a caller outside this canvas's workspace
   // learns that there is nothing here for it, and nothing else. A distinct
   // reason would answer "does a canvas with this id exist elsewhere on this
