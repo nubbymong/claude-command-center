@@ -9,7 +9,7 @@ import {
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
-import { fetchAllAccountsUsage, fetchAccountUsage } from '../usage/account-usage'
+import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
@@ -33,6 +33,21 @@ export function registerAccountProfilesHandlers(): void {
 
   // All-accounts usage overview: fetch each profile's usage directly (no session).
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL, () => fetchAllAccountsUsage())
+
+  // Streaming variant (plan P3): the renderer opens a private reply channel and
+  // passes its name; each account's usage is sent back on it AS IT RESOLVES, so
+  // the page fills per-account skeleton rows in load order. `channel` names only
+  // where to send on the CALLER's own webContents (event.sender) -- it can reach
+  // no other window -- but it is prefix-checked so a stray value cannot address an
+  // unrelated ipcRenderer listener in this same renderer. The invoke resolves when
+  // every account has been sent, so the caller knows the stream is complete.
+  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, async (event, p: { channel?: unknown }) => {
+    const channel = p?.channel
+    if (typeof channel !== 'string' || !channel.startsWith('accountUsage:result:') || channel.length > 128) return
+    await fetchAllAccountsUsageStreaming((usage) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, usage)
+    })
+  })
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>
     // `!!p.noRefresh`, not `=== true` (adversarial review): a hostile/garbled
     // noRefresh must fail toward NOT rotating the token (a stale number), never

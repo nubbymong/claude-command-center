@@ -561,17 +561,29 @@ export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: 
  *  at once (the old Promise.all) drew 429s on otherwise-valid tokens. Order
  *  matches listProfiles (primary first is the store's responsibility). */
 export async function fetchAllAccountsUsage(): Promise<AccountUsage[]> {
+  // The batch shape, for callers that want the whole set at once (SettingsPage).
+  // The streaming variant owns the ordering, pacing and the hydrate-before-stagger
+  // fix; this collects its results in order.
+  const out: AccountUsage[] = []
+  await fetchAllAccountsUsageStreaming((usage) => out.push(usage))
+  return out
+}
+
+/**
+ * Fetch every account's usage in the same order and pacing as fetchAllAccountsUsage,
+ * but deliver each result to `onResult` AS IT RESOLVES rather than collecting them
+ * into one array (plan P3): the usage page shows a skeleton per account up front and
+ * fills each row when its result lands -- open accounts resolve instantly (no call),
+ * closed ones as their staggered calls arrive. `onResult` is called once per account,
+ * in listProfiles order; a throw in it is the caller's problem, not this loop's.
+ */
+export async function fetchAllAccountsUsageStreaming(onResult: (usage: AccountUsage) => void): Promise<void> {
   // Hydrate BEFORE the stagger decision: accountUsageWillNetwork reads lastGoodUsage
   // (a prior fetch's cached credits force an open account onto the GET path, Q1b),
   // and fetchAccountUsage only hydrates on its first call -- so without this the
   // first page-open of the process would mis-pace a cached-credits account.
   hydrateSnapshots()
   const profiles = listProfiles()
-  const out: AccountUsage[] = []
-  // Stagger only between accounts that actually hit the network. A parked
-  // account short-circuits in fetchAccountUsage (no request), so it must not
-  // consume a stagger slot — otherwise N parked accounts add N*STAGGER_MS of
-  // dead wait before the active ones load.
   let networkedCount = 0
   for (const p of profiles) {
     // An OPEN account served from its delivered figure (plan P2) makes no request,
@@ -579,8 +591,7 @@ export async function fetchAllAccountsUsage(): Promise<AccountUsage[]> {
     // accounts would add N*STAGGER_MS of dead wait before a closed one loads.
     const willNetwork = accountUsageWillNetwork(p)
     if (willNetwork && networkedCount > 0) await sleep(STAGGER_MS)
-    out.push(await fetchAccountUsage(p.id))
+    onResult(await fetchAccountUsage(p.id))
     if (willNetwork) networkedCount++
   }
-  return out
 }

@@ -64,7 +64,7 @@ vi.mock('https', () => {
   return { default: { request }, request }
 })
 
-const { fetchAccountUsage, fetchAllAccountsUsage, recordLiveUsageForSession, _resetLiveUsageForTest, _resetSnapshotsForTest, LIVE_USAGE_MAX_AGE_MS } =
+const { fetchAccountUsage, fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, recordLiveUsageForSession, _resetLiveUsageForTest, _resetSnapshotsForTest, LIVE_USAGE_MAX_AGE_MS } =
   await import('../../src/main/usage/account-usage')
 
 const USAGE_HOST = 'api.anthropic.com'
@@ -261,5 +261,48 @@ describe('fetchAllAccountsUsage — open accounts make no call and take no stagg
     // ...and they are paced: exactly one stagger between the two networked accounts.
     expect(timeoutSpy.mock.calls.filter((c) => c[1] === 300)).toHaveLength(1)
     timeoutSpy.mockRestore()
+  })
+})
+
+describe('fetchAllAccountsUsageStreaming — per-account delivery in load order (plan P3)', () => {
+  it('calls onResult once per account, in listProfiles order, and the batch API collects the same set', async () => {
+    profiles = [
+      profile({ id: 'profile-open-1' }), profile({ id: 'profile-closed-2' }), profile({ id: 'profile-open-3' }),
+    ]
+    inUse.add('profile-open-1'); inUse.add('profile-open-3')
+    profileBySession.set('s1', 'profile-open-1'); profileBySession.set('s3', 'profile-open-3')
+    recordLiveUsageForSession('s1', [bucket({ percent: 10 })], false)
+    recordLiveUsageForSession('s3', [bucket({ percent: 30 })], false)
+
+    const streamed: string[] = []
+    await fetchAllAccountsUsageStreaming((u) => streamed.push(u.profileId))
+    expect(streamed).toEqual(['profile-open-1', 'profile-closed-2', 'profile-open-3'])
+
+    // The batch shape returns the same rows (it is the streaming fn collected).
+    const rows = await fetchAllAccountsUsage()
+    expect(rows.map((r) => r.profileId)).toEqual(['profile-open-1', 'profile-closed-2', 'profile-open-3'])
+  })
+
+  it('delivers an OPEN account before a slower CLOSED one that precedes it in a stagger', async () => {
+    // open-1 is served instantly; closed-2 waits a stagger only if it is not first.
+    profiles = [profile({ id: 'profile-open-1' }), profile({ id: 'profile-closed-2' })]
+    inUse.add('profile-open-1')
+    profileBySession.set('s1', 'profile-open-1')
+    recordLiveUsageForSession('s1', [bucket({ percent: 5 })], false)
+
+    const order: Array<{ id: string; hadCall: boolean }> = []
+    await fetchAllAccountsUsageStreaming((u) => order.push({ id: u.profileId, hadCall: u.buckets[0]?.percent !== 5 }))
+    // open-1 lands first, from its delivered figure (percent 5, no call); closed-2 after.
+    expect(order[0]).toEqual({ id: 'profile-open-1', hadCall: false })
+    expect(order[1].id).toBe('profile-closed-2')
+    expect(requestedHosts).toEqual([USAGE_HOST]) // only the closed account called
+  })
+
+  it('propagates a throw from onResult (the caller owns its handler)', async () => {
+    profiles = [profile({ id: 'profile-open-1' })]
+    inUse.add('profile-open-1')
+    profileBySession.set('s1', 'profile-open-1')
+    recordLiveUsageForSession('s1', [bucket()], false)
+    await expect(fetchAllAccountsUsageStreaming(() => { throw new Error('handler boom') })).rejects.toThrow('handler boom')
   })
 })

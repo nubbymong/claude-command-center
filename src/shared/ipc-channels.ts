@@ -394,6 +394,10 @@ export const IPC = {
 
   // All-accounts usage overview (fetch each profile's usage without a session)
   ACCOUNT_USAGE_FETCH_ALL: 'accountUsage:fetchAll',
+  // Streaming variant: emits each account's usage as it resolves (open accounts
+  // instantly, closed ones as their staggered calls land) so the page can fill
+  // per-account skeleton rows in load order instead of waiting for the whole set.
+  ACCOUNT_USAGE_FETCH_ALL_STREAM: 'accountUsage:fetchAllStream',
   ACCOUNT_USAGE_FETCH_ONE: 'accountUsage:fetchOne',
 
   // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)

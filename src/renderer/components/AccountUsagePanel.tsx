@@ -7,6 +7,7 @@ import { formatResetTime } from '../utils/terminalFormatting'
 import PageFrame from './PageFrame'
 import { describeAuthWindow, type AuthWindowTone, type ProfileAuthInfo } from '../../shared/account-auth'
 import type { AccountUsage, UsageBucket } from '../../shared/usage-types'
+import type { AccountProfile } from '../../shared/account-types'
 
 const TONE_TEXT: Record<AuthWindowTone, string> = {
   expired: 'text-red',
@@ -36,26 +37,34 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
 }) {
   const theme = useResolvedTheme()
   const reauth = useReauthAccount()
-  const [rows, setRows] = useState<AccountUsage[] | null>(null)
+  // The account list drives the SKELETON rows (a local read, so it resolves at
+  // once); usage streams in per account and fills each row as it lands. null =
+  // the list has not resolved yet (a placeholder skeleton or two show meanwhile).
+  const [profiles, setProfiles] = useState<AccountProfile[] | null>(null)
+  const [usageByProfile, setUsageByProfile] = useState<Record<string, AccountUsage>>({})
   const [authInfo, setAuthInfo] = useState<Record<string, ProfileAuthInfo>>({})
-  const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
-    setLoading(true)
+    // Clear usage so every row returns to a skeleton, then re-stream. The account
+    // list and the credential state are both local file reads, so they resolve at
+    // once and independently of the network usage fetch — one slow account must
+    // not hold back the others' rows or the forced-login countdown.
+    setUsageByProfile({})
     try {
-      // Credential state is local file reads, so it resolves immediately and
-      // independently of the network usage fetch — one slow account must not
-      // hold back the forced-login countdown for the others.
-      const [data, auth] = await Promise.all([
-        window.electronAPI.accountUsage.fetchAll(),
+      const [profs, auth] = await Promise.all([
+        window.electronAPI.accountProfiles.list(),
         window.electronAPI.accountProfiles.authInfo().catch(() => [] as ProfileAuthInfo[]),
       ])
-      setRows(data)
+      setProfiles(profs)
       setAuthInfo(Object.fromEntries(auth.map((a) => [a.profileId, a])))
+      // Stream each account's usage in as it resolves (plan P3): an OPEN account
+      // snaps in instantly from its live figure (no call), a CLOSED one fills in
+      // as its staggered call lands. No all-or-nothing "Loading…" gate.
+      await window.electronAPI.accountUsage.fetchAllStream((usage) => {
+        setUsageByProfile((prev) => ({ ...prev, [usage.profileId]: usage }))
+      })
     } catch {
-      setRows([])
-    } finally {
-      setLoading(false)
+      setProfiles((prev) => prev ?? [])
     }
   }, [])
 
@@ -64,7 +73,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   const refreshOne = useCallback(async (profileId: string) => {
     try {
       const one = await window.electronAPI.accountUsage.fetchOne(profileId)
-      if (one) setRows((prev) => (prev ? prev.map((r) => (r.profileId === profileId ? one : r)) : prev))
+      if (one) setUsageByProfile((prev) => ({ ...prev, [profileId]: one }))
     } catch { /* leave the stale row */ }
   }, [])
 
@@ -87,17 +96,18 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   return (
     <PageFrame title="Account usage" icon={peopleIcon} iconAccent="mauve" onClose={onClose} actions={refreshAction}>
       <div className="max-w-3xl mx-auto p-4 space-y-3">
-        {loading && !rows && <p className="text-[0.8125rem] text-overlay0">Loading usage for all accounts…</p>}
-        {rows && rows.length === 0 && <p className="text-[0.8125rem] text-overlay0">No accounts found.</p>}
-        {rows?.map((row) => (
-          <AccountCard
-            key={row.profileId}
-            row={row}
-            auth={authInfo[row.profileId]}
-            theme={theme}
-            onSignIn={() => onSignIn(row)}
-          />
-        ))}
+        {profiles === null
+          // The list is a local read; the placeholders below cover only the frame
+          // or two before it resolves, so the page never flashes empty.
+          ? [0, 1].map((i) => <UsageSkeletonCard key={`sk-${i}`} />)
+          : profiles.length === 0
+            ? <p className="text-[0.8125rem] text-overlay0">No accounts found.</p>
+            : profiles.map((p) => {
+                const usage = usageByProfile[p.id]
+                return usage
+                  ? <AccountCard key={p.id} row={usage} auth={authInfo[p.id]} theme={theme} onSignIn={() => onSignIn(usage)} />
+                  : <UsageSkeletonCard key={p.id} />
+              })}
         <p className="text-[0.6875rem] text-overlay0 leading-relaxed pt-1">
           Usage is read live from each account, no session required. Signing in refreshes only that account.
           The countdown is the point at which an interactive sign-in becomes unavoidable — the shorter-lived
@@ -105,6 +115,38 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
         </p>
       </div>
     </PageFrame>
+  )
+}
+
+// One loading row (plan P3): the card frame with its identity and bars replaced by
+// a calm sweep, shown until this account's usage streams in. Reuses the statusline
+// pending-track shimmer (styles.css) so there is no second animation to maintain,
+// and it stops under prefers-reduced-motion. role=status/aria-busy announces the
+// load without reading empty shimmer as content.
+function UsageSkeletonCard() {
+  const shimmer = 'statusline-pending-track bg-surface1 rounded'
+  return (
+    <div
+      className="rounded-xl border border-surface0/70 px-4 py-3.5 bg-surface0/20"
+      role="status"
+      aria-busy="true"
+      aria-label="Loading account usage"
+      data-testid="account-usage-skeleton"
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <span className={`${shimmer} w-2.5 h-2.5 rounded-[3px] shrink-0`} />
+        <span className={`${shimmer} h-3.5`} style={{ width: '11rem' }} />
+        <span className={`${shimmer} ml-auto h-3 rounded-full`} style={{ width: '3.5rem' }} />
+      </div>
+      <div className="flex flex-col gap-2.5">
+        {['5h', 'Weekly'].map((lbl) => (
+          <div key={lbl} className="flex items-center gap-2.5">
+            <span className="text-[0.8125rem] text-overlay0 shrink-0" style={{ minWidth: '3.625rem' }}>{lbl}</span>
+            <span className={`${shimmer} flex-1 h-2 rounded-full`} />
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

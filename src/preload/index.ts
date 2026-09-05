@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
+import { randomId } from '../shared/id'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
 import type { WebviewNavState } from '../shared/browser-url'
@@ -75,6 +76,7 @@ export interface ElectronAPI {
   }
   accountUsage: {
     fetchAll: () => Promise<import('../shared/usage-types').AccountUsage[]>
+    fetchAllStream: (onResult: (usage: import('../shared/usage-types').AccountUsage) => void) => Promise<void>
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => Promise<import('../shared/usage-types').AccountUsage | null>
   }
   window: {
@@ -806,6 +808,16 @@ const electronAPI: ElectronAPI = {
   },
   accountUsage: {
     fetchAll: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL),
+    // Streaming variant (plan P3): each account's usage arrives via `onResult` as
+    // it resolves. A private per-call channel is subscribed before the invoke and
+    // torn down when the stream completes, so overlapping calls never cross-talk.
+    fetchAllStream: (onResult: (usage: import('../shared/usage-types').AccountUsage) => void): Promise<void> => {
+      const channel = `accountUsage:result:${randomId()}`
+      const handler = (_e: unknown, usage: import('../shared/usage-types').AccountUsage) => onResult(usage)
+      ipcRenderer.on(channel, handler)
+      return ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, { channel })
+        .finally(() => ipcRenderer.removeListener(channel, handler))
+    },
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id, noRefresh: opts?.noRefresh }),
   },
   window: {
