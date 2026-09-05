@@ -21,7 +21,8 @@ import {
   installCanvasPermissionGuard,
 } from './canvas/ccc-ux-protocol'
 
-import { startStatuslineWatcher, setTranscriptPathSink, healGlobalStatusline } from './statusline-watcher'
+import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
+import { recordLiveUsageForSession } from './usage/account-usage'
 import { registerProvider, getProvider } from './providers'
 import { ClaudeProvider } from './providers/claude'
 import { CodexProvider } from './providers/codex'
@@ -1252,6 +1253,9 @@ if (!gotTheLock) {
     // binder sink first so the continuous, exact transcript path carried by each
     // status JSON feeds discovery (lazy getter — no-op when logging is disabled).
     setTranscriptPathSink(routeTranscriptPath)
+    // Plan P2: harvest each live session's delivered usage so the account-usage
+    // page can reuse an OPEN account's figure rather than making a redundant call.
+    setStatuslineUsageSink(recordLiveUsageForSession)
     startStatuslineWatcher(getWindow)
 
     // Start polling Anthropic service status

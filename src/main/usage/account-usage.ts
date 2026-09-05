@@ -16,7 +16,8 @@ import * as os from 'os'
 import * as path from 'path'
 import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
-import { isProfileInUseByLiveSession } from '../claude-account-identity'
+import type { AccountProfile } from '../../shared/account-types'
+import { isProfileInUseByLiveSession, getClaudeProfileId } from '../claude-account-identity'
 import { noteProfileRefreshInFlight } from '../profile-consumers'
 import { parseUsage } from './usage-buckets'
 import { loadSnapshots, saveSnapshots, type UsageSnapshot } from './usage-snapshots'
@@ -315,6 +316,109 @@ function hydrateSnapshots(): void {
   for (const [id, snap] of loadSnapshots()) lastGoodUsage.set(id, snap)
 }
 
+// -- Live per-account usage harvested from open sessions (plan P2) -----------
+//
+// An OPEN account -- one with a live session -- already has its usage on screen:
+// that session's statusline bridge fetched api.anthropic.com/api/oauth/usage
+// seconds ago and the watcher fanned the buckets out. Making the account-usage
+// page fetch the same thing AGAIN is a redundant call against an endpoint that
+// rate-limits by IP, and Phase 1 already forbids the only DANGEROUS call for an
+// in-use account -- the single-use token rotation. So an open account reuses the
+// delivered figure and makes NO network call; only CLOSED accounts call, one at
+// a time. `recordLiveUsageForSession` is wired to the statusline fan-out
+// (setStatuslineUsageSink, main/index).
+//
+// The delivered figure carries buckets but NOT the page's full CreditsInfo (the
+// statusline has only the dollar `rateLimitExtra` shape -- no currency). So when
+// the page would show a credits row the buckets-only figure cannot express (the
+// delivered payload had extra usage, or a prior real fetch cached credits for
+// this profile), the open account falls back to ONE GET with its live token --
+// never a rotation; the refresh guard forbids that while in use. This is the
+// agreed Q1b behaviour.
+
+/** How stale a delivered figure may be and still count as "live". A session
+ *  writes its statusline 1-3x/s, so a healthy open account is always well inside
+ *  this; the bound only stops a wedged or paused session's minutes-old figure
+ *  from being served as current -- past it, the open account takes the GET path. */
+export const LIVE_USAGE_MAX_AGE_MS = 90_000
+
+interface LiveUsageEntry {
+  buckets: UsageBucket[]
+  /** The delivered payload indicated paid credit (statusline sets rateLimitExtra
+   *  only when extra usage is enabled). The page would then show a credits row
+   *  the buckets-only figure cannot, so the open account fills it with one GET. */
+  hasCredits: boolean
+  fetchedAt: number
+}
+
+/** Latest session-delivered usage per profile: one entry per open account,
+ *  overwritten on each statusline tick and read only for an in-use account. */
+const liveUsageByProfile = new Map<string, LiveUsageEntry>()
+
+/** A delivered bucket, defensively -- the local bridge file is trusted, but a
+ *  malformed record must not paint wrong numbers on the account page. */
+function isLiveBucket(v: unknown): v is UsageBucket {
+  if (!v || typeof v !== 'object') return false
+  const b = v as Record<string, unknown>
+  return typeof b.key === 'string' && typeof b.label === 'string' && typeof b.group === 'string'
+    && typeof b.percent === 'number' && Number.isFinite(b.percent) && typeof b.resetsAt === 'string'
+}
+
+/**
+ * Record the usage a live session just delivered, keyed by the PROFILE it runs
+ * under. An empty or all-malformed set is ignored (nothing to serve), and an SSH
+ * or default-home session has no local profile id so it stores nothing -- both
+ * leave the account on the GET path, which is correct.
+ */
+export function recordLiveUsageForSession(sessionId: string, buckets: unknown, hasCredits: boolean, now: number = Date.now()): void {
+  const profileId = getClaudeProfileId(sessionId)
+  if (!profileId) return
+  if (!Array.isArray(buckets)) return
+  const clean = buckets.filter(isLiveBucket)
+  if (clean.length === 0) return
+  liveUsageByProfile.set(profileId, { buckets: clean, hasCredits: !!hasCredits, fetchedAt: now })
+}
+
+/** The delivered figure for a profile if one is recorded and still fresh. */
+function freshLiveUsage(profileId: string, now: number): LiveUsageEntry | undefined {
+  const e = liveUsageByProfile.get(profileId)
+  if (!e || now - e.fetchedAt > LIVE_USAGE_MAX_AGE_MS) return undefined
+  return e
+}
+
+/**
+ * The delivered figure to SERVE for an open account without any network call, or
+ * null when the account must take the GET path. Null when: no fresh figure yet
+ * (a session just spawned), the delivered payload had credits (Q1b -> GET), or a
+ * prior fetch cached credits the buckets-only figure cannot carry (Q1b -> GET).
+ * The ONE decision, shared by fetchAccountUsage and the fetchAll stagger so the
+ * two never disagree about which accounts hit the network.
+ */
+function servableLiveUsage(profileId: string, now: number = Date.now()): LiveUsageEntry | null {
+  const live = freshLiveUsage(profileId, now)
+  if (!live || live.hasCredits) return null
+  if (lastGoodUsage.get(profileId)?.credits) return null
+  return live
+}
+
+/** Whether fetchAllAccountsUsage should count a profile toward the network
+ *  stagger: active, and either primary/closed or an open account that cannot be
+ *  served from its delivered figure. Primary keeps the network path (its creds
+ *  are shared with the global CLI), exactly as the refresh guard excludes it. */
+function accountUsageWillNetwork(profile: AccountProfile): boolean {
+  if (!isAccountActive(profile)) return false
+  if (profile.isPrimary) return true
+  if (!isProfileInUseByLiveSession(profile.id)) return true
+  return servableLiveUsage(profile.id) === null
+}
+
+/** Test seam: the live cache is module state and outlives a test file otherwise. */
+export function _resetLiveUsageForTest(): void { liveUsageByProfile.clear() }
+
+/** Test seam: reset the hydrate latch + last-good map so a test can seed fresh
+ *  snapshots. Without it the once-per-process hydrate keeps the first test's view. */
+export function _resetSnapshotsForTest(): void { lastGoodUsage.clear(); snapshotsLoaded = false }
+
 /** Pure decision: given the account's signed-in state, whether its token was
  *  usable, the fetch result (if we made one), and any cached usage, produce the
  *  AccountUsage to show. Exported + pure so the whole state matrix is unit-tested. */
@@ -386,6 +490,19 @@ export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: 
   // before readProfileToken/refresh/fetch so none of that runs.
   if (!active) return { ...base, status: 'inactive' }
 
+  // OPEN account (plan P2): a live session is using this profile, so its usage
+  // was just delivered by that session's statusline -- reuse it and make no call.
+  // Primary is excluded (its creds are shared with the global CLI; it keeps the
+  // network path). `servableLiveUsage` returns null when there is nothing fresh
+  // to serve or the page would show a credits row the delivered figure cannot
+  // carry (Q1b), in which case we fall through to the GET below. The refresh
+  // guard there already forbids a rotation while in use, so any fall-through is a
+  // read with the live token, never a token rotation.
+  if (!isPrimary && isProfileInUseByLiveSession(profileId)) {
+    const live = servableLiveUsage(profileId)
+    if (live) return { ...base, status: 'ok', stale: false, buckets: live.buckets, fetchedAt: live.fetchedAt }
+  }
+
   const creds = await readProfileToken(profileId, isPrimary)
   let token = creds.token
   let expiresAt = creds.expiresAt
@@ -452,7 +569,10 @@ export async function fetchAllAccountsUsage(): Promise<AccountUsage[]> {
   // dead wait before the active ones load.
   let networkedCount = 0
   for (const p of profiles) {
-    const willNetwork = isAccountActive(p)
+    // An OPEN account served from its delivered figure (plan P2) makes no request,
+    // so -- like a parked account -- it must not consume a stagger slot, or N open
+    // accounts would add N*STAGGER_MS of dead wait before a closed one loads.
+    const willNetwork = accountUsageWillNetwork(p)
     if (willNetwork && networkedCount > 0) await sleep(STAGGER_MS)
     out.push(await fetchAccountUsage(p.id))
     if (willNetwork) networkedCount++

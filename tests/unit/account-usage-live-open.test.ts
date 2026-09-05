@@ -1,0 +1,218 @@
+// @vitest-environment node
+//
+// Plan P2 (rc.15): an OPEN account -- one a live session is using -- already has
+// its usage on screen (that session's statusline delivered it), so the account-
+// usage page reuses that figure and makes NO network call. Only CLOSED accounts
+// call, one at a time. The exception is the agreed Q1b case: when the page would
+// show a credits row the buckets-only statusline figure cannot carry, the open
+// account falls back to ONE GET with its live token -- never a rotation.
+//
+// The observable is the network: a served-from-delivered account issues no
+// request at all; a fallen-through open account issues a GET to api.anthropic.com
+// but NEVER a refresh POST to console.anthropic.com (Phase 1's guard).
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import type { AccountProfile } from '../../src/shared/account-types'
+import type { UsageBucket } from '../../src/shared/usage-types'
+
+let profiles: AccountProfile[] = []
+let tmpHome = ''
+/** sessionId -> profileId, as claude-account-identity would resolve it. */
+const profileBySession = new Map<string, string | undefined>()
+/** profileIds the guard reports in-use. */
+const inUse = new Set<string>()
+/** Seeded last-good snapshots (a prior real fetch), by profileId. */
+let seededSnapshots: Record<string, { buckets: UsageBucket[]; credits?: unknown; fetchedAt: number }> = {}
+
+vi.mock('../../src/main/account-profiles', () => ({
+  listProfiles: () => profiles,
+  getProfileConfigDir: () => tmpHome,
+  readProfileAccountEmail: () => null,
+  atomicWriteSecure: vi.fn(),
+  hardenCredentialFile: vi.fn(),
+}))
+vi.mock('../../src/main/claude-account-identity', () => ({
+  isProfileInUseByLiveSession: (id: string) => inUse.has(id),
+  getClaudeProfileId: (sessionId: string) => profileBySession.get(sessionId),
+}))
+vi.mock('../../src/main/usage/usage-snapshots', () => ({
+  loadSnapshots: () => new Map(Object.entries(seededSnapshots)),
+  saveSnapshots: () => true,
+}))
+vi.mock('../../src/main/debug-logger', () => ({ logWarn: vi.fn(), logInfo: vi.fn() }))
+
+const requestedHosts: string[] = []
+vi.mock('https', () => {
+  const request = (opts: any, cb: (res: any) => void) => {
+    requestedHosts.push(opts?.hostname ?? '')
+    // A GET to the usage endpoint returns a tiny valid payload; anything else 400s.
+    const isUsageGet = opts?.hostname === 'api.anthropic.com'
+    const res: any = {
+      statusCode: isUsageGet ? 200 : 400,
+      headers: {},
+      on: (ev: string, fn: (arg?: unknown) => void) => {
+        if (ev === 'data' && isUsageGet) fn(JSON.stringify({ limits: [{ group: 'session', percent: 3, resets_at: '' }] }))
+        if (ev === 'end') fn()
+        return res
+      },
+    }
+    cb(res)
+    return { on: () => ({}), write: () => {}, end: () => {}, destroy: () => {}, setTimeout: () => {} }
+  }
+  return { default: { request }, request }
+})
+
+const { fetchAccountUsage, fetchAllAccountsUsage, recordLiveUsageForSession, _resetLiveUsageForTest, _resetSnapshotsForTest, LIVE_USAGE_MAX_AGE_MS } =
+  await import('../../src/main/usage/account-usage')
+
+const USAGE_HOST = 'api.anthropic.com'
+const REFRESH_HOST = 'console.anthropic.com'
+
+const profile = (over: Partial<AccountProfile>): AccountProfile => ({
+  id: 'profile-x-1', name: 'Acct', accountEmail: 'x@example.com', createdAt: 0, ...over,
+})
+const bucket = (over: Partial<UsageBucket> = {}): UsageBucket =>
+  ({ key: 'session:', label: '5h', group: 'session', percent: 12, resetsAt: '', severity: 'normal', ...over })
+
+/** A fresh, non-lapsed credentials file so a fall-through GET has a usable token. */
+function writeFreshCreds(): void {
+  const dir = path.join(tmpHome, '.claude')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, '.credentials.json'), JSON.stringify({
+    claudeAiOauth: { accessToken: 'live-token', refreshToken: 'r', expiresAt: Date.now() + 3_600_000 },
+  }))
+}
+
+beforeEach(() => {
+  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-live-open-'))
+  profiles = [profile({ id: 'profile-x-1' })]
+  profileBySession.clear()
+  inUse.clear()
+  seededSnapshots = {}
+  requestedHosts.length = 0
+  _resetLiveUsageForTest()
+  _resetSnapshotsForTest() // so each test's seededSnapshots is hydrated fresh
+  writeFreshCreds()
+})
+afterEach(() => { try { fs.rmSync(tmpHome, { recursive: true, force: true }) } catch { /* ignore */ } })
+
+describe('fetchAccountUsage — an OPEN account reuses its delivered figure (no call)', () => {
+  it('serves the delivered buckets with status ok and NO network request', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket({ percent: 41 })], false)
+
+    const r = await fetchAccountUsage('profile-x-1')
+    expect(r.status).toBe('ok')
+    expect(r.stale).toBe(false)
+    expect(r.buckets.map((b) => b.percent)).toEqual([41])
+    expect(requestedHosts).toEqual([]) // reused the delivered figure, made no call
+  })
+
+  it('a CLOSED account still hits the usage endpoint', async () => {
+    // not in use, fresh token -> the normal GET path.
+    const r = await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(USAGE_HOST)
+    expect(r.status).toBe('ok')
+  })
+
+  it('falls through to a GET (never a refresh) when the delivered payload had credits (Q1b)', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket()], /* hasCredits */ true)
+
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(USAGE_HOST)   // one GET to fill the credits row
+    expect(requestedHosts).not.toContain(REFRESH_HOST) // never a rotation while in use
+  })
+
+  it('falls through to a GET when a prior fetch cached credits the delivered figure cannot carry (Q1b)', async () => {
+    seededSnapshots = { 'profile-x-1': { buckets: [bucket()], credits: { currency: 'USD', used: 1, limit: null, remaining: null, enabled: true }, fetchedAt: Date.now() - 1000 } }
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket()], false) // delivered has no credits...
+
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(USAGE_HOST) // ...but the cached credits force the GET
+  })
+
+  it('falls through to a GET when the delivered figure is STALE (older than the max age)', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket()], false, Date.now() - LIVE_USAGE_MAX_AGE_MS - 1)
+
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(USAGE_HOST)
+  })
+
+  it('falls through to a GET when the account is in use but NO figure was delivered yet', async () => {
+    inUse.add('profile-x-1') // session just spawned; nothing recorded
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(USAGE_HOST)
+  })
+
+  it('the PRIMARY account is NOT served from a delivered figure -- it keeps the network path', async () => {
+    profiles = [profile({ id: 'profile-x-1', isPrimary: true })]
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket()], false)
+
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(USAGE_HOST)
+  })
+})
+
+describe('recordLiveUsageForSession — what it stores', () => {
+  it('stores nothing for a session with no local profile (SSH / default home)', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-ssh', undefined) // getClaudeProfileId -> undefined
+    recordLiveUsageForSession('sess-ssh', [bucket()], false)
+
+    await fetchAccountUsage('profile-x-1') // in use, but nothing was stored for it
+    expect(requestedHosts).toContain(USAGE_HOST) // so it GETs
+  })
+
+  it('ignores an empty or all-malformed bucket set', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [], false)
+    recordLiveUsageForSession('sess-1', [{ nope: 1 }, 'bad', null], false)
+
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(USAGE_HOST) // nothing servable -> GET
+  })
+
+  it('drops malformed buckets but keeps the valid ones', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket({ percent: 7 }), { key: 1 }, bucket({ key: 'weekly:', label: 'Weekly', group: 'weekly', percent: 20 })], false)
+
+    const r = await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toEqual([])
+    expect(r.buckets.map((b) => b.percent)).toEqual([7, 20])
+  })
+})
+
+describe('fetchAllAccountsUsage — open accounts make no call and take no stagger slot', () => {
+  it('only the closed account hits the network; both open accounts are served from their figures', async () => {
+    profiles = [
+      profile({ id: 'profile-open-1', accountEmail: 'a@x.com' }),
+      profile({ id: 'profile-open-2', accountEmail: 'b@x.com' }),
+      profile({ id: 'profile-closed-3', accountEmail: 'c@x.com' }),
+    ]
+    inUse.add('profile-open-1'); inUse.add('profile-open-2')
+    profileBySession.set('s1', 'profile-open-1'); profileBySession.set('s2', 'profile-open-2')
+    recordLiveUsageForSession('s1', [bucket({ percent: 10 })], false)
+    recordLiveUsageForSession('s2', [bucket({ percent: 20 })], false)
+
+    const rows = await fetchAllAccountsUsage()
+    expect(rows.map((r) => r.profileId)).toEqual(['profile-open-1', 'profile-open-2', 'profile-closed-3'])
+    // Exactly one network call: the closed account's GET. The two open accounts
+    // were served from their delivered figures and made no request.
+    expect(requestedHosts).toEqual([USAGE_HOST])
+    expect(rows[0].buckets[0].percent).toBe(10)
+    expect(rows[1].buckets[0].percent).toBe(20)
+  })
+})
