@@ -46,6 +46,7 @@ registerProvider(new ClaudeProvider())
 const sendMock = vi.fn()
 const win = { webContents: { send: sendMock }, isDestroyed: () => false } as never
 const ssh = { username: 'user', host: 'invalid.example', port: 22, remotePath: '~' }
+const spawnPtyId = (id: string, opts: unknown) => spawnPty(win, id, opts as never)
 const feed = (text: string) => onDataListeners.forEach((cb) => cb(text))
 const wrote = (needle: string) => writeMock.mock.calls.some(([s]) => String(s).includes(needle))
 const writes = () => writeMock.mock.calls.map(([s]) => String(s))
@@ -193,11 +194,14 @@ describe('round 2: the host prompt itself coming back is a failed entry', () => 
     expect(states(id)).not.toContain('awaiting-claude')
   })
 
-  it('a TERMINATED host prompt line (followed by a newline) needs no wait: text no regex lists, then the prompt, then more', () => {
+  it('a host prompt back with text no regex lists (terminated line, more after) fails once idle confirms it', () => {
     const id = 'entry-mid-chunk'
     enterContainer(id)
     feed(`Some refusal in words we do not list\r\n${HOST_PROMPT}\r\n`)
+    expect(getSshFlow(id)?.getState().state).toBe('running-postcommand') // the host prompt is the trailing line; idle decides
+    settle()
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+    expect(states(id)).not.toContain('awaiting-claude')
   })
 
   it('REGRESSION (quality review): a repaint chunk that ends right after the prompt, then the echo, then the inner prompt, is a HEALTHY entry', () => {
@@ -256,6 +260,96 @@ describe('round 2: the host prompt itself coming back is a failed entry', () => 
     expect(getSshFlow(id)?.getState().state).toBe('running-postcommand')
     feed(INNER_PROMPT)
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
+  })
+})
+
+// Review 2c (spec + quality): the host-back signal must survive a `\r`/BEL
+// repaint, the user typing at the returned prompt, and a login prompt split
+// across chunks, and must not be a per-chunk flag a single byte can erase.
+describe('review 2c: the host-back signal is robust', () => {
+  it('REGRESSION: a BEL after the returned host prompt does not promote it to inner', () => {
+    const id = 'entry-bel'
+    enterContainer(id)
+    feed(`^C\r\n${HOST_PROMPT}`)
+    feed('\x07') // a bell: not stripped, not whitespace -- must not blank the trailing line
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+    expect(states(id)).not.toContain('awaiting-claude')
+  })
+
+  it('REGRESSION: a host that rings the BELL at its prompt is still captured (control bytes stripped), so the failure is caught', () => {
+    const id = 'entry-bell-prompt'
+    ids.push(id)
+    spawnPtyId(id, { ssh: { ...ssh, runtime: { type: 'container', engine: 'docker', container: 'ccc-test' } } })
+    feed(`user@host:~$ \x07`) // the login prompt arrives with a trailing bell
+    vi.advanceTimersByTime(1600) // the bell defeats the connect-time prompt match; the idle fallback carries it
+    expect(getSshFlow(id)?.getState().state).toBe('awaiting-postcommand')
+    getSshFlow(id)!.runPostCommand()
+    vi.advanceTimersByTime(201)
+    feed(`^C\r\n${HOST_PROMPT}`) // a clean host prompt back
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+    expect(states(id)).not.toContain('awaiting-claude')
+  })
+
+  it('REGRESSION: a bare CR repaint after the returned host prompt does not promote it', () => {
+    const id = 'entry-cr-after'
+    enterContainer(id)
+    feed(`^C\r\n${HOST_PROMPT}`)
+    feed('\r') // cursor to col 0, nothing overwrites -- the prompt is still on screen
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+  })
+
+  it('REGRESSION: the user typing at the returned host prompt does not promote it to inner', () => {
+    const id = 'entry-user-types'
+    enterContainer(id)
+    feed(`^C\r\n${HOST_PROMPT}`)
+    feed('ls') // they are back on the host and start typing
+    vi.advanceTimersByTime(600)
+    feed(` -la\r\nfile.txt\r\n` + HOST_PROMPT) // runs it; a fresh host prompt returns
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+    expect(states(id)).not.toContain('awaiting-claude')
+  })
+
+  it('REGRESSION: the user typing `cd ~` (ends in a prompt char) at the returned prompt is not the inner shell', () => {
+    const id = 'entry-user-cd'
+    enterContainer(id)
+    feed(`^C\r\n${HOST_PROMPT}`)
+    feed('cd ~') // trailing now `user@host:~$ cd ~`, ends in ~ but starts with the host prompt
+    expect(getSshFlow(id)?.getState().state).toBe('running-postcommand') // NOT promoted by the prompt path
+    settle()
+    expect(getSshFlow(id)?.getState().state).toBe('failed')
+  })
+
+  it('REGRESSION: a login prompt split across PTY chunks is still captured (line-buffered), so the failure is still caught', () => {
+    const id = 'entry-split-login'
+    ids.push(id)
+    spawnPtyId(id, { ssh: { ...ssh, runtime: { type: 'container', engine: 'docker', container: 'ccc-test' } } })
+    feed('user@ho') // the login prompt arrives in two chunks
+    feed('st:~$ ')
+    expect(getSshFlow(id)?.getState().state).toBe('awaiting-postcommand')
+    getSshFlow(id)!.runPostCommand()
+    vi.advanceTimersByTime(201)
+    feed(`Some refusal in words we do not list\r\n${HOST_PROMPT}`)
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+  })
+
+  it('REGRESSION: a wrong saved sudo password, then its newline echo, still holds (not promoted) and then fails on the error', () => {
+    const id = 'entry-sudo-wrong'
+    enterContainer(id, 'ccc-test', { sudo: true, sudoPassword: 'synthetic-wrong' })
+    feed('[sudo] password for user: ')
+    vi.advanceTimersByTime(101)
+    expect(writes()).toEqual(['synthetic-wrong\r'])
+    feed('\r\n') // the Enter echo: must NOT blank the sticky prompt and promote
+    vi.advanceTimersByTime(1600)
+    expect(getSshFlow(id)?.getState().state).toBe('running-postcommand')
+    expect(states(id)).not.toContain('awaiting-claude')
+    feed('Sorry, try again.\r\n[sudo] password for user: ')
+    feed(`\r\nsudo: 3 incorrect password attempts\r\n${HOST_PROMPT}`)
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
   })
 })
 
@@ -430,12 +524,13 @@ bash
     expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
   })
 
-  it('the sudo-prompt hold is BOUNDED: a stale prompt line can delay but never wedge the flow', () => {
+  it('the sudo-prompt hold is BOUNDED, and FAILS (never promotes the host) at the cap: a prompt still waiting after ~61s', () => {
     const id = 'entry-sudo-wait-bound'
     enterContainer(id, 'ccc-test', { sudo: true })
     feed('[sudo] password for user: ')
     vi.advanceTimersByTime(90000) // well past MAX_ENTRY_PROMPT_HOLD_FIRES x 1.5s
-    expect(getSshFlow(id)?.getState().state).toBe('awaiting-claude')
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
+    expect(states(id)).not.toContain('awaiting-claude')
   })
 })
 
@@ -586,6 +681,16 @@ describe('the failure shapes', () => {
       'my-service is not running, starting it', 'checking docker: not found in cache, pulling',
     ]) expect(CONTAINER_ENTRY_ERROR_RE.test(line), line).toBe(false)
   })
+  it('CONTAINER_ENTRY_ERROR_RE uses a BOUNDED quantifier (no unbounded .+ on remote-controlled text)', () => {
+    // The `Sorry, user ... is not allowed` alternative must not scan an
+    // unbounded run of remote bytes; a bounded char-class keeps the match
+    // linear and short. Structural, because the input is attacker-shaped.
+    expect(CONTAINER_ENTRY_ERROR_RE.source).not.toContain('.+')
+    expect(CONTAINER_ENTRY_ERROR_RE.source).toContain('[^\\r\\n]{0,200} is not allowed')
+    // And it still matches a real refusal.
+    expect(CONTAINER_ENTRY_ERROR_RE.test('Sorry, user dev is not allowed to execute \'/usr/bin/docker\' as root')).toBe(true)
+  })
+
   it('CONTAINER_ENGINE_NOT_FOUND_RE: the shells\' own not-found lines for the engine binary, as whole lines', () => {
     for (const line of [
       'bash: docker: command not found', '-bash: podman: command not found', 'sh: 1: docker: not found',

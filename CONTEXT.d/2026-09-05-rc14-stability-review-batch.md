@@ -130,7 +130,7 @@ typed for it. Three more mutations, each caught.
 
 **Quality review of round 2 (Tier B)** found one MAJOR and four minors, fixed in the
 next commit: the identity check read the UNTERMINATED trailing line, so a repaint chunk
-that ended right after the prompt (readline writes `` + prompt, and the echoed command
+that ended right after the prompt (readline writes a carriage return + prompt, and the echoed command
 can arrive in the next chunk) failed a healthy entry -- a trailing host prompt is now
 PENDING (`entryHostPromptPending`): the prompt path refuses it as an inner shell and the
 idle fallback fails it only if nothing followed in 1.5s, while a TERMINATED host prompt
@@ -138,9 +138,9 @@ line still fails at once; nothing armed the idle timer when the post-command was
 so a flow the idle path had carried to awaiting-postcommand could sit in
 running-postcommand forever against a remote that never echoes -- `writePostCommand`
 arms it; echo was matched by substring, so a terse genuine line (`bash`) read as echo --
-it is now a PREFIX of the command (a partial echo is always a prefix), with `` repaints
+it is now a PREFIX of the command (a partial echo is always a prefix), with carriage-return repaints
 within a line collapsed to the visible text (`visibleLines`); the definitive regex's doc
-comment was stale (rewritten) and its `sudo:` shape now anchors on `` too; one test was
+comment was stale (rewritten) and its `sudo:` shape now anchors on a carriage return too; one test was
 confounded by a regex shape and now uses text no regex lists. Also from the nits: two hold
 counters instead of one shared, the prompt hold reads the buffer's live trailing line
 rather than the sticky (a starship inner prompt no longer keeps a sudo prompt "on screen"

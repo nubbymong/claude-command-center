@@ -644,7 +644,7 @@ type SshLineBufferKind = 'setup' | 'stage' | 'arch' | 'runtime'
  * it. The `sudo:` not-found shape is anchored at a line start; `\r` counts as
  * one because ConPTY repaints a line with a bare carriage return.
  */
-export const CONTAINER_ENTRY_ERROR_RE = /Error response from daemon|No such container|Cannot connect to (?:the )?(?:Docker|Podman)|permission denied while trying to connect to the (?:Docker|Podman) daemon|(?:^|[\r\n])sudo: (?:docker|podman): command not found|Error: no container with name|can only create exec sessions on running containers|OCI runtime exec failed|unable to start container process|sudo: \d+ incorrect password attempts|sudo: a password is required|sudo: no password was provided|is not in the sudoers file|Sorry, user .+ is not allowed to execute/i
+export const CONTAINER_ENTRY_ERROR_RE = /Error response from daemon|No such container|Cannot connect to (?:the )?(?:Docker|Podman)|permission denied while trying to connect to the (?:Docker|Podman) daemon|(?:^|[\r\n])sudo: (?:docker|podman): command not found|Error: no container with name|can only create exec sessions on running containers|OCI runtime exec failed|unable to start container process|sudo: \d+ incorrect password attempts|sudo: a password is required|sudo: no password was provided|is not in the sudoers file|Sorry, user [^\r\n]{0,200} is not allowed to execute/i
 /**
  * The SHELL's "no such command" for the engine binary. Definitive when the HOST
  * shell printed it (no engine installed: the entry failed), but the same line
@@ -655,7 +655,7 @@ export const CONTAINER_ENTRY_ERROR_RE = /Error response from daemon|No such cont
  * all by the time the pane goes idle is also a failure (a zsh host whose `%`
  * prompt never matches SHELL_PROMPT_RE reaches the idle path only).
  */
-export const CONTAINER_ENGINE_NOT_FOUND_RE = /(?:^|\n)[^\n]{0,40}(?:docker|podman): (?:command )?not found\s*(?:\r|$)|(?:^|\n)[^\n]{0,40}command not found: (?:docker|podman)\s*(?:\r|$)/im
+export const CONTAINER_ENGINE_NOT_FOUND_RE = /(?:^|[\r\n])[^\r\n]{0,40}(?:docker|podman): (?:command )?not found\s*(?:\r|$)|(?:^|[\r\n])[^\r\n]{0,40}command not found: (?:docker|podman)\s*(?:\r|$)/im
 const sshLineBuffers = new Map<string, string>()
 const sshLineBufferKey = (sessionId: string, kind: SshLineBufferKind): string => `${sessionId}:${kind}`
 
@@ -1670,15 +1670,6 @@ export function spawnPty(
     // still-starting container, not an inner shell with an unrecognised
     // prompt, and the idle fallback holds instead of promoting.
     let entryOutputSeen = false
-    // The host prompt is the UNTERMINATED trailing line of the post-command's
-    // output right now. Two things look exactly like that: the host shell back
-    // after a failed entry, and readline about to repaint the echoed command
-    // after the prompt (`\r` + prompt, then the command in the next chunk). The
-    // idle fallback tells them apart -- 1.5s of silence means nothing followed,
-    // so the host is back -- and the prompt-path transition refuses it as an
-    // inner shell meanwhile. A prompt line that was TERMINATED (followed by a
-    // newline) needs no wait and fails the entry at once.
-    let entryHostPromptPending = false
     // The trailing visible line of the post-command's output, for the idle
     // fallback's password-prompt hold: read from the buffer rather than the
     // sticky lastPromptLineSeen, which ignores `❯` lines and would keep a
@@ -1962,45 +1953,38 @@ export function spawnPty(
           && !runtimeEntryFailed
         ) {
           if (isContainerSession) {
-            // rc.14 review F1 round 2 (aicc_planning#45). The prompt path never
-            // fired, so no line since the post-command matched SHELL_PROMPT_RE.
-            // Three readings of that, in order:
-            // (1) the host shell said the engine binary does not exist and its
-            //     own (unmatched -- a zsh `%`) prompt came back: a failed entry.
-            //     Only where the identity check could not have caught it
-            //     (hostPromptLine ''): with a known host prompt, its NOT coming
-            //     back means we are not on the host, so the line came from an
-            //     rc file inside the container and the inner shell simply has
-            //     a prompt the regex does not know -- promote, as always;
-            // (2) nothing beyond the command's echo has come back: the engine
-            //     is hung or the container is still starting. Hold, bounded;
-            //     a container that never prints anything is not one claude
-            //     can be launched in, so the cap FAILS the entry (Run again /
-            //     Skip on the overlay) rather than promoting the host;
-            // (3) the trailing line on screen is a password prompt (sudo waiting
-            //     for the user with no saved secret, or a refused saved one):
-            //     the pane is idle because a human is typing. Hold, bounded;
-            //     at the cap advance as before, so a prompt-shaped line that is
-            //     not really waiting can delay but never wedge.
-            // Before all three: (0) the host prompt is the unterminated trailing
-            // line and nothing followed it in 1.5s -- the host is back (the
-            // repaint reading needed the echo to arrive; it did not).
-            // Anything else -- an inner shell whose prompt the regex does not
-            // know -- promotes exactly as it always has.
-            if (entryHostPromptPending) {
+            // rc.14 review F1 (aicc_planning#45), round 2+. The prompt path did
+            // not promote, so what is on screen is not a recognised NON-host
+            // prompt. Decide, in order:
+            // (0) the host's own prompt is on screen and nothing followed it in
+            //     1.5s -- the container was not entered (Ctrl-C at the sudo
+            //     prompt, a refusal no regex lists, the socket denied us).
+            //     isHostBackLine reads the sticky trailing line, so a `\r`/BEL
+            //     repaint or the user typing at the returned prompt cannot hide
+            //     it, and the echo (host prompt + a prefix of the command) does
+            //     not count -- that is the slow-start case, held below.
+            if (isHostBackLine(entryTrailingLine)) {
               runtimeEntryFailed = true
               clearSshLineBuffer(sessionId, 'runtime')
-              logInfo(`[ssh] ${sessionId}: container entry failed (the host prompt came back and nothing followed it) -- staying on the host shell, not marking inner`)
+              logInfo(`[ssh] ${sessionId}: container entry failed (the host prompt is back and nothing followed it) -- staying on the host shell, not marking inner`)
               setFlowState('failed', 'container entry failed')
               return
             }
-            if (entrySuspect && hostPromptLine === '') {
+            // (1) the shell said the engine binary is missing and there is no
+            //     host prompt to confirm against (a zsh `%` host we could not
+            //     capture) -- take the idle as the failure the suspicion feared.
+            if (entrySuspect) {
               runtimeEntryFailed = true
               clearSshLineBuffer(sessionId, 'runtime')
               logInfo(`[ssh] ${sessionId}: idle after postCommand with an engine-not-found line and no inner prompt -- container entry failed`)
               setFlowState('failed', 'container entry failed')
               return
             }
+            // (2) nothing beyond the command's echo has come back: the engine is
+            //     hung or the container is still starting. Hold, bounded; a
+            //     container that never prints anything is not one claude can be
+            //     launched in, so the cap FAILS the entry (Run again / Skip on
+            //     the overlay) rather than promoting the host.
             if (!entryOutputSeen) {
               if (entrySilentHoldFires < MAX_ENTRY_SILENT_HOLD_FIRES) {
                 entrySilentHoldFires++
@@ -2014,12 +1998,26 @@ export function spawnPty(
               setFlowState('failed', 'container entry failed')
               return
             }
-            if ((PASSWORD_PROMPT_RE.test(entryTrailingLine) || SUDO_PROMPT_RE.test(entryTrailingLine)) && entryPromptHoldFires < MAX_ENTRY_PROMPT_HOLD_FIRES) {
-              entryPromptHoldFires++
-              if (entryPromptHoldFires === 1) logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms after postCommand but a password prompt is waiting -- holding (bounded)`)
-              armIdleFallback()
+            // (3) the trailing line is a password/sudo prompt: a human is typing
+            //     (no saved secret, or a refused one). Hold while it is really on
+            //     screen -- the LIVE trailing line, so an inner shell that
+            //     replaced it never holds; the cap FAILS (a prompt still showing
+            //     after ~61s is unanswered, i.e. still the host), never promotes.
+            if (PASSWORD_PROMPT_RE.test(entryTrailingLine) || SUDO_PROMPT_RE.test(entryTrailingLine)) {
+              if (entryPromptHoldFires < MAX_ENTRY_PROMPT_HOLD_FIRES) {
+                entryPromptHoldFires++
+                if (entryPromptHoldFires === 1) logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms after postCommand but a password prompt is waiting -- holding (bounded)`)
+                armIdleFallback()
+                return
+              }
+              runtimeEntryFailed = true
+              clearSshLineBuffer(sessionId, 'runtime')
+              logError(`[ssh] ${sessionId}: a password prompt was still waiting ${(MAX_ENTRY_PROMPT_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms after postCommand -- container entry failed`)
+              setFlowState('failed', 'container entry failed')
               return
             }
+            // else: an inner shell with a prompt we do not specifically know --
+            // promote, exactly as before this review.
           }
           postCommandShellReady = true
           inInnerShell = true
@@ -2223,14 +2221,15 @@ export function spawnPty(
     const MAX_AUTH_HOLD_FIRES = 8
     // rc.14 review F1 round 2: consecutive idle fires spent holding in
     // running-postcommand (container sessions only; see the idle branch), one
-    // counter per hold since their caps have opposite outcomes. Both reset by
-    // every data chunk, like authHoldFires. Silence cap: (10+1) x 1.5s = ~16.5s
-    // with NOTHING back from the entry -> failed. Prompt cap: (40+1) x 1.5s =
-    // ~61s before the fallback advances anyway -- far longer than the connect-
-    // time auth hold's 13.5s because that one guards a STALE sticky line and
-    // must release quickly, whereas this hold reads the live trailing line of
-    // the buffer (a prompt the inner shell has since replaced never holds), so
-    // it can afford a human's time to type a sudo password.
+    // counter per hold since they track different waits. Both reset by every
+    // data chunk, like authHoldFires. Silence cap: (10+1) x 1.5s = ~16.5s with
+    // NOTHING back from the entry -> failed. Prompt cap: (40+1) x 1.5s = ~61s
+    // with a password prompt still on screen -> failed (a human who has not
+    // answered sudo in a minute is still on the host, so Run again is safer than
+    // promoting). Longer than the connect-time auth hold's 13.5s because that
+    // one guards a STALE sticky line that must release quickly, whereas this
+    // reads the LIVE trailing line -- a prompt the inner shell has replaced
+    // never holds -- so it can afford a human's time to type.
     let entrySilentHoldFires = 0
     let entryPromptHoldFires = 0
     const MAX_ENTRY_SILENT_HOLD_FIRES = 10
@@ -2283,24 +2282,52 @@ export function spawnPty(
     }
 
     /** The lines of an ANSI-stripped output buffer as the terminal shows them:
-     *  split on newlines, and within a line only the text after the last bare
-     *  `\r` -- a carriage return without a newline is a repaint of that line
-     *  (`user@host:~$ \ruser@host:~$ docker exec ...` shows the second copy).
-     *  Each trimmed. The last element is the unterminated trailing line. */
+     *  split on newlines; within a line a bare `\r` returns the cursor to
+     *  column 0, so the LAST non-empty carriage-return segment is what remains
+     *  visible (a trailing `\r` with nothing after it leaves the prior text on
+     *  screen -- taking `.pop()` blindly would read it as empty). C0 control
+     *  bytes a BEL or the like leaves behind are dropped (trim() does not remove
+     *  them), then each line is trimmed. */
     const visibleLines = (stripped: string): string[] =>
-      stripped.split(/\r?\n/).map((l) => (l.split('\r').pop() ?? '').trim())
+      stripped.split(/\r?\n/).map((line) => {
+        const segs = line.split('\r').filter((s) => s !== '')
+        return (segs.length ? segs[segs.length - 1] : '')
+          // eslint-disable-next-line no-control-regex
+          .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+          .trim()
+      })
 
-    /** Is this visible line nothing but the post-command's own echo -- the
-     *  command, or a PREFIX of it still arriving (bytes come in order, so a
-     *  partial echo is always a prefix) -- alone, or with the host prompt
-     *  repainted in front of it? Anything else is the entry answering. Prefix,
-     *  not substring: a short genuine line such as `bash` must count as output. */
+    /** The last non-empty visible line -- the terminal's trailing line, robust
+     *  to a chunk that ends in a newline or strips to nothing. */
+    const lastVisible = (lines: string[]): string => {
+      for (let i = lines.length - 1; i >= 0; i--) if (lines[i] !== '') return lines[i]
+      return ''
+    }
+
+    /** Is `line` nothing but the post-command's own echo -- the command, or a
+     *  PREFIX of it still arriving (bytes come in order, so a partial echo is
+     *  always a prefix) -- alone, or with the host prompt repainted in front of
+     *  it? Anything else is the entry answering. Prefix, not substring: a short
+     *  genuine line such as `bash` must count as output (rc.14 review F1). */
     const isPostCommandEcho = (line: string): boolean => {
       if (!postCommand || line === '') return false
       const rest = hostPromptLine !== '' && line.startsWith(hostPromptLine)
         ? line.slice(hostPromptLine.length).trim()
         : line
       return rest !== '' && postCommand.startsWith(rest)
+    }
+
+    /** Is `line` the HOST's prompt back on screen -- i.e. the container was not
+     *  entered? The host prompt alone, or with host/user activity after it (a
+     *  typed command, a Ctrl-C's `^C`), but NOT our command's echo (the host
+     *  prompt followed by a prefix of the post-command), which is transient
+     *  while the container starts. `hostPromptLine === ''` (an unrecognised host
+     *  PS1) disables this; the suspect/silence signals carry those hosts. */
+    const isHostBackLine = (line: string): boolean => {
+      if (hostPromptLine === '' || !line.startsWith(hostPromptLine)) return false
+      const rest = line.slice(hostPromptLine.length).trim()
+      if (rest === '') return true
+      return !(postCommand && postCommand.startsWith(rest))
     }
 
     const writePostCommand = () => {
@@ -2311,6 +2338,9 @@ export function spawnPty(
       setTimeout(() => {
         if (destroyed) return
         postCommandWritten = true
+        // Drop the host output accumulated while capturing the host prompt
+        // below; the entry watch must see only the post-command's own output.
+        clearSshLineBuffer(sessionId, 'runtime')
         ptyProcess.write(postCommand + '\r')
         // The idle fallback is only re-armed by data. A flow that reached
         // awaiting-postcommand on the idle path has no timer pending, so a
@@ -2954,7 +2984,6 @@ export function spawnPty(
           postCommandShellReady = false
           entrySuspect = false
           entryOutputSeen = false
-          entryHostPromptPending = false
           entryTrailingLine = ''
           entrySilentHoldFires = 0
           entryPromptHoldFires = 0
@@ -3375,7 +3404,13 @@ export function spawnPty(
       // the two strip different escape families, and a prompt one of them
       // reduces to '' would otherwise never be compared equal by the other.
       if (isContainerSession && (!postCommandWritten || runtimeEntryFailed)) {
-        const tail = visibleLines(stripAnsiForSentinel(data)).pop() ?? ''
+        // From the ACCUMULATED host output (line-buffered), not one chunk -- a
+        // real SSH link splits the login prompt across chunks (#242 I1), and a
+        // fragment captured here would never compare equal to the prompt coming
+        // back. The 'runtime' buffer is unused until the post-command is written
+        // (which clears it), so it is free to hold host output until then. The
+        // < 200 guard mirrors lastPromptLineForClaude: a prompt is a short line.
+        const tail = lastVisible(visibleLines(stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))))
         if (tail !== '' && tail.length < 200 && SHELL_PROMPT_RE.test(tail)) hostPromptLine = tail
       }
 
@@ -3383,50 +3418,50 @@ export function spawnPty(
       // to the HOST shell, whose next prompt used to be read as the inner shell
       // (the transition further down, and the idle fallback), so Launch Claude
       // wrote the container setup and the claude command to the host. Watch the
-      // post-command's own output and fail the flow instead; both inner-shell
-      // transitions are also gated on the flag, and launchClaude() re-emits the
-      // failure rather than walking the host ladder. Skip stays available as the
-      // explicit way onto the raw host shell; Run again re-enters (runPostCommand).
-      // Round 2: three signals, on the line-buffered ANSI-stripped output, read
-      // as the terminal shows it (visibleLines: `\r` repaints collapsed) --
-      //  - an engine / sudo failure shape (CONTAINER_ENTRY_ERROR_RE): definitive;
-      //  - the host's own prompt line back on screen (hostPromptLine): the one
-      //    that catches what no regex lists -- Ctrl-C at the sudo prompt, a
-      //    refusal in a language or engine version we do not know. Definitive
-      //    when the line was terminated; as the unterminated trailing line it is
-      //    PENDING, because readline repaints `\r` + prompt and then the echoed
-      //    command, and a chunk can end between the two -- the idle fallback
-      //    fails it if nothing follows, and the prompt-path transition below
-      //    refuses it as an inner shell meanwhile;
-      //  - the shell's engine-not-found line (CONTAINER_ENGINE_NOT_FOUND_RE):
-      //    suspect only, decided by the prompt that follows (rc files inside a
-      //    healthy container can print it).
-      // Only from the moment the command has actually been WRITTEN
-      // (postCommandWritten), so a host prompt repaint still in flight during
-      // writePostCommand's 200ms defer is not mistaken for the prompt returning.
+      // post-command's own output instead. Two things are DECIDED here, on the
+      // line-buffered, ANSI-stripped output read as the terminal shows it
+      // (visibleLines): an engine/sudo failure SHAPE (CONTAINER_ENTRY_ERROR_RE)
+      // fails at once; the shell's engine-not-found line raises a SUSPICION the
+      // idle fallback resolves. The host prompt coming BACK is NOT judged here
+      // -- it is recorded as the sticky trailing line and decided by the idle
+      // fallback (isHostBackLine), because readline repaints `\r` + prompt and
+      // then the echoed command, and a chunk can end between the two. Both
+      // inner-shell transitions refuse a host-back trailing line, launchClaude()
+      // re-emits the failure rather than walking the host ladder, Skip is the
+      // explicit way onto the raw host shell, and Run again re-enters. Only from
+      // the moment the command has actually been WRITTEN (postCommandWritten;
+      // the 'runtime' buffer was cleared then), so a host prompt repaint in
+      // flight during writePostCommand's 200ms defer is never read as output.
       if (isContainerSession && postCommandWritten && !postCommandShellReady && !runtimeEntryFailed) {
         const recent = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
         const lines = visibleLines(recent)
-        const trailing = lines[lines.length - 1] ?? ''
-        const hostPromptCompleted = hostPromptLine !== '' && lines.slice(0, -1).includes(hostPromptLine)
-        if (CONTAINER_ENTRY_ERROR_RE.test(recent) || hostPromptCompleted) {
+        const trailing = lastVisible(lines)
+        if (CONTAINER_ENTRY_ERROR_RE.test(recent)) {
           runtimeEntryFailed = true
           clearSshLineBuffer(sessionId, 'runtime')
-          logInfo(`[ssh] ${sessionId}: container entry failed (${hostPromptCompleted ? 'the host prompt came back' : 'engine error after the post-command'}) -- staying on the host shell, not marking inner`)
+          logInfo(`[ssh] ${sessionId}: container entry failed (engine error after the post-command) -- staying on the host shell, not marking inner`)
           setFlowState('failed', 'container entry failed')
           return
         }
-        entryHostPromptPending = hostPromptLine !== '' && trailing === hostPromptLine
-        entryTrailingLine = trailing
-        if (!entrySuspect && CONTAINER_ENGINE_NOT_FOUND_RE.test(recent)) {
+        // The trailing line for the idle fallback's host-back and password-
+        // prompt reads. lastVisible already skips empty lines and reads through
+        // `\r`/BEL repaints, so an empty or eol-only chunk still yields the
+        // buffered prompt -- no separate stickiness needed. Capped like a
+        // prompt line, which bounds the regex work on it.
+        entryTrailingLine = trailing.slice(0, 200)
+        // The shell said the engine binary is missing: a SUSPICION only where
+        // the identity check cannot decide (no known host prompt). An rc file
+        // inside a healthy container can print the same line, and there the
+        // host prompt NOT coming back is the tell. The following prompt decides.
+        if (!entrySuspect && hostPromptLine === '' && CONTAINER_ENGINE_NOT_FOUND_RE.test(recent)) {
           entrySuspect = true
-          logInfo(`[ssh] ${sessionId}: post-command output says the engine binary was not found -- suspect entry, waiting for the prompt to decide`)
+          logInfo(`[ssh] ${sessionId}: post-command output says the engine binary was not found and the host PS1 is unrecognised -- suspect entry, waiting for idle to decide`)
         }
-        // The command's own echo (a prefix still arriving, or repainted by
-        // readline/ConPTY with the host prompt in front of it) does not count
-        // as the entry answering, and neither does the pending host prompt;
-        // anything else does.
-        if (!entryOutputSeen && lines.some((l, i) => l !== '' && !(i === lines.length - 1 && entryHostPromptPending) && !isPostCommandEcho(l))) {
+        // Real inner-shell output has appeared once a visible line is neither
+        // the command's echo nor the host's prompt (alone or with host activity
+        // after it). Latched: once true the idle fallback promotes an
+        // unrecognised prompt instead of holding for silence.
+        if (!entryOutputSeen && lines.some((l) => l !== '' && !isPostCommandEcho(l) && !isHostBackLine(l))) {
           entryOutputSeen = true
         }
       }
@@ -3518,8 +3553,8 @@ export function spawnPty(
       // postCommandWritten (rc.14 review F1 round 2): the command goes out
       // 200ms after the click; a host prompt repaint landing inside that window
       // is not the inner shell -- nothing has been asked of the host yet. And
-      // the HOST prompt itself as the trailing line (entryHostPromptPending) is
-      // never the inner shell: the idle fallback decides whether it came back.
+      // the HOST's own prompt is never the inner shell (isHostBackLine): the
+      // idle fallback decides whether it came back after 1.5s of silence.
       if (
         postCommandSent
         && postCommandWritten
@@ -3527,7 +3562,7 @@ export function spawnPty(
         && sawShellPrompt
         && (!sudoPassword || sudoPasswordSent)
         && !runtimeEntryFailed
-        && !entryHostPromptPending
+        && !isHostBackLine(entryTrailingLine)
       ) {
         postCommandShellReady = true
         inInnerShell = true
