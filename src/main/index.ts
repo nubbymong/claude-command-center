@@ -664,6 +664,10 @@ function createWindow(): void {
     }
   })
 
+  // rc.14 review F3: a (re)created window starts with a fresh close decision --
+  // the previous window's Save left `allowClose` set in the shared coordinator.
+  closeCoordinator.onWindowCreated()
+
   // Prevent navigation away from the app
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()

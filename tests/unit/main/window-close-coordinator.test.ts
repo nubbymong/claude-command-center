@@ -127,3 +127,41 @@ describe('window close (Windows title bar; also macOS red button)', () => {
     expect(deps.quit).toHaveBeenCalledTimes(1)
   })
 })
+
+// The coordinator lives for the whole process while windows come and go. A
+// window closed with Save leaves `allowClose` set; on macOS the app stays in
+// the dock and a click creates a NEW window, which must be asked again.
+describe('a second window in the same process (macOS dock reopen)', () => {
+  it('after Save-close of the first window, the reopened window is asked again on close and on Cmd+Q', () => {
+    const c = make()
+    c.onWindowClose(preventDefault)
+    c.onAllowClose() // Save: window 1 closes; darwin keeps the app alive
+    expect(c.state().allowClose).toBe(true)
+
+    windowAlive = true // dock click -> createWindow()
+    c.onWindowCreated()
+    expect(c.state()).toMatchObject({ allowClose: false, closeRequestedOnce: false, quitRequested: false })
+
+    c.onWindowClose(preventDefault)
+    expect(prevented).toBe(2)
+    expect(deps.askRenderer).toHaveBeenCalledTimes(2)
+    c.onCancelClose()
+
+    c.onBeforeQuit(preventDefault)
+    expect(prevented).toBe(3)
+    expect(deps.askRenderer).toHaveBeenCalledTimes(3)
+    expect(deps.teardown).not.toHaveBeenCalled()
+  })
+
+  it('a window created after the teardown ran never re-runs it', () => {
+    const c = make()
+    windowAlive = false
+    c.onBeforeQuit(preventDefault) // real quit: teardown
+    expect(deps.teardown).toHaveBeenCalledTimes(1)
+    windowAlive = true
+    c.onWindowCreated()
+    windowAlive = false
+    c.onBeforeQuit(preventDefault)
+    expect(deps.teardown).toHaveBeenCalledTimes(1)
+  })
+})

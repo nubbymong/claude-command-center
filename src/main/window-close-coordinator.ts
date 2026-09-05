@@ -53,6 +53,13 @@ export interface CloseCoordinator {
   onAllowClose: () => void
   /** Renderer: the user cancelled the close dialog. */
   onCancelClose: () => void
+  /**
+   * A main window was (re)created: first launch, or a macOS dock reopen after
+   * the last window closed. The per-window decision starts over -- a window
+   * closed with Save left `allowClose` set, and without this reset the next
+   * window would close (or quit) without ever asking.
+   */
+  onWindowCreated: () => void
   /** Test seam / diagnostics. */
   state: () => { allowClose: boolean; closeRequestedOnce: boolean; quitRequested: boolean; tornDown: boolean }
 }
@@ -106,6 +113,14 @@ export function createCloseCoordinator(deps: CloseCoordinatorDeps): CloseCoordin
     },
 
     onCancelClose() {
+      closeRequestedOnce = false
+      quitRequested = false
+    },
+
+    onWindowCreated() {
+      // `tornDown` deliberately survives: a teardown that already ran is not
+      // undone by a window appearing, and a second quit must still not re-run it.
+      allowClose = false
       closeRequestedOnce = false
       quitRequested = false
     },
