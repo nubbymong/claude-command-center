@@ -4,11 +4,12 @@
 // real user home has a basename that passes the id charset and must map to null.
 import { describe, it, expect, vi } from 'vitest'
 import path from 'node:path'
+import os from 'node:os'
 
 vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
 
 import { isValidProfileId, profileIdFromHome, PROFILES_ROOT_DIRNAME } from '../../../src/main/profile-id'
-import { isValidProfileId as reExported } from '../../../src/main/account-profiles'
+import { isValidProfileId as reExported, _setRootsForTest, getProfileConfigDir, getProfilesRoot } from '../../../src/main/account-profiles'
 
 describe('isValidProfileId', () => {
   it('accepts the generated shape and rejects traversal, case, and non-strings', () => {
@@ -34,6 +35,20 @@ describe('profileIdFromHome', () => {
     expect(profileIdFromHome(path.join('F:', 'res', PROFILES_ROOT_DIRNAME, 'profile-a1b2-ff'))).toBe('profile-a1b2-ff')
     expect(profileIdFromHome('/home/pi/res/account-profiles/profile-a1b2-ff')).toBe('profile-a1b2-ff')
     expect(profileIdFromHome('F:\\res\\account-profiles\\profile-a1b2-ff')).toBe('profile-a1b2-ff')
+  })
+
+  it('round-trips through the REAL getProfileConfigDir -- the root dirname is one constant, not a copy', () => {
+    // If account-profiles ever renamed the profiles root without this module
+    // following, every real home would map to null and claude-headless would
+    // silently stop registering (#48) and waiting (#49). Build the home the way
+    // the app does, not from a literal.
+    _setRootsForTest({ resourcesDir: path.join(os.tmpdir(), 'ccc-pid-res'), sharedRoot: path.join(os.tmpdir(), 'ccc-pid-shared') })
+    try {
+      expect(path.basename(getProfilesRoot())).toBe(PROFILES_ROOT_DIRNAME)
+      expect(profileIdFromHome(getProfileConfigDir('profile-a1b2-ff'))).toBe('profile-a1b2-ff')
+    } finally {
+      _setRootsForTest(null)
+    }
   })
 
   it('maps the default home and any non-profile path to null', () => {

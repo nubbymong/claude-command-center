@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { isValidProfileId } from './profile-id'
+import { isValidProfileId, PROFILES_ROOT_DIRNAME } from './profile-id'
 import { atomicWriteFileSync } from './atomic-write'
 import { logWarn } from './debug-logger'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -39,7 +39,7 @@ function resourcesDir(): string { return rootsOverride?.resourcesDir ?? getResou
 /** The shared real config root (default account). Overridable in tests ONLY. */
 export function sharedRoot(): string { return rootsOverride?.sharedRoot ?? path.join(os.homedir(), '.claude') }
 
-export function getProfilesRoot(): string { return path.join(resourcesDir(), 'account-profiles') }
+export function getProfilesRoot(): string { return path.join(resourcesDir(), PROFILES_ROOT_DIRNAME) }
 
 // The single choke point: every profile home in the app is built here, so the
 // guard lives here rather than at each of the ~20 call sites. Three resolvers

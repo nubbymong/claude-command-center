@@ -47,7 +47,7 @@ vi.mock('../../src/main/account-profiles', async (importOriginal) => ({
   listProfiles: () => Object.keys(profMocks.homes).map((id) => ({ id, name: id, accountEmail: `${id}@example.com` })),
 }))
 
-import { initCloudAgentManager, dispatchAgent, _resetCloudAgentLatchForTest } from '../../src/main/cloud-agent-manager'
+import { initCloudAgentManager, dispatchAgent, listAgents, _resetCloudAgentLatchForTest } from '../../src/main/cloud-agent-manager'
 import {
   hasTransientProfileConsumer,
   noteProfileRefreshInFlight,
@@ -121,6 +121,15 @@ describe('cloud agent — the agent is a profile consumer for its process life (
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('a SYNCHRONOUS spawn throw releases the hold and removes the prompt file', async () => {
+    mockSpawn.mockImplementationOnce(() => { throw new Error('spawn EINVAL') })
+    await expect(dispatch()).rejects.toThrow('spawn EINVAL')
+    expect(hasTransientProfileConsumer(PROFILE)).toBe(false) // no child will ever fire close/error
+    const agent = listAgents()[0]
+    expect(agent.profileId).toBe(PROFILE)
+    expect(fs.existsSync(path.join(os.tmpdir(), `ccc-agent-${agent.id}.txt`))).toBe(false)
   })
 
   it('holds nothing when the agent falls back to the default/global home', async () => {

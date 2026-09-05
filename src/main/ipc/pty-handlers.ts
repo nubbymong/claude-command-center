@@ -14,7 +14,7 @@ import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
-import type { SshRuntime, DetachedRemoteLiveness, HostPingResult } from '../../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote } from '../../shared/types'
 import { detachedDestinationAgrees, type SshDestinationSource } from '../../shared/detached-destination'
 import { readDetachedRemotesRegistry } from '../session-state'
 import { pingHost } from '../host-ping'
@@ -390,6 +390,26 @@ export function _resetPingInFlightForTest(): void {
 }
 
 /**
+ * #54: is `sessionId` recorded in the persisted resume registry at a DIFFERENT
+ * destination than `ssh` (the saved config, as it is now) reaches? The main-side
+ * twin of the renderer's `matchDetachedRemotes` rule, applied where the config
+ * id becomes a host to dial: a renderer that names a config whose destination
+ * was edited after the session was left running must not have main probe, or
+ * kill, on the NEW host under the OLD session's name. A session the registry
+ * does not know is not checked -- there is nothing to compare, and the guard is
+ * strictly additive to the config-only trust rule. Callers checking several
+ * sessions pass one `registry` read so the file is parsed once, not per id.
+ */
+function recordedDestinationMoved(
+  sessionId: string,
+  ssh: SshDestinationSource,
+  registry: readonly DetachedRemote[] = readDetachedRemotesRegistry(),
+): boolean {
+  const entry = registry.find((e) => e.sessionId === sessionId)
+  return !!entry && !detachedDestinationAgrees(entry, ssh)
+}
+
+/**
  * Rebuild an End-remote target from the SAVED config on disk (Phase 3.5).
  *
  * The one place a DETACHED remote's connection details come from, and every
@@ -409,21 +429,6 @@ export function _resetPingInFlightForTest(): void {
  * container forever — #572's one-hop-deeper orphan, reached by the detached
  * road instead of the live one.
  */
-/**
- * #54: is `sessionId` recorded in the persisted resume registry at a DIFFERENT
- * destination than `ssh` (the saved config, as it is now) reaches? The main-side
- * twin of the renderer's `matchDetachedRemotes` rule, applied where the config
- * id becomes a host to dial: a renderer that names a config whose destination
- * was edited after the session was left running must not have main probe, or
- * kill, on the NEW host under the OLD session's name. A session the registry
- * does not know is not checked -- there is nothing to compare, and the guard is
- * strictly additive to the config-only trust rule.
- */
-function recordedDestinationMoved(sessionId: string, ssh: SshDestinationSource): boolean {
-  const entry = readDetachedRemotesRegistry().find((e) => e.sessionId === sessionId)
-  return !!entry && !detachedDestinationAgrees(entry, ssh)
-}
-
 function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTarget | undefined {
   const saved = findSavedConfig(readConfig('configs'), configId)
   if (!saved || saved.sessionType !== 'ssh' || !saved.sshConfig) return undefined
@@ -718,7 +723,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // queried session recorded elsewhere makes the WHOLE answer 'unverified'
     // (fail-open -- nothing is pruned, nothing is probed on the wrong host)
     // rather than a 'verified' list that would read the missing id as dead.
-    if (sessionIds.some((id) => recordedDestinationMoved(id, s))) {
+    const registry = readDetachedRemotesRegistry()
+    if (sessionIds.some((id) => recordedDestinationMoved(id, s, registry))) {
       logWarn(`[ssh] checkDetachedLive answered unverified for config ${configId}: a queried session is recorded at a different destination than the config reaches now`)
       return { outcome: 'unverified', liveSessionIds: [] }
     }

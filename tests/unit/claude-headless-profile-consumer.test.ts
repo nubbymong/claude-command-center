@@ -9,12 +9,15 @@ import path from 'node:path'
 import os from 'node:os'
 
 const spawnCalls: Array<{ executable: string; args: string[]; opts: any }> = []
-let fakeChild: any
+/** One fake child per spawn, in spawn order, so a test with two runs settles each on its own. */
+const children: Array<ReturnType<typeof makeChild>> = []
 
 vi.mock('child_process', () => ({
   spawn: (executable: string, args: string[], opts: any) => {
     spawnCalls.push({ executable, args, opts })
-    return fakeChild
+    const child = makeChild()
+    children.push(child)
+    return child
   },
   execSync: vi.fn(),
 }))
@@ -45,12 +48,15 @@ function makeChild() {
 }
 
 const PROFILE = 'profile-a1b2-ff'
+// The shape getProfileConfigDir builds: <resources>/account-profiles/<id>. The
+// coupling of that root name to profile-id.ts is pinned against the REAL
+// getProfileConfigDir in tests/unit/main/profile-id.test.ts.
 const HOME = path.join(os.tmpdir(), 'account-profiles', PROFILE)
 const tick = async (n = 3) => { for (let i = 0; i < n; i++) await Promise.resolve() }
 
 beforeEach(() => {
   spawnCalls.length = 0
-  fakeChild = makeChild()
+  children.length = 0
   _resetProfileConsumersForTest()
 })
 
@@ -59,7 +65,7 @@ describe('spawnClaudeHeadless — the run is a profile consumer (#48)', () => {
     const p = spawnClaudeHeadless(['-p'], 10_000, 'prompt', HOME)
     expect(spawnCalls).toHaveLength(1) // spawn is still synchronous when nothing is rotating
     expect(hasTransientProfileConsumer(PROFILE)).toBe(true)
-    fakeChild.handlers.close(0)
+    children[0].handlers.close(0)
     await p
     expect(hasTransientProfileConsumer(PROFILE)).toBe(false)
   })
@@ -67,7 +73,7 @@ describe('spawnClaudeHeadless — the run is a profile consumer (#48)', () => {
   it('releases on the error path', async () => {
     const p = spawnClaudeHeadless(['-p'], 10_000, undefined, HOME)
     expect(hasTransientProfileConsumer(PROFILE)).toBe(true)
-    fakeChild.handlers.error(new Error('spawn ENOENT'))
+    children[0].handlers.error(new Error('spawn ENOENT'))
     await p
     expect(hasTransientProfileConsumer(PROFILE)).toBe(false)
   })
@@ -99,7 +105,8 @@ describe('spawnClaudeHeadless — the run is a profile consumer (#48)', () => {
     const p2 = spawnClaudeHeadless(['--version'], 10_000, undefined, '/home')
     expect(spawnCalls).toHaveLength(2)
     expect(profileConsumerCount('home')).toBe(0)
-    fakeChild.handlers.close(0)
+    children[0].handlers.close(0)
+    children[1].handlers.close(0)
     await Promise.all([p1, p2])
   })
 
@@ -124,7 +131,7 @@ describe('spawnClaudeHeadless — starting mid-rotation waits for the refresh (#
     await tick()
     expect(spawnCalls).toHaveLength(1)
     expect(hasTransientProfileConsumer(PROFILE)).toBe(true)
-    fakeChild.handlers.close(0)
+    children[0].handlers.close(0)
     await p
     expect(hasTransientProfileConsumer(PROFILE)).toBe(false)
   })
@@ -133,7 +140,7 @@ describe('spawnClaudeHeadless — starting mid-rotation waits for the refresh (#
     noteProfileRefreshInFlight('profile-other-00', new Promise(() => { /* never settles */ }))
     const p = spawnClaudeHeadless(['-p'], 10_000, undefined, HOME)
     expect(spawnCalls).toHaveLength(1)
-    fakeChild.handlers.close(0)
+    children[0].handlers.close(0)
     await p
   })
 
@@ -146,7 +153,7 @@ describe('spawnClaudeHeadless — starting mid-rotation waits for the refresh (#
     fail(new Error('500'))
     await tick()
     expect(spawnCalls).toHaveLength(1)
-    fakeChild.handlers.close(0)
+    children[0].handlers.close(0)
     await p
   })
 })
