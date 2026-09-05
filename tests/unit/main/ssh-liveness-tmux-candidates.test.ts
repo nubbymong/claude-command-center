@@ -41,3 +41,15 @@ describe('liveness probe tmux candidates', () => {
     }
   })
 })
+
+describe('every candidate is existence-gated before it lists (rc.14 review F11, second half)', () => {
+  it('prints FOUND only from a binary that exists: `command -v` for PATH, `[ -x ]` for fixed paths', () => {
+    const cmd = buildTmuxListCommand()
+    expect(cmd).toContain("command -v tmux >/dev/null 2>&1 && { echo __CCC_TMUX_FOUND__; command tmux ls -F '#{session_name}' 2>/dev/null; }")
+    expect(cmd).toContain("[ -x /opt/homebrew/bin/tmux ] && { echo __CCC_TMUX_FOUND__; /opt/homebrew/bin/tmux ls -F '#{session_name}' 2>/dev/null; }")
+    expect(cmd).toContain('[ -x "$HOME"/.claude/bin/tmux ] && { echo __CCC_TMUX_FOUND__; "$HOME"/.claude/bin/tmux ls -F')
+    // One gate per candidate, no bare listing anywhere: deleting the marker
+    // from the builder would make every probe unverified forever, silently.
+    expect((cmd.match(/__CCC_TMUX_FOUND__/g) ?? []).length).toBe(TMUX_LIVENESS_BIN_EXPRS.length)
+  })
+})

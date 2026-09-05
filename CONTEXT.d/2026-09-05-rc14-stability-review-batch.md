@@ -51,5 +51,33 @@ wait out an in-flight refresh), F10 (detached entries keyed on the full destinat
   Electron's event order instead, and a static test pins the source shape. Owner
   verifies on a real Mac before merge.
 
+**Review round 2 (Tier A).** Spec + quality reviews found: the close coordinator is a
+process singleton, so a Save-close left `allowClose` set and a dock-reopened window was
+never asked (BLOCKER -> `onWindowCreated()` from `createWindow`); F11 only did half the
+ticket -- every candidate is now existence-gated and prints a FOUND marker, and END
+without FOUND parses as unverified (never death); the rotation stamp was per session
+(N sessions -> N backups) -> per profile; the re-auth pending path skipped the attempt
+backstop; an end-to-end F6 test now drives the real backup/restore over a temp root.
+
+**Tier B (live-host findings), same PR.**
+- F13 `pty-manager.ts`: the SSH-password branch is closed once `postCommandSent` -- a
+  bare `Password:` after key auth is sudo's; the sudo branch answers with the sudo
+  secret, or leaves the prompt to the user when none is saved. Auth-stage prompts
+  (including a bare `Password:` before any post-command) still get the SSH secret.
+- F1 `pty-manager.ts`: `CONTAINER_ENTRY_ERROR_RE` (the engines' failure shapes) is
+  matched against the line-buffered, ANSI-stripped post-command output of a container
+  session; a hit sets `runtimeEntryFailed`, fails the flow (`container entry failed`),
+  gates both inner-shell transitions (prompt and idle fallback) and makes
+  `launchClaude()` re-emit the failure instead of walking the host ladder. Skip stays
+  the explicit route to the raw host shell. Positive control: a real inner prompt still
+  reaches `awaiting-claude / inner`.
+- F12 `sshCloseStore.ts`: a container session's close calls `ssh.endRemote` (session +
+  config id) before the local kill, no dialog; legacy docker post-command sessions
+  count; plain and persistent SSH sessions unchanged.
+- Both pty-manager changes sit in the SSH-flow blast radius: the live SSH matrix + a
+  Docker host run are recorded in the PR before merge (the "connectivity suite").
+
 **Deferred / not changed.** The review's INCIDENT assessment needs no code; the
 `existsSync` vs `isFile` hardening from the earlier adversarial pass is still deferred.
+Tier C (F4 + F5 consumer coordinator, F10 destination identity) is 2.2 work, tickets
+aicc_planning#48, #49, #54.
