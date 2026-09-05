@@ -323,17 +323,6 @@ describe('review 2c: the host-back signal is robust', () => {
     expect(getSshFlow(id)?.getState().state).toBe('failed')
   })
 
-  it('REGRESSION: once the host prompt is back, a prompt-shaped line the user types is NOT promoted (entryHostSeen latch)', () => {
-    const id = 'entry-host-then-prompt'
-    enterContainer(id)
-    feed(`^C\r\n${HOST_PROMPT}`) // failed entry: the host prompt is back (latched)
-    feed(`echo hi>\r\nhi>`) // the user runs a command whose output's last line ends in a prompt char, no host prefix
-    expect(getSshFlow(id)?.getState().state).toBe('running-postcommand') // NOT promoted by the prompt path
-    settle()
-    expect(getSshFlow(id)?.getState()).toEqual({ state: 'failed', info: 'container entry failed' })
-    expect(states(id)).not.toContain('awaiting-claude')
-  })
-
   it('REGRESSION: a login prompt split across PTY chunks is still captured (line-buffered), so the failure is still caught', () => {
     const id = 'entry-split-login'
     ids.push(id)

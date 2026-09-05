@@ -1670,13 +1670,6 @@ export function spawnPty(
     // still-starting container, not an inner shell with an unrecognised
     // prompt, and the idle fallback holds instead of promoting.
     let entryOutputSeen = false
-    // Latched once the host's own prompt has been seen back on screen this
-    // attempt. The host prompt returning means the container was not entered;
-    // once it has, an intervening prompt-shaped line the user types on the host
-    // (`echo x>` -> `x>`) must NOT be promoted to the inner shell in the sub-
-    // 1.5s window before the idle fallback fails. Cleared by our own command's
-    // echo (the readline repaint, below) and reset by Run again.
-    let entryHostSeen = false
     // The trailing visible line of the post-command's output, for the idle
     // fallback's password-prompt hold: read from the buffer rather than the
     // sticky lastPromptLineSeen, which ignores `❯` lines and would keep a
@@ -1970,10 +1963,10 @@ export function spawnPty(
             //     repaint or the user typing at the returned prompt cannot hide
             //     it, and the echo (host prompt + a prefix of the command) does
             //     not count -- that is the slow-start case, held below.
-            if (isHostBackLine(entryTrailingLine) || entryHostSeen) {
+            if (isHostBackLine(entryTrailingLine)) {
               runtimeEntryFailed = true
               clearSshLineBuffer(sessionId, 'runtime')
-              logInfo(`[ssh] ${sessionId}: container entry failed (the host prompt is/was back) -- staying on the host shell, not marking inner`)
+              logInfo(`[ssh] ${sessionId}: container entry failed (the host prompt is back and nothing followed it) -- staying on the host shell, not marking inner`)
               setFlowState('failed', 'container entry failed')
               return
             }
@@ -2992,7 +2985,6 @@ export function spawnPty(
           entrySuspect = false
           entryOutputSeen = false
           entryTrailingLine = ''
-          entryHostSeen = false
           entrySilentHoldFires = 0
           entryPromptHoldFires = 0
           sudoPasswordSent = false
@@ -3457,14 +3449,6 @@ export function spawnPty(
         // buffered prompt -- no separate stickiness needed. Capped like a
         // prompt line, which bounds the regex work on it.
         entryTrailingLine = trailing.slice(0, 200)
-        // The host prompt back on screen latches entryHostSeen (the container
-        // was not entered). But readline paints `\r` + the host prompt and
-        // THEN the echoed command as it repaints the line, and a chunk can end
-        // between the two -- so our own command's echo arriving next clears the
-        // latch (that first prompt was the repaint, not the host coming back).
-        // Host activity that is NOT our echo (the user typing) leaves it set.
-        if (isHostBackLine(trailing)) entryHostSeen = true
-        else if (isPostCommandEcho(trailing)) entryHostSeen = false
         // The shell said the engine binary is missing: a SUSPICION only where
         // the identity check cannot decide (no known host prompt). An rc file
         // inside a healthy container can print the same line, and there the
@@ -3579,7 +3563,6 @@ export function spawnPty(
         && (!sudoPassword || sudoPasswordSent)
         && !runtimeEntryFailed
         && !isHostBackLine(entryTrailingLine)
-        && !entryHostSeen
       ) {
         postCommandShellReady = true
         inInnerShell = true

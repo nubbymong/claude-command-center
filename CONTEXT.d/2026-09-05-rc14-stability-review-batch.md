@@ -154,11 +154,21 @@ empty/eol-only chunks, so a repaint/BEL/CSI chunk or the user typing at the retu
 prompt cannot erase the read; `isHostBackLine` (host prompt alone or with non-echo
 activity after it, but not the command echo) is the single test the prompt path and the
 idle fallback share; the password-prompt hold reads the live trailing line and its cap
-FAILS; the `Sorry, user` alternative is bounded `[^\r\n]{0,200}`. A follow-up added an
-`entryHostSeen` latch (set on host-back, cleared by our own command echo -- the readline
-repaint) so that once the host prompt has returned, an intervening prompt-shaped line the
-user types is never promoted. `entryHostPromptPending`/`hostPromptCompleted` are gone.
-Thirteen more mutations across the two files, each caught; full unit suite green (10476).
+FAILS; the `Sorry, user` alternative is bounded `[^\r\n]{0,200}`.
+`entryHostPromptPending`/`hostPromptCompleted` are gone. Ten more mutations across the
+two files, each caught; full unit suite green.
+
+ACCEPTED, documented as a known issue (a follow-up `entryHostSeen` latch was tried and
+REVERTED -- it wrongly failed a healthy entry when the command echo and the inner prompt
+arrived glued in one PTY read on a fast local container, a worse regression than the
+narrow case it closed): after a FAILED container entry, if the user types a command whose
+output's last line is prompt-shaped and not host-prefixed WITHIN the ~1.5s idle window,
+the prompt path can take it for the inner shell. It needs active, fast typing in that
+window and a specific output shape; doing nothing lets the idle fallback fail the entry
+as intended, and Skip / Run again recover. The knob that would close it (remember the
+host prompt was seen) cannot be distinguished from the readline repaint's transient
+host-prompt without also breaking the glued-echo healthy entry, so it is documented
+rather than fixed (app-knowledge known issue).
 
 **Deferred / not changed.** The review's INCIDENT assessment needs no code; the
 `existsSync` vs `isFile` hardening from the earlier adversarial pass is still deferred.
