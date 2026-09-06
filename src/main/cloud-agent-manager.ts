@@ -193,6 +193,22 @@ export async function dispatchAgent(params: {
   persist()
   broadcastStatus(agent)
 
+  // rc.15 review R5 (aicc_planning#49): a Cancel (or a Remove) can land while
+  // dispatch is parked on an await below -- the legacy install, the account
+  // refresh. cancelAgent finds no process then and marks the record cancelled;
+  // the resumed dispatch must see that and spawn nothing, or the work runs
+  // labelled cancelled with no control left to stop it. Checked after EVERY
+  // pre-spawn await; `agent` is the very object in `agents`, so a cancel is
+  // visible on it even after a Remove filtered it out of the list.
+  const abandoned = (): boolean => agent.status === 'cancelled' || !agents.includes(agent)
+  const abandon = (where: string): CloudAgentData => {
+    logInfo(`[cloud-agent] Agent ${agent.id} was cancelled during ${where}; not spawning`)
+    agent.updatedAt = Date.now()
+    agent.duration = agent.updatedAt - agent.createdAt
+    if (agents.includes(agent)) { persist(); broadcastStatus(agent) }
+    return agent
+  }
+
   // Resolve Claude binary (use legacy version if configured)
   let claudeBin = 'claude'
   if (params.legacyVersion?.enabled && params.legacyVersion.version) {
@@ -207,6 +223,7 @@ export async function dispatchAgent(params: {
         if (!result.ok) {
           logInfo(`[cloud-agent] Legacy install failed, using system claude: ${result.error}`)
         }
+        if (abandoned()) return abandon('the legacy CLI install')
       }
       const legacyBin = resolveVersionBinary(params.legacyVersion.version)
       if (legacyBin) {
@@ -250,6 +267,11 @@ export async function dispatchAgent(params: {
     // the new lineage land before the agent's claude reads the credential file.
     // The hold above means no OTHER rotation can begin while we wait.
     if (resolvedProfileId) await waitForProfileRefresh(resolvedProfileId)
+    if (abandoned()) {
+      releaseProfile()
+      cleanupTmpFileFor(tmpFile)
+      return abandon('the account refresh wait')
+    }
     child = spawn(shellCmd, [], {
       cwd: params.projectPath,
       shell: true,
