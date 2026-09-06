@@ -402,7 +402,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     if (cmd.kind === 'page') {
       if (!isAllowedBrowserUrl(cmd.pageUrl)) { console.warn('[CommandBar] page command has no usable URL:', cmd.label); return }
       trackUsage('webview.opened')
-      useWebviewStore.getState().navigate(webviewKey, cmd.pageUrl)
+      useWebviewStore.getState().navigate(webviewKey, cmd.pageUrl) // opens the browser pane; the store evicts canvas/logs itself
       return
     }
     if (withArgsAt && (cmd.defaultArgs?.length || cmd.lastCustomArgs?.length)) {

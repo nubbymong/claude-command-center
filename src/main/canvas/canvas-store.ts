@@ -40,6 +40,7 @@ import {
   isKeepableOpenQuestions,
   isKeepableVerdict,
   libraryRowKindOf,
+  openVersionIdsOf,
   openVersionOf,
   sanitizeAuditStamp,
   sanitizeCanvasConfigId,
@@ -2213,10 +2214,52 @@ function isLiveOrUnknown(sessionId: string, isSessionLive: (sid: string) => bool
  *
  * Fails safe: an oracle that throws counts as live, and live means untouchable.
  */
+/**
+ * Signed off is DONE, not resumable (owner, 2026-09-06: "if something was
+ * signed off then it should be done"). Two conditions. The first is the
+ * completion guard's own version term, so this gate never says DONE over a
+ * canvas Mark complete would refuse on its versions. (The guard has further
+ * terms this store cannot read -- review notes still with the agent, an
+ * agent-chat verdict -- so the converse does not hold: notes still owed under
+ * an approved newest run are a known gap, recorded in the 2026-09-06 fragment.)
+ *   1. Nothing is still owed. `openVersionIdsOf` — every live (non-archived)
+ *      run's open version — is empty. A canvas holds a history of runs, of
+ *      several kinds: a plan still awaiting the user under an approved design
+ *      is unfinished, exactly as Mark complete refuses it.
+ *   2. The NEWEST run (`artifactRuns(...).at(-1)`) was decided. Its anchor —
+ *      the newest version the user would act on, skipping show-and-tell (owes
+ *      no review) and 'withdrawn' stamps, the rule `openVersionOf` uses —
+ *      carries 'approved' or 'dismissed'. An earlier run's approval does not
+ *      reach across: approve run A, archive it, render run B, and B decides.
+ * So: 'rejected' asks for another round and stays resumable; an open version
+ * anywhere live stays resumable; a canvas of drafts only has nothing decided,
+ * so it is not signed off (the list has no shown version to make a card of,
+ * but the action does not refuse it). Drafts otherwise neither block nor
+ * count: they are the
+ * agent's own loop (#366), shown to nobody, and the completion guard ignores
+ * them too — a draft rendered after an approval does not reopen the subject.
+ *
+ * Two readings of "signed off" coexist on purpose. The Library's Signed-off
+ * chip (canvas-library-rows) means the canvas was MARKED COMPLETE (#476); this
+ * gate means the canvas is decided. Both callers check `completed` first; this
+ * covers the far more common "reviewed and approved but never formally Marked
+ * complete" case, which was surfacing every signed-off canvas as resumable.
+ */
+function isSignedOff(record: CanvasRecord): boolean {
+  const { versions } = record
+  if (openVersionIdsOf(versions).length > 0) return false // still owed somewhere live
+  const run = artifactRuns(versions).at(-1)
+  if (!run) return false // drafts only, or nothing: nothing has been decided
+  const anchor = [...run].reverse().find((v) => !v.show && v.verdict?.state !== 'withdrawn')
+  const state = anchor?.verdict?.state
+  return state === 'approved' || state === 'dismissed'
+}
+
 function isResumeCandidate(record: CanvasRecord, sessionId: string, query: CanvasLivenessQuery): boolean {
   if (record.sessionId === sessionId) return false
   if (record.versions.length === 0) return false // nothing to inherit
   if (record.completed) return false
+  if (isSignedOff(record)) return false // a signed-off subject is done, not resumable
   try {
     if (query.isSessionLive(record.sessionId)) return false
   } catch {
@@ -2458,6 +2501,11 @@ export function resumeCanvasForSession(
   if (record.sessionId === sessionId) return { ok: false, reason: 'changed' }
   if (record.sessionId !== expectedOwnerSessionId) return { ok: false, reason: 'changed' }
   if (record.completed) return { ok: false, reason: 'completed' }
+  // Signed off is done (owner, 2026-09-06): a decided subject is not resumable,
+  // so the action refuses it exactly as the list (isResumeCandidate) omits it —
+  // the two must agree. 'completed' is the honest reason: from the caller's
+  // view the subject is finished.
+  if (isSignedOff(record)) return { ok: false, reason: 'completed' }
   // Reported as 'gone', deliberately: a caller outside this canvas's workspace
   // learns that there is nothing here for it, and nothing else. A distinct
   // reason would answer "does a canvas with this id exist elsewhere on this

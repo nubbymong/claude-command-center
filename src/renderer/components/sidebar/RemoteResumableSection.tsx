@@ -10,7 +10,8 @@ import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useLaunchConfig, useLaunchSessionAction } from '../../hooks/useLaunchConfig'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { persistSessionState } from '../../session-persistence'
-import { configForDetachedEntry, describeDetachedAge, filterLiveEntries } from '../../utils/detachedRemotes'
+import { describeDetachedAge, filterLiveEntries, pairDetachedEntry } from '../../utils/detachedRemotes'
+import { describeDestination, effectiveRuntimeOf } from '../../../shared/detached-destination'
 import { displayLiveness, type EntryDisplayLiveness } from '../../utils/detachedRemotesLiveness'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { resolveAccountColourKey, resolveAccountNameByEmail } from '../../../shared/account-chip-color'
@@ -72,6 +73,10 @@ type CardModal =
   | { kind: 'dead'; entry: DetachedRemote; config: TerminalConfig | undefined }
   /** The saved config was deleted: nothing to launch, so Remove only. */
   | { kind: 'no-config'; entry: DetachedRemote }
+  /** The saved config still exists but was EDITED to point elsewhere after the
+   *  remote was left running (#54): resuming through it would land on the wrong
+   *  destination, so Remove only — and say where the session really is. */
+  | { kind: 'retargeted'; entry: DetachedRemote; config: TerminalConfig }
 
 interface ContextMenuState {
   entry: DetachedRemote
@@ -194,8 +199,13 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
    * id) over the one recorded at detach time.
    */
   const removeRemote = useCallback(async (entry: DetachedRemote, mightBeLive: boolean) => {
-    if (mightBeLive) {
-      const configId = configForDetachedEntry(entry, configs)?.id ?? entry.configId
+    const pairing = pairDetachedEntry(entry, configs)
+    // A RETARGETED entry is never ended through its config (#54): that config
+    // now dials a different host, main refuses the target anyway, and the real
+    // remote would be left running with the user told nothing. The dialog says
+    // where it is and how to end it there; Remove only forgets the card.
+    if (mightBeLive && pairing.kind !== 'retargeted') {
+      const configId = pairing.kind === 'paired' ? pairing.config.id : entry.configId
       try {
         await window.electronAPI?.ssh?.endRemote?.({ sessionId: entry.sessionId, configId })
       } catch {
@@ -207,13 +217,20 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
 
   /** The whole-card action: verify THIS config, then resume or explain. */
   const activateCard = useCallback(async (entry: DetachedRemote) => {
-    const config = configForDetachedEntry(entry, configs)
-    if (!config) {
+    const pairing = pairDetachedEntry(entry, configs)
+    if (pairing.kind === 'deleted') {
       // The saved config was deleted. Nothing to launch and nothing to reattach
       // into — say so and offer Remove.
       setModal({ kind: 'no-config', entry })
       return
     }
+    if (pairing.kind === 'retargeted') {
+      // The config exists but was edited to point elsewhere (#54). Resuming
+      // through it would land on the wrong machine — say so and offer Remove.
+      setModal({ kind: 'retargeted', entry, config: pairing.config })
+      return
+    }
+    const config = pairing.config
     setClickChecking((prev) => new Set(prev).add(entry.sessionId))
     try {
       await verifyOnCardClick(config)
@@ -275,7 +292,9 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
       </button>
 
       {!collapsed && visible.map((entry) => {
-        const config = configForDetachedEntry(entry, configs)
+        const pairing = pairDetachedEntry(entry, configs)
+        const config = pairing.kind === 'paired' ? pairing.config : undefined
+        const retargeted = pairing.kind === 'retargeted'
         const state = displayLiveness(entry, livenessMap, hostReach)
         const pill = pillForLiveness(state)
         const gone = pill === 'unreachable'
@@ -306,12 +325,16 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
             aria-label={
               config
                 ? `Resume ${label} on ${entry.username}@${entry.host}`
-                : `${label} — saved config deleted; open options`
+                : retargeted
+                  ? `${label} — saved config now points elsewhere; open options`
+                  : `${label} — saved config deleted; open options`
             }
             title={
               config
                 ? `Click to resume on ${entry.username}@${entry.host} · right-click: Resume / Remove`
-                : `${label} — its saved config was deleted. Right-click to remove.`
+                : retargeted
+                  ? `${label} — its saved config was edited to point at a different destination. Click for details; right-click to remove.`
+                  : `${label} — its saved config was deleted. Right-click to remove.`
             }
             className="rr-card relative w-full my-0.5 px-2.5 py-[7px] rounded-[9px] overflow-hidden text-left focus-ring"
             style={{
@@ -329,6 +352,7 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
             data-testid="remote-resumable-card"
             data-session-id={entry.sessionId}
             data-liveness={state}
+            data-pairing={pairing.kind}
           >
             <span className="flex items-center gap-2">
               <span
@@ -387,7 +411,12 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
         <RemoteResumableContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          canResume={!!configForDetachedEntry(contextMenu.entry, configs)}
+          canResume={pairDetachedEntry(contextMenu.entry, configs).kind === 'paired'}
+          cannotResumeReason={
+            pairDetachedEntry(contextMenu.entry, configs).kind === 'retargeted'
+              ? 'The saved config for this remote now points at a different destination'
+              : 'The saved config for this remote was deleted'
+          }
           onResume={() => { const e = contextMenu.entry; setContextMenu(null); void activateCard(e) }}
           onRemove={() => {
             const e = contextMenu.entry
@@ -429,18 +458,45 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
           onCancel={() => setModal(null)}
         />
       )}
+
+      {modal?.kind === 'retargeted' && (
+        <RetargetedConfigDialog
+          label={modal.entry.label || modal.entry.sessionId}
+          was={describeDestination(modal.entry)}
+          now={describeConfigDestination(modal.config)}
+          tmuxTarget={`ccc-${modal.entry.sessionId}`}
+          onRemove={() => {
+            const e = modal.entry
+            setModal(null)
+            // Forget only (see removeRemote): the remote is on a host this
+            // config no longer reaches.
+            void removeRemote(e, false)
+          }}
+          onCancel={() => setModal(null)}
+        />
+      )}
     </>
   )
+}
+
+/** Where a saved config points NOW, in the same words the entry uses for where
+ *  the session was left, so the retargeted dialog reads as one before/after. */
+function describeConfigDestination(config: TerminalConfig): string {
+  const ssh = config.sessionType === 'ssh' ? config.sshConfig : undefined
+  if (!ssh) return 'a local session'
+  return describeDestination({ host: ssh.host, username: ssh.username, port: ssh.port, runtime: effectiveRuntimeOf(ssh) })
 }
 
 /* ── context menu ─────────────────────────────────────────────────────────── */
 
 /** Resume / Remove, on the ConfigContextMenu shape (fixed-position card, click
  *  outside or Escape closes — `useClickOutside`). */
-function RemoteResumableContextMenu({ x, y, canResume, onResume, onRemove, onClose }: {
+function RemoteResumableContextMenu({ x, y, canResume, cannotResumeReason, onResume, onRemove, onClose }: {
   x: number
   y: number
   canResume: boolean
+  /** Why Resume is disabled, when it is (deleted vs retargeted config). */
+  cannotResumeReason: string
   onResume: () => void
   onRemove: () => void
   onClose: () => void
@@ -459,7 +515,7 @@ function RemoteResumableContextMenu({ x, y, canResume, onResume, onRemove, onClo
         disabled={!canResume}
         className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:cursor-not-allowed"
         style={{ color: 'var(--text-primary)' }}
-        title={canResume ? 'Reattach to the remote session' : 'The saved config for this remote was deleted'}
+        title={canResume ? 'Reattach to the remote session' : cannotResumeReason}
         data-testid="rr-ctx-resume"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -550,6 +606,41 @@ function MissingConfigDialog({ label, host, onRemove, onCancel }: {
         <DialogFooter>
           <DialogButton onClick={onCancel} testId="rr-missing-cancel">Cancel</DialogButton>
           <DialogButton variant="danger" onClick={onRemove} testId="rr-missing-remove">Remove</DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
+  )
+}
+
+/** The saved config still exists but was EDITED to point somewhere else after
+ *  the remote was left running (#54). Resuming through it would land on the
+ *  wrong destination and End through it would kill the wrong host's session
+ *  (main refuses that target too), so the only offer is to forget the card —
+ *  and to say where the session really is, so the user can end it there. */
+function RetargetedConfigDialog({ label, was, now, tmuxTarget, onRemove, onCancel }: {
+  label: string
+  was: string
+  now: string
+  tmuxTarget: string
+  onRemove: () => void
+  onCancel: () => void
+}) {
+  useDialogEscape(onCancel)
+  return (
+    <DialogOverlay testId="rr-retargeted-dialog">
+      <DialogPanel labelledBy="rr-retargeted-title" testId="rr-retargeted-panel" role="alertdialog">
+        <DialogHeader
+          title={`${label} — its saved config now points elsewhere.`}
+          titleId="rr-retargeted-title"
+          subtitle={`It was left running on ${was}; the config has since been edited to ${now}. Resuming through it would land on the wrong destination, so this card can only be removed. Removing forgets the card here; the remote session keeps running on ${was} until you end it there (tmux kill-session -t ${tmuxTarget}).`}
+          glyph={DEAD_GLYPH}
+          glyphAccent="var(--status-warning)"
+          onClose={onCancel}
+          closeTestId="rr-retargeted-close"
+        />
+        <DialogFooter>
+          <DialogButton onClick={onCancel} testId="rr-retargeted-cancel">Cancel</DialogButton>
+          <DialogButton variant="danger" onClick={onRemove} testId="rr-retargeted-remove">Remove</DialogButton>
         </DialogFooter>
       </DialogPanel>
     </DialogOverlay>

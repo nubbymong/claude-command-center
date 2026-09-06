@@ -71,6 +71,15 @@ export function setTranscriptPathSink(sink: (sessionId: string, path: string) =>
   transcriptPathSink = sink
 }
 
+// Plan P2: the account-usage page reuses an OPEN account's live figure instead of
+// making its own redundant call. The figure is the buckets a live session's
+// statusline just delivered, so it is harvested HERE at the fan-out, through a
+// sink (like transcriptPathSink) so this module stays free of the account graph.
+let statuslineUsageSink: ((sessionId: string, buckets: unknown, hasCredits: boolean) => void) | null = null
+export function setStatuslineUsageSink(sink: (sessionId: string, buckets: unknown, hasCredits: boolean) => void): void {
+  statuslineUsageSink = sink
+}
+
 /**
  * Common fan-out for any parsed StatuslineData payload — used by both the
  * file watcher and the SSH OSC sentinel dispatch path. Sends to the renderer
@@ -111,6 +120,15 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
   // isn't in unit tests). A throw here must not break the statusline pipeline.
   if (data.transcriptPath && data.sessionId && transcriptPathSink) {
     try { transcriptPathSink(data.sessionId, data.transcriptPath) } catch { /* sink must not break fan-out */ }
+  }
+  // Plan P2: harvest the account-level usage this session just delivered so the
+  // account-usage page can reuse an OPEN account's figure. Read from raw `data`
+  // (account-level, so unaffected by the subagent model/effort strip on
+  // forDisplay). Best-effort and guarded: the sink resolves the session's profile
+  // and stores nothing for an SSH or default-home session, and must never break
+  // the fan-out.
+  if (data.sessionId && Array.isArray(data.usageBuckets) && data.usageBuckets.length > 0 && statuslineUsageSink) {
+    try { statuslineUsageSink(data.sessionId, data.usageBuckets, data.rateLimitExtra != null) } catch { /* sink must not break fan-out */ }
   }
   // Sentinel Trigger A: observe the raw model id (modelId preferred; fall back to
   // model which may be a display name — the resolver handles both). Safe before

@@ -28,6 +28,8 @@ import ConfigRow from './sidebar/ConfigRow'
 import SessionRow from './sidebar/SessionRow'
 import ConfigContextMenu from './sidebar/ConfigContextMenu'
 import SessionContextMenu from './sidebar/SessionContextMenu'
+import ConfigEditGuardDialog from './sidebar/ConfigEditGuardDialog'
+import { configEditGuardState } from './sidebar/configEditGuard'
 import { openArtifactsPerSetting } from '../lib/claude-web-targets'
 import GroupContextMenu from './sidebar/GroupContextMenu'
 import SectionHeader from './sidebar/SectionHeader'
@@ -114,6 +116,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   // once, plus again whenever a NEW remote is left running (count increases).
   // No poll: the store's own in-flight guard dedupes concurrent probes.
   const detachedCount = useDetachedRemotesStore((s) => s.entries.length)
+  const detachedEntries = useDetachedRemotesStore((s) => s.entries)
   const prevDetachedCount = useRef(0)
   useEffect(() => {
     if (detachedCount > prevDetachedCount.current) {
@@ -134,6 +137,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const serverRunning = useConductorMcpStore((s) => s.serverRunning)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingConfig, setEditingConfig] = useState<TerminalConfig | null>(null)
+  // #54 config-edit guard: a config the user asked to edit that has a live or
+  // left-running session. Editing it is allowed (advise, don't block), but we warn
+  // first — changes apply on the next launch and a destination change can break
+  // resume. Null once the user proceeds (→ editingConfig) or cancels.
+  const [editGuardConfig, setEditGuardConfig] = useState<TerminalConfig | null>(null)
   const [contextMenuConfig, setContextMenuConfig] = useState<{ configId: string; x: number; y: number } | null>(null)
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -421,6 +429,16 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       await window.electronAPI.credentials.save(editingConfig.id + '_argsecret', argSecret)
     }
     setEditingConfig(null)
+  }
+
+  /** The one chokepoint for opening the config editor (#54 guard). An SSH config
+   *  with a live or left-running session gets the warn-and-advise dialog first;
+   *  everything else opens the editor straight away. Every "edit this config"
+   *  entry point routes through here so the guard cannot be bypassed by one. */
+  const requestEditConfig = (config: TerminalConfig) => {
+    const { needsGuard } = configEditGuardState(config, runningCounts.get(config.id) ?? 0, detachedEntries)
+    if (needsGuard) setEditGuardConfig(config)
+    else setEditingConfig(config)
   }
 
   const handleDeleteConfig = async (configId: string) => {
@@ -859,7 +877,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         key={config.id}
         config={config}
         onLaunch={() => launchFromConfig(config)}
-        onEdit={() => setEditingConfig(config)}
+        onEdit={() => requestEditConfig(config)}
         onDelete={() => handleDeleteConfig(config.id)}
         onPin={() => togglePinned(config.id)}
         onContextMenu={(e) => handleConfigContextMenu(e, config.id)}
@@ -1286,7 +1304,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           onCreateSection={(name) => handleCreateSectionAndMoveConfig(contextMenuConfig.configId, name)}
           onEdit={() => {
             const cfg = configs.find((c) => c.id === contextMenuConfig.configId)
-            if (cfg) setEditingConfig(cfg)
+            if (cfg) requestEditConfig(cfg)
             setContextMenuConfig(null)
           }}
           onDelete={() => {
@@ -1419,11 +1437,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         }}
       >
         {/* One-time colour-migration notice. Wires Review colours to the SAME
-            edit dialog ConfigRow.onEdit uses (setEditingConfig below). */}
+            edit dialog ConfigRow.onEdit uses (requestEditConfig → the #54 guard
+            for a running SSH config, else the editor directly). */}
         <ColourMigrationNotice
           onOpenConfigEditor={(configId) => {
             const cfg = configs.find((c) => c.id === configId)
-            if (cfg) setEditingConfig(cfg)
+            if (cfg) requestEditConfig(cfg)
           }}
         />
 
@@ -1683,6 +1702,19 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           liveSessionCount={runningCounts.get(editingConfig.id) ?? 0}
         />
       )}
+
+      {editGuardConfig && (() => {
+        const { liveCount, leftRunningCount } = configEditGuardState(editGuardConfig, runningCounts.get(editGuardConfig.id) ?? 0, detachedEntries)
+        return (
+          <ConfigEditGuardDialog
+            label={editGuardConfig.label}
+            liveCount={liveCount}
+            leftRunningCount={leftRunningCount}
+            onProceed={() => { setEditingConfig(editGuardConfig); setEditGuardConfig(null) }}
+            onCancel={() => setEditGuardConfig(null)}
+          />
+        )
+      })()}
 
     </aside>
   )

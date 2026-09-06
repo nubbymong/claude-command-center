@@ -12,6 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { isValidProfileId, PROFILES_ROOT_DIRNAME } from './profile-id'
 import { atomicWriteFileSync } from './atomic-write'
 import { logWarn } from './debug-logger'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -22,18 +23,13 @@ import type { AccountProfile, AccountProfilesConfig } from '../shared/account-ty
 // are deliberately NOT here -- they stay private per profile.
 export const SHARED_DIR_NAMES = ['projects', 'memory', 'agents', 'skills', 'commands', 'plugins'] as const
 
-// Profile ids are CCC-generated, lowercase-alphanumeric + hyphen. Validating
-// here is the primary defense against a malicious/buggy renderer-supplied id
-// (e.g. "..\\..\\.claude") escaping the profiles root in teardown.
-const PROFILE_ID_RE = /^[a-z0-9][a-z0-9-]*$/
-
-// `unknown` in, type-guard out: the id can arrive over IPC, where it is not
-// necessarily a string. `RE.test(x)` would stringify a non-string first, so a
-// crafted `{ toString: () => 'ok' }` used to pass. Length-capped like
-// isValidNoteId so a pathological id can't be used to build a huge path.
-export function isValidProfileId(id: unknown): id is string {
-  return typeof id === 'string' && id.length > 0 && id.length <= 128 && PROFILE_ID_RE.test(id)
-}
+// Profile ids are CCC-generated, lowercase-alphanumeric + hyphen. Validating is
+// the primary defense against a malicious/buggy renderer-supplied id (e.g.
+// "..\\..\\.claude") escaping the profiles root in teardown. The predicate lives
+// in profile-id.ts (dependency-free, so claude-headless can recover a profile
+// id from a HOME path without importing this module's electron graph, #48) and
+// is re-exported here so every existing import keeps working.
+export { isValidProfileId } from './profile-id'
 
 let rootsOverride: { resourcesDir: string; sharedRoot: string } | null = null
 /** Test seam: inject temp roots so we never touch ~/.claude. */
@@ -43,7 +39,7 @@ function resourcesDir(): string { return rootsOverride?.resourcesDir ?? getResou
 /** The shared real config root (default account). Overridable in tests ONLY. */
 export function sharedRoot(): string { return rootsOverride?.sharedRoot ?? path.join(os.homedir(), '.claude') }
 
-export function getProfilesRoot(): string { return path.join(resourcesDir(), 'account-profiles') }
+export function getProfilesRoot(): string { return path.join(resourcesDir(), PROFILES_ROOT_DIRNAME) }
 
 // The single choke point: every profile home in the app is built here, so the
 // guard lives here rather than at each of the ~20 call sites. Three resolvers
@@ -1631,6 +1627,27 @@ function readFileMaybe(file: string): string | undefined {
  *
  * Returns what it did (for logging/tests).
  */
+/**
+ * A profile's credential GENERATION, for the re-auth poll (rc.14 review F7):
+ * `stamp` changes whenever `.credentials.json` is rewritten (a /login, a
+ * rotation), `signedIn` says whether it currently holds an access or refresh
+ * token. Deliberately stat + presence only -- no token, expiry or email leaves
+ * this function, so it is safe to expose over IPC. Absent file: null stamp,
+ * not signed in.
+ */
+export function readProfileCredentialStamp(id: string): { stamp: string | null; signedIn: boolean } {
+  const file = path.join(getProfileConfigDir(id), '.claude', '.credentials.json')
+  let st: fs.Stats
+  try { st = fs.statSync(file) } catch { return { stamp: null, signedIn: false } }
+  let signedIn = false
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { claudeAiOauth?: { accessToken?: unknown; refreshToken?: unknown } }
+    const o = raw?.claudeAiOauth
+    signedIn = !!(o && ((typeof o.accessToken === 'string' && o.accessToken) || (typeof o.refreshToken === 'string' && o.refreshToken)))
+  } catch { signedIn = false }
+  return { stamp: `${Math.round(st.mtimeMs)}:${st.size}`, signedIn }
+}
+
 export function syncPrimaryCredentialsWithGlobal(): PrimaryCredentialSyncResult {
   try {
     const primaryId = getPrimaryProfileId()

@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react'
 import { useCanvasStore } from '../stores/canvasStore'
-import { useExcalidrawStore } from '../stores/excalidrawStore'
+import { openAltPane } from '../stores/altPane'
 import { useSessionStore } from '../stores/sessionStore'
 import { isContextMenuGesture } from '../lib/pointer'
 import {
@@ -48,7 +48,6 @@ export default function CanvasQueuePopover({ sessionId, onClose }: Props) {
   const unknown = useCanvasTotalsStore((s) => s.bySessionId[sessionId]?.unknown ?? 0)
   const refreshTotals = useCanvasTotalsStore((s) => s.refresh)
   const activeCanvasId = useCanvasStore((s) => s.bySessionId[sessionId]?.canvasId ?? null)
-  const setOpen = useExcalidrawStore((s) => s.setOpen)
   const openSessionIds = useSessionStore((s) => s.sessions.map((x) => x.id).join(','))
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -73,7 +72,7 @@ export default function CanvasQueuePopover({ sessionId, onClose }: Props) {
         await useCanvasStore.getState().refresh(sessionId)
         await refreshTotals(sessionId)
         setBusy(null)
-        setOpen(sessionId, true)
+        openAltPane(sessionId, 'canvas') // one surface at a time: evict browser/logs
         onClose()
         return
       }
@@ -84,7 +83,7 @@ export default function CanvasQueuePopover({ sessionId, onClose }: Props) {
       await refreshTotals(sessionId)
       setBusy(null)
     },
-    [sessionId, openTiles, refreshTotals, setOpen, onClose],
+    [sessionId, openTiles, refreshTotals, onClose],
   )
 
   const onDismiss = useCallback(
@@ -134,10 +133,10 @@ export default function CanvasQueuePopover({ sessionId, onClose }: Props) {
         }
         setBusy(null)
       }
-      setOpen(sessionId, true)
+      openAltPane(sessionId, 'canvas') // one surface at a time: evict browser/logs
       onClose()
     },
-    [sessionId, activeCanvasId, openSessionIds, setOpen, onClose],
+    [sessionId, activeCanvasId, openSessionIds, onClose],
   )
 
   return (

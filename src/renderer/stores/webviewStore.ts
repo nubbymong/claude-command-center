@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 import { isAllowedBrowserUrl, type WebviewNavState } from '../../shared/browser-url'
+// A deliberate import cycle (altPane reads this store too): the one-surface
+// rule is enforced HERE, at the two writes that open the pane, so no caller can
+// bypass it. Only ever called inside actions, never at module evaluation.
+import { closeOtherAltPanes } from './altPane'
 
 /**
  * Per-session state for the browser pane (the "webview").
@@ -252,6 +256,10 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   // (#481): the explicit "show me the start page" applied to that viewing;
   // a fresh open gets the ordinary go-home convenience back.
   togglePane: (sessionId) => {
+    // Opening evicts the canvas/logs like every other open. No production
+    // caller today (the buttons use the coordinator); kept honest so this
+    // cannot become a bypass.
+    if (!get().bySessionId[sessionId]?.isOpen) closeOtherAltPanes(sessionId, 'browser')
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {
@@ -284,6 +292,12 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     }))
   },
   navigate: (sessionId, url) => {
+    // One session surface at a time: opening the pane evicts the canvas and
+    // logs. Done at the source so the agent-push open, a "page" command and any
+    // future caller honour it without having to remember to. Before the read
+    // of `cur`, so the snapshot spread below can never resurrect what the
+    // eviction cleared.
+    closeOtherAltPanes(sessionId, 'browser')
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {
@@ -331,6 +345,11 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     }))
   },
   openAccountPane: (sessionId, profileId) => {
+    // Opens the pane too (the Artifacts buttons, Settings' internal-browser
+    // sign-in), so it evicts the canvas and logs exactly as `navigate` does —
+    // this was the third path that left two surfaces flagged open. Before the
+    // read of `cur`, for the same reason as there.
+    closeOtherAltPanes(sessionId, 'browser')
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {

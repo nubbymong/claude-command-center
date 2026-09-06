@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 import { dialogButtonStyle, scrim } from './ui/Dialog'
 
 export type DockFeature = 'tips' | 'ask'
@@ -51,6 +52,9 @@ const COPY: Record<DockFeature, { title: string; body: string; note: string; con
 }
 
 export default function HideDockFeatureDialog({ feature, onConfirm, onCancel }: Props) {
+  // Window-covering modal with its own backdrop (not DialogOverlay): hold the
+  // native panes hidden while mounted, or the browser pane paints over it.
+  useOccludesNativePanes()
   const copy = COPY[feature]
   const confirmRef = useRef<HTMLButtonElement>(null)
 

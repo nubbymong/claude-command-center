@@ -5,10 +5,11 @@ import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
   captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileHomeFromCanonical,
+  readProfileCredentialStamp,
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
-import { fetchAllAccountsUsage, fetchAccountUsage } from '../usage/account-usage'
+import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
@@ -32,6 +33,37 @@ export function registerAccountProfilesHandlers(): void {
 
   // All-accounts usage overview: fetch each profile's usage directly (no session).
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL, () => fetchAllAccountsUsage())
+
+  // Streaming variant (plan P3): the renderer opens a private reply channel and
+  // passes its name; each account's usage is sent back on it AS IT RESOLVES, so
+  // the page fills per-account skeleton rows in load order. `channel` names only
+  // where to send on the CALLER's own webContents (event.sender) -- it can reach
+  // no other window -- but it is prefix-checked so a stray value cannot address an
+  // unrelated ipcRenderer listener in this same renderer. The invoke resolves when
+  // every account has been sent, so the caller knows the stream is complete.
+  //
+  // ONE stream per caller at a time (adversarial pass on #598): a renderer that
+  // opens the usage page again while the previous stream is still pacing its
+  // closed accounts has already discarded the old results (its gen-ref), so the
+  // old loop stops at its next account instead of finishing a fan-out nobody
+  // will read -- N reopenings were N parallel fan-outs against an endpoint that
+  // rate-limits by IP. A destroyed sender stops its loop the same way.
+  const streamGenBySender = new Map<number, number>()
+  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, async (event, p: { channel?: unknown }) => {
+    const channel = p?.channel
+    if (typeof channel !== 'string' || !channel.startsWith('accountUsage:result:') || channel.length > 128) return
+    const senderId = event.sender.id
+    const gen = (streamGenBySender.get(senderId) ?? 0) + 1
+    streamGenBySender.set(senderId, gen)
+    const live = () => !event.sender.isDestroyed() && streamGenBySender.get(senderId) === gen
+    try {
+      await fetchAllAccountsUsageStreaming((usage) => {
+        if (live()) event.sender.send(channel, usage)
+      }, { shouldContinue: live })
+    } finally {
+      if (streamGenBySender.get(senderId) === gen) streamGenBySender.delete(senderId)
+    }
+  })
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>
     // `!!p.noRefresh`, not `=== true` (adversarial review): a hostile/garbled
     // noRefresh must fail toward NOT rotating the token (a stale number), never
@@ -116,6 +148,16 @@ export function registerAccountProfilesHandlers(): void {
         error: `The account's claude.ai session could not be cleared, so the account was not removed: ${err instanceof Error ? err.message : String(err)}`,
       }
     }
+    // The clear above was awaited, and a session can spawn on this profile in
+    // that time: check again before anything destructive, so the guard covers
+    // the whole delete and not only its first instant. Fails closed: the web
+    // session is gone, the account is not -- and its record goes with the
+    // session it described, so the account does not survive claiming a web
+    // session whose partition was just wiped.
+    if (isProfileInUseByLiveSession(p.id)) {
+      removeWebSession(p.id)
+      return { ok: false, error: 'This account is in use by an open session. Its claude.ai sign-in was cleared; close its sessions and try again.' }
+    }
     // Drop the record next to the clear that made it meaningless, rather than
     // after the teardown below: if that throws, the account survives with a
     // record claiming a web session whose partition has already been wiped.
@@ -143,6 +185,15 @@ export function registerAccountProfilesHandlers(): void {
       backupProfileHomeToCanonical(p.id)
     }
     return { ok: true, email, configDir: getProfileConfigDir(p.id) }
+  })
+  // rc.14 review F7: the re-auth poll needs to know whether the CREDENTIALS
+  // changed, not whether an email exists -- an expired account still has its
+  // email on disk, so refreshIdentity alone "completed" a login that never
+  // happened. This returns a generation stamp (stat) and a signed-in flag;
+  // token contents never cross the bridge.
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, (_e, p: { id: string }) => {
+    if (!p || !isValidProfileId(p.id)) return { ok: false, stamp: null, signedIn: false }
+    return { ok: true, ...readProfileCredentialStamp(p.id) }
   })
   ipcMain.handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
   ipcMain.handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sessionId: string; name?: string }) => {

@@ -23,6 +23,16 @@ import { ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR, safeSid } from './ssh-tmux
  */
 export const TMUX_LIVENESS_BEGIN = '__CCC_TMUX_LIVE_BEGIN__'
 export const TMUX_LIVENESS_END = '__CCC_TMUX_LIVE_END__'
+/**
+ * Printed once per tmux binary that actually EXISTS on the host, right before
+ * that binary's listing (rc.14 review F11). Without it, a host whose tmux lives
+ * somewhere none of the candidates cover produced BEGIN..END with nothing in
+ * between -- indistinguishable from "tmux ran and found no sessions" -- and the
+ * store took that verified-empty answer as proof of death. A run that reached
+ * END but printed no FOUND is now "the shell ran, but no authoritative probe
+ * did": unverified, and the entries stay.
+ */
+export const TMUX_LIVENESS_FOUND = '__CCC_TMUX_FOUND__'
 
 /**
  * The remote command run over a one-shot ssh exec. HOST-AUTHORED LITERAL with
@@ -38,34 +48,73 @@ export const TMUX_LIVENESS_END = '__CCC_TMUX_LIVE_END__'
  * (computeLiveSessionIds) against the returned names via safeSid, so no untrusted
  * value ever reaches the remote shell.
  */
+/**
+ * Every place a tmux binary can live on a host we support, as HOST-AUTHORED
+ * LITERALS (rc.14 review F11, aicc_planning#55). The probe runs over a
+ * NON-LOGIN ssh exec whose PATH is minimal: on macOS a Homebrew tmux lives in
+ * /opt/homebrew/bin (arm64) or /usr/local/bin (intel), which only a login shell
+ * adds to PATH -- so `command tmux` alone came back empty there, the probe
+ * still printed its completion sentinel, and a VERIFIED-EMPTY answer pruned
+ * live Remote Resumable entries. The End command (buildRemoteTmuxKillCommand in
+ * providers/claude/ssh-shim.ts) already tries these same locations for the
+ * same reason; a test pins the two lists to each other so they cannot drift
+ * apart again.
+ */
+export const TMUX_LIVENESS_BIN_EXPRS: readonly string[] = [
+  ON_PATH_TMUX_BIN_EXPR,
+  '/opt/homebrew/bin/tmux',
+  '/usr/local/bin/tmux',
+  '/usr/bin/tmux',
+  STAGED_TMUX_BIN_EXPR,
+]
+
 export function buildTmuxListCommand(): string {
+  // Each candidate is probed for existence FIRST, and only an existing binary
+  // prints the FOUND marker and lists. `command -v` for the on-PATH form, `-x`
+  // for the fixed paths; both are POSIX sh. Everything stays a literal.
+  const lists = TMUX_LIVENESS_BIN_EXPRS.map((bin) => {
+    const exists = bin === ON_PATH_TMUX_BIN_EXPR ? 'command -v tmux >/dev/null 2>&1' : `[ -x ${bin} ]`
+    return `${exists} && { echo ${TMUX_LIVENESS_FOUND}; ${bin} ls -F '#{session_name}' 2>/dev/null; }; `
+  }).join('')
   return (
     `echo ${TMUX_LIVENESS_BEGIN}; ` +
-    `${ON_PATH_TMUX_BIN_EXPR} ls -F '#{session_name}' 2>/dev/null; ` +
-    `${STAGED_TMUX_BIN_EXPR} ls -F '#{session_name}' 2>/dev/null; ` +
+    lists +
     `echo ${TMUX_LIVENESS_END}`
   )
 }
 
 /**
- * Parse the probe's raw stdout/PTY output. `completed` is true iff the END
- * sentinel came back (the shell ran the whole command) — the caller reads that as
- * "verified", its absence as "unverified" (fail-open). `names` are the tmux
- * session names between the sentinels, ANSI-stripped, trimmed, de-duped (both tmux
- * tiers can list the same session). Robust to a login banner before BEGIN and to
- * CR/LF and ANSI noise over a PTY.
+ * Parse the probe's raw stdout/PTY output. `completed` is true iff the run is
+ * AUTHORITATIVE: the END sentinel came back (the shell ran the whole command)
+ * AND at least one tmux binary printed FOUND (an actual tmux answered). The
+ * caller reads that as "verified", anything else as "unverified" (fail-open):
+ * no END is a connection/auth failure; END without FOUND is a host where none
+ * of the candidate binaries exist, which must never read as "no sessions".
+ * `shellCompleted` / `tmuxFound` are exposed for logging. `names` are the tmux
+ * session names between the sentinels, ANSI-stripped, trimmed, de-duped (several
+ * binaries can list the same session). Robust to a login banner before BEGIN and
+ * to CR/LF and ANSI noise over a PTY.
  */
-export function parseTmuxLivenessOutput(raw: string): { completed: boolean; names: string[] } {
+export function parseTmuxLivenessOutput(raw: string): { completed: boolean; shellCompleted: boolean; tmuxFound: boolean; names: string[] } {
   const clean = stripAnsiForSentinel(raw)
   const lines = clean.split(/\r?\n/).map((l) => l.trim())
   const endIdx = lines.lastIndexOf(TMUX_LIVENESS_END)
-  if (endIdx === -1) return { completed: false, names: [] }
-  const beginIdx = lines.indexOf(TMUX_LIVENESS_BEGIN)
+  if (endIdx === -1) return { completed: false, shellCompleted: false, tmuxFound: false, names: [] }
+  // The LAST BEGIN before that END, not the first in the buffer (adversarial
+  // pass on #598): BEGIN and END are matched symmetrically, so text printed
+  // BEFORE the command ran -- a login banner, a MOTD, anything a host-side
+  // actor can author -- cannot contribute a forged FOUND marker and session
+  // names to the body. Only what the shell printed between the probe's own
+  // sentinels counts. (A session NAMED like the BEGIN sentinel empties the body
+  // and reads as unverified -- fail-open, never a false "live".)
+  const beginIdx = lines.lastIndexOf(TMUX_LIVENESS_BEGIN, endIdx)
   const from = beginIdx === -1 ? 0 : beginIdx + 1
-  const names = lines
-    .slice(from, endIdx)
-    .filter((l) => l.length > 0 && l !== TMUX_LIVENESS_BEGIN && l !== TMUX_LIVENESS_END)
-  return { completed: true, names: Array.from(new Set(names)) }
+  const body = lines.slice(from, endIdx)
+  const tmuxFound = body.includes(TMUX_LIVENESS_FOUND)
+  if (!tmuxFound) return { completed: false, shellCompleted: true, tmuxFound: false, names: [] }
+  const names = body
+    .filter((l) => l.length > 0 && l !== TMUX_LIVENESS_BEGIN && l !== TMUX_LIVENESS_END && l !== TMUX_LIVENESS_FOUND)
+  return { completed: true, shellCompleted: true, tmuxFound: true, names: Array.from(new Set(names)) }
 }
 
 /**

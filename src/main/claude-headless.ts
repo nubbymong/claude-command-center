@@ -3,6 +3,13 @@
 import { spawn, execSync } from 'child_process'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
+import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
+import { profileIdFromHome } from './profile-id'
+
+/** Grace added to a run's kill timeout for its consumer ref's leak bound: the
+ *  spawner kills at `timeoutMs` and settles right after, so a ref that outlives
+ *  this could only be one whose release never ran. */
+export const HEADLESS_CONSUMER_GRACE_MS = 60_000
 
 // shell:true means the spawn is `cmd.exe -> claude` on Windows, so proc.kill()
 // kills only the shell and orphans the real claude process (it keeps running and
@@ -89,6 +96,43 @@ export function spawnClaudeHeadless(
   signal?: AbortSignal
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   assertSafeArgv(args)
+  // #48/#49: a headless run under a profile home is a credential consumer like
+  // any session, and this is the ONE place every such run passes through
+  // (insights KPI extraction, the cross-account synthesis, Sentinel analysis).
+  // Two things follow. If the usage page is mid-rotation for THIS profile, the
+  // run waits for the new lineage to land before it spawns -- a CLI that read
+  // the old file would redeem the same single-use refresh token later and log
+  // the account out. And for the run's whole life the profile reads as in-use,
+  // so the usage refresh and the account delete defer to it. The ref is bounded
+  // by the run's own kill timeout plus a grace: the only way it outlives that is
+  // a release that never ran, which is a leak, and leaks are swept.
+  //
+  // The spawn stays SYNCHRONOUS when nothing is pending (the common case, and
+  // what the timeout tests drive); it defers only behind a real in-flight
+  // refresh for this profile.
+  //
+  // The hold is taken BEFORE the wait (adversarial pass on #598): it is what
+  // stops a new rotation from starting, and acquiring only after the in-flight
+  // one settled left a microtask in which a fresh refresh could begin and
+  // rotate the token this run is about to read. The wait itself is bounded by
+  // the refresh's own socket timeout, well inside the ref's grace.
+  const profileId = profileIdFromHome(home)
+  const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
+  const pending = profileId ? pendingProfileRefresh(profileId) : null
+  const p = pending
+    ? pending.then(() => spawnNow(args, timeoutMs, stdinData, home, signal))
+    : spawnNow(args, timeoutMs, stdinData, home, signal)
+  if (release) p.then(release, release)
+  return p
+}
+
+function spawnNow(
+  args: string[],
+  timeoutMs: number,
+  stdinData: string | undefined,
+  home: string | null,
+  signal: AbortSignal | undefined
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
 

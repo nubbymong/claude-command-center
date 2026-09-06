@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 import { generateId } from '../utils/id'
 import { COMMAND_SWATCHES, swatchesFor } from '../lib/command-swatches'
 import { ConfirmCard } from './command-bar/menus'
@@ -50,6 +51,9 @@ const segStyle = (selected: boolean, disabled?: boolean): React.CSSProperties =>
  * and nowhere else, and `notes.save` is the caller's.
  */
 export default function NoteDialog({ note, configId, configName, onSave, onCancel, onDelete }: Props) {
+  // Window-covering modal with its own backdrop (not DialogOverlay): hold the
+  // native panes hidden while mounted, or the browser pane paints over it.
+  useOccludesNativePanes()
   const isEdit = !!note
   const [label, setLabel] = useState(note?.label || '')
   const [content, setContent] = useState('')

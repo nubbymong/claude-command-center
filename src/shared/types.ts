@@ -244,6 +244,18 @@ export interface DetachedRemote {
   host: string
   username: string
   remotePath: string
+  /** SSH port at detach time (#54). With host/user/path/runtime it is the
+   *  recorded DESTINATION every lookup verifies against the saved config before
+   *  offering a reattach: a config-id match whose destination has since been
+   *  edited away is an orphan of that edit, never a retarget. Absent on entries
+   *  written before this field existed; those are matched on host/user/path as
+   *  before (see shared/detached-destination.ts). */
+  port?: number
+  /** The runtime the session ran under at detach time (#54), recorded
+   *  normalised: `{ type: 'host' }` for a plain host session, else the container
+   *  runtime (a legacy docker post-command is recorded as the container it
+   *  names). Absent on pre-#54 entries. */
+  runtime?: SshRuntime
   /** Multiplexer holding the session alive. Always 'tmux' today (psmux is the
    *  Windows-only path and is NOT wired yet — the field is recorded for it). */
   mux: 'tmux' | 'psmux'

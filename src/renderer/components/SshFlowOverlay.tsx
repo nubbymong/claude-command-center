@@ -17,6 +17,19 @@ interface Props {
   onRetry?: () => void
 }
 
+/** Main's reason string for a failed container entry (pty-manager, rc.14 review
+ *  F1, aicc_planning#45). The overlay keys the Run again button on it. */
+export const CONTAINER_ENTRY_FAILED = 'container entry failed'
+
+/** The failed-state copy for a reason main sent. Most reasons are shown as
+ *  they are; the container entry gets a sentence that says what to do. */
+export function failureText(info: string | undefined): string {
+  if (info === CONTAINER_ENTRY_FAILED) {
+    return 'The container could not be entered: the host shell came back. Start the container (or fix sudo or the engine), then run the post-connect command again. Skip stays on the host shell.'
+  }
+  return info ?? 'See app.log for details.'
+}
+
 type FlowState =
   | 'connecting'
   | 'awaiting-postcommand'
@@ -79,7 +92,7 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
       if (msg.state !== 'running-postcommand' && msg.state !== 'running-setup' && msg.state !== 'running-claude') {
         setBusy(false)
       }
-      if (msg.state === 'failed') setErrorText(msg.info ?? 'See app.log for details.')
+      if (msg.state === 'failed') setErrorText(failureText(msg.info))
       else setErrorText(null)
     })
 
@@ -315,12 +328,26 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
         <div className="space-y-1.5">
           <p className="text-[11px]" style={{ color: 'var(--status-danger)' }}>{errorText || 'Step did not complete.'}</p>
           <div className="flex gap-1.5">
-            <DialogButton
-              variant="primary"
-              onClick={launchClaude}
-            >
-              Retry Launch
-            </DialogButton>
+            {info === CONTAINER_ENTRY_FAILED ? (
+              // rc.14 review F1 round 2: Retry Launch only re-emits this failure
+              // (main refuses the host ladder). The way forward is to run the
+              // post-command again once the container is fixed.
+              <DialogButton
+                variant="primary"
+                onClick={runPostCommand}
+                disabled={busy}
+                testId="ssh-run-post-command-again"
+              >
+                Run again
+              </DialogButton>
+            ) : (
+              <DialogButton
+                variant="primary"
+                onClick={launchClaude}
+              >
+                Retry Launch
+              </DialogButton>
+            )}
             <DialogButton
               variant="ghost"
               onClick={skip}

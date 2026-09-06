@@ -1,5 +1,6 @@
 import React from 'react'
 import { useLogsStore } from '../stores/useLogsStore'
+import { toggleAltPane } from '../stores/altPane'
 import { useSettingsStore } from '../stores/settingsStore'
 import type { LogsEmptyReason } from '../lib/session-capabilities'
 
@@ -34,14 +35,13 @@ const reasonCopy = (reason: LogsEmptyReason, remoteHost?: string): string => {
 export default function LogsButton({ sessionId, structuralReason = null, remoteHost }: Props) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
   const isOpen = useLogsStore((s) => !!s.bySessionId[sessionId]?.isOpen)
-  const togglePane = useLogsStore((s) => s.togglePane)
 
   if (loggingEnabled === false) return null
   const dim = !!structuralReason && !isOpen
 
   return (
     <button
-      onClick={() => togglePane(sessionId)}
+      onClick={() => toggleAltPane(sessionId, 'logs')}
       className={`flex items-center gap-1.5 px-2 h-7 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
         isOpen
           ? 'bg-surface1 border-surface1 text-text'

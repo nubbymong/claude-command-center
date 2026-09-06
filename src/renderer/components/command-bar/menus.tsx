@@ -1,4 +1,5 @@
 import React from 'react'
+import { useOccludesNativePanes } from '../../stores/paneOcclusionStore'
 import type { CustomCommand, CommandSection, CommandBand } from '../../stores/commandStore'
 import type { CoreToolId, CommandBarOverflow } from '../../stores/commandBarStore'
 import type { SessionCapabilities } from '../../lib/session-capabilities'
@@ -440,6 +441,9 @@ export function ConfirmCard({ title, body, actions, onCancel, testId }: {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onCancel])
+  // Window-covering confirm with its own backdrop (not DialogOverlay): hold the
+  // native panes hidden while mounted, or the browser pane paints over it.
+  useOccludesNativePanes()
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" data-testid={testId ?? 'command-confirm'}>
       <div className="rounded-xl shadow-2xl w-[440px] max-w-[92vw]" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }} role="dialog" aria-modal="true" aria-labelledby="cmd-confirm-title">

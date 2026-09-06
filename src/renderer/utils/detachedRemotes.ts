@@ -10,6 +10,7 @@
 import type { DetachedRemote } from '../../shared/types'
 import type { Session } from '../stores/sessionStore'
 import type { TerminalConfig } from '../stores/configStore'
+import { detachedDestinationAgrees, effectiveRuntimeOf, normalizeSshPort } from '../../shared/detached-destination'
 
 /** The Session fields buildDetachedRemote reads — a narrow view so this module
  *  never depends on the full store record. */
@@ -27,6 +28,10 @@ export type LaunchableConfig = Pick<TerminalConfig, 'id' | 'sessionType' | 'sshC
  * multiplexer is always 'tmux' for now — psmux (Windows) is not wired yet, so
  * the field is recorded as 'tmux' regardless of remoteOs (a Windows remote's
  * reattach is a known upstream gap and degrades to a fresh create either way).
+ *
+ * The entry records the session's COMPLETE destination — host, user, port, path
+ * and the runtime it actually ran under (#54) — so a later edit of the config it
+ * came from can be told apart from the config that launched it.
  */
 export function buildDetachedRemote(session: DetachableSession | undefined | null, now: number): DetachedRemote | null {
   if (!session) return null
@@ -39,6 +44,8 @@ export function buildDetachedRemote(session: DetachableSession | undefined | nul
     host: ssh.host,
     username: ssh.username,
     remotePath: ssh.remotePath,
+    port: normalizeSshPort(ssh.port),
+    runtime: effectiveRuntimeOf(ssh),
     mux: 'tmux',
     accountEmail: session.sshRemoteAccount,
     label: session.customName?.trim() || session.label,
@@ -49,20 +56,28 @@ export function buildDetachedRemote(session: DetachableSession | undefined | nul
 /**
  * Registry entries that could reattach for this config. SSH configs only; a
  * local/non-SSH launch never consults the map. Match by `configId` first (the
- * strong key), and only when nothing matches by config fall back to
- * host+username+remotePath so a re-created config pointing at the same remote
- * still finds it. Returns [] for a non-SSH config or an SSH config with no
- * matching remote.
+ * strong key), and only when nothing matches by config fall back to the
+ * destination (host+user+port+path+runtime) so a re-created config pointing at
+ * the same remote still finds it. Returns [] for a non-SSH config, an SSH
+ * config with no ssh block, or one with no matching remote.
+ *
+ * #54: the config id is the strong key only while the config still points
+ * where the session was left. An entry recorded under this id whose destination
+ * has since been edited (host A -> B, another port, a different container) is
+ * an ORPHAN of that edit: it is not offered here, its liveness is not asked of
+ * the new host (a verified-empty answer from B would have pruned A's entry),
+ * and Resume / End never act on B. `detachedDestinationAgrees` is the one rule,
+ * shared with main's IPC handlers so the two cannot disagree.
  */
 export function matchDetachedRemotes(entries: DetachedRemote[], config: LaunchableConfig): DetachedRemote[] {
   if (config.sessionType !== 'ssh') return []
-  const byConfig = config.id ? entries.filter((e) => e.configId === config.id) : []
-  if (byConfig.length > 0) return byConfig
   const ssh = config.sshConfig
   if (!ssh) return []
-  return entries.filter(
-    (e) => e.host === ssh.host && e.username === ssh.username && e.remotePath === ssh.remotePath,
-  )
+  const byConfig = config.id
+    ? entries.filter((e) => e.configId === config.id && detachedDestinationAgrees(e, ssh))
+    : []
+  if (byConfig.length > 0) return byConfig
+  return entries.filter((e) => detachedDestinationAgrees(e, ssh))
 }
 
 /**
@@ -106,15 +121,43 @@ export function configForDetachedEntry<C extends LaunchableConfig>(
   entry: DetachedRemote,
   configs: C[],
 ): C | undefined {
-  // Exact config id wins outright. matchDetachedRemotes would also accept a
-  // DIFFERENT config that merely shares host+user+path, and resuming into the
-  // wrong template (different account, model, post-command) is worse than the
-  // deleted-config path.
+  // Exact config id wins outright -- while it still points at the recorded
+  // destination (#54). matchDetachedRemotes would also accept a DIFFERENT
+  // config that merely shares the destination, and resuming into the wrong
+  // template (different account, model, post-command) is worse than the
+  // deleted-config path. An exact id whose destination moved is NOT the
+  // session's config any more; the fallback may still find a re-created one
+  // that is, and otherwise the entry is an orphan (see pairDetachedEntry).
   if (entry.configId) {
     const exact = configs.find((c) => c.id === entry.configId)
-    if (exact) return exact
+    if (exact && matchDetachedRemotes([entry], exact).length > 0) return exact
   }
   return configs.find((c) => matchDetachedRemotes([entry], c).length > 0)
+}
+
+/**
+ * How a registry entry relates to the saved configs, for the resume surface:
+ *   - 'paired'      — `config` still reaches the recorded destination; Resume is
+ *                     offered through it (the id match, or a re-created config).
+ *   - 'retargeted'  — the config it was launched from still exists but was
+ *                     EDITED to point elsewhere (host, port, user, path, or
+ *                     runtime), and no other config reaches the recorded
+ *                     destination. Remove only — never a resume through the
+ *                     edited config, which would land on the wrong machine (#54).
+ *   - 'deleted'     — no config with its id exists and nothing else reaches the
+ *                     destination. Remove only.
+ */
+export type DetachedEntryPairing<C> =
+  | { kind: 'paired'; config: C }
+  | { kind: 'retargeted'; config: C }
+  | { kind: 'deleted' }
+
+export function pairDetachedEntry<C extends LaunchableConfig>(entry: DetachedRemote, configs: C[]): DetachedEntryPairing<C> {
+  const config = configForDetachedEntry(entry, configs)
+  if (config) return { kind: 'paired', config }
+  const recorded = entry.configId ? configs.find((c) => c.id === entry.configId) : undefined
+  if (recorded) return { kind: 'retargeted', config: recorded }
+  return { kind: 'deleted' }
 }
 
 /**

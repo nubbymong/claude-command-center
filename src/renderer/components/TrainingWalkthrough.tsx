@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import {
   trainingSteps,
@@ -93,6 +94,13 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
   // larger panel (still unmasked, app remains interactive). first-run
   // is always full-screen so the toggle is hidden in that mode.
   const [expanded, setExpanded] = useState(false)
+  // The native browser / account panes must not paint over this when it
+  // covers the session area: always in first-run (a masked whole-window
+  // overlay), and in help mode only while EXPANDED to the centred panel. The
+  // collapsed help card is a corner card over an app that stays interactive,
+  // so it must not blank the pane for its whole life. Nothing is held while
+  // there are no steps to show (the early null return below).
+  useOccludesNativePanes(steps.length > 0 && (mode === 'first-run' || expanded))
 
   const step = steps[displayIndex]
   const isFirst = currentIndex === 0

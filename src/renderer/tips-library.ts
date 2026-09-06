@@ -1067,6 +1067,37 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.account-usage-reuse',
+    category: 'tokenomics',
+    complexity: 'simple',
+    priority: 40,
+    variants: {
+      primary: {
+        shortText: 'The Usage page reuses what your sessions already know',
+        title: 'Account Usage, Without the Extra Calls',
+        body: 'The **Usage page** (the person icon on the left rail, once you have two or more accounts) shows the 5-hour and weekly limits for every account. It is cheaper than it looks: an account with an **open session** shows the figures that session already reported on its status line, so it makes no request at all; the primary account is the exception and is always fetched. Accounts with no session open are fetched one at a time, each row filling in as its answer arrives.\n\nThat is also why the page never refreshes a signed-in account\'s token while anything is using it: sessions, shells, Insights runs and cloud agents all count.\n\nOne more exception: an account on extra usage (paid credits) still makes a single request for its credits figure, which the status line cannot carry.',
+        actionLabel: 'Open the Usage page',
+        actionTarget: 'account-usage',
+      },
+    },
+  },
+
+  {
+    id: 'tip.config-edit-guard',
+    category: 'sessions',
+    complexity: 'simple',
+    priority: 38,
+    variants: {
+      primary: {
+        shortText: 'Editing a running SSH config warns you first',
+        title: 'Edit a Config While It Runs',
+        body: 'Opening the editor for an SSH config that has a **live** or **left-running** session shows a short warning first: it lists what is affected, reminds you that changes apply on the **next launch** rather than to the running session, and that changing **where it connects** (host, port, user, path or container) can break resuming the one you left running.\n\nIt never blocks -- Cancel, or **Edit anyway**. If you do move a config, the session you left on the old host shows as retargeted in Remote Resumable, with Remove as its only action and the command to end it where it really is.',
+        focusHint: 'Sidebar -- the pencil on a saved SSH config row, or Edit in its right-click menu',
+      },
+    },
+  },
+
+  {
     id: 'tip.transparency.network-activity',
     category: 'transparency',
     complexity: 'intermediate',
