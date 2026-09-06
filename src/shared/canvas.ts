@@ -315,6 +315,36 @@ export function openVersionIdsOf(versions: readonly CanvasVersion[]): string[] {
   return out
 }
 
+/**
+ * rc.15 review R10 (aicc_planning#52 adjacent): the LIVE artefact runs whose
+ * latest decision is a REJECTION that nothing has reworked -- rounds the agent
+ * still owes on. The resume gate and Mark complete both read this: a plan the
+ * user rejected does not become finished because a design beside it was
+ * approved. A rejection IS reworked once a later live run of the same kind
+ * carries a decision (approved or dismissed): a plan rendered after a design
+ * starts a new run in this history (artifactRuns breaks on the kind change),
+ * and its approval is the rework the rejected plan was waiting for. Archived
+ * runs are the user's own tucking-away and are skipped (Codex re-review,
+ * condition 3); show-and-tell and withdrawn versions are skipped the way
+ * `openVersionOf` skips them. Returns the rejected anchors' version ids.
+ */
+export function rejectedRunAnchorsOf(versions: readonly CanvasVersion[]): string[] {
+  const runs = artifactRuns(versions).filter((run) => !run[0]?.archived)
+  const anchorOf = (run: CanvasVersion[]) => [...run].reverse().find((v) => !v.draft && !v.show && v.verdict?.state !== 'withdrawn')
+  const out: string[] = []
+  runs.forEach((run, i) => {
+    const anchor = anchorOf(run)
+    if (anchor?.verdict?.state !== 'rejected') return
+    const reworked = runs.slice(i + 1).some((later) => {
+      if (later[0]?.mode !== run[0]?.mode) return false
+      const state = anchorOf(later)?.verdict?.state
+      return state === 'approved' || state === 'dismissed'
+    })
+    if (!reworked) out.push(anchor.id)
+  })
+  return out
+}
+
 /** The round the user owes a first review on: set when the agent deliberately
  *  marks a render ready (#366), cleared when the user submits a review on the
  *  canvas. This is one of the two inputs to the queue number (#364); the other

@@ -37,8 +37,10 @@ import {
   sameProjectDirExactCase,
   setCanvasSessionInfoResolver,
   type CanvasWorkspaceCheck,
+  type CanvasLivenessQuery,
+  type CanvasReviewDebt,
 } from './canvas-store'
-import { dropReviewsForCanvas, getReviewCountsForCanvas, rebindReviewsToSession } from './canvas-review-store'
+import { dropReviewsForCanvas, getReviewCountsForCanvas, rebindReviewsToSession, reviewStoreFileExists } from './canvas-review-store'
 import { isPtySessionLive } from '../session-registry'
 import { getTranscriptBinder } from '../logging/logging-service'
 import { listProfiles } from '../account-profiles'
@@ -252,8 +254,17 @@ function openTileSet(openTileSessionIds: readonly string[] | undefined): Set<str
  *
  * Takes NO hint, deliberately: see `isSessionLive`.
  */
-export function canvasLivenessQuery(): { isSessionLive: (sessionId: string) => boolean } {
-  return { isSessionLive }
+export function canvasLivenessQuery(): CanvasLivenessQuery {
+  return { isSessionLive, reviewDebt }
+}
+
+/** rc.15 review R10: the review debt the resume gate reads -- the SAME four
+ *  counts Mark complete refuses over, from the same store; a store that exists
+ *  but cannot be read is 'unreadable' (debt), an absent one 'none'. */
+function reviewDebt(canvasId: string): CanvasReviewDebt {
+  const counts = getReviewCountsForCanvas(canvasId)
+  if (counts) return { draftNotes: counts.draftNotes, openNotes: counts.openNotes, addressedNotes: counts.addressedNotes, liveRounds: counts.liveRounds }
+  return reviewStoreFileExists(canvasId) ? 'unreadable' : 'none'
 }
 
 /**

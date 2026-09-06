@@ -42,6 +42,7 @@ import {
   libraryRowKindOf,
   openVersionIdsOf,
   openVersionOf,
+  rejectedRunAnchorsOf,
   sanitizeAuditStamp,
   sanitizeCanvasConfigId,
   type CanvasVersionVerdict,
@@ -609,7 +610,22 @@ export interface CanvasLivenessQuery {
    * route back.
    */
   isSessionLive: (sessionId: string) => boolean
+  /**
+   * rc.15 review R10: the canvas's review debt -- exactly what Mark complete
+   * refuses over -- so the resume gate reads the SAME debt (isSettled). Absent
+   * (a test affordance) means no review store is consulted.
+   */
+  reviewDebt?: (canvasId: string) => CanvasReviewDebt
 }
+
+/** What the review store owes on a canvas, for `isSettled`: the four counts the
+ *  completion guard reads, 'unreadable' for a store that exists but cannot be
+ *  read (debt: refusing to call settled what cannot be checked), 'none' for a
+ *  canvas that never had a review store. */
+export type CanvasReviewDebt =
+  | { draftNotes: number; openNotes: number; addressedNotes: number; liveRounds: number }
+  | 'unreadable'
+  | 'none'
 
 /**
  * "May this session act on a canvas stamped with THAT workspace?" — the second
@@ -2215,51 +2231,82 @@ function isLiveOrUnknown(sessionId: string, isSessionLive: (sid: string) => bool
  * Fails safe: an oracle that throws counts as live, and live means untouchable.
  */
 /**
- * Signed off is DONE, not resumable (owner, 2026-09-06: "if something was
- * signed off then it should be done"). Two conditions. The first is the
- * completion guard's own version term, so this gate never says DONE over a
- * canvas Mark complete would refuse on its versions. (The guard has further
- * terms this store cannot read -- review notes still with the agent, an
- * agent-chat verdict -- so the converse does not hold: notes still owed under
- * an approved newest run are a known gap, recorded in the 2026-09-06 fragment.)
- *   1. Nothing is still owed. `openVersionIdsOf` — every live (non-archived)
- *      run's open version — is empty. A canvas holds a history of runs, of
- *      several kinds: a plan still awaiting the user under an approved design
- *      is unfinished, exactly as Mark complete refuses it.
- *   2. The NEWEST run (`artifactRuns(...).at(-1)`) was decided. Its anchor —
- *      the newest version the user would act on, skipping show-and-tell (owes
- *      no review) and 'withdrawn' stamps, the rule `openVersionOf` uses —
- *      carries 'approved' or 'dismissed'. An earlier run's approval does not
- *      reach across: approve run A, archive it, render run B, and B decides.
- * So: 'rejected' asks for another round and stays resumable; an open version
- * anywhere live stays resumable; a canvas of drafts only has nothing decided,
- * so it is not signed off (the list has no shown version to make a card of,
- * but the action does not refuse it). Drafts otherwise neither block nor
- * count: they are the
- * agent's own loop (#366), shown to nobody, and the completion guard ignores
- * them too — a draft rendered after an approval does not reopen the subject.
+ * SETTLED is DONE, not resumable (owner, 2026-09-06: "if something was signed
+ * off then it should be done") -- rc.15 review R10 (aicc_planning#52 adjacent):
+ * ONE predicate for the resume list, the resume action and the completion
+ * guard's version/debt terms, so the three can never disagree over a record.
+ * A canvas is settled when:
+ *   1. Nothing is still owed on its versions: no live run has an open version
+ *      (`openVersionIdsOf`) and no live run's latest decision is a rejection
+ *      with no later version (`rejectedRunAnchorsOf`). A plan the user
+ *      rejected does not become finished because a design beside it was
+ *      approved -- which is what the newest-run-only reading got wrong.
+ *   2. Something WAS decided: at least one live run's anchor -- its newest
+ *      version skipping show-and-tell and 'withdrawn', the rule `openVersionOf`
+ *      uses -- carries 'approved' or 'dismissed'. A canvas of drafts, or of
+ *      show-and-tell only, has nothing decided (the list has no shown version
+ *      to make a card of, but the action does not refuse it).
+ *   3. The review store owes nothing: no draft, open or answered notes and no
+ *      live round -- the debt Mark complete refuses over (canvas-completion);
+ *      a review store that exists but cannot be read is debt (resumable), an
+ *      absent one is none. Read through the query's oracle, which the
+ *      session link builds from the review store this module may not import.
+ * An archived run OWES nothing -- the user tucked it away (Codex re-review,
+ * condition 3) -- but an approved run that was archived is still a decision.
+ * Drafts never count (#366).
  *
- * Two readings of "signed off" coexist on purpose. The Library's Signed-off
- * chip (canvas-library-rows) means the canvas was MARKED COMPLETE (#476); this
- * gate means the canvas is decided. Both callers check `completed` first; this
+ * Two readings of "done" coexist on purpose. The Library's Signed-off chip
+ * (canvas-library-rows) means the canvas was MARKED COMPLETE (#476); this gate
+ * means the canvas is settled. Both callers check `completed` first; this
  * covers the far more common "reviewed and approved but never formally Marked
  * complete" case, which was surfacing every signed-off canvas as resumable.
  */
-function isSignedOff(record: CanvasRecord): boolean {
+export function isSettled(
+  record: Pick<CanvasRecord, 'canvasId' | 'versions'>,
+  reviewDebt?: CanvasLivenessQuery['reviewDebt'],
+): boolean {
   const { versions } = record
   if (openVersionIdsOf(versions).length > 0) return false // still owed somewhere live
-  const run = artifactRuns(versions).at(-1)
-  if (!run) return false // drafts only, or nothing: nothing has been decided
-  const anchor = [...run].reverse().find((v) => !v.show && v.verdict?.state !== 'withdrawn')
-  const state = anchor?.verdict?.state
-  return state === 'approved' || state === 'dismissed'
+  if (rejectedRunAnchorsOf(versions).length > 0) return false // a rework still with the agent
+  let decided = false
+  for (const run of artifactRuns(versions)) {
+    const anchor = [...run].reverse().find((v) => !v.show && v.verdict?.state !== 'withdrawn')
+    if (!anchor) {
+      // A LIVE run that is only show-and-tell so far is a fresh artefact nobody
+      // has decided on: undecided, whatever an earlier run's approval says
+      // (canvas-session-link tests). Archived, it owes and decides nothing.
+      if (!run[0]?.archived) return false
+      continue
+    }
+    const state = anchor.verdict?.state
+    // An approved run stays decided when the user archives it -- archiving
+    // tucks it away, it does not un-decide it (canvas-session-link tests).
+    if (state === 'approved' || state === 'dismissed') { decided = true; continue }
+    // A rejection still here was judged reworked above (rejectedRunAnchorsOf);
+    // the rework's decision is the one that counts.
+    if (state === 'rejected') continue
+    if (run[0]?.archived) continue // an archived run owes nothing (Codex re-review, condition 3)
+    return false // 'superseded' at the anchor, or anything else: not decided
+  }
+  if (!decided) return false // drafts only, or nothing: nothing has been decided
+  if (reviewDebt) {
+    let debt: CanvasReviewDebt
+    try {
+      debt = reviewDebt(record.canvasId)
+    } catch {
+      return false // cannot read the debt -> treat as owed
+    }
+    if (debt === 'unreadable') return false
+    if (debt !== 'none' && debt.draftNotes + debt.openNotes + debt.addressedNotes + debt.liveRounds > 0) return false
+  }
+  return true
 }
 
 function isResumeCandidate(record: CanvasRecord, sessionId: string, query: CanvasLivenessQuery): boolean {
   if (record.sessionId === sessionId) return false
   if (record.versions.length === 0) return false // nothing to inherit
   if (record.completed) return false
-  if (isSignedOff(record)) return false // a signed-off subject is done, not resumable
+  if (isSettled(record, query.reviewDebt)) return false // a settled subject is done, not resumable
   try {
     if (query.isSessionLive(record.sessionId)) return false
   } catch {
@@ -2505,7 +2552,7 @@ export function resumeCanvasForSession(
   // so the action refuses it exactly as the list (isResumeCandidate) omits it —
   // the two must agree. 'completed' is the honest reason: from the caller's
   // view the subject is finished.
-  if (isSignedOff(record)) return { ok: false, reason: 'completed' }
+  if (isSettled(record, query.reviewDebt)) return { ok: false, reason: 'completed' }
   // Reported as 'gone', deliberately: a caller outside this canvas's workspace
   // learns that there is nothing here for it, and nothing else. A distinct
   // reason would answer "does a canvas with this id exist elsewhere on this

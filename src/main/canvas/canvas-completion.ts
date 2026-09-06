@@ -8,6 +8,7 @@ import { getCanvasStateById, reopenCompletedCanvas, setCanvasCompleted, setVersi
 import { logInfo } from '../debug-logger'
 import {
   openVersionIdsOf,
+  rejectedRunAnchorsOf,
   type CanvasCompletion,
   type CanvasState,
   type CanvasVersion,
@@ -183,6 +184,18 @@ export function completeCanvasGuarded(
   if (stillOpen.length > 0) {
     const named = stillOpen.map((id) => describeOpenVersion(versionsNow, id)).join(', ')
     return { error: `not everything is settled: ${named} still open for review` }
+  }
+  // rc.15 review R10: an artefact whose latest decision is a rejection with no
+  // later version is still with the agent -- a design approved beside it does
+  // not finish the plan. The same term the resume gate reads (isSettled), so
+  // the two agree over one record. A force (the user closing what is still
+  // owed) passes it, as it passes the open versions above.
+  if (!force) {
+    const rejected = rejectedRunAnchorsOf(versionsNow)
+    if (rejected.length > 0) {
+      const named = rejected.map((id) => describeOpenVersion(versionsNow, id)).join(', ')
+      return { error: `not everything is settled: ${named} rejected and not yet reworked` }
+    }
   }
   return setCanvasCompleted(canvasId, by, requireOwnerSessionId)
 }
