@@ -36,12 +36,29 @@ class FakePty {
 }
 const ptys: FakePty[] = []
 const held: { answer: (() => void) | null; methods: string[] } = { answer: null, methods: [] }
+/** Fault injection for the deferred re-entry (quality round 3, M2): make the
+ *  next spawn throw BEFORE the PTY is registered (node-pty refuses) or right
+ *  AFTER it (the registry write that follows `ptySessions.set` throws). */
+const inject: { spawnThrows: boolean; registryThrows: boolean } = { spawnThrows: false, registryThrows: false }
 vi.mock('electron', () => ({
   BrowserWindow: Object.assign(class {}, { getAllWindows: () => [] }),
   nativeTheme: { shouldUseDarkColors: false, on() {} },
   app: { getPath: () => process.env.TEMP ?? '/tmp' },
 }))
-vi.mock('node-pty', () => ({ spawn: () => { const child = new FakePty(); ptys.push(child); return child } }))
+vi.mock('node-pty', () => ({ spawn: () => {
+  if (inject.spawnThrows) { inject.spawnThrows = false; throw new Error('injected: node-pty spawn failed') }
+  const child = new FakePty(); ptys.push(child); return child
+} }))
+vi.mock('../../../src/main/session-registry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/main/session-registry')>()
+  return {
+    ...actual,
+    updateSessionMeta: (...args: Parameters<typeof actual.updateSessionMeta>) => {
+      if (inject.registryThrows) { inject.registryThrows = false; throw new Error('injected: registry write failed') }
+      return actual.updateSessionMeta(...args)
+    },
+  }
+})
 vi.mock('../../../src/main/usage/usage-snapshots', () => ({ loadSnapshots: () => new Map(), saveSnapshots() {} }))
 vi.mock('https', () => {
   const request = (opts: any, cb: (res: any) => void) => {
@@ -55,12 +72,13 @@ vi.mock('https', () => {
 })
 
 const profiles = await import('../../../src/main/account-profiles')
-const { spawnPty, killPty, writePty } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, writePty, isSessionWritable } = await import('../../../src/main/pty-manager')
 const { registerProvider } = await import('../../../src/main/providers')
 const identity = await import('../../../src/main/claude-account-identity')
 const consumers = await import('../../../src/main/profile-consumers')
 const { fetchAccountUsage, _resetLiveUsageForTest, _resetSnapshotsForTest } = await import('../../../src/main/usage/account-usage')
 const { isPtySessionLive } = await import('../../../src/main/session-registry')
+const canvasLink = await import('../../../src/main/canvas/canvas-session-link')
 const fakeProvider = {
   id: 'claude', displayName: 'Claude', resolveBinary: () => null,
   buildSpawnCommand: () => ({ cmd: '', args: [], env: {} }), detectUiRunning: () => false,
@@ -109,8 +127,13 @@ beforeEach(() => {
   held.methods = []
   ptys.length = 0
   sent.length = 0
+  inject.spawnThrows = false
+  inject.registryThrows = false
+  canvasLink._resetCanvasSessionLinkForTest()
 })
 afterEach(() => {
+  inject.spawnThrows = false
+  inject.registryThrows = false
   for (const sid of sids.splice(0)) { try { killPty(sid) } catch { /* already gone */ } }
   for (const child of ptys) child.exitCb?.({ exitCode: 0 })
   identity._resetClaudeAccounts()
@@ -260,5 +283,103 @@ describe('a local spawn waits out an in-flight refresh of its profile (Codex R3,
     spawnPty(win, 'rc15refreshother', { shellOnly: true, profileId, cwd: sandbox })
     expect(ptys).toHaveLength(1)
     await settle(fetching)
+  })
+})
+
+/** A second, idle profile whose refresh the tests below park at its POST. */
+function makeIdleProfile(name: string): string {
+  const q = profiles.createProfile(name)
+  profiles.upsertProfile({ ...q, isPrimary: false, active: true, accountEmail: `${name.toLowerCase()}@example.test` })
+  const qFile = path.join(profiles.getProfileConfigDir(q.id), '.claude', '.credentials.json')
+  fs.mkdirSync(path.dirname(qFile), { recursive: true })
+  fs.writeFileSync(qFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x', refreshToken: 'y', expiresAt: 1 } }))
+  return q.id
+}
+/** An interactive session live on P, then switched onto the mid-refresh Q: the
+ *  switch defers, and P's PTY exit arrives during the wait (suppressed as
+ *  stale, its teardown handed to the wait). Returns Q's parked refresh. */
+async function switchedOntoMidRefresh(sid: string, q: string): Promise<{ fetching: Promise<unknown> }> {
+  spawnPty(win, sid, { shellOnly: false, profileId, cwd: sandbox })
+  expect(isPtySessionLive(sid)).toBe(true)
+  const old = ptys[0]
+  const fetching = fetchAccountUsage(q)
+  for (let i = 0; i < 100 && !held.answer; i++) await new Promise((resolve) => setTimeout(resolve, 5))
+  expect(consumers.pendingProfileRefresh(q)).not.toBeNull()
+  spawnPty(win, sid, { shellOnly: false, profileId: q, cwd: sandbox })
+  expect(ptys).toHaveLength(1) // deferred
+  old.exitCb?.({ exitCode: 0 })
+  expect(sent.filter(([ch]) => ch === `pty:exit:${sid}`)).toHaveLength(0) // suppressed: handed to the wait
+  return { fetching } // in an object: returning the parked promise itself would adopt it and deadlock
+}
+const exits = (sid: string) => sent.filter(([ch]) => ch === `pty:exit:${sid}`)
+
+describe('quality round 3: a superseding spawn carries the handed-over teardown; a failed re-entry ends only a PTY-less session', () => {
+  it('M1: a second spawn of the id while the first waits (Switch again) neither reports an exit nor wipes the canvas stamps pty:spawn just wrote; a kill of the NEW wait still ends the session exactly once', async () => {
+    const q = makeIdleProfile('M1a')
+    const { fetching } = await switchedOntoMidRefresh('rc16supersede', q)
+    // pty:spawn stamps the canvas identity BEFORE spawnPty runs; the stamps of
+    // the superseding spawn must survive its own prologue.
+    canvasLink.noteSessionSpawnForCanvas('rc16supersede', { cwd: sandbox })
+    spawnPty(win, 'rc16supersede', { shellOnly: false, profileId: q, cwd: sandbox }) // supersedes the first wait; Q still mid-refresh -> waits too
+    expect(ptys).toHaveLength(1)
+    expect(exits('rc16supersede')).toHaveLength(0) // f737d411: the prologue's killPty ran the handed-over teardown -> an exit reached the renderer...
+    expect(canvasLink.canvasCwdForSession('rc16supersede')).toBe(sandbox) // ...and forgetSessionForCanvas wiped the stamps
+    expect(consumers.profileConsumerCount(q)).toBe(1) // the first wait's hold went with it; the new wait holds
+    // The teardown travelled with the wait: closing the card now ends the session once.
+    killPty('rc16supersede')
+    expect(exits('rc16supersede')).toHaveLength(1)
+    expect(isPtySessionLive('rc16supersede')).toBe(false)
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(false) // P released
+    expect(consumers.hasTransientProfileConsumer(q)).toBe(false)
+    await settle(fetching)
+    expect(ptys).toHaveLength(1) // nothing spawned from either wait
+    expect(exits('rc16supersede')).toHaveLength(1) // and nothing torn down twice
+  })
+
+  it('M1: a second spawn of the id that lands at once (Switch back onto an idle profile) drops the carried teardown: the live PTY is the session, and only ITS exit is reported', async () => {
+    const q = makeIdleProfile('M1b')
+    const { fetching } = await switchedOntoMidRefresh('rc16landing', q)
+    canvasLink.noteSessionSpawnForCanvas('rc16landing', { cwd: sandbox })
+    spawnPty(win, 'rc16landing', { shellOnly: false, profileId, cwd: sandbox }) // back onto P: no refresh pending -> synchronous
+    expect(ptys).toHaveLength(2)
+    expect(exits('rc16landing')).toHaveLength(0)
+    expect(canvasLink.canvasCwdForSession('rc16landing')).toBe(sandbox)
+    expect(isPtySessionLive('rc16landing')).toBe(true)
+    expect(identity.getWatchedProfileId('rc16landing')).toBe(profileId)
+    expect(consumers.hasTransientProfileConsumer(q)).toBe(false) // the superseded wait's hold released
+    await settle(fetching)
+    expect(ptys).toHaveLength(2) // the cancelled wait spawned nothing
+    expect(exits('rc16landing')).toHaveLength(0)
+    ptys[1].exitCb?.({ exitCode: 0 })
+    expect(exits('rc16landing')).toHaveLength(1) // the successor's own exit is the session's end
+    expect(isPtySessionLive('rc16landing')).toBe(false)
+  })
+
+  it('M2 control: a re-entry that throws BEFORE registering a PTY ends the session once (no successor: exit reported, not live, both profiles released)', async () => {
+    const q = makeIdleProfile('M2a')
+    const { fetching } = await switchedOntoMidRefresh('rc16nopty', q)
+    inject.spawnThrows = true
+    await settle(fetching)
+    expect(ptys).toHaveLength(1) // node-pty refused the re-entry
+    expect(exits('rc16nopty')).toHaveLength(1)
+    expect(isPtySessionLive('rc16nopty')).toBe(false)
+    expect(isSessionWritable('rc16nopty')).toBe(false)
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(false)
+    expect(consumers.hasTransientProfileConsumer(q)).toBe(false)
+  })
+
+  it('M2: a re-entry that throws AFTER registering its PTY leaves that PTY as the session (no exit reported, still writable, ended by killPty later) instead of tearing it down under itself', async () => {
+    const q = makeIdleProfile('M2b')
+    const { fetching } = await switchedOntoMidRefresh('rc16registered', q)
+    sids.push('rc16registered')
+    inject.registryThrows = true
+    await settle(fetching)
+    expect(ptys).toHaveLength(2) // the re-entry spawned and registered before it threw
+    expect(exits('rc16registered')).toHaveLength(0) // f737d411: the catch ran the teardown -> exit reported, entry deleted under a live PTY
+    expect(isSessionWritable('rc16registered')).toBe(true)
+    expect(ptys[1].kill).not.toHaveBeenCalled()
+    killPty('rc16registered')
+    expect(ptys[1].kill).toHaveBeenCalled()
+    expect(isSessionWritable('rc16registered')).toBe(false)
   })
 })
