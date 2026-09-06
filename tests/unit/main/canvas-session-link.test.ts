@@ -231,19 +231,35 @@ describe('a signed-off subject is done, not resumable', () => {
   })
 })
 
-// A canvas is a HISTORY of artifact runs (item C): approve run A, archive it,
-// and the next render starts run B. The gate above must read the NEWEST run,
-// not the flat version list — a reverse-find over the whole history skipped
-// B's draft and landed on A's approval, so run B was stranded: omitted from
-// the list AND refused by the action.
-describe('signed off is judged on the NEWEST RUN, not the whole history', () => {
+/// A canvas is a HISTORY of artifact runs (item C), of several kinds: approve run
+// A, archive it, and the next render starts run B; a plan and a design can sit
+// side by side. The gate must read that history the way the completion guard
+// does (`openVersionIdsOf`: every live run's open version), then judge the
+// NEWEST run — a flat reverse-find over the whole version list read an earlier
+// approval as the answer for later work, and (worse) an approved newest run
+// read as done over an OPEN version of another kind that Mark complete refuses.
+describe('signed off is judged like Mark complete: nothing still owed, and the newest run decided', () => {
   const html = '<!doctype html><p>next</p>'
 
-  it('REGRESSION: an approved-then-archived run followed by a fresh OPEN run leaves the canvas resumable', () => {
+  it('an approved-then-archived run followed by a fresh OPEN run leaves the canvas resumable', () => {
     const canvasId = renderAs(OWNER, PROJECT, CONV)
     store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
     store.setArtifactArchived(canvasId, 'v1', true)
     expect(store.renderVersion(OWNER, { mode: 'design', html }).versionId).toBe('v2') // run B
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
+    expect(link.resumeCanvasFromSession(ASKER, canvasId, OWNER, [])).toEqual({ ok: true, canvasId })
+  })
+
+  it('REGRESSION: an OPEN version in an earlier run of another kind keeps the canvas resumable under an approved newest run', () => {
+    // A plan still awaiting the user, then a design the user approved: Mark
+    // complete refuses this canvas ("v1 (plan) still open for review"), so the
+    // resume gate must not call it done either — otherwise the plan review is
+    // stranded with no way back in.
+    const canvasId = renderAs(OWNER, PROJECT, CONV) // v1, design, open
+    const v2 = store.renderVersion(OWNER, { mode: 'plan', html }).versionId // a second run, another kind
+    store.setVersionVerdict(OWNER, v2, { state: 'approved' }, 'user')
     restart()
     link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
     expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
@@ -262,24 +278,14 @@ describe('signed off is judged on the NEWEST RUN, not the whole history', () => 
     expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
   })
 
-  it('REGRESSION: a DRAFT rendered after the archived approval is the next run starting — not done', () => {
-    const canvasId = renderAs(OWNER, PROJECT, CONV)
-    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+  it('an archived run\'s open version does not hold the canvas open — archiving tucked it away, as Mark complete agrees', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV) // v1 open
     store.setArtifactArchived(canvasId, 'v1', true)
-    expect(store.renderVersion(OWNER, { mode: 'design', html, ready: false }).draft).toBe(true)
+    const v2 = store.renderVersion(OWNER, { mode: 'design', html }).versionId
+    store.setVersionVerdict(OWNER, v2, { state: 'approved' }, 'user')
     restart()
     link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
-    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
-    expect(link.resumeCanvasFromSession(ASKER, canvasId, OWNER, []).ok).toBe(true)
-  })
-
-  it('a draft after an approval in the SAME run (nothing archived) is unfinished work too', () => {
-    const canvasId = renderAs(OWNER, PROJECT, CONV)
-    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
-    expect(store.renderVersion(OWNER, { mode: 'design', html, ready: false }).draft).toBe(true)
-    restart()
-    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
-    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([canvasId])
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
   })
 
   it('the newest run decides: once run B is approved too, the canvas is done', () => {
@@ -301,6 +307,43 @@ describe('signed off is judged on the NEWEST RUN, not the whole history', () => 
     restart()
     link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
     expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
+  })
+
+  // Drafts are the agent's own loop (#366): shown to nobody, absent from the
+  // Library and the history picker, and ignored by Mark complete. A draft after
+  // an approval therefore does not reopen the subject — counting it would light
+  // the resumable dot for a cause no screen can show and no gesture can clear.
+  it('a DRAFT rendered after the archived approval does not reopen the subject: the canvas stays done', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    store.setArtifactArchived(canvasId, 'v1', true)
+    expect(store.renderVersion(OWNER, { mode: 'design', html, ready: false }).draft).toBe(true)
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
+    expect(link.resumeCanvasFromSession(ASKER, canvasId, OWNER, [])).toEqual({ ok: false, reason: 'completed' })
+  })
+
+  it('a draft after an approval in the SAME run (nothing archived) leaves it done too', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    store.setVersionVerdict(OWNER, 'v1', { state: 'approved' }, 'user')
+    expect(store.renderVersion(OWNER, { mode: 'design', html, ready: false }).draft).toBe(true)
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
+  })
+
+  it('a canvas of drafts only has nothing decided: the gate lets it through, and the list has nothing to show', () => {
+    link.noteSessionSpawnForCanvas(OWNER, { cwd: PROJECT, resumeUuid: CONV })
+    const { canvasId, draft } = store.renderVersion(OWNER, { mode: 'design', html, ready: false })
+    expect(draft).toBe(true)
+    restart()
+    link.noteSessionSpawnForCanvas(ASKER, { cwd: PROJECT })
+    // The row builder needs a SHOWN version to make a card of, so nothing is
+    // listed (its own rule, older than the sign-off gate); but the action does
+    // not refuse the canvas as signed off — nothing has been decided.
+    expect(link.listResumableRows(ASKER, []).map((r) => r.canvasId)).toEqual([])
+    expect(link.resumeCanvasFromSession(ASKER, canvasId, OWNER, [])).toEqual({ ok: true, canvasId })
   })
 })
 

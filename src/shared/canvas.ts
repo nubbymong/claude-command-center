@@ -294,6 +294,27 @@ export function artifactRunContaining(versions: readonly CanvasVersion[], versio
   return null
 }
 
+/**
+ * EVERY artefact run's open version — the decisions the user still owes on this
+ * canvas. What the completion guard refuses Mark complete over (and what a
+ * force stamps `dismissed`), and what the resume gate reads to tell a decided
+ * canvas from one still awaiting the user: ONE definition, so the two can never
+ * disagree about the same record.
+ *
+ * Archived runs are skipped: the user has already tucked those away, and
+ * `artifactRuns` breaks a run on the archive flip, so an archived run is a
+ * separate one that nothing is waiting on. Drafts never appear (#366).
+ */
+export function openVersionIdsOf(versions: readonly CanvasVersion[]): string[] {
+  const out: string[] = []
+  for (const run of artifactRuns(versions)) {
+    if (run[0]?.archived) continue
+    const open = openVersionOf(run)
+    if (open) out.push(open.id)
+  }
+  return out
+}
+
 /** The round the user owes a first review on: set when the agent deliberately
  *  marks a render ready (#366), cleared when the user submits a review on the
  *  canvas. This is one of the two inputs to the queue number (#364); the other

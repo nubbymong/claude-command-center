@@ -7,8 +7,7 @@ import {
 import { getCanvasStateById, reopenCompletedCanvas, setCanvasCompleted, setVersionVerdict } from './canvas-store'
 import { logInfo } from '../debug-logger'
 import {
-  artifactRuns,
-  openVersionOf,
+  openVersionIdsOf,
   type CanvasCompletion,
   type CanvasState,
   type CanvasVersion,
@@ -188,23 +187,6 @@ export function completeCanvasGuarded(
   return setCanvasCompleted(canvasId, by, requireOwnerSessionId)
 }
 
-/**
- * EVERY artefact run's open version — the decisions the user still owes on this
- * canvas, and what a force stamps `dismissed`.
- *
- * Archived runs are skipped: the user has already tucked those away, and
- * `artifactRuns` breaks a run on the archive flip, so an archived run is a
- * separate one that nothing is waiting on.
- */
-function openVersionIdsOf(versions: readonly CanvasVersion[]): string[] {
-  const out: string[] = []
-  for (const run of artifactRuns(versions)) {
-    if (run[0]?.archived) continue
-    const open = openVersionOf(run)
-    if (open) out.push(open.id)
-  }
-  return out
-}
 
 /** "v1 (plan)" — the version, and what kind of thing it is, so a refusal over a
  *  canvas holding several artefacts says WHICH one to go and decide. */

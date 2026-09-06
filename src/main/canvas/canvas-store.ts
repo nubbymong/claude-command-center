@@ -40,6 +40,7 @@ import {
   isKeepableOpenQuestions,
   isKeepableVerdict,
   libraryRowKindOf,
+  openVersionIdsOf,
   openVersionOf,
   sanitizeAuditStamp,
   sanitizeCanvasConfigId,
@@ -2215,37 +2216,37 @@ function isLiveOrUnknown(sessionId: string, isSessionLive: (sid: string) => bool
  */
 /**
  * Signed off is DONE, not resumable (owner, 2026-09-06: "if something was
- * signed off then it should be done"). Judged on the NEWEST ARTIFACT RUN only
- * (`artifactRuns`, the grouping the Library and archive use): a canvas is a
- * history of runs, and an earlier run's approval says nothing about the work
- * that came after it — approve run A, archive it, render run B, and a flat
- * reverse-find over every version lands on A's approval and strands B. Within
- * that run, the newest version the user would act on — skipping show-and-tell
- * (owes no review) and 'withdrawn' stamps, the anchor rule `openVersionOf`
- * uses — carries a terminal decision:
- *   - 'approved' / 'dismissed' → the user decided; the subject is finished and
- *     must not keep nagging as resumable.
- *   - 'rejected' → a rejection asks for another round, so the work is NOT done;
- *     it stays resumable.
- *   - no verdict (an OPEN version) → the user's to decide; stays resumable.
- * A DRAFT rendered after the newest run's last ready version is the agent
- * starting the next round or run (#366): unfinished work, so not signed off —
- * a session that died mid-draft after an approval must not strand it.
+ * signed off then it should be done"). Two conditions, both read the way the
+ * completion guard reads them so the two gates can never disagree about one
+ * canvas:
+ *   1. Nothing is still owed. `openVersionIdsOf` — every live (non-archived)
+ *      run's open version — is empty. A canvas holds a history of runs, of
+ *      several kinds: a plan still awaiting the user under an approved design
+ *      is unfinished, exactly as Mark complete refuses it.
+ *   2. The NEWEST run (`artifactRuns(...).at(-1)`) was decided. Its anchor —
+ *      the newest version the user would act on, skipping show-and-tell (owes
+ *      no review) and 'withdrawn' stamps, the rule `openVersionOf` uses —
+ *      carries 'approved' or 'dismissed'. An earlier run's approval does not
+ *      reach across: approve run A, archive it, render run B, and B decides.
+ * So: 'rejected' asks for another round and stays resumable; an open version
+ * anywhere live stays resumable; a canvas of drafts only has nothing decided,
+ * so it is not signed off (the list has no shown version to make a card of,
+ * but the action does not refuse it). Drafts otherwise neither block nor
+ * count: they are the
+ * agent's own loop (#366), shown to nobody, and the completion guard ignores
+ * them too — a draft rendered after an approval does not reopen the subject.
  *
  * Two readings of "signed off" coexist on purpose. The Library's Signed-off
  * chip (canvas-library-rows) means the canvas was MARKED COMPLETE (#476); this
- * gate means the newest run carries a user verdict. Both callers check
- * `completed` first; this covers the far more common "reviewed and approved
- * but never formally Marked complete" case, which was surfacing every
- * signed-off canvas as resumable.
+ * gate means the canvas is decided. Both callers check `completed` first; this
+ * covers the far more common "reviewed and approved but never formally Marked
+ * complete" case, which was surfacing every signed-off canvas as resumable.
  */
 function isSignedOff(record: CanvasRecord): boolean {
   const { versions } = record
+  if (openVersionIdsOf(versions).length > 0) return false // still owed somewhere live
   const run = artifactRuns(versions).at(-1)
   if (!run) return false // drafts only, or nothing: nothing has been decided
-  // Every ready version belongs to some run, so a version after the newest
-  // run's last member can only be a draft — the next round starting.
-  if (versions[versions.length - 1]?.id !== run[run.length - 1].id) return false
   const anchor = [...run].reverse().find((v) => !v.show && v.verdict?.state !== 'withdrawn')
   const state = anchor?.verdict?.state
   return state === 'approved' || state === 'dismissed'
