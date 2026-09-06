@@ -104,6 +104,22 @@ describe('PR600 R1 lifetime (Codex findings 1+2)', () => {
     vi.advanceTimersByTime(101)
     expect(writes(), 'proof of container entry must permanently close the host-secret gate').toEqual([])
   })
+  it('finding 2a (isolated): the IN latch refuses the host secret across a Run again, when runtimeEntryFailed has been reset', () => {
+    // The same-chunk case above is also caught by the 2b write-time re-check
+    // (runtimeEntryFailed is set by failEntry). This case isolates the PERMANENT
+    // IN latch: a Run again resets runtimeEntryFailed and sudoPasswordSent, so
+    // only containerEverEntered can still refuse the host secret.
+    const id = 'r1-in-error-runagain'
+    enter(id, 'SYNTHETIC_HOST_SUDO_SECRET')
+    feed(mark(id, 'IN') + 'Cannot connect to the Docker daemon\r\n')
+    expect(getSshFlow(id)?.getState().state).toBe('failed')
+    getSshFlow(id)!.runPostCommand() // Run again: re-types the exec, resets runtimeEntryFailed + sudoPasswordSent
+    vi.advanceTimersByTime(201)
+    write.mockClear()
+    feed('[sudo] password for user: ')
+    vi.advanceTimersByTime(101)
+    expect(writes(), 'a session that reached the container never auto-types the host secret again').toEqual([])
+  })
   it('finding 2b: an IN arriving before the delayed sudo write cancels that write', () => {
     const id = 'r1-sudo-timer'
     enter(id, 'SYNTHETIC_HOST_SUDO_SECRET')
