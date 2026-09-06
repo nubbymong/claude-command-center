@@ -1872,13 +1872,15 @@ function spawnPtyResolved(
     // returning with no OUT (a plain detach), so the pending write bails.
     let deferredEntryWritePending = false
     // ADR-009 round 3, R1 re-attack (MINOR): the handle of that scheduled write.
-    // failEntry and destroy cancel it, so a write scheduled by an attempt that
+    // failEntry, skip and destroy cancel it, so a write scheduled by an attempt that
     // has since failed can neither fire into the NEXT attempt (a Run again
     // inside its 200/300 ms window: the callback's own runtimeEntryFailed check
     // is reset by Run again, so the stale claude timer typed the command onto
     // the host before the new exec was even out) nor clear
     // deferredEntryWritePending under the next attempt's own pending write,
-    // which disarmed the host-back check above for the rest of that window.
+    // which disarmed the host-back check (the after-entry watch's
+    // `deferredEntryWritePending && isHostBackLine` test) for the rest of that
+    // window.
     // The two writers (container setup, claude command) are sequential by
     // construction -- the claude command is only scheduled after the setup's
     // `setup ok` -- so one handle covers both; scheduling cancels any
@@ -1892,6 +1894,10 @@ function spawnPtyResolved(
       deferredEntryWritePending = false
     }
     const scheduleDeferredEntryWrite = (delayMs: number, write: () => void) => {
+      // Review: the predecessor cancel is defence in depth against an overlap
+      // the call graph does not allow today -- if it ever happens, say so
+      // rather than drop a payload silently.
+      if (deferredEntryWriteHandle) logError(`[ssh] ${sessionId}: a deferred entry write was still pending when the next was scheduled -- the earlier one is withdrawn`)
       cancelDeferredEntryWrite()
       deferredEntryWritePending = true
       deferredEntryWriteHandle = setTimeout(() => {
@@ -3543,6 +3549,25 @@ function spawnPtyResolved(
         // launch guard still out is withdrawn with it (round 3): its answer
         // could no longer be read, so its timeout would call the shell gone.
         dropEntryGuard()
+        // R1 re-attack MINOR (independent review): a setup or claude payload
+        // scheduled but not yet written is withdrawn with the guard -- "Manage
+        // manually" means no auto writes, and a Skip can land inside the
+        // 200/300 ms window (an unverified Launch anyway schedules the setup
+        // synchronously, with the Skip button live). Nothing went out, so the
+        // latches say so: the setup can run afresh (and its timeout must not
+        // fail a payload that was never sent), and Launch is live again
+        // instead of inert on claudeSent.
+        if (deferredEntryWriteHandle) {
+          cancelDeferredEntryWrite()
+          if (!containerSetupDone) {
+            containerSetupSent = false
+            if (setupTimeoutHandle) {
+              clearTimeout(setupTimeoutHandle)
+              setupTimeoutHandle = null
+            }
+          }
+          if (!claudeWritten) claudeSent = false
+        }
         entrySkipped = true
         setFlowState('skipped')
       },

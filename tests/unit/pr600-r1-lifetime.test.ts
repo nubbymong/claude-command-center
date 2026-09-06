@@ -218,6 +218,36 @@ describe('PR600 R1 round-3 MINOR: a failed attempt leaves no deferred write behi
     firstGuard(id)
     feed(mark(id, 'HERE')) // setup write pending
     getSshFlow(id)!.destroy() // the flow's own teardown; killPty's process-level teardown is outside this ladder
+    // Deliberately process-global: destroy must leave NO fake timer behind (an
+    // inert-but-armed timer would pass a write-based check, since the callback
+    // is destroyed-gated). An unrelated timer armed during spawnPty would fail
+    // this too -- extend destroy or scope the count if that ever happens.
     expect(vi.getTimerCount(), 'a torn-down flow must own no timer').toBe(0)
+  })
+  // Independent review of the fix: skip() -- "Manage manually, no auto writes"
+  // -- was the one flow method that still left a scheduled write armed. An
+  // unverified "Launch anyway" schedules the setup synchronously and the Skip
+  // button is live meanwhile, so a Skip can land inside the 200/300 ms window.
+  it('skip inside the deferred-setup window withdraws the payload and leaves no setup timeout behind', () => {
+    const id = 'r1-skip-withdraws-setup'
+    firstGuard(id)
+    feed(mark(id, 'HERE')) // setup write scheduled (+300), setup timeout armed (10 s)
+    vi.advanceTimersByTime(20)
+    getSshFlow(id)!.skip()
+    vi.advanceTimersByTime(300)
+    expect(writes(), 'a shell the user took over receives no auto write').toEqual([])
+    vi.advanceTimersByTime(10_001)
+    expect(getSshFlow(id)?.getState().state, 'no setup timeout may fail a payload that was never sent').toBe('skipped')
+  })
+  it('skip inside the deferred-claude window withdraws the command, and Launch is live again rather than inert', () => {
+    const id = 'r1-skip-withdraws-claude'
+    secondGuard(id)
+    feed(mark(id, 'HERE')) // claude write scheduled (+200)
+    vi.advanceTimersByTime(20)
+    getSshFlow(id)!.skip()
+    vi.advanceTimersByTime(200)
+    expect(writes(), 'a shell the user took over receives no auto write').toEqual([])
+    getSshFlow(id)!.launchClaude() // a later Launch re-proves the shell instead of returning on claudeSent
+    expect(writes(), 'Launch after the withdrawn command must go out again (the guard), not sit on claudeSent').toEqual([GUARD])
   })
 })
