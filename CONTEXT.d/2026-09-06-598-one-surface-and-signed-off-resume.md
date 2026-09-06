@@ -13,35 +13,49 @@ what reveals the canvas. Fix: `src/renderer/stores/altPane.ts` is the coordinato
 (`toggleAltPane` / `openAltPane` / `closeOtherAltPanes`) and the three buttons route through
 it (64208981). Three paths opened a pane WITHOUT it and left two flags set: the canvas-queue
 popover's resume/open and the CommandBar "page" command (both 336feedb), and -- found by the
-post-fix review -- `openAccountPane` in the browser store, reached from the CommandBar
-Artifacts button and from Settings' internal-browser sign-in. That one is closed AT THE
+post-fix review -- `openAccountPane` in the browser store, reached from the Artifacts
+buttons (CommandBar and Sidebar, via `openArtifactsPerSetting`), from Settings'
+internal-browser sign-in, and from the pane's own Back-to-account. That one is closed AT THE
 SOURCE: the browser store's own `navigate` and `openAccountPane` (the two writes that set
-`isOpen: true`) call `closeOtherAltPanes` themselves, so no present or future caller has to
-remember. The caller-side calls in WebviewButton and CommandBar went as redundant. This is
-a deliberate import cycle (altPane reads the browser store; the browser store calls
-altPane), only ever inside actions and never at module evaluation; the repo has no no-cycle
-lint and other stores already cross-import.
+`isOpen: true`) call `closeOtherAltPanes` themselves, before they snapshot state, so no
+present or future caller has to remember. The caller-side calls in WebviewButton and
+CommandBar went as redundant. This is a deliberate static import cycle (altPane reads the
+browser store; the browser store calls altPane) -- the repo's only runtime store cycle, used
+only inside actions and never at module evaluation; there is no lint rule against cycles
+and the renderer bundle builds. One consequence to know: Settings' sign-in picks a host
+session itself, so it can close the canvas of a session the user is not looking at; the
+native view has to own the pane, so that is unavoidable.
 
 **Mechanism, signed off.** `isResumeCandidate` / `resumeCanvasForSession` (canvas-store)
 excluded only a `completed` (Marked complete) canvas, so a reviewed-and-approved one that
 was never formally completed -- the common case -- stayed resumable. `isSignedOff` now
-gates both: the newest version the user would act on carries 'approved' / 'dismissed'.
-'rejected' asks for another round and stays resumable; an open (unverdicted) version stays.
-The first cut (6f6a63af) scanned the FLAT version list, and the review found it strands a
-new artifact run: approve run A, archive it, start run B as a draft -- the scan skips the
-draft and lands on A's approval, so B is omitted from the list AND refused by the action.
-Now judged on the NEWEST artifact run only (`artifactRuns(...).at(-1)`, the grouping the
-Library and archive use), and a draft rendered after that run's last ready version reads as
-the next round starting: unfinished, not signed off. Two meanings of "signed off" coexist on
-purpose and are documented at the function: the Library chip means Marked complete (#476);
-the resume gate means the newest run carries a user verdict.
+gates both. The first cut (6f6a63af) reverse-scanned the FLAT version list; two reviews
+found what that gets wrong on a canvas with a HISTORY of runs: an earlier run's approval
+answered for later work (approve run A, archive it, render a show-and-tell run B: B read as
+done), and -- the sharper one -- an approved NEWEST run masked an OPEN version of another
+kind (plan v1 awaiting the user, design v2 approved), which Mark complete refuses but the
+resume gate called done, stranding the plan review with no way back in. Now read the way
+the completion guard reads it: `openVersionIdsOf` (moved to `src/shared/canvas.ts`, ONE
+definition for both gates) must be empty -- nothing owed in any live run -- and the newest
+run's anchor (`artifactRuns(...).at(-1)`, skipping show-and-tell and withdrawn) must carry
+'approved' / 'dismissed'. 'rejected' stays resumable; drafts only = nothing decided, stays.
+Drafts otherwise neither block nor count: they are the agent's own loop (#366), shown to
+nobody, absent from the Library and history, and ignored by Mark complete -- so a draft the
+agent rendered after an approval does NOT reopen the subject (a cause no screen could show
+and no gesture could clear). Relative to beta the gate only tightens (beta had no
+sign-off test at all: every uncompleted canvas with a dead owner was adoptable); relative
+to 6f6a63af it relaxes three cases beta allowed. Two meanings of "signed off" coexist on
+purpose, documented at the function: the Library chip = Marked complete (#476); this gate
+= decided.
 
 **Tests.** `alt-pane-coordinator.test.ts` drives the real coordinator against the real
 stores, now including the at-source cases for `openAccountPane` and `navigate`; each was
 proven red by removing its eviction. `canvas-session-link.test.ts` gains the multi-run
-block: archived approval then a fresh open run; a show-and-tell-only run; a trailing draft
-(after an archive, and in the same run); the newest run approved = done; an archived
-approval alone = done. Under the flat scan three of those fail.
+block: archived approval then a fresh open run; an open earlier run of another kind under
+an approved newest run; a show-and-tell-only run; an archived run's open version; the
+newest run approved = done; an archived approval alone = done; drafts after an approval
+(archived and same-run) = done; drafts only = not signed off (nothing listed, since the row
+builder needs a shown version, but the action does not refuse it).
 
 **macOS CI lane.** `Test (macos-latest)` had been red on every push since 572411ed: the
 `profileIdFromHome` test asserted that a BACKSLASH profile home maps to its id on every
@@ -51,7 +65,7 @@ platform-native, like `getProfileConfigDir`. A test defect, not a behaviour chan
 assertion now expects the id on win32 and null elsewhere. The implementation (reviewed in
 the adversarial pass) is untouched.
 
-**Not in the ADR-009 path table.** Renderer stores/components and canvas resume logic that
-only tightens (a signed-off canvas is refused where it was allowed); no IPC, preload, PTY
-argv, credential or updater code. No adversarial pass for this round; the independent spec
-and quality reviews ran.
+**Not in the ADR-009 path table.** Renderer stores/components and main canvas resume logic;
+no IPC, preload, PTY argv, credential or updater code, and the gate is strictly tighter
+than beta. No adversarial pass for this round; the independent spec and quality reviews
+ran (two rounds: the quality review's major above, then re-verification).
