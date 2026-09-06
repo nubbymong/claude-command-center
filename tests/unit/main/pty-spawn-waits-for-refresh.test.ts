@@ -355,6 +355,21 @@ describe('quality round 3: a superseding spawn carries the handed-over teardown;
     expect(isPtySessionLive('rc16landing')).toBe(false)
   })
 
+  it('M1: a superseding spawn that throws before it has a PTY (node-pty refuses) still ends the session once -- the carried teardown is not lost with the failed spawn', async () => {
+    const q = makeIdleProfile('M1c')
+    const { fetching } = await switchedOntoMidRefresh('rc16superfail', q)
+    inject.spawnThrows = true
+    expect(() => spawnPty(win, 'rc16superfail', { shellOnly: false, profileId, cwd: sandbox })).toThrow(/injected/) // back onto P: synchronous, and it fails
+    expect(ptys).toHaveLength(1)
+    expect(exits('rc16superfail')).toHaveLength(1) // 697d3448: dropped with the spawn -> the session never ended
+    expect(isPtySessionLive('rc16superfail')).toBe(false)
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(false) // P's identity watch stopped
+    expect(consumers.hasTransientProfileConsumer(q)).toBe(false) // the superseded wait's hold released
+    await settle(fetching)
+    expect(ptys).toHaveLength(1)
+    expect(exits('rc16superfail')).toHaveLength(1)
+  })
+
   it('M2 control: a re-entry that throws BEFORE registering a PTY ends the session once (no successor: exit reported, not live, both profiles released)', async () => {
     const q = makeIdleProfile('M2a')
     const { fetching } = await switchedOntoMidRefresh('rc16nopty', q)

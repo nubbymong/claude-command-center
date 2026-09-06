@@ -1410,7 +1410,46 @@ function getResumePickerPath(): string | null {
   return null
 }
 
-export function spawnPty(
+/** The spawn options `pty:spawn` builds field by field (see pty-handlers). */
+type SpawnPtyOptions = NonNullable<Parameters<typeof spawnPtyResolved>[2]>
+
+/**
+ * Spawn (or respawn) the PTY of a session.
+ *
+ * rc.15 review R3 (quality round 3, M1): a spawn of an id whose EARLIER spawn
+ * is still parked on a refresh wait supersedes that wait. The wait is cancelled
+ * here (its hold goes with it; nothing spawns from it) and the teardown it may
+ * be carrying -- the exit of the PTY that earlier spawn replaced, suppressed as
+ * stale -- is carried over to THIS spawn rather than run: this spawn is the
+ * session's next process, and running it now would send the renderer a
+ * pty:exit for a session about to get its PTY and wipe the canvas stamps
+ * pty:spawn wrote a moment ago. If this spawn waits too, the new wait carries
+ * it (a cancel or a failed re-entry still ends the session once); if it spawns
+ * now, its PTY's own exit ends the session and the carried teardown is
+ * dropped, exactly as a replaced PTY's exit is ignored once its successor is
+ * live. If it THROWS before it has a PTY (node-pty refused, a bad cwd), nothing
+ * else would end the session the carried teardown was for, so it runs here,
+ * once, before the error goes on to the caller.
+ */
+export function spawnPty(win: BrowserWindow, sessionId: string, options?: SpawnPtyOptions): void {
+  const supersededWait = refreshWaitSpawns.get(sessionId)
+  const inheritedTeardown = supersededWait?.abandonedTeardown
+  if (supersededWait) {
+    logInfo(`[pty] Session ${sessionId} was still waiting for a profile refresh; this spawn supersedes that wait`)
+    supersededWait.cancel()
+  }
+  try {
+    spawnPtyResolved(win, sessionId, options, inheritedTeardown)
+  } catch (err) {
+    if (inheritedTeardown && !ptySessions.has(sessionId)) {
+      logInfo(`[pty] Session ${sessionId}: the superseding spawn failed before it had a PTY -- ending the session its predecessor's exit was told to leave alone`)
+      inheritedTeardown()
+    }
+    throw err
+  }
+}
+
+function spawnPtyResolved(
   win: BrowserWindow,
   sessionId: string,
   options?: {
@@ -1480,7 +1519,11 @@ export function spawnPty(
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
     }
-  }
+  },
+  /** MAIN-INTERNAL: the teardown carried over from a superseded refresh wait
+   *  (see spawnPty). Attached to this spawn's own wait if it parks; dropped
+   *  once its PTY is registered. */
+  inheritedTeardown?: () => void,
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
 
@@ -1520,25 +1563,6 @@ export function spawnPty(
     } catch (err) {
       logWarn(`[pty] T8b resume-target capture failed for ${sessionId}: ${(err as Error)?.message ?? err}`)
     }
-  }
-
-  // rc.15 review R3 (quality round 3, M1): a spawn of an id whose EARLIER spawn
-  // is still parked on a refresh wait supersedes that wait. The wait is
-  // cancelled here (its hold goes with it; nothing spawns from it) and the
-  // teardown it may be carrying -- the exit of the PTY that earlier spawn
-  // replaced, suppressed as stale -- is carried over to THIS spawn rather than
-  // run: this spawn is the session's next process, and running it now would
-  // send the renderer a pty:exit for a session about to get its PTY and wipe
-  // the canvas stamps pty:spawn wrote a moment ago. If this spawn waits too,
-  // the new wait carries it (a cancel or a failed re-entry still ends the
-  // session once); if it spawns now, its PTY's own exit ends the session and
-  // the carried teardown is dropped, exactly as a replaced PTY's exit is
-  // ignored once its successor is live.
-  const supersededWait = refreshWaitSpawns.get(sessionId)
-  const inheritedTeardown = supersededWait?.abandonedTeardown
-  if (supersededWait) {
-    logInfo(`[pty] Session ${sessionId} was still waiting for a profile refresh; this spawn supersedes that wait`)
-    supersededWait.cancel()
   }
 
   killPty(sessionId)
@@ -4229,7 +4253,7 @@ export function spawnPty(
         let cancelled = false
         refreshWaitSpawns.set(sessionId, {
           cancel: () => { cancelled = true; refreshWaitSpawns.delete(sessionId); release() },
-          // Carried over from the wait this spawn superseded (see the prologue).
+          // Carried over from the wait this spawn superseded (see spawnPty).
           abandonedTeardown: inheritedTeardown,
         })
         logInfo(`[profiles] session ${sessionId}: profile ${waitedProfile} is mid-refresh -- holding the spawn until it settles`)
