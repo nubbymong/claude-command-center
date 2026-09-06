@@ -15,8 +15,13 @@ import path from 'node:path'
 import vm from 'node:vm'
 import { transformSync } from 'esbuild'
 
-const APP = fs.readFileSync(path.resolve(process.cwd(), 'src/renderer/App.tsx'), 'utf8')
-const INDEX = fs.readFileSync(path.resolve(process.cwd(), 'src/main/index.ts'), 'utf8')
+// ADR-009 round 2 (Lens C2): normalise CRLF -> LF. This file matches multi-line
+// source markers written with `\n`; on a Windows checkout with core.autocrlf the
+// working tree is CRLF (there is no `*.tsx text eol=lf` in .gitattributes), so an
+// un-normalised read makes every marker miss. CI (Linux, LF) never saw it.
+const readSrc = (rel: string) => fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n')
+const APP = readSrc('src/renderer/App.tsx')
+const INDEX = readSrc('src/main/index.ts')
 
 /** The text from `from` (inclusive) to the brace that closes the block opened
  *  by the first `{` at or after `from`. Strings, template literals and line
