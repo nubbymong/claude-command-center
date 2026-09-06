@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.16] - 2026-09-06
+
+> Fixes from an independent stability review of rc.15. Entering a container is confirmed from inside it before anything is launched there, and checked again before Claude itself starts; two more account-refresh races are closed and capturing a second account can no longer put a spent token back on the first; on a Mac, Close sessions closes the sessions; a remote left running is never pruned because a tmux upgrade broke the client; and a rejected plan no longer hides from the canvas resume list behind an approved design.
+
+### Fixed
+- A container entry is confirmed from inside the container before anything is launched there. The app enters a container with a command that prints a one-time confirmation from inside it before the shell starts, and only that confirmation makes the session count as inside: a prompt that merely looks different, a quiet pane, a cancelled sudo prompt or a host prompt the app cannot recognise (a zsh prompt ending in a percent sign) never does. Launching re-checks the attached shell first, and again before Claude itself is started, so a container you detached from or that stopped in between gets nothing typed onto the host. A container configured to Start, or an after-connecting command that is not a plain docker or podman exec, cannot be confirmed this way: the app says so and asks before launching. Configs written as a free-text exec line get the same confirmation and keep the shell they name, and the Runtime section has a "Shell inside the container" choice for images without bash.
+- Two sessions on one account can no longer capture a half-written sign-in. The backup that follows a token rotation was checked once per session instead of once per account, so with two sessions open a sign-in could be backed up between its two writes and restored later as a mixed account.
+- A session started while its account's token is being refreshed now waits for the refresh to finish before it starts, as background runs already did, so it never reads a token that is about to be replaced. Closing the tab during the wait cancels the start; anything typed during the wait is dropped rather than queued into the shell.
+- Capturing a second account that was signed into mid-session no longer reinstalls a token the first account may already have spent. The original account gets its identity back and shows Sign in; signing in once brings it back, instead of it failing silently later on a dead token.
+- Cancelling an agent before it has started really cancels it. An agent cancelled while it was still waiting for an account refresh or a Claude install used to start anyway, labelled cancelled, with no control left to stop it.
+- On a Mac, Close sessions closes the sessions. Choosing Close sessions on the close dialog discarded the cards but left the sessions running invisibly behind the Dock icon; they are ended first now, and anything left over is swept when the last window closes.
+- Closing the window before answering the resume prompt keeps everything. With both saved sessions and left-running remotes, closing before choosing Resume or Don't open cleared the saved file, remotes included; the file is left as it is now, and the next launch asks again.
+- A remote left running is never pruned because its tmux cannot answer. A tmux client that exists but cannot talk to its server (after a tmux upgrade, or a permission problem on the socket) used to read as "no sessions" and the entry was removed as dead; the check now tells that apart from a genuine empty answer and keeps the entry, marked as not verified.
+- Output from a restarted session's old process no longer reaches the new one. Late output from the replaced process was still shown in the new terminal and fed to its watchdog; it is dropped now, as its exit already was.
+- A rejected plan no longer hides from the canvas resume list behind an approved design. Resume judged a canvas by its newest artefact only; it now looks at every artefact and at every note still owed, so a canvas with a rejected plan that was never reworked, an unsubmitted note, or an answered note you have not looked at stays resumable, and Mark complete says which artefact was rejected and not yet reworked.
+
 ## [2.1.0-rc.15] - 2026-09-06
 
 > Fixes from the rc.14 feedback and from an independent stability review of rc.14. The in-app browser pane no longer sits in front of a page tab; the SSO Sign-in browser choice is back on managed machines with a per-user Chrome; on a Mac, quitting asks before it stops anything and reopening from the Dock works; a restarted session is no longer shown as exited; and the remote sessions you leave running are remembered even when they were the only thing open. The Usage page loads account by account and reuses the figures your open sessions already report (the primary account aside), a background run can no longer be signed out by a token refresh, and editing a config that has a session running warns you first.
@@ -1531,6 +1547,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.16]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.16
 [2.1.0-rc.15]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.15
 [2.1.0-rc.14]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.14
 [2.1.0-rc.13]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.13
