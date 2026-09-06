@@ -884,7 +884,14 @@ const shellOnlyProfileHolds = new Map<string, () => void>()
 // during the wait releases the hold and spawns nothing. Writes that arrive
 // during the wait are dropped and logged, never queued: a queued line would
 // replay into a shell the user never saw start.
-const refreshWaitSpawns = new Map<string, { cancel: () => void }>()
+const refreshWaitSpawns = new Map<string, {
+  cancel: () => void
+  /** The teardown of the PTY this spawn replaced, whose exit arrived while the
+   *  wait was armed and was treated as stale (the deferred spawn being the
+   *  session's next process). Run by the cancel path and by a failed re-entry,
+   *  because then nothing else ends the session (review round 2). */
+  abandonedTeardown?: () => void
+}>()
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
 const codexTelemetrySources = new Map<string, TelemetrySource>()
@@ -4203,11 +4210,14 @@ export function spawnPty(
         logInfo(`[profiles] session ${sessionId}: profile ${waitedProfile} is mid-refresh -- holding the spawn until it settles`)
         void pending.then(() => {
           if (cancelled) return
+          const wait = refreshWaitSpawns.get(sessionId)
           refreshWaitSpawns.delete(sessionId)
           try {
             spawnPty(win, sessionId, { ...options, refreshAwaited: true })
           } catch (err) {
             logError(`[profiles] session ${sessionId}: the spawn after the refresh wait failed: ${(err as Error)?.message ?? err}`)
+            // No successor: end the session the replaced PTY's exit was told to leave alone.
+            wait?.abandonedTeardown?.()
           } finally {
             release()
           }
@@ -4889,8 +4899,12 @@ export function spawnPty(
     // session's next process). Without this, a Switch account under a
     // mid-refresh profile marked the session exited and dropped its resume
     // target and canvas link while the new PTY was seconds away.
-    const weAreCurrent = current ? current.ptyProcess === ptyProcess : !refreshWaitSpawns.has(sessionId)
-    if (weAreCurrent) {
+    const pendingWait = current ? undefined : refreshWaitSpawns.get(sessionId)
+    const weAreCurrent = current ? current.ptyProcess === ptyProcess : !pendingWait
+    // Everything that ends the session, as ONE unit: run at once when this exit
+    // is the session's own, or handed to the pending respawn wait (below) so a
+    // wait that never lands can still end the session its spawn replaced.
+    const finishSession = (): void => {
       // item 5 (resume cascade): an SSH session whose ssh process exited before
       // reaching claude-running failed to connect -- tell the overlay so it can
       // offer Retry (never strand). Runs only while the flow still exists (a
@@ -4977,22 +4991,31 @@ export function spawnPty(
       // when the PTY really is gone for good, which is the contract the
       // function documents.
       forgetSessionForCanvas(sessionId)
-    } else {
-      // Skip the renderer notification too (rc.14 review F8): the event below
-      // is keyed by session id only, so TerminalView would mark the LIVE
-      // replacement as exited (ptyExited + spawn tracker cleared), Ask
-      // Conductor would treat a healthy session as dead and respawn it, and a
-      // remount would spawn yet again. The exit that matters -- the current
-      // PTY's -- still reaches the renderer through the branch above.
-      logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup and exit notification`)
+      if (win.isDestroyed()) {
+        logDebug(`[pty] Window already destroyed, skipping exit notification for ${sessionId}`)
+        return
+      }
+      win.webContents.send(`pty:exit:${sessionId}`, exitCode)
+    }
+    if (weAreCurrent) {
+      finishSession()
       return
     }
-
-    if (win.isDestroyed()) {
-      logDebug(`[pty] Window already destroyed, skipping exit notification for ${sessionId}`)
+    if (pendingWait) {
+      // rc.15 review R3 (review round 2): stale only if the deferred spawn lands.
+      // If the wait is cancelled (the card closed meanwhile) or the re-entry
+      // fails, nothing else ends this session: the wait carries the teardown.
+      logInfo(`[pty] Exit of the replaced PTY for ${sessionId} while its respawn waits for a profile refresh -- teardown handed to the wait`)
+      pendingWait.abandonedTeardown = finishSession
       return
     }
-    win.webContents.send(`pty:exit:${sessionId}`, exitCode)
+    // Skip the renderer notification too (rc.14 review F8): the event above
+    // is keyed by session id only, so TerminalView would mark the LIVE
+    // replacement as exited (ptyExited + spawn tracker cleared), Ask
+    // Conductor would treat a healthy session as dead and respawn it, and a
+    // remount would spawn yet again. The exit that matters -- the current
+    // PTY's -- still reaches the renderer through finishSession.
+    logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup and exit notification`)
   })
 }
 
@@ -5280,6 +5303,9 @@ export function killPty(sessionId: string): void {
   if (waiting) {
     logInfo(`[pty] Session ${sessionId} was still waiting for a profile refresh; the spawn is cancelled`)
     waiting.cancel()
+    // The replaced PTY's exit, if it already arrived, was left to this spawn to
+    // supersede; with the spawn cancelled it ends the session now (once).
+    waiting.abandonedTeardown?.()
   }
   const entry = ptySessions.get(sessionId)
   // Read persistence BEFORE cleanupSessionResources runs (it no longer clears

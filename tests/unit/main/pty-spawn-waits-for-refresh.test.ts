@@ -60,6 +60,7 @@ const { registerProvider } = await import('../../../src/main/providers')
 const identity = await import('../../../src/main/claude-account-identity')
 const consumers = await import('../../../src/main/profile-consumers')
 const { fetchAccountUsage, _resetLiveUsageForTest, _resetSnapshotsForTest } = await import('../../../src/main/usage/account-usage')
+const { isPtySessionLive } = await import('../../../src/main/session-registry')
 const fakeProvider = {
   id: 'claude', displayName: 'Claude', resolveBinary: () => null,
   buildSpawnCommand: () => ({ cmd: '', args: [], env: {} }), detectUiRunning: () => false,
@@ -212,6 +213,31 @@ describe('a local spawn waits out an in-flight refresh of its profile (Codex R3,
     expect(ptys).toHaveLength(2)
     ptys[1].exitCb?.({ exitCode: 0 })
     expect(sent.some(([ch]) => ch === 'pty:exit:rc15switch')).toBe(true) // the real end is reported
+  })
+
+  it('review round 2: the card is closed while the respawn waits, after the replaced PTY\'s exit was suppressed -> the session is torn down once (not live, profile released, exit reported)', async () => {
+    const q = profiles.createProfile('Q2')
+    profiles.upsertProfile({ ...q, isPrimary: false, active: true, accountEmail: 'q2@example.test' })
+    const qFile = path.join(profiles.getProfileConfigDir(q.id), '.claude', '.credentials.json')
+    fs.mkdirSync(path.dirname(qFile), { recursive: true })
+    fs.writeFileSync(qFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x', refreshToken: 'y', expiresAt: 1 } }))
+    spawnPty(win, 'rc15abandon', { shellOnly: false, profileId, cwd: sandbox }) // interactive: watched on P
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(true)
+    expect(isPtySessionLive('rc15abandon')).toBe(true)
+    const old = ptys[0]
+    const fetching = fetchAccountUsage(q.id)
+    for (let i = 0; i < 100 && !held.answer; i++) await new Promise((resolve) => setTimeout(resolve, 5))
+    spawnPty(win, 'rc15abandon', { shellOnly: false, profileId: q.id, cwd: sandbox }) // Switch account onto Q: deferred
+    old.exitCb?.({ exitCode: 0 }) // suppressed: the deferred spawn is the successor...
+    expect(sent.filter(([ch]) => ch === 'pty:exit:rc15abandon')).toHaveLength(0)
+    killPty('rc15abandon') // ...but the user closes the card before it lands
+    expect(sent.filter(([ch]) => ch === 'pty:exit:rc15abandon')).toHaveLength(1) // the session's end IS reported
+    expect(isPtySessionLive('rc15abandon')).toBe(false) // 7ef62a2e+R3: stayed live for the process life
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(false) // P released (identity watch stopped)
+    expect(consumers.hasTransientProfileConsumer(q.id)).toBe(false) // the wait's hold released
+    await settle(fetching)
+    expect(ptys).toHaveLength(1) // nothing spawned
+    expect(sent.filter(([ch]) => ch === 'pty:exit:rc15abandon')).toHaveLength(1) // and nothing torn down twice
   })
 
   it('positive control: with no refresh in flight the spawn is synchronous, exactly as before', () => {
