@@ -23,8 +23,8 @@ CommandBar went as redundant. This is a deliberate static import cycle (altPane 
 browser store; the browser store calls altPane) -- the repo's only runtime store cycle, used
 only inside actions and never at module evaluation; there is no lint rule against cycles
 and the renderer bundle builds. One consequence to know: Settings' sign-in picks a host
-session itself, so it can close the canvas of a session the user is not looking at; the
-native view has to own the pane, so that is unavoidable.
+session itself, so the eviction lands on a session that was not active at click time (the
+handler then switches to it); the native view has to own the pane, so that is unavoidable.
 
 **Mechanism, signed off.** `isResumeCandidate` / `resumeCanvasForSession` (canvas-store)
 excluded only a `completed` (Marked complete) canvas, so a reviewed-and-approved one that
@@ -44,9 +44,14 @@ nobody, absent from the Library and history, and ignored by Mark complete -- so 
 agent rendered after an approval does NOT reopen the subject (a cause no screen could show
 and no gesture could clear). Relative to beta the gate only tightens (beta had no
 sign-off test at all: every uncompleted canvas with a dead owner was adoptable); relative
-to 6f6a63af it relaxes three cases beta allowed. Two meanings of "signed off" coexist on
-purpose, documented at the function: the Library chip = Marked complete (#476); this gate
-= decided.
+to 6f6a63af it relaxes two classes beta allowed -- a newest run with no version the user
+would act on (show-and-tell or withdrawn only), and an open version in an earlier live run.
+The invariant is one-directional: the gate never says done over a canvas Mark complete
+would refuse on its versions. Known gap (pre-existing since 6f6a63af, not closed here):
+Mark complete also refuses over review notes still with the agent, which this store cannot
+read, so a canvas with notes still owed under an approved newest run reads as done to the
+resume gate. Two meanings of "signed off" coexist on purpose, documented at the function:
+the Library chip = Marked complete (#476); this gate = decided.
 
 **Tests.** `alt-pane-coordinator.test.ts` drives the real coordinator against the real
 stores, now including the at-source cases for `openAccountPane` and `navigate`; each was

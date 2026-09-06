@@ -2216,9 +2216,12 @@ function isLiveOrUnknown(sessionId: string, isSessionLive: (sid: string) => bool
  */
 /**
  * Signed off is DONE, not resumable (owner, 2026-09-06: "if something was
- * signed off then it should be done"). Two conditions, both read the way the
- * completion guard reads them so the two gates can never disagree about one
- * canvas:
+ * signed off then it should be done"). Two conditions. The first is the
+ * completion guard's own version term, so this gate never says DONE over a
+ * canvas Mark complete would refuse on its versions. (The guard has further
+ * terms this store cannot read -- review notes still with the agent, an
+ * agent-chat verdict -- so the converse does not hold: notes still owed under
+ * an approved newest run are a known gap, recorded in the 2026-09-06 fragment.)
  *   1. Nothing is still owed. `openVersionIdsOf` — every live (non-archived)
  *      run's open version — is empty. A canvas holds a history of runs, of
  *      several kinds: a plan still awaiting the user under an approved design

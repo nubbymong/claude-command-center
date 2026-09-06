@@ -62,8 +62,8 @@ describe('alt-pane coordinator — one session surface at a time', () => {
 
   it('closeOtherAltPanes evicts the others but keeps the one named (the browser agent-push path)', () => {
     toggleAltPane(SID, 'canvas')
-    // A bare setOpen(true) is the one way to open the browser WITHOUT eviction (the
-    // coordinator itself uses it); this pins the primitive, not a production path.
+    // A bare setOpen(true) opens the browser WITHOUT eviction (it is what the
+    // coordinator itself uses); this pins the primitive, not a production path.
     useWebviewStore.getState().setOpen(SID, true)
     closeOtherAltPanes(SID, 'browser')
     expect(openState()).toEqual({ canvas: false, browser: true, logs: false })
@@ -90,6 +90,14 @@ describe('alt-pane coordinator — one session surface at a time', () => {
     toggleAltPane(SID, 'canvas')
     useWebviewStore.getState().navigate(SID, 'http://127.0.0.1:5173/next')
     expect(openState()).toEqual({ canvas: false, browser: true, logs: false })
+  })
+
+  it('the browser store\'s own togglePane evicts on open too — no store action can become a bypass', () => {
+    toggleAltPane(SID, 'canvas')
+    useWebviewStore.getState().togglePane(SID)
+    expect(openState()).toEqual({ canvas: false, browser: true, logs: false })
+    useWebviewStore.getState().togglePane(SID) // ...and closing returns to the terminal
+    expect(openCount()).toBe(0)
   })
 
   it('is per session — one session\'s surface does not touch another\'s', () => {

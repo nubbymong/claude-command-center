@@ -231,7 +231,7 @@ describe('a signed-off subject is done, not resumable', () => {
   })
 })
 
-/// A canvas is a HISTORY of artifact runs (item C), of several kinds: approve run
+// A canvas is a HISTORY of artifact runs (item C), of several kinds: approve run
 // A, archive it, and the next render starts run B; a plan and a design can sit
 // side by side. The gate must read that history the way the completion guard
 // does (`openVersionIdsOf`: every live run's open version), then judge the

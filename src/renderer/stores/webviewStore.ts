@@ -256,6 +256,10 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   // (#481): the explicit "show me the start page" applied to that viewing;
   // a fresh open gets the ordinary go-home convenience back.
   togglePane: (sessionId) => {
+    // Opening evicts the canvas/logs like every other open. No production
+    // caller today (the buttons use the coordinator); kept honest so this
+    // cannot become a bypass.
+    if (!get().bySessionId[sessionId]?.isOpen) closeOtherAltPanes(sessionId, 'browser')
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {

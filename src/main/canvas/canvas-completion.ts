@@ -187,7 +187,6 @@ export function completeCanvasGuarded(
   return setCanvasCompleted(canvasId, by, requireOwnerSessionId)
 }
 
-
 /** "v1 (plan)" — the version, and what kind of thing it is, so a refusal over a
  *  canvas holding several artefacts says WHICH one to go and decide. */
 function describeOpenVersion(versions: readonly CanvasVersion[], versionId: string): string {
