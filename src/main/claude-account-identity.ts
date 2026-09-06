@@ -175,6 +175,21 @@ export function getWatchedProfileId(sessionId: string): string | undefined {
   return watched.get(sessionId)
 }
 
+/** The email of a NEW account currently detected in this profile's shared home
+ *  (a `/login` to a different account than the profile's known one), or null.
+ *  Set when the new-account prompt is broadcast, cleared when the home returns
+ *  to a known account.
+ *
+ *  ADR-009 adversarial review (Lens B, R4): the capture-detected IPC gates on
+ *  this. Without it, a compromised renderer could name ANY watched session and
+ *  the handler would capture that session's live account into a new profile and
+ *  -- since R4 -- wipe the source's credentials, a renderer-triggerable forced
+ *  sign-out. Capture may proceed only for a profile where a new account was
+ *  actually detected. */
+export function detectedNewAccountEmail(profileId: string): string | null {
+  return detectedByProfile.get(profileId) ?? null
+}
+
 /** True when `profileId` is in use by a live session OR a transient credential
  *  consumer -- i.e. that profile's home is the active USERPROFILE/credential
  *  store of something running now. Used to refuse a profile delete that would
@@ -236,13 +251,21 @@ export async function recheckAllAsync(): Promise<void> {
 }
 
 async function recheckAllAsyncInner(): Promise<void> {
+  // rc.15 review R2 (aicc_planning#50): the rotation follower runs ONCE per
+  // DISTINCT profile per poll, before the per-session loop. Its state is per
+  // profile, so calling it once per session let two sessions on one profile
+  // arm the changed stamp and back it up inside the SAME poll -- the
+  // "settled, not merely changed" barrier it exists to enforce, bypassed, and a
+  // snapshot taken between the CLI's credential write and its identity write.
+  for (const profileId of new Set([...watched.values()].filter((p): p is string => !!p))) {
+    try { await followCredentialRotation(profileId) } catch { /* best-effort per profile; never abort the poll */ }
+  }
   for (const [sessionId, profileId] of [...watched]) {
     // Guard the WHOLE per-session body (not just the stat) so a throw in
     // pushAccountIdentity/listProfiles/classify/broadcast can never abort the poll
     // or reject this promise (it's void'd in a setInterval -> would be an unhandled
     // rejection). One bad session is skipped; the rest still poll.
     try {
-      if (profileId) await followCredentialRotation(profileId)
       const before = bySession.get(sessionId) ?? null
       const changed = await recheckSessionIdentityAsync(sessionId, profileId)
       if (!changed) continue

@@ -109,7 +109,7 @@ import { CSP_POLICY } from '../shared/csp-policy'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
-import { createCloseCoordinator } from './window-close-coordinator'
+import { createCloseCoordinator, onAllWindowsClosed } from './window-close-coordinator'
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
@@ -1336,11 +1336,10 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
   app.on('before-quit', (e) => closeCoordinator.onBeforeQuit(() => e.preventDefault()))
 
   app.on('window-all-closed', () => {
-    // On macOS, apps conventionally stay running when all windows are closed.
-    // The user must explicitly quit via Cmd+Q or the app menu.
-    if (process.platform !== 'darwin') {
-      app.quit()
-    }
+    // On macOS, apps conventionally stay running when all windows are closed
+    // (the user quits via Cmd+Q or the app menu) -- but not their PTYs: rc.15
+    // review R6, see onAllWindowsClosed.
+    onAllWindowsClosed({ platform: process.platform, quit: () => app.quit(), endStragglerPtys: killAllPty })
   })
 
   // On macOS, re-create the window when the dock icon is clicked and no windows exist

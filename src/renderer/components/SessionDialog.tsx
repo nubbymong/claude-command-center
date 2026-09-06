@@ -165,6 +165,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [rtMode, setRtMode] = useState<'exec' | 'start'>(initialRuntime?.mode ?? 'exec')
   const [rtSudo, setRtSudo] = useState(initialRuntime?.sudo ?? false)
   const [rtDir, setRtDir] = useState(initialRuntime?.containerDir ?? '')
+  // bash unless the config (or a converted legacy `... sh` line) says sh --
+  // rc.15 review R1: a sh-only container must keep its shell.
+  const [rtShell, setRtShell] = useState<'bash' | 'sh'>(initialRuntime?.shell === 'sh' ? 'sh' : 'bash')
 
   // ── Session startup (Claude Code)
   // Edit must not rewrite what's stored: a config saved with no model override
@@ -499,6 +502,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
           mode: rtMode,
           sudo: rtSudo || undefined,
           containerDir: rtDir.trim() || undefined,
+          shell: rtShell === 'sh' ? 'sh' : undefined,
         } : undefined,
         // item 1: persist only the opt-OUT (false); ON is the default/undefined.
         detachable: detachable ? undefined : false,
@@ -914,6 +918,15 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                           placeholder="Optional — where the session lands inside the container" className={inputCls} />
                         <Hint k="rtdir">Working directory inside the container. Leave blank for the container's default.</Hint>
                       </div>
+                      {rtMode !== 'start' && (
+                        <div>
+                          <label className="block text-xs text-[var(--text-secondary)] mb-1">Shell inside the container</label>
+                          <select value={rtShell} onChange={(e) => setRtShell(e.target.value as 'bash' | 'sh')} className={inputCls} data-testid="runtime-shell">
+                            <option value="bash">bash</option>
+                            <option value="sh">sh (minimal images without bash)</option>
+                          </select>
+                        </div>
+                      )}
                       <div>
                         <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
                           <input type="checkbox" checked={rtSudo} onChange={(e) => setRtSudo(e.target.checked)}
@@ -979,6 +992,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                           setRtContainer(parsed.container ?? '')
                           setRtMode(parsed.mode ?? 'exec')
                           setRtSudo(Boolean(parsed.sudo))
+                          setRtDir(parsed.containerDir ?? '')
+                          setRtShell(parsed.shell === 'sh' ? 'sh' : 'bash')
                           setPostCommand('')
                         }}
                       >

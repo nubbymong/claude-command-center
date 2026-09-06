@@ -4,14 +4,14 @@ import { IPC } from '../../shared/ipc-channels'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
-  captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileHomeFromCanonical,
+  captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileIdentityFromCanonical,
   readProfileCredentialStamp,
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
-import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
+import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, detectedNewAccountEmail } from '../claude-account-identity'
 import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
-import { logError } from '../debug-logger'
+import { logError, logWarn } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
 import { removeWebSession } from '../account-web/session-store'
 import { closeArtifacts } from '../account-web/artifacts'
@@ -200,12 +200,26 @@ export function registerAccountProfilesHandlers(): void {
     if (!p || !p.sessionId) return null
     // Bug 2: the /login wrote the new account into the session's SHARED profile home.
     // Resolve that profile, capture the new account out of it into a fresh profile,
-    // then restore the source profile home from canonical so the source account's
-    // other sessions (and its saved profile) recover.
+    // then put the source profile's IDENTITY back so its saved profile recovers.
+    // rc.15 review R4: identity only -- the canonical token may be a generation
+    // the account has already spent (a rotation and this /login inside one
+    // unobserved poll), so it is never reinstalled; the source account shows
+    // Sign in instead of failing silently on a dead token (owner decision, plan Q1).
     const profileId = getWatchedProfileId(p.sessionId)
     if (!profileId) return null
+    // ADR-009 adversarial review (Lens B, R4): capture only when a new account
+    // was ACTUALLY detected in this profile's home. getWatchedProfileId alone
+    // means "some session watches this profile" -- so a renderer naming any
+    // watched session id would otherwise capture that session's live account
+    // and (since R4) wipe the source's credentials, a renderer-triggerable
+    // forced sign-out. detectedNewAccountEmail is set only by the identity
+    // watcher's own /login detection, which the renderer cannot forge.
+    if (!detectedNewAccountEmail(profileId)) {
+      logWarn(`[account-profiles] capture refused for session ${p.sessionId}: no new account is detected in profile ${profileId}`)
+      return null
+    }
     const np = captureDetectedAccount(profileId, p.name)
-    if (np) { try { restoreProfileHomeFromCanonical(profileId) } catch { /* best-effort */ } }
+    if (np) { try { restoreProfileIdentityFromCanonical(profileId) } catch { /* best-effort */ } }
     return np
   })
   ipcMain.handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())

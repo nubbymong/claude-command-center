@@ -99,6 +99,9 @@ const sshSchema = z.object({
     mode: z.enum(['exec', 'start']).optional(),
     sudo: z.boolean().optional(),
     containerDir: z.string().max(4096).optional(),
+    // A two-literal pick, enumerated here for the same reason `type` is: it is
+    // interpolated into the composed entry command (rc.15 review R1).
+    shell: z.enum(['bash', 'sh']).optional(),
   }).optional(),
 }).optional()
 
@@ -122,6 +125,13 @@ export const spawnOptionsSchema = z.object({
   }).optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
+  // ADR-009 adversarial review (Lens B/D): pty-manager reads a TOP-LEVEL
+  // `options.elevated` (`options?.elevated ?? options?.terminalOptions?.elevated`)
+  // to wrap the launch in sudo/gsudo. It was declared only under terminalOptions,
+  // so the raw options spread let a renderer set the top-level field with no
+  // type check -- an undeclared field forcing an elevation prompt on a config
+  // that never asked for one. Declared here so the schema validates it.
+  elevated: z.boolean().optional(),
   // Ask Conductor's opening question. Bounded, NOT charset-guarded, for the same
   // reason as agentsConfig below: this is a natural-language sentence the user
   // typed, so rejecting metacharacters would break the feature for anyone who
@@ -535,7 +545,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // verbatim (the zod parse result is intentionally discarded), so a field the
     // schema doesn't declare would otherwise flow straight through from the
     // renderer. Only the keychain lookup below may set it.
+    // rc.15 review R3: refreshAwaited is main-internal (the deferred re-entry
+    // after a profile refresh wait) -- a renderer that set it would skip the wait.
     let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
+    if (resolvedOptions) delete (resolvedOptions as Record<string, unknown>).refreshAwaited
     // An SSH block is bound to the config it names, ON DISK: the request must be
     // that config's own (host/port/username/remotePath/postCommand) or the spawn
     // is refused. Main trusting the renderer to pair a config's stored password

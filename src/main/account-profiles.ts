@@ -1543,8 +1543,13 @@ export function readProfileAccountEmail(id: string): string | null {
   return readEmailFromFile(path.join(getProfileConfigDir(id), '.claude.json'))
 }
 
-/** Restore a profile's per-account-home identity from its canonical backup.
- *  Returns false if there is no canonical backup to restore from. */
+/** Restore a profile's per-account-home identity AND credentials from its
+ *  canonical backup. Returns false if there is no canonical backup to restore
+ *  from. rc.15 review R4: no production caller -- canonical is the last SETTLED
+ *  observation, and only a caller that can prove it holds the account's CURRENT
+ *  credential generation may reinstall a token from it (none exists today; the
+ *  capture path uses restoreProfileIdentityFromCanonical). Kept for the tests
+ *  that pin the follower's backup contents. */
 export function restoreProfileHomeFromCanonical(id: string): boolean {
   const idDir = getAccountIdentityDir(id)
   // Read side: if the identity dir is a reparse point, readFileSync below would
@@ -1571,6 +1576,108 @@ export function restoreProfileHomeFromCanonical(id: string): boolean {
     hardenCredentialDir(claudeDir)
     copyCredentialFile(srcCred, path.join(claudeDir, '.credentials.json'))
   }
+  return true
+}
+
+/** The keys of a `.claude.json` that can carry a credential. The CLI's identity
+ *  file is mostly state (projects, tips, the oauthAccount's email and uuids),
+ *  but it has carried token material in some versions, so an identity-only
+ *  restore strips by NAME rather than trusting a shape. */
+const IDENTITY_TOKEN_KEY_RE = /token|secret|credential|apikey|api_key|claudeAiOauth/i
+
+/** The canonical `.claude.json` with every token-bearing key removed, at EVERY
+ *  depth. Unparseable input yields an empty object: an identity that cannot be
+ *  read cannot be sanitised, and nothing token-bearing may go back.
+ *
+ *  ADR-009 adversarial review (Lens B, R4): the earlier version stripped only
+ *  the top level and one level under `oauthAccount`, so a secret nested deeper
+ *  -- `mcpServers.<name>.env.GITHUB_PERSONAL_ACCESS_TOKEN` is a shape the CLI
+ *  itself writes -- rode straight back into the "token-free" home, falsifying
+ *  this function's own guarantee. It now recurses through every object and
+ *  array, dropping a token-bearing FIELD name at any depth -- but NOT the keys
+ *  of a data map (`projects`, `mcpServers`), which are user paths / names that
+ *  may themselves contain "secret" (round 2). Exported for its tests. */
+export function stripIdentityTokens(claudeJson: string): string {
+  let parsed: unknown
+  try { parsed = JSON.parse(claudeJson) } catch { return '{}' }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}'
+  // ADR-009 round 2 (Lens A2): the key-name test applies to credential FIELD
+  // names, not to DATA-MAP keys. `projects` is keyed by absolute paths and
+  // `mcpServers` by server names -- user strings that legitimately contain
+  // "secret"/"token" (`C:\work\secret-santa`, an MCP server named
+  // "my-secret-store"). A blanket key test at every depth dropped those whole
+  // entries, losing the folder-trust + allowedTools/history that key held. So
+  // the immediate children of a data-map container are never dropped by name;
+  // recursion still reaches token FIELDS deeper (an mcpServers `env.<VAR>` token
+  // is stripped).
+  const strip = (value: unknown, dataMapKeys: boolean): unknown => {
+    if (Array.isArray(value)) return value.map((v) => strip(v, false))
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        if (!dataMapKeys && IDENTITY_TOKEN_KEY_RE.test(k)) continue
+        out[k] = strip(v, k === 'projects' || k === 'mcpServers')
+      }
+      return out
+    }
+    return value
+  }
+  return JSON.stringify(strip(parsed, false))
+}
+
+/**
+ * rc.15 review R4 (aicc_planning#50): the restore the CAPTURE path runs after
+ * another account was captured out of this profile's shared home. IDENTITY
+ * ONLY. Canonical is the last SETTLED observation of this account; a token
+ * that rotated after it and was then overwritten by the /login (a rotation and
+ * a login inside one unobserved poll cannot be told apart from outside) is
+ * spent by the time it would be reinstalled, and restoring it strands the
+ * account silently. So nothing token-bearing goes back: the canonical
+ * `.claude.json` is written with its token keys stripped, and the home's
+ * `.credentials.json` is removed (or, if it cannot be removed, emptied). The
+ * account then reads as Sign in -- needs-login, no usable credentials at all --
+ * never as signed in on a token that may be dead. Returns false when there is
+ * no canonical identity to restore from.
+ */
+export function restoreProfileIdentityFromCanonical(id: string): boolean {
+  const idDir = getAccountIdentityDir(id)
+  try {
+    if (fs.lstatSync(idDir).isSymbolicLink()) throw new Error(`refusing restore: ${idDir} is a reparse point`)
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('reparse point')) throw e
+    return false // idDir absent -> nothing to restore
+  }
+  const srcJson = path.join(idDir, '.claude.json')
+  if (!fs.existsSync(srcJson)) return false
+  const home = getProfileConfigDir(id)
+  mkdirSecure(home)
+  // Credentials FIRST (review): if the token file cannot be cleared, nothing
+  // is written -- writing A's identity over B's token would pass the backup's
+  // email guard and copy B's token into A's canonical store on the next poll.
+  // rmSync on a symlink removes the link itself, never its target.
+  const cred = path.join(home, '.claude', '.credentials.json')
+  // `recursive` so a DIRECTORY planted at the credentials path (ADR-009 Lens B:
+  // a failed-clear repro) is removed rather than throwing, and the account
+  // still ends signed out. rmSync on a symlink removes the link, not its target.
+  try { fs.rmSync(cred, { force: true, recursive: true }) } catch { /* fall through to the overwrite */ }
+  if (fs.existsSync(cred)) {
+    try {
+      writeCredentialFile(cred, '{}')
+    } catch (e) {
+      // ADR-009 adversarial review (Lens B, round 2): the token file cannot be
+      // neutralised here (a reparse point, or an OS lock held by a live session
+      // on Windows). The security invariant still holds -- A's identity is never
+      // written next to a live token -- and we remove A's identity so the home
+      // can never show the SOURCE account signed in on the CAPTURED token. What
+      // survives is the captured account's own token file with no identity, which
+      // the very next successful restore/backup clears; we do NOT overclaim it as
+      // a clean "Sign in" here. Reported as a failed restore.
+      logWarn(`[profiles] restore ${id}: could not clear .credentials.json (${(e as Error)?.message ?? e}); removed the identity so the source account is not shown on the captured token`)
+      try { fs.rmSync(path.join(home, '.claude.json'), { force: true }) } catch { /* best-effort */ }
+      return false
+    }
+  }
+  atomicWriteSecure(path.join(home, '.claude.json'), stripIdentityTokens(fs.readFileSync(srcJson, 'utf8')), IS_POSIX ? CRED_FILE_MODE : undefined)
   return true
 }
 

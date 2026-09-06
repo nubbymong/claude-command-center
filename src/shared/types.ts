@@ -57,6 +57,10 @@ export interface SshRuntime {
   sudo?: boolean
   /** Optional working directory INSIDE the container (engine -w flag). */
   containerDir?: string
+  /** The shell the exec lands in. Default bash; 'sh' is recorded only when a
+   *  legacy free-text `... exec -it <name> sh` line was parsed, so a sh-only
+   *  container keeps the shell it was configured with (rc.15 review R1). */
+  shell?: 'bash' | 'sh'
 }
 
 export interface SshConfig {

@@ -229,3 +229,102 @@ export async function persistLastUsedAccount(sessionId: string, profileId: strin
     /* best-effort: the choice still lives in the store for this run */
   }
 }
+
+/**
+ * rc.15 review R7 (aicc_planning#53): what boot does with the saved file. The
+ * left-running registry is hydrated for BOTH startup shapes -- with attached
+ * cards (the restore prompt follows) and without -- BEFORE the restore prompt
+ * is decided. It used to be hydrated only inside the attached-session restore,
+ * so a boot that showed the prompt had an empty live registry until the user
+ * answered, and a close in that window (see closeWithNoSessions) cleared the
+ * file with the remotes in it. Returns the saved state when there are cards to
+ * offer (the caller shows the prompt), null otherwise.
+ */
+export async function loadSavedStateAtStartup(deps: {
+  load: () => Promise<SessionState | null>
+  pingHosts: () => void
+  reconcile: () => void
+}): Promise<SessionState | null> {
+  const savedState = await deps.load()
+  if (hydrateDetachedFromSavedState(savedState) > 0) deps.pingHosts()
+  if (savedState && savedState.sessions.length > 0) return savedState
+  // Nothing to restore: every per-session tool hide from the last run is for a
+  // session that no longer exists. (The restore path sweeps after it knows
+  // which sessions came back.)
+  deps.reconcile()
+  return null
+}
+
+/**
+ * The zero-session close (no dialog). rc.15 review R7: while the restore prompt
+ * is still unanswered the saved file holds the cards AND the remotes the user
+ * has not decided about -- the live session set is empty only because the
+ * decision is pending -- so the file is left exactly as it is and the next boot
+ * asks again with everything intact. Otherwise, as before: the pending autosave
+ * is cancelled and the file keeps only the left-running registry (or is cleared).
+ * The window is allowed to close whatever happens.
+ */
+export async function closeWithNoSessions(deps: {
+  restorePromptPending: boolean
+  cancelAutosave: () => void
+  flush: () => Promise<void>
+  allowClose: () => void
+}): Promise<'left-untouched' | 'saved' | 'cleared'> {
+  deps.cancelAutosave()
+  let outcome: 'left-untouched' | 'saved' | 'cleared' = 'left-untouched'
+  try {
+    await deps.flush()
+    if (!deps.restorePromptPending) outcome = await persistDetachedOnlyOrClear()
+  } catch {
+    /* best-effort: the empty store still yields no card next launch */
+  } finally {
+    deps.allowClose()
+  }
+  return outcome
+}
+
+/**
+ * The close dialog's "Close sessions" / "Don't save" path. rc.15 review R6
+ * (aicc_planning#53 adjacent): the dialog says the sessions will be closed, and
+ * on macOS the window closing does not quit the app -- so the sessions are
+ * ENDED here, the way Save ends them (session.gracefulExit: local sessions get
+ * /exit, tmux-persistent remotes detach), before the window is allowed to go.
+ * Main's window-all-closed then sweeps any straggler. A teardown error never
+ * strands the close. Returns false when the close itself failed (the caller
+ * leaves the closing state).
+ */
+export async function discardAndClose(deps: {
+  isUpdate: boolean
+  flush: () => Promise<void>
+  cancelAutosave: () => void
+  gracefulExit: () => Promise<unknown>
+  installAndRestart: () => Promise<unknown>
+  allowClose: () => void
+}): Promise<boolean> {
+  try {
+    await deps.flush()
+    // #397 round-2: kill any pending debounced autosave first, so it cannot fire
+    // after the clear and rewrite the set the user just chose to discard.
+    deps.cancelAutosave()
+    // rc.14 review F9: "Don't save" discards the cards, not the remotes left
+    // running on their hosts -- those stay in the file on their own.
+    await persistDetachedOnlyOrClear()
+    console.log('[App] Session state cleared (left-running registry kept if any)')
+    if (deps.isUpdate) {
+      await deps.installAndRestart()
+      return true
+    }
+    try {
+      await deps.gracefulExit()
+      console.log('[App] Sessions closed')
+    } catch (err) {
+      console.error('[App] Closing the sessions failed; closing the window anyway:', err)
+    }
+    deps.allowClose()
+    return true
+  } catch (err) {
+    console.error('[App] Error during close:', err)
+    if (!deps.isUpdate) deps.allowClose()
+    return false
+  }
+}
