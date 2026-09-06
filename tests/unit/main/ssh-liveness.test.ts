@@ -19,7 +19,9 @@ import {
 
 // A run in which at least one tmux binary existed and answered (FOUND), then the
 // listed names. `wrapNoTmux` is the shell reaching END with no binary found.
-const wrap = (body: string) => `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND}\n${body}\n${TMUX_LIVENESS_END}\n`
+// rc.15 review R8: FOUND carries the candidate's `ls` exit status (0 here: an
+// authoritative listing).
+const wrap = (body: string) => `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND} 0\n${body}\n${TMUX_LIVENESS_END}\n`
 const wrapNoTmux = () => `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_END}\n`
 
 describe('buildTmuxListCommand', () => {
@@ -31,8 +33,9 @@ describe('buildTmuxListCommand', () => {
   })
 
   it('lists names from BOTH the on-PATH and the staged tmux, single-quoting the format', () => {
-    expect(cmd).toContain(`command tmux ls -F '#{session_name}' 2>/dev/null`)
-    expect(cmd).toContain(`"$HOME"/.claude/bin/tmux ls -F '#{session_name}' 2>/dev/null`)
+    // rc.15 review R8: stderr is captured with the listing (2>&1), never discarded.
+    expect(cmd).toContain(`command tmux ls -F '#{session_name}' 2>&1`)
+    expect(cmd).toContain(`"$HOME"/.claude/bin/tmux ls -F '#{session_name}' 2>&1`)
   })
 
   it('carries NO candidate/session operand — it is a fixed literal', () => {
@@ -67,12 +70,12 @@ describe('parseTmuxLivenessOutput', () => {
   })
 
   it('the FOUND marker never leaks into the names, however many binaries printed it', () => {
-    const raw = `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND}\nccc-a\n${TMUX_LIVENESS_FOUND}\nccc-a\nccc-b\n${TMUX_LIVENESS_END}\n`
+    const raw = `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND} 0\nccc-a\n${TMUX_LIVENESS_FOUND} 0\nccc-a\nccc-b\n${TMUX_LIVENESS_END}\n`
     expect(parseTmuxLivenessOutput(raw)).toMatchObject({ completed: true, tmuxFound: true, names: ['ccc-a', 'ccc-b'] })
   })
 
   it('no END sentinel => NOT completed (a connection/auth failure — unverified)', () => {
-    expect(parseTmuxLivenessOutput('ssh: connect to host pi.local port 22: Connection refused')).toEqual({ completed: false, shellCompleted: false, tmuxFound: false, names: [] })
+    expect(parseTmuxLivenessOutput('ssh: connect to host pi.local port 22: Connection refused')).toMatchObject({ completed: false, shellCompleted: false, tmuxFound: false, names: [] })
   })
 
   it('dedupes names reported by both tmux tiers', () => {
@@ -80,7 +83,7 @@ describe('parseTmuxLivenessOutput', () => {
   })
 
   it('tolerates a login banner before BEGIN, ANSI escapes and CRLF', () => {
-    const raw = `Last login: today\r\n\x1b[32m${TMUX_LIVENESS_BEGIN}\x1b[0m\r\n${TMUX_LIVENESS_FOUND}\r\nccc-a\r\nccc-b\r\n${TMUX_LIVENESS_END}\r\n`
+    const raw = `Last login: today\r\n\x1b[32m${TMUX_LIVENESS_BEGIN}\x1b[0m\r\n${TMUX_LIVENESS_FOUND} 0\r\nccc-a\r\nccc-b\r\n${TMUX_LIVENESS_END}\r\n`
     expect(parseTmuxLivenessOutput(raw).names).toEqual(['ccc-a', 'ccc-b'])
   })
 })
@@ -89,11 +92,11 @@ describe('parseTmuxLivenessOutput', () => {
 // text a host-side actor can print BEFORE the probe runs (a banner, a MOTD)
 // cannot forge the FOUND marker and a session name into the body.
 describe('parseTmuxLivenessOutput — forged sentinels printed before the probe', () => {
-  const banner = `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND}\nccc-forged\n`
+  const banner = `${TMUX_LIVENESS_BEGIN}\n${TMUX_LIVENESS_FOUND} 0\nccc-forged\n`
 
   it('REGRESSION: a banner that prints BEGIN/FOUND/<name> ahead of a real, empty run does not make that name live', () => {
     const parsed = parseTmuxLivenessOutput(banner + wrapNoTmux())
-    expect(parsed).toEqual({ completed: false, shellCompleted: true, tmuxFound: false, names: [] })
+    expect(parsed).toMatchObject({ completed: false, shellCompleted: true, tmuxFound: false, names: [] })
     expect(computeLiveSessionIds(['forged'], parsed.names)).toEqual([])
   })
 

@@ -20,7 +20,7 @@ describe('liveness probe tmux candidates', () => {
   it('include the Homebrew (arm64 + intel) and system locations, not just PATH and the staged binary', () => {
     const cmd = buildTmuxListCommand()
     for (const bin of ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux']) {
-      expect(cmd).toContain(`${bin} ls -F '#{session_name}' 2>/dev/null`)
+      expect(cmd).toContain(`${bin} ls -F '#{session_name}' 2>&1`)
     }
   })
 
@@ -45,9 +45,10 @@ describe('liveness probe tmux candidates', () => {
 describe('every candidate is existence-gated before it lists (rc.14 review F11, second half)', () => {
   it('prints FOUND only from a binary that exists: `command -v` for PATH, `[ -x ]` for fixed paths', () => {
     const cmd = buildTmuxListCommand()
-    expect(cmd).toContain("command -v tmux >/dev/null 2>&1 && { echo __CCC_TMUX_FOUND__; command tmux ls -F '#{session_name}' 2>/dev/null; }")
-    expect(cmd).toContain("[ -x /opt/homebrew/bin/tmux ] && { echo __CCC_TMUX_FOUND__; /opt/homebrew/bin/tmux ls -F '#{session_name}' 2>/dev/null; }")
-    expect(cmd).toContain('[ -x "$HOME"/.claude/bin/tmux ] && { echo __CCC_TMUX_FOUND__; "$HOME"/.claude/bin/tmux ls -F')
+    // rc.15 review R8: `ls` runs first with status + output captured; FOUND carries the status.
+    expect(cmd).toContain("command -v tmux >/dev/null 2>&1 && { __ccc_o=$(command tmux ls -F '#{session_name}' 2>&1); __ccc_s=$?; echo \"__CCC_TMUX_FOUND__ $__ccc_s\"; printf '%s\\n' \"$__ccc_o\"; }")
+    expect(cmd).toContain("[ -x /opt/homebrew/bin/tmux ] && { __ccc_o=$(/opt/homebrew/bin/tmux ls -F '#{session_name}' 2>&1); __ccc_s=$?; echo \"__CCC_TMUX_FOUND__ $__ccc_s\"")
+    expect(cmd).toContain('[ -x "$HOME"/.claude/bin/tmux ] && { __ccc_o=$("$HOME"/.claude/bin/tmux ls -F')
     // One gate per candidate, no bare listing anywhere: deleting the marker
     // from the builder would make every probe unverified forever, silently.
     expect((cmd.match(/__CCC_TMUX_FOUND__/g) ?? []).length).toBe(TMUX_LIVENESS_BIN_EXPRS.length)

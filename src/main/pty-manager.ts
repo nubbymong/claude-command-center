@@ -1229,7 +1229,14 @@ export function probeTmuxLive(
   // lives outside every candidate path, and that is unverified, never death.
   const finish = (raw: string): DetachedRemoteLiveness => {
     const parsed = parseTmuxLivenessOutput(raw)
-    if (!parsed.completed) return unverified
+    if (!parsed.completed) {
+      // rc.15 review R8: an operational failure of a found tmux client (a
+      // protocol mismatch, a permission error) is logged and answered
+      // 'unverified' -- never 'verified' with no names, which pruned live
+      // sessions as dead.
+      logWarn(`[ssh] tmux liveness probe of ${target.host} is not authoritative: ${parsed.unverifiedReason ?? 'unknown'}`)
+      return unverified
+    }
     return { outcome: 'verified', liveSessionIds: computeLiveSessionIds(sessionIds, parsed.names) }
   }
 
