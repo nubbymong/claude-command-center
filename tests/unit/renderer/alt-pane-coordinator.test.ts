@@ -62,7 +62,8 @@ describe('alt-pane coordinator — one session surface at a time', () => {
 
   it('closeOtherAltPanes evicts the others but keeps the one named (the browser agent-push path)', () => {
     toggleAltPane(SID, 'canvas')
-    // The browser's navigate() opens the browser itself; the push path then evicts the rest.
+    // A bare setOpen(true) is the one way to open the browser WITHOUT eviction (the
+    // coordinator itself uses it); this pins the primitive, not a production path.
     useWebviewStore.getState().setOpen(SID, true)
     closeOtherAltPanes(SID, 'browser')
     expect(openState()).toEqual({ canvas: false, browser: true, logs: false })

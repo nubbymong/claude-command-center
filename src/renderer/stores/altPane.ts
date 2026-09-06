@@ -39,10 +39,11 @@ function setPaneOpen(kind: AltPaneKind, sessionId: string, open: boolean): void 
 }
 
 /**
- * Close every alt-pane for this session EXCEPT `keep`. The browser store calls
- * it from its own `navigate` and `openAccountPane` — the writes that open the
+ * Close every alt-pane for this session EXCEPT `keep`. The primitive under
+ * `openAltPane` and `toggleAltPane` below, and what the browser store calls
+ * from its own `navigate` and `openAccountPane` — the writes that open the
  * pane by a path other than its toggle button (an agent push, a "page" command,
- * the Artifacts button, Settings' sign-in) — so the one-surface rule is
+ * the Artifacts buttons, Settings' sign-in) — so the one-surface rule is
  * enforced at the source rather than remembered per caller.
  */
 export function closeOtherAltPanes(sessionId: string, keep: AltPaneKind): void {
@@ -54,8 +55,9 @@ export function closeOtherAltPanes(sessionId: string, keep: AltPaneKind): void {
 /**
  * Open `kind` and close the other two, whatever the current state (NOT a
  * toggle). For paths that open a surface unconditionally — a canvas resumed
- * from the queue, a "page" command that opens the browser — so the
- * one-surface rule holds there as it does for the toggle buttons.
+ * or opened from the queue popover — so the one-surface rule holds there as
+ * it does for the toggle buttons. (The browser's own open paths call
+ * `closeOtherAltPanes` from inside the store instead.)
  */
 export function openAltPane(sessionId: string, kind: AltPaneKind): void {
   closeOtherAltPanes(sessionId, kind)

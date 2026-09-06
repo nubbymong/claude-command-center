@@ -288,11 +288,13 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     }))
   },
   navigate: (sessionId, url) => {
-    const cur = get().bySessionId[sessionId] || defaultState()
     // One session surface at a time: opening the pane evicts the canvas and
     // logs. Done at the source so the agent-push open, a "page" command and any
-    // future caller honour it without having to remember to.
+    // future caller honour it without having to remember to. Before the read
+    // of `cur`, so the snapshot spread below can never resurrect what the
+    // eviction cleared.
     closeOtherAltPanes(sessionId, 'browser')
+    const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
@@ -339,11 +341,12 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     }))
   },
   openAccountPane: (sessionId, profileId) => {
-    const cur = get().bySessionId[sessionId] || defaultState()
-    // Opens the pane too (the Artifacts button, Settings' internal-browser
+    // Opens the pane too (the Artifacts buttons, Settings' internal-browser
     // sign-in), so it evicts the canvas and logs exactly as `navigate` does —
-    // this was the third path that left two surfaces flagged open.
+    // this was the third path that left two surfaces flagged open. Before the
+    // read of `cur`, for the same reason as there.
     closeOtherAltPanes(sessionId, 'browser')
+    const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,

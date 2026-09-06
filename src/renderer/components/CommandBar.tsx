@@ -17,7 +17,6 @@ import LogsButton from './LogsButton'
 import WebviewButton from './WebviewButton'
 import PasteHint from './PasteHint'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
-
 import { generateId } from '../utils/id'
 import { buildCommandLine, commandSecretRef, commandSecretKey } from '../../shared/command-secret'
 import { isAllowedBrowserUrl } from '../../shared/browser-url'
