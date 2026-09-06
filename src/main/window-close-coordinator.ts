@@ -164,3 +164,24 @@ export function createCloseCoordinator(deps: CloseCoordinatorDeps): CloseCoordin
     state: () => ({ allowClose, closeRequestedOnce, quitRequested, tornDown }),
   }
 }
+
+/**
+ * What `window-all-closed` does (rc.15 review R6, aicc_planning#53 adjacent).
+ * Everywhere but macOS the app quits, and before-quit tears everything down. On
+ * macOS the app stays resident for a Dock reopen -- but the window's sessions
+ * are gone with the renderer, and main-owned PTYs must not keep executing
+ * invisibly behind an empty Dock icon: the stragglers are ended here (the
+ * renderer's Close sessions already ended them gracefully; this is the sweep).
+ */
+export function onAllWindowsClosed(deps: {
+  platform: NodeJS.Platform
+  quit: () => void
+  endStragglerPtys: () => void
+}): 'quit' | 'stay-resident' {
+  if (deps.platform !== 'darwin') {
+    deps.quit()
+    return 'quit'
+  }
+  deps.endStragglerPtys()
+  return 'stay-resident'
+}
