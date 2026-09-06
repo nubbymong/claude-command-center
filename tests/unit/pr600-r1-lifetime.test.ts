@@ -258,3 +258,80 @@ describe('PR600 R1 round-3 MINOR: a failed attempt leaves no deferred write behi
     expect(writes().filter((text) => text.includes('claude --settings')), 'the relaunch must reach the claude command').toHaveLength(1)
   })
 })
+
+// Codex PR600 final re-review, P2: the deferred-write host-back hint cancelled a
+// HEALTHY launch when the container's prompt is identical to the host's. The
+// hint tested isHostBackLine without the distinct-inner-prompt guard the older
+// idle hint carries -- so a genuine IN + HERE followed by the container's own
+// (identical) prompt in a later chunk read as a host-return detach. Fix: require
+// known, distinct inner and host prompts before the prompt-only cancellation;
+// OUT / real host-back with a distinct prompt stay caught. RED before the fix.
+describe('PR600 P2: identical host/container prompts do not cancel a healthy launch', () => {
+  const enterP = (id: string, host: string, inner: string, secret?: string) => {
+    ids.push(id)
+    spawnPty(win, id, { ssh: {
+      username: 'synthetic', host: 'invalid.example', port: 22, remotePath: '~', sudoPassword: secret,
+      runtime: { type: 'container', engine: 'docker', container: 'synthetic', sudo: !!secret },
+    } } as never)
+    feed(host)
+    expect(getSshFlow(id)?.getState().state).toBe('awaiting-postcommand')
+    getSshFlow(id)!.runPostCommand()
+    vi.advanceTimersByTime(201)
+    write.mockClear()
+    feed(mark(id, 'IN') + inner)
+    expect(getSshFlow(id)?.getState().state).toBe('awaiting-claude')
+    getSshFlow(id)!.launchClaude()
+    expect(writes()).toEqual([GUARD])
+    write.mockClear()
+  }
+  const secondGuardP = (id: string, host: string, inner: string) => {
+    enterP(id, host, inner)
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(301)
+    expect(writes().some((text) => text.includes('base64 -d | node'))).toBe(true)
+    write.mockClear()
+    feed(`setup ok ${_getSshNonceForTest(id)} tmux=none\r\n${inner}`)
+    vi.advanceTimersByTime(1600)
+    expect(writes()).toEqual([GUARD])
+    write.mockClear()
+  }
+  it('identical prompts: a split HERE then the healthy container prompt still writes the setup', () => {
+    const id = 'p2-identical-setup'
+    enterP(id, '$ ', '$ ')
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(20)
+    feed('$ ') // the container's own prompt, in its own chunk -- not a host return
+    vi.advanceTimersByTime(281)
+    expect(getSshFlow(id)?.getState().state, 'an identical prompt is not evidence of host return').not.toBe('failed')
+    expect(writes().filter((text) => text.includes('base64 -d | node')), 'the healthy container gets its setup').toHaveLength(1)
+  })
+  it('identical prompts: a split second HERE then the healthy prompt still writes the claude command', () => {
+    const id = 'p2-identical-claude'
+    secondGuardP(id, '$ ', '$ ')
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(20)
+    feed('$ ')
+    vi.advanceTimersByTime(181)
+    expect(writes().filter((text) => text.includes('claude --settings')), 'the healthy container gets the claude command').toHaveLength(1)
+  })
+  it('control: a distinct container prompt in its own chunk still writes the setup', () => {
+    const id = 'p2-distinct-setup'
+    enterP(id, HOST, INNER)
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(20)
+    feed(INNER)
+    vi.advanceTimersByTime(281)
+    expect(writes().filter((text) => text.includes('base64 -d | node'))).toHaveLength(1)
+  })
+  it('control: with DISTINCT prompts a genuine host-back detach still cancels the setup (the fix keeps the real protection)', () => {
+    const id = 'p2-distinct-hostback'
+    enterP(id, HOST, INNER)
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(20)
+    feed('\r\n' + HOST) // the DISTINCT host prompt returns with no OUT -- a real detach
+    vi.advanceTimersByTime(281)
+    expect(writes(), 'a distinct host prompt back with a payload pending is a detach').toEqual([])
+    expect(getSshFlow(id)?.getState().state).toBe('failed')
+  })
+})
+

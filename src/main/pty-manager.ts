@@ -4097,10 +4097,22 @@ function spawnPtyResolved(
           // container setup or the claude command) is scheduled but not yet
           // written, a host prompt on the trailing line means the container shell
           // was left with no OUT (a plain detach). Fail the entry so the pending
-          // deferred write bails instead of landing on the host. Only fires with a
-          // write in flight and a positively-recognised host prompt, so the normal
-          // idle awaiting-claude phase (handled by its own hint below) is untouched.
-          if (deferredEntryWritePending && isHostBackLine(trailingNow)) {
+          // deferred write bails instead of landing on the host.
+          //
+          // Codex PR600 final re-review (P2): require the inner and host prompts
+          // to be KNOWN and DISTINCT, exactly as the idle host-back hint below
+          // does. When the container's prompt is byte-identical to the host's, a
+          // healthy container prompt arriving in its own chunk after HERE is not
+          // evidence of a return, and this prompt-only test would otherwise
+          // cancel a legitimate launch. Current-attempt OUT stays caught
+          // unconditionally (above); a real detach with a distinct prompt still
+          // trips here. Only fires with a write in flight and a positively
+          // recognised, distinct host prompt.
+          if (
+            deferredEntryWritePending
+            && hostPromptLine !== '' && innerPromptLine !== '' && innerPromptLine !== hostPromptLine
+            && isHostBackLine(trailingNow)
+          ) {
             failEntry(SSH_ENTRY.LEFT, 'the host prompt returned before the proven-entry payload was written')
             return
           }
