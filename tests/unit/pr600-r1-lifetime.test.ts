@@ -130,3 +130,94 @@ describe('PR600 R1 lifetime (Codex findings 1+2)', () => {
     expect(writes(), 'a previously scheduled host secret must not enter the proven container').toEqual([])
   })
 })
+
+// ADR-009 round 3, R1 re-attack MINOR: the deferred setup (300 ms) and claude
+// (200 ms) writes were anonymous timers. failEntry did not clear them, so a Run
+// again inside the failed attempt's window let the STALE timer fire into the
+// next attempt: its callback cleared deferredEntryWritePending under the next
+// attempt's own pending write (disarming the host-back check for the rest of
+// that window), wrote the payload a second time, or -- for the claude timer,
+// once Run again had reset runtimeEntryFailed -- typed the Claude command onto
+// the host shell before the new exec was even typed. failEntry also never
+// un-latched claudeSent, so after an OUT in the deferred-claude window the next
+// attempt could not launch Claude at all. RED before the fix.
+function runAgainToSecondProof(id: string) {
+  getSshFlow(id)!.runPostCommand()
+  vi.advanceTimersByTime(201)
+  expect(writes().some((text) => text.includes('docker exec'))).toBe(true)
+  write.mockClear()
+  feed(mark(id, 'IN') + INNER)
+  getSshFlow(id)!.launchClaude()
+  expect(writes()).toEqual([GUARD])
+  write.mockClear()
+}
+
+describe('PR600 R1 round-3 MINOR: a failed attempt leaves no deferred write behind', () => {
+  it('setup timer: a Run again inside the failed attempt\'s window keeps the host-back check armed for the new attempt', () => {
+    const id = 'r1-stale-setup-disarm'
+    firstGuard(id)
+    feed(mark(id, 'HERE')) // attempt 1: setup write scheduled (+300)
+    vi.advanceTimersByTime(20)
+    feed('\r\n' + HOST) // host-back detach -> failEntry at +20
+    expect(getSshFlow(id)?.getState().state).toBe('failed')
+    runAgainToSecondProof(id) // exec re-typed at +221, attempt 2 proven
+    feed(mark(id, 'HERE')) // attempt 2: setup write scheduled (+521)
+    vi.advanceTimersByTime(100) // +321: attempt 1's stale timer would have fired at +300
+    feed('\r\n' + HOST) // host-back detach inside attempt 2's window
+    vi.advanceTimersByTime(300) // +621: past attempt 2's own write time
+    expect(writes(), 'the returned host must receive no setup payload').toEqual([])
+    expect(getSshFlow(id)?.getState().state, 'the detach must fail the entry').toBe('failed')
+  })
+  it('setup timer: the re-entry writes its setup payload exactly once', () => {
+    const id = 'r1-stale-setup-duplicate'
+    firstGuard(id)
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(20)
+    feed('\r\n' + HOST)
+    runAgainToSecondProof(id)
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(301)
+    expect(writes().filter((text) => text.includes('base64 -d | node')), 'one attempt, one setup payload').toHaveLength(1)
+  })
+  it('claude timer: a Run again inside the failed attempt\'s window never types the Claude command onto the host', () => {
+    const id = 'r1-stale-claude-timer'
+    secondGuard(id)
+    const out = mark(id, 'OUT')
+    feed(mark(id, 'HERE')) // attempt 1: claude write scheduled (+200)
+    vi.advanceTimersByTime(20)
+    feed(out + HOST) // real OUT -> failEntry at +20; the PTY is on the host shell
+    expect(getSshFlow(id)?.getState().state).toBe('failed')
+    getSshFlow(id)!.runPostCommand() // Run again at +20 resets runtimeEntryFailed; the exec is typed at +220
+    vi.advanceTimersByTime(181) // +201: the stale claude timer has fired, the exec has not yet been typed
+    expect(writes().filter((text) => text.includes('claude --settings')), 'no Claude command may reach the host shell').toEqual([])
+  })
+  it('claude timer: after an OUT in the deferred-claude window, the next attempt can still launch Claude', () => {
+    const id = 'r1-runagain-relaunch'
+    secondGuard(id)
+    const out = mark(id, 'OUT')
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(20)
+    feed(out + HOST)
+    vi.advanceTimersByTime(200) // let the failed attempt's window pass before Run again
+    write.mockClear()
+    runAgainToSecondProof(id)
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(301)
+    expect(writes().some((text) => text.includes('base64 -d | node'))).toBe(true)
+    write.mockClear()
+    feed(`setup ok ${_getSshNonceForTest(id)} tmux=none\r\n${INNER}`)
+    vi.advanceTimersByTime(1600)
+    expect(writes()).toEqual([GUARD])
+    write.mockClear()
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(201)
+    expect(writes().filter((text) => text.includes('claude --settings')), 'the second attempt must be able to launch').toHaveLength(1)
+  })
+  it('destroy clears a pending deferred entry write (no ladder timer survives teardown)', () => {
+    const id = 'r1-destroy-clears-deferred'
+    firstGuard(id)
+    feed(mark(id, 'HERE')) // setup write pending
+    getSshFlow(id)!.destroy() // the flow's own teardown; killPty's process-level teardown is outside this ladder
+    expect(vi.getTimerCount(), 'a torn-down flow must own no timer').toBe(0)
+  })
+})

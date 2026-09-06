@@ -1871,6 +1871,35 @@ function spawnPtyResolved(
     // While it is set, the after-entry watch fails the entry on a host prompt
     // returning with no OUT (a plain detach), so the pending write bails.
     let deferredEntryWritePending = false
+    // ADR-009 round 3, R1 re-attack (MINOR): the handle of that scheduled write.
+    // failEntry and destroy cancel it, so a write scheduled by an attempt that
+    // has since failed can neither fire into the NEXT attempt (a Run again
+    // inside its 200/300 ms window: the callback's own runtimeEntryFailed check
+    // is reset by Run again, so the stale claude timer typed the command onto
+    // the host before the new exec was even out) nor clear
+    // deferredEntryWritePending under the next attempt's own pending write,
+    // which disarmed the host-back check above for the rest of that window.
+    // The two writers (container setup, claude command) are sequential by
+    // construction -- the claude command is only scheduled after the setup's
+    // `setup ok` -- so one handle covers both; scheduling cancels any
+    // predecessor regardless, as defence in depth.
+    let deferredEntryWriteHandle: ReturnType<typeof setTimeout> | null = null
+    const cancelDeferredEntryWrite = () => {
+      if (deferredEntryWriteHandle) {
+        clearTimeout(deferredEntryWriteHandle)
+        deferredEntryWriteHandle = null
+      }
+      deferredEntryWritePending = false
+    }
+    const scheduleDeferredEntryWrite = (delayMs: number, write: () => void) => {
+      cancelDeferredEntryWrite()
+      deferredEntryWritePending = true
+      deferredEntryWriteHandle = setTimeout(() => {
+        deferredEntryWriteHandle = null
+        deferredEntryWritePending = false
+        write()
+      }, delayMs)
+    }
     let claudeRunning = false
     // #25: rolling tail of recent PTY output, so the idle-fallback can tell a
     // running-but-marker-less claude from one that exited to a bare shell.
@@ -2618,6 +2647,13 @@ function spawnPtyResolved(
       afterEntryTrailingLine = ''
       sshEntryNonceBySession.delete(sessionId)
       dropEntryGuard()
+      // ADR-009 round 3, R1 re-attack (MINOR): a setup or claude write scheduled
+      // by THIS attempt is cancelled outright -- see deferredEntryWriteHandle.
+      // A claude command that was scheduled but never written is un-sent again:
+      // claudeSent otherwise latched for the session's lifetime, so after an OUT
+      // in the deferred-claude window a Run again could never launch Claude.
+      cancelDeferredEntryWrite()
+      if (!claudeWritten) claudeSent = false
       claudeReproven = false
       // A container setup that was in flight when the shell was lost must not
       // fire its own timeout over this failure, and a Run again + Launch must
@@ -2696,10 +2732,9 @@ function spawnPtyResolved(
         }
       }, SETUP_TIMEOUT_MS)
       // ADR-009 round 3 (Codex finding 1): the after-entry watch fails the entry
-      // if the host prompt returns in this window, so the blob below bails.
-      deferredEntryWritePending = true
-      setTimeout(() => {
-        deferredEntryWritePending = false
+      // if the host prompt returns in this window, so the blob below bails --
+      // and (R1 re-attack MINOR) failEntry cancels the timer itself.
+      scheduleDeferredEntryWrite(300, () => {
         // See writeHostSetupCmd: a throw here would crash main via the global
         // handler; fail the flow instead (adversarial review, #188).
         // rc.15 review R1 round 2: the shell can be lost inside these 300 ms (an
@@ -2724,7 +2759,7 @@ function spawnPtyResolved(
           logError(`[ssh] ${sessionId}: container setup failed: ${(err as Error)?.message ?? err}`)
           setFlowState('failed', 'container setup error')
         }
-      }, 300)
+      })
     }
 
     /**
@@ -2846,10 +2881,10 @@ function spawnPtyResolved(
       // ADR-009 round 3 (Codex finding 1): the after-entry watch stays live
       // through this window (it gates on !claudeWritten, not !claudeSent), so an
       // OUT or a host-back detach in the 200ms fails the entry and the write
-      // below bails -- the command never lands on the returned host.
-      deferredEntryWritePending = true
-      setTimeout(() => {
-        deferredEntryWritePending = false
+      // below bails -- the command never lands on the returned host. (R1
+      // re-attack MINOR: failEntry cancels the timer itself, so a Run again
+      // inside this window cannot inherit attempt-1's write.)
+      scheduleDeferredEntryWrite(200, () => {
         // #242 finding F3 (adversarial review round 4, MAJOR): this write is
         // reachable from a leaked timer (stagingTimeoutHandle/
         // pushTimeoutHandle/downloadTimeoutHandle -- all now cleared in
@@ -2873,7 +2908,7 @@ function spawnPtyResolved(
         } catch (err) {
           logError(`[ssh] ${sessionId}: writeClaudeCmd's write failed post-schedule: ${(err as Error)?.message ?? err}`)
         }
-      }, 200)
+      })
     }
 
     /**
@@ -3547,6 +3582,10 @@ function spawnPtyResolved(
         // torn-down flow must not emit that (setFlowState is destroyed-gated,
         // but the timer is cleared here like every other one).
         dropEntryGuard()
+        // ADR-009 round 3, R1 re-attack (MINOR): the deferred setup / claude
+        // write. Its callback is destroyed-gated too; cleared here so no ladder
+        // timer outlives teardown.
+        cancelDeferredEntryWrite()
         // #242 finding F3 (adversarial review round 4, MAJOR): stagingTimeoutHandle
         // was the one timer on this ladder NOT cleared here -- it outlives
         // session teardown and, unguarded, drives a full claude-launch write
