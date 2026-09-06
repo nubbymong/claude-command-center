@@ -62,7 +62,7 @@ import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
-import { acquireProfileConsumer } from './profile-consumers'
+import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
@@ -877,6 +877,15 @@ const ptySessions = new Map<string, PtySession>()
 // identity maps already cover them.
 const shellOnlyProfileHolds = new Map<string, () => void>()
 
+// rc.15 review R3 (aicc_planning#49): a LOCAL spawn whose profile is mid-refresh
+// waits for the refresh to settle before its PTY exists. The hold is taken
+// BEFORE the wait (so no further rotation can start), the session is known to
+// killPty/writePty only through this map until the real spawn runs, and a kill
+// during the wait releases the hold and spawns nothing. Writes that arrive
+// during the wait are dropped and logged, never queued: a queued line would
+// replay into a shell the user never saw start.
+const refreshWaitSpawns = new Map<string, { cancel: () => void }>()
+
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
 const codexTelemetrySources = new Map<string, TelemetrySource>()
 
@@ -1435,6 +1444,10 @@ export function spawnPty(
     model?: string
     /** Per-session account isolation: spawn claude under this profile's CLAUDE_CONFIG_DIR. */
     profileId?: string
+    /** MAIN-INTERNAL (rc.15 review R3): set by the deferred re-entry after a
+     *  profile refresh wait. Never accepted from the renderer -- pty:spawn builds
+     *  its options object field by field and does not copy this one. */
+    refreshAwaited?: boolean
     /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
     enableCodexReview?: boolean
     /**
@@ -4160,6 +4173,37 @@ export function spawnPty(
       const primary = getPrimaryProfileId()
       if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
     }
+    // rc.15 review R3 (aicc_planning#49): if the usage page is rotating this
+    // profile's token right now, a PTY that starts would read the credential
+    // generation being replaced -- and registering it afterwards cannot retract
+    // the in-flight POST. Both local paths, the profile-pinned shell and the
+    // interactive session, wait it out exactly as the background consumers do:
+    // hold first (no further rotation can begin), wait, then re-enter with the
+    // flag set; the pre-wait hold is released once the real spawn has taken its
+    // own (shell-only) or is watched (interactive). No pending refresh: the
+    // synchronous spawn below, exactly as before.
+    if (resolvedProfileId && !options?.refreshAwaited) {
+      const pending = pendingProfileRefresh(resolvedProfileId)
+      if (pending) {
+        const waitedProfile = resolvedProfileId
+        const release = acquireProfileConsumer(waitedProfile, { maxAgeMs: Infinity })
+        let cancelled = false
+        refreshWaitSpawns.set(sessionId, { cancel: () => { cancelled = true; refreshWaitSpawns.delete(sessionId); release() } })
+        logInfo(`[profiles] session ${sessionId}: profile ${waitedProfile} is mid-refresh -- holding the spawn until it settles`)
+        void pending.then(() => {
+          if (cancelled) return
+          refreshWaitSpawns.delete(sessionId)
+          try {
+            spawnPty(win, sessionId, { ...options, refreshAwaited: true })
+          } catch (err) {
+            logError(`[profiles] session ${sessionId}: the spawn after the refresh wait failed: ${(err as Error)?.message ?? err}`)
+          } finally {
+            release()
+          }
+        })
+        return
+      }
+    }
     // Home selection (Bug 2): EVERY session of an account -- shell-only (plain
     // shells + the add-account login flow) AND interactive Claude -- runs in the
     // account's shared PROFILE home. That way concurrent sessions of one account
@@ -5025,6 +5069,13 @@ export function writePty(sessionId: string, data: string): void {
     recentWrites.set(sessionId, { data, ts: now })
   }
 
+  // rc.15 review R3: nothing is queued across a refresh wait -- the shell the
+  // line was typed for has not started, and a replay into it would be a command
+  // the user never saw run.
+  if (refreshWaitSpawns.has(sessionId)) {
+    logInfo(`[pty] Dropped write for ${sessionId} (${data.length} bytes): the spawn is waiting for a profile refresh`)
+    return
+  }
   try {
     const session = ptySessions.get(sessionId)
     // The PTY can exist while still being the bare shell (see
@@ -5199,6 +5250,13 @@ function cleanupSessionResources(sessionId: string): void {
 const REMOTE_CLEANUP_GRACE_MS = 400
 
 export function killPty(sessionId: string): void {
+  // rc.15 review R3: a spawn still waiting for its profile's refresh has no PTY
+  // yet -- cancel the wait (its hold goes with it); there is nothing else to kill.
+  const waiting = refreshWaitSpawns.get(sessionId)
+  if (waiting) {
+    logInfo(`[pty] Session ${sessionId} was still waiting for a profile refresh; the spawn is cancelled`)
+    waiting.cancel()
+  }
   const entry = ptySessions.get(sessionId)
   // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
   // these, but killPty does, at the end).
