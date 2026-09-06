@@ -538,7 +538,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // verbatim (the zod parse result is intentionally discarded), so a field the
     // schema doesn't declare would otherwise flow straight through from the
     // renderer. Only the keychain lookup below may set it.
+    // rc.15 review R3: refreshAwaited is main-internal (the deferred re-entry
+    // after a profile refresh wait) -- a renderer that set it would skip the wait.
     let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
+    if (resolvedOptions) delete (resolvedOptions as Record<string, unknown>).refreshAwaited
     // An SSH block is bound to the config it names, ON DISK: the request must be
     // that config's own (host/port/username/remotePath/postCommand) or the spawn
     // is refused. Main trusting the renderer to pair a config's stored password

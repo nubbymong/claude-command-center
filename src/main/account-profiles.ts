@@ -1631,11 +1631,14 @@ export function restoreProfileIdentityFromCanonical(id: string): boolean {
   if (!fs.existsSync(srcJson)) return false
   const home = getProfileConfigDir(id)
   mkdirSecure(home)
-  atomicWriteSecure(path.join(home, '.claude.json'), stripIdentityTokens(fs.readFileSync(srcJson, 'utf8')), IS_POSIX ? CRED_FILE_MODE : undefined)
-  const cred = path.join(home, '.claude', '.credentials.json')
+  // Credentials FIRST (review): if the token file cannot be cleared, nothing
+  // is written -- writing A's identity over B's token would pass the backup's
+  // email guard and copy B's token into A's canonical store on the next poll.
   // rmSync on a symlink removes the link itself, never its target.
+  const cred = path.join(home, '.claude', '.credentials.json')
   try { fs.rmSync(cred, { force: true }) } catch { /* fall through to the overwrite */ }
-  if (fs.existsSync(cred)) writeCredentialFile(cred, '{}')
+  if (fs.existsSync(cred)) writeCredentialFile(cred, '{}') // throws if it cannot: the caller sees a failed restore
+  atomicWriteSecure(path.join(home, '.claude.json'), stripIdentityTokens(fs.readFileSync(srcJson, 'utf8')), IS_POSIX ? CRED_FILE_MODE : undefined)
   return true
 }
 

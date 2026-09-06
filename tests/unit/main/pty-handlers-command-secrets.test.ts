@@ -50,6 +50,12 @@ describe('pty:spawn and command secrets', () => {
     expect(spawnPty.mock.calls[0][2].commandSecrets).toBeUndefined()
   })
 
+  it('STRIPS refreshAwaited too (rc.15 review R3): the flag that skips the profile-refresh wait is main-internal, never the renderer\'s to set', async () => {
+    await spawn({}, SID, { cwd: 'C:/w', shellOnly: true, configId: 'cfg1', refreshAwaited: true })
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    expect(spawnPty.mock.calls[0][2].refreshAwaited).toBeUndefined()
+  })
+
   it('rebuilds them from the commands file on disk and the keychain, for a SHELL spawn with a config', async () => {
     commandsOnDisk = [
       { id: 'aaa111', hasSecretArg: true, scope: 'global' },

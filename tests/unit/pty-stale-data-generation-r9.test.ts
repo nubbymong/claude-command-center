@@ -96,6 +96,17 @@ describe('late output from a replaced PTY (R9)', () => {
     expect(dataFor(SID)).toEqual(['hello'])
   })
 
+  it('the SSH branch carries the same guard: a replaced ssh process\'s late bytes never reach the new terminal', () => {
+    const ssh = { host: 'invalid.example', port: 22, username: 'u', remotePath: '~' }
+    spawnPty(win, SID, { ssh } as never)
+    spawnPty(win, SID, { ssh } as never)
+    expect(ptys).toHaveLength(2)
+    ptys[0].feed('late banner from the old ssh')
+    expect(dataFor(SID)).toEqual([])
+    ptys[1].feed('login: ')
+    expect(dataFor(SID)).toEqual(['login: '])
+  })
+
   it('output after the session was killed (no replacement) is dropped too', () => {
     spawnPty(win, SID, { shellOnly: true, cwd: homedir() })
     const p = ptys[0]

@@ -67,7 +67,8 @@ const fakeProvider = {
   resumeCommand: () => ({ cmd: '', args: [] }), configureMcpServer: async () => {},
   getSshSettingsPath: () => '', getSshMcpConfigPath: () => '', configureRemoteSettings: () => '',
 } as never
-const win = { webContents: { send() {} }, isDestroyed: () => false } as never
+const sent: Array<[string, unknown]> = []
+const win = { webContents: { send: (ch: string, payload?: unknown) => { sent.push([ch, payload]) } }, isDestroyed: () => false } as never
 let sandbox = ''
 let profileId = ''
 const sids: string[] = []
@@ -106,6 +107,7 @@ beforeEach(() => {
   held.answer = null
   held.methods = []
   ptys.length = 0
+  sent.length = 0
 })
 afterEach(() => {
   for (const sid of sids.splice(0)) { try { killPty(sid) } catch { /* already gone */ } }
@@ -184,6 +186,32 @@ describe('a local spawn waits out an in-flight refresh of its profile (Codex R3,
     await settle(fetching)
     expect(ptys).toHaveLength(1)
     expect(consumers.profileConsumerCount(profileId)).toBe(1)
+  })
+
+  it('review: Switch account under a mid-refresh profile -- the replaced PTY\'s exit during the wait is STALE (no exit reported, the deferred spawn still lands)', async () => {
+    // A shell on profile P is live; profile Q (idle) is mid-refresh; the user
+    // switches the session to Q: killPty + spawn -> the spawn defers on Q's
+    // refresh, and P's PTY exits asynchronously in the meantime.
+    const q = profiles.createProfile('Q')
+    profiles.upsertProfile({ ...q, isPrimary: false, active: true, accountEmail: 'q@example.test' })
+    const qFile = path.join(profiles.getProfileConfigDir(q.id), '.claude', '.credentials.json')
+    fs.mkdirSync(path.dirname(qFile), { recursive: true })
+    fs.writeFileSync(qFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x', refreshToken: 'y', expiresAt: 1 } }))
+    sids.push('rc15switch')
+    spawnPty(win, 'rc15switch', { shellOnly: true, profileId, cwd: sandbox })
+    const old = ptys[0]
+    const fetching = fetchAccountUsage(q.id)
+    for (let i = 0; i < 100 && !held.answer; i++) await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(consumers.pendingProfileRefresh(q.id)).not.toBeNull()
+    spawnPty(win, 'rc15switch', { shellOnly: true, profileId: q.id, cwd: sandbox })
+    expect(ptys).toHaveLength(1) // deferred
+    old.exitCb?.({ exitCode: 0 }) // the replaced PTY's exit arrives during the wait
+    expect(sent.some(([ch]) => ch === 'pty:exit:rc15switch')).toBe(false) // stale: not the session's end
+    expect(consumers.hasTransientProfileConsumer(q.id)).toBe(true) // the wait is still armed
+    await settle(fetching)
+    expect(ptys).toHaveLength(2)
+    ptys[1].exitCb?.({ exitCode: 0 })
+    expect(sent.some(([ch]) => ch === 'pty:exit:rc15switch')).toBe(true) // the real end is reported
   })
 
   it('positive control: with no refresh in flight the spawn is synchronous, exactly as before', () => {

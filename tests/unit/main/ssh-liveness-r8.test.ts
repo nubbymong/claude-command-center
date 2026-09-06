@@ -41,6 +41,10 @@ function have(shell: string): boolean {
 }
 const HAVE_SH = have('sh')
 
+// Never a silent skip: a runner without `sh` cannot run the R8 gate, and must say
+// so in red rather than report green.
+it('a POSIX sh is available on this runner (the R8 gate needs it)', () => { expect(HAVE_SH).toBe(true) })
+
 // A synthetic tmux whose behaviour the test picks per run. Installed as the
 // on-PATH candidate (a temp bin dir first on PATH) and, when asked, as the
 // staged candidate ("$HOME"/.claude/bin/tmux, with HOME pointed at a temp dir).
@@ -97,7 +101,9 @@ describe.skipIf(!HAVE_SH)('the production probe under a real sh (Codex R8, flipp
   it('Codex: a found client whose `ls` fails with a protocol mismatch -> UNVERIFIED, nothing pruned, the entry stays offered with the "could not verify" note', async () => {
     const raw = runProbe('mismatch')
     const parsed = parseTmuxLivenessOutput(raw)
-    expect(parsed.frames).toEqual([{ status: 1, outcome: 'error', lines: ['protocol version mismatch (client 8, server 7)'] }])
+    // frames[0] is the on-PATH candidate (first in the candidate order); a real
+    // tmux at an absolute candidate path on the runner adds later frames.
+    expect(parsed.frames[0]).toEqual({ status: 1, outcome: 'error', lines: ['protocol version mismatch (client 8, server 7)'] })
     expect(parsed.completed).toBe(false) // 7ef62a2e: completed:true, names:[] -- verified empty
     expect(parsed.unverifiedReason).toContain('protocol version mismatch')
     const result = await probeWith(raw)
@@ -128,7 +134,8 @@ describe.skipIf(!HAVE_SH)('the production probe under a real sh (Codex R8, flipp
   it('mixed candidates: one lists names, another cannot talk to its server -> UNVERIFIED (a server the first did not see may exist)', async () => {
     const raw = runProbe('names', 'mismatch')
     const parsed = parseTmuxLivenessOutput(raw)
-    expect(parsed.frames.map((f) => f.outcome)).toEqual(['names', 'error'])
+    expect(parsed.frames[0].outcome).toBe('names') // on-PATH candidate
+    expect(parsed.frames.at(-1)?.outcome).toBe('error') // the staged candidate, last in the order
     expect(parsed.completed).toBe(false)
     expect(await probeWith(raw)).toEqual(UNVERIFIED)
   })
@@ -138,7 +145,8 @@ describe.skipIf(!HAVE_SH)('the production probe under a real sh (Codex R8, flipp
       const raw = runProbe(mode)
       const parsed = parseTmuxLivenessOutput(raw)
       expect(parsed.frames[0].outcome).toBe('no-server')
-      expect(parsed).toMatchObject({ completed: true, names: [] })
+      expect(parsed.completed).toBe(true)
+      expect(parsed.names).not.toContain('live-before-tmux-upgrade')
       const result = await probeWith(raw)
       expect(result).toEqual({ outcome: 'verified', liveSessionIds: [] })
       expect(deadSessionIds(['live-before-tmux-upgrade'], result)).toEqual(['live-before-tmux-upgrade'])
@@ -148,18 +156,23 @@ describe.skipIf(!HAVE_SH)('the production probe under a real sh (Codex R8, flipp
   it('positive control: a compatible live client lists its sessions -> verified with names', async () => {
     const raw = runProbe('names')
     const parsed = parseTmuxLivenessOutput(raw)
-    expect(parsed).toMatchObject({ completed: true, names: ['ccc-live1', 'ccc-live2'] })
+    expect(parsed.completed).toBe(true)
+    expect(parsed.names).toEqual(expect.arrayContaining(['ccc-live1', 'ccc-live2']))
     expect(parsed.frames[0]).toEqual({ status: 0, outcome: 'names', lines: ['ccc-live1', 'ccc-live2'] })
   })
 
   it('positive control: a true empty listing (exit 0, no names) is verified-empty', async () => {
-    expect(parseTmuxLivenessOutput(runProbe('empty'))).toMatchObject({ completed: true, names: [], frames: [{ status: 0, outcome: 'names', lines: [] }] })
+    const parsed = parseTmuxLivenessOutput(runProbe('empty'))
+    expect(parsed.completed).toBe(true)
+    expect(parsed.frames[0]).toEqual({ status: 0, outcome: 'names', lines: [] })
   })
 
   it('positive control: two authoritative candidates: names from one, no server from the other -> verified with the union', async () => {
     const parsed = parseTmuxLivenessOutput(runProbe('names', 'noserver'))
-    expect(parsed.frames.map((f) => f.outcome)).toEqual(['names', 'no-server'])
-    expect(parsed).toMatchObject({ completed: true, names: ['ccc-live1', 'ccc-live2'] })
+    expect(parsed.frames[0].outcome).toBe('names')
+    expect(parsed.frames.at(-1)?.outcome).toBe('no-server')
+    expect(parsed.completed).toBe(true)
+    expect(parsed.names).toEqual(expect.arrayContaining(['ccc-live1', 'ccc-live2']))
   })
 })
 

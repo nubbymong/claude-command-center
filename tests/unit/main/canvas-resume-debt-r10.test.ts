@@ -10,7 +10,7 @@
 // the completion guard's version/debt terms: every live run must be decided,
 // and the full review debt (draft, open, answered notes, live rounds; an
 // unreadable store) keeps a canvas resumable. Real stores over a temp root.
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -83,6 +83,7 @@ function approvedDesignOnly(o: string) {
 }
 
 beforeEach(() => { /* each test mints its own owner/peer; the stores keep every canvas */ })
+afterAll(() => { fs.rmSync(hoisted.root, { recursive: true, force: true }) })
 
 describe('R10: an approved design does not hide an unfinished plan from resume (Codex, flipped)', () => {
   it('Codex: rejected plan + 1 open note + approved design -> Mark complete refuses, and the canvas IS listed and resumable from a peer', () => {

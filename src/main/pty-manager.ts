@@ -3474,6 +3474,9 @@ export function spawnPty(
 
     ptyProcess.onData((rawData) => {
       if (win.isDestroyed()) return
+      // rc.15 review R9: a replaced ssh process's late bytes must not reach the
+      // new terminal or the sentinel parsers (same guard as the local branch).
+      if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
       // Strip SSH statusline OSC sentinels before forwarding to xterm.
       // Parsed sentinels are dispatched to the statusline pipeline as a side effect.
       const data = extractSshOscSentinels(sessionId, rawData)
@@ -4093,6 +4096,7 @@ export function spawnPty(
       })
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
         getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
@@ -4879,7 +4883,13 @@ export function spawnPty(
     // Identity-check the map: only run cleanup when the entry still
     // points at OUR ptyProcess (or there's no entry at all).
     const current = ptySessions.get(sessionId)
-    const weAreCurrent = !current || current.ptyProcess === ptyProcess
+    // rc.15 review R3: while a respawn of this id is still waiting for its
+    // profile's refresh there is no entry either -- but the exit of the PTY it
+    // replaced is STALE, not the session's end (the deferred spawn is the
+    // session's next process). Without this, a Switch account under a
+    // mid-refresh profile marked the session exited and dropped its resume
+    // target and canvas link while the new PTY was seconds away.
+    const weAreCurrent = current ? current.ptyProcess === ptyProcess : !refreshWaitSpawns.has(sessionId)
     if (weAreCurrent) {
       // item 5 (resume cascade): an SSH session whose ssh process exited before
       // reaching claude-running failed to connect -- tell the overlay so it can
@@ -5069,6 +5079,14 @@ export function writePty(sessionId: string, data: string): void {
   // This protects against double-sends from double-clicks, React effect races, event
   // listeners firing twice, etc. Only applies to "submitted" writes (ending in \r or \n)
   // so keystrokes and escape sequences are never blocked.
+  // rc.15 review R3: nothing is queued across a refresh wait -- the shell the
+  // line was typed for has not started, and a replay into it would be a command
+  // the user never saw run. Judged BEFORE the duplicate-submit suppressor, so a
+  // dropped line does not arm it against the user's own resend.
+  if (refreshWaitSpawns.has(sessionId)) {
+    logInfo(`[pty] Dropped write for ${sessionId} (${data.length} bytes): the spawn is waiting for a profile refresh`)
+    return
+  }
   if (isSubmittedPayload(data)) {
     const recent = recentWrites.get(sessionId)
     const now = Date.now()
@@ -5082,13 +5100,6 @@ export function writePty(sessionId: string, data: string): void {
     recentWrites.set(sessionId, { data, ts: now })
   }
 
-  // rc.15 review R3: nothing is queued across a refresh wait -- the shell the
-  // line was typed for has not started, and a replay into it would be a command
-  // the user never saw run.
-  if (refreshWaitSpawns.has(sessionId)) {
-    logInfo(`[pty] Dropped write for ${sessionId} (${data.length} bytes): the spawn is waiting for a profile refresh`)
-    return
-  }
   try {
     const session = ptySessions.get(sessionId)
     // The PTY can exist while still being the bare shell (see
