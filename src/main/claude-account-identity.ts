@@ -236,13 +236,21 @@ export async function recheckAllAsync(): Promise<void> {
 }
 
 async function recheckAllAsyncInner(): Promise<void> {
+  // rc.15 review R2 (aicc_planning#50): the rotation follower runs ONCE per
+  // DISTINCT profile per poll, before the per-session loop. Its state is per
+  // profile, so calling it once per session let two sessions on one profile
+  // arm the changed stamp and back it up inside the SAME poll -- the
+  // "settled, not merely changed" barrier it exists to enforce, bypassed, and a
+  // snapshot taken between the CLI's credential write and its identity write.
+  for (const profileId of new Set([...watched.values()].filter((p): p is string => !!p))) {
+    try { await followCredentialRotation(profileId) } catch { /* best-effort per profile; never abort the poll */ }
+  }
   for (const [sessionId, profileId] of [...watched]) {
     // Guard the WHOLE per-session body (not just the stat) so a throw in
     // pushAccountIdentity/listProfiles/classify/broadcast can never abort the poll
     // or reject this promise (it's void'd in a setInterval -> would be an unhandled
     // rejection). One bad session is skipped; the rest still poll.
     try {
-      if (profileId) await followCredentialRotation(profileId)
       const before = bySession.get(sessionId) ?? null
       const changed = await recheckSessionIdentityAsync(sessionId, profileId)
       if (!changed) continue
