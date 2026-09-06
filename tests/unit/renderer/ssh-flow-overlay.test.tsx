@@ -16,8 +16,9 @@ import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const { default: SshFlowOverlay, failureText, CONTAINER_ENTRY_FAILED } = await import('../../../src/renderer/components/SshFlowOverlay')
+const { default: SshFlowOverlay, failureText, CONTAINER_ENTRY_FAILED, CONTAINER_LEFT, ENTRY_UNVERIFIED } = await import('../../../src/renderer/components/SshFlowOverlay')
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
+import { SSH_ENTRY } from '../../../src/shared/ssh-entry'
 import type { Session } from '../../../src/renderer/stores/sessionStore'
 
 const WARNING = 'persistent session unavailable'
@@ -142,5 +143,103 @@ describe('SshFlowOverlay persistence-unavailable warning gate', () => {
     mount()
     push({ state: 'running-claude', info: 'probe=none' })
     expect(container.textContent).toContain(WARNING)
+  })
+})
+
+// rc.15 review R1 (aicc_planning#45): two new main-side outcomes. 'unverified'
+// = the post-connect command finished but nothing proved where it landed
+// (a start -ai attach, a free-text command): the overlay must WARN that the
+// launch may run on the SSH host or a non-shell process and make it an
+// explicit "Launch anyway", never the ordinary inner-shell copy. 'left the
+// container' = a proven entry was lost again: Run again, like a failed entry.
+describe('SshFlowOverlay rc.15 review R1: unverified entry needs explicit consent; a lost container shell offers Run again', () => {
+  const containerCfg = { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', engine: 'docker', container: 'ccc-test', mode: 'start' } }
+
+  it('awaiting-claude/unverified: warns, offers Launch anyway (wired to launchClaude) and Skip; never the inner-shell copy', async () => {
+    setSession(containerCfg)
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: ENTRY_UNVERIFIED }) })
+    expect(container.textContent).toContain('Couldn’t verify where that landed')
+    expect(container.textContent).toContain('possibly the SSH host itself')
+    expect(container.textContent).not.toContain('Inner shell ready')
+    expect(container.textContent).not.toContain('inside the post-connect shell')
+    const anyway = container.querySelector('[data-testid="ssh-launch-anyway"]') as HTMLButtonElement | null
+    expect(anyway).not.toBeNull()
+    expect(anyway!.textContent).toBe('Launch anyway')
+    expect(container.textContent).toContain('Skip')
+    await act(async () => { anyway!.click() })
+    expect((globalThis as any).window.electronAPI.ssh.launchClaude).toHaveBeenCalledWith('s1')
+  })
+
+  it('awaiting-claude/inner is unchanged: the ordinary Launch Claude, no warning', async () => {
+    setSession(containerCfg)
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: 'inner' }) })
+    expect(container.textContent).toContain('Inner shell ready')
+    expect(container.querySelector('[data-testid="ssh-launch-anyway"]')).toBeNull()
+    expect(container.textContent).not.toContain('possibly the SSH host itself')
+  })
+
+  it("failed/'left the container': the sentence says nothing was launched, and Run again is wired to runPostCommand", async () => {
+    setSession(containerCfg)
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'failed', info: CONTAINER_LEFT }) })
+    expect(container.textContent).toContain('Nothing was launched')
+    const again = container.querySelector('[data-testid="ssh-run-post-command-again"]') as HTMLButtonElement | null
+    expect(again).not.toBeNull()
+    expect(container.textContent).not.toContain('Retry Launch')
+    await act(async () => { again!.click() })
+    expect((globalThis as any).window.electronAPI.ssh.runPostCommand).toHaveBeenCalledWith('s1')
+    expect(failureText(CONTAINER_LEFT)).toMatch(/run the post-connect command again/i)
+    expect(failureText(CONTAINER_ENTRY_FAILED)).toContain('no entry confirmation')
+  })
+})
+
+// Quality review on the R1 commit: a HOST session with a free-text command is
+// on the host it asked for unless the command hopped somewhere -- the consent
+// copy must not describe running on the host as the hazard.
+describe('SshFlowOverlay rc.15 review R1: the unverified copy is tailored to the session kind', () => {
+  it('a host session (no runtime) gets the "cannot tell whether it changed where you are" copy, still with Launch anyway', async () => {
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~', postCommand: 'source ~/.venv/bin/activate' })
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: ENTRY_UNVERIFIED }) })
+    expect(container.textContent).toContain('cannot tell whether it changed where you are')
+    expect(container.textContent).not.toContain('possibly the SSH host itself')
+    expect(container.querySelector('[data-testid="ssh-launch-anyway"]')).not.toBeNull()
+  })
+
+  it('a container session (start mode) keeps the host/non-shell warning', async () => {
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', engine: 'docker', container: 'ccc-test', mode: 'start' } })
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: ENTRY_UNVERIFIED }) })
+    expect(container.textContent).toContain('possibly the SSH host itself')
+  })
+
+  it('the overlay constants ARE the shared constants main emits', async () => {
+    const { SSH_ENTRY } = await import('../../../src/shared/ssh-entry')
+    expect(CONTAINER_ENTRY_FAILED).toBe(SSH_ENTRY.FAILED)
+    expect(CONTAINER_LEFT).toBe(SSH_ENTRY.LEFT)
+    expect(ENTRY_UNVERIFIED).toBe(SSH_ENTRY.UNVERIFIED)
+  })
+})
+
+// rc.15 review R1 round 2: the launch guard is a probe, not an injection --
+// the overlay must not say "Injecting statusline" while nothing has been typed.
+describe('SshFlowOverlay launch guard headline', () => {
+  it('running-setup with the verifying info reads as a check of the container shell', async () => {
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', engine: 'docker', container: 'ccc-test' } })
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'running-setup', info: SSH_ENTRY.VERIFYING }) })
+    expect(container.textContent).toContain('Checking the container shell')
+    expect(container.textContent).not.toContain('Injecting statusline')
+    await act(async () => { flowCb?.({ state: 'running-setup', info: 'container' }) })
+    expect(container.textContent).toContain('Injecting statusline (container)')
+  })
+
+  it('the inner headline keys off the shared constant', async () => {
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', engine: 'docker', container: 'ccc-test' } })
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: SSH_ENTRY.INNER }) })
+    expect(container.textContent).toContain('Inner shell ready')
   })
 })

@@ -142,7 +142,8 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/tmp' },
 }))
 
-const { spawnPty, getSshFlow, killPty, gracefulExitPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest, _hasSshTargetForTest, _getSshTargetForTest } = await import('../../src/main/pty-manager')
+const { spawnPty, getSshFlow, killPty, gracefulExitPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSshEntryNonceForTest, _getSetupLineBufferLenForTest, _hasSshTargetForTest, _getSshTargetForTest } = await import('../../src/main/pty-manager')
+const { composeContainerEntryCommand, entrySentinel } = await import('../../src/shared/container-command')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 // Pure module, no node-pty/electron deps -- safe to import directly (unlike
@@ -268,11 +269,15 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     vi.advanceTimersByTime(1500) // idle: connecting -> awaiting-postcommand
     getSshFlow(sid)!.runPostCommand()
     vi.advanceTimersByTime(300)
-    feedPtyData('user@container:~$ ') // inner shell -> awaiting-claude
+    // rc.15 review R1: inner is proven by the entry sentinel, and Launch re-proves the shell (guard) first.
+    feedPtyData(`${entrySentinel(_getSshEntryNonceForTest(sid)!, 'IN')}\r\nuser@container:~$ `)
     getSshFlow(sid)!.launchClaude()
+    feedPtyData(`${entrySentinel(_getSshEntryNonceForTest(sid)!, 'HERE')}\r\n`)
     vi.advanceTimersByTime(300)
     feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
     vi.advanceTimersByTime(1500)
+    // rc.15 review R1 round 2: the claude command has its own guard; answer it.
+    feedPtyData(`${entrySentinel(_getSshEntryNonceForTest(sid)!, 'HERE')}\r\n`)
     vi.advanceTimersByTime(300)
     expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
@@ -297,11 +302,15 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     vi.advanceTimersByTime(1500) // idle: connecting -> awaiting-postcommand
     getSshFlow(sid)!.runPostCommand()
     vi.advanceTimersByTime(300)
-    feedPtyData('user@container:~$ ') // inner shell -> awaiting-claude
+    // rc.15 review R1: a legacy line is composed with the sentinel wrapper too; same proof, same guard.
+    feedPtyData(`${entrySentinel(_getSshEntryNonceForTest(sid)!, 'IN')}\r\nuser@container:~$ `)
     getSshFlow(sid)!.launchClaude()
+    feedPtyData(`${entrySentinel(_getSshEntryNonceForTest(sid)!, 'HERE')}\r\n`)
     vi.advanceTimersByTime(300)
     feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
     vi.advanceTimersByTime(1500)
+    // rc.15 review R1 round 2: the claude command has its own guard; answer it.
+    feedPtyData(`${entrySentinel(_getSshEntryNonceForTest(sid)!, 'HERE')}\r\n`)
     vi.advanceTimersByTime(300)
     expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
@@ -1420,7 +1429,11 @@ describe('spawnPty SSH branch — structured container Runtime drives the post-c
     expect(postWrite).toBeDefined()
     // Exact, including the trailing CR: the app builds this whole line, so a
     // stray flag/quote/space regression is a defect, not a formatting nit.
-    expect(postWrite![0] as string).toBe('sudo docker exec -it ccc-test bash\r')
+    // rc.15 review R1: the typed line is the sentinel-bearing wrapper around
+    // this attempt's nonce (composeContainerEntryCommand), not the bare exec.
+    const nonce = _getSshEntryNonceForTest(sessionId)!
+    expect(postWrite![0] as string).toBe(`${composeContainerEntryCommand(CCC_TEST_RUNTIME, nonce)}\r`)
+    expect(postWrite![0] as string).toMatch(/^sudo docker exec -it ccc-test sh -c '/)
   })
 
   it('postCommand AND runtime compose as "<prep> && <runtime>" in a single post-command write', () => {
@@ -1436,7 +1449,7 @@ describe('spawnPty SSH branch — structured container Runtime drives the post-c
     vi.advanceTimersByTime(300)
     const postWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('docker exec'))
     expect(postWrite).toBeDefined()
-    expect(postWrite![0] as string).toBe('echo prep && sudo docker exec -it ccc-test bash\r')
+    expect(postWrite![0] as string).toBe(`echo prep && ${composeContainerEntryCommand(CCC_TEST_RUNTIME, _getSshEntryNonceForTest(sessionId)!)}\r`)
   })
 
   // Fail-CLOSED, found reviewing this change: composeRuntimeCommand rejecting a

@@ -99,6 +99,9 @@ const sshSchema = z.object({
     mode: z.enum(['exec', 'start']).optional(),
     sudo: z.boolean().optional(),
     containerDir: z.string().max(4096).optional(),
+    // A two-literal pick, enumerated here for the same reason `type` is: it is
+    // interpolated into the composed entry command (rc.15 review R1).
+    shell: z.enum(['bash', 'sh']).optional(),
   }).optional(),
 }).optional()
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { isSshPersistenceFailureReason, formatPersistenceUnavailableMessage } from '../../shared/ssh-tmux-persistence'
 import { parseDockerPostCommand, isContainerRuntime } from '../../shared/container-command'
+import { SSH_ENTRY } from '../../shared/ssh-entry'
 import { useSessionStore } from '../stores/sessionStore'
 import { DialogButton } from './ui/Dialog'
 
@@ -19,13 +20,27 @@ interface Props {
 
 /** Main's reason string for a failed container entry (pty-manager, rc.14 review
  *  F1, aicc_planning#45). The overlay keys the Run again button on it. */
-export const CONTAINER_ENTRY_FAILED = 'container entry failed'
+export const CONTAINER_ENTRY_FAILED = SSH_ENTRY.FAILED
+/** Main's reason when a PROVEN container entry was lost again (rc.15 review
+ *  R1): the container shell exited (an `exit` in an rc file, the user leaving)
+ *  or the launch-time guard found a different shell attached (detach keys, a
+ *  stopped container). Same way forward as a failed entry: Run again. */
+export const CONTAINER_LEFT = SSH_ENTRY.LEFT
+/** Main's awaiting-claude info when the post-connect command finished but
+ *  nothing could prove which shell -- or which machine -- is attached now (a
+ *  `start -ai` attach, a free-text command with no recognised container
+ *  shape). Launching is the user's explicit, warned choice (rc.15 review R1).
+ *  All three are the SHARED constants main emits (src/shared/ssh-entry.ts). */
+export const ENTRY_UNVERIFIED = SSH_ENTRY.UNVERIFIED
 
 /** The failed-state copy for a reason main sent. Most reasons are shown as
  *  they are; the container entry gets a sentence that says what to do. */
 export function failureText(info: string | undefined): string {
   if (info === CONTAINER_ENTRY_FAILED) {
-    return 'The container could not be entered: the host shell came back. Start the container (or fix sudo or the engine), then run the post-connect command again. Skip stays on the host shell.'
+    return 'The container could not be entered: no entry confirmation came back from inside it (the host shell is probably still attached). Start the container (or fix sudo or the engine), then run the post-connect command again. Skip stays on the host shell.'
+  }
+  if (info === CONTAINER_LEFT) {
+    return 'The container shell is gone: it exited (or never started — check the terminal for a shell-not-found line), or the connection to it was detached, so the host shell is attached now. Nothing was launched. Run the post-connect command again to re-enter. Skip stays on the host shell.'
   }
   return info ?? 'See app.log for details.'
 }
@@ -166,9 +181,10 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
   const headline =
     state === 'connecting' ? 'Connecting…' :
     isAwaitingPostCommand ? (hasPostCommand ? 'Run post-connect command?' : 'Launch Claude?') :
-    isAwaitingClaude ? (info === 'inner' ? 'Inner shell ready — launch Claude?' : 'Launch Claude?') :
+    isAwaitingClaude ? (info === SSH_ENTRY.INNER ? 'Inner shell ready — launch Claude?' : info === ENTRY_UNVERIFIED ? 'Couldn’t verify where that landed — launch anyway?' : 'Launch Claude?') :
     state === 'running-postcommand' ? 'Running post-connect command…' :
     isTmuxInstall ? 'Installing a lightweight tmux…' :
+    state === 'running-setup' && info === SSH_ENTRY.VERIFYING ? 'Checking the container shell…' :
     state === 'running-setup' ? `Injecting statusline (${info || 'host'})…` :
     // item 7: distinguish a reconnect-reattach from a first launch.
     state === 'running-claude' ? (info === 'reattach' ? 'Reconnecting to your session…' : 'Launching Claude…') :
@@ -246,18 +262,35 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
       )}
       {isAwaitingClaude && (
         <div className="space-y-1.5">
-          <p className="text-[11px] leading-snug" style={mutedStyle}>
-            {info === 'inner'
-              ? 'You\'re inside the post-connect shell (e.g. docker container). Clicking will re-run setup here so Claude finds its settings, then launch Claude.'
-              : 'Inject statusline shim and launch Claude.'}
-          </p>
+          {info === ENTRY_UNVERIFIED ? (
+            // rc.15 review R1: explicit consent, with the warning. This state is
+            // never "inner" -- main keeps the entry unverified whatever is clicked.
+            // The copy is tailored: a container session (a `start -ai` attach)
+            // may have landed on the host or on a non-shell entrypoint; a host
+            // session with a free-text command is on the host it asked for
+            // unless that command hopped somewhere (quality review: warning a
+            // host session that it might run on the host describes the intended
+            // outcome as a hazard).
+            <p className="text-[11px] leading-snug" style={{ color: 'var(--status-warning)' }}>
+              {isContainerRuntime(effectiveRuntime)
+                ? 'The container was started and attached, but the app could not confirm a shell inside it is what is attached now. Launching runs setup and Claude in whatever is attached — possibly the SSH host itself, or a process that is not a shell. Skip to stay in the terminal and check first.'
+                : 'The post-connect command finished, but the app cannot tell whether it changed where you are (for example by entering a container or another machine). Launching runs setup and Claude in whatever shell is attached now. Skip to stay in the terminal and check first.'}
+            </p>
+          ) : (
+            <p className="text-[11px] leading-snug" style={mutedStyle}>
+              {info === SSH_ENTRY.INNER
+                ? 'You\'re inside the post-connect shell (e.g. docker container). Clicking will re-run setup here so Claude finds its settings, then launch Claude.'
+                : 'Inject statusline shim and launch Claude.'}
+            </p>
+          )}
           <div className="flex gap-1.5">
             <DialogButton
-              variant="primary"
+              variant={info === ENTRY_UNVERIFIED ? 'secondary' : 'primary'}
               onClick={launchClaude}
               disabled={busy}
+              testId={info === ENTRY_UNVERIFIED ? 'ssh-launch-anyway' : undefined}
             >
-              Launch Claude
+              {info === ENTRY_UNVERIFIED ? 'Launch anyway' : 'Launch Claude'}
             </DialogButton>
             <DialogButton
               variant="ghost"
@@ -328,10 +361,12 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
         <div className="space-y-1.5">
           <p className="text-[11px]" style={{ color: 'var(--status-danger)' }}>{errorText || 'Step did not complete.'}</p>
           <div className="flex gap-1.5">
-            {info === CONTAINER_ENTRY_FAILED ? (
+            {info === CONTAINER_ENTRY_FAILED || info === CONTAINER_LEFT ? (
               // rc.14 review F1 round 2: Retry Launch only re-emits this failure
               // (main refuses the host ladder). The way forward is to run the
-              // post-command again once the container is fixed.
+              // post-command again once the container is fixed -- or, for a
+              // container shell that was lost after entry (rc.15 review R1),
+              // simply to re-enter it.
               <DialogButton
                 variant="primary"
                 onClick={runPostCommand}

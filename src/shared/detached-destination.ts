@@ -56,9 +56,9 @@ export function effectiveRuntimeOf(src: Pick<SshDestinationSource, 'runtime' | '
 
 /**
  * What identifies WHERE a runtime puts claude: the host, or a named container on
- * a named engine. `mode`, `sudo` and `containerDir` are how you get in, not where
- * you land -- toggling sudo does not move the session -- so they are not part of
- * the identity. A block of unknown type is not a container (main fails that
+ * a named engine. `mode`, `sudo`, `containerDir` and `shell` are how you get in,
+ * not where you land -- toggling sudo does not move the session -- so they are
+ * not part of the identity. A block of unknown type is not a container (main fails that
  * launch closed) and reads as the host here for the same reason.
  */
 export function runtimeIdentityKey(runtime: SshRuntime | undefined | null): string {

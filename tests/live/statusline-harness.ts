@@ -93,7 +93,7 @@ export const misParsedStageFail = (ev: Captured[], sid: string) =>
     .filter((i) => /tmux-stage-fail:(unsafe-path|invalid-reason)/.test(i))
 export const pane = (ev: Captured[], sid: string) => ev.filter((e) => e.channel === `pty:data:${sid}`).map((e) => String(e.payload)).join('')
 
-const stripPane = (p: string) => p
+export const stripPane = (p: string) => p
   .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
   .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')
 const TRUST_RE = /trustthisfolder|Doyoutrust/i

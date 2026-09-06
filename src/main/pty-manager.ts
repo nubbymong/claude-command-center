@@ -6,7 +6,11 @@ import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ss
 import { buildTmuxListCommand, parseTmuxLivenessOutput, computeLiveSessionIds, TMUX_LIVENESS_END } from './ssh-liveness'
 import { stripAnsiForSentinel } from './ansi-strip'
 import { randomId } from '../shared/id'
-import { composeRuntimeCommand, parseDockerPostCommand, isContainerRuntime } from '../shared/container-command'
+import {
+  composeRuntimeCommand, composeContainerEntryCommand, parseDockerPostCommand, isContainerRuntime,
+  isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand,
+} from '../shared/container-command'
+import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
 import type { SshRuntime, DetachedRemoteLiveness } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
@@ -583,6 +587,24 @@ const sshNonceBySession = new Map<string, string>()
  *  match production randomId() output. */
 export function _getSshNonceForTest(sessionId: string): string | undefined {
   return sshNonceBySession.get(sessionId)
+}
+
+/**
+ * rc.15 review R1 (aicc_planning#45): the container-entry nonce of the CURRENT
+ * attempt, keyed by sessionId. Unlike sshNonceBySession (one per session, baked
+ * into every setup/stage/push script) this one is minted per ATTEMPT -- every
+ * runPostCommand, including Run again -- and the entry watch accepts only the
+ * current one, so a delayed IN from an earlier attempt can never promote a
+ * later one. The watch reads the flow's own closure variable (entryNonce); this
+ * map MIRRORS it for the test getter below, so a test can print the genuine
+ * sentinel. Cleared with it on failure/exit and in cleanupSessionResources.
+ */
+const sshEntryNonceBySession = new Map<string, string>()
+
+/** Test-only: the entry nonce of the current attempt, so a test can print the
+ *  genuine `__CCC_<nonce>_IN__` sentinel into the mocked PTY rather than guess. */
+export function _getSshEntryNonceForTest(sessionId: string): string | undefined {
+  return sshEntryNonceBySession.get(sessionId)
 }
 
 /** Test-only: whether this session still has a captured end-remote target. Pins
@@ -1575,8 +1597,15 @@ export function spawnPty(
     // the structured field alone.
     const effectiveRuntime = ssh.runtime ?? parseDockerPostCommand(ssh.postCommand ?? '') ?? undefined
     const isContainerSession = isContainerRuntime(effectiveRuntime)
+    // rc.15 review R1 (aicc_planning#45): can this entry be PROVEN? Only an
+    // `exec` into a named container can -- the app composes it so a process
+    // inside that container prints a per-attempt nonce sentinel, and the flow
+    // marks "inner" on that sentinel ALONE (never on prompt shape or silence).
+    // `start -ai` cannot be proven (it attaches an entrypoint that need not be
+    // a shell) and is never auto-promoted: the overlay asks for consent.
+    const entryProvable = isProvableContainerEntry(effectiveRuntime)
     if (!ssh.runtime && isContainerSession) {
-      logInfo(`[ssh] ${sessionId}: legacy docker post-command detected — treating this session as a container runtime (persistence gate + End kill)`)
+      logInfo(`[ssh] ${sessionId}: legacy docker post-command detected — treating this session as a container runtime (persistence gate + End kill + proven entry)`)
     }
     const persistenceEnabled = ssh.detachable !== false && !isContainerSession
     if (ssh.detachable !== false && isContainerSession) {
@@ -1661,6 +1690,47 @@ export function spawnPty(
     // failure, or the HOST shell's own prompt came back (round 2). The prompt
     // that follows is NOT the inner shell.
     let runtimeEntryFailed = false
+    // rc.15 review R1: WHY the entry failed, re-emitted by launchClaude's refusal
+    // so the overlay keeps saying the right thing ('container entry failed' = it
+    // was never proven; 'left the container' = proven, then the container shell
+    // exited or the launch-time guard found a different shell attached).
+    let entryFailureReason: SshEntryFailureReason = SSH_ENTRY.FAILED
+    // rc.15 review R1: the CURRENT attempt's entry nonce (null while no attempt
+    // is in flight, or when the entry cannot be proven at all). Minted in
+    // writePostCommand, so Run again judges its attempt on a fresh sentinel.
+    let entryNonce: string | null = null
+    // rc.15 review R1: the current attempt's `__CCC_<nonce>_IN__` has been seen
+    // -- the ONLY thing that sets inInnerShell for a provable container entry.
+    let entryProven = false
+    // rc.15 review R1: the post-command finished but nothing could prove where
+    // it landed (a `start -ai` attach, a free-text command with no recognised
+    // container shape). Reaches 'awaiting-claude' with info 'unverified' and
+    // launches ONLY on the user's explicit Launch-anyway click; never sets
+    // inInnerShell, so it can never read as a verified entry.
+    let entryUnverified = false
+    // rc.15 review R1: the launch-time guard (buildEntryGuardCommand) is out and
+    // its HERE answer is awaited; every ordinary launch write waits behind it.
+    let entryGuardPending = false
+    /** What the launch guard does once the attached shell has answered with
+     *  this attempt's nonce: the container setup (first launch write) or, after
+     *  `setup ok`, the claude command (second). Dropped with the guard. */
+    let entryGuardContinuation: (() => void) | null = null
+    /** rc.15 review R1 round 2: the claude command has passed its own guard.
+     *  Reset with the rest of the attempt (failEntry, Run again). */
+    let claudeReproven = false
+    /** rc.15 review R1 round 2: the user clicked Skip after the entry was proven
+     *  and is managing the shell by hand -- the after-entry watch stands down
+     *  until a later Launch re-engages it. */
+    let entrySkipped = false
+    let entryGuardTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // rc.15 review R1: after IN, the container's first prompt-shaped line and
+    // the live trailing line. A fail-ONLY hint for the wait-for-click window:
+    // when the container's prompt is known to DIFFER from the host's and the
+    // host's exact prompt line is back on screen, the exec client has detached
+    // (or the container stopped) with no OUT to say so. Never a proof of
+    // presence -- the launch guard is -- and inert for identical prompts.
+    let innerPromptLine = ''
+    let afterEntryTrailingLine = ''
     // rc.14 review F1 round 2 (aicc_planning#45): the post-command has actually
     // been WRITTEN (writePostCommand defers the write 200ms behind its state
     // change). The entry watch buffers output only from here, so a host prompt
@@ -1977,20 +2047,14 @@ export function spawnPty(
             //     it, and the echo (host prompt + a prefix of the command) does
             //     not count -- that is the slow-start case, held below.
             if (isHostBackLine(entryTrailingLine)) {
-              runtimeEntryFailed = true
-              clearSshLineBuffer(sessionId, 'runtime')
-              logInfo(`[ssh] ${sessionId}: container entry failed (the host prompt is back and nothing followed it) -- staying on the host shell, not marking inner`)
-              setFlowState('failed', 'container entry failed')
+              failEntry(SSH_ENTRY.FAILED, 'the host prompt is back and nothing followed it -- staying on the host shell, not marking inner')
               return
             }
             // (1) the shell said the engine binary is missing and there is no
             //     host prompt to confirm against (a zsh `%` host we could not
             //     capture) -- take the idle as the failure the suspicion feared.
             if (entrySuspect) {
-              runtimeEntryFailed = true
-              clearSshLineBuffer(sessionId, 'runtime')
-              logInfo(`[ssh] ${sessionId}: idle after postCommand with an engine-not-found line and no inner prompt -- container entry failed`)
-              setFlowState('failed', 'container entry failed')
+              failEntry(SSH_ENTRY.FAILED, 'idle after postCommand with an engine-not-found line and no entry')
               return
             }
             // (2) nothing beyond the command's echo has come back: the engine is
@@ -2005,10 +2069,7 @@ export function spawnPty(
                 armIdleFallback()
                 return
               }
-              runtimeEntryFailed = true
-              clearSshLineBuffer(sessionId, 'runtime')
-              logError(`[ssh] ${sessionId}: no output from the container entry for ${(MAX_ENTRY_SILENT_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms -- container entry failed`)
-              setFlowState('failed', 'container entry failed')
+              failEntry(SSH_ENTRY.FAILED, `no output from the container entry for ${(MAX_ENTRY_SILENT_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms`)
               return
             }
             // (3) the trailing line is a password/sudo prompt: a human is typing
@@ -2023,21 +2084,65 @@ export function spawnPty(
                 armIdleFallback()
                 return
               }
-              runtimeEntryFailed = true
-              clearSshLineBuffer(sessionId, 'runtime')
-              logError(`[ssh] ${sessionId}: a password prompt was still waiting ${(MAX_ENTRY_PROMPT_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms after postCommand -- container entry failed`)
-              setFlowState('failed', 'container entry failed')
+              failEntry(SSH_ENTRY.FAILED, `a password prompt was still waiting ${(MAX_ENTRY_PROMPT_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms after postCommand`)
               return
             }
-            // else: an inner shell with a prompt we do not specifically know --
-            // promote, exactly as before this review.
+            // (4) rc.15 review R1 (aicc_planning#45): a PROVABLE entry that has
+            //     not announced itself. Reaching here means the data path saw
+            //     no `__CCC_<nonce>_IN__` (that path promotes at once). Nothing
+            //     else ever promotes such an entry -- not an unrecognised
+            //     prompt, not silence: absence of evidence is not entry.
+            if (entryProvable) {
+              // A shell prompt the regex knows is waiting for input and it is
+              // not our command's echo. IN precedes the container shell by
+              // construction, so a prompt with no IN is the HOST's (a changing
+              // command counter, a cd -- a shape the identity check could not
+              // match) or a container that failed to start its wrapper.
+              if (SHELL_PROMPT_RE.test(entryTrailingLine) && !isPostCommandEcho(entryTrailingLine)) {
+                failEntry(SSH_ENTRY.FAILED, 'a shell prompt is waiting after the post-command but the entry sentinel never arrived')
+                return
+              }
+              // No prompt the regex knows (a zsh `%` host after a cancelled
+              // sudo, a container still starting): hold briefly, then fail.
+              if (entryUnprovenHoldFires < MAX_ENTRY_UNPROVEN_HOLD_FIRES) {
+                entryUnprovenHoldFires++
+                if (entryUnprovenHoldFires === 1) logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms after postCommand with output but no entry sentinel yet -- holding (bounded)`)
+                armIdleFallback()
+                return
+              }
+              failEntry(SSH_ENTRY.FAILED, `no entry sentinel within ${(MAX_ENTRY_UNPROVEN_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms of the last output`)
+              return
+            }
+            // `start -ai`: an attach to the container's entrypoint, which need
+            // not be a shell -- nothing can be typed into it to prove where it
+            // landed. Fall through to the explicit-consent state.
           }
+          // rc.15 review R1: NOT inner. A free-text post-command (or a start -ai
+          // attach) finished and the pane went idle, but nothing proves which
+          // shell -- or which machine -- is attached now. Say so, and launch
+          // only on the user's explicit Launch-anyway click.
           postCommandShellReady = true
-          inInnerShell = true
+          entryUnverified = true
+          entrySkipped = false // the flow is live again, like the IN promotion
           clearSshLineBuffer(sessionId, 'runtime')
-          logInfo(`[ssh] ${sessionId}: idle after postCommand → inner shell ready`)
-          // User decides next via overlay (Launch Claude vs Skip).
-          setFlowState('awaiting-claude', 'inner')
+          logInfo(`[ssh] ${sessionId}: idle after postCommand -- entry could not be verified, asking for explicit consent before any launch`)
+          setFlowState('awaiting-claude', SSH_ENTRY.UNVERIFIED)
+          return
+        }
+
+        // rc.15 review R1: the wait-for-click window after a PROVEN entry. If
+        // the host's exact prompt line is back on screen and the container's
+        // own prompt is known to be a different line, the exec client has gone
+        // (detach keys, a stopped container) without an OUT: fail closed now
+        // rather than at the launch guard, so the overlay stops saying "inner"
+        // over a host prompt. Fail-only; identical prompts never trip it.
+        if (
+          currentFlowState === 'awaiting-claude'
+          && inInnerShell && entryProven && !entryGuardPending && !claudeSent
+          && hostPromptLine !== '' && innerPromptLine !== '' && innerPromptLine !== hostPromptLine
+          && isHostBackLine(afterEntryTrailingLine)
+        ) {
+          failEntry(SSH_ENTRY.LEFT, 'the host prompt is back after entry and the container prompt was a different line')
           return
         }
 
@@ -2052,6 +2157,8 @@ export function spawnPty(
           && containerSetupDone
           && !containerSetupShellReady
           && !claudeSent
+          // Defence in depth: failEntry drops the setup latches first (R1 review).
+          && !runtimeEntryFailed
         ) {
           containerSetupShellReady = true
           logInfo(`[ssh] ${sessionId}: idle after container setup ok → writing claudeCmd`)
@@ -2192,7 +2299,22 @@ export function spawnPty(
       runtimeInvalid = true
       setFlowState('failed', 'container runtime invalid')
     }
-    const postCommand = [ssh.postCommand, runtimeCmd].filter(Boolean).join(' && ') || undefined
+    // The text of the CURRENT attempt. Presence (`if (postCommand)`) is decided
+    // once, here; for a provable container entry the text itself is re-composed
+    // by writePostCommand with that attempt's nonce (rc.15 review R1), and the
+    // echo/host-back comparisons below read whatever was actually typed.
+    let postCommand = [ssh.postCommand, runtimeCmd].filter(Boolean).join(' && ') || undefined
+    // rc.15 review R1 (aicc_planning#45): the sentinel-bearing entry for one
+    // attempt. A structured runtime keeps the free-text prep in front of it; a
+    // LEGACY free-text docker line IS the entry (it parsed into effectiveRuntime
+    // and nothing else is in it), so it is replaced by the composed shape --
+    // the one deliberate change to a legacy launch line, so legacy configs get
+    // the same proof (their shell -- bash or sh -- is preserved).
+    const composeEntryAttempt = (nonce: string): string => {
+      const entry = composeContainerEntryCommand(effectiveRuntime, nonce)
+      const prep = ssh.runtime ? ssh.postCommand : undefined
+      return [prep, entry].filter(Boolean).join(' && ')
+    }
     const sudoPassword = ssh.sudoPassword
 
     // Tight password-prompt match: `password:` or `password?` at the trimmed
@@ -2247,6 +2369,19 @@ export function spawnPty(
     let entryPromptHoldFires = 0
     const MAX_ENTRY_SILENT_HOLD_FIRES = 10
     const MAX_ENTRY_PROMPT_HOLD_FIRES = 40
+    // rc.15 review R1: output came back from a provable entry but no IN sentinel
+    // yet and nothing on screen decides it (no recognised prompt, no password
+    // prompt) -- a slow container start, or a host whose prompt the regex does
+    // not know (zsh `%`) after a cancelled sudo. Hold, then FAIL: an entry
+    // that never announces itself is never promoted. Same budget as the silent
+    // hold, (10+1) x 1.5s = 16.5s after the last output: on a host whose prompt
+    // the regex cannot strip, the command's own echo already counts as output,
+    // so this IS the engine's start-up allowance (quality review).
+    let entryUnprovenHoldFires = 0
+    const MAX_ENTRY_UNPROVEN_HOLD_FIRES = 10
+    // rc.15 review R1: how long the launch-time guard waits for its HERE answer.
+    // A shell round trip, not a container start, so short.
+    const ENTRY_GUARD_TIMEOUT_MS = 5000
 
     /**
      * Writers for the four discrete SSH stages. The manual
@@ -2274,6 +2409,7 @@ export function spawnPty(
         // global handler and crashes main (adversarial review, #188). Fail the
         // flow instead. The IPC schema already rejects bad paths up front; this
         // is defence-in-depth for any path that reaches here.
+        if (destroyed) return
         try {
           const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
           const setupOpts = {
@@ -2343,9 +2479,80 @@ export function spawnPty(
       return !(postCommand && postCommand.startsWith(rest))
     }
 
+    const clearEntryGuardTimer = () => {
+      if (entryGuardTimeoutHandle) {
+        clearTimeout(entryGuardTimeoutHandle)
+        entryGuardTimeoutHandle = null
+      }
+    }
+    /** Withdraw an outstanding launch guard entirely: nothing it was going to
+     *  do runs, and its timer cannot fire. */
+    const dropEntryGuard = () => {
+      entryGuardPending = false
+      entryGuardContinuation = null
+      clearEntryGuardTimer()
+    }
+
+    /** The ONE way a container entry fails (rc.14 review F1 / rc.15 review R1).
+     *  Latches the refusal every launch path checks, records WHY for the
+     *  overlay's re-emit, drops the current attempt's proof and nonce (a late IN
+     *  from this attempt can never promote a later one), and stops any launch
+     *  guard in flight. inInnerShell is cleared too: a 'left the container'
+     *  failure is reached FROM the inner state, and the host ladder must never
+     *  see it set. */
+    const failEntry = (reason: SshEntryFailureReason, why: string) => {
+      runtimeEntryFailed = true
+      entryFailureReason = reason
+      inInnerShell = false
+      entryProven = false
+      entryNonce = null
+      innerPromptLine = ''
+      afterEntryTrailingLine = ''
+      sshEntryNonceBySession.delete(sessionId)
+      dropEntryGuard()
+      claudeReproven = false
+      // A container setup that was in flight when the shell was lost must not
+      // fire its own timeout over this failure, and a Run again + Launch must
+      // be able to run the setup afresh (quality review: the latch was never
+      // reset, so the re-entered container sat in running-setup forever).
+      if (setupTimeoutHandle) {
+        clearTimeout(setupTimeoutHandle)
+        setupTimeoutHandle = null
+      }
+      containerSetupSent = false
+      containerSetupDone = false
+      containerSetupShellReady = false
+      clearSshLineBuffer(sessionId, 'runtime')
+      logInfo(`[ssh] ${sessionId}: ${reason} (${why})`)
+      setFlowState('failed', reason)
+    }
+
     const writePostCommand = () => {
       if (postCommandSent || !postCommand) return
       postCommandSent = true
+      // rc.15 review R1 round 3 (spec MAJOR): a Skip given at the post-command
+      // offer must not stand the after-entry watch down for the attempt that
+      // follows it -- every attempt starts watched.
+      entrySkipped = false
+      // rc.15 review R1: a fresh nonce per ATTEMPT, and the entry text composed
+      // around it. Only this nonce's sentinels are accepted from here on.
+      if (entryProvable) {
+        const nonce = randomId()
+        try {
+          postCommand = composeEntryAttempt(nonce)
+        } catch (err) {
+          // Unreachable for a runtime composeRuntimeCommand accepted at spawn
+          // (same validation) and for a regex-parsed legacy line, but a throw
+          // here must fail the flow, not escape into the IPC handler.
+          logError(`[ssh] ${sessionId}: container entry command invalid: ${(err as Error)?.message ?? err}`)
+          runtimeInvalid = true
+          setFlowState('failed', 'container runtime invalid')
+          return
+        }
+        entryNonce = nonce
+        entryProven = false
+        sshEntryNonceBySession.set(sessionId, nonce)
+      }
       setFlowState('running-postcommand')
       logInfo(`[ssh] ${sessionId}: writing post-command`)
       setTimeout(() => {
@@ -2373,12 +2580,20 @@ export function spawnPty(
         setupTimeoutHandle = null
         if (!containerSetupDone) {
           logError(`[ssh] ${sessionId}: container setup ok not received within ${SETUP_TIMEOUT_MS}ms`)
+          // Release the latch so the overlay's Retry Launch can run the setup
+          // again (through the launch guard for a proven entry); before, the
+          // retry no-op'd and the failure sat there inert (quality review).
+          containerSetupSent = false
           setFlowState('failed', 'container setup timeout')
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
         // See writeHostSetupCmd: a throw here would crash main via the global
         // handler; fail the flow instead (adversarial review, #188).
+        // rc.15 review R1 round 2: the shell can be lost inside these 300 ms (an
+        // OUT right after the guard answered) -- failEntry releases the latch,
+        // and the blob must not land on the host prompt behind it.
+        if (destroyed || runtimeEntryFailed || !containerSetupSent) return
         try {
           const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
           const setupOpts = {
@@ -2397,6 +2612,31 @@ export function spawnPty(
           setFlowState('failed', 'container setup error')
         }
       }, 300)
+    }
+
+    /**
+     * rc.15 review R1 (aicc_planning#45): the launch-time guard. Typed into the
+     * shell the flow believes is this attempt's container shell, BEFORE any
+     * ordinary launch write; the shell expands CCC_ENTRY itself, so only a shell
+     * descended from this attempt's exec answers `__CCC_<nonce>_HERE__`. The
+     * onData handler resolves it (HERE -> writeContainerSetupCmd; OUT -> left);
+     * silence past ENTRY_GUARD_TIMEOUT_MS fails closed with nothing written.
+     */
+    const startEntryGuard = (onAnswered: () => void) => {
+      if (destroyed || !entryNonce || entryGuardPending) return
+      entryGuardPending = true
+      entryGuardContinuation = onAnswered
+      clearSshLineBuffer(sessionId, 'runtime')
+      // Its own info: the overlay says what is happening (a probe, not an
+      // injection -- nothing has been written yet).
+      setFlowState('running-setup', SSH_ENTRY.VERIFYING)
+      logInfo(`[ssh] ${sessionId}: verifying the attached shell is this attempt's container shell before launching`)
+      entryGuardTimeoutHandle = setTimeout(() => {
+        entryGuardTimeoutHandle = null
+        if (destroyed || !entryGuardPending) return
+        failEntry(SSH_ENTRY.LEFT, `no answer to the launch guard within ${ENTRY_GUARD_TIMEOUT_MS}ms`)
+      }, ENTRY_GUARD_TIMEOUT_MS)
+      ptyProcess.write(buildEntryGuardCommand() + '\r')
     }
 
     // #242 round-2 MINOR fix: `runningClaudeInfo` lets a caller that just
@@ -2419,6 +2659,11 @@ export function spawnPty(
       // suppressed. Everything this function does is meaningless for a
       // destroyed flow, and harmful once the id has been respawned.
       if (destroyed) return
+      // rc.15 review R1 (spec review BLOCKER): the claude command is never
+      // written for a container entry that failed -- a shell lost after the
+      // setup went out would otherwise get claude typed onto the HOST by the
+      // next prompt-shaped line. Defence in depth, like proceedAfterSetup's.
+      if (runtimeEntryFailed) return
       // Idempotent. shellOnly is intentionally NOT gated: this writer
       // only runs after the user clicked Launch Claude (or after a
       // user-consented chain reached this stage), so the click is
@@ -2495,7 +2740,10 @@ export function spawnPty(
         // is defence-in-depth against any OTHER reason ptyProcess.write()
         // might throw post-teardown (killPty's own write wraps in the same
         // /* best-effort */ shape for exactly this reason).
-        if (destroyed) return
+        // Defence in depth (R1 review round 3): claudeSent stands the after-entry
+        // watch down before this timer is armed, so a lost shell cannot be
+        // observed inside this window; kept symmetric with the setup write.
+        if (destroyed || runtimeEntryFailed) return
         try {
           ptyProcess.write(cmdToWrite + '\r')
           // Follow-up adversarial pass (fail-posture MAJOR): arm the
@@ -2922,6 +3170,12 @@ export function spawnPty(
      */
     const proceedAfterSetup = () => {
       if (claudeSent) return
+      // rc.15 review R1: a container entry that failed -- including one lost
+      // AFTER its setup went out -- never proceeds to a claude launch. Defence
+      // in depth: failEntry also drops the setup latches, so today no caller
+      // reaches this line with the flag set; the invariant must not depend on
+      // that staying true.
+      if (runtimeEntryFailed) return
       // #242 round-3 MINOR fix: the choke point itself had no
       // staging-in-flight guard -- launchClaude() got one (`if (stagingSent
       // && !stagingDone) return`) because a second click is an obvious
@@ -2960,6 +3214,17 @@ export function spawnPty(
         writeTmuxStageCmd()
         return
       }
+      // rc.15 review R1 round 2 (quality MAJOR): the launch guard proved the
+      // container shell once, before the setup went out. A detach or a stopped
+      // container in the seconds between `setup ok` and this point prints no
+      // OUT, and a host prompt the regex cannot strip is never recognised
+      // coming back -- so the claude command, the second ordinary write, gets
+      // its own proof. No answer within ENTRY_GUARD_TIMEOUT_MS fails closed as
+      // LEFT with nothing typed.
+      if (entryProvable && entryProven && inInnerShell && !claudeReproven) {
+        startEntryGuard(() => { claudeReproven = true; proceedAfterSetup() })
+        return
+      }
       writeClaudeCmd()
     }
 
@@ -2992,6 +3257,7 @@ export function spawnPty(
         // any other state: this is the one re-entry, not a general reset.
         if (currentFlowState === 'failed' && runtimeEntryFailed) {
           runtimeEntryFailed = false
+          entryFailureReason = SSH_ENTRY.FAILED
           postCommandSent = false
           postCommandWritten = false
           postCommandShellReady = false
@@ -3000,6 +3266,17 @@ export function spawnPty(
           entryTrailingLine = ''
           entrySilentHoldFires = 0
           entryPromptHoldFires = 0
+          // rc.15 review R1: the new attempt starts unproven, with no nonce until
+          // writePostCommand mints one, and no consent carried over.
+          entryUnprovenHoldFires = 0
+          entryProven = false
+          entryNonce = null
+          entryUnverified = false
+          inInnerShell = false
+          innerPromptLine = ''
+          afterEntryTrailingLine = ''
+          dropEntryGuard()
+          claudeReproven = false
           sudoPasswordSent = false
           clearSshLineBuffer(sessionId, 'runtime')
           logInfo(`[ssh] ${sessionId}: re-running the post-command after a failed container entry`)
@@ -3017,11 +3294,21 @@ export function spawnPty(
         // so the overlay keeps saying why instead of appearing inert; the user's
         // route out is Skip (an explicit choice to drive the raw shell) or
         // fixing the config.
+        entrySkipped = false
         if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
         // rc.14 review F1: same shape for a container the engine could not enter.
         // inInnerShell is still false here, so without this guard Retry Launch
         // would take the host ladder and start claude on the host.
-        if (runtimeEntryFailed) { setFlowState('failed', 'container entry failed'); return }
+        if (runtimeEntryFailed) { setFlowState('failed', entryFailureReason); return }
+        // rc.15 review R1 round 2 (quality MAJOR): once the claude command has
+        // been typed, Launch is inert -- the latch proceedAfterSetup already
+        // has, applied before the container branch below. Without it, Retry
+        // Launch after claude exited to the container shell typed the launch
+        // guard into the live pane, and because the after-entry watch stands
+        // down at claudeSent its answer was never read: the timeout then called
+        // a healthy container shell "gone". Re-emitted so the overlay's busy
+        // state clears.
+        if (claudeSent) { setFlowState(currentFlowState, currentFlowInfo); return }
         // #242 round-2 MAJOR fix: tier-3 staging can be in flight for up to
         // STAGE_TIMEOUT_MS (20s) while claudeSent is still false, a window
         // that didn't exist pre-#242 (claudeSent used to flip true in the
@@ -3040,6 +3327,22 @@ export function spawnPty(
         // invariant doesn't depend on proceedAfterSetup being the only path
         // that can reach writeClaudeCmd while a push is open.
         if (pushSent && !pushDone) return
+        // rc.15 review R1: a launch guard is already out -- its answer (or its
+        // timeout) decides; a second click must not write anything meanwhile.
+        if (entryGuardPending) return
+        // rc.15 review R1: once the post-command has gone out on a container
+        // session, the host ladder is no longer an option -- the user asked for
+        // the container, and an entry that is neither proven nor explicitly
+        // consented to must not launch ANYWHERE (a Launch reaching main while
+        // the entry is still in flight used to write the host setup). Skip is
+        // the explicit route onto the raw host shell; "Launch Claude on host"
+        // is only offered BEFORE the post-command runs.
+        if (isContainerSession && postCommandSent && !inInnerShell && !entryUnverified) {
+          logInfo(`[ssh] ${sessionId}: launch refused -- the container entry is neither proven nor consented to (state=${currentFlowState})`)
+          // Re-emitted for the overlay's benefit; the state itself has not changed.
+          setFlowState(currentFlowState, currentFlowInfo)
+          return
+        }
         // Two paths depending on whether we already entered the inner
         // shell. Inner shell → container setup + claudeCmd. Host shell
         // (no postCommand or user skipped it) → host setup + claudeCmd.
@@ -3047,6 +3350,23 @@ export function spawnPty(
         // Launch Claude — that IS their consent, overriding any saved
         // shellOnly preference on the config.
         if (inInnerShell) {
+          // rc.15 review R1: a PROVEN entry is re-proven at launch time. IN said
+          // the container shell was attached THEN; detach keys or a stopped
+          // container hand the host prompt back without any OUT, and a host
+          // whose prompt the regex never captured cannot be recognised coming
+          // back. So before any ordinary launch write goes out, the attached
+          // shell is asked for this attempt's CCC_ENTRY (buildEntryGuardCommand)
+          // -- only a shell descended from THIS exec answers with the nonce.
+          // No answer, or the wrong one, fails closed: nothing is written.
+          if (entryProvable) { startEntryGuard(writeContainerSetupCmd); return }
+          writeContainerSetupCmd()
+        } else if (entryUnverified) {
+          // rc.15 review R1: the user clicked Launch anyway on the overlay that
+          // said the entry could not be verified. Their explicit consent, with
+          // the warning that this may run on the SSH host or whatever process
+          // is attached. It never becomes a verified entry (inInnerShell stays
+          // false); the setup simply re-runs in the attached shell.
+          logInfo(`[ssh] ${sessionId}: launching in an UNVERIFIED shell on the user's explicit consent`)
           writeContainerSetupCmd()
         } else if (!setupSent) {
           writeHostSetupCmd()
@@ -3062,9 +3382,20 @@ export function spawnPty(
         }
       },
       skip: () => {
+        // rc.15 review R1 round 2: the user took the shell over. An `exit` they
+        // type in a container they are managing by hand is not a lost entry to
+        // re-raise the overlay for; a later Launch re-engages the watch. A
+        // launch guard still out is withdrawn with it (round 3): its answer
+        // could no longer be read, so its timeout would call the shell gone.
+        dropEntryGuard()
+        entrySkipped = true
         setFlowState('skipped')
       },
       handlePtyExit: () => {
+        // rc.15 review R1: a launch guard cannot be answered by a dead PTY; stop
+        // its timer so it does not overwrite the connection failure below with
+        // 'left the container' five seconds later (quality review).
+        dropEntryGuard()
         // Only a connection failure BEFORE a good terminal state matters here.
         // A mid-session drop (already claude-running) is left to the user's
         // Restart; a deliberate close destroys the flow first, so this never
@@ -3092,6 +3423,10 @@ export function spawnPty(
           clearTimeout(idleFallbackHandle)
           idleFallbackHandle = null
         }
+        // rc.15 review R1: the launch guard's timer fails the entry on fire; a
+        // torn-down flow must not emit that (setFlowState is destroyed-gated,
+        // but the timer is cleared here like every other one).
+        dropEntryGuard()
         // #242 finding F3 (adversarial review round 4, MAJOR): stagingTimeoutHandle
         // was the one timer on this ladder NOT cleared here -- it outlives
         // session teardown and, unguarded, drives a full claude-launch write
@@ -3167,6 +3502,7 @@ export function spawnPty(
         authHoldFires = 0
         entrySilentHoldFires = 0
         entryPromptHoldFires = 0
+        entryUnprovenHoldFires = 0
         armIdleFallback()
       }
 
@@ -3445,37 +3781,111 @@ export function spawnPty(
       // the moment the command has actually been WRITTEN (postCommandWritten;
       // the 'runtime' buffer was cleared then), so a host prompt repaint in
       // flight during writePostCommand's 200ms defer is never read as output.
+      // rc.15 review R1: the chunk that proved the entry has already been read
+      // for an OUT (above) and its buffer dropped; the after-entry watch below
+      // must not re-buffer it.
+      let entryProvenThisChunk = false
       if (isContainerSession && postCommandWritten && !postCommandShellReady && !runtimeEntryFailed) {
         const recent = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
         const lines = visibleLines(recent)
         const trailing = lastVisible(lines)
         if (CONTAINER_ENTRY_ERROR_RE.test(recent)) {
-          runtimeEntryFailed = true
-          clearSshLineBuffer(sessionId, 'runtime')
-          logInfo(`[ssh] ${sessionId}: container entry failed (engine error after the post-command) -- staying on the host shell, not marking inner`)
-          setFlowState('failed', 'container entry failed')
+          failEntry(SSH_ENTRY.FAILED, 'engine error after the post-command -- staying on the host shell, not marking inner')
           return
         }
-        // The trailing line for the idle fallback's host-back and password-
-        // prompt reads. lastVisible already skips empty lines and reads through
-        // `\r`/BEL repaints, so an empty or eol-only chunk still yields the
-        // buffered prompt -- no separate stickiness needed. Capped like a
-        // prompt line, which bounds the regex work on it.
-        entryTrailingLine = trailing.slice(0, 200)
-        // The shell said the engine binary is missing: a SUSPICION only where
-        // the identity check cannot decide (no known host prompt). An rc file
-        // inside a healthy container can print the same line, and there the
-        // host prompt NOT coming back is the tell. The following prompt decides.
-        if (!entrySuspect && hostPromptLine === '' && CONTAINER_ENGINE_NOT_FOUND_RE.test(recent)) {
-          entrySuspect = true
-          logInfo(`[ssh] ${sessionId}: post-command output says the engine binary was not found and the host PS1 is unrecognised -- suspect entry, waiting for idle to decide`)
+        // rc.15 review R1 (aicc_planning#45): the entry sentinel is judged HERE,
+        // before anything else in this handler reads the chunk -- the sudo
+        // auto-answer below in particular. `__CCC_<nonce>_IN__` was printed by
+        // a process the engine ran INSIDE the named container, before that
+        // container's shell started (composeContainerEntryCommand); it is the
+        // ONLY thing that marks inner for a provable entry. An IN and a
+        // container-side `[sudo]` prompt arriving in one chunk therefore set
+        // inInnerShell first, and the host's sudo secret is refused. An OUT
+        // after the IN (an rc file that runs `exit`) means the shell is already
+        // gone: fail closed, never promote.
+        if (entryProvable && entryNonce) {
+          const words = parseEntrySentinels(recent, entryNonce)
+          const inAt = words.indexOf('IN')
+          if (inAt !== -1) {
+            if (words.indexOf('OUT', inAt) !== -1) {
+              // IN and OUT in one chunk: the shell exited at once (an rc file
+              // that runs `exit`; the configured shell missing from the image,
+              // in which case the wrapper's own `sh: bash: not found` sits
+              // between them on screen as the diagnosis). Either way the
+              // container shell is gone: fail closed as LEFT, never promote.
+              failEntry(SSH_ENTRY.LEFT, 'the container shell exited immediately after entry (an rc-file exit, or the configured shell is missing from the image)')
+              return
+            }
+            postCommandShellReady = true
+            inInnerShell = true
+            entryProven = true
+            // A Skip given while the attempt was in flight (IPC only; the overlay
+            // offers none there) is overridden by the promotion it did not stop:
+            // the flow is live again, so its watch is too (R1 review round 4).
+            entrySkipped = false
+            entryProvenThisChunk = true
+            // The container's prompt, if this chunk already shows it (the line
+            // after the IN token); see innerPromptLine.
+            const afterIn = lastVisible(lines)
+            innerPromptLine = afterIn !== '' && !afterIn.includes('__CCC_') && SHELL_PROMPT_RE.test(afterIn) ? afterIn.slice(0, 200) : ''
+            afterEntryTrailingLine = ''
+            clearSshLineBuffer(sessionId, 'runtime')
+            logInfo(`[ssh] ${sessionId}: container entry proven by this attempt's sentinel -> inner shell ready`)
+            setFlowState('awaiting-claude', SSH_ENTRY.INNER)
+            // No return: the rest of the chunk is judged with inInnerShell set.
+          }
         }
-        // Real inner-shell output has appeared once a visible line is neither
-        // the command's echo nor the host's prompt (alone or with host activity
-        // after it). Latched: once true the idle fallback promotes an
-        // unrecognised prompt instead of holding for silence.
-        if (!entryOutputSeen && lines.some((l) => l !== '' && !isPostCommandEcho(l) && !isHostBackLine(l))) {
-          entryOutputSeen = true
+        if (!entryProven) {
+          // The trailing line for the idle fallback's host-back and password-
+          // prompt reads. lastVisible already skips empty lines and reads through
+          // `\r`/BEL repaints, so an empty or eol-only chunk still yields the
+          // buffered prompt -- no separate stickiness needed. Capped like a
+          // prompt line, which bounds the regex work on it.
+          entryTrailingLine = trailing.slice(0, 200)
+          // The shell said the engine binary is missing: a SUSPICION only where
+          // the identity check cannot decide (no known host prompt). An rc file
+          // inside a healthy container can print the same line, and there the
+          // host prompt NOT coming back is the tell. The following prompt decides.
+          if (!entrySuspect && hostPromptLine === '' && CONTAINER_ENGINE_NOT_FOUND_RE.test(recent)) {
+            entrySuspect = true
+            logInfo(`[ssh] ${sessionId}: post-command output says the engine binary was not found and the host PS1 is unrecognised -- suspect entry, waiting for idle to decide`)
+          }
+          // Real output has appeared once a visible line is neither the
+          // command's echo nor the host's prompt (alone or with host activity
+          // after it). Latched: the idle fallback then stops holding for
+          // silence (a provable entry still needs its sentinel; a start -ai
+          // attach goes to the explicit-consent state).
+          if (!entryOutputSeen && lines.some((l) => l !== '' && !isPostCommandEcho(l) && !isHostBackLine(l))) {
+            entryOutputSeen = true
+          }
+        }
+      }
+
+      // rc.15 review R1: after a PROVEN entry the wrapper prints
+      // `__CCC_<nonce>_OUT__` when the container shell exits (the user typed
+      // exit, an rc file ran it), and the launch guard's `__CCC_<nonce>_HERE__`
+      // answers buildEntryGuardCommand. Both ride the runtime buffer up to the
+      // moment the claude command is written; after that the flow is claude's.
+      if (entryProven && entryNonce && !runtimeEntryFailed && !claudeSent && !entrySkipped && !entryProvenThisChunk) {
+        const afterEntry = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
+        const words = parseEntrySentinels(afterEntry, entryNonce)
+        if (words.includes('OUT')) {
+          failEntry(SSH_ENTRY.LEFT, entryGuardPending ? 'the container shell exited while the launch guard was out' : 'the container shell exited')
+          return
+        }
+        // Bookkeeping for the idle host-back hint (see innerPromptLine).
+        const trailingNow = lastVisible(visibleLines(afterEntry)).slice(0, 200)
+        if (trailingNow !== '' && !trailingNow.includes('__CCC_')) {
+          afterEntryTrailingLine = trailingNow
+          if (innerPromptLine === '' && SHELL_PROMPT_RE.test(trailingNow)) innerPromptLine = trailingNow
+        }
+        if (entryGuardPending && words.includes('HERE')) {
+          const next = entryGuardContinuation
+          dropEntryGuard()
+          clearSshLineBuffer(sessionId, 'runtime')
+          logInfo(`[ssh] ${sessionId}: launch guard answered -- the attached shell is this attempt's container shell`)
+          next?.()
+          return
         }
       }
 
@@ -3514,7 +3924,10 @@ export function spawnPty(
       // printed by something INSIDE the container (a MOTD, a .bashrc, a process
       // the user ran), and typing the host's sudo secret into it hands that
       // secret to the container. Same shape as the SSH-password gate above.
-      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent && !inInnerShell) {
+      // rc.15 review R1 (spec review): an UNVERIFIED entry (start -ai, free
+      // text) is past the host's own sudo too -- whatever is attached printed
+      // that prompt, and it gets no host secret either.
+      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent && !inInnerShell && !entryUnverified) {
         const promptLine = promptLineNow
         if (promptLine && SUDO_PROMPT_RE.test(promptLine)) {
           sudoPasswordSent = true
@@ -3584,11 +3997,20 @@ export function spawnPty(
         && (!sudoPassword || sudoPasswordSent)
         && !runtimeEntryFailed
         && !isHostBackLine(entryTrailingLine)
+        // rc.15 review R1: a PROVABLE container entry is never promoted by
+        // prompt shape -- its sentinel (judged above) is the only proof, and
+        // the idle fallback fails an entry that never sends it.
+        && !entryProvable
       ) {
+        // Everything else (a free-text prep, a start -ai attach) finished on
+        // SOME shell nobody can identify: awaiting-claude, but marked
+        // unverified, so the launch needs the user's explicit consent and
+        // never reads as inner.
         postCommandShellReady = true
-        inInnerShell = true
+        entryUnverified = true
+        entrySkipped = false // the flow is live again, like the IN promotion
         clearSshLineBuffer(sessionId, 'runtime')
-        setFlowState('awaiting-claude', 'inner')
+        setFlowState('awaiting-claude', SSH_ENTRY.UNVERIFIED)
         return
       }
 
@@ -3600,6 +4022,8 @@ export function spawnPty(
         && containerSetupDone
         && !containerSetupShellReady
         && !claudeSent
+        // Defence in depth: failEntry drops the setup latches first (R1 review).
+        && !runtimeEntryFailed
         && sawShellPrompt
       ) {
         containerSetupShellReady = true
@@ -4680,6 +5104,7 @@ function cleanupSessionResources(sessionId: string): void {
   // #242 finding F1 (b): drop this session's nonce so it can never leak into
   // a future, unrelated spawn reusing the same sessionId.
   sshNonceBySession.delete(sessionId)
+  sshEntryNonceBySession.delete(sessionId)
   // item 4: the SSH connection target + tmux-persistence flag are DELIBERATELY
   // NOT cleared here -- cleanupSessionResources runs on a natural PTY exit (a
   // transient drop) too, where the tab stays and a later End must still reach
