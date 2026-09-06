@@ -3519,6 +3519,13 @@ function spawnPtyResolved(
           // shell is asked for this attempt's CCC_ENTRY (buildEntryGuardCommand)
           // -- only a shell descended from THIS exec answers with the nonce.
           // No answer, or the wrong one, fails closed: nothing is written.
+          // R1 re-attack round 5 (MINOR): with the container setup already done
+          // -- a Skip inside the deferred-claude window withdrew the command --
+          // the relaunch is the claude step, and proceedAfterSetup re-proves the
+          // shell itself (claudeReproven was dropped with the command).
+          // Re-running writeContainerSetupCmd was a no-op on its latch that left
+          // the flow stranded behind an answered guard.
+          if (containerSetupDone) { proceedAfterSetup(); return }
           if (entryProvable) { startEntryGuard(writeContainerSetupCmd); return }
           writeContainerSetupCmd()
         } else if (entryUnverified) {
@@ -3528,6 +3535,8 @@ function spawnPtyResolved(
           // is attached. It never becomes a verified entry (inInnerShell stays
           // false); the setup simply re-runs in the attached shell.
           logInfo(`[ssh] ${sessionId}: launching in an UNVERIFIED shell on the user's explicit consent`)
+          // Same relaunch shape as the proven leg (no guard: unverified by design).
+          if (containerSetupDone) { proceedAfterSetup(); return }
           writeContainerSetupCmd()
         } else if (!setupSent) {
           writeHostSetupCmd()
@@ -3566,7 +3575,12 @@ function spawnPtyResolved(
               setupTimeoutHandle = null
             }
           }
-          if (!claudeWritten) claudeSent = false
+          if (!claudeWritten) {
+            claudeSent = false
+            // The next launch re-proves the shell before the claude step, as
+            // after a failEntry: the user has been driving it by hand since.
+            claudeReproven = false
+          }
         }
         entrySkipped = true
         setFlowState('skipped')

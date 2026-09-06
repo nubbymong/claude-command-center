@@ -249,5 +249,12 @@ describe('PR600 R1 round-3 MINOR: a failed attempt leaves no deferred write behi
     expect(writes(), 'a shell the user took over receives no auto write').toEqual([])
     getSshFlow(id)!.launchClaude() // a later Launch re-proves the shell instead of returning on claudeSent
     expect(writes(), 'Launch after the withdrawn command must go out again (the guard), not sit on claudeSent').toEqual([GUARD])
+    write.mockClear()
+    feed(mark(id, 'HERE'))
+    vi.advanceTimersByTime(201)
+    // Attacker round 5: the guard alone is not enough -- with the setup already
+    // done, the relaunch must reach the claude step, not strand behind the guard
+    // on writeContainerSetupCmd's latch.
+    expect(writes().filter((text) => text.includes('claude --settings')), 'the relaunch must reach the claude command').toHaveLength(1)
   })
 })
