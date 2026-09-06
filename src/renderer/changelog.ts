@@ -22,7 +22,7 @@ export interface ChangelogEntry {
 export const changelog: ChangelogEntry[] = [
   {
     version: '2.1.0-rc.15',
-    date: '2026-09-05',
+    date: '2026-09-06',
     highlights: 'Fixes from the rc.14 feedback and from an independent stability review of rc.14. The in-app browser pane no longer sits in front of a page tab; the SSO Sign-in browser choice is back on managed machines with a per-user Chrome; on a Mac, quitting asks before it stops anything and reopening from the Dock works; a restarted session is no longer shown as exited; and the remote sessions you leave running are remembered even when they were the only thing open. The Usage page loads account by account and reuses the figures your open sessions already report (the primary account aside), a background run can no longer be signed out by a token refresh, and editing a config that has a session running warns you first.',
     changes: [
       { type: 'fix', description: 'A signed-off canvas is done, not resumable. Once you approve (or dismiss) a canvas, it drops out of the resume list and the purple "resumable" dot on the Canvas button, instead of lingering there until you formally mark it complete. A canvas you sent back (rejected) stays resumable, because a rejection asks for another round, and one still awaiting your decision stays too.' },

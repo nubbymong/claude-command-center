@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
-## [2.1.0-rc.15] - 2026-09-05
+## [2.1.0-rc.15] - 2026-09-06
 
 > Fixes from the rc.14 feedback and from an independent stability review of rc.14. The in-app browser pane no longer sits in front of a page tab; the SSO Sign-in browser choice is back on managed machines with a per-user Chrome; on a Mac, quitting asks before it stops anything and reopening from the Dock works; a restarted session is no longer shown as exited; and the remote sessions you leave running are remembered even when they were the only thing open. The Usage page loads account by account and reuses the figures your open sessions already report (the primary account aside), a background run can no longer be signed out by a token refresh, and editing a config that has a session running warns you first.
 
