@@ -175,6 +175,21 @@ export function getWatchedProfileId(sessionId: string): string | undefined {
   return watched.get(sessionId)
 }
 
+/** The email of a NEW account currently detected in this profile's shared home
+ *  (a `/login` to a different account than the profile's known one), or null.
+ *  Set when the new-account prompt is broadcast, cleared when the home returns
+ *  to a known account.
+ *
+ *  ADR-009 adversarial review (Lens B, R4): the capture-detected IPC gates on
+ *  this. Without it, a compromised renderer could name ANY watched session and
+ *  the handler would capture that session's live account into a new profile and
+ *  -- since R4 -- wipe the source's credentials, a renderer-triggerable forced
+ *  sign-out. Capture may proceed only for a profile where a new account was
+ *  actually detected. */
+export function detectedNewAccountEmail(profileId: string): string | null {
+  return detectedByProfile.get(profileId) ?? null
+}
+
 /** True when `profileId` is in use by a live session OR a transient credential
  *  consumer -- i.e. that profile's home is the active USERPROFILE/credential
  *  store of something running now. Used to refuse a profile delete that would

@@ -138,14 +138,14 @@ describe('App.tsx wires the R6/R7 helpers', () => {
   })
 
   it('the zero-session close passes whether the restore prompt is pending, and a non-empty session set still opens the dialog', () => {
-    const go = (sessions: unknown[], pendingRestore: unknown) => {
+    const go = (sessions: unknown[], pendingRestore: unknown, restoreUnsettled = false) => {
       const closeWithNoSessions = vi.fn(async () => 'left-untouched')
       const setCloseDialog = vi.fn()
       const allowClose = vi.fn()
       const cancelSessionAutosave = vi.fn()
       const flushPendingConfigSaves = vi.fn(async () => {})
       const handler = run<() => void>(namedArrow(APP, 'handleCloseRequested'), {
-        isClosing: false, pendingRestore, useSessionStore: { getState: () => ({ sessions }) },
+        isClosing: false, pendingRestore, restoreUnsettledRef: { current: restoreUnsettled }, useSessionStore: { getState: () => ({ sessions }) },
         closeWithNoSessions, cancelSessionAutosave, flushPendingConfigSaves, setCloseDialog,
         window: { electronAPI: { window: { allowClose } } },
       })
@@ -162,6 +162,10 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     expect(pending.setCloseDialog).not.toHaveBeenCalled()
     const noPrompt = go([], null)
     expect((noPrompt.closeWithNoSessions.mock.calls[0][0] as { restorePromptPending: boolean }).restorePromptPending).toBe(false)
+    // ADR-009 R7: a restore chosen but not yet landed (prompt already cleared)
+    // still protects the saved file from the zero-session clear.
+    const unsettled = go([], null, true)
+    expect((unsettled.closeWithNoSessions.mock.calls[0][0] as { restorePromptPending: boolean }).restorePromptPending).toBe(true)
     const withSessions = go([{ id: 'a' }], null)
     expect(withSessions.closeWithNoSessions).not.toHaveBeenCalled()
     expect(withSessions.setCloseDialog).toHaveBeenCalledWith('close')
@@ -193,12 +197,17 @@ describe('App.tsx wires the R6/R7 helpers', () => {
   it('Resume hands the saved state to restoreSavedSessions and clears the prompt first', () => {
     const order: string[] = []
     const saved = { sessions: [{ id: 'a' }], activeSessionId: 'a', savedAt: 1 }
+    const restoreUnsettledRef = { current: false }
     const handler = run<() => void>(jsxHandler(APP, 'onResume'), {
       pendingRestore: saved, setPendingRestore: (v: unknown) => { order.push(`setPendingRestore:${v}`) },
       restoreSavedSessions: async (s: unknown) => { order.push(`restore:${s === saved}`) },
+      restoreUnsettledRef,
     })
     handler()
     expect(order).toEqual(['setPendingRestore:null', 'restore:true'])
+    // ADR-009 R7: the restore is marked in flight BEFORE the prompt clears, so a
+    // close before it lands keeps the saved file.
+    expect(restoreUnsettledRef.current).toBe(true)
   })
 })
 

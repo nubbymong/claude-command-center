@@ -194,4 +194,23 @@ describe('R10: an approved design does not hide an unfinished plan from resume (
     link.noteSessionSpawnForCanvas(peer, { cwd })
     expectResumable(peer, plan.canvasId, o, false)
   })
+
+  it('ADR-009 (Lens C): archiving the approved REWORK does not reintroduce the rejected plan\'s refusal', () => {
+    const o = owner()
+    link.noteSessionSpawnForCanvas(o, { cwd })
+    const p1 = store.renderVersion(o, { title: 'Rework then archived', mode: 'plan', html: '<p>plan</p>' })
+    store.setVersionVerdict(o, p1.versionId, { state: 'rejected', note: 'redo it' }, 'user')
+    const d1 = store.renderVersion(o, { title: 'Rework then archived', mode: 'design', html: '<p>design</p>' })
+    store.setVersionVerdict(o, d1.versionId, { state: 'approved' }, 'user')
+    // A later plan version the user approves is the rework the rejection waited for.
+    const p2 = store.renderVersion(o, { title: 'Rework then archived', mode: 'plan', html: '<p>plan v2</p>' })
+    store.setVersionVerdict(o, p2.versionId, { state: 'approved' }, 'user')
+    expect(store.isSettled(store.getCanvasStateById(p1.canvasId)!, () => 'none')).toBe(true)
+    // The user tucks the approved REWORK away. 7ef62a2e-R10 filtered archived runs
+    // out of the rework scan, so plan v1 looked un-reworked again -> isSettled
+    // flipped to false and Mark complete refused a plan that WAS reworked.
+    store.setArtifactArchived(p1.canvasId, p2.versionId, true)
+    expect(store.isSettled(store.getCanvasStateById(p1.canvasId)!, () => 'none')).toBe(true)
+    expect(completion.completeCanvasGuarded(p1.canvasId, 'user', o)).toMatchObject({ completed: expect.anything() })
+  })
 })

@@ -193,4 +193,58 @@ describe('R4: rotation, then /login before the settled observation (Codex, flipp
     expect(profiles.stripIdentityTokens('[1,2]')).toBe('{}')
     expect(profiles.stripIdentityTokens('null')).toBe('{}')
   })
+
+  it('ADR-009 (Lens B): stripIdentityTokens strips token-bearing keys at EVERY depth -- a nested mcpServers env secret does not survive', () => {
+    const out = JSON.parse(profiles.stripIdentityTokens(JSON.stringify({
+      oauthAccount: { emailAddress: 'a@example.test', accountUuid: 'u' },
+      mcpServers: {
+        github: {
+          command: 'gh-mcp',
+          args: ['--stdio'],
+          env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_secret', HOME: '/home/a' },
+        },
+      },
+      deep: { list: [{ apiKey: 'k', keep: 1 }, { credentials: 'c', ok: 2 }] },
+      projects: { '/p': {} },
+    }))) as Record<string, unknown>
+    // 7ef62a2e (top-level + oauthAccount only): ghp_secret, apiKey and credentials all rode back.
+    expect(JSON.stringify(out)).not.toMatch(/ghp_secret|GITHUB_PERSONAL_ACCESS_TOKEN|apiKey|credentials/)
+    expect(out).toEqual({
+      oauthAccount: { emailAddress: 'a@example.test', accountUuid: 'u' },
+      mcpServers: { github: { command: 'gh-mcp', args: ['--stdio'], env: { HOME: '/home/a' } } },
+      deep: { list: [{ keep: 1 }, { ok: 2 }] },
+      projects: { '/p': {} },
+    })
+  })
+
+  it('ADR-009 (Lens B): a DIRECTORY planted at .credentials.json no longer strands the source on the captured account -- it is removed and A\'s identity restored, signed out', () => {
+    const id = accountA()
+    // The failed-clear repro: a reparse point / directory where the token file
+    // should be. 7ef62a2e (and the first R4 cut) threw here, leaving the home on
+    // the captured account. Now the recursive remove clears it and the account
+    // reads Sign in on A's identity.
+    fs.rmSync(credFile(id))
+    fs.mkdirSync(credFile(id), { recursive: true })
+    fs.writeFileSync(path.join(credFile(id), 'inner'), 'x')
+    expect(profiles.restoreProfileIdentityFromCanonical(id)).toBe(true)
+    expect(fs.existsSync(credFile(id))).toBe(false) // the planted directory is gone
+    expect(readProfileCredentialStamp(id).signedIn).toBe(false)
+    const restored = JSON.parse(fs.readFileSync(identityFile(id), 'utf8')) as Record<string, unknown>
+    expect((restored.oauthAccount as { emailAddress: string }).emailAddress).toBe('a@example.test')
+    expect(JSON.stringify(restored)).not.toMatch(/synthetic-identity-token|synthetic-apikey/)
+  })
+
+  it('ADR-009 (Lens B): capture is REFUSED for a watched session where no new account was detected -- the source is not signed out', async () => {
+    const id = accountA()
+    identity.startWatchingAccountIdentity('no-detection', id)
+    await identity.recheckAllAsync() // the home is still A: no /login, so no detection
+    expect(identity.detectedNewAccountEmail(id)).toBeNull()
+    registerAccountProfilesHandlers()
+    // 7ef62a2e+R4: getWatchedProfileId alone let this proceed -> captured A into a
+    // new profile AND wiped A's credentials. The gate refuses it.
+    const np = handlers.get(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED)!({}, { sessionId: 'no-detection', name: 'X' })
+    expect(np).toBeNull()
+    expect(home(id)).toBe('synthetic-a-old') // untouched: still signed in on its own token
+    expect(readProfileCredentialStamp(id).signedIn).toBe(true)
+  })
 })

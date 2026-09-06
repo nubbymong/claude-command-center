@@ -1794,6 +1794,19 @@ function spawnPtyResolved(
      *  and is managing the shell by hand -- the after-entry watch stands down
      *  until a later Launch re-engages it. */
     let entrySkipped = false
+    // ADR-009 adversarial review (Lens A, R1 BLOCKER): the saved HOST sudo
+    // secret exists ONLY for the post-command's own `sudo <engine> exec`, which
+    // prompts on the host BEFORE any container shell. Once THIS session has ever
+    // been proven inside the container (an IN sentinel), that secret is never
+    // offered again -- not after a failEntry clears inInnerShell, not after Run
+    // again resets sudoPasswordSent, not on a launch-guard timeout. Without this
+    // latch, a forged OUT, a `su -`/`env -i` inside the container, a guard
+    // timeout, or a container prompt coinciding with the host's could revoke
+    // inInnerShell and hand the host secret to a `[sudo]` prompt the container
+    // printed. The cost is a saved secret not auto-typed after a genuine exit +
+    // Run again on the host (the one case host and container cannot be told
+    // apart): fail safe -- the user types it. Sticky for the flow's life.
+    let containerEverEntered = false
     let entryGuardTimeoutHandle: ReturnType<typeof setTimeout> | null = null
     // rc.15 review R1: after IN, the container's first prompt-shaped line and
     // the live trailing line. A fail-ONLY hint for the wait-for-click window:
@@ -3894,6 +3907,9 @@ function spawnPtyResolved(
             postCommandShellReady = true
             inInnerShell = true
             entryProven = true
+            // ADR-009 (Lens A): sticky proof that this session reached the
+            // container at least once. Gates the host sudo secret off for good.
+            containerEverEntered = true
             // A Skip given while the attempt was in flight (IPC only; the overlay
             // offers none there) is overridden by the promotion it did not stop:
             // the flow is live again, so its watch is too (R1 review round 4).
@@ -4002,7 +4018,7 @@ function spawnPtyResolved(
       // rc.15 review R1 (spec review): an UNVERIFIED entry (start -ai, free
       // text) is past the host's own sudo too -- whatever is attached printed
       // that prompt, and it gets no host secret either.
-      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent && !inInnerShell && !entryUnverified) {
+      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent && !inInnerShell && !entryUnverified && !containerEverEntered) {
         const promptLine = promptLineNow
         if (promptLine && SUDO_PROMPT_RE.test(promptLine)) {
           sudoPasswordSent = true
@@ -4261,6 +4277,16 @@ function spawnPtyResolved(
           if (cancelled) return
           const wait = refreshWaitSpawns.get(sessionId)
           refreshWaitSpawns.delete(sessionId)
+          // ADR-009 (Lens C, U13): the window can be destroyed while the wait
+          // holds (app quit, a renderer crash) -- never spawn a PTY into a gone
+          // window. End the session its predecessor's exit deferred, release the
+          // hold, and stop.
+          if (win.isDestroyed()) {
+            logInfo(`[profiles] session ${sessionId}: window destroyed during the refresh wait -- not spawning`)
+            wait?.abandonedTeardown?.()
+            release()
+            return
+          }
           try {
             spawnPty(win, sessionId, { ...options, refreshAwaited: true })
           } catch (err) {
@@ -5060,7 +5086,12 @@ function spawnPtyResolved(
       // If the wait is cancelled (the card closed meanwhile) or the re-entry
       // fails, nothing else ends this session: the wait carries the teardown.
       logInfo(`[pty] Exit of the replaced PTY for ${sessionId} while its respawn waits for a profile refresh -- teardown handed to the wait`)
-      pendingWait.abandonedTeardown = finishSession
+      // ADR-009 (Lens C): two predecessors can exit stale before the wait
+      // settles (respawn twice under one mid-refresh profile). Keep the FIRST
+      // teardown rather than clobbering it -- both do the same session-global
+      // cleanup, so one run ends the session once; overwriting merely swapped
+      // which exit code the single pty:exit carried.
+      if (!pendingWait.abandonedTeardown) pendingWait.abandonedTeardown = finishSession
       return
     }
     // Skip the renderer notification too (rc.14 review F8): the event above
@@ -5401,8 +5432,15 @@ export function killPty(sessionId: string): void {
 }
 
 export function killAllPty(): void {
-  logInfo(`[pty] Killing all PTYs (${ptySessions.size} active)`)
-  for (const [id] of ptySessions) {
+  // ADR-009 adversarial review (Lens C, R3 BLOCKER U13): a spawn parked on a
+  // profile-refresh wait has no PTY in ptySessions yet, so a ptySessions-only
+  // sweep left its Infinity hold alive AND let its deferred spawn start a real
+  // PTY behind an already-destroyed window (the darwin window-all-closed sweep,
+  // the update-install teardown). killPty(id) cancels a parked wait, so sweep
+  // the union. Snapshot the keys first: killPty mutates both maps.
+  const ids = new Set<string>([...ptySessions.keys(), ...refreshWaitSpawns.keys()])
+  logInfo(`[pty] Killing all PTYs (${ptySessions.size} active, ${refreshWaitSpawns.size} parked on a refresh wait)`)
+  for (const id of ids) {
     killPty(id)
   }
 }
@@ -5465,6 +5503,12 @@ export function gracefulExitPty(sessionId: string, timeoutMs = 5000): Promise<vo
  * Returns when all have exited or timed out.
  */
 export async function gracefulExitAllPty(timeoutMs = 5000): Promise<void> {
+  // ADR-009 adversarial review (Lens C, R3 BLOCKER U13): cancel any spawn parked
+  // on a refresh wait first -- it has no PTY to /exit, but left armed its
+  // deferred spawn would start a PTY after this graceful shutdown returns. A
+  // cancel releases the hold and ends the session its predecessor's exit was
+  // told to leave alone.
+  for (const id of Array.from(refreshWaitSpawns.keys())) killPty(id)
   const sessionIds = Array.from(ptySessions.keys())
   if (sessionIds.length === 0) return
 

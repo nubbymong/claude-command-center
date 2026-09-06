@@ -1585,24 +1585,34 @@ export function restoreProfileHomeFromCanonical(id: string): boolean {
  *  restore strips by NAME rather than trusting a shape. */
 const IDENTITY_TOKEN_KEY_RE = /token|secret|credential|apikey|api_key|claudeAiOauth/i
 
-/** The canonical `.claude.json` with every token-bearing key removed, at the top
- *  level and inside oauthAccount. Unparseable input yields an empty object: an
- *  identity that cannot be read cannot be sanitised, and nothing token-bearing
- *  may go back. Exported for its tests. */
+/** The canonical `.claude.json` with every token-bearing key removed, at EVERY
+ *  depth. Unparseable input yields an empty object: an identity that cannot be
+ *  read cannot be sanitised, and nothing token-bearing may go back.
+ *
+ *  ADR-009 adversarial review (Lens B, R4): the earlier version stripped only
+ *  the top level and one level under `oauthAccount`, so a secret nested deeper
+ *  -- `mcpServers.<name>.env.GITHUB_PERSONAL_ACCESS_TOKEN` is a shape the CLI
+ *  itself writes -- rode straight back into the "token-free" home, falsifying
+ *  this function's own guarantee. It now recurses through every object and
+ *  array, dropping any key whose NAME matches at any level. Exported for its
+ *  tests. */
 export function stripIdentityTokens(claudeJson: string): string {
   let parsed: unknown
   try { parsed = JSON.parse(claudeJson) } catch { return '{}' }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}'
-  const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-    if (IDENTITY_TOKEN_KEY_RE.test(k)) continue
-    if (k === 'oauthAccount' && v && typeof v === 'object' && !Array.isArray(v)) {
-      out[k] = Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([kk]) => !IDENTITY_TOKEN_KEY_RE.test(kk)))
-      continue
+  const strip = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(strip)
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        if (IDENTITY_TOKEN_KEY_RE.test(k)) continue
+        out[k] = strip(v)
+      }
+      return out
     }
-    out[k] = v
+    return value
   }
-  return JSON.stringify(out)
+  return JSON.stringify(strip(parsed))
 }
 
 /**
@@ -1636,8 +1646,26 @@ export function restoreProfileIdentityFromCanonical(id: string): boolean {
   // email guard and copy B's token into A's canonical store on the next poll.
   // rmSync on a symlink removes the link itself, never its target.
   const cred = path.join(home, '.claude', '.credentials.json')
-  try { fs.rmSync(cred, { force: true }) } catch { /* fall through to the overwrite */ }
-  if (fs.existsSync(cred)) writeCredentialFile(cred, '{}') // throws if it cannot: the caller sees a failed restore
+  // `recursive` so a DIRECTORY planted at the credentials path (ADR-009 Lens B:
+  // a failed-clear repro) is removed rather than throwing, and the account
+  // still ends signed out. rmSync on a symlink removes the link, not its target.
+  try { fs.rmSync(cred, { force: true, recursive: true }) } catch { /* fall through to the overwrite */ }
+  if (fs.existsSync(cred)) {
+    try {
+      writeCredentialFile(cred, '{}')
+    } catch (e) {
+      // ADR-009 adversarial review (Lens B, R4): the token file cannot be
+      // neutralised (a reparse point, an OS lock). Do NOT strand the source
+      // profile SIGNED IN on the captured account: remove its identity too so
+      // the home reads Sign in, and report the failed restore. The security
+      // invariant holds either way -- A's identity is never written next to a
+      // live token -- but this makes the failure fail SAFE (needs-login) rather
+      // than fail WRONG (silently showing the captured account).
+      logWarn(`[profiles] restore ${id}: could not clear .credentials.json (${(e as Error)?.message ?? e}); removing the identity so the home reads Sign in`)
+      try { fs.rmSync(path.join(home, '.claude.json'), { force: true }) } catch { /* best-effort */ }
+      return false
+    }
+  }
   atomicWriteSecure(path.join(home, '.claude.json'), stripIdentityTokens(fs.readFileSync(srcJson, 'utf8')), IS_POSIX ? CRED_FILE_MODE : undefined)
   return true
 }

@@ -329,10 +329,18 @@ export function openVersionIdsOf(versions: readonly CanvasVersion[]): string[] {
  * `openVersionOf` skips them. Returns the rejected anchors' version ids.
  */
 export function rejectedRunAnchorsOf(versions: readonly CanvasVersion[]): string[] {
-  const runs = artifactRuns(versions).filter((run) => !run[0]?.archived)
+  // ADR-009 adversarial review (Lens C, R10): the rework scan runs over ALL
+  // runs, archived included; only the EMIT of an anchor skips archived runs.
+  // Filtering archived out up front (the earlier shape) let archiving the
+  // approved REWORK -- not the rejection -- make the rejection look un-reworked
+  // again, so isSettled flipped back to false and Mark complete refused a plan
+  // that had demonstrably been reworked. Archiving tucks a decided run away; it
+  // does not un-decide the rework it carried.
+  const runs = artifactRuns(versions)
   const anchorOf = (run: CanvasVersion[]) => [...run].reverse().find((v) => !v.draft && !v.show && v.verdict?.state !== 'withdrawn')
   const out: string[] = []
   runs.forEach((run, i) => {
+    if (run[0]?.archived) return // an archived rejection is the user's own tucking-away: nothing owes on it
     const anchor = anchorOf(run)
     if (anchor?.verdict?.state !== 'rejected') return
     const reworked = runs.slice(i + 1).some((later) => {

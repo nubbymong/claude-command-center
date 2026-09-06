@@ -1247,6 +1247,48 @@ describe('the saved sudo secret never reaches the container', () => {
     vi.advanceTimersByTime(200)
     expect(writes()).toEqual([])
   })
+
+  // ADR-009 adversarial review (Lens A, R1 BLOCKER U9): once THIS session has
+  // been proven inside the container, the host sudo secret is never offered
+  // again -- whatever revokes the inner state. Absent the containerEverEntered
+  // latch, a failEntry clears inInnerShell and the sudo gate re-opens, handing
+  // the host secret to a `[sudo]` prompt the (still-attached) container prints.
+  it('ADR-009: after a proven entry is LOST (a forged OUT from inside), a container sudo prompt is STILL refused the host secret', () => {
+    const id = 'sudo-after-lost-entry'
+    // sudo:false so no host sudo ran -- sudoPasswordSent stays false, the exact
+    // state in which the gate would otherwise fire once inInnerShell is cleared.
+    const cmd = enterContainer(id, 'ccc-test', { sudoPassword: SECRET })
+    feed(`${cmd}\r\n${IN(id)}${INNER_PROMPT}`)
+    settle()
+    expect(getSshFlow(id)?.getState()).toEqual({ state: 'awaiting-claude', info: 'inner' })
+    // A process inside the container (which can read the exported CCC_ENTRY)
+    // forges an OUT -> the flow believes the shell LEFT and clears inInnerShell.
+    feed(OUT(id))
+    expect(getSshFlow(id)?.getState().state).toBe('failed')
+    writeMock.mockClear()
+    feed('[sudo] password for root: ')
+    vi.advanceTimersByTime(200)
+    // 7ef62a2e + first R1 cut: `synthetic-sudo-secret\r` written to the container.
+    expect(wrote(SECRET)).toBe(false)
+    expect(writes()).toEqual([])
+  })
+
+  it('ADR-009: Run again after a lost entry does not re-open the host secret to the container', () => {
+    const id = 'sudo-after-run-again'
+    const cmd = enterContainer(id, 'ccc-test', { sudoPassword: SECRET })
+    feed(`${cmd}\r\n${IN(id)}${INNER_PROMPT}`)
+    settle()
+    feed(OUT(id)) // lost
+    expect(getSshFlow(id)?.getState().state).toBe('failed')
+    // Run again resets sudoPasswordSent and mints a fresh attempt, but the
+    // container-ever-entered latch survives it.
+    getSshFlow(id)!.runPostCommand()
+    vi.advanceTimersByTime(201)
+    writeMock.mockClear()
+    feed('[sudo] password for root: ')
+    vi.advanceTimersByTime(200)
+    expect(wrote(SECRET)).toBe(false)
+  })
 })
 
 // Independent spec + quality reviews on the first R1 cut (2026-09-06). Each

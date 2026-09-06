@@ -287,6 +287,14 @@ export default function App() {
   const logsBySession = useLogsStore((s) => s.bySessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
+  // ADR-009 adversarial review (Lens C, R7): true from the moment the user
+  // chooses Resume until the restore actually lands. The Resume click clears
+  // pendingRestore synchronously (so the prompt goes away), but restoreSessions
+  // runs async and can throw before it lands -- leaving the live set empty with
+  // pendingRestore null. A close in that window used to satisfy the zero-session
+  // clear and wipe the saved file the user had just chosen to KEEP. While this
+  // ref is set, that close treats the saved file as still-pending and leaves it.
+  const restoreUnsettledRef = useRef(false)
 
   // Push focus changes to main so the sync orchestrator can shift the
   // active session to the fast interval and the background ones to the
@@ -732,7 +740,7 @@ export default function App() {
   }, [])
 
   // Restore saved sessions on startup
-  async function restoreSavedSessions(savedState: SessionState) {
+  async function restoreSavedSessions(savedState: SessionState): Promise<boolean> {
     try {
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
@@ -883,8 +891,15 @@ export default function App() {
       }
 
       console.log('[App] Sessions restored')
+      // ADR-009 (Lens C, R7): the restore landed -- the saved file is now
+      // represented by the live set, so a later zero-session close may clear it.
+      restoreUnsettledRef.current = false
+      return true
     } catch (err) {
       console.error('[App] Failed to restore sessions:', err)
+      // The restore did NOT land: leave restoreUnsettledRef set so a close now
+      // keeps the saved file rather than clearing it under an empty live set.
+      return false
     }
   }
 
@@ -968,7 +983,10 @@ export default function App() {
         // file is left exactly as it is -- cards and remotes intact for the next
         // boot -- instead of being cleared under an empty live registry.
         void closeWithNoSessions({
-          restorePromptPending: pendingRestore !== null,
+          // ADR-009 (Lens C, R7): a restore chosen but not yet landed (or that
+          // threw) also means "do not clear the saved file" -- the empty live
+          // set is transient, not the user's decision.
+          restorePromptPending: pendingRestore !== null || restoreUnsettledRef.current,
           cancelAutosave: cancelSessionAutosave,
           flush: flushPendingConfigSaves,
           allowClose: () => window.electronAPI.window.allowClose(),
@@ -1434,6 +1452,9 @@ export default function App() {
             sessions={pendingRestore.sessions}
             onResume={() => {
               const saved = pendingRestore
+              // ADR-009 (Lens C, R7): mark the restore in flight BEFORE clearing
+              // the prompt, so a close before it lands keeps the saved file.
+              restoreUnsettledRef.current = true
               setPendingRestore(null)
               void restoreSavedSessions(saved)
             }}

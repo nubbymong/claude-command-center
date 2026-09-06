@@ -81,9 +81,16 @@ export function buildTmuxListCommand(): string {
   // upgrade, a permission error) printed FOUND and nothing else -- exactly the
   // shape of "no sessions" -- and a live detached session was pruned as dead.
   // The parser now classifies each frame from its status and text.
+  // ADR-009 adversarial review (Lens C, R8): force the C locale so tmux's
+  // connection-error text ("... (No such file or directory)", whose parenthetical
+  // is libc strerror) stays English and matches TMUX_NO_SERVER_RE. Under a
+  // non-English remote login locale that parenthetical is translated, the frame
+  // classifies as 'error' not 'no-server', and a genuinely empty host reads
+  // UNVERIFIED -- fail-safe (never a false prune) but the wrong answer. Session
+  // names carry no locale, so the names path is unaffected.
   const lists = TMUX_LIVENESS_BIN_EXPRS.map((bin) => {
     const exists = bin === ON_PATH_TMUX_BIN_EXPR ? 'command -v tmux >/dev/null 2>&1' : `[ -x ${bin} ]`
-    return `${exists} && { __ccc_o=$(${bin} ls -F '#{session_name}' 2>&1); __ccc_s=$?; echo "${TMUX_LIVENESS_FOUND} $__ccc_s"; printf '%s\\n' "$__ccc_o"; }; `
+    return `${exists} && { __ccc_o=$(LC_ALL=C ${bin} ls -F '#{session_name}' 2>&1); __ccc_s=$?; echo "${TMUX_LIVENESS_FOUND} $__ccc_s"; printf '%s\\n' "$__ccc_o"; }; `
   }).join('')
   return (
     `echo ${TMUX_LIVENESS_BEGIN}; ` +

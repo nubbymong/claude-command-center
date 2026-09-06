@@ -125,6 +125,13 @@ export const spawnOptionsSchema = z.object({
   }).optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
+  // ADR-009 adversarial review (Lens B/D): pty-manager reads a TOP-LEVEL
+  // `options.elevated` (`options?.elevated ?? options?.terminalOptions?.elevated`)
+  // to wrap the launch in sudo/gsudo. It was declared only under terminalOptions,
+  // so the raw options spread let a renderer set the top-level field with no
+  // type check -- an undeclared field forcing an elevation prompt on a config
+  // that never asked for one. Declared here so the schema validates it.
+  elevated: z.boolean().optional(),
   // Ask Conductor's opening question. Bounded, NOT charset-guarded, for the same
   // reason as agentsConfig below: this is a natural-language sentence the user
   // typed, so rejecting metacharacters would break the feature for anyone who

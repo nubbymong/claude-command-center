@@ -72,7 +72,7 @@ vi.mock('https', () => {
 })
 
 const profiles = await import('../../../src/main/account-profiles')
-const { spawnPty, killPty, writePty, isSessionWritable } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, writePty, isSessionWritable, killAllPty, gracefulExitAllPty } = await import('../../../src/main/pty-manager')
 const { registerProvider } = await import('../../../src/main/providers')
 const identity = await import('../../../src/main/claude-account-identity')
 const consumers = await import('../../../src/main/profile-consumers')
@@ -396,5 +396,44 @@ describe('quality round 3: a superseding spawn carries the handed-over teardown;
     killPty('rc16registered')
     expect(ptys[1].kill).toHaveBeenCalled()
     expect(isSessionWritable('rc16registered')).toBe(false)
+  })
+})
+
+describe('ADR-009 (Lens C, U13): the all-sessions teardowns see a spawn parked on a refresh wait', () => {
+  it('killAllPty cancels a parked wait -- the Infinity hold is released and nothing spawns behind the closed window', async () => {
+    const { fetching } = await refreshInFlight()
+    spawnPty(win, 'rc16killall', { shellOnly: true, profileId, cwd: sandbox })
+    expect(ptys).toHaveLength(0)
+    expect(consumers.hasTransientProfileConsumer(profileId)).toBe(true)
+    killAllPty() // the darwin window-all-closed sweep / the update-install teardown
+    // f737d411: ptySessions-only, so the parked hold survived AND its deferred spawn later ran.
+    expect(consumers.hasTransientProfileConsumer(profileId)).toBe(false)
+    await settle(fetching)
+    expect(ptys).toHaveLength(0)
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(false)
+  })
+
+  it('gracefulExitAllPty cancels a parked wait too', async () => {
+    const { fetching } = await refreshInFlight()
+    spawnPty(win, 'rc16gracefulall', { shellOnly: true, profileId, cwd: sandbox })
+    expect(consumers.hasTransientProfileConsumer(profileId)).toBe(true)
+    await gracefulExitAllPty(50)
+    expect(consumers.hasTransientProfileConsumer(profileId)).toBe(false)
+    await settle(fetching)
+    expect(ptys).toHaveLength(0)
+  })
+
+  it('a window destroyed during the wait never spawns a PTY into it, and the hold is released', async () => {
+    let destroyed = false
+    const dwin = { webContents: { send: (ch: string, payload?: unknown) => { sent.push([ch, payload]) } }, isDestroyed: () => destroyed } as never
+    const { fetching } = await refreshInFlight()
+    sids.push('rc16windestroy')
+    spawnPty(dwin, 'rc16windestroy', { shellOnly: true, profileId, cwd: sandbox })
+    expect(ptys).toHaveLength(0)
+    destroyed = true // the renderer crashed / the app quit while the wait held
+    await settle(fetching)
+    expect(ptys).toHaveLength(0) // f737d411: spawned a PTY against the destroyed window
+    expect(consumers.hasTransientProfileConsumer(profileId)).toBe(false)
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(false)
   })
 })

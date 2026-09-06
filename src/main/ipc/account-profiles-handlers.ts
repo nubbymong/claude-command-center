@@ -8,10 +8,10 @@ import {
   readProfileCredentialStamp,
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
-import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
+import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, detectedNewAccountEmail } from '../claude-account-identity'
 import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
-import { logError } from '../debug-logger'
+import { logError, logWarn } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
 import { removeWebSession } from '../account-web/session-store'
 import { closeArtifacts } from '../account-web/artifacts'
@@ -207,6 +207,17 @@ export function registerAccountProfilesHandlers(): void {
     // Sign in instead of failing silently on a dead token (owner decision, plan Q1).
     const profileId = getWatchedProfileId(p.sessionId)
     if (!profileId) return null
+    // ADR-009 adversarial review (Lens B, R4): capture only when a new account
+    // was ACTUALLY detected in this profile's home. getWatchedProfileId alone
+    // means "some session watches this profile" -- so a renderer naming any
+    // watched session id would otherwise capture that session's live account
+    // and (since R4) wipe the source's credentials, a renderer-triggerable
+    // forced sign-out. detectedNewAccountEmail is set only by the identity
+    // watcher's own /login detection, which the renderer cannot forge.
+    if (!detectedNewAccountEmail(profileId)) {
+      logWarn(`[account-profiles] capture refused for session ${p.sessionId}: no new account is detected in profile ${profileId}`)
+      return null
+    }
     const np = captureDetectedAccount(profileId, p.name)
     if (np) { try { restoreProfileIdentityFromCanonical(profileId) } catch { /* best-effort */ } }
     return np

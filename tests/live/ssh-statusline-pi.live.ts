@@ -94,7 +94,7 @@ describe('rc.16 R8 -- a tmux client that cannot talk to its server never prunes 
     // Only the lane's own shim is removed; a staged tmux moved aside is put back.
     const restore = `if [ -e ${BACKUP} ]; then mv -f ${BACKUP} ${SHIM}; elif [ -e ${SHIM} ] && grep -q ${MARK} ${SHIM}; then rm -f ${SHIM}; fi; true`
     const target = { username: e.username, host: e.host, port: 22 }
-    const entry = { sessionId: sid, configId: 'cfg-t27', host: e.host, username: e.username, remotePath: '~', mux: 'tmux' as const, detachedAt: Date.now() }
+    const entry = { sessionId: sid, configId: 'cfg-t27', label: 'ccc-t27', host: e.host, username: e.username, remotePath: '~', mux: 'tmux' as const, detachedAt: Date.now() }
     pi(`tmux new-session -d -s ${name} 'sleep 900'`)
     try {
       pi(`mkdir -p ${STAGED}; if [ -e ${SHIM} ] && ! grep -q ${MARK} ${SHIM}; then mv -f ${SHIM} ${BACKUP}; fi; printf '%s\\n' '#!/bin/sh' '# ${MARK}' 'echo "protocol version mismatch (client 8, server 7)" >&2' 'exit 1' > ${SHIM}; chmod +x ${SHIM}`)

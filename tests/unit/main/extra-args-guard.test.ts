@@ -113,3 +113,21 @@ describe('extraArgs still accepts what it is for', () => {
     })
   }
 })
+
+// ADR-009 adversarial review (Lens B/D): pty-manager reads a TOP-LEVEL
+// `options.elevated` to wrap a launch in sudo/gsudo. It was declared only under
+// terminalOptions, so the schema neither validated nor even saw a top-level
+// `elevated` -- an undeclared field a compromised renderer could set to any
+// value, and the handler forwards the raw options object. Declaring it means a
+// non-boolean is now rejected at the IPC gate rather than flowing through.
+describe('ADR-009: the top-level elevated flag is schema-validated', () => {
+  it('accepts a boolean', () => {
+    expect(spawnOptionsSchema.safeParse({ elevated: true }).success).toBe(true)
+    expect(spawnOptionsSchema.safeParse({ elevated: false }).success).toBe(true)
+  })
+  it('rejects a non-boolean (7ef62a2e: undeclared, so it parsed and the raw value flowed on)', () => {
+    expect(spawnOptionsSchema.safeParse({ elevated: 'yes' }).success).toBe(false)
+    expect(spawnOptionsSchema.safeParse({ elevated: 1 }).success).toBe(false)
+    expect(spawnOptionsSchema.safeParse({ elevated: { toString: () => 'x' } }).success).toBe(false)
+  })
+})
