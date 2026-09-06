@@ -4726,6 +4726,12 @@ export function spawnPty(
 
     ptyProcess.onData((data) => {
       if (win.isDestroyed()) return
+      // rc.15 review R9 (aicc_planning#52 adjacent): the generation guard the
+      // stale-exit path has, applied to DATA too. A restart replaces this id's
+      // PTY synchronously and node-pty still delivers the old process's late
+      // output afterwards; it must not reach the new terminal, its integrity
+      // monitor or its watchdog (all keyed by session id, not by process).
+      if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       // Watchdog (#235): no-op when off or when this session never got a
       // watchdog started (shell-only sessions never do — see below).
