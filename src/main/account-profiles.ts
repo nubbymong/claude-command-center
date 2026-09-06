@@ -1594,25 +1594,35 @@ const IDENTITY_TOKEN_KEY_RE = /token|secret|credential|apikey|api_key|claudeAiOa
  *  -- `mcpServers.<name>.env.GITHUB_PERSONAL_ACCESS_TOKEN` is a shape the CLI
  *  itself writes -- rode straight back into the "token-free" home, falsifying
  *  this function's own guarantee. It now recurses through every object and
- *  array, dropping any key whose NAME matches at any level. Exported for its
- *  tests. */
+ *  array, dropping a token-bearing FIELD name at any depth -- but NOT the keys
+ *  of a data map (`projects`, `mcpServers`), which are user paths / names that
+ *  may themselves contain "secret" (round 2). Exported for its tests. */
 export function stripIdentityTokens(claudeJson: string): string {
   let parsed: unknown
   try { parsed = JSON.parse(claudeJson) } catch { return '{}' }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}'
-  const strip = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(strip)
+  // ADR-009 round 2 (Lens A2): the key-name test applies to credential FIELD
+  // names, not to DATA-MAP keys. `projects` is keyed by absolute paths and
+  // `mcpServers` by server names -- user strings that legitimately contain
+  // "secret"/"token" (`C:\work\secret-santa`, an MCP server named
+  // "my-secret-store"). A blanket key test at every depth dropped those whole
+  // entries, losing the folder-trust + allowedTools/history that key held. So
+  // the immediate children of a data-map container are never dropped by name;
+  // recursion still reaches token FIELDS deeper (an mcpServers `env.<VAR>` token
+  // is stripped).
+  const strip = (value: unknown, dataMapKeys: boolean): unknown => {
+    if (Array.isArray(value)) return value.map((v) => strip(v, false))
     if (value && typeof value === 'object') {
       const out: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        if (IDENTITY_TOKEN_KEY_RE.test(k)) continue
-        out[k] = strip(v)
+        if (!dataMapKeys && IDENTITY_TOKEN_KEY_RE.test(k)) continue
+        out[k] = strip(v, k === 'projects' || k === 'mcpServers')
       }
       return out
     }
     return value
   }
-  return JSON.stringify(strip(parsed))
+  return JSON.stringify(strip(parsed, false))
 }
 
 /**
@@ -1654,14 +1664,15 @@ export function restoreProfileIdentityFromCanonical(id: string): boolean {
     try {
       writeCredentialFile(cred, '{}')
     } catch (e) {
-      // ADR-009 adversarial review (Lens B, R4): the token file cannot be
-      // neutralised (a reparse point, an OS lock). Do NOT strand the source
-      // profile SIGNED IN on the captured account: remove its identity too so
-      // the home reads Sign in, and report the failed restore. The security
-      // invariant holds either way -- A's identity is never written next to a
-      // live token -- but this makes the failure fail SAFE (needs-login) rather
-      // than fail WRONG (silently showing the captured account).
-      logWarn(`[profiles] restore ${id}: could not clear .credentials.json (${(e as Error)?.message ?? e}); removing the identity so the home reads Sign in`)
+      // ADR-009 adversarial review (Lens B, round 2): the token file cannot be
+      // neutralised here (a reparse point, or an OS lock held by a live session
+      // on Windows). The security invariant still holds -- A's identity is never
+      // written next to a live token -- and we remove A's identity so the home
+      // can never show the SOURCE account signed in on the CAPTURED token. What
+      // survives is the captured account's own token file with no identity, which
+      // the very next successful restore/backup clears; we do NOT overclaim it as
+      // a clean "Sign in" here. Reported as a failed restore.
+      logWarn(`[profiles] restore ${id}: could not clear .credentials.json (${(e as Error)?.message ?? e}); removed the identity so the source account is not shown on the captured token`)
       try { fs.rmSync(path.join(home, '.claude.json'), { force: true }) } catch { /* best-effort */ }
       return false
     }

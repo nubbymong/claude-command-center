@@ -217,6 +217,31 @@ describe('R4: rotation, then /login before the settled observation (Codex, flipp
     })
   })
 
+  it('ADR-009 round 2 (Lens A2): the recursive strip drops token FIELDS, not data-map KEYS -- projects paths and mcpServers names that contain "secret" survive, while a real env token is stripped', () => {
+    const out = JSON.parse(profiles.stripIdentityTokens(JSON.stringify({
+      oauthAccount: { emailAddress: 'a@example.test', accountUuid: 'u' },
+      projects: {
+        'C:\\work\\secret-santa': { hasTrustDialogAccepted: true, allowedTools: ['Bash'], history: ['x'] },
+        'C:\\work\\oauth-proxy': { hasTrustDialogAccepted: true },
+        'C:\\work\\normal': { hasTrustDialogAccepted: false },
+      },
+      mcpServers: {
+        'my-secret-store': { command: 'srv', env: { API_KEY: 'k-should-go', HOME: '/h' } },
+        'plain': { command: 'p' },
+      },
+      primaryApiKey: 'k',
+    }))) as Record<string, unknown>
+    // The whole-entry loss this fix prevents: every project path key and every
+    // server name key is preserved with its settings intact...
+    expect(Object.keys(out.projects as object).sort()).toEqual(['C:\\work\\normal', 'C:\\work\\oauth-proxy', 'C:\\work\\secret-santa'])
+    expect((out.projects as Record<string, { allowedTools?: string[] }>)['C:\\work\\secret-santa'].allowedTools).toEqual(['Bash'])
+    expect(Object.keys(out.mcpServers as object).sort()).toEqual(['my-secret-store', 'plain'])
+    // ...but a token FIELD inside a server's env is still stripped, and the
+    // top-level credential field is gone.
+    expect((out.mcpServers as Record<string, { env?: Record<string, string> }>)['my-secret-store'].env).toEqual({ HOME: '/h' })
+    expect(out.primaryApiKey).toBeUndefined()
+  })
+
   it('ADR-009 (Lens B): a DIRECTORY planted at .credentials.json no longer strands the source on the captured account -- it is removed and A\'s identity restored, signed out', () => {
     const id = accountA()
     // The failed-clear repro: a reparse point / directory where the token file

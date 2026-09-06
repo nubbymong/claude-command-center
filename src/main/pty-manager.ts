@@ -893,6 +893,15 @@ const refreshWaitSpawns = new Map<string, {
    *  (review round 2); carried over, not run, by a spawn of the same id that
    *  supersedes this wait (quality round 3, M1). */
   abandonedTeardown?: () => void
+  /** The window this spawn was for. ADR-009 round 2 (Lens C2): when killPty
+   *  cancels a parked wait that has NO predecessor teardown (a FRESH spawn that
+   *  never had a live PTY -- the common case), the card is left showing a
+   *  starting spinner with no exit event. On a killAllPty that does not quit the
+   *  app (the update-install path re-throws on a failed installer launch), that
+   *  card is stranded. killPty emits a synthetic pty:exit through this window so
+   *  the card always resolves. NOT used on the supersede path (which deletes the
+   *  entry before killPty runs) or the destroyed-window path. */
+  win: BrowserWindow
 }>()
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
@@ -4271,6 +4280,7 @@ function spawnPtyResolved(
           cancel: () => { cancelled = true; refreshWaitSpawns.delete(sessionId); release() },
           // Carried over from the wait this spawn superseded (see spawnPty).
           abandonedTeardown: inheritedTeardown,
+          win,
         })
         logInfo(`[profiles] session ${sessionId}: profile ${waitedProfile} is mid-refresh -- holding the spawn until it settles`)
         void pending.then(() => {
@@ -5390,7 +5400,18 @@ export function killPty(sessionId: string): void {
     waiting.cancel()
     // The replaced PTY's exit, if it already arrived, was left to this spawn to
     // supersede; with the spawn cancelled it ends the session now (once).
-    waiting.abandonedTeardown?.()
+    if (waiting.abandonedTeardown) {
+      waiting.abandonedTeardown()
+    } else if (!waiting.win.isDestroyed()) {
+      // ADR-009 round 2 (Lens C2): a FRESH parked wait (no predecessor PTY) has
+      // no teardown to run, so nothing tells the renderer its card is done. On a
+      // killAllPty that does not quit the app (a failed update-installer launch
+      // re-throws without app.exit), that card is stranded on a starting spinner.
+      // Emit a synthetic exit so it always resolves. Not reached on the supersede
+      // path (the entry is deleted before killPty) or the destroyed-window path.
+      logInfo(`[pty] Session ${sessionId}: parked spawn cancelled with no PTY -- notifying the renderer the start ended`)
+      waiting.win.webContents.send(`pty:exit:${sessionId}`, -1)
+    }
   }
   const entry = ptySessions.get(sessionId)
   // Read persistence BEFORE cleanupSessionResources runs (it no longer clears

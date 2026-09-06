@@ -408,6 +408,10 @@ describe('ADR-009 (Lens C, U13): the all-sessions teardowns see a spawn parked o
     killAllPty() // the darwin window-all-closed sweep / the update-install teardown
     // f737d411: ptySessions-only, so the parked hold survived AND its deferred spawn later ran.
     expect(consumers.hasTransientProfileConsumer(profileId)).toBe(false)
+    // ADR-009 round 2 (Lens C2): a fresh parked wait has no predecessor teardown,
+    // so killAllPty must still tell the renderer the card ended -- otherwise a
+    // killAllPty that does not quit the app strands it on a spinner.
+    expect(sent.some(([ch]) => ch === 'pty:exit:rc16killall')).toBe(true)
     await settle(fetching)
     expect(ptys).toHaveLength(0)
     expect(identity.isProfileInUseByLiveSession(profileId)).toBe(false)
