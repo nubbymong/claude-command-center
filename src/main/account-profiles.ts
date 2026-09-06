@@ -1543,8 +1543,13 @@ export function readProfileAccountEmail(id: string): string | null {
   return readEmailFromFile(path.join(getProfileConfigDir(id), '.claude.json'))
 }
 
-/** Restore a profile's per-account-home identity from its canonical backup.
- *  Returns false if there is no canonical backup to restore from. */
+/** Restore a profile's per-account-home identity AND credentials from its
+ *  canonical backup. Returns false if there is no canonical backup to restore
+ *  from. rc.15 review R4: no production caller -- canonical is the last SETTLED
+ *  observation, and only a caller that can prove it holds the account's CURRENT
+ *  credential generation may reinstall a token from it (none exists today; the
+ *  capture path uses restoreProfileIdentityFromCanonical). Kept for the tests
+ *  that pin the follower's backup contents. */
 export function restoreProfileHomeFromCanonical(id: string): boolean {
   const idDir = getAccountIdentityDir(id)
   // Read side: if the identity dir is a reparse point, readFileSync below would
@@ -1571,6 +1576,66 @@ export function restoreProfileHomeFromCanonical(id: string): boolean {
     hardenCredentialDir(claudeDir)
     copyCredentialFile(srcCred, path.join(claudeDir, '.credentials.json'))
   }
+  return true
+}
+
+/** The keys of a `.claude.json` that can carry a credential. The CLI's identity
+ *  file is mostly state (projects, tips, the oauthAccount's email and uuids),
+ *  but it has carried token material in some versions, so an identity-only
+ *  restore strips by NAME rather than trusting a shape. */
+const IDENTITY_TOKEN_KEY_RE = /token|secret|credential|apikey|api_key|claudeAiOauth/i
+
+/** The canonical `.claude.json` with every token-bearing key removed, at the top
+ *  level and inside oauthAccount. Unparseable input yields an empty object: an
+ *  identity that cannot be read cannot be sanitised, and nothing token-bearing
+ *  may go back. Exported for its tests. */
+export function stripIdentityTokens(claudeJson: string): string {
+  let parsed: unknown
+  try { parsed = JSON.parse(claudeJson) } catch { return '{}' }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}'
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (IDENTITY_TOKEN_KEY_RE.test(k)) continue
+    if (k === 'oauthAccount' && v && typeof v === 'object' && !Array.isArray(v)) {
+      out[k] = Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([kk]) => !IDENTITY_TOKEN_KEY_RE.test(kk)))
+      continue
+    }
+    out[k] = v
+  }
+  return JSON.stringify(out)
+}
+
+/**
+ * rc.15 review R4 (aicc_planning#50): the restore the CAPTURE path runs after
+ * another account was captured out of this profile's shared home. IDENTITY
+ * ONLY. Canonical is the last SETTLED observation of this account; a token
+ * that rotated after it and was then overwritten by the /login (a rotation and
+ * a login inside one unobserved poll cannot be told apart from outside) is
+ * spent by the time it would be reinstalled, and restoring it strands the
+ * account silently. So nothing token-bearing goes back: the canonical
+ * `.claude.json` is written with its token keys stripped, and the home's
+ * `.credentials.json` is removed (or, if it cannot be removed, emptied). The
+ * account then reads as Sign in -- needs-login, no usable credentials at all --
+ * never as signed in on a token that may be dead. Returns false when there is
+ * no canonical identity to restore from.
+ */
+export function restoreProfileIdentityFromCanonical(id: string): boolean {
+  const idDir = getAccountIdentityDir(id)
+  try {
+    if (fs.lstatSync(idDir).isSymbolicLink()) throw new Error(`refusing restore: ${idDir} is a reparse point`)
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('reparse point')) throw e
+    return false // idDir absent -> nothing to restore
+  }
+  const srcJson = path.join(idDir, '.claude.json')
+  if (!fs.existsSync(srcJson)) return false
+  const home = getProfileConfigDir(id)
+  mkdirSecure(home)
+  atomicWriteSecure(path.join(home, '.claude.json'), stripIdentityTokens(fs.readFileSync(srcJson, 'utf8')), IS_POSIX ? CRED_FILE_MODE : undefined)
+  const cred = path.join(home, '.claude', '.credentials.json')
+  // rmSync on a symlink removes the link itself, never its target.
+  try { fs.rmSync(cred, { force: true }) } catch { /* fall through to the overwrite */ }
+  if (fs.existsSync(cred)) writeCredentialFile(cred, '{}')
   return true
 }
 

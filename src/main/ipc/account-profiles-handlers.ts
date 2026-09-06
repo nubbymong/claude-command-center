@@ -4,7 +4,7 @@ import { IPC } from '../../shared/ipc-channels'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
-  captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileHomeFromCanonical,
+  captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileIdentityFromCanonical,
   readProfileCredentialStamp,
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
@@ -200,12 +200,15 @@ export function registerAccountProfilesHandlers(): void {
     if (!p || !p.sessionId) return null
     // Bug 2: the /login wrote the new account into the session's SHARED profile home.
     // Resolve that profile, capture the new account out of it into a fresh profile,
-    // then restore the source profile home from canonical so the source account's
-    // other sessions (and its saved profile) recover.
+    // then put the source profile's IDENTITY back so its saved profile recovers.
+    // rc.15 review R4: identity only -- the canonical token may be a generation
+    // the account has already spent (a rotation and this /login inside one
+    // unobserved poll), so it is never reinstalled; the source account shows
+    // Sign in instead of failing silently on a dead token (owner decision, plan Q1).
     const profileId = getWatchedProfileId(p.sessionId)
     if (!profileId) return null
     const np = captureDetectedAccount(profileId, p.name)
-    if (np) { try { restoreProfileHomeFromCanonical(profileId) } catch { /* best-effort */ } }
+    if (np) { try { restoreProfileIdentityFromCanonical(profileId) } catch { /* best-effort */ } }
     return np
   })
   ipcMain.handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())
