@@ -1857,6 +1857,20 @@ function spawnPtyResolved(
     let containerSetupDone = false
     let containerSetupShellReady = false
     let claudeSent = false
+    // ADR-009 round 3 (Codex finding 1): the after-entry lifetime watch is stood
+    // down only once the claude command is ACTUALLY written, not merely when
+    // claudeSent latches. writeClaudeCmd sets claudeSent then defers the write by
+    // 200ms; an OUT (or a host prompt) arriving in that window used to be ignored
+    // (the watch gated on !claudeSent) and the command still landed on the
+    // returned host. The watch now gates on !claudeWritten and the deferred write
+    // re-checks the destination, so definitive exit evidence in the gap prevents
+    // the write.
+    let claudeWritten = false
+    // ADR-009 round 3 (Codex finding 1): true while a proven-entry payload (the
+    // container setup or the claude command) is scheduled but not yet written.
+    // While it is set, the after-entry watch fails the entry on a host prompt
+    // returning with no OUT (a plain detach), so the pending write bails.
+    let deferredEntryWritePending = false
     let claudeRunning = false
     // #25: rolling tail of recent PTY output, so the idle-fallback can tell a
     // running-but-marker-less claude from one that exited to a bare shell.
@@ -2681,12 +2695,17 @@ function spawnPtyResolved(
           setFlowState('failed', 'container setup timeout')
         }
       }, SETUP_TIMEOUT_MS)
+      // ADR-009 round 3 (Codex finding 1): the after-entry watch fails the entry
+      // if the host prompt returns in this window, so the blob below bails.
+      deferredEntryWritePending = true
       setTimeout(() => {
+        deferredEntryWritePending = false
         // See writeHostSetupCmd: a throw here would crash main via the global
         // handler; fail the flow instead (adversarial review, #188).
         // rc.15 review R1 round 2: the shell can be lost inside these 300 ms (an
-        // OUT right after the guard answered) -- failEntry releases the latch,
-        // and the blob must not land on the host prompt behind it.
+        // OUT right after the guard answered, or a plain host-back detach caught
+        // by the after-entry watch) -- failEntry releases the latch, and the blob
+        // must not land on the host prompt behind it.
         if (destroyed || runtimeEntryFailed || !containerSetupSent) return
         try {
           const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
@@ -2824,7 +2843,13 @@ function spawnPtyResolved(
       if (tmuxWrapped) sshTmuxWrappedBySession.add(sessionId)
       else sshTmuxWrappedBySession.delete(sessionId)
       logInfo(`[ssh] ${sessionId}: writing claudeCmd${tmuxWrapped ? ' (tmux-wrapped)' : ''}${continueFlag ? ' (+continue)' : ''}`)
+      // ADR-009 round 3 (Codex finding 1): the after-entry watch stays live
+      // through this window (it gates on !claudeWritten, not !claudeSent), so an
+      // OUT or a host-back detach in the 200ms fails the entry and the write
+      // below bails -- the command never lands on the returned host.
+      deferredEntryWritePending = true
       setTimeout(() => {
+        deferredEntryWritePending = false
         // #242 finding F3 (adversarial review round 4, MAJOR): this write is
         // reachable from a leaked timer (stagingTimeoutHandle/
         // pushTimeoutHandle/downloadTimeoutHandle -- all now cleared in
@@ -2834,12 +2859,13 @@ function spawnPtyResolved(
         // is defence-in-depth against any OTHER reason ptyProcess.write()
         // might throw post-teardown (killPty's own write wraps in the same
         // /* best-effort */ shape for exactly this reason).
-        // Defence in depth (R1 review round 3): claudeSent stands the after-entry
-        // watch down before this timer is armed, so a lost shell cannot be
-        // observed inside this window; kept symmetric with the setup write.
+        // R1: a genuine OUT or a plain host-back in this window set
+        // runtimeEntryFailed via the after-entry watch, which bails here.
         if (destroyed || runtimeEntryFailed) return
         try {
           ptyProcess.write(cmdToWrite + '\r')
+          // The command is out: only now does the after-entry watch stand down.
+          claudeWritten = true
           // Follow-up adversarial pass (fail-posture MAJOR): arm the
           // wrapped-launch watchdog only once the wrapped command has actually
           // been written -- see tmuxLaunchWatchUntil's doc comment.
@@ -3886,6 +3912,17 @@ function spawnPtyResolved(
         const recent = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
         const lines = visibleLines(recent)
         const trailing = lastVisible(lines)
+        // ADR-009 round 3 (Codex finding 2): a genuine current-attempt IN proves
+        // this session reached the container, so latch the host-sudo gate closed
+        // BEFORE any early return below. Otherwise a single chunk carrying the IN
+        // and a container-side engine diagnostic ("Cannot connect to the Docker
+        // daemon") takes the engine-error return without recording the entry, and
+        // a later container [sudo] prompt is answered with the host secret. The
+        // latch is permanent and independent of whether the entry ultimately
+        // succeeds; the IN+OUT and engine-error paths still fail the entry.
+        if (entryProvable && entryNonce && parseEntrySentinels(recent, entryNonce).includes('IN')) {
+          containerEverEntered = true
+        }
         if (CONTAINER_ENTRY_ERROR_RE.test(recent)) {
           failEntry(SSH_ENTRY.FAILED, 'engine error after the post-command -- staying on the host shell, not marking inner')
           return
@@ -3966,7 +4003,7 @@ function spawnPtyResolved(
       // exit, an rc file ran it), and the launch guard's `__CCC_<nonce>_HERE__`
       // answers buildEntryGuardCommand. Both ride the runtime buffer up to the
       // moment the claude command is written; after that the flow is claude's.
-      if (entryProven && entryNonce && !runtimeEntryFailed && !claudeSent && !entrySkipped && !entryProvenThisChunk) {
+      if (entryProven && entryNonce && !runtimeEntryFailed && !claudeWritten && !entrySkipped && !entryProvenThisChunk) {
         const afterEntry = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
         const words = parseEntrySentinels(afterEntry, entryNonce)
         if (words.includes('OUT')) {
@@ -3978,6 +4015,17 @@ function spawnPtyResolved(
         if (trailingNow !== '' && !trailingNow.includes('__CCC_')) {
           afterEntryTrailingLine = trailingNow
           if (innerPromptLine === '' && SHELL_PROMPT_RE.test(trailingNow)) innerPromptLine = trailingNow
+          // ADR-009 round 3 (Codex finding 1): while a proven-entry payload (the
+          // container setup or the claude command) is scheduled but not yet
+          // written, a host prompt on the trailing line means the container shell
+          // was left with no OUT (a plain detach). Fail the entry so the pending
+          // deferred write bails instead of landing on the host. Only fires with a
+          // write in flight and a positively-recognised host prompt, so the normal
+          // idle awaiting-claude phase (handled by its own hint below) is untouched.
+          if (deferredEntryWritePending && isHostBackLine(trailingNow)) {
+            failEntry(SSH_ENTRY.LEFT, 'the host prompt returned before the proven-entry payload was written')
+            return
+          }
         }
         if (entryGuardPending && words.includes('HERE')) {
           const next = entryGuardContinuation
@@ -4032,6 +4080,13 @@ function spawnPtyResolved(
         if (promptLine && SUDO_PROMPT_RE.test(promptLine)) {
           sudoPasswordSent = true
           setTimeout(() => {
+            // ADR-009 round 3 (Codex finding 2): re-check the gate at WRITE time.
+            // A current-attempt IN (containerEverEntered) or a failed entry in the
+            // 100ms between the prompt and this write means the host sudo secret
+            // must not land -- in a container that has since proven itself, or a
+            // host the flow has since left. The pre-schedule gate above is not
+            // enough because IN can arrive inside this window.
+            if (containerEverEntered || runtimeEntryFailed) return
             ptyProcess.write(sudoPassword + '\r')
           }, 100)
           return
@@ -4307,7 +4362,21 @@ function spawnPtyResolved(
             // killPty ends later, exactly as a synchronous spawn that throws
             // there does, and the teardown would delete that PTY's entry and
             // report an exit the renderer would act on.
-            if (!ptySessions.has(sessionId)) wait?.abandonedTeardown?.()
+            if (!ptySessions.has(sessionId)) {
+              if (wait?.abandonedTeardown) {
+                wait.abandonedTeardown()
+              } else if (!win.isDestroyed()) {
+                // ADR-009 round 3 (Codex finding 3): a FRESH deferred spawn has no
+                // predecessor teardown. Its pty:spawn IPC already resolved, so
+                // without a notification the renderer is left with a blank
+                // terminal treated as spawned (no error/exit handler fires). Tell
+                // it the start ended and drop the canvas stamp the spawn handler
+                // wrote before spawnPty ran.
+                logError(`[profiles] session ${sessionId}: fresh deferred spawn failed with no PTY -- notifying the renderer the start ended`)
+                forgetSessionForCanvas(sessionId)
+                win.webContents.send(`pty:exit:${sessionId}`, -1)
+              }
+            }
           } finally {
             release()
           }

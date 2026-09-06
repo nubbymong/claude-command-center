@@ -233,6 +233,9 @@ export function describeForceClosures(canvasId: string, requireOwnerSessionId?: 
     openNotes: notes?.openNotes ?? 0,
     addressedNotes: notes?.addressedNotes ?? 0,
     unreviewedVersionIds: openVersionIdsOf(canvas.versions),
+    // ADR-009 round 3 (Codex finding 5): the completion guard refuses these, so
+    // the force route must be offered (and named) for them too.
+    rejectedUnreworkedVersionIds: rejectedRunAnchorsOf(canvas.versions),
   }
 }
 

@@ -238,6 +238,12 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title, displ
     if (closures.addressedNotes > 0) forcePhrases.push(`closes ${closures.addressedNotes} note${closures.addressedNotes === 1 ? '' : 's'} the agent answered, as not done`)
     const unreviewed = closures.unreviewedVersionIds ?? []
     if (unreviewed.length > 0) forcePhrases.push(`closes ${unreviewed.join(', ')} unreviewed`)
+    // ADR-009 round 3 (Codex finding 5): the completion guard refuses a rejected,
+    // unreworked version, so name it here — otherwise the phrase list is empty,
+    // the plain path runs, and main's refusal reads as a dead button. "as not
+    // done" keeps a force from implying the rejected work was approved.
+    const rejected = closures.rejectedUnreworkedVersionIds ?? []
+    if (rejected.length > 0) forcePhrases.push(`closes ${rejected.join(', ')} rejected and not reworked, as not done`)
   }
   /**
    * FORCE when EITHER side says something is outstanding.

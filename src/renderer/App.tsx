@@ -287,14 +287,17 @@ export default function App() {
   const logsBySession = useLogsStore((s) => s.bySessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
-  // ADR-009 adversarial review (Lens C, R7): true from the moment the user
-  // chooses Resume until the restore actually lands. The Resume click clears
-  // pendingRestore synchronously (so the prompt goes away), but restoreSessions
-  // runs async and can throw before it lands -- leaving the live set empty with
-  // pendingRestore null. A close in that window used to satisfy the zero-session
-  // clear and wipe the saved file the user had just chosen to KEEP. While this
-  // ref is set, that close treats the saved file as still-pending and leaves it.
-  const restoreUnsettledRef = useRef(false)
+  // ADR-009 (Lens C, R7; round 3 Codex finding 4): the saved-state recovery is
+  // "unsettled" -- a zero-session close must LEAVE the saved file -- whenever the
+  // live set is transiently empty for a reason that is not the user's decision.
+  // Two windows: (a) initial startup, from mount until loadSavedStateAtStartup
+  // positively resolves (INCLUDING its failure path) -- a close before the load +
+  // registry hydration completes would otherwise clear both attached and
+  // detached recovery with an empty store; (b) from a Resume click until the
+  // restore actually lands (the click clears pendingRestore synchronously, but
+  // restoreSessions runs async and can throw). Initialised TRUE for (a); cleared
+  // once startup resolves without error; re-armed by onResume for (b).
+  const restoreUnsettledRef = useRef(true)
 
   // Push focus changes to main so the sync orchestrator can shift the
   // active session to the fast interval and the background ones to the
@@ -614,8 +617,14 @@ export default function App() {
           reconcile: () => useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id)),
         })
         if (savedState) setPendingRestore(savedState)
+        // R7 (Codex finding 4): startup load + registry hydration completed. From
+        // here a zero-session close is a real decision (the prompt, if any, is up
+        // and covered by pendingRestore); the transient-empty window is over.
+        restoreUnsettledRef.current = false
       } catch (err) {
         console.error('[App] Failed to load saved sessions:', err)
+        // Leave restoreUnsettledRef TRUE: the load failed, so the on-disk recovery
+        // state is unknown and a zero-session close must not clear it.
       }
 
       // Start cloud agent IPC listener early so status updates are

@@ -1124,6 +1124,13 @@ export interface ForceClosures {
    *  version anywhere on the canvas is a decision the user still owes, and a
    *  force stamps each of them `dismissed`. */
   unreviewedVersionIds: string[]
+  /** ADR-009 round 3 (Codex finding 5): artefact runs whose latest decision is a
+   *  REJECTION nothing has reworked. The completion guard refuses these, so the
+   *  UI must offer the force route for them too — otherwise Mark complete arms,
+   *  is refused, and no force is ever offered. A force closes the canvas WITHOUT
+   *  approving the rejected work; the label must say so. Archived runs are
+   *  excluded, matching rejectedRunAnchorsOf. */
+  rejectedUnreworkedVersionIds: string[]
 }
 
 /** Ids the review store mints. Tighter than path-safe on purpose (these appear

@@ -116,30 +116,40 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     const stmt = `${tryBlock.text} ${catchBlock.text}`
     expect(stmt).toContain('loadSavedStateAtStartup(')
     expect(stmt).toContain('[App] Failed to load saved sessions:')
-    const go = async (returned: unknown) => {
-      const load = vi.fn(async () => returned)
-      const loadSavedStateAtStartup = vi.fn(async (deps: { load: () => Promise<unknown> }) => { await deps.load(); return returned })
+    // ADR-009 round 3 (Codex finding 4): the ref that protects the saved file
+    // starts TRUE (startup is unsettled) and is cleared only once the load
+    // POSITIVELY resolves -- never in the catch.
+    expect(APP, 'restoreUnsettledRef initialised true').toContain('const restoreUnsettledRef = useRef(true)')
+    const go = async (returned: unknown, throws = false) => {
+      const load = vi.fn(async () => { if (throws) throw new Error('synthetic load failure'); return returned })
+      const loadSavedStateAtStartup = vi.fn(async (deps: { load: () => Promise<unknown> }) => { const r = await deps.load(); return r })
       const setPendingRestore = vi.fn()
       const pingAllDetachedHosts = vi.fn()
       const reconcile = vi.fn()
+      const restoreUnsettledRef = { current: true } // as the component initialises it
       const fn = run<() => Promise<void>>(`async () => { ${stmt} }`, {
-        loadSavedStateAtStartup, setPendingRestore, pingAllDetachedHosts,
+        loadSavedStateAtStartup, setPendingRestore, pingAllDetachedHosts, restoreUnsettledRef, console,
         useCommandBarStore: { getState: () => ({ reconcile }) }, useSessionStore: { getState: () => ({ sessions: [] }) },
         window: { electronAPI: { session: { load } } },
       })
       await fn()
-      return { load, loadSavedStateAtStartup, setPendingRestore, pingAllDetachedHosts, reconcile }
+      return { load, loadSavedStateAtStartup, setPendingRestore, pingAllDetachedHosts, reconcile, restoreUnsettledRef }
     }
     const saved = { sessions: [{ id: 'a' }], activeSessionId: 'a', savedAt: 1 }
     const withCards = await go(saved)
     expect(withCards.loadSavedStateAtStartup).toHaveBeenCalledTimes(1)
     expect(withCards.load).toHaveBeenCalledTimes(1)
     expect(withCards.setPendingRestore).toHaveBeenCalledWith(saved)
+    expect(withCards.restoreUnsettledRef.current, 'cleared once the load resolved with cards').toBe(false)
     const deps = withCards.loadSavedStateAtStartup.mock.calls[0][0] as { pingHosts: () => void; reconcile: () => void }
     deps.pingHosts(); expect(withCards.pingAllDetachedHosts).toHaveBeenCalledTimes(1)
     deps.reconcile(); expect(withCards.reconcile).toHaveBeenCalledWith([])
     const without = await go(null)
     expect(without.setPendingRestore).not.toHaveBeenCalled()
+    expect(without.restoreUnsettledRef.current, 'cleared once the load resolved with no cards').toBe(false)
+    // The load FAILED: the ref stays true so a zero-session close leaves the file.
+    const failed = await go(null, true)
+    expect(failed.restoreUnsettledRef.current, 'left set when the startup load threw').toBe(true)
   })
 
   it('the zero-session close passes whether the restore prompt is pending, and a non-empty session set still opens the dialog', () => {

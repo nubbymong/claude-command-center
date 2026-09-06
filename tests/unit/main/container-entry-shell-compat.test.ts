@@ -107,8 +107,31 @@ describe('Codex plan-review condition 4 (F13): nothing of the container runs bef
   const body = composeContainerEntryCommand({ type: 'container', container: 'x' }, NONCE)!.replace(/^.*sh -c '/, '').slice(0, -1)
   const poisoned = { ...process.env, BASH_ENV: posix(startupFile), ENV: posix(startupFile) }
 
+  /** ADR-009 round 3 (Codex finding: Windows CI shell selection): does THIS
+   *  runner's `<shell> -c` read $ENV / $BASH_ENV BEFORE its -c body? POSIX says a
+   *  non-interactive `-c` does not; some shells on a Windows PATH (a `sh` that is
+   *  really bash, a restricted `bash`) do, or don't, differently from the fleet.
+   *  That is a property of the chosen binary, not of our wrapper, and it made the
+   *  fixtures below non-deterministic across runners. Probe it so each fixture
+   *  runs only where its own premise holds and skips loudly otherwise. */
+  function preSourcesStartup(shell: string): boolean {
+    if (!have(shell)) return false
+    const probe = path.join(tmp, `presrc-${shell}.sh`)
+    fs.writeFileSync(probe, 'echo PRESOURCE_RAN\n')
+    const r = spawnSync(shell, ['-c', 'echo BODY_RAN'], {
+      encoding: 'utf8', timeout: 10000, windowsHide: true,
+      env: { ...process.env, ENV: posix(probe), BASH_ENV: posix(probe) },
+    })
+    const out = typeof r.stdout === 'string' ? r.stdout.replace(/\r\n/g, '\n') : ''
+    const pre = out.indexOf('PRESOURCE_RAN'); const bod = out.indexOf('BODY_RAN')
+    return pre !== -1 && (bod === -1 || pre < bod)
+  }
+
   for (const outer of ['sh', 'dash'] as const) {
-    it.skipIf(!have(outer))(`${outer} -c: BASH_ENV/ENV are NOT read before IN`, () => {
+    // The positive fixture proves OUR `sh -c` wrapper body runs nothing before
+    // IN. A runner `sh` that itself pre-sources $ENV cannot isolate that (its own
+    // startup, not our wrapper, prints first), so skip it there rather than fail.
+    it.skipIf(!have(outer) || preSourcesStartup(outer))(`${outer} -c: BASH_ENV/ENV are NOT read before IN`, () => {
       const { out } = run(outer, ['-c', body], { input: 'exit\n', env: poisoned })
       const inAt = out.indexOf(IN)
       expect(inAt).toBeGreaterThanOrEqual(0)
@@ -119,7 +142,9 @@ describe('Codex plan-review condition 4 (F13): nothing of the container runs bef
     })
   }
 
-  it.skipIf(!have('bash'))('negative control: the rejected `bash -c` outer DOES run BASH_ENV before IN', () => {
+  // The negative control's premise is that THIS runner's `bash -c` pre-sources
+  // BASH_ENV (the very reason we reject the bash outer). Skip where it does not.
+  it.skipIf(!preSourcesStartup('bash'))('negative control: the rejected `bash -c` outer DOES run BASH_ENV before IN', () => {
     const { out } = run('bash', ['-c', body], { input: 'exit\n', env: poisoned })
     const inAt = out.indexOf(IN)
     const ranAt = out.indexOf('STARTUP_FILE_RAN')

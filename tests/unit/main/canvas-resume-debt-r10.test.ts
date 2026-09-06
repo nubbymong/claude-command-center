@@ -213,4 +213,32 @@ describe('R10: an approved design does not hide an unfinished plan from resume (
     expect(store.isSettled(store.getCanvasStateById(p1.canvasId)!, () => 'none')).toBe(true)
     expect(completion.completeCanvasGuarded(p1.canvasId, 'user', o)).toMatchObject({ completed: expect.anything() })
   })
+
+  it('ADR-009 round 3 (Codex finding 5): describeForceClosures names a rejected-unreworked version so the UI can route to force', () => {
+    const o = owner()
+    link.noteSessionSpawnForCanvas(o, { cwd })
+    const plan = store.renderVersion(o, { title: 'Force UI', mode: 'plan', html: '<p>plan</p>' })
+    store.setVersionVerdict(o, plan.versionId, { state: 'rejected', note: 'redo' }, 'user')
+    const design = store.renderVersion(o, { title: 'Force UI', mode: 'design', html: '<p>design</p>' })
+    store.setVersionVerdict(o, design.versionId, { state: 'approved' }, 'user')
+    // Healthy empty review mirror (no notes): 7565739c returned all-zero closures,
+    // so the button saw no reason to offer force and the guard's refusal read as a
+    // dead button. The rejected debt is now named.
+    const desc = completion.describeForceClosures(plan.canvasId, o)!
+    expect(desc.rejectedUnreworkedVersionIds).toEqual([plan.versionId])
+    expect(desc.unsentNotes + desc.openNotes + desc.addressedNotes).toBe(0)
+    expect(desc.unreviewedVersionIds).toEqual([])
+    // Ordinary completion is refused; a direct force succeeds -- the UI must route there.
+    expect(completion.completeCanvasGuarded(plan.canvasId, 'user', o)).toMatchObject({ error: expect.stringContaining('rejected and not yet reworked') })
+    expect(completion.completeCanvasGuarded(plan.canvasId, 'user', o, { force: true })).toMatchObject({ completed: expect.anything() })
+    // An archived rejection is not named (parity with rejectedRunAnchorsOf).
+    const o2 = owner()
+    link.noteSessionSpawnForCanvas(o2, { cwd })
+    const ap = store.renderVersion(o2, { title: 'Archived rej', mode: 'plan', html: '<p>p</p>' })
+    store.setVersionVerdict(o2, ap.versionId, { state: 'rejected', note: 'x' }, 'user')
+    store.setArtifactArchived(ap.canvasId, ap.versionId, true)
+    const ad = store.renderVersion(o2, { title: 'Archived rej', mode: 'design', html: '<p>d</p>' })
+    store.setVersionVerdict(o2, ad.versionId, { state: 'approved' }, 'user')
+    expect(completion.describeForceClosures(ap.canvasId, o2)!.rejectedUnreworkedVersionIds).toEqual([])
+  })
 })
