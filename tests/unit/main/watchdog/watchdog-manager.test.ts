@@ -12,6 +12,7 @@ interface FakeWatchdog {
   feed: ReturnType<typeof vi.fn>
   tick: ReturnType<typeof vi.fn>
   handleHookEvent: ReturnType<typeof vi.fn>
+  setChecks: ReturnType<typeof vi.fn>
   dispose: ReturnType<typeof vi.fn>
   getState: ReturnType<typeof vi.fn>
 }
@@ -24,10 +25,12 @@ vi.mock('../../../../src/main/watchdog/session-watchdog', () => {
     feed = vi.fn()
     tick = vi.fn()
     handleHookEvent = vi.fn()
+    setChecks = vi.fn()
     dispose = vi.fn()
     getState = vi.fn(() => ({
       sessionId: this.sessionId,
       status: 'monitoring',
+      checks: { rateLimit: true, overload: true, safeguard: true },
       attempts: 0,
       overloadAttempts: 0,
       safeguardAttempts: 0,
@@ -653,5 +656,35 @@ describe('WatchdogManager — adapter wiring', () => {
     const wd = instances[0]
     wd.adapter.onStateChange({ sessionId: 's1' } as any)
     expect(webContentsSend).not.toHaveBeenCalled()
+  })
+})
+
+// #605: the manager routes a per-session check toggle to that session's
+// watchdog only, and reports whether it landed.
+describe('WatchdogManager.setSessionChecks (#605)', () => {
+  it('applies to the named session and reports true', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    mgr.startWatchdog('s2', { provider: 'claude' })
+    expect(mgr.setSessionChecks('s1', { overload: false })).toBe(true)
+    expect(instances[0].setChecks).toHaveBeenCalledWith({ overload: false })
+    expect(instances[1].setChecks, 'only the named session is touched').not.toHaveBeenCalled()
+  })
+
+  it('reports false for a session with no armed watcher, and touches nothing', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    expect(mgr.setSessionChecks('nope', { overload: false })).toBe(false)
+    expect(instances[0].setChecks).not.toHaveBeenCalled()
+  })
+
+  it('reports false when the feature is off entirely (nothing is armed)', () => {
+    watchdogSettings = {}
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    expect(mgr.setSessionChecks('s1', { rateLimit: false })).toBe(false)
   })
 })

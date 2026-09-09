@@ -199,3 +199,71 @@ describe('#605 the rate-limit check also guards the escalation path', () => {
     expect(t.sent).toEqual([])
   })
 })
+
+// The runtime cases: the check is switched off AFTER construction, so the
+// config flag still says ON. Only the live `checks` triple can suppress these
+// -- reverting any gate to `this.config.*.enabled` makes them fire again.
+describe('#605 a check switched off at runtime stops a FRESH incident', () => {
+  it('rate limit: a new usage-limit banner opens no wait', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    wd.setChecks({ rateLimit: false })
+    isRateLimited.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm')
+    wd.feed()
+    expect(wd.getState().status, 'the live check, not the config, decides').toBe('monitoring')
+    t.advance(10_000_000)
+    wd.tick()
+    expect(t.sent).toEqual([])
+  })
+
+  it('overload: a new API error opens no incident', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    wd.setChecks({ overload: false })
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: 529')
+    wd.feed()
+    expect(wd.getState().status).toBe('monitoring')
+    t.advance(10_000_000)
+    wd.tick()
+    expect(t.sent).toEqual([])
+  })
+
+  it('safeguard: a new flagged message opens no incident', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    wd.setChecks({ safeguard: false })
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.feed()
+    expect(wd.getState().status).toBe('monitoring')
+    t.advance(10_000_000)
+    wd.tick()
+    expect(t.sent).toEqual([])
+  })
+
+  it('overload: the hook-event path is muted too, not just the tail scraper', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    wd.setChecks({ overload: false })
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    expect(wd.getState().status, 'an edge-triggered overload must respect the live check').toBe('monitoring')
+    t.advance(10_000_000)
+    wd.tick()
+    expect(t.sent).toEqual([])
+  })
+
+  it('the other two checks keep working when one is muted', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    wd.setChecks({ overload: false })
+    isRateLimited.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm')
+    wd.feed()
+    expect(wd.getState().status).toBe('waiting')
+    t.advance(60_001)
+    wd.tick()
+    expect(t.sent, 'muting one check must not mute the others').toEqual(['continue'])
+  })
+})
