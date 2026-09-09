@@ -77,9 +77,9 @@ detection ENTRY, so a session already in that status kept sending.
 
 ### Verification
 
-Mutation matrix (scratchpad `mutate-605.py`, MUTANT_TOTAL mutants):
-MUTANT_KILLED killed, MUTANT_SURVIVED unreachable-by-construction survivor(s) --
-MUTANT_SURVIVOR_LIST. New tests:
+Mutation matrix (scratchpad `mutate-605.py`, 24 mutants):
+23 killed, 1 unreachable-by-construction survivor -- M5, the `tickWaiting` send guard, which `setChecks` makes
+unreachable by always transitioning out of `waiting` first. New tests:
 `tests/unit/main/watchdog/session-checks.test.ts` (the runtime cases are the ones
 that pin the live `checks` triple rather than the config; the round-2 cases pin
 the parked-budget resume in both directions),
