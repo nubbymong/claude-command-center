@@ -155,19 +155,36 @@ export class SessionWatchdog {
   /** #605: per-session, live-mutable. Seeded from config in the constructor. */
   private checks: WatchdogChecks
   /**
-   * #605 (ADR-009 round 1, MAJOR): a check switched OFF while its own incident
-   * was live SUSPENDS that incident -- it does not end it. Without this, the
-   * trip through 'monitoring' let the next feed() re-open the very same banner
-   * through enterWaiting/enterOverload/enterSafeguard, each of which resets the
-   * attempt budget and clears gaveUp: an off/on toggle pair handed back a full
+   * #605: a check switched OFF while its own incident was live PARKS that
+   * incident's spend -- it neither ends the incident nor abandons it.
+   *
+   * ADR-009 round 1 (MAJOR): without this, the trip through 'monitoring' let
+   * the next feed() re-open the very same banner through enterWaiting /
+   * enterOverload / enterSafeguard, each of which zeroes the attempt budget and
+   * clears gaveUp. An off/on toggle pair therefore handed back a FULL
    * allowance, so a user could re-submit a safeguard-FLAGGED message without
-   * bound, and a partly-spent budget was refunded in full. While a check is
-   * suspended its incident cannot be re-opened at all; the flag clears only
-   * when feedMonitoring sees that condition genuinely gone from the screen, at
-   * which point a fresh budget is the correct reading. Mirrors the existing
-   * refusal to resurrect a latched give-up (handleHookEvent, manualRestart).
+   * bound, and a partly-spent budget was refunded in full.
+   *
+   * ADR-009 round 2 (MAJOR): round 1 closed that by refusing to re-open a
+   * suspended incident at all, which over-corrected -- nothing cleared the
+   * suspension when the check came back ON, so a live incident stayed
+   * permanently disarmed while the pill and the menu still reported the check
+   * as on. What must survive the toggle is the SPEND, not the abandonment: the
+   * counters are snapshotted here and restored by the enter* methods, so
+   * switching the check back on resumes the same incident with its budget
+   * already spent (and, since every give-up is derived from these counters, a
+   * given-up incident comes back given up). A park is discarded by
+   * feedMonitoring the moment its condition genuinely leaves the screen --
+   * evaluated even while the check is off, so a park can never outlive the
+   * incident that created it and a later banner is a fresh incident with a full
+   * budget. Mirrors the existing refusal to resurrect a latched give-up
+   * (handleHookEvent).
    */
-  private suspendedChecks: WatchdogChecks = { rateLimit: false, overload: false, safeguard: false }
+  private parkedBudget: {
+    rateLimit: { attempts: number } | null
+    overload: { attempts: number; totalWaitMs: number } | null
+    safeguard: { attempts: number } | null
+  } = { rateLimit: null, overload: null, safeguard: null }
   private readonly rand: () => number
   private readonly sessionId: string
   private readonly adapter: WatchdogAdapter
@@ -206,10 +223,11 @@ export class SessionWatchdog {
    *
    * A check switched OFF while its own incident is live drops the session back
    * to monitoring: nothing is typed, the pending wait is dropped, and the badge
-   * stops advertising a retry that will never fire. Its attempt counters reset
-   * too, so switching the check back on later starts a fresh incident rather
-   * than resuming a half-spent budget. Switching a check ON never fabricates an
-   * incident -- the next feed() re-detects if the condition is still on screen.
+   * stops advertising a retry that will never fire. Its spend is PARKED rather
+   * than discarded (see parkedBudget), so switching the check back on resumes
+   * the same incident with the budget it had already used up. Switching a check
+   * ON never fabricates an incident -- the next feed() re-detects if the
+   * condition is still on screen.
    */
   setChecks(partial: Partial<WatchdogChecks>): void {
     if (this.disposed) return
@@ -218,24 +236,25 @@ export class SessionWatchdog {
       && next.overload === this.checks.overload
       && next.safeguard === this.checks.safeguard) return
     this.checks = next
-    // Leaving a live incident SUSPENDS it (see suspendedChecks): the counters
-    // reset here are harmless only because the suspension makes the incident
-    // un-reopenable until its condition actually clears.
+    // Leaving a live incident PARKS its spend (see parkedBudget): the live
+    // counters are zeroed so 'monitoring' reads clean, but the enter* methods
+    // restore the parked values if the same condition is still on screen when
+    // the check comes back on.
     if (this.status === 'waiting' && !next.rateLimit) {
-      this.suspendedChecks.rateLimit = true
+      this.parkedBudget.rateLimit = { attempts: this.attempts }
       this.attempts = 0
       this.waitingGaveUpLogged = false
       this.toMonitoring('rate-limit check turned off')
       return
     }
     if (this.status === 'overload' && !next.overload) {
-      this.suspendedChecks.overload = true
+      this.parkedBudget.overload = { attempts: this.overloadAttempts, totalWaitMs: this.overloadTotalWaitMs }
       this.resetOverload()
       this.toMonitoring('overload check turned off')
       return
     }
     if (this.status === 'safeguard' && !next.safeguard) {
-      this.suspendedChecks.safeguard = true
+      this.parkedBudget.safeguard = { attempts: this.safeguardAttempts }
       this.resetSafeguard()
       this.toMonitoring('safeguard check turned off')
       return
@@ -388,35 +407,39 @@ export class SessionWatchdog {
 
   private feedMonitoring(tail: string): void {
     // Usage-limit (hours-scale reset) takes precedence over overload/safeguard.
-    if (this.checks.rateLimit) {
+    // Each block also runs while its check is OFF if that check has a parked
+    // budget, purely to notice the condition leaving the screen and discard it
+    // (#605) -- a park must never outlive the incident that created it.
+    if (this.checks.rateLimit || this.parkedBudget.rateLimit) {
       const limited = isRateLimited(tail, [], USAGE_TAIL_LINES)
-      // #605: the condition is gone, so a suspended incident is genuinely over.
-      if (!limited) this.suspendedChecks.rateLimit = false
-      if (limited && !isWorking(tail)) {
-        // Gated on checks.rateLimit above; a decline here leaves us in
-        // 'monitoring', which is already the status.
+      if (!limited) this.parkedBudget.rateLimit = null
+      if (this.checks.rateLimit && limited && !isWorking(tail)) {
+        // Gated on checks.rateLimit here, so enterWaiting cannot decline.
         this.enterWaiting(tail)
         return
       }
     }
 
-    if (this.checks.overload) {
+    if (this.checks.overload || this.parkedBudget.overload) {
       const present = detectOverload(tail, this.config.overload.patterns)
-      if (present && !isInternalRetry(tail)) {
-        if (this.lastHandledOverloadTail === tail) return // event path already handled this exact render
+      if (!present) {
+        this.lastHandledOverloadTail = null // banner gone -> a future match is a fresh incident
+        this.parkedBudget.overload = null
+      }
+      if (this.checks.overload && present && !isInternalRetry(tail)) {
+        // #605: a PARKED incident resumes even on the exact render its last
+        // retry handled -- the toggle is the user asking for it, and it is the
+        // restored spend (not the render memo) that bounds the retries.
+        if (this.lastHandledOverloadTail === tail && !this.parkedBudget.overload) return // event path already handled this exact render
         this.enterOverload()
         return
       }
-      if (!present) {
-        this.lastHandledOverloadTail = null // banner gone -> a future match is a fresh incident
-        this.suspendedChecks.overload = false
-      }
     }
 
-    if (this.checks.safeguard) {
+    if (this.checks.safeguard || this.parkedBudget.safeguard) {
       const flagged = detectSafeguard(tail, this.config.safeguard.patterns)
-      if (!flagged) this.suspendedChecks.safeguard = false
-      if (flagged) this.enterSafeguard()
+      if (!flagged) this.parkedBudget.safeguard = null
+      if (this.checks.safeguard && flagged) this.enterSafeguard()
     }
   }
 
@@ -440,10 +463,11 @@ export class SessionWatchdog {
     // rate-limit check off, a usage limit is simply not this watchdog's
     // business: decline, and let the caller settle the machine.
     if (!this.checks.rateLimit) return false
-    // #605: suspended -- this exact condition was abandoned when the check was
-    // switched off, and has not cleared since. Re-opening here would hand back
-    // a full retry budget for a screen the watchdog already finished with.
-    if (this.suspendedChecks.rateLimit) return false
+    // #605: a parked incident resumes with the budget it had already spent, so
+    // an off/on toggle over an unchanged screen buys no extra retries. The
+    // give-up follows from the counter, so a given-up wait comes back given up.
+    const parked = this.parkedBudget.rateLimit
+    this.parkedBudget.rateLimit = null
     const message = findRateLimitMessage(tail)
     const parsed = message ? parseResetTime(message) : null
     const waitMs = calculateWaitMs(parsed, {
@@ -452,7 +476,7 @@ export class SessionWatchdog {
       now: new Date(this.adapter.now()),
     })
     this.status = 'waiting'
-    this.attempts = 0
+    this.attempts = parked ? parked.attempts : 0
     this.waitUntil = this.adapter.now() + waitMs
     this.gaveUp = false
     this.waitingGaveUpLogged = false
@@ -462,31 +486,45 @@ export class SessionWatchdog {
   }
 
   private enterOverload(): void {
-    if (this.suspendedChecks.overload) return // #605, see suspendedChecks
+    // #605: a parked incident resumes at the backoff step and cumulative wait it
+    // had reached, so an off/on toggle neither restarts the ramp nor refunds the
+    // spend the maxTotalWaitMinutes cap is measured against.
+    const parked = this.parkedBudget.overload
+    this.parkedBudget.overload = null
     this.resetOverload()
     this.status = 'overload'
     this.gaveUp = false
+    if (parked) {
+      this.overloadAttempts = parked.attempts
+      this.overloadTotalWaitMs = parked.totalWaitMs
+    }
     const capMs = this.config.overload.maxTotalWaitMinutes * 60_000
-    const w = this.nextOverloadWaitMs(0)
-    if (w > capMs) {
-      // Degenerate config: the first backoff already exceeds the cap. Force the
-      // cap to trip on the next tick rather than entering a real retry loop.
+    const w = this.nextOverloadWaitMs(this.overloadAttempts)
+    if (this.overloadTotalWaitMs + w > capMs) {
+      // Degenerate config (or a resumed incident that has already spent the
+      // cap): force the cap to trip on the next tick rather than entering a
+      // real retry loop.
       this.overloadTotalWaitMs = capMs
       this.waitUntil = this.adapter.now()
       this.emit('overload detected (degenerate backoff config exceeds cap)')
       return
     }
-    this.overloadTotalWaitMs = w
+    this.overloadTotalWaitMs += w
     this.waitUntil = this.adapter.now() + w
     this.adapter.log('warn', `Overload/transient API error detected. Backing off ${Math.round(w / 1000)}s before retry.`)
     this.emit('overload detected; backing off')
   }
 
   private enterSafeguard(): void {
-    if (this.suspendedChecks.safeguard) return // #605, see suspendedChecks
+    // #605: a parked incident resumes with its attempts already spent, so an
+    // off/on toggle cannot buy another round of auto-submits for a message the
+    // safeguards flagged. The give-up follows from the counter.
+    const parked = this.parkedBudget.safeguard
+    this.parkedBudget.safeguard = null
     this.resetSafeguard()
     this.status = 'safeguard'
     this.gaveUp = false
+    if (parked) this.safeguardAttempts = parked.attempts
     this.waitUntil = this.adapter.now() + this.config.safeguard.retryDelaySeconds * 1000
     this.adapter.log('warn', `Safeguard/AUP flag detected — often a false positive. Will retry up to ${this.config.safeguard.maxRetries}x every ${this.config.safeguard.retryDelaySeconds}s.`)
     this.emit('safeguard flag detected')

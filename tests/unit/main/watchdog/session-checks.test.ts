@@ -151,40 +151,78 @@ describe('#605 switching a check off mid-incident', () => {
     expect(t.sent, 'the retry the wait was counting down to must not fire').toEqual([])
   })
 
-  // ADR-009 round 1 (MAJOR): switching a check off SUSPENDS its incident. An
-  // off/on pair must not hand back a retry budget for a screen that never
-  // changed -- otherwise a user could re-submit a safeguard-flagged message
-  // without bound just by toggling.
-  it('does not re-open the same unchanged incident when the check comes back on', () => {
+  // ADR-009 round 1 (MAJOR): an off/on pair must not hand back a retry budget
+  // for a screen that never changed -- otherwise a user could re-submit a
+  // safeguard-flagged message without bound just by toggling. Round 2 (MAJOR 1):
+  // and it must not go the other way either -- the check coming back ON has to
+  // re-arm, or the pill reports "on" for a check that will never act again.
+  it('resumes the same incident with its SPENT budget when the check comes back on', () => {
     const { t, wd } = intoWaiting()
+    // Spend two of the five default rate-limit retries.
+    t.advance(60_001); wd.tick()
+    t.advance(60_001); wd.tick()
+    expect(t.sent.length).toBe(2)
     wd.setChecks({ rateLimit: false })
     wd.setChecks({ rateLimit: true })
-    expect(wd.getState().status).toBe('monitoring')
-    // The limit banner is still on screen, unchanged.
+    // The limit banner is still on screen, unchanged: the incident resumes.
     t.setTail('limit reached, resets 3pm')
     wd.feed()
-    expect(wd.getState().status, 'a suspended incident stays suspended').toBe('monitoring')
-    t.advance(10_000_000)
-    wd.tick()
-    expect(t.sent, 'no budget is refunded for an unchanged screen').toEqual([])
+    expect(wd.getState().status, 'switching the check back on must re-arm it').toBe('waiting')
+    for (let i = 0; i < 10; i++) { t.advance(60_001); wd.tick() }
+    expect(t.sent.length, 'only the unspent retries are left -- no refund').toBe(5)
+    expect(wd.getState().gaveUp, 'the give-up follows from the resumed counter').toBe(true)
   })
 
-  it('re-opens only once the condition has genuinely cleared', () => {
+  it('a given-up wait comes back given up rather than buying a fresh budget', () => {
     const { t, wd } = intoWaiting()
+    for (let i = 0; i < 10; i++) { t.advance(60_001); wd.tick() }
+    expect(wd.getState().gaveUp).toBe(true)
+    const spent = t.sent.length
     wd.setChecks({ rateLimit: false })
     wd.setChecks({ rateLimit: true })
-    // The limit clears: the suspended incident is genuinely over.
+    t.setTail('limit reached, resets 3pm')
+    wd.feed()
+    for (let i = 0; i < 10; i++) { t.advance(60_001); wd.tick() }
+    expect(t.sent.length, 'toggling must not resurrect a latched give-up').toBe(spent)
+  })
+
+  it('a parked incident is discarded once its banner clears, even while the check is off', () => {
+    const { t, wd } = intoWaiting()
+    t.advance(60_001); wd.tick()
+    expect(t.sent.length).toBe(1)
+    wd.setChecks({ rateLimit: false })
+    // The limit clears WHILE the check is off: the parked incident is over, so
+    // its spend must not be carried into the next one.
     isRateLimited.mockReturnValue(false)
     t.setTail('all good now')
     wd.feed()
+    wd.setChecks({ rateLimit: true })
     // A NEW limit later is a fresh incident with a full budget.
     isRateLimited.mockReturnValue(true)
     t.setTail('limit reached, resets 5pm')
     wd.feed()
     expect(wd.getState().status).toBe('waiting')
-    t.advance(60_001)
-    wd.tick()
-    expect(t.sent).toEqual(['continue'])
+    const before = t.sent.length
+    for (let i = 0; i < 10; i++) { t.advance(60_001); wd.tick() }
+    expect(t.sent.length - before, 'a genuinely new incident gets the full budget').toBe(5)
+  })
+
+  it('a resumed overload incident keeps its backoff step and cumulative wait', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { overload: { jitterPct: 0 } as never })
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: 529')
+    wd.feed()
+    expect(wd.getState().status).toBe('overload')
+    // Two retries: the ramp is at [30, 60, 120, 240, 300]s.
+    t.advance(10_000_000); wd.tick()
+    t.advance(10_000_000); wd.tick()
+    expect(t.sent.length).toBe(2)
+    wd.setChecks({ overload: false })
+    wd.setChecks({ overload: true })
+    wd.feed()
+    expect(wd.getState().status).toBe('overload')
+    expect(wd.getState().overloadAttempts, 'the resumed incident keeps its spend').toBe(2)
   })
 
   it('a safeguard give-up cannot be resurrected by toggling the check', () => {
@@ -219,6 +257,31 @@ describe('#605 switching a check off mid-incident', () => {
     t.stateChanges.length = 0
     wd.setChecks({ overload: true })
     expect(t.stateChanges).toEqual([])
+  })
+})
+
+describe('#605 a muted rate-limit check does not swallow the other two', () => {
+  // The gate on the rate-limit block in feedMonitoring is BEHAVIOUR, not
+  // defence in depth: without it a tail carrying both banners runs the
+  // rate-limit branch, which returns early and never reaches overload.
+  it('a tail carrying BOTH a usage limit and an overload banner still opens the overload incident', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { rateLimitEnabled: false })
+    isRateLimited.mockReturnValue(true)
+    detectOverload.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm / API Error: 529')
+    wd.feed()
+    expect(wd.getState().status, 'the muted check must not consume the feed').toBe('overload')
+  })
+
+  it('a tail carrying BOTH a usage limit and a safeguard flag still opens the safeguard incident', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { rateLimitEnabled: false })
+    isRateLimited.mockReturnValue(true)
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm / safeguards flagged this message')
+    wd.feed()
+    expect(wd.getState().status, 'the muted check must not consume the feed').toBe('safeguard')
   })
 })
 

@@ -28,14 +28,26 @@ detection ENTRY, so a session already in that status kept sending.
   and its send. `rateLimitEnabled` is new in `WatchdogConfig` (the other two
   already existed) and is threaded from settings like the rest.
 - Turning a check off mid-incident drops the session to `monitoring`: nothing is
-  typed, the pending wait is dropped, and the attempt counters reset, so
-  switching it back on starts a fresh incident rather than resuming a half-spent
-  budget. Turning one ON never fabricates an incident -- only a later `feed()`
-  re-detects.
+  typed and the pending wait is dropped. The incident's spend is PARKED rather
+  than discarded (`parkedBudget`), so turning the check back on while the same
+  condition is still on screen resumes THAT incident with its budget already
+  used up -- an off/on pair buys no extra retries, and because every give-up is
+  derived from the counters, a given-up incident comes back given up. A park is
+  discarded the moment `feedMonitoring` sees the condition genuinely gone, and
+  that discard runs even while the check is off, so a park can never outlive the
+  incident that created it. Turning a check ON never fabricates an incident --
+  only a later `feed()` re-detects.
 - `enterWaiting` is guarded as well as `feedMonitoring`, because `tickOverload`
   and `tickSafeguard` escalate INTO it when a usage limit appears mid-incident.
-  That guard is what actually kills the escalation path; the `feedMonitoring`
-  rate-limit gate is defence in depth over it (see the matrix below).
+  It returns a boolean: FALSE means it declined and made no transition, and the
+  caller settles the machine itself. That matters because all four escalation
+  callers zero their own incident's budget immediately before calling, so a
+  silent decline used to leave the session pinned in `overload`/`safeguard` with
+  a zeroed budget that the next tick would refund in full.
+- The `feedMonitoring` rate-limit gate is real behaviour, NOT defence in depth
+  over the `enterWaiting` guard: without it a tail carrying both a usage-limit
+  banner and an overload banner runs the rate-limit branch, which returns early
+  and never reaches the overload or safeguard branch at all.
 - The three `tick*` send guards are defence in depth only: `setChecks` always
   transitions out of the matching status first, so they are unreachable today.
 - `WatchdogPublicState` carries `checks`, so the renderer shows the LIVE state of
@@ -65,14 +77,23 @@ detection ENTRY, so a session already in that status kept sending.
 
 ### Verification
 
-Mutation matrix (scratchpad `mutate-605.py`, 15 mutants): 13 killed, 2
-defence-in-depth survivors, both named above -- M1 (the `feedMonitoring`
-rate-limit gate, redundant with the `enterWaiting` guard; removing BOTH is killed
-by M15) and M5 (the `tickWaiting` send guard, unreachable because `setChecks`
-transitions out first). New tests: `tests/unit/main/watchdog/session-checks.test.ts`
-(the runtime cases are the ones that pin the live `checks` triple rather than the
-config), `tests/unit/main/watchdog-set-checks-ipc.test.ts` for the payload gate,
-plus manager, context-menu and header-pill cases.
+Mutation matrix (scratchpad `mutate-605.py`, MUTANT_TOTAL mutants):
+MUTANT_KILLED killed, MUTANT_SURVIVED unreachable-by-construction survivor(s) --
+MUTANT_SURVIVOR_LIST. New tests:
+`tests/unit/main/watchdog/session-checks.test.ts` (the runtime cases are the ones
+that pin the live `checks` triple rather than the config; the round-2 cases pin
+the parked-budget resume in both directions),
+`tests/unit/main/watchdog-set-checks-ipc.test.ts` for the payload gate, plus
+manager, context-menu and header-pill cases.
+
+Two rounds of ADR-009 review landed on this. Round 1 found that an off/on toggle
+refunded the retry budget and cleared a give-up, so a safeguard-FLAGGED message
+could be auto-resubmitted without bound. The first fix suspended the INCIDENT,
+and the independent quality review then found that over-corrected: nothing
+cleared the suspension when the check came back on, so a live incident stayed
+permanently disarmed while the pill still reported the check as on. Round 2
+suspends the BUDGET instead, which keeps the anti-resubmission property while
+honouring the toggle in both directions.
 
 Adds an IPC channel, so this sits in the ADR-009 security-sensitive path table
 and needs an adversarial pass before merge.

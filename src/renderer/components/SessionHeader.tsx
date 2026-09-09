@@ -325,17 +325,6 @@ function SshConnectionPill({ session }: { session: Session }) {
 }
 
 /**
- * The account · claude.ai · Claude Code (with refresh) pill trio plus the
- * trailing GitHub group. Shared by a LOCAL Claude session and an SSH session
- * whose remote account maps to a local profile: the claude.ai / Claude Code
- * checks are local-profile-scoped, so once a remote session is mapped to a local
- * profile the same set applies (harmonise-remote). The account pill's
- * label/tone/title are passed in because they differ — a remote session names
- * its account "Remote Claude account: …". `status` is the accountAuthStore entry
- * for `profileId`; `gitHubTail` is the already-assembled trailing group (its own
- * leading separator + the GitHub pill, or null).
- */
-/**
  * #605: the session's live watchdog auto-retry state.
  *
  * Renders NOTHING when no watcher is armed for this session -- the master
@@ -362,6 +351,17 @@ function WatchdogPill({ watchdog }: { watchdog?: Session['watchdog'] }) {
   return <HeaderPill label="Watchdog" tone={tone} word={word} title={title} testId="session-pill-watchdog" />
 }
 
+/**
+ * The account · claude.ai · Claude Code (with refresh) pill trio plus the
+ * trailing GitHub group. Shared by a LOCAL Claude session and an SSH session
+ * whose remote account maps to a local profile: the claude.ai / Claude Code
+ * checks are local-profile-scoped, so once a remote session is mapped to a local
+ * profile the same set applies (harmonise-remote). The account pill's
+ * label/tone/title are passed in because they differ — a remote session names
+ * its account "Remote Claude account: …". `status` is the accountAuthStore entry
+ * for `profileId`; `gitHubTail` is the already-assembled trailing group (its own
+ * leading separator + the GitHub pill, or null).
+ */
 function AccountAuthPillSet({
   accountLabel, accountTone, accountTitle, status, profileId, refresh, gitHubTail, watchdogPill,
 }: {
