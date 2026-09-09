@@ -260,6 +260,63 @@ describe('#605 switching a check off mid-incident', () => {
   })
 })
 
+// A parked incident makes feedMonitoring run its block even while the check is
+// OFF -- purely so the discard can notice the condition leaving the screen. The
+// inner check gate is what stops that from also re-arming the incident, and it
+// is reachable ONLY in this state.
+describe('#605 a park does not re-arm a check that is still off', () => {
+  it('rate limit: a parked wait is not re-opened while the check is off', () => {
+    const { t, wd } = intoWaiting()
+    t.advance(60_001); wd.tick()
+    expect(t.sent.length).toBe(1)
+    wd.setChecks({ rateLimit: false })
+    // The banner is still up, and the park is held.
+    t.setTail('limit reached, resets 3pm')
+    wd.feed()
+    expect(wd.getState().status, 'a park must not re-arm a check the user turned off').toBe('monitoring')
+    t.advance(10_000_000); wd.tick()
+    expect(t.sent.length, 'nothing more is typed while the check is off').toBe(1)
+  })
+
+  it('rate limit: a parked wait does not swallow the overload branch either', () => {
+    const { t, wd } = intoWaiting()
+    wd.setChecks({ rateLimit: false })
+    // Both banners on screen, rate-limit check off but its park still held.
+    detectOverload.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm / API Error: 529')
+    wd.feed()
+    expect(wd.getState().status, 'the parked block must fall through to overload').toBe('overload')
+  })
+
+  it('overload: a parked incident is not re-opened while the check is off', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: 529')
+    wd.feed()
+    expect(wd.getState().status).toBe('overload')
+    wd.setChecks({ overload: false })
+    wd.feed()
+    expect(wd.getState().status, 'a park must not re-arm a check the user turned off').toBe('monitoring')
+    t.advance(10_000_000); wd.tick()
+    expect(t.sent).toEqual([])
+  })
+
+  it('safeguard: a parked incident is not re-opened while the check is off', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.feed()
+    expect(wd.getState().status).toBe('safeguard')
+    wd.setChecks({ safeguard: false })
+    wd.feed()
+    expect(wd.getState().status, 'a park must not re-arm a check the user turned off').toBe('monitoring')
+    t.advance(10_000_000); wd.tick()
+    expect(t.sent).toEqual([])
+  })
+})
+
 describe('#605 a muted rate-limit check does not swallow the other two', () => {
   // The gate on the rate-limit block in feedMonitoring is BEHAVIOUR, not
   // defence in depth: without it a tail carrying both banners runs the
