@@ -24,6 +24,8 @@ function makeState(overrides: Partial<BootGateState> = {}): BootGateState {
     onboardingDue: false,
     showTraining: false,
     showTrainingAll: false,
+    tourActive: false,
+    showGuidedConfig: false,
     showGitHubOnboarding: false,
     showMachineNamePrompt: false,
     loggingConsentSeen: true,
@@ -34,6 +36,68 @@ function makeState(overrides: Partial<BootGateState> = {}): BootGateState {
     ...overrides,
   }
 }
+
+// #609: a gate this returns MUST render. The resume prompt kept the
+// `!tourActive` condition it needed back when it rendered OUTSIDE the chain,
+// while GuidedTour required `bootGate === null` -- so a boot with saved sessions
+// AND a chained tour selected 'resume', rendered neither surface, and stranded
+// pendingRestore along with every gate below it.
+describe('pickBootGate — the tour and the first-config dialog own turns (#609)', () => {
+  it('a chained tour outranks the resume prompt instead of deadlocking with it', () => {
+    expect(pickBootGate(makeState({ tourActive: true, resumePending: true }))).toBe('guidedTour')
+  })
+
+  it('the resume prompt follows as soon as the tour closes', () => {
+    expect(pickBootGate(makeState({ tourActive: false, resumePending: true }))).toBe('resume')
+  })
+
+  it('the first-config dialog outranks resume too, rather than suppressing it', () => {
+    expect(pickBootGate(makeState({ showGuidedConfig: true, resumePending: true }))).toBe('guidedConfig')
+  })
+
+  it('the tour outranks the dialog it can open', () => {
+    expect(pickBootGate(makeState({ tourActive: true, showGuidedConfig: true }))).toBe('guidedTour')
+  })
+
+  it('both wait behind the release-notes harness', () => {
+    expect(pickBootGate(makeState({ tourActive: true, onboardingDue: true }))).toBe('onboarding')
+    expect(pickBootGate(makeState({ showGuidedConfig: true, onboardingDue: true }))).toBe('onboarding')
+  })
+
+  it('neither is starved by a pending boot timer', () => {
+    // They are opened by a user action that has ALREADY happened, so unlike the
+    // one-time notices they must not wait on the *Due short-circuit.
+    expect(pickBootGate(makeState({ tourActive: true, whatsNewDue: true, trainingDue: true }))).toBe('guidedTour')
+    expect(pickBootGate(makeState({ showGuidedConfig: true, githubOnboardingDue: true }))).toBe('guidedConfig')
+  })
+
+  it('both are absent === false, like the other optional gates', () => {
+    const { tourActive, showGuidedConfig, ...without } = makeState({ tourActive: true, showGuidedConfig: true })
+    expect(tourActive && showGuidedConfig).toBe(true)
+    expect(pickBootGate(without as BootGateState)).toBeNull()
+  })
+
+  it('NO input combination selects a gate that has no turn — exhaustive sweep', () => {
+    // The deadlock was one selected-but-unrendered gate. Sweep every boolean
+    // combination and assert the result is always a real gate or null; a new
+    // input that can produce an unknown value fails here.
+    const known = new Set([
+      'logsWipe', 'onboarding', 'training', 'guidedTour', 'guidedConfig',
+      'githubOnboarding', 'machineName', 'loggingConsent', 'resume', 'multiSpawnIntro',
+    ])
+    const flags = [
+      'onboardingDue', 'showTraining', 'showTrainingAll', 'tourActive', 'showGuidedConfig',
+      'showGitHubOnboarding', 'showMachineNamePrompt', 'loggingConsentSeen', 'resumePending',
+      'multiSpawnIntroDue', 'whatsNewDue', 'trainingDue', 'githubOnboardingDue',
+    ] as const
+    for (let mask = 0; mask < (1 << flags.length); mask++) {
+      const over: Record<string, boolean> = {}
+      flags.forEach((f, i) => { over[f] = Boolean(mask & (1 << i)) })
+      const gate = pickBootGate(makeState(over as Partial<BootGateState>))
+      expect(gate === null || known.has(gate), `mask ${mask} -> ${gate}`).toBe(true)
+    }
+  })
+})
 
 describe('pickBootGate', () => {
   it('shows nothing before config loads', () => {

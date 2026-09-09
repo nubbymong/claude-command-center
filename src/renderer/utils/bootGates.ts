@@ -16,18 +16,22 @@
  *                          harness in its what's-new-only mode). Timer-free
  *                          pure appMeta predicate, so it needs no entry in the
  *                          *Due short-circuit below.
- *   3. training          — the live-app guided tour (chained from the harness
- *                          finish; also the user-invoked help tour).
- *   4. githubOnboarding  — opened by its own effect 120ms after the gates
+ *   3. training          — the live-app guided walkthrough (chained from the
+ *                          harness finish; also the user-invoked help tour).
+ *   4. guidedTour        — the GuidedTour overlay, armed by the harness
+ *                          finishing with startTour.
+ *   5. guidedConfig      — the first-config SessionDialog, opened from the
+ *                          tour, the sidebar FirstRunCard or the empty state.
+ *   6. githubOnboarding  — opened by its own effect 120ms after the gates
  *                          above clear.
- *   5. machineName       — 800ms boot timer.
- *   6. loggingConsent    — one-time notice. Waits on the *due* predicates so it
+ *   7. machineName       — 800ms boot timer.
+ *   8. loggingConsent    — one-time notice. Waits on the *due* predicates so it
  *                          doesn't flash for the few hundred ms before a higher
  *                          gate's timer fires and then get swapped out from
  *                          under the user.
- *   7. resume            — "restore your sessions?". Every boot, so it sits
+ *   9. resume            — "restore your sessions?". Every boot, so it sits
  *                          below the one-time surfaces above.
- *   8. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
+ *  10. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
  *                          and both halves of that are deliberate. It must come
  *                          after the release notes, because it is the second
  *                          page of one upgrade story — and the `*Due`
@@ -43,13 +47,27 @@
  * resume prompt gated only on `bootGate !== 'onboarding'`, Sentinel on nothing
  * at all — which is why a launch could paint release notes, a resume prompt and
  * a findings panel on top of one another. Sentinel is not a gate (it owns no
- * turn in the sequence); it is simply suppressed while any gate is up.
+ * turn in the sequence); it is simply suppressed while any gate is up, as is the
+ * pre-spawn account picker (#607) and the new-account prompt.
+ *
+ * THE INVARIANT (#609): a gate this returns MUST render. Splitting the decision
+ * — selecting a gate here while its render site ALSO tests something else — can
+ * pick a surface that then paints nothing, and a chain that stops at a surface
+ * nobody can answer never advances. That is exactly what happened: `resume` kept
+ * the `!tourActive` condition it needed back when it rendered outside the chain,
+ * while GuidedTour required `bootGate === null`, so a boot with saved sessions
+ * AND a chained tour rendered neither and stranded `pendingRestore` — taking
+ * every gate below it down too. The fix is the rule this module already states:
+ * one authority. `tourActive` and `showGuidedConfig` are inputs now, not extra
+ * conditions bolted onto a render site.
  */
 
 export type BootGate =
   | 'logsWipe'
   | 'onboarding'
   | 'training'
+  | 'guidedTour'
+  | 'guidedConfig'
   | 'githubOnboarding'
   | 'machineName'
   | 'loggingConsent'
@@ -65,6 +83,10 @@ export interface BootGateState {
   onboardingDue?: boolean
   showTraining: boolean
   showTrainingAll: boolean
+  /** The GuidedTour overlay is up. Optional: absent === false. */
+  tourActive?: boolean
+  /** The first-config SessionDialog is up. Optional: absent === false. */
+  showGuidedConfig?: boolean
   showGitHubOnboarding: boolean
   showMachineNamePrompt: boolean
   loggingConsentSeen: boolean
@@ -88,6 +110,10 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   if (s.logsWipeBytes > 0) return 'logsWipe'
   if (s.onboardingDue) return 'onboarding'
   if (s.showTraining || s.showTrainingAll) return 'training'
+  // Above the *Due short-circuit below: both are opened by a user action that
+  // has already happened, so they must never be starved by a pending timer.
+  if (s.tourActive) return 'guidedTour'
+  if (s.showGuidedConfig) return 'guidedConfig'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
   if (s.showMachineNamePrompt) return 'machineName'
   if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null

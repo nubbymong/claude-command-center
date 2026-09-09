@@ -1373,6 +1373,8 @@ export default function App() {
     logsWipeBytes,
     showTraining,
     showTrainingAll,
+    tourActive,
+    showGuidedConfig,
     showGitHubOnboarding,
     showMachineNamePrompt,
     loggingConsentSeen: Boolean(loggingConsentSeen),
@@ -1403,7 +1405,7 @@ export default function App() {
             }}
           />
         )}
-        {tourActive && bootGate === null && (
+        {bootGate === 'guidedTour' && (
           <GuidedTour
             onClose={() => setTourActive(false)}
             onCreateConfig={() => {
@@ -1435,7 +1437,7 @@ export default function App() {
             underneath. State is kept, so they surface once the overlay closes. */}
         {/* darwin: multi-account is Windows-only (Keychain token can't be
             isolated per profile), so never offer to capture a second account. */}
-        {newAccountDetected && window.electronPlatform !== 'darwin' && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
+        {newAccountDetected && window.electronPlatform !== 'darwin' && bootGate === null && (
           <NewAccountPrompt
             email={newAccountDetected.email}
             onDismiss={() => setNewAccountDetected(null)}
@@ -1456,7 +1458,7 @@ export default function App() {
             a surface that merely stepped around onboarding. It used to be
             gated on `bootGate !== 'onboarding'` alone, so a launch that showed
             release notes painted this prompt over them. */}
-        {bootGate === 'resume' && pendingRestore && !tourActive && !showGuidedConfig && (
+        {bootGate === 'resume' && pendingRestore && (
           <ResumeSessionsPrompt
             sessions={pendingRestore.sessions}
             onResume={() => {
@@ -1626,7 +1628,7 @@ export default function App() {
             the live app — same create + launch path as the sidebar's New Session,
             so there is no behaviour drift and no dead controls (retires the old
             GuidedConfigView). */}
-        {showGuidedConfig && (
+        {bootGate === 'guidedConfig' && (
           <SessionDialog
             onCancel={() => setShowGuidedConfig(false)}
             onConfirm={async (data, password, sudoPassword, argSecret) => {

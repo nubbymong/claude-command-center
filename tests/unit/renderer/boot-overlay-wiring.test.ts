@@ -33,6 +33,39 @@ describe('AccountLaunchGate is suppressed by the boot-gate chain', () => {
   })
 })
 
+describe('every gate renders on its own name alone (#609)', () => {
+  const APP = readSrc('src/renderer/App.tsx')
+
+  it('the resume prompt no longer second-guesses the chain', () => {
+    // It kept !tourActive from the days it rendered outside the chain, which
+    // with GuidedTour's bootGate === null meant a boot with saved sessions AND
+    // a chained tour painted neither and stranded pendingRestore.
+    expect(APP).toContain("{bootGate === 'resume' && pendingRestore && (")
+    expect(APP).not.toMatch(/bootGate === 'resume'[^\n]*!tourActive/)
+  })
+
+  it('the tour and the first-config dialog render on their own gates', () => {
+    expect(APP).toContain("{bootGate === 'guidedTour' && (")
+    expect(APP).toContain("{bootGate === 'guidedConfig' && (")
+    expect(APP, 'the tour must not wait for an empty chain any more')
+      .not.toContain('{tourActive && bootGate === null && (')
+  })
+
+  it('no render site negates another gate\'s trigger', () => {
+    // That split decision IS the bug: the chain picks one surface, the render
+    // site vetoes it, and nothing paints.
+    for (const trigger of ['!tourActive', '!showGuidedConfig']) {
+      expect(APP, `${trigger} must not gate a render site`).not.toContain(trigger)
+    }
+  })
+
+  it('the new-account prompt is suppressed by ANY gate, not just onboarding', () => {
+    // Same class as the account picker: it owns no turn, so it must not paint
+    // over one. It used to exclude only 'onboarding'.
+    expect(APP).toContain("window.electronPlatform !== 'darwin' && bootGate === null &&")
+  })
+})
+
 describe('SessionContextMenu is placed inside the viewport', () => {
   const MENU = readSrc('src/renderer/components/sidebar/SessionContextMenu.tsx')
 

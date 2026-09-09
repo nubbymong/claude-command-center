@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - A startup page is no longer interrupted by the sessions it is describing. Restoring your sessions starts them straight away, and each one that asks which account to use put its own prompt on top of whatever was still on screen -- so the Enable Multi Spawn page could be covered before you had finished with it. Those prompts now wait until the last startup page is dismissed, and none of them is answered for you in the meantime.
+- A first launch that has both saved sessions and a guided tour to show no longer gets stuck showing neither. The tour and the restore prompt each waited for the other, so nothing appeared and the saved sessions could not be restored at all. Startup pages now take strict turns, and the one being shown is always the one that was chosen.
 - A session right-click menu opened near the bottom of the window stays on screen. It used to open at the pointer and run off the edge, which hid the lower entries with no way to scroll to them -- most visibly the account list under Switch Account, where the last few accounts simply could not be reached. The menu now opens upward when there is more room above, and scrolls when it is taller than the window either way.
 
 ## [2.1.0-rc.16] - 2026-09-06

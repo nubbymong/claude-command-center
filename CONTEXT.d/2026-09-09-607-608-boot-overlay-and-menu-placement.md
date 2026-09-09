@@ -1,8 +1,14 @@
-# 2026-09-09 — #607/#608: two overlays that ignored the screen
+# 2026-09-09 — #607/#608/#609: three surfaces that ignored the chain
 
-Both found by the owner install-testing a local build of #606
-(`2.1.0-rc.16-pr606`, head `694d618a`), and both fixed on that same PR: it is the
-current RC cycle's only PR, and #605 is what made each of them reachable.
+#607 and #608 were found by the owner install-testing a local build of #606
+(`2.1.0-rc.16-pr606`, head `694d618a`); #609 fell out of the adversarial pass on
+their fix. All three land on that same PR: it is the current RC cycle's only PR,
+and #605 is what made the first two reachable.
+
+They are one bug three times over. `pickBootGate` exists because first-launch
+surfaces used to stack, and its own doc says exactly one may render at a time —
+but three surfaces were still deciding for themselves. Two painted over a gate;
+the third vetoed one and stranded the boot.
 
 ## #607 — the account picker painted over the Multi Spawn startup page
 
@@ -82,10 +88,34 @@ always the room from `top` to the bottom margin, which makes
 `top + maxHeight <= viewportHeight - margin` true by construction on every branch,
 and a menu with too little room is LIFTED rather than capped to a sliver.
 
-The pass also surfaced an ADJACENT, PRE-EXISTING deadlock that this delta neither
-causes nor worsens: with `bootGate === 'resume'` and `tourActive` true, neither
-surface renders (the tour needs `bootGate === null`, the resume prompt needs
-`!tourActive`), so `pendingRestore` can never be cleared. Filed as #609.
+## #609 — a selected gate that rendered nothing
+
+The pass also surfaced an adjacent, PRE-EXISTING deadlock, fixed here rather than
+deferred: with `bootGate === 'resume'` and `tourActive` true, neither surface
+rendered — the tour needed `bootGate === null`, the resume prompt needed
+`!tourActive` — so `pendingRestore` could never be cleared, taking every gate
+below it down with it. Reachable when the harness finishes with `startTour` on an
+install that has saved sessions.
+
+The cause is the one this module already warns about: a SPLIT decision. `resume`
+kept the `!tourActive && !showGuidedConfig` conditions it needed back when it
+rendered outside the chain, where they were the whole mechanism; folding it in on
+2026-08-21 made them redundant at best and contradictory at worst. So the fix is
+the module's own rule — one authority. `tourActive` and `showGuidedConfig` are
+INPUTS now: `guidedTour` and `guidedConfig` are real turns, placed above the
+`*Due` short-circuit because both are opened by a user action that has already
+happened and must not be starved by a pending timer. The render sites test their
+own gate name and nothing else.
+
+The new-account prompt was the same class and is fixed with them: it excluded only
+`'onboarding'`, so it could paint over the machine-name, consent, resume and Multi
+Spawn gates. It owns no turn, so it is now suppressed by any gate, like Sentinel
+and the account picker.
+
+**The invariant, now tested:** a gate the chain returns MUST render. An exhaustive
+sweep over every boolean combination of the thirteen inputs asserts the result is
+always a real gate or null, and a source assertion pins that no render site
+negates another gate's trigger — which is the shape the bug took.
 
 ## Verification
 
@@ -100,3 +130,9 @@ request**. Both fixes are one JSX expression each, which no behavioural test can
 see, so `boot-overlay-wiring.test.ts` asserts the wiring against the source, the
 technique `app-lifecycle-wiring.test.ts` established. Each fix was mutated and
 confirmed to turn a test red.
+
+For #609: `boot-gates.test.ts` gains the tour/dialog ordering cases, the
+starvation case, and the exhaustive sweep; `boot-overlay-wiring.test.ts` pins that
+the resume site no longer carries `!tourActive`, that both new gates have render
+sites, and that neither negated trigger appears anywhere in App. Deleting the
+`guidedTour` line from the chain turns three of them red.
