@@ -67,6 +67,16 @@ npm run test         # both
 
 - Prefer the `ccc` launcher for dev — it isolates dev data from prod and cleans
   up all dev processes on exit. See `docs/dev-alongside-prod.md`.
+- **Never run `npm install` in a worktree — use `npm ci` (#226).** `npm install`
+  rewrites the tree and can leave it looking fully installed while Electron's own
+  binary is absent: `node_modules/electron/` exists, `package.json` is satisfied
+  and `npm ls` is clean, but `path.txt` and `dist/electron.exe` are gone. The
+  repo's `postinstall` only rebuilds the two native addons, so nothing replaces
+  them. electron-vite then dies with an opaque `Error: Electron uninstall`, the
+  launcher window closes instantly, and the real message is only in
+  `dev-logs/ccc-dev-*.log`. `predev` (`scripts/preflight-electron.mjs`) now
+  detects this and re-runs Electron's installer before dev starts, but the rule
+  stands: `npm ci`, and it must be run in the worktree you are working in.
 
 ## Architecture
 

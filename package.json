@@ -5,6 +5,7 @@
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
   "scripts": {
+    "predev": "node scripts/preflight-electron.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
