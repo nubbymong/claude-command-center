@@ -411,6 +411,44 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 </label>
                 {settings.watchdog?.enabled === true && (
                   <>
+                    <div className="pl-6 pt-1" data-testid="watchdog-checks">
+                      <div className="text-[10px] text-overlay0 mb-1">
+                        Which checks may auto-type. Each session can switch these for itself from its right-click menu; changing them here sets what a newly launched session starts with.
+                      </div>
+                      {([
+                        { key: 'rateLimit', label: 'Rate-limit resume', hint: 'Waits out a usage-limit reset, then continues.' },
+                        { key: 'overload', label: 'API overload', hint: 'Backs off and retries on 429/5xx and overloaded_error.' },
+                        { key: 'safeguard', label: 'Safeguard', hint: 'Retries after a flagged-safeguard message clears.' },
+                      ] as const).map(({ key, label, hint }) => {
+                        const wd = settings.watchdog || {}
+                        const checked = key === 'rateLimit'
+                          ? wd.rateLimitEnabled !== false
+                          : key === 'overload'
+                            ? wd.overload?.enabled !== false
+                            : wd.safeguard?.enabled !== false
+                        const write = (v: boolean) => {
+                          const base = { ...DEFAULT_WATCHDOG_SETTINGS, ...wd }
+                          if (key === 'rateLimit') return save({ watchdog: { ...base, rateLimitEnabled: v } })
+                          if (key === 'overload') return save({ watchdog: { ...base, overload: { ...(wd.overload || {}), enabled: v } } })
+                          return save({ watchdog: { ...base, safeguard: { ...(wd.safeguard || {}), enabled: v } } })
+                        }
+                        return (
+                          <label key={key} className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mb-1">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => write(e.target.checked)}
+                              className="mt-0.5 rounded border-surface1"
+                              data-testid={`watchdog-check-${key}`}
+                            />
+                            <span>
+                              {label}
+                              <span className="block text-[10px] text-overlay0">{hint}</span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
                     <Field label="Retry message">
                       <input
                         type="text"

@@ -16,7 +16,7 @@ export function useWatchdogSubscription(sessionId: string) {
     const unsub = window.electronAPI.watchdog.onUpdate((state) => {
       if (state.sessionId !== sessionId) return
       updateSession(sessionId, {
-        watchdog: { status: state.status, waitUntil: state.waitUntil, gaveUp: state.gaveUp },
+        watchdog: { status: state.status, waitUntil: state.waitUntil, gaveUp: state.gaveUp, checks: state.checks },
       })
     })
     // Seed from main's CURRENT states on mount (#266 MAJOR-4): a push-only
@@ -28,7 +28,7 @@ export function useWatchdogSubscription(sessionId: string) {
       if (cancelled) return
       const mine = states.find((s) => s.sessionId === sessionId)
       updateSession(sessionId, {
-        watchdog: mine ? { status: mine.status, waitUntil: mine.waitUntil, gaveUp: mine.gaveUp } : undefined,
+        watchdog: mine ? { status: mine.status, waitUntil: mine.waitUntil, gaveUp: mine.gaveUp, checks: mine.checks } : undefined,
       })
     }).catch(() => { /* main gone mid-teardown */ })
     return () => {

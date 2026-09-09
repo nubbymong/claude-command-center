@@ -1621,6 +1621,18 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               trackUsage('sessions.pin-config')
               setSessionContextMenu(null)
             } : undefined}
+            // #605: live per-session watchdog checks. Only offered when main
+            // actually has a watcher armed for this session -- s.watchdog is
+            // absent otherwise, so the block hides rather than offering a
+            // toggle that would be a no-op. The menu stays open: these are
+            // three independent switches and users flip more than one.
+            watchdogChecks={s.watchdog?.checks}
+            onToggleWatchdogCheck={(key) => {
+              const current = s.watchdog?.checks
+              if (!current) return
+              void window.electronAPI.watchdog.setChecks(s.id, { [key]: !current[key] })
+              trackUsage('sessions.watchdog-check-toggle')
+            }}
             onRemoveFromGroup={() => {
               if (cfg) moveConfigToGroup(cfg.id, undefined)
               setSessionContextMenu(null)

@@ -62,7 +62,14 @@ export interface Session {
   needsAttention?: boolean
   /** Session Watchdog (#235) live state, pushed from main via IPC.WATCHDOG_STATE.
    *  Absent = watchdog off / not running for this session (no indicator shown). */
-  watchdog?: { status: string; waitUntil: number | null; gaveUp: boolean }
+  watchdog?: {
+    status: string
+    waitUntil: number | null
+    gaveUp: boolean
+    /** #605: which auto-retry checks are live for this session right now.
+     *  Absent on states pushed by older main builds; treat as all-on. */
+    checks?: { rateLimit: boolean; overload: boolean; safeguard: boolean }
+  }
   costUsd?: number
   modelName?: string
   // Codex: reasoning effort label (e.g. "xhigh"). Always undefined for Claude sessions.

@@ -3,7 +3,9 @@ import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { isAccountActive, type AccountProfile } from '../../../shared/account-types'
 import { resolveAccountName, middleTruncateEmail } from '../../../shared/account-chip-color'
-import { pinMenuLabel, PIN_WHILE_RUNNING_HINT } from './sessionsPanelState'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, WATCHDOG_CHECK_ITEMS, WATCHDOG_RUNTIME_HINT } from './sessionsPanelState'
+
+export type WatchdogCheckKey = 'rateLimit' | 'overload' | 'safeguard'
 
 interface SessionContextMenuProps {
   x: number
@@ -40,6 +42,13 @@ interface SessionContextMenuProps {
   /** True when this account's Claude Code CLI is already signed in; disables the
    *  "Sign in to Claude Code" item so it isn't offered when it would be a no-op. */
   codeSignedIn?: boolean
+  /** #605: the session's LIVE watchdog checks. Undefined when no watcher is
+   *  armed for this session (master switch off, or a session type that never
+   *  arms one) -- the whole block is hidden then, rather than offering toggles
+   *  that would do nothing. */
+  watchdogChecks?: Record<WatchdogCheckKey, boolean>
+  /** #605: flip one check for THIS running session. Runtime only. */
+  onToggleWatchdogCheck?: (key: WatchdogCheckKey) => void
 }
 
 export default function SessionContextMenu({
@@ -47,6 +56,7 @@ export default function SessionContextMenu({
   configPinned, onPinConfig,
   canSwitchAccount, profiles, accountAliases, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn,
+  watchdogChecks, onToggleWatchdogCheck,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -87,6 +97,43 @@ export default function SessionContextMenu({
             </div>
           )}
         </>
+      )}
+      {watchdogChecks && onToggleWatchdogCheck && (
+        <div className="border-t mt-1 pt-1" style={{ borderColor: 'var(--border-subtle)' }} data-testid="session-ctx-watchdog">
+          <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+            Watchdog auto-retry
+          </div>
+          {WATCHDOG_CHECK_ITEMS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => onToggleWatchdogCheck(key)}
+              role="menuitemcheckbox"
+              aria-checked={watchdogChecks[key]}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
+              data-testid={`session-ctx-watchdog-${key}`}
+            >
+              <span
+                className="w-3 h-3 rounded-sm flex items-center justify-center shrink-0"
+                style={{
+                  border: '1px solid var(--border-subtle)',
+                  background: watchdogChecks[key] ? 'var(--status-success)' : 'transparent',
+                }}
+                aria-hidden
+              >
+                {watchdogChecks[key] && (
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="var(--surface-raised)" strokeWidth="1.6">
+                    <path d="M1 4l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </span>
+              {label}
+            </button>
+          ))}
+          <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+            {WATCHDOG_RUNTIME_HINT}
+          </div>
+        </div>
       )}
       {hasGroup && (
         <button
