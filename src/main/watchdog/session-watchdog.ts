@@ -44,9 +44,24 @@ export type { WatchdogConfig } from './config'
 
 export type WatchdogStatus = 'monitoring' | 'waiting' | 'overload' | 'safeguard'
 
+/**
+ * #605: the three auto-retry checks, each independently switchable. Seeded from
+ * the resolved config when the watchdog arms, then live-settable PER SESSION via
+ * setChecks() -- turning one off stops that check both detecting and typing, for
+ * this run only. The silence/sleep indicator is NOT here: it lives in
+ * WatchdogManager, is status-only, and never sends, so it is never gated.
+ */
+export interface WatchdogChecks {
+  rateLimit: boolean
+  overload: boolean
+  safeguard: boolean
+}
+
 export interface WatchdogPublicState {
   sessionId: string
   status: WatchdogStatus
+  /** #605: which checks are live for this session right now. */
+  checks: WatchdogChecks
   attempts: number
   overloadAttempts: number
   safeguardAttempts: number
@@ -133,6 +148,8 @@ export class SessionWatchdog {
   private disposed = false
 
   private readonly config: WatchdogConfig
+  /** #605: per-session, live-mutable. Seeded from config in the constructor. */
+  private checks: WatchdogChecks
   private readonly rand: () => number
   private readonly sessionId: string
   private readonly adapter: WatchdogAdapter
@@ -141,6 +158,11 @@ export class SessionWatchdog {
     this.sessionId = sessionId
     this.adapter = adapter
     this.config = resolveWatchdogConfig(config)
+    this.checks = {
+      rateLimit: this.config.rateLimitEnabled,
+      overload: this.config.overload.enabled,
+      safeguard: this.config.safeguard.enabled,
+    }
     this.rand = rand
     this.updatedAt = this.adapter.now()
   }
@@ -149,6 +171,7 @@ export class SessionWatchdog {
     return {
       sessionId: this.sessionId,
       status: this.status,
+      checks: { ...this.checks },
       attempts: this.attempts,
       overloadAttempts: this.overloadAttempts,
       safeguardAttempts: this.safeguardAttempts,
@@ -157,6 +180,42 @@ export class SessionWatchdog {
       lastAction: this.lastAction,
       updatedAt: this.updatedAt,
     }
+  }
+
+  /**
+   * #605: switch individual checks on/off for THIS session, in real time.
+   *
+   * A check switched OFF while its own incident is live drops the session back
+   * to monitoring: nothing is typed, the pending wait is dropped, and the badge
+   * stops advertising a retry that will never fire. Its attempt counters reset
+   * too, so switching the check back on later starts a fresh incident rather
+   * than resuming a half-spent budget. Switching a check ON never fabricates an
+   * incident -- the next feed() re-detects if the condition is still on screen.
+   */
+  setChecks(partial: Partial<WatchdogChecks>): void {
+    if (this.disposed) return
+    const next: WatchdogChecks = { ...this.checks, ...partial }
+    if (next.rateLimit === this.checks.rateLimit
+      && next.overload === this.checks.overload
+      && next.safeguard === this.checks.safeguard) return
+    this.checks = next
+    if (this.status === 'waiting' && !next.rateLimit) {
+      this.attempts = 0
+      this.waitingGaveUpLogged = false
+      this.toMonitoring('rate-limit check turned off')
+      return
+    }
+    if (this.status === 'overload' && !next.overload) {
+      this.resetOverload()
+      this.toMonitoring('overload check turned off')
+      return
+    }
+    if (this.status === 'safeguard' && !next.safeguard) {
+      this.resetSafeguard()
+      this.toMonitoring('safeguard check turned off')
+      return
+    }
+    this.emit('checks changed')
   }
 
   dispose(): void {
@@ -232,7 +291,7 @@ export class SessionWatchdog {
   // retired error kind) can't start a backoff no policy owns.
   handleHookEvent(evt: { event: string; error?: string }): void {
     if (this.disposed) return
-    if (!this.config.overload.enabled) return
+    if (!this.checks.overload) return
     if (evt.error !== 'overloaded' && evt.error !== 'server_error') return
 
     // A hook-driven overload must never override a real usage-limit wait, nor
@@ -304,12 +363,12 @@ export class SessionWatchdog {
 
   private feedMonitoring(tail: string): void {
     // Usage-limit (hours-scale reset) takes precedence over overload/safeguard.
-    if (isRateLimited(tail, [], USAGE_TAIL_LINES) && !isWorking(tail)) {
+    if (this.checks.rateLimit && isRateLimited(tail, [], USAGE_TAIL_LINES) && !isWorking(tail)) {
       this.enterWaiting(tail)
       return
     }
 
-    if (this.config.overload.enabled) {
+    if (this.checks.overload) {
       const present = detectOverload(tail, this.config.overload.patterns)
       if (present && !isInternalRetry(tail)) {
         if (this.lastHandledOverloadTail === tail) return // event path already handled this exact render
@@ -319,12 +378,20 @@ export class SessionWatchdog {
       if (!present) this.lastHandledOverloadTail = null // banner gone -> a future match is a fresh incident
     }
 
-    if (this.config.safeguard.enabled && detectSafeguard(tail, this.config.safeguard.patterns)) {
+    if (this.checks.safeguard && detectSafeguard(tail, this.config.safeguard.patterns)) {
       this.enterSafeguard()
     }
   }
 
   private enterWaiting(tail: string): void {
+    // #605: reached from feedMonitoring (already gated) AND from the
+    // tickOverload/tickSafeguard escalations, which are not. With the
+    // rate-limit check off, a usage limit is simply not this watchdog's
+    // business: fall back to monitoring rather than opening a wait.
+    if (!this.checks.rateLimit) {
+      this.toMonitoring('usage limit seen with the rate-limit check off')
+      return
+    }
     const message = findRateLimitMessage(tail)
     const parsed = message ? parseResetTime(message) : null
     const waitMs = calculateWaitMs(parsed, {
@@ -386,6 +453,7 @@ export class SessionWatchdog {
   }
 
   private tickWaiting(): void {
+    if (!this.checks.rateLimit) return
     const now = this.adapter.now()
     if (this.waitUntil === null || now < this.waitUntil) return
 
@@ -500,6 +568,7 @@ export class SessionWatchdog {
   }
 
   private tickOverload(): void {
+    if (!this.checks.overload) return
     const now = this.adapter.now()
     if (this.waitUntil === null || now < this.waitUntil) return
 
@@ -582,6 +651,7 @@ export class SessionWatchdog {
   }
 
   private tickSafeguard(): void {
+    if (!this.checks.safeguard) return
     const now = this.adapter.now()
     if (this.waitUntil === null || now < this.waitUntil) return
 

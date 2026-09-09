@@ -33,6 +33,10 @@ export interface WatchdogConfig {
   maxRetries: number
   marginSeconds: number
   fallbackWaitHours: number
+  /** #605: the usage/rate-limit resume check. The overload and safeguard blocks
+   *  have carried their own `enabled` since #419; the rate-limit path had none,
+   *  so it could not be turned off independently of the whole watchdog. */
+  rateLimitEnabled: boolean
   retryMessage: string
   overload: OverloadConfig
   safeguard: SafeguardConfig
@@ -64,6 +68,7 @@ export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   maxRetries: 5,
   marginSeconds: 60,
   fallbackWaitHours: 5,
+  rateLimitEnabled: true,
   retryMessage: 'continue',
   overload: DEFAULT_OVERLOAD,
   safeguard: DEFAULT_SAFEGUARD,
@@ -169,6 +174,7 @@ export function resolveWatchdogConfig(partial?: unknown): WatchdogConfig {
     maxRetries: boundedNumber(p.maxRetries, DEFAULT_WATCHDOG_CONFIG.maxRetries, 1, 100),
     marginSeconds: boundedNumber(p.marginSeconds, DEFAULT_WATCHDOG_CONFIG.marginSeconds, 0, 3600),
     fallbackWaitHours: boundedNumber(p.fallbackWaitHours, DEFAULT_WATCHDOG_CONFIG.fallbackWaitHours, 1, 24),
+    rateLimitEnabled: boolean(p.rateLimitEnabled, DEFAULT_WATCHDOG_CONFIG.rateLimitEnabled),
     retryMessage,
     overload: resolveOverload(p.overload, retryMessage),
     safeguard: resolveSafeguard(p.safeguard, retryMessage),

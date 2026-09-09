@@ -14,7 +14,7 @@
 import type { BrowserWindow } from 'electron'
 import { Terminal } from '@xterm/headless'
 import { SessionWatchdog } from './session-watchdog'
-import type { WatchdogAdapter, WatchdogPublicState } from './session-watchdog'
+import type { WatchdogAdapter, WatchdogChecks, WatchdogPublicState } from './session-watchdog'
 import { hasActiveMonitors } from './patterns'
 import { getGateway } from '../hooks/index'
 import { readConfig } from '../config-manager'
@@ -211,6 +211,8 @@ export interface WatchdogSettings {
    *  threadedWatchdogConfig) and stay compiled-in. */
   marginSeconds?: number
   fallbackWaitHours?: number
+  /** #605: the usage/rate-limit resume check, alongside overload/safeguard. */
+  rateLimitEnabled?: boolean
   overload?: unknown
   safeguard?: unknown
 }
@@ -236,6 +238,7 @@ function threadedWatchdogConfig(settings: WatchdogSettings): Record<string, unkn
     maxRetries: settings.maxRetries,
     marginSeconds: settings.marginSeconds,
     fallbackWaitHours: settings.fallbackWaitHours,
+    rateLimitEnabled: settings.rateLimitEnabled,
     ...(settings.overload !== undefined ? { overload: dropPatterns(settings.overload) } : {}),
     ...(settings.safeguard !== undefined ? { safeguard: dropPatterns(settings.safeguard) } : {}),
   }
@@ -611,6 +614,9 @@ export class WatchdogManager {
     return {
       sessionId,
       status: 'monitoring',
+      // A stopped watcher has no live checks; the renderer keys the pill off
+      // the entry's absence, so these are inert placeholders (#605).
+      checks: { rateLimit: false, overload: false, safeguard: false },
       attempts: 0,
       overloadAttempts: 0,
       safeguardAttempts: 0,
@@ -702,6 +708,23 @@ export class WatchdogManager {
 
   isActive(sessionId: string): boolean {
     return this.entries.has(sessionId)
+  }
+
+  /**
+   * #605: switch individual auto-retry checks on/off for ONE running session,
+   * in real time. Runtime only -- nothing is persisted, so relaunching the
+   * session returns it to whatever the global settings say. A session with no
+   * armed watcher is a no-op (the master switch is off, or the session type
+   * never arms one), reported so the caller can tell "ignored" from "applied".
+   */
+  setSessionChecks(sessionId: string, checks: Partial<WatchdogChecks>): boolean {
+    const entry = this.entries.get(sessionId)
+    if (!entry) return false
+    entry.wd.setChecks(checks)
+    // setChecks emits only when something actually changed; push the current
+    // state regardless so a redundant toggle still resyncs a stale renderer.
+    this.pushState(entry.wd.getState())
+    return true
   }
 
   /** Does this entry's rendered pane advertise active monitors in its mode

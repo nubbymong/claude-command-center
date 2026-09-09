@@ -35,9 +35,17 @@ import type {
 /** Mirrors src/main/watchdog/session-watchdog.ts's WatchdogPublicState — kept
  *  as a structural copy (not imported) so preload never pulls in main-only
  *  code, matching this file's existing convention for other main-side types. */
+export interface WatchdogChecks {
+  rateLimit: boolean
+  overload: boolean
+  safeguard: boolean
+}
+
 export interface WatchdogPublicState {
   sessionId: string
   status: 'monitoring' | 'waiting' | 'overload' | 'safeguard'
+  /** #605: which auto-retry checks are live for this session right now. */
+  checks: WatchdogChecks
   attempts: number
   overloadAttempts: number
   safeguardAttempts: number
@@ -210,6 +218,9 @@ export interface ElectronAPI {
   watchdog: {
     getStates: () => Promise<WatchdogPublicState[]>
     onUpdate: (callback: (state: WatchdogPublicState) => void) => () => void
+    /** #605: runtime-only per-session check toggle. Resolves false when the
+     *  session has no armed watcher. */
+    setChecks: (sessionId: string, checks: Partial<WatchdogChecks>) => Promise<boolean>
   }
   registry: {
     get: () => Promise<ModelRegistry>
@@ -924,6 +935,7 @@ const electronAPI: ElectronAPI = {
   },
   watchdog: {
     getStates: () => ipcRenderer.invoke(IPC.WATCHDOG_GET_STATES),
+    setChecks: (sessionId, checks) => ipcRenderer.invoke(IPC.WATCHDOG_SET_CHECKS, sessionId, checks),
     onUpdate: (callback) => {
       const handler = (_: unknown, data: unknown) => callback(data as WatchdogPublicState)
       ipcRenderer.on(IPC.WATCHDOG_STATE, handler)
