@@ -393,6 +393,8 @@ export class SessionWatchdog {
       // #605: the condition is gone, so a suspended incident is genuinely over.
       if (!limited) this.suspendedChecks.rateLimit = false
       if (limited && !isWorking(tail)) {
+        // Gated on checks.rateLimit above; a decline here leaves us in
+        // 'monitoring', which is already the status.
         this.enterWaiting(tail)
         return
       }
@@ -418,19 +420,30 @@ export class SessionWatchdog {
     }
   }
 
-  private enterWaiting(tail: string): void {
+  /**
+   * Opens a usage-limit wait. Returns TRUE when the session is now in
+   * 'waiting', FALSE when this call DECLINED and made no transition at all.
+   *
+   * #605 (ADR-009 round 2, MAJOR): the false return matters because the four
+   * escalation callers (feedOverload, tickOverload, feedSafeguard,
+   * tickSafeguard) each zero their OWN incident's budget immediately before
+   * calling this. A decline that silently made no transition therefore left the
+   * session pinned in 'overload'/'safeguard' with a zeroed budget and a
+   * waitUntil already in the past -- so once the interfering usage-limit banner
+   * scrolled out of the tail, the next tick resumed sending with a FULL,
+   * refunded budget. A false return hands the transition back to the caller,
+   * which settles the machine in 'monitoring' instead.
+   */
+  private enterWaiting(tail: string): boolean {
     // #605: reached from feedMonitoring (already gated) AND from the
     // tickOverload/tickSafeguard escalations, which are not. With the
     // rate-limit check off, a usage limit is simply not this watchdog's
-    // business: fall back to monitoring rather than opening a wait.
-    if (!this.checks.rateLimit) {
-      this.toMonitoring('usage limit seen with the rate-limit check off')
-      return
-    }
+    // business: decline, and let the caller settle the machine.
+    if (!this.checks.rateLimit) return false
     // #605: suspended -- this exact condition was abandoned when the check was
     // switched off, and has not cleared since. Re-opening here would hand back
     // a full retry budget for a screen the watchdog already finished with.
-    if (this.suspendedChecks.rateLimit) return
+    if (this.suspendedChecks.rateLimit) return false
     const message = findRateLimitMessage(tail)
     const parsed = message ? parseResetTime(message) : null
     const waitMs = calculateWaitMs(parsed, {
@@ -445,6 +458,7 @@ export class SessionWatchdog {
     this.waitingGaveUpLogged = false
     this.adapter.log('info', `Rate limit detected${message ? `: "${message}"` : ''}. Waiting ${Math.round(waitMs / 1000)}s.`)
     this.emit('rate limit detected; waiting for reset')
+    return true
   }
 
   private enterOverload(): void {
@@ -583,7 +597,7 @@ export class SessionWatchdog {
   private feedOverload(tail: string): void {
     if (isRateLimited(tail, [], USAGE_TAIL_LINES)) {
       this.resetOverload()
-      this.enterWaiting(tail)
+      if (!this.enterWaiting(tail)) this.toMonitoring('overload cleared; the usage limit is not this watchdog\'s business')
       return
     }
     if (isWorking(tail) && !isInternalRetry(tail)) {
@@ -617,7 +631,7 @@ export class SessionWatchdog {
 
     if (isRateLimited(tail, [], USAGE_TAIL_LINES)) {
       this.resetOverload()
-      this.enterWaiting(tail)
+      if (!this.enterWaiting(tail)) this.toMonitoring('overload cleared; the usage limit is not this watchdog\'s business')
       return
     }
     if (isWorking(tail) && !isInternalRetry(tail)) {
@@ -681,7 +695,7 @@ export class SessionWatchdog {
   private feedSafeguard(tail: string): void {
     if (isRateLimited(tail, [], USAGE_TAIL_LINES)) {
       this.resetSafeguard()
-      this.enterWaiting(tail)
+      if (!this.enterWaiting(tail)) this.toMonitoring('safeguard cleared; the usage limit is not this watchdog\'s business')
       return
     }
     if (isWorking(tail)) return // in flight; recovery is decided at the next idle read
@@ -699,7 +713,7 @@ export class SessionWatchdog {
     const tail = this.adapter.getTail()
     if (isRateLimited(tail, [], USAGE_TAIL_LINES)) {
       this.resetSafeguard()
-      this.enterWaiting(tail)
+      if (!this.enterWaiting(tail)) this.toMonitoring('safeguard cleared; the usage limit is not this watchdog\'s business')
       return
     }
     if (isWorking(tail)) {

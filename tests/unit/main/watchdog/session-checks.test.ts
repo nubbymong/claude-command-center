@@ -238,6 +238,63 @@ describe('#605 the rate-limit check also guards the escalation path', () => {
     expect(wd.getState().status, 'escalation must not reach a muted check').toBe('monitoring')
     expect(t.sent).toEqual([])
   })
+
+  // ADR-009 round 2 (MAJOR 2): enterWaiting can DECLINE, and every escalation
+  // caller has already zeroed its own incident by the time it calls. A decline
+  // that made no transition left the session pinned in overload/safeguard with a
+  // zeroed budget and a waitUntil already in the past, so the next tick resumed
+  // sending on a full refunded allowance. Each caller settles the machine itself.
+  it('feedOverload: a declined escalation settles in monitoring, not pinned in overload', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { rateLimitEnabled: false })
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: 529')
+    wd.feed()
+    expect(wd.getState().status).toBe('overload')
+    isRateLimited.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm / API Error: 529')
+    wd.feed()
+    expect(wd.getState().status, 'a declined enterWaiting must not leave the session in overload').toBe('monitoring')
+    expect(wd.getState().waitUntil, 'a pinned incident keeps a stale waitUntil').toBeNull()
+    t.advance(10_000_000)
+    wd.tick()
+    expect(t.sent).toEqual([])
+  })
+
+  it('feedSafeguard: a declined escalation settles in monitoring, not pinned in safeguard', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { rateLimitEnabled: false })
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.feed()
+    expect(wd.getState().status).toBe('safeguard')
+    isRateLimited.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm / safeguards flagged this message')
+    wd.feed()
+    expect(wd.getState().status, 'a declined enterWaiting must not leave the session in safeguard').toBe('monitoring')
+    expect(wd.getState().waitUntil).toBeNull()
+    t.advance(10_000_000)
+    wd.tick()
+    expect(t.sent).toEqual([])
+  })
+
+  it('tickSafeguard: a declined escalation settles in monitoring, not pinned in safeguard', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { rateLimitEnabled: false })
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.feed()
+    expect(wd.getState().status).toBe('safeguard')
+    isRateLimited.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm / safeguards flagged this message')
+    t.advance(10_000_000)
+    wd.tick()
+    expect(wd.getState().status, 'a declined enterWaiting must not leave the session in safeguard').toBe('monitoring')
+    expect(wd.getState().waitUntil).toBeNull()
+    t.advance(10_000_000)
+    wd.tick()
+    expect(t.sent).toEqual([])
+  })
 })
 
 // The runtime cases: the check is switched off AFTER construction, so the
