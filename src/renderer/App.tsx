@@ -1646,8 +1646,14 @@ export default function App() {
         )}
         {/* Pre-spawn account launch gate: asks which account a session runs
             under on its first spawn (multi-account only). App-root so it
-            overlays every view. */}
-        <AccountLaunchGate />
+            overlays every view -- but NOT on top of a boot gate. Like
+            SentinelPanel it owns no turn in the sequence, so it is suppressed
+            while any gate is up; unlike SentinelPanel it holds spawns awaiting
+            a promise, and those simply keep waiting (no timeout on that path),
+            so the queue surfaces intact once the chain clears. Without this a
+            restore painted its per-session account pickers over the Multi Spawn
+            startup page, which by design comes AFTER resume. */}
+        <AccountLaunchGate suppressed={bootGate !== null} />
         {/* Sentinel findings panel: global overlay, driven by sentinelStore.
             Suppressed while ANY boot gate is up — it is not a gate itself (it
             owns no turn in the sequence and can arrive at any time), but it

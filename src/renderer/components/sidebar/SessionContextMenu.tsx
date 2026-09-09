@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react'
+import React, { useLayoutEffect, useRef, useState } from 'react'
 import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
+import { placeMenu, type MenuPlacement } from '../../utils/menuPlacement'
 import { isAccountActive, type AccountProfile } from '../../../shared/account-types'
 import { resolveAccountName, middleTruncateEmail } from '../../../shared/account-chip-color'
 import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, WATCHDOG_CHECK_ITEMS, WATCHDOG_RUNTIME_HINT } from './sessionsPanelState'
@@ -64,11 +65,56 @@ export default function SessionContextMenu({
 
   const showSwitch = !!canSwitchAccount && !!profiles && profiles.length > 1 && !!onSwitchAccount
 
+  // Keep the menu inside the window. This one is the tallest in the app and
+  // still grows -- the #605 Watchdog block, and Switch Account expanding to one
+  // row per account -- so opened low in the sidebar its bottom items used to
+  // land off-screen with no way to reach them.
+  //
+  // useLayoutEffect, so the measure-and-reposition happens before paint rather
+  // than as a visible jump. Height is read from scrollHeight (full content, not
+  // the capped box) so a second pass cannot progressively shrink the menu, and
+  // the update is skipped when nothing moved, which is what stops the measure
+  // -> setState -> measure loop.
+  const [placement, setPlacement] = useState<MenuPlacement | null>(null)
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = menuRef.current
+      if (!el) return
+      const next = placeMenu({
+        x,
+        y,
+        width: el.offsetWidth,
+        height: el.scrollHeight,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      })
+      setPlacement((prev) =>
+        prev && prev.left === next.left && prev.top === next.top && prev.maxHeight === next.maxHeight
+          ? prev
+          : next,
+      )
+    }
+    measure()
+    // A resize (or a maximise) while the menu is open moves the edges under it.
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+    // accountOpen is a dep because expanding the account list changes the height.
+  }, [x, y, accountOpen])
+
   return (
     <div
       ref={menuRef}
       className="fixed z-50 rounded-lg shadow-xl py-1 min-w-[180px]"
-      style={{ left: x, top: y, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      style={{
+        left: placement?.left ?? x,
+        top: placement?.top ?? y,
+        // Only once measured: an unset cap on the first pass is what lets
+        // scrollHeight report the menu's natural height.
+        maxHeight: placement?.maxHeight,
+        overflowY: 'auto',
+        background: 'var(--surface-raised)',
+        border: '1px solid var(--border-subtle)',
+      }}
     >
       <button
         onClick={onRename}

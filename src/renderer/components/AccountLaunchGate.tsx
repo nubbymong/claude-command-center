@@ -23,7 +23,20 @@ import {
   DIALOG_INPUT_STYLE,
 } from './ui/Dialog'
 
-export default function AccountLaunchGate() {
+/**
+ * `suppressed` — a boot gate owns the screen right now, so this modal must not
+ * paint on top of it. The QUEUE IS UNTOUCHED while suppressed: the awaiting
+ * spawn keeps waiting on its promise (there is no timeout anywhere in this
+ * path), so the picker surfaces unanswered the moment the gate chain clears.
+ *
+ * This overlay was the third boot-time surface still outside pickBootGate, and
+ * it failed the same way the other two did: a restore spawns its sessions as
+ * soon as the resume prompt is answered, while the Multi Spawn startup page
+ * (deliberately LAST in the chain, since its counts come from what resumed) is
+ * still on screen -- so the per-session account picker painted over a page the
+ * user had not finished with. See utils/bootGates.ts.
+ */
+export default function AccountLaunchGate({ suppressed = false }: { suppressed?: boolean }) {
   const pending = useAccountGateStore((s) => s.queue[0] ?? null)
   const resolveChoice = useAccountGateStore((s) => s.resolveChoice)
   const cancelChoice = useAccountGateStore((s) => s.cancelChoice)
@@ -64,7 +77,8 @@ export default function AccountLaunchGate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending?.sessionId])
 
-  if (!pending) return null
+  // After every hook, so suppression never changes the hook order.
+  if (!pending || suppressed) return null
 
   const launch = () => resolveChoice(selected || undefined)
 
