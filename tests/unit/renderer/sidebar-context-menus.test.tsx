@@ -12,7 +12,7 @@ import { act } from 'react'
 
 const { default: ConfigContextMenu } = await import('../../../src/renderer/components/sidebar/ConfigContextMenu')
 const { default: SessionContextMenu } = await import('../../../src/renderer/components/sidebar/SessionContextMenu')
-const { PIN_WHILE_RUNNING_HINT } = await import('../../../src/renderer/components/sidebar/sessionsPanelState')
+const { PIN_WHILE_RUNNING_HINT, WATCHDOG_RUNTIME_HINT } = await import('../../../src/renderer/components/sidebar/sessionsPanelState')
 
 describe('sidebar context menus — Quick Start + running lock', () => {
   let container: HTMLDivElement; let root: Root
@@ -84,5 +84,32 @@ describe('sidebar context menus — Quick Start + running lock', () => {
   it('session menu: hidden entirely for a config-less session', () => {
     renderSessionMenu({ onPinConfig: undefined })
     expect(container.querySelector('[data-testid="session-ctx-pin"]')).toBeNull()
+  })
+
+  // #605: the watchdog block is offered only where a watcher is actually armed,
+  // and each check is an independent live switch.
+  const allOn = { rateLimit: true, overload: true, safeguard: true }
+
+  it('session menu: no watchdog block when no watcher is armed for the session', () => {
+    renderSessionMenu({ watchdogChecks: undefined, onToggleWatchdogCheck: () => {} })
+    expect(container.querySelector('[data-testid="session-ctx-watchdog"]')).toBeNull()
+  })
+
+  it('session menu: the three checks render with their live state and the runtime hint', () => {
+    renderSessionMenu({ watchdogChecks: { ...allOn, overload: false }, onToggleWatchdogCheck: () => {} })
+    expect(container.querySelector('[data-testid="session-ctx-watchdog"]')).toBeTruthy()
+    const at = (k: string) => container.querySelector(`[data-testid="session-ctx-watchdog-${k}"]`) as HTMLButtonElement
+    expect(at('rateLimit').getAttribute('aria-checked')).toBe('true')
+    expect(at('overload').getAttribute('aria-checked')).toBe('false')
+    expect(at('safeguard').getAttribute('aria-checked')).toBe('true')
+    expect(container.textContent).toContain(WATCHDOG_RUNTIME_HINT)
+  })
+
+  it('session menu: clicking a check reports that one key, leaving the others alone', () => {
+    const onToggleWatchdogCheck = vi.fn()
+    renderSessionMenu({ watchdogChecks: allOn, onToggleWatchdogCheck })
+    act(() => { (container.querySelector('[data-testid="session-ctx-watchdog-safeguard"]') as HTMLButtonElement).click() })
+    expect(onToggleWatchdogCheck).toHaveBeenCalledTimes(1)
+    expect(onToggleWatchdogCheck).toHaveBeenCalledWith('safeguard')
   })
 })
