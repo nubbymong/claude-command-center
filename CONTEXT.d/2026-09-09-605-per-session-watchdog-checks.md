@@ -32,11 +32,26 @@ detection ENTRY, so a session already in that status kept sending.
   than discarded (`parkedBudget`), so turning the check back on while the same
   condition is still on screen resumes THAT incident with its budget already
   used up -- an off/on pair buys no extra retries, and because every give-up is
-  derived from the counters, a given-up incident comes back given up. A park is
-  discarded the moment `feedMonitoring` sees the condition genuinely gone, and
-  that discard runs even while the check is off, so a park can never outlive the
-  incident that created it. Turning a check ON never fabricates an incident --
-  only a later `feed()` re-detects.
+  derived from the counters, a given-up incident comes back given up (and reads
+  as given up at once, not only after the next tick).
+- A park lives exactly as long as the incident that created it.
+  `discardStaleParks` runs at the top of every monitoring feed, before any branch
+  that can `return`, and regardless of whether its own check is currently on.
+  Both properties are load-bearing: a discard folded into the branch it belongs
+  to is skipped whenever an earlier branch returns first, and a discard gated on
+  the check being on never fires for the case the park exists to serve. Each rule
+  mirrors what the LIVE state treats as "this incident is over", so a parked
+  incident and a live one end on the same evidence -- in particular an
+  event-opened overload park ends on the tail ADVANCING past the event snapshot
+  (it may never have had a banner), and a safeguard park is not ended by an
+  absent flag while a retry is in flight (the flag has merely scrolled out of the
+  12-line window).
+- `handleHookEvent` is the FOURTH way into `overload` and consumes the park like
+  `enterOverload` does; without that, an off/on pair followed by the next
+  StopFailure opened the incident from a zeroed cumulative wait and refunded the
+  `maxTotalWaitMinutes` cap. Its self-recovery branch discards the park instead.
+- Turning a check ON never fabricates an incident -- only a later `feed()` (or
+  hook event) re-detects.
 - `enterWaiting` is guarded as well as `feedMonitoring`, because `tickOverload`
   and `tickSafeguard` escalate INTO it when a usage limit appears mid-incident.
   It returns a boolean: FALSE means it declined and made no transition, and the
@@ -49,7 +64,9 @@ detection ENTRY, so a session already in that status kept sending.
   banner and an overload banner runs the rate-limit branch, which returns early
   and never reaches the overload or safeguard branch at all.
 - The three `tick*` send guards are defence in depth only: `setChecks` always
-  transitions out of the matching status first, so they are unreachable today.
+  transitions out of the matching status first, so a status can never be live
+  with its own check off. `tickWaiting`'s is the one carried in the mutation
+  matrix (M5) and it survives for exactly that reason.
 - `WatchdogPublicState` carries `checks`, so the renderer shows the LIVE state of
   the running session rather than re-deriving it from a config that may have been
   edited since launch.
@@ -77,9 +94,10 @@ detection ENTRY, so a session already in that status kept sending.
 
 ### Verification
 
-Mutation matrix (scratchpad `mutate-605.py`, 24 mutants):
-23 killed, 1 unreachable-by-construction survivor -- M5, the `tickWaiting` send guard, which `setChecks` makes
-unreachable by always transitioning out of `waiting` first. New tests:
+Mutation matrix (scratchpad `mutate-605.py`, 30 mutants): 29 killed, 1
+unreachable-by-construction survivor -- M5, the `tickWaiting` send guard, which
+`setChecks` makes unreachable by always transitioning out of `waiting` first.
+New tests:
 `tests/unit/main/watchdog/session-checks.test.ts` (the runtime cases are the ones
 that pin the live `checks` triple rather than the config; the round-2 cases pin
 the parked-budget resume in both directions),
@@ -94,6 +112,29 @@ cleared the suspension when the check came back on, so a live incident stayed
 permanently disarmed while the pill still reported the check as on. Round 2
 suspends the BUDGET instead, which keeps the anti-resubmission property while
 honouring the toggle in both directions.
+
+Round 3 attacked that. Both reviewers converged on the same class: the park was
+created correctly but did not END correctly. `handleHookEvent` opened the
+incident without consuming it (refunding the `maxTotalWaitMinutes` cap); an
+event-opened park was thrown away by the next feed because it had no banner to
+scrape; and a safeguard park was thrown away by a feed taken while its own retry
+was in flight, which handed a safeguards-FLAGGED message a fresh budget -- round
+1's hazard, through the discard site. All three are closed above, and the
+discards were consolidated into one pass so no park can be skipped by an earlier
+branch's `return`.
+
+Two findings were assessed and deliberately NOT changed. (a) With the rate-limit
+check off and a tail carrying both a usage-limit and an overload banner, the
+overload incident churns `overload -> monitoring -> overload` on every feed, so
+its cumulative wait never reaches the cap. It is log and IPC noise, not a send
+breach: `tickOverload` tests `isRateLimited` before every send, so nothing is
+typed while the limit is up, and the refund lands only after an hours-long limit
+episode ends. Gating the escalation on `checks.rateLimit` instead would fix the
+noise by typing overload retries INTO a rate-limited pane, which is worse. (b)
+The escalation path (`feedOverload`/`feedSafeguard` meeting a usage limit)
+discards the outgoing incident's spend without parking it. That is pre-#605
+behaviour, is bounded by a real rate-limit episode, and parking there would
+change behaviour no reviewer asked to change.
 
 Adds an IPC channel, so this sits in the ADR-009 security-sensitive path table
 and needs an adversarial pass before merge.

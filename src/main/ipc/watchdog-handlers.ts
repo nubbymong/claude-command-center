@@ -34,8 +34,9 @@ export function registerWatchdogHandlers(): void {
   // entry (an unknown id is a no-op) and the payload carries booleans only, so
   // this cannot reach another session or smuggle a message in. It is NOT a
   // pure "types less" lever, though: switching a check back ON re-arms that
-  // check. SessionWatchdog.suspendedChecks is what stops that re-arming from
-  // refunding a spent retry budget or resurrecting a give-up (ADR-009 round 1).
+  // check. SessionWatchdog.parkedBudget is what stops that re-arming from
+  // refunding a spent retry budget or resurrecting a give-up: the incident
+  // resumes with the budget it had already used (ADR-009 rounds 1 and 2).
   ipcMain.handle(IPC.WATCHDOG_SET_CHECKS, (_evt, sessionId: unknown, checks: unknown): boolean => {
     if (typeof sessionId !== 'string' || sessionId.length === 0) return false
     const clean = sanitizeChecks(checks)

@@ -264,6 +264,158 @@ describe('#605 switching a check off mid-incident', () => {
 // OFF -- purely so the discard can notice the condition leaving the screen. The
 // inner check gate is what stops that from also re-arming the incident, and it
 // is reachable ONLY in this state.
+describe('#605 a park ends on the same evidence the live incident does', () => {
+  it('safeguard: a park survives a retry in flight, when the flag is out of the tail window', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.feed()
+    t.advance(60_000); wd.tick()
+    t.advance(60_000); wd.tick()
+    expect(t.sent.length, 'two of the three safeguard retries are spent').toBe(2)
+    // The user toggles the check off just after watching a retry fire. That
+    // retry is in flight, so the flag has scrolled out of the tail window --
+    // exactly the state feedSafeguard/tickSafeguard refuse to read as recovery.
+    wd.setChecks({ safeguard: false })
+    isWorking.mockReturnValue(true)
+    detectSafeguard.mockReturnValue(false)
+    t.setTail('... working ...')
+    wd.feed()
+    // The same message is flagged again and the user turns the check back on.
+    isWorking.mockReturnValue(false)
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.setChecks({ safeguard: true })
+    wd.feed()
+    for (let i = 0; i < 10; i++) { t.advance(60_000); wd.tick() }
+    expect(t.sent.length, 'a flagged message must not get a fresh budget via a mid-retry toggle').toBe(3)
+  })
+
+  it('overload: a hook-opened park is not discarded merely because no banner is on screen', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { overload: { maxTotalWaitMinutes: 1, jitterPct: 0 } as never })
+    t.setTail('no banner here')
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    expect(wd.getState().status).toBe('overload')
+    wd.setChecks({ overload: false })
+    // detectOverload stays false: an event-opened incident may never have had a
+    // banner at all, so absent banner text is NOT a clearing signal for it.
+    wd.feed()
+    wd.setChecks({ overload: true })
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    expect(wd.getState().gaveUp, 'an event-opened park must not evaporate on an unchanged tail').toBe(true)
+  })
+
+  it('overload: a hook-opened park IS discarded once the tail advances past the event snapshot', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { overload: { maxTotalWaitMinutes: 1, jitterPct: 0 } as never })
+    t.setTail('no banner here')
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    wd.setChecks({ overload: false })
+    // The session moved on: a silent recovery, which is how feedOverload ends an
+    // event-opened incident.
+    t.setTail('the session carried on')
+    wd.feed()
+    wd.setChecks({ overload: true })
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    expect(wd.getState().gaveUp, 'a genuinely finished incident starts the next one fresh').toBe(false)
+  })
+
+  it('overload: a self-recovered hook event ends the parked incident too', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { overload: { maxTotalWaitMinutes: 1, jitterPct: 0 } as never })
+    t.setTail('no banner here')
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    wd.setChecks({ overload: false })
+    wd.setChecks({ overload: true })
+    // The session self-recovered before the next event landed. That ends the
+    // incident, and its park with it -- without waiting for a monitoring feed.
+    isWorking.mockReturnValue(true)
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    expect(wd.getState().status).toBe('monitoring')
+    isWorking.mockReturnValue(false)
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    expect(wd.getState().gaveUp, 'a finished incident must not carry its spend into the next one').toBe(false)
+  })
+
+  it('a park skipped by an earlier branch is still discarded on the same feed', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.feed()
+    for (let i = 0; i < 10; i++) { t.advance(60_000); wd.tick() }
+    expect(wd.getState().gaveUp, 'the safeguard budget is spent').toBe(true)
+    const spent = t.sent.length
+    wd.setChecks({ safeguard: false })
+    // The flag clears on a render that ALSO opens a rate-limit wait, so the
+    // rate-limit branch returns before the safeguard branch is reached.
+    detectSafeguard.mockReturnValue(false)
+    isRateLimited.mockReturnValue(true)
+    t.setTail('limit reached, resets 3pm')
+    wd.feed()
+    expect(wd.getState().status).toBe('waiting')
+    // The limit clears; a NEW message is flagged. That is a fresh incident and
+    // must get a full budget -- the stale park must not have survived.
+    isRateLimited.mockReturnValue(false)
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.setChecks({ safeguard: true })
+    wd.feed() // feedWaiting: the limit banner is gone, so drop back to monitoring
+    expect(wd.getState().status).toBe('monitoring')
+    wd.feed()
+    for (let i = 0; i < 10; i++) { t.advance(60_000); wd.tick() }
+    expect(t.sent.length - spent, 'a genuinely new incident gets the full budget').toBe(3)
+  })
+})
+
+describe('#605 every entry into an incident consumes its park', () => {
+  it('handleHookEvent resumes a parked overload incident instead of refunding the cap', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { overload: { maxTotalWaitMinutes: 1, jitterPct: 0 } as never })
+    // cap = 60s, ladder starts at 30s: three events reach it, two do not.
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    expect(wd.getState().status).toBe('overload')
+    wd.setChecks({ overload: false })
+    wd.setChecks({ overload: true })
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    wd.handleHookEvent({ event: 'error', error: 'overloaded' })
+    expect(wd.getState().gaveUp, 'the maxTotalWaitMinutes cap must not be refundable by a toggle').toBe(true)
+  })
+
+  it('a resumed overload incident still hits its cumulative-wait cap', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { overload: { maxTotalWaitMinutes: 1, jitterPct: 0 } as never })
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: 529')
+    wd.feed()
+    t.advance(10_000_000); wd.tick()
+    expect(t.sent.length, 'entry spends 30s, one retry spends another 60s').toBe(1)
+    wd.setChecks({ overload: false })
+    wd.setChecks({ overload: true })
+    wd.feed()
+    expect(wd.getState().gaveUp, 'a resumed incident past its cap reads as given up at once').toBe(true)
+    t.advance(10_000_000); wd.tick()
+    expect(t.sent.length, 'a capped resume must not buy another retry').toBe(1)
+  })
+
+  it('a resumed rate-limit incident past its budget reads as given up before the next tick', () => {
+    const { t, wd } = intoWaiting()
+    for (let i = 0; i < 10; i++) { t.advance(60_001); wd.tick() }
+    expect(wd.getState().gaveUp).toBe(true)
+    wd.setChecks({ rateLimit: false })
+    wd.setChecks({ rateLimit: true })
+    t.setTail('limit reached, resets 3pm')
+    wd.feed()
+    expect(wd.getState().status).toBe('waiting')
+    expect(wd.getState().gaveUp, 'the pill must not advertise a retry that cannot fire').toBe(true)
+  })
+})
+
 describe('#605 a park does not re-arm a check that is still off', () => {
   it('rate limit: a parked wait is not re-opened while the check is off', () => {
     const { t, wd } = intoWaiting()

@@ -179,10 +179,17 @@ export class SessionWatchdog {
    * incident that created it and a later banner is a fresh incident with a full
    * budget. Mirrors the existing refusal to resurrect a latched give-up
    * (handleHookEvent).
+   *
+   * The overload park also records how its incident was OPENED, because the two
+   * kinds have different "it is over" rules: a scraped incident ends when the
+   * banner leaves the tail, but an event-opened one may never have had a banner
+   * at all and ends when the tail ADVANCES past the snapshot taken at the event
+   * (see feedOverload). Keying its discard on absent banner text would throw
+   * every hook-driven park away on the next feed.
    */
   private parkedBudget: {
     rateLimit: { attempts: number } | null
-    overload: { attempts: number; totalWaitMs: number } | null
+    overload: { attempts: number; totalWaitMs: number; viaEvent: boolean; eventTailSnapshot: string | null } | null
     safeguard: { attempts: number } | null
   } = { rateLimit: null, overload: null, safeguard: null }
   private readonly rand: () => number
@@ -248,7 +255,12 @@ export class SessionWatchdog {
       return
     }
     if (this.status === 'overload' && !next.overload) {
-      this.parkedBudget.overload = { attempts: this.overloadAttempts, totalWaitMs: this.overloadTotalWaitMs }
+      this.parkedBudget.overload = {
+        attempts: this.overloadAttempts,
+        totalWaitMs: this.overloadTotalWaitMs,
+        viaEvent: this.viaEvent,
+        eventTailSnapshot: this.eventTailSnapshot,
+      }
       this.resetOverload()
       this.toMonitoring('overload check turned off')
       return
@@ -353,11 +365,26 @@ export class SessionWatchdog {
 
     if (isWorking(tail) && !isInternalRetry(tail)) {
       // Self-recovered between the failing turn and this event landing.
+      this.parkedBudget.overload = null // #605: the incident is over, so is its park
       this.resetOverload()
       if (this.status === 'overload') this.toMonitoring('overload cleared (self-recovered before hook event processed)')
       return
     }
 
+    // #605: this is the FOURTH way into 'overload', and it must consume a parked
+    // budget exactly as enterOverload does. Without it, an off/on toggle
+    // followed by the next StopFailure event opens the incident from a zeroed
+    // cumulative wait -- refunding the maxTotalWaitMinutes cap the park exists
+    // to preserve, and un-giving-up an incident that had already given up.
+    const parked = this.parkedBudget.overload
+    this.parkedBudget.overload = null
+    if (parked) {
+      this.overloadAttempts = parked.attempts
+      this.overloadTotalWaitMs = parked.totalWaitMs
+    }
+
+    // A gap this long means the retry turn in between succeeded: a NEW incident,
+    // so the resumed spend above is correctly discarded with the live counters.
     if (this.lastEventRetryAt !== null && this.adapter.now() - this.lastEventRetryAt > OVERLOAD_INCIDENT_GAP_MS) {
       this.resetOverload()
     }
@@ -406,27 +433,21 @@ export class SessionWatchdog {
   // ---- monitoring ----
 
   private feedMonitoring(tail: string): void {
+    this.discardStaleParks(tail)
+
     // Usage-limit (hours-scale reset) takes precedence over overload/safeguard.
-    // Each block also runs while its check is OFF if that check has a parked
-    // budget, purely to notice the condition leaving the screen and discard it
-    // (#605) -- a park must never outlive the incident that created it.
-    if (this.checks.rateLimit || this.parkedBudget.rateLimit) {
-      const limited = isRateLimited(tail, [], USAGE_TAIL_LINES)
-      if (!limited) this.parkedBudget.rateLimit = null
-      if (this.checks.rateLimit && limited && !isWorking(tail)) {
+    if (this.checks.rateLimit) {
+      if (isRateLimited(tail, [], USAGE_TAIL_LINES) && !isWorking(tail)) {
         // Gated on checks.rateLimit here, so enterWaiting cannot decline.
         this.enterWaiting(tail)
         return
       }
     }
 
-    if (this.checks.overload || this.parkedBudget.overload) {
+    if (this.checks.overload) {
       const present = detectOverload(tail, this.config.overload.patterns)
-      if (!present) {
-        this.lastHandledOverloadTail = null // banner gone -> a future match is a fresh incident
-        this.parkedBudget.overload = null
-      }
-      if (this.checks.overload && present && !isInternalRetry(tail)) {
+      if (!present) this.lastHandledOverloadTail = null // banner gone -> a future match is a fresh incident
+      if (present && !isInternalRetry(tail)) {
         // #605: a PARKED incident resumes even on the exact render its last
         // retry handled -- the toggle is the user asking for it, and it is the
         // restored spend (not the render memo) that bounds the retries.
@@ -436,10 +457,48 @@ export class SessionWatchdog {
       }
     }
 
-    if (this.checks.safeguard || this.parkedBudget.safeguard) {
-      const flagged = detectSafeguard(tail, this.config.safeguard.patterns)
-      if (!flagged) this.parkedBudget.safeguard = null
-      if (this.checks.safeguard && flagged) this.enterSafeguard()
+    if (this.checks.safeguard && detectSafeguard(tail, this.config.safeguard.patterns)) {
+      this.enterSafeguard()
+    }
+  }
+
+  /**
+   * #605: a park lives exactly as long as the incident that created it.
+   *
+   * Runs on EVERY monitoring feed, before any branch that can return, and
+   * regardless of whether its own check is currently on. Both properties are
+   * load-bearing: a discard folded into the branch it belongs to is skipped
+   * whenever an earlier branch returns first (so a stale park could be applied
+   * to a later, unrelated incident), and a discard gated on the check being on
+   * never fires at all for the case the park exists to serve -- the user
+   * switched that check OFF.
+   *
+   * Each rule mirrors what the corresponding LIVE state already treats as "this
+   * incident is over", so a parked incident and a live one end on exactly the
+   * same evidence.
+   */
+  private discardStaleParks(tail: string): void {
+    // feedWaiting: the banner leaving the tail ends the wait.
+    if (this.parkedBudget.rateLimit && !isRateLimited(tail, [], USAGE_TAIL_LINES)) {
+      this.parkedBudget.rateLimit = null
+    }
+    // feedOverload: a scraped incident ends on absent banner text, but an
+    // event-opened one may never have had any, and ends on the tail advancing
+    // past the snapshot taken at the event.
+    const over = this.parkedBudget.overload
+    if (over) {
+      const ended = over.viaEvent
+        ? over.eventTailSnapshot !== null && tail !== over.eventTailSnapshot
+        : !detectOverload(tail, this.config.overload.patterns)
+      if (ended) this.parkedBudget.overload = null
+    }
+    // feedSafeguard/tickSafeguard: a retry in flight scrolls the flag out of the
+    // tail window, so an absent flag only ends the incident at an IDLE read.
+    // Without that guard a toggle during a retry discards the park, and the
+    // next flag buys a full fresh budget for a message the safeguards flagged.
+    if (this.parkedBudget.safeguard && !isWorking(tail)
+      && !detectSafeguard(tail, this.config.safeguard.patterns)) {
+      this.parkedBudget.safeguard = null
     }
   }
 
@@ -478,7 +537,10 @@ export class SessionWatchdog {
     this.status = 'waiting'
     this.attempts = parked ? parked.attempts : 0
     this.waitUntil = this.adapter.now() + waitMs
-    this.gaveUp = false
+    // #605: a resumed incident that is already spent must READ as given up now,
+    // not only after the next tick re-derives it -- otherwise the pill advertises
+    // a retry that cannot fire. A fresh incident is unchanged.
+    this.gaveUp = parked ? this.attempts >= this.config.maxRetries : false
     this.waitingGaveUpLogged = false
     this.adapter.log('info', `Rate limit detected${message ? `: "${message}"` : ''}. Waiting ${Math.round(waitMs / 1000)}s.`)
     this.emit('rate limit detected; waiting for reset')
@@ -493,12 +555,14 @@ export class SessionWatchdog {
     this.parkedBudget.overload = null
     this.resetOverload()
     this.status = 'overload'
-    this.gaveUp = false
     if (parked) {
       this.overloadAttempts = parked.attempts
       this.overloadTotalWaitMs = parked.totalWaitMs
     }
     const capMs = this.config.overload.maxTotalWaitMinutes * 60_000
+    // #605: see enterWaiting -- a resumed incident past its cap reads as given
+    // up immediately. A fresh incident is unchanged (parked is null).
+    this.gaveUp = parked ? this.overloadTotalWaitMs >= capMs : false
     const w = this.nextOverloadWaitMs(this.overloadAttempts)
     if (this.overloadTotalWaitMs + w > capMs) {
       // Degenerate config (or a resumed incident that has already spent the
@@ -523,8 +587,10 @@ export class SessionWatchdog {
     this.parkedBudget.safeguard = null
     this.resetSafeguard()
     this.status = 'safeguard'
-    this.gaveUp = false
     if (parked) this.safeguardAttempts = parked.attempts
+    // #605: see enterWaiting -- a resumed incident past its cap reads as given
+    // up immediately. A fresh incident is unchanged (parked is null).
+    this.gaveUp = parked ? this.safeguardAttempts >= this.config.safeguard.maxRetries : false
     this.waitUntil = this.adapter.now() + this.config.safeguard.retryDelaySeconds * 1000
     this.adapter.log('warn', `Safeguard/AUP flag detected — often a false positive. Will retry up to ${this.config.safeguard.maxRetries}x every ${this.config.safeguard.retryDelaySeconds}s.`)
     this.emit('safeguard flag detected')
