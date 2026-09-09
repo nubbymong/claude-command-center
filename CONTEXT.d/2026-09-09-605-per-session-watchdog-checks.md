@@ -45,7 +45,9 @@ detection ENTRY, so a session already in that status kept sending.
   event-opened overload park ends on the tail ADVANCING past the event snapshot
   (it may never have had a banner), and a safeguard park is not ended by an
   absent flag while a retry is in flight (the flag has merely scrolled out of the
-  12-line window).
+  12-line window). The rules are deliberately a shade STRICTER than the live
+  ones (they omit `resumedAfterLimit` and the overload recovery/escalation
+  branches), which can only over-charge a resumed incident, never refund one.
 - `handleHookEvent` is the FOURTH way into `overload` and consumes the park like
   `enterOverload` does; without that, an off/on pair followed by the next
   StopFailure opened the incident from a zeroed cumulative wait and refunded the
@@ -94,7 +96,7 @@ detection ENTRY, so a session already in that status kept sending.
 
 ### Verification
 
-Mutation matrix (scratchpad `mutate-605.py`, 30 mutants): 29 killed, 1
+Mutation matrix (scratchpad `mutate-605.py`, 33 mutants): 32 killed, 1
 unreachable-by-construction survivor -- M5, the `tickWaiting` send guard, which
 `setChecks` makes unreachable by always transitioning out of `waiting` first.
 New tests:

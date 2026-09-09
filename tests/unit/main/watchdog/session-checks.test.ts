@@ -240,6 +240,7 @@ describe('#605 switching a check off mid-incident', () => {
     wd.setChecks({ safeguard: false })
     wd.setChecks({ safeguard: true })
     wd.feed()
+    expect(wd.getState().gaveUp, 'the resumed incident reads as given up at once').toBe(true)
     for (let i = 0; i < 10; i++) { t.advance(60_000); wd.tick() }
     expect(t.sent.length, 'a flagged message must not be re-submitted by toggling').toBe(spent)
   })
@@ -260,10 +261,12 @@ describe('#605 switching a check off mid-incident', () => {
   })
 })
 
-// A parked incident makes feedMonitoring run its block even while the check is
-// OFF -- purely so the discard can notice the condition leaving the screen. The
-// inner check gate is what stops that from also re-arming the incident, and it
-// is reachable ONLY in this state.
+// A park is discarded by discardStaleParks, which runs before any branch that
+// can return and regardless of whether its own check is on. Each rule has to
+// match what the LIVE state treats as "this incident is over" -- an event-opened
+// overload incident that never had a banner, and a safeguard flag that has
+// merely scrolled out of the tail while its own retry is in flight, are the two
+// places where "the condition is not on screen" is NOT that evidence.
 describe('#605 a park ends on the same evidence the live incident does', () => {
   it('safeguard: a park survives a retry in flight, when the flag is out of the tail window', () => {
     const t = makeAdapter()
@@ -290,6 +293,31 @@ describe('#605 a park ends on the same evidence the live incident does', () => {
     wd.feed()
     for (let i = 0; i < 10; i++) { t.advance(60_000); wd.tick() }
     expect(t.sent.length, 'a flagged message must not get a fresh budget via a mid-retry toggle').toBe(3)
+  })
+
+  it('overload: a scraper-opened park IS discarded once its banner clears', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter, { overload: { maxTotalWaitMinutes: 1, jitterPct: 0 } as never })
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: 529')
+    wd.feed()
+    t.advance(10_000_000); wd.tick()
+    expect(t.sent.length, 'the incident is one retry from its cap').toBe(1)
+    wd.setChecks({ overload: false })
+    // The banner clears while the check is off: that incident is genuinely over.
+    detectOverload.mockReturnValue(false)
+    t.setTail('all good now')
+    wd.feed()
+    wd.setChecks({ overload: true })
+    // A NEW banner later is a fresh incident with a full budget, not one that is
+    // already past its cap.
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: 503')
+    wd.feed()
+    expect(wd.getState().status).toBe('overload')
+    expect(wd.getState().gaveUp, 'a stale park must not condemn a fresh incident').toBe(false)
+    t.advance(10_000_000); wd.tick()
+    expect(t.sent.length, 'the fresh incident gets its own retry').toBe(2)
   })
 
   it('overload: a hook-opened park is not discarded merely because no banner is on screen', () => {
