@@ -42,13 +42,44 @@ describe('placeMenu — vertical', () => {
   it('takes the roomier side when it fits neither — above', () => {
     const p = placeMenu({ x: 100, y: 600, width: 200, height: 900, viewportWidth: 1000, viewportHeight: 800 })
     expect(p.top, 'pinned to the top margin so the space above is usable').toBe(8)
-    expect(p.maxHeight).toBe(600 - 8)
+    // The cap is the room from top to the bottom margin -- lifting the menu to
+    // the top gives it MORE than the space that was above the pointer.
+    expect(p.maxHeight).toBe(800 - 8 - 8)
+    expect(p.top + p.maxHeight).toBeLessThanOrEqual(800)
   })
 
   it('never caps below the minimum, however little room there is', () => {
     // A click 2px from the bottom of a short window.
     const p = placeMenu({ x: 10, y: 798, width: 200, height: 600, viewportWidth: 1000, viewportHeight: 800 })
     expect(p.maxHeight).toBeGreaterThanOrEqual(120)
+  })
+
+  it('the minimum gives way on a window shorter than it', () => {
+    // The floor is a comfort minimum, not a licence to overflow the screen --
+    // which is the very bug this module exists to prevent.
+    const p = placeMenu({ x: 10, y: 40, width: 200, height: 600, viewportWidth: 1000, viewportHeight: 100 })
+    expect(p.maxHeight).toBeLessThanOrEqual(100)
+    expect(p.top + p.maxHeight).toBeLessThanOrEqual(100)
+  })
+
+  it('never places the menu above the top edge, even for a negative pointer', () => {
+    for (const y of [-50, -1, 0, 5]) {
+      const p = placeMenu({ x: 100, y, width: 200, height: 300, viewportWidth: 1000, viewportHeight: 800 })
+      expect(p.top, `top for y=${y}`).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it('returns a usable box for every combination in a coarse sweep', () => {
+    for (const vh of [100, 400, 800]) {
+      for (const y of [-10, 0, 50, vh / 2, vh - 1, vh + 10]) {
+        for (const h of [50, 300, 2000]) {
+          const p = placeMenu({ x: 20, y, width: 200, height: h, viewportWidth: 600, viewportHeight: vh })
+          expect(p.maxHeight, `maxHeight vh=${vh} y=${y} h=${h}`).toBeGreaterThan(0)
+          expect(p.left).toBeGreaterThanOrEqual(0)
+          expect(p.top, `top vh=${vh} y=${y} h=${h}`).toBeGreaterThanOrEqual(0)
+        }
+      }
+    }
   })
 
   it('a menu exactly the height of the space below still opens downward', () => {

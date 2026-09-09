@@ -97,8 +97,22 @@ export default function SessionContextMenu({
     measure()
     // A resize (or a maximise) while the menu is open moves the edges under it.
     window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
-    // accountOpen is a dep because expanding the account list changes the height.
+    // ADR-009: a dep list cannot carry this. Only accountOpen is local state --
+    // every other thing that adds rows arrives as a PROP and can land after the
+    // first measure, watchdogChecks above all (main pushes it asynchronously, so
+    // a menu measured before the watcher reports then grows a header, three
+    // toggles and a hint). With a stale placement the extra rows fall off-screen
+    // WITH the scrollbar that would have rescued them -- this bug, re-entered
+    // through the back door. Observing the element covers every source of growth,
+    // including ones added later. Applying maxHeight changes the border box but
+    // not scrollHeight, and an unchanged placement returns the previous object,
+    // so the observer cannot drive a render loop.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    if (ro && menuRef.current) ro.observe(menuRef.current)
+    return () => {
+      window.removeEventListener('resize', measure)
+      ro?.disconnect()
+    }
   }, [x, y, accountOpen])
 
   return (

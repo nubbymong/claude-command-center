@@ -28,15 +28,18 @@ export interface MenuPlacementInput {
   viewportHeight: number
   /** Gap kept between the menu and the window edge. */
   margin?: number
-  /** Never cap below this: a menu squeezed into a few pixels is worse than one
-   *  that slightly overhangs, and it can always scroll. */
+  /** A menu opened with almost no room below is LIFTED so at least this much
+   *  fits, rather than capped to a sliver. Gives way on a window shorter than
+   *  itself -- a floor that can overflow the screen would be this module's own
+   *  bug. */
   minHeight?: number
 }
 
 export interface MenuPlacement {
   left: number
   top: number
-  /** Apply with `overflow-y: auto` so a capped menu scrolls. */
+  /** Room from `top` down to the bottom margin. Apply with `overflow-y: auto`:
+   *  where the menu is shorter than this it simply does not scroll. */
   maxHeight: number
 }
 
@@ -58,20 +61,25 @@ export function placeMenu({
   }
   if (left < margin) left = margin
 
-  // --- vertical: below the click, else above it, else the roomier side ---
+  // --- vertical: choose `top` first; the cap then follows from it ---
   const spaceBelow = viewportHeight - margin - y
   const spaceAbove = y - margin
 
-  if (height <= spaceBelow) {
-    return { left, top: y, maxHeight: Math.max(spaceBelow, minHeight) }
-  }
-  if (height <= spaceAbove) {
-    // Opens upward, bottom edge landing on the click point.
-    return { left, top: y - height, maxHeight: Math.max(spaceAbove, minHeight) }
-  }
-  // Taller than both sides: take the roomier one and let it scroll.
-  if (spaceBelow >= spaceAbove) {
-    return { left, top: y, maxHeight: Math.max(spaceBelow, minHeight) }
-  }
-  return { left, top: margin, maxHeight: Math.max(spaceAbove, minHeight) }
+  let top: number
+  if (height <= spaceBelow) top = y // fits below the pointer
+  else if (height <= spaceAbove) top = y - height // fits above, bottom edge on the pointer
+  else if (spaceBelow >= spaceAbove) top = y // fits neither: take the roomier side
+  else top = margin
+
+  // Room from `top` to the bottom margin IS the cap, so `top + maxHeight` can
+  // never leave the window whatever the branch above chose.
+  const roomFrom = (t: number) => viewportHeight - margin - t
+  // Too little room to be usable? Lift the menu instead of capping it to a
+  // sliver -- but never above the top margin, and never past what the window
+  // can hold at all.
+  const floor = Math.min(minHeight, Math.max(0, viewportHeight - margin * 2))
+  if (roomFrom(top) < floor) top = viewportHeight - margin - floor
+  top = Math.max(margin, top)
+
+  return { left, top, maxHeight: Math.max(0, roomFrom(top)) }
 }

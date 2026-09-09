@@ -54,6 +54,21 @@ describe('SessionContextMenu is placed inside the viewport', () => {
     expect(MENU).toMatch(/\}, \[x, y, accountOpen\]\)/)
   })
 
+  it('re-measures on ANY size change, not just the one dep', () => {
+    // ADR-009 on this delta: accountOpen is the only LOCAL state that changes
+    // the height. watchdogChecks arrives as a prop, pushed asynchronously from
+    // main, so a menu measured before the watcher reports then grows a header,
+    // three toggles and a hint -- and with a stale placement those rows fall
+    // off-screen along with the scrollbar that would have reached them.
+    expect(MENU).toContain('new ResizeObserver(measure)')
+    expect(MENU).toContain('ro.observe(menuRef.current)')
+    expect(MENU, 'the observer must be torn down with the menu').toContain('ro?.disconnect()')
+  })
+
+  it('tolerates an environment without ResizeObserver', () => {
+    expect(MENU).toContain("typeof ResizeObserver !== 'undefined'")
+  })
+
   it('applies the cap and lets a capped menu scroll', () => {
     expect(MENU).toContain('maxHeight: placement?.maxHeight')
     expect(MENU).toContain("overflowY: 'auto'")
