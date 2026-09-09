@@ -151,19 +151,59 @@ describe('#605 switching a check off mid-incident', () => {
     expect(t.sent, 'the retry the wait was counting down to must not fire').toEqual([])
   })
 
-  it('resets the attempt budget, so switching back on starts a fresh incident', () => {
+  // ADR-009 round 1 (MAJOR): switching a check off SUSPENDS its incident. An
+  // off/on pair must not hand back a retry budget for a screen that never
+  // changed -- otherwise a user could re-submit a safeguard-flagged message
+  // without bound just by toggling.
+  it('does not re-open the same unchanged incident when the check comes back on', () => {
     const { t, wd } = intoWaiting()
     wd.setChecks({ rateLimit: false })
     wd.setChecks({ rateLimit: true })
-    expect(wd.getState().attempts).toBe(0)
-    // Back on, but nothing is fabricated: only a fresh feed re-detects.
     expect(wd.getState().status).toBe('monitoring')
+    // The limit banner is still on screen, unchanged.
     t.setTail('limit reached, resets 3pm')
+    wd.feed()
+    expect(wd.getState().status, 'a suspended incident stays suspended').toBe('monitoring')
+    t.advance(10_000_000)
+    wd.tick()
+    expect(t.sent, 'no budget is refunded for an unchanged screen').toEqual([])
+  })
+
+  it('re-opens only once the condition has genuinely cleared', () => {
+    const { t, wd } = intoWaiting()
+    wd.setChecks({ rateLimit: false })
+    wd.setChecks({ rateLimit: true })
+    // The limit clears: the suspended incident is genuinely over.
+    isRateLimited.mockReturnValue(false)
+    t.setTail('all good now')
+    wd.feed()
+    // A NEW limit later is a fresh incident with a full budget.
+    isRateLimited.mockReturnValue(true)
+    t.setTail('limit reached, resets 5pm')
     wd.feed()
     expect(wd.getState().status).toBe('waiting')
     t.advance(60_001)
     wd.tick()
     expect(t.sent).toEqual(['continue'])
+  })
+
+  it('a safeguard give-up cannot be resurrected by toggling the check', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s', t.adapter)
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('safeguards flagged this message')
+    wd.feed()
+    expect(wd.getState().status).toBe('safeguard')
+    // Spend the whole budget (default 3) until it gives up.
+    for (let i = 0; i < 10; i++) { t.advance(60_000); wd.tick() }
+    const spent = t.sent.length
+    expect(wd.getState().gaveUp).toBe(true)
+    // Toggling off and on must not buy another round of auto-submits.
+    wd.setChecks({ safeguard: false })
+    wd.setChecks({ safeguard: true })
+    wd.feed()
+    for (let i = 0; i < 10; i++) { t.advance(60_000); wd.tick() }
+    expect(t.sent.length, 'a flagged message must not be re-submitted by toggling').toBe(spent)
   })
 
   it('publishes the change so the session pill can follow it', () => {

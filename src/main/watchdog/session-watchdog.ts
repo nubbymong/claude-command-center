@@ -60,6 +60,10 @@ export interface WatchdogChecks {
 export interface WatchdogPublicState {
   sessionId: string
   status: WatchdogStatus
+  /** #605 (ADR-009 round 1, MINOR): false on the state pushed when a watcher is
+   *  TORN DOWN. The renderer keys its pill and its menu block off this, so a
+   *  stopped watchdog leaves no "off" pill and no dead toggles behind. */
+  armed: boolean
   /** #605: which checks are live for this session right now. */
   checks: WatchdogChecks
   attempts: number
@@ -150,6 +154,20 @@ export class SessionWatchdog {
   private readonly config: WatchdogConfig
   /** #605: per-session, live-mutable. Seeded from config in the constructor. */
   private checks: WatchdogChecks
+  /**
+   * #605 (ADR-009 round 1, MAJOR): a check switched OFF while its own incident
+   * was live SUSPENDS that incident -- it does not end it. Without this, the
+   * trip through 'monitoring' let the next feed() re-open the very same banner
+   * through enterWaiting/enterOverload/enterSafeguard, each of which resets the
+   * attempt budget and clears gaveUp: an off/on toggle pair handed back a full
+   * allowance, so a user could re-submit a safeguard-FLAGGED message without
+   * bound, and a partly-spent budget was refunded in full. While a check is
+   * suspended its incident cannot be re-opened at all; the flag clears only
+   * when feedMonitoring sees that condition genuinely gone from the screen, at
+   * which point a fresh budget is the correct reading. Mirrors the existing
+   * refusal to resurrect a latched give-up (handleHookEvent, manualRestart).
+   */
+  private suspendedChecks: WatchdogChecks = { rateLimit: false, overload: false, safeguard: false }
   private readonly rand: () => number
   private readonly sessionId: string
   private readonly adapter: WatchdogAdapter
@@ -171,6 +189,7 @@ export class SessionWatchdog {
     return {
       sessionId: this.sessionId,
       status: this.status,
+      armed: true,
       checks: { ...this.checks },
       attempts: this.attempts,
       overloadAttempts: this.overloadAttempts,
@@ -199,18 +218,24 @@ export class SessionWatchdog {
       && next.overload === this.checks.overload
       && next.safeguard === this.checks.safeguard) return
     this.checks = next
+    // Leaving a live incident SUSPENDS it (see suspendedChecks): the counters
+    // reset here are harmless only because the suspension makes the incident
+    // un-reopenable until its condition actually clears.
     if (this.status === 'waiting' && !next.rateLimit) {
+      this.suspendedChecks.rateLimit = true
       this.attempts = 0
       this.waitingGaveUpLogged = false
       this.toMonitoring('rate-limit check turned off')
       return
     }
     if (this.status === 'overload' && !next.overload) {
+      this.suspendedChecks.overload = true
       this.resetOverload()
       this.toMonitoring('overload check turned off')
       return
     }
     if (this.status === 'safeguard' && !next.safeguard) {
+      this.suspendedChecks.safeguard = true
       this.resetSafeguard()
       this.toMonitoring('safeguard check turned off')
       return
@@ -363,9 +388,14 @@ export class SessionWatchdog {
 
   private feedMonitoring(tail: string): void {
     // Usage-limit (hours-scale reset) takes precedence over overload/safeguard.
-    if (this.checks.rateLimit && isRateLimited(tail, [], USAGE_TAIL_LINES) && !isWorking(tail)) {
-      this.enterWaiting(tail)
-      return
+    if (this.checks.rateLimit) {
+      const limited = isRateLimited(tail, [], USAGE_TAIL_LINES)
+      // #605: the condition is gone, so a suspended incident is genuinely over.
+      if (!limited) this.suspendedChecks.rateLimit = false
+      if (limited && !isWorking(tail)) {
+        this.enterWaiting(tail)
+        return
+      }
     }
 
     if (this.checks.overload) {
@@ -375,11 +405,16 @@ export class SessionWatchdog {
         this.enterOverload()
         return
       }
-      if (!present) this.lastHandledOverloadTail = null // banner gone -> a future match is a fresh incident
+      if (!present) {
+        this.lastHandledOverloadTail = null // banner gone -> a future match is a fresh incident
+        this.suspendedChecks.overload = false
+      }
     }
 
-    if (this.checks.safeguard && detectSafeguard(tail, this.config.safeguard.patterns)) {
-      this.enterSafeguard()
+    if (this.checks.safeguard) {
+      const flagged = detectSafeguard(tail, this.config.safeguard.patterns)
+      if (!flagged) this.suspendedChecks.safeguard = false
+      if (flagged) this.enterSafeguard()
     }
   }
 
@@ -392,6 +427,10 @@ export class SessionWatchdog {
       this.toMonitoring('usage limit seen with the rate-limit check off')
       return
     }
+    // #605: suspended -- this exact condition was abandoned when the check was
+    // switched off, and has not cleared since. Re-opening here would hand back
+    // a full retry budget for a screen the watchdog already finished with.
+    if (this.suspendedChecks.rateLimit) return
     const message = findRateLimitMessage(tail)
     const parsed = message ? parseResetTime(message) : null
     const waitMs = calculateWaitMs(parsed, {
@@ -409,6 +448,7 @@ export class SessionWatchdog {
   }
 
   private enterOverload(): void {
+    if (this.suspendedChecks.overload) return // #605, see suspendedChecks
     this.resetOverload()
     this.status = 'overload'
     this.gaveUp = false
@@ -429,6 +469,7 @@ export class SessionWatchdog {
   }
 
   private enterSafeguard(): void {
+    if (this.suspendedChecks.safeguard) return // #605, see suspendedChecks
     this.resetSafeguard()
     this.status = 'safeguard'
     this.gaveUp = false

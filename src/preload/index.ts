@@ -44,6 +44,8 @@ export interface WatchdogChecks {
 export interface WatchdogPublicState {
   sessionId: string
   status: 'monitoring' | 'waiting' | 'overload' | 'safeguard'
+  /** #605: false on the state pushed when a watcher is torn down. */
+  armed: boolean
   /** #605: which auto-retry checks are live for this session right now. */
   checks: WatchdogChecks
   attempts: number

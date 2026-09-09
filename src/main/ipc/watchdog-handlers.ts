@@ -30,10 +30,12 @@ export function registerWatchdogHandlers(): void {
     return getWatchdogManager()?.getStates() ?? []
   })
 
-  // #605: per-session, runtime-only. Turning a check off can only ever make the
-  // watchdog type LESS, never more or into a different session: the sessionId
-  // selects an already-armed entry (an unknown id is a no-op) and the payload
-  // carries booleans only, so there is no path here to a new send.
+  // #605: per-session, runtime-only. The sessionId selects an already-armed
+  // entry (an unknown id is a no-op) and the payload carries booleans only, so
+  // this cannot reach another session or smuggle a message in. It is NOT a
+  // pure "types less" lever, though: switching a check back ON re-arms that
+  // check. SessionWatchdog.suspendedChecks is what stops that re-arming from
+  // refunding a spent retry budget or resurrecting a give-up (ADR-009 round 1).
   ipcMain.handle(IPC.WATCHDOG_SET_CHECKS, (_evt, sessionId: unknown, checks: unknown): boolean => {
     if (typeof sessionId !== 'string' || sessionId.length === 0) return false
     const clean = sanitizeChecks(checks)

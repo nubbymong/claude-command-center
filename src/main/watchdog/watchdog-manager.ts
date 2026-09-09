@@ -614,8 +614,10 @@ export class WatchdogManager {
     return {
       sessionId,
       status: 'monitoring',
-      // A stopped watcher has no live checks; the renderer keys the pill off
-      // the entry's absence, so these are inert placeholders (#605).
+      // A stopped watcher: `armed: false` is what the renderer reads to drop the
+      // pill and the menu block entirely (#605, ADR-009 round 1 MINOR). The
+      // checks below are inert placeholders that go with it.
+      armed: false,
       checks: { rateLimit: false, overload: false, safeguard: false },
       attempts: 0,
       overloadAttempts: 0,
