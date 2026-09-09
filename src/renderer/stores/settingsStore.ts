@@ -52,6 +52,12 @@ export interface WatchdogSettings {
    *  ONLY — never triggers a retry. 0 disables silence detection. Absent = the
    *  manager default (see main/watchdog/watchdog-manager.ts). */
   silenceWindowMs?: number
+  /** #605: the three auto-retry checks, switchable independently. These decide
+   *  what a NEWLY LAUNCHED session starts with; a running session is switched
+   *  from its own right-click menu and is not affected by a change here. */
+  rateLimitEnabled?: boolean
+  overload?: { enabled?: boolean }
+  safeguard?: { enabled?: boolean }
 }
 
 export const DEFAULT_WATCHDOG_SETTINGS: WatchdogSettings = {
@@ -59,6 +65,9 @@ export const DEFAULT_WATCHDOG_SETTINGS: WatchdogSettings = {
   retryMessage: 'continue',
   maxRetries: 5,
   silenceWindowMs: 120_000,
+  rateLimitEnabled: true,
+  overload: { enabled: true },
+  safeguard: { enabled: true },
 }
 
 // ── UI typography (Font & Size settings page, spec 2026-07-04) ──

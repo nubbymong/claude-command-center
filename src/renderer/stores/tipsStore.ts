@@ -90,6 +90,7 @@ export const VIEW_FEATURE_IDS: Readonly<Record<string, string>> = {
 const DIRECT_FEATURE_IDS: readonly string[] = [
   'sessions.create-config',
   'sessions.pin-config',
+  'sessions.watchdog-check-toggle',
   'sessions.duplicate-config',
   'sessions.effort-level',
   'sessions.session-type',

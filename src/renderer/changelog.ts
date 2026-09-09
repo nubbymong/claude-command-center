@@ -21,6 +21,19 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.17',
+    date: '2026-09-09',
+    highlights: 'The Session Watchdog is no longer all-or-nothing. Its three auto-retry checks -- rate-limit resume, API overload and safeguard -- are now separate switches in Settings, and each session can turn them on or off for itself from its right-click menu, taking effect immediately. A new Watchdog pill in the session header says what is live for that session.',
+    changes: [
+      { type: 'feature', description: 'Each session can switch the watchdog’s auto-retry off for itself, without touching any other session. Right-click the session and use the Watchdog auto-retry block to turn the rate-limit resume, API overload and safeguard checks on or off. It applies straight away to the running session -- a check you switch off stops watching and never types, and if it was already waiting to retry, that retry is dropped. This is for the current run only: relaunching the session brings back whatever Settings says. Turning a check off never affects the sleeping-session indicator, which only ever reports and never types.' },
+      { type: 'feature', description: 'The session header shows a Watchdog pill, immediately right of the account, so you can see at a glance what the watchdog will do in that session: green when all three checks are on, "partial" when some are off, and "off" when none will type. There is no pill when no watchdog is running for that session.' },
+      { type: 'feature', description: 'Settings now lists the watchdog’s three checks separately instead of one switch. Rate-limit resume waits out a usage-limit reset and then continues; API overload backs off and retries on server errors; Safeguard retries once a flagged message clears. Two of these already existed but could not be reached from the app. These decide what a newly launched session starts with.' },
+      { type: 'fix', description: 'A startup page is no longer interrupted by the sessions it is describing. Restoring your sessions starts them straight away, and each one that asks which account to use put its own prompt on top of whatever was still on screen -- so the Enable Multi Spawn page could be covered before you had finished with it. Those prompts now wait until the last startup page is dismissed, and none of them is answered for you in the meantime.' },
+      { type: 'fix', description: 'A first launch that has both saved sessions and a guided tour to show no longer gets stuck showing neither. The tour and the restore prompt each waited for the other, so nothing appeared and the saved sessions could not be restored at all. Startup pages now take strict turns, and the one being shown is always the one that was chosen.' },
+      { type: 'fix', description: 'A session right-click menu opened near the bottom of the window stays on screen. It used to open at the pointer and run off the edge, which hid the lower entries with no way to scroll to them -- most visibly the account list under Switch Account, where the last few accounts simply could not be reached. The menu now opens upward when there is more room above, and scrolls when it is taller than the window either way.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.16',
     date: '2026-09-06',
     highlights: 'Fixes from an independent stability review of rc.15. Entering a container is confirmed from inside it before anything is launched there, and checked again before Claude itself starts; two more account-refresh races are closed and capturing a second account can no longer put a spent token back on the first; on a Mac, Close sessions closes the sessions; a remote left running is never pruned because a tmux upgrade broke the client; and a rejected plan no longer hides from the canvas resume list behind an approved design.',

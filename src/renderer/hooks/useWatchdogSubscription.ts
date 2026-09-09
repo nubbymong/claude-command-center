@@ -16,7 +16,11 @@ export function useWatchdogSubscription(sessionId: string) {
     const unsub = window.electronAPI.watchdog.onUpdate((state) => {
       if (state.sessionId !== sessionId) return
       updateSession(sessionId, {
-        watchdog: { status: state.status, waitUntil: state.waitUntil, gaveUp: state.gaveUp },
+        // #605: a teardown push carries armed:false -- clear rather than paint
+        // an "off" pill and a menu block whose toggles could never tick.
+        watchdog: state.armed === false
+          ? undefined
+          : { status: state.status, waitUntil: state.waitUntil, gaveUp: state.gaveUp, checks: state.checks },
       })
     })
     // Seed from main's CURRENT states on mount (#266 MAJOR-4): a push-only
@@ -28,7 +32,9 @@ export function useWatchdogSubscription(sessionId: string) {
       if (cancelled) return
       const mine = states.find((s) => s.sessionId === sessionId)
       updateSession(sessionId, {
-        watchdog: mine ? { status: mine.status, waitUntil: mine.waitUntil, gaveUp: mine.gaveUp } : undefined,
+        watchdog: mine && mine.armed !== false
+          ? { status: mine.status, waitUntil: mine.waitUntil, gaveUp: mine.gaveUp, checks: mine.checks }
+          : undefined,
       })
     }).catch(() => { /* main gone mid-teardown */ })
     return () => {

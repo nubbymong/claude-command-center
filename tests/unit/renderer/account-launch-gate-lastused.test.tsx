@@ -40,6 +40,46 @@ afterEach(() => { act(() => root.unmount()); container.remove() })
 const render = () => act(() => root.render(<AccountLaunchGate />))
 const q = (sel: string) => container.querySelector(sel) as HTMLElement | null
 
+describe('AccountLaunchGate — suppressed while a boot gate owns the screen', () => {
+  it('renders the picker when no boot gate is up', () => {
+    profilesState.profiles = [profile({ id: 'primary', isPrimary: true })]
+    act(() => root.render(<AccountLaunchGate suppressed={false} />))
+    expect(container.textContent, 'the queued request paints normally').toContain('Start session')
+  })
+
+  it('paints NOTHING while a boot gate is up, even with a request queued', () => {
+    profilesState.profiles = [profile({ id: 'primary', isPrimary: true })]
+    act(() => root.render(<AccountLaunchGate suppressed />))
+    expect(container.textContent, 'a picker must not paint over the Multi Spawn startup page').toBe('')
+  })
+
+  it('does not consume or answer the queued request while suppressed', () => {
+    profilesState.profiles = [profile({ id: 'primary', isPrimary: true })]
+    const resolve = vi.fn()
+    gateState.queue = [{ sessionId: 's1', sessionLabel: 'web', currentProfileId: undefined, resolve }]
+    act(() => root.render(<AccountLaunchGate suppressed />))
+    // The awaiting spawn has no timeout anywhere in this path, so suppression
+    // must PARK it, never answer it on the user's behalf.
+    expect(resolve, 'the spawn must keep waiting, not be launched blind').not.toHaveBeenCalled()
+    expect(gateState.resolveChoice).not.toHaveBeenCalled()
+    expect(gateState.queue.length, 'the queue survives suppression intact').toBe(1)
+  })
+
+  it('surfaces the same unanswered request once the gate chain clears', () => {
+    profilesState.profiles = [profile({ id: 'primary', isPrimary: true })]
+    act(() => root.render(<AccountLaunchGate suppressed />))
+    expect(container.textContent).toBe('')
+    act(() => root.render(<AccountLaunchGate suppressed={false} />))
+    expect(container.textContent, 'the picker returns for the SAME session').toContain('web')
+  })
+
+  it('defaults to not suppressed, so an ordinary launch is unaffected', () => {
+    profilesState.profiles = [profile({ id: 'primary', isPrimary: true })]
+    act(() => root.render(<AccountLaunchGate />))
+    expect(container.textContent).toContain('Start session')
+  })
+})
+
 describe('AccountLaunchGate — Last used line', () => {
   it('shows the Last used line for an ACTIVE last-used account', () => {
     profilesState.profiles = [profile({ id: 'primary', isPrimary: true }), profile({ id: 'p-active', accountEmail: 'used@b.co' })]

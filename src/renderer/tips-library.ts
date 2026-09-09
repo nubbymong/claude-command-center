@@ -81,6 +81,22 @@ export function resolveFocusHint(content: TipContent, isMac: boolean): string | 
 }
 
 export const TIPS_LIBRARY: Tip[] = [
+  {
+    id: 'tip.watchdog-per-session',
+    category: 'sessions',
+    complexity: 'simple',
+    priority: 70,
+    variants: {
+      primary: {
+        shortText: 'Silence the watchdog on one session',
+        title: 'Per-session watchdog',
+        body: 'The Session Watchdog types a retry for you when a session hits a usage limit, an API overload, or a safeguard message. On a session you are driving by hand, you may not want that.\n\n**Right-click the session** and use the **Watchdog auto-retry** block to switch any of the three checks off. It applies to that session immediately and to nothing else -- a check you switch off stops watching and never types, and a retry it was already waiting on is dropped.\n\nIt lasts for that run only: relaunching the session restores whatever Settings says. The **Watchdog pill** in the session header, just right of the account, always shows what is live for that session.',
+        actionLabel: 'Got it',
+        focusHint: 'Right-click a running session -- Watchdog auto-retry',
+      },
+    },
+  },
+
   // ── Discovery: low-barrier, high-value features ────────────────────────
 
   {

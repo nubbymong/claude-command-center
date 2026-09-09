@@ -1,9 +1,12 @@
-import React, { useRef, useState } from 'react'
+import React, { useLayoutEffect, useRef, useState } from 'react'
 import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
+import { placeMenu, type MenuPlacement } from '../../utils/menuPlacement'
 import { isAccountActive, type AccountProfile } from '../../../shared/account-types'
 import { resolveAccountName, middleTruncateEmail } from '../../../shared/account-chip-color'
-import { pinMenuLabel, PIN_WHILE_RUNNING_HINT } from './sessionsPanelState'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, WATCHDOG_CHECK_ITEMS, WATCHDOG_RUNTIME_HINT } from './sessionsPanelState'
+
+export type WatchdogCheckKey = 'rateLimit' | 'overload' | 'safeguard'
 
 interface SessionContextMenuProps {
   x: number
@@ -40,6 +43,13 @@ interface SessionContextMenuProps {
   /** True when this account's Claude Code CLI is already signed in; disables the
    *  "Sign in to Claude Code" item so it isn't offered when it would be a no-op. */
   codeSignedIn?: boolean
+  /** #605: the session's LIVE watchdog checks. Undefined when no watcher is
+   *  armed for this session (master switch off, or a session type that never
+   *  arms one) -- the whole block is hidden then, rather than offering toggles
+   *  that would do nothing. */
+  watchdogChecks?: Record<WatchdogCheckKey, boolean>
+  /** #605: flip one check for THIS running session. Runtime only. */
+  onToggleWatchdogCheck?: (key: WatchdogCheckKey) => void
 }
 
 export default function SessionContextMenu({
@@ -47,6 +57,7 @@ export default function SessionContextMenu({
   configPinned, onPinConfig,
   canSwitchAccount, profiles, accountAliases, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn,
+  watchdogChecks, onToggleWatchdogCheck,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -54,11 +65,70 @@ export default function SessionContextMenu({
 
   const showSwitch = !!canSwitchAccount && !!profiles && profiles.length > 1 && !!onSwitchAccount
 
+  // Keep the menu inside the window. This one is the tallest in the app and
+  // still grows -- the #605 Watchdog block, and Switch Account expanding to one
+  // row per account -- so opened low in the sidebar its bottom items used to
+  // land off-screen with no way to reach them.
+  //
+  // useLayoutEffect, so the measure-and-reposition happens before paint rather
+  // than as a visible jump. Height is read from scrollHeight (full content, not
+  // the capped box) so a second pass cannot progressively shrink the menu, and
+  // the update is skipped when nothing moved, which is what stops the measure
+  // -> setState -> measure loop.
+  const [placement, setPlacement] = useState<MenuPlacement | null>(null)
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = menuRef.current
+      if (!el) return
+      const next = placeMenu({
+        x,
+        y,
+        width: el.offsetWidth,
+        height: el.scrollHeight,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      })
+      setPlacement((prev) =>
+        prev && prev.left === next.left && prev.top === next.top && prev.maxHeight === next.maxHeight
+          ? prev
+          : next,
+      )
+    }
+    measure()
+    // A resize (or a maximise) while the menu is open moves the edges under it.
+    window.addEventListener('resize', measure)
+    // ADR-009: a dep list cannot carry this. Only accountOpen is local state --
+    // every other thing that adds rows arrives as a PROP and can land after the
+    // first measure, watchdogChecks above all (main pushes it asynchronously, so
+    // a menu measured before the watcher reports then grows a header, three
+    // toggles and a hint). With a stale placement the extra rows fall off-screen
+    // WITH the scrollbar that would have rescued them -- this bug, re-entered
+    // through the back door. Observing the element covers every source of growth,
+    // including ones added later. Applying maxHeight changes the border box but
+    // not scrollHeight, and an unchanged placement returns the previous object,
+    // so the observer cannot drive a render loop.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    if (ro && menuRef.current) ro.observe(menuRef.current)
+    return () => {
+      window.removeEventListener('resize', measure)
+      ro?.disconnect()
+    }
+  }, [x, y, accountOpen])
+
   return (
     <div
       ref={menuRef}
       className="fixed z-50 rounded-lg shadow-xl py-1 min-w-[180px]"
-      style={{ left: x, top: y, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      style={{
+        left: placement?.left ?? x,
+        top: placement?.top ?? y,
+        // Only once measured: an unset cap on the first pass is what lets
+        // scrollHeight report the menu's natural height.
+        maxHeight: placement?.maxHeight,
+        overflowY: 'auto',
+        background: 'var(--surface-raised)',
+        border: '1px solid var(--border-subtle)',
+      }}
     >
       <button
         onClick={onRename}
@@ -87,6 +157,43 @@ export default function SessionContextMenu({
             </div>
           )}
         </>
+      )}
+      {watchdogChecks && onToggleWatchdogCheck && (
+        <div className="border-t mt-1 pt-1" style={{ borderColor: 'var(--border-subtle)' }} data-testid="session-ctx-watchdog">
+          <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+            Watchdog auto-retry
+          </div>
+          {WATCHDOG_CHECK_ITEMS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => onToggleWatchdogCheck(key)}
+              role="menuitemcheckbox"
+              aria-checked={watchdogChecks[key]}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
+              data-testid={`session-ctx-watchdog-${key}`}
+            >
+              <span
+                className="w-3 h-3 rounded-sm flex items-center justify-center shrink-0"
+                style={{
+                  border: '1px solid var(--border-subtle)',
+                  background: watchdogChecks[key] ? 'var(--status-success)' : 'transparent',
+                }}
+                aria-hidden
+              >
+                {watchdogChecks[key] && (
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="var(--surface-raised)" strokeWidth="1.6">
+                    <path d="M1 4l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </span>
+              {label}
+            </button>
+          ))}
+          <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+            {WATCHDOG_RUNTIME_HINT}
+          </div>
+        </div>
       )}
       {hasGroup && (
         <button

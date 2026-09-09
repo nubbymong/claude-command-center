@@ -325,6 +325,33 @@ function SshConnectionPill({ session }: { session: Session }) {
 }
 
 /**
+ * #605: the session's live watchdog auto-retry state.
+ *
+ * Renders NOTHING when no watcher is armed for this session -- the master
+ * switch is off, or it is a session type that never arms one (shell-only,
+ * Codex, Ask). An absent pill is the honest reading of "no watchdog here",
+ * and beats an "off" pill on every session in a workspace with the feature
+ * turned off. `checks` absent on an armed session (a state pushed by an older
+ * main) reads as all-on, matching that build's behaviour.
+ */
+function WatchdogPill({ watchdog }: { watchdog?: Session['watchdog'] }) {
+  // Presence of the state IS the armed signal: main pushes one only for a
+  // session it actually watches, and clears it on teardown.
+  if (!watchdog) return null
+  const checks = watchdog.checks
+  const values = checks ? [checks.rateLimit, checks.overload, checks.safeguard] : [true, true, true]
+  const on = values.filter(Boolean).length
+  const tone = on === 3 ? 'var(--status-success)' : on === 0 ? 'var(--text-muted)' : 'var(--status-warning)'
+  const word = on === 3 ? undefined : on === 0 ? 'off' : 'partial'
+  const title = on === 3
+    ? 'Watchdog auto-retry is on for this session (rate-limit resume, API overload, safeguard). Right-click the session to change it.'
+    : on === 0
+      ? 'Watchdog auto-retry is off for this session — it still reports a sleeping session, but never types. Right-click the session to change it.'
+      : `Watchdog auto-retry is partly on for this session (${on} of 3 checks). Right-click the session to change it.`
+  return <HeaderPill label="Watchdog" tone={tone} word={word} title={title} testId="session-pill-watchdog" />
+}
+
+/**
  * The account · claude.ai · Claude Code (with refresh) pill trio plus the
  * trailing GitHub group. Shared by a LOCAL Claude session and an SSH session
  * whose remote account maps to a local profile: the claude.ai / Claude Code
@@ -336,11 +363,13 @@ function SshConnectionPill({ session }: { session: Session }) {
  * leading separator + the GitHub pill, or null).
  */
 function AccountAuthPillSet({
-  accountLabel, accountTone, accountTitle, status, profileId, refresh, gitHubTail,
+  accountLabel, accountTone, accountTitle, status, profileId, refresh, gitHubTail, watchdogPill,
 }: {
   accountLabel: React.ReactNode
   accountTone: string
   accountTitle: string
+  /** #605: sits immediately right of the account pill. */
+  watchdogPill?: React.ReactNode
   status: AccountAuthStatus | undefined
   profileId: string
   refresh: (profileId: string, opts?: { force?: boolean }) => Promise<void>
@@ -370,6 +399,7 @@ function AccountAuthPillSet({
         title={accountTitle}
         testId="session-pill-account"
       />
+      {watchdogPill}
       <HeaderPill
         label="claude.ai"
         tone={aiTone}
@@ -532,6 +562,7 @@ function SessionAuthPills({ session }: { session: Session }) {
           profileId={sshProfileId}
           refresh={refresh}
           gitHubTail={gitHubTail}
+          watchdogPill={<WatchdogPill watchdog={session.watchdog} />}
         />
       )
     }
@@ -544,6 +575,7 @@ function SessionAuthPills({ session }: { session: Session }) {
           title={accountTitle}
           testId="session-pill-account"
         />
+        <WatchdogPill watchdog={session.watchdog} />
         {gitHubTail}
       </>
     )
@@ -608,6 +640,7 @@ function SessionAuthPills({ session }: { session: Session }) {
       profileId={profileId}
       refresh={refresh}
       gitHubTail={<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>}
+      watchdogPill={<WatchdogPill watchdog={session.watchdog} />}
     />
   )
 }

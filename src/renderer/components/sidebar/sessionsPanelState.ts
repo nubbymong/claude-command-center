@@ -183,3 +183,17 @@ export function launchableInSection(
     return false
   })
 }
+
+/**
+ * #605: the three switchable watchdog auto-retry checks, in the order they are
+ * offered. Labels match the Settings wording so the session menu and the global
+ * panel read as the same three things.
+ */
+export const WATCHDOG_CHECK_ITEMS: ReadonlyArray<{ key: 'rateLimit' | 'overload' | 'safeguard'; label: string }> = [
+  { key: 'rateLimit', label: 'Rate-limit resume' },
+  { key: 'overload', label: 'API overload' },
+  { key: 'safeguard', label: 'Safeguard' },
+]
+
+/** Says what the session-level toggles are: live, and only for this run. */
+export const WATCHDOG_RUNTIME_HINT = 'Applies to this session now. Relaunching restores the Settings defaults.'

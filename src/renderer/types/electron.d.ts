@@ -96,9 +96,20 @@ export interface ServiceStatusPayload {
 // Mirror of src/main/watchdog/session-watchdog.ts's WatchdogPublicState (#235).
 // Declared locally for the same reason as ServiceComponentStatus above — the
 // renderer/web tsconfig must not pull a main-process module into its type graph.
+/** #605: the three switchable auto-retry checks. */
+export interface WatchdogChecks {
+  rateLimit: boolean
+  overload: boolean
+  safeguard: boolean
+}
+
 export interface WatchdogPublicState {
   sessionId: string
   status: 'monitoring' | 'waiting' | 'overload' | 'safeguard'
+  /** #605: false on the state pushed when a watcher is torn down. */
+  armed: boolean
+  /** #605: which auto-retry checks are live for this session right now. */
+  checks: WatchdogChecks
   attempts: number
   overloadAttempts: number
   safeguardAttempts: number
@@ -262,6 +273,9 @@ export interface ElectronAPI {
   watchdog: {
     getStates: () => Promise<WatchdogPublicState[]>
     onUpdate: (callback: (state: WatchdogPublicState) => void) => () => void
+    /** #605: runtime-only per-session check toggle. Resolves false when the
+     *  session has no armed watcher. */
+    setChecks: (sessionId: string, checks: Partial<WatchdogChecks>) => Promise<boolean>
   }
   registry: {
     get(): Promise<ModelRegistry>

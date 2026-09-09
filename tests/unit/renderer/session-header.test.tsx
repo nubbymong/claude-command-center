@@ -420,3 +420,50 @@ describe('the slim Ask header (#465)', () => {
     expect(container.querySelector('[data-ux-id="ask-band-history"]')).not.toBeNull()
   })
 })
+
+// #605: the Watchdog pill sits immediately right of the account pill and
+// reports the session's LIVE auto-retry state -- absent when nothing is armed.
+describe('the Watchdog pill (#605)', () => {
+  const pill = () => container.querySelector('[data-testid="session-pill-watchdog"]')
+  // The pill lives in the account-pill set, which only renders for a Claude
+  // session with a resolved profile -- mirror the auth-pill tests' setup.
+  const claudeSession = (watchdog?: Session['watchdog']) => {
+    useAccountAuthStore.setState({ byProfile: { 'profile-w': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    return makeSession({ profileId: 'profile-w', provider: 'claude', sessionType: 'local', watchdog })
+  }
+
+  it('is absent when no watcher is armed for the session', () => {
+    render(claudeSession(undefined))
+    expect(pill()).toBeNull()
+  })
+
+  it('shows no qualifier word when all three checks are on', () => {
+    render(claudeSession({ status: 'monitoring', waitUntil: null, gaveUp: false, checks: { rateLimit: true, overload: true, safeguard: true } }))
+    expect(pill()).toBeTruthy()
+    expect(pill()!.textContent).toContain('Watchdog')
+    expect(pill()!.textContent).not.toMatch(/off|partial/)
+  })
+
+  it('reads "off" when every check is muted', () => {
+    render(claudeSession({ status: 'monitoring', waitUntil: null, gaveUp: false, checks: { rateLimit: false, overload: false, safeguard: false } }))
+    expect(pill()!.textContent).toMatch(/off/)
+    expect(pill()!.getAttribute('title')).toMatch(/still reports a sleeping session/i)
+  })
+
+  it('reads "partial" when only some checks are muted', () => {
+    render(claudeSession({ status: 'monitoring', waitUntil: null, gaveUp: false, checks: { rateLimit: true, overload: false, safeguard: true } }))
+    expect(pill()!.textContent).toMatch(/partial/)
+    expect(pill()!.getAttribute('title')).toMatch(/2 of 3/)
+  })
+
+  it('treats an armed session with no checks field as all-on (older main build)', () => {
+    render(claudeSession({ status: 'monitoring', waitUntil: null, gaveUp: false }))
+    expect(pill()!.textContent).not.toMatch(/off|partial/)
+  })
+
+  it('sits immediately after the account pill', () => {
+    render(claudeSession({ status: 'monitoring', waitUntil: null, gaveUp: false, checks: { rateLimit: true, overload: true, safeguard: true } }))
+    const account = container.querySelector('[data-testid="session-pill-account"]')
+    expect(account?.nextElementSibling).toBe(pill())
+  })
+})

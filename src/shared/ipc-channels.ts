@@ -460,6 +460,8 @@ export const IPC = {
   // hydrate a freshly-mounted renderer with whatever is currently running.
   WATCHDOG_STATE: 'watchdog:state',
   WATCHDOG_GET_STATES: 'watchdog:getStates',
+  /** #605: switch individual auto-retry checks for ONE running session. */
+  WATCHDOG_SET_CHECKS: 'watchdog:setChecks',
 } as const
 
 /** Helper to build per-session PTY data channels */
