@@ -12,6 +12,32 @@ const closer = require('../../../scripts/close-in-beta-issues.js') as {
     toClose: Array<{ number: number; closeLabel: string; closeCarried: string[] }>
     skipped: Array<{ number: number; reason: string }>
   }
+  selectCandidates: (
+    refs: number[],
+    labeled: Map<number, unknown>,
+  ) => { matched: Array<{ number: number }>; unmatched: number[] }
+  expandViaPrBodies: (opts: {
+    direct: number[]
+    labeled: Map<number, unknown>
+    unmatched: number[]
+    fetchItem: (n: number) => unknown
+    max?: number
+    log?: (line: string) => void
+  }) => { found: Array<{ number: number }>; stillMissing: number[]; lookups: number }
+  fetchLifecycleIssues: (
+    repo: string,
+    runGh: (args: string[]) => string,
+    maxPages?: number,
+  ) => Map<number, { number: number }>
+  closeOne: (opts: {
+    issue: { number: number; title?: string; closeLabel?: string; closeCarried?: string[] }
+    repo: string
+    version?: string
+    sha?: string
+    range?: string
+    run: (args: string[]) => string
+    pause?: () => void
+  }) => void
   resolveRange: (opts: {
     explicit?: string
     before?: string
@@ -23,7 +49,19 @@ const closer = require('../../../scripts/close-in-beta-issues.js') as {
   parseArgv: (argv: string[]) => { dryRun: boolean; range?: string; version?: string; repo?: string }
 }
 
-const { extractRefs, refsFromCommitLog, classifyCandidate, planClosures, resolveRange, closeCommentBody, parseArgv } = closer
+const {
+  extractRefs,
+  refsFromCommitLog,
+  classifyCandidate,
+  planClosures,
+  selectCandidates,
+  expandViaPrBodies,
+  fetchLifecycleIssues,
+  closeOne,
+  resolveRange,
+  closeCommentBody,
+  parseArgv,
+} = closer
 
 const issue = (over: Record<string, unknown> = {}) => ({
   number: 74,
@@ -132,8 +170,9 @@ describe('classifyCandidate', () => {
 
   it('skips a ref that does not resolve', () => {
     expect(classifyCandidate(null)).toEqual({ action: 'skip', reason: 'not found' })
-    // main() substitutes this marker so an unresolvable ref is still REPORTED
-    // rather than dropped from the run log.
+    // Defence-in-depth only: nothing in the script produces this marker any more,
+    // now that candidates come from a `state=open&labels=` query rather than a
+    // per-ref fetch that could 404.
     expect(classifyCandidate({ number: 1194, notFound: true })).toEqual({ action: 'skip', reason: 'not found' })
   })
 
@@ -166,6 +205,286 @@ describe('planClosures', () => {
 
   it('closes nothing when given nothing', () => {
     expect(planClosures([])).toEqual({ toClose: [], skipped: [] })
+  })
+})
+
+// ── selectCandidates — the fix for the 475-ref promotion ───────────
+describe('selectCandidates', () => {
+  const labeledMap = (...items: Array<Record<string, unknown>>) => new Map(items.map((i) => [i.number as number, i]))
+
+  it('keeps only the refs that are open and lifecycle-labeled', () => {
+    const labeled = labeledMap(issue({ number: 74 }), issue({ number: 75 }))
+    // 92 is a PR, 1194 is another project's issue — neither is in the label set,
+    // and neither costs an API call to reject any more.
+    const { matched, unmatched } = selectCandidates([74, 92, 75, 1194], labeled)
+    expect(matched.map((i) => i.number)).toEqual([74, 75])
+    expect(unmatched).toEqual([])
+  })
+
+  it('scales to a full release range without a single per-ref lookup', () => {
+    // The regression this function exists for: v2.0.0..main for 2.1.0 carried
+    // 775 commits / 475 distinct refs against 128 labeled issues. The old walk
+    // fetched refs until a 200 ceiling and then returned having closed NOTHING.
+    const refs = Array.from({ length: 475 }, (_, i) => i + 1)
+    const labeled = labeledMap(...Array.from({ length: 128 }, (_, i) => issue({ number: i + 1 })))
+    const { matched, unmatched } = selectCandidates(refs, labeled)
+    expect(matched).toHaveLength(128)
+    expect(unmatched).toEqual([])
+  })
+
+  it('reports a labeled issue no commit cites, so the caller can expand PR bodies', () => {
+    const labeled = labeledMap(issue({ number: 74 }), issue({ number: 555 }))
+    expect(selectCandidates([74, 92], labeled).unmatched).toEqual([555])
+  })
+
+  it('never reports a labeled PULL REQUEST as a shortfall', () => {
+    // A labeled PR can never close, so chasing it would buy 200 useless lookups.
+    const labeled = labeledMap(issue({ number: 74 }), issue({ number: 600, pull_request: { url: 'x' } }))
+    expect(selectCandidates([74], labeled).unmatched).toEqual([])
+  })
+
+  it('does not double-count a ref cited twice in the range', () => {
+    const labeled = labeledMap(issue({ number: 74 }))
+    expect(selectCandidates([74, 74], labeled).matched).toHaveLength(1)
+  })
+
+  it('closes nothing when no ref is labeled', () => {
+    expect(selectCandidates([1, 2, 3], labeledMap())).toEqual({ matched: [], unmatched: [] })
+  })
+})
+
+// ── expandViaPrBodies — the only unbounded pass ────────────────────
+describe('expandViaPrBodies', () => {
+  const pr = (number: number, body: string, over: Record<string, unknown> = {}) => ({
+    number,
+    title: `fix: something (#${number})`,
+    body,
+    state: 'open',
+    pull_request: { url: 'x' },
+    labels: [],
+    ...over,
+  })
+
+  it('finds a labeled issue through the body of a cited PR', () => {
+    const labeled = new Map<number, unknown>([[555, issue({ number: 555 })]])
+    const fetched: number[] = []
+    const r = expandViaPrBodies({
+      direct: [600],
+      labeled,
+      unmatched: [555],
+      fetchItem: (n) => {
+        fetched.push(n)
+        return pr(600, 'Closes #555.')
+      },
+    })
+    expect(r.found.map((i) => i.number)).toEqual([555])
+    expect(r.stillMissing).toEqual([])
+    expect(fetched).toEqual([600])
+  })
+
+  it('reads a LABELED pull request already in hand, without spending a lookup', () => {
+    // Regression: `labeled` holds issues AND pull requests, because REST
+    // /issues?labels= returns both. Skipping everything already in `labeled`
+    // skipped labeled PRs too — and a labeled PR's body is the entire reason
+    // this pass exists, so #555 was reported as "not referenced anywhere in
+    // this range" when it plainly was.
+    const labeled = new Map<number, unknown>([
+      [555, issue({ number: 555 })],
+      [600, pr(600, 'Closes #555.', { labels: [{ name: 'in-beta' }] })],
+    ])
+    const r = expandViaPrBodies({
+      direct: [600],
+      labeled,
+      unmatched: [555],
+      fetchItem: () => {
+        throw new Error('must not fetch a PR we already hold')
+      },
+    })
+    expect(r.found.map((i) => i.number)).toEqual([555])
+    expect(r.lookups).toBe(0)
+  })
+
+  it('stops at the ceiling but KEEPS what it already found', () => {
+    // The old overflow path returned and discarded the run. Whatever matched
+    // before the ceiling must survive it.
+    const labeled = new Map<number, unknown>([
+      [555, issue({ number: 555 })],
+      [556, issue({ number: 556 })],
+    ])
+    const lines: string[] = []
+    const r = expandViaPrBodies({
+      direct: [600, 601, 602, 603],
+      labeled,
+      unmatched: [555, 556],
+      max: 2,
+      log: (l) => lines.push(l),
+      fetchItem: (n) => (n === 600 ? pr(600, 'Closes #555.') : pr(n, 'no refs here')),
+    })
+    expect(r.found.map((i) => i.number)).toEqual([555])
+    expect(r.stillMissing).toEqual([556])
+    expect(r.lookups).toBe(2)
+    expect(lines.join('\n')).toContain('Stopped after 2 lookups')
+  })
+
+  it('stops early the moment the shortfall closes, buying no further lookups', () => {
+    const labeled = new Map<number, unknown>([[555, issue({ number: 555 })]])
+    const r = expandViaPrBodies({
+      direct: [600, 601, 602],
+      labeled,
+      unmatched: [555],
+      fetchItem: (n) => pr(n, n === 600 ? 'Closes #555.' : 'nothing'),
+    })
+    expect(r.lookups).toBe(1)
+  })
+
+  it('never pushes undefined when a PR body cites a ref that is not labeled', () => {
+    const labeled = new Map<number, unknown>([[555, issue({ number: 555 })]])
+    const r = expandViaPrBodies({
+      direct: [600],
+      labeled,
+      unmatched: [555],
+      fetchItem: () => pr(600, 'Closes #555. Also mentions #999 and #1000.'),
+    })
+    expect(r.found).toHaveLength(1)
+    expect(r.found.every(Boolean)).toBe(true)
+  })
+
+  it('skips a labeled ISSUE without a lookup, and ignores a ref that is not a PR', () => {
+    const labeled = new Map<number, unknown>([
+      [74, issue({ number: 74 })],
+      [555, issue({ number: 555 })],
+    ])
+    const r = expandViaPrBodies({
+      direct: [74, 900],
+      labeled,
+      unmatched: [555],
+      fetchItem: () => issue({ number: 900, labels: [] }),
+    })
+    expect(r.lookups).toBe(1)
+    expect(r.stillMissing).toEqual([555])
+  })
+})
+
+// ── fetchLifecycleIssues — paging bounds ───────────────────────────
+describe('fetchLifecycleIssues', () => {
+  const page = (numbers: number[]) => JSON.stringify(numbers.map((n) => ({ number: n, title: `#${n}`, state: 'open', labels: [] })))
+
+  it('merges both lifecycle labels into one map', () => {
+    const gh = (args: string[]) => (args[1].includes('in-beta') ? page([1, 2]) : page([3]))
+    expect([...fetchLifecycleIssues('o/n', gh).keys()].sort((a, b) => a - b)).toEqual([1, 2, 3])
+  })
+
+  it('stops after a short page', () => {
+    let calls = 0
+    const gh = () => {
+      calls++
+      return page([1])
+    }
+    fetchLifecycleIssues('o/n', gh)
+    expect(calls).toBe(2) // one short page per label
+  })
+
+  it('pages past an exactly-full first page', () => {
+    // The real boundary: `in-release` returned exactly 100 on page 1 and 9 on
+    // page 2. Breaking on `length < 100` must not stop at the full page.
+    const first = Array.from({ length: 100 }, (_, i) => i + 1)
+    let call = 0
+    const gh = () => {
+      call++
+      return call % 2 === 1 ? page(first) : page([1000 + call])
+    }
+    expect(fetchLifecycleIssues('o/n', gh).size).toBe(102)
+  })
+
+  it('throws a NAMED error on a non-array body rather than "items is not iterable"', () => {
+    expect(() => fetchLifecycleIssues('o/n', () => JSON.stringify({ message: 'Bad credentials' }))).toThrow(/non-array/)
+  })
+
+  it('refuses to page forever when the API ignores `page`', () => {
+    // Without a ceiling this spins until the Actions job times out.
+    const full = Array.from({ length: 100 }, (_, i) => i + 1)
+    expect(() => fetchLifecycleIssues('o/n', () => page(full), 3)).toThrow(/refusing to page further/i)
+  })
+})
+
+// ── closeOne — the call ORDER is the fail-safe ─────────────────────
+describe('closeOne', () => {
+  const target = { number: 74, title: 'x', closeLabel: 'in-beta', closeCarried: ['in-beta'] }
+  const verbs = (calls: string[][]) => calls.map((c) => c[1])
+
+  const runCapturing = (failOn?: string) => {
+    const calls: string[][] = []
+    const run = (args: string[]) => {
+      calls.push(args)
+      if (failOn && args[1] === failOn) throw new Error(`HTTP 403: secondary rate limit on ${failOn}`)
+      return ''
+    }
+    return { calls, run }
+  }
+
+  it('comments, then CLOSES, then removes the label — in that order', () => {
+    const { calls, run } = runCapturing()
+    closeOne({ issue: target, repo: 'o/n', version: '2.1.0', sha: 'abc1234', range: 'v2.0.0..main', run })
+    expect(verbs(calls)).toEqual(['comment', 'close', 'edit'])
+    expect(calls[2]).toContain('--remove-label')
+    expect(calls[2]).toContain('in-beta')
+  })
+
+  it('leaves the issue STILL LABELED when the close fails, so a re-run finds it again', () => {
+    // The defect this ordering exists to prevent. Candidates are discovered by
+    // querying open issues BY LABEL, so unlabelling before the close would strand
+    // a failed issue open-and-unlabeled: matched by no query, never closed by
+    // anything, and carrying a comment saying it shipped.
+    const { calls, run } = runCapturing('close')
+    expect(() => closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run })).toThrow(/secondary rate limit/)
+    expect(verbs(calls)).toEqual(['comment', 'close'])
+    expect(verbs(calls)).not.toContain('edit')
+  })
+
+  it('leaves the issue CLOSED when only the unlabel fails — a stale label is recoverable', () => {
+    const { calls, run } = runCapturing('edit')
+    expect(() => closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run })).toThrow()
+    expect(verbs(calls)).toEqual(['comment', 'close', 'edit'])
+  })
+
+  it('touches nothing beyond the comment when the comment itself fails', () => {
+    const { calls, run } = runCapturing('comment')
+    expect(() => closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run })).toThrow()
+    expect(verbs(calls)).toEqual(['comment'])
+  })
+
+  it('pauses between every content-generating call, not just between issues', () => {
+    // All three are content-generating and count against the same secondary
+    // limit, so pausing only between issues does not bound the rate.
+    let pauses = 0
+    const { run } = runCapturing()
+    closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run, pause: () => pauses++ })
+    expect(pauses).toBe(3)
+  })
+
+  it('still backs off when a call THREW — the failure path is where it matters', () => {
+    // A rate-limit cascade skipped every pause, so the failure path ran ~30x the
+    // request rate of the success path, aimed at an API that had just returned
+    // 403 telling us to slow down. Repeated violations extend the block, so that
+    // turned a partial failure into a total one.
+    for (const failOn of ['comment', 'close', 'edit']) {
+      let pauses = 0
+      const { run } = runCapturing(failOn)
+      expect(() => closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run, pause: () => pauses++ })).toThrow()
+      expect(pauses).toBeGreaterThan(0)
+    }
+  })
+
+  it('sheds BOTH lifecycle labels when an issue somehow carries both', () => {
+    const { calls, run } = runCapturing()
+    closeOne({ issue: { ...target, closeCarried: ['in-beta', 'in-release'] }, repo: 'o/n', version: '2.1.0', run })
+    expect(calls[2].filter((a) => a === '--remove-label')).toHaveLength(2)
+  })
+
+  it('skips the edit entirely rather than sending an empty label list', () => {
+    const { calls, run } = runCapturing()
+    closeOne({ issue: { ...target, closeCarried: [] }, repo: 'o/n', version: '2.1.0', run })
+    expect(verbs(calls)).toEqual(['comment', 'close'])
   })
 })
 
