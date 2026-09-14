@@ -35,6 +35,18 @@
  * not the harvest: a candidate is only ever closed if it is an issue (not a PR),
  * is currently OPEN, and carries the `in-beta` or `in-release` label. Anything
  * else is skipped and reported.
+ *
+ * Why the LABEL SET drives the lookups, not the refs: a promotion range is as
+ * long as a release. `v2.0.0..main` for 2.1.0 spans 775 commits carrying 476
+ * distinct refs — almost all of them PR numbers. Fetching every ref to discover
+ * that 348 of them are pull requests is both slow and, at one API call each,
+ * enough to bite the Actions token's hourly budget. Worse, the old ceiling
+ * `return`ed without closing anything, so the single run that matters most —
+ * the first stable promotion in months — would have silently closed nothing.
+ * So: list the open `in-beta`/`in-release` issues once (bounded by how many
+ * issues carry the label, which is inherently small), intersect with the refs
+ * harvested from the commit log for free, and pay for a PR-body lookup only
+ * when a labeled issue was NOT cited directly.
  */
 
 const { execFileSync } = require('child_process')
@@ -45,10 +57,13 @@ const path = require('path')
 // script swaps in-beta for in-release), but the close path removes every one it
 // finds so a mislabeled issue cannot keep a stale lifecycle label after close.
 const LIFECYCLE_LABELS = ['in-beta', 'in-release']
-// Ceiling on API lookups. A promotion spans one release; hundreds of distinct
-// refs means the range is wrong (e.g. a fallback that reached back too far), and
-// we would rather do nothing than hammer the API on a bad range.
-const MAX_CANDIDATES = 200
+// Ceiling on the OPTIONAL PR-body expansion pass only — the one part of the run
+// whose cost is not bounded by the label set. Hitting it no longer discards the
+// run: whatever was already matched still closes, and the shortfall is reported
+// by number so a human can finish the job. (Before, the ceiling `return`ed and
+// closed nothing, which is the failure mode that made a 476-ref promotion a
+// no-op.)
+const MAX_EXPANSION_LOOKUPS = 200
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────
 
@@ -124,6 +139,37 @@ function planClosures(items) {
 }
 
 /**
+ * Intersect the refs harvested from the promoted commits with the set of issues
+ * that could possibly close (open + lifecycle-labeled), fetched once up front.
+ *
+ * Returns the matched items in ref order, plus the labeled issues that were NOT
+ * cited anywhere in the range. That second list is what decides whether the
+ * caller pays for PR-body expansion at all: when it is empty — the common case,
+ * because a squash subject carries `(#NNN)` — the whole run costs one listing
+ * and no per-ref lookups.
+ *
+ * Labeled PULL REQUESTS are excluded from the shortfall: they can never close,
+ * so their absence from the range must not trigger an expansion pass hunting
+ * for them. They stay in `matched` if referenced, where classifyCandidate's own
+ * guard skips them and reports why.
+ */
+function selectCandidates(refs, labeledByNumber) {
+  const matched = []
+  const hit = new Set()
+  for (const n of refs || []) {
+    const item = labeledByNumber.get(n)
+    if (!item || hit.has(n)) continue
+    hit.add(n)
+    matched.push(item)
+  }
+  const unmatched = [...labeledByNumber.entries()]
+    .filter(([n, item]) => !hit.has(n) && !(item && item.pull_request))
+    .map(([n]) => n)
+    .sort((a, b) => a - b)
+  return { matched, unmatched }
+}
+
+/**
  * Pick the commit range to harvest.
  *
  * `before` is all-zeros on a branch's first push, and unreachable after a force
@@ -158,8 +204,12 @@ function closeCommentBody({ version, sha, range, label = 'in-beta' }) {
 
 // ── i/o ────────────────────────────────────────────────────────────
 
+// maxBuffer matters here, not just on gh: a promotion range is a whole release,
+// and `git log --format=%s%n%b v2.0.0..main` for 2.1.0 is ~2 MB of subjects and
+// bodies. Node's 1 MB default kills it with ENOBUFS, which the catch in main()
+// reports as a bare failure with nothing closed.
 function git(args) {
-  return execFileSync('git', args, { encoding: 'utf-8' }).trim()
+  return execFileSync('git', args, { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }).trim()
 }
 
 function gh(args) {
@@ -183,6 +233,28 @@ function fetchItem(repo, number) {
   } catch {
     return null
   }
+}
+
+/**
+ * Every OPEN issue currently carrying a lifecycle label, keyed by number.
+ *
+ * Uses the REST `/issues` list so the payload shape is identical to fetchItem's
+ * (lowercase `state`, a `pull_request` key on PRs) — `gh issue list --json`
+ * returns `"OPEN"` and would silently fail classifyCandidate's `state !== 'open'`
+ * check, closing nothing. Paged explicitly rather than via `--paginate`, which
+ * concatenates raw pages into invalid JSON.
+ */
+function fetchLifecycleIssues(repo) {
+  const byNumber = new Map()
+  for (const label of LIFECYCLE_LABELS) {
+    for (let page = 1; ; page++) {
+      const raw = gh(['api', `repos/${repo}/issues?state=open&labels=${label}&per_page=100&page=${page}`])
+      const items = JSON.parse(raw)
+      for (const item of items) byNumber.set(item.number, item)
+      if (items.length < 100) break
+    }
+  }
+  return byNumber
 }
 
 function commitLogFor(range) {
@@ -248,42 +320,56 @@ function main() {
   console.log(`Repo:  ${repo}`)
   console.log(`Range: ${range}${dryRun ? '   [DRY RUN]' : ''}`)
 
-  // 1. Refs straight out of the promoted commits (PR numbers, mostly).
+  // 1. Refs straight out of the promoted commits (PR numbers, mostly). Local
+  //    git, so the 476 refs of a full release range cost nothing.
   const direct = refsFromCommitLog(commitLogFor(range))
-  console.log(`\nRefs in promoted commits: ${direct.length ? direct.map((n) => `#${n}`).join(' ') : '(none)'}`)
+  console.log(`\nRefs in promoted commits: ${direct.length}`)
   if (!direct.length) {
     console.log('Nothing referenced. Done.')
     return
   }
 
-  // 2. Fetch each, and for anything that turns out to be a PR, harvest the refs
-  //    in its title+body too (that's where `Closes #NNN` lives). One level deep:
-  //    a PR's linked issues, not an issue's onward references.
-  const fetched = new Map()
-  const queue = [...direct]
-  const seen = new Set()
-  while (queue.length) {
-    if (seen.size >= MAX_CANDIDATES) {
-      console.log(`\nRefusing to look up more than ${MAX_CANDIDATES} refs — the range looks wrong. Nothing changed.`)
-      return
-    }
-    const n = queue.shift()
-    if (seen.has(n)) continue
-    seen.add(n)
-    const item = fetchItem(repo, n)
-    fetched.set(n, item)
-    if (item && item.pull_request) {
-      for (const ref of extractRefs(`${item.title || ''}\n${item.body || ''}`)) {
-        if (!seen.has(ref)) queue.push(ref)
+  // 2. The only issues that can possibly close, fetched once. This is what
+  //    bounds the run: refs that are PRs, foreign, or unlabeled are rejected by
+  //    set lookup instead of by an API call each.
+  const labeled = fetchLifecycleIssues(repo)
+  console.log(`Open ${LIFECYCLE_LABELS.join('/')} issues: ${labeled.size}`)
+
+  const { matched, unmatched } = selectCandidates(direct, labeled)
+  console.log(`Cited in this promotion: ${matched.length}`)
+
+  // 3. A labeled issue that no commit cites may still be linked from a PR BODY
+  //    (`Closes #NNN`), which is why this pass exists at all. It runs only when
+  //    there is a shortfall to chase, and stops the moment the shortfall closes.
+  if (unmatched.length) {
+    console.log(`\nNot cited directly (${unmatched.length}) — expanding PR bodies: ${unmatched.map((n) => `#${n}`).join(' ')}`)
+    const wanted = new Set(unmatched)
+    let lookups = 0
+    for (const n of direct) {
+      if (!wanted.size) break
+      if (labeled.has(n)) continue
+      if (lookups >= MAX_EXPANSION_LOOKUPS) {
+        console.log(`  Stopped after ${MAX_EXPANSION_LOOKUPS} lookups with ${wanted.size} still unaccounted for.`)
+        break
       }
+      lookups++
+      const item = fetchItem(repo, n)
+      if (!item || !item.pull_request) continue
+      for (const ref of extractRefs(`${item.title || ''}\n${item.body || ''}`)) {
+        if (!wanted.has(ref)) continue
+        wanted.delete(ref)
+        matched.push(labeled.get(ref))
+      }
+    }
+    if (wanted.size) {
+      console.log(
+        `  ${wanted.size} labeled issue(s) are not referenced anywhere in this range and stay OPEN: ` +
+          `${[...wanted].sort((a, b) => a - b).map((n) => `#${n}`).join(' ')}`,
+      )
     }
   }
 
-  // Keep unresolvable refs in the list (as `notFound`) so the report accounts for
-  // every ref harvested — a silently-dropped ref is indistinguishable from one
-  // that was never seen, which is exactly the blind spot #134 is about.
-  const items = [...fetched.entries()].map(([n, item]) => item || { number: n, notFound: true })
-  const { toClose, skipped } = planClosures(items)
+  const { toClose, skipped } = planClosures(matched)
 
   if (skipped.length) {
     console.log('\nSkipped:')
@@ -316,11 +402,12 @@ function main() {
 
 module.exports = {
   LIFECYCLE_LABELS,
-  MAX_CANDIDATES,
+  MAX_EXPANSION_LOOKUPS,
   extractRefs,
   refsFromCommitLog,
   classifyCandidate,
   planClosures,
+  selectCandidates,
   resolveRange,
   closeCommentBody,
   parseArgv,

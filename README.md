@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nubbymong/claude-command-center/beta/docs/screenshots/hero-banner.png" alt="AI Code Conductor — mission control for Claude Code" width="100%">
+  <img src="docs/screenshots/hero-banner.png" alt="AI Code Conductor — mission control for Claude Code" width="100%">
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@ Claude Code is a remarkable CLI. But the moment you have more than one project, 
 ## Sessions, accounts, and a sidebar that knows what is going on
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nubbymong/claude-command-center/beta/docs/screenshots/shot-sessions.png" alt="The session sidebar — live sessions across three accounts" width="88%">
+  <img src="docs/screenshots/shot-sessions.png" alt="The session sidebar — live sessions across three accounts" width="88%">
 </p>
 
 Every workspace starts as a **saved config**: a label, a colour, a working directory, a starting model and effort, its own permission preset and any extra CLI arguments, and any agent templates you want pre-loaded. Configs live in **sections and groups** you arrange yourself, and the sidebar has two modes — **Saved** for launching and **Running** for tending what is live — with a **Quick Start** row for the configs you pin. A config runs one session at a time unless you tick **Allow Multi Spawn**, which trades the play button for a copy count and lets you start several at once; **Select** on either tab turns the rows into tick boxes and launches a whole set in one press. Each session card carries the whole picture on one line: status, the model and effort actually in use (read live from Claude, never guessed) and whether **Fast Mode** is on, context consumed, the account it is signed in as, and its type — Claude Code, Codex or a plain terminal, over SSH or not.
@@ -42,7 +42,7 @@ How a config connects is one choice of three: **Local**, **SSH**, or **SSH Persi
 ## Agent Canvas — review what Claude built by pointing at it
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nubbymong/claude-command-center/beta/docs/screenshots/shot-canvas.png" alt="The Agent Canvas — annotating a rendered mockup" width="88%">
+  <img src="docs/screenshots/shot-canvas.png" alt="The Agent Canvas — annotating a rendered mockup" width="88%">
 </p>
 
 Claude renders a design mockup, a plan, or your project's real built site onto a canvas inside the app. You mark it up directly — pin a note to an element, draw over a region, paste screenshots of your own — and then decide: **approve or reject the version in front of you**. Claude receives the notes **anchored to the actual elements you pointed at**, works through them in one pass, renders the next version and hands back; the pane returns you to the terminal on its own. It is a review loop rather than a screenshot: the page is laid out by a real browser engine, so what you annotate is what will ship. **Approving owes the agent nothing** — notes you send with an approval are kept as *observations* rather than work — and once nothing else on the canvas is open the artefact signs itself off into the project Library. Only one round is ever live at a time, and a settled round stays settled: reopening a note, or a whole round, is yours alone. Answer a note in chat instead of the pane and Claude marks it addressed, but the decision is still yours. Each canvas holds one subject, so a new topic never inherits an old one's notes, and History moves you between the artefacts a session has built up. Not every render is a review: when you only want to *see* something, Claude can put it up as a **show-and-tell** that joins no queue and you dismiss in a click (or tell the agent to). The Canvas button counts what is still open across every canvas the session owns, so nothing waits out of sight, and **Mark complete** closes an artefact yourself, naming exactly what it will close as not done before you confirm. The canvas also has a **plan mode**: before starting anything large, Claude puts the plan on the canvas rather than in the chat, and you review it per step, anchored, before a line of code is written. A plan is reviewed as a plan — **Approve** or **Submit Revisions**, never Reject, because a plan is meant to go round again — and Approve stays out of reach while the plan carries an open question or you have a note you have not sent, so an approval never arrives carrying work the agent has not seen.
@@ -52,7 +52,7 @@ Claude renders a design mockup, a plan, or your project's real built site onto a
 ## Tokenomics — every cent, pivotable
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nubbymong/claude-command-center/beta/docs/screenshots/shot-tokenomics.png" alt="The Tokenomics dashboard" width="88%">
+  <img src="docs/screenshots/shot-tokenomics.png" alt="The Tokenomics dashboard" width="88%">
 </p>
 
 A background indexer reads all of your transcripts — subagent and sidechain files included — dedups globally, and computes cost at query time from live pricing, so the dashboard opens instantly. A KPI row, a daily-spend chart, a per-model breakdown and a sessions table with cost, model and config attribution; filter the whole view by date, model, **account** or project. Codex spend is segmented automatically. Pricing comes from LiteLLM's open pricing data, cached for a day.
@@ -60,7 +60,7 @@ A background indexer reads all of your transcripts — subagent and sidechain fi
 ## Logs — your conversations, readable
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nubbymong/claude-command-center/beta/docs/screenshots/shot-logs.png" alt="The Logs viewer with its timeline rail" width="88%">
+  <img src="docs/screenshots/shot-logs.png" alt="The Logs viewer with its timeline rail" width="88%">
 </p>
 
 The Conductor indexes Claude's own transcripts and renders them back as a readable chat — messages, tool calls, thinking. A **timeline rail** beside the transcript scrubs the whole conversation; click to jump. **Full-text search** spans every conversation and lands you on the matching turn. A per-session **Conversation** tab live-follows the running session. Deleting the index never touches your conversations, which stay in `~/.claude/projects`.
@@ -68,7 +68,7 @@ The Conductor indexes Claude's own transcripts and renders them back as a readab
 ## Memory — catch the drift before it costs you context
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nubbymong/claude-command-center/beta/docs/screenshots/shot-memory.png" alt="The Memory dashboard" width="88%">
+  <img src="docs/screenshots/shot-memory.png" alt="The Memory dashboard" width="88%">
 </p>
 
 A dashboard over Claude's auto-memory across every project. A KPI strip — memories, projects, total size, stale-over-30-days, index health — and charts summarise the store; a ranked project list shows staleness, index warnings and live-session activity. Drill into any project for a sortable table, open a memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search runs across everything.
@@ -76,7 +76,7 @@ A dashboard over Claude's auto-memory across every project. A KPI strip — memo
 ## Insights — what actually happened, across every account
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nubbymong/claude-command-center/beta/docs/screenshots/shot-insights.png" alt="Insights — a cross-account report" width="88%">
+  <img src="docs/screenshots/shot-insights.png" alt="Insights — a cross-account report" width="88%">
 </p>
 
 Scheduled and on-demand reports over your own usage, runnable across **all of your accounts at once** rather than one at a time. Where Tokenomics answers what things cost, Insights answers what you did with them.
@@ -119,7 +119,7 @@ Scheduled and on-demand reports over your own usage, runnable across **all of yo
 
 ## Under the hood
 
-Electron 43 with a frameless, sandboxed renderer and zod-validated IPC; React 19 with Tailwind CSS v4 (dark, light and system themes); Zustand 5 hydrated from disk on boot; xterm.js 6 over node-pty (ConPTY on Windows) — GPU rendering is opt-in and only ever drives the terminal you are looking at, because the WebGL addon keeps one glyph cache per process and a session rebuilding it blanked every other; electron-vite; `@modelcontextprotocol/sdk` for the Conductor MCP server. The main process owns config persistence, the PTY pool, the hooks HTTP gateway that drives the attention pulse, the tokenomics aggregator, the statusline ingest, the MCP server and cloud-agent dispatch; the renderer talks to it exclusively through typed IPC channels.
+Electron 43 with a frameless, sandboxed renderer and zod-validated IPC; React 19 with Tailwind CSS v4 (dark, light and system themes); Zustand 5 hydrated from disk on boot; xterm.js 6 over node-pty (ConPTY on Windows) — GPU rendering is on by default and only ever drives the terminal you are looking at, because the WebGL addon keeps one glyph cache per process and a session rebuilding it blanked every other until a victim was taught to drop its own render model before repainting; electron-vite; `@modelcontextprotocol/sdk` for the Conductor MCP server. The main process owns config persistence, the PTY pool, the hooks HTTP gateway that drives the attention pulse, the tokenomics aggregator, the statusline ingest, the MCP server and cloud-agent dispatch; the renderer talks to it exclusively through typed IPC channels.
 
 Over six thousand unit tests plus a native suite that runs under Electron's own runtime — for better-sqlite3, node-pty, and anything whose behaviour differs between Electron and plain Node — green on Windows and macOS in CI on every labelled PR. Security-sensitive changes go through an adversarial review pass before merge: independent agents attack the change with distinct lenses, and the verdict is recorded on the pull request.
 

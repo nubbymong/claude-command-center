@@ -1,0 +1,84 @@
+## 2026-09-14 -- 2.1.0 stable promotion prep
+
+Prep for promoting the 2.1 line to `main`. `beta` was at `838f6943`
+(`2.1.0-rc.17`); `main` still at `9b63f8e8` (`2.0.0`, 15 Jul) -- 775 commits.
+
+### The auto-close would have closed nothing
+
+`close-in-beta-issues.js` (#134) is what closes `in-beta`/`in-release` issues on
+promotion. It harvested every `#NNN` in the range and fetched each one, capped at
+`MAX_CANDIDATES = 200` -- and the overflow path `return`ed **before** the close
+loop. `v2.0.0..main` carries 475 distinct refs against 128 labeled issues, so the
+one run that matters most would have printed "the range looks wrong" and closed
+nothing. Cutting an rc never exercises this: the ranges are small.
+
+Inverted the algorithm. The label set now drives the lookups, not the refs:
+
+- `fetchLifecycleIssues()` lists the open `in-beta`/`in-release` issues once, via
+  REST `/issues` (not `gh issue list --json`, which returns `"OPEN"` and would
+  silently fail `classifyCandidate`'s `state !== 'open'` check), paged explicitly
+  because `--paginate` concatenates raw pages into invalid JSON.
+- `selectCandidates()` (pure, tested) intersects that set with the refs harvested
+  from the commit log. Refs that are PRs, foreign or unlabeled are rejected by set
+  lookup instead of by an API call each.
+- PR-body expansion survives but is needs-driven: it runs only when a labeled
+  issue was not cited directly, and stops the moment the shortfall closes. Hitting
+  its ceiling no longer discards the run -- what matched still closes, and the
+  shortfall is reported by number.
+- A labeled PULL REQUEST is never counted as a shortfall; chasing one would buy
+  200 useless lookups.
+
+Second bug, and only a real run found it: `git()` had no `maxBuffer`, so the
+~2 MB `git log --format=%s%n%b` for a release-long range died with `ENOBUFS`.
+`gh()` already had 16 MB; `git()` now has 64 MB.
+
+Verified end to end against the real range, not just in unit tests:
+`--range v2.0.0..origin/beta --dry-run` -> 475 refs, 128 labeled, **"Would close
+128 issue(s)"**, zero expansion lookups. Mutation-checked: restoring the old
+bail-out fails the 476-ref regression test.
+
+### User-facing surface sweep (AGENTS.md)
+
+Two surfaces had drifted, both saying GPU terminal rendering is opt-in and
+unfixed. It has been default-ON since #374 (2026-08-22) with the shared-atlas
+corruption repaired in #311 -- so Ask Conductor, the Feature Guide and the README
+were all advising users to turn off a setting that now works.
+
+- `app-knowledge.ts` known-issues entry rewritten: the fault is described as
+  repaired, with Ctrl+Alt+G capture as the remedy if it ever recurs.
+- `README.md` "Under the hood" corrected from "opt-in" to "on by default".
+- `tips-library.ts` was already current (`tip.gpu-rendering` says "by default
+  now"). Tour and Feature Guide cards needed nothing.
+
+`changelog.ts` gains a consolidated `2.1.0` entry -- a stable user jumps straight
+from 2.0.0 and has seen none of the 33 prerelease entries, so it retells the
+whole line: the rename, remote sessions as first-class, the Agent Canvas,
+claude.ai in the app, the terminal fix, the watchdog, Linux, Electron 43 and the
+security line.
+
+### Rename prep (repo renames to `ai-code-conductor` after this ships)
+
+Confirmed the soft-switch works and that the updater is the only functional
+coupling: no `publish` block in electron-builder, no `repository` field in
+package.json, releases are created from the workflow's own repo context.
+`RENAMED_REPO` is the hyphenated `nubbymong/ai-code-conductor` -- confirmed with
+the owner, because an underscored slug would never match and `httpGetJson` is a
+bare `https.get` that does not follow the 301 a renamed repo returns.
+
+One consequence worth recording: 2.0.0 predates the soft-switch (17 Aug), so a
+user who never takes the 2.1.0 update before the rename is stranded on a dead
+update feed and needs a manual reinstall. Shipping 2.1.0 stable *before* the
+rename is what carries everyone else across.
+
+README screenshots were 7 absolute `raw.githubusercontent.com/.../claude-command-center/beta/`
+URLs; made relative so they survive the rename without depending on whether
+`raw.` honours the redirect.
+
+### Still owed before the cut
+
+- Milestone `2.1.0` must exist -- the gate resolves it from the tag and a missing
+  milestone fails closed.
+- `promote.js` refuses to run from `beta` (it requires `release/X.Y.Z`), so the
+  promote goes through a `release/2.1.0` branch cut from beta. No code change.
+- The updater soft-switch still owes the adversarial pass its own fragment asked
+  for before the official cut.

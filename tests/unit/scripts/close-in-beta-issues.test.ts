@@ -12,6 +12,10 @@ const closer = require('../../../scripts/close-in-beta-issues.js') as {
     toClose: Array<{ number: number; closeLabel: string; closeCarried: string[] }>
     skipped: Array<{ number: number; reason: string }>
   }
+  selectCandidates: (
+    refs: number[],
+    labeled: Map<number, unknown>,
+  ) => { matched: Array<{ number: number }>; unmatched: number[] }
   resolveRange: (opts: {
     explicit?: string
     before?: string
@@ -23,7 +27,8 @@ const closer = require('../../../scripts/close-in-beta-issues.js') as {
   parseArgv: (argv: string[]) => { dryRun: boolean; range?: string; version?: string; repo?: string }
 }
 
-const { extractRefs, refsFromCommitLog, classifyCandidate, planClosures, resolveRange, closeCommentBody, parseArgv } = closer
+const { extractRefs, refsFromCommitLog, classifyCandidate, planClosures, selectCandidates, resolveRange, closeCommentBody, parseArgv } =
+  closer
 
 const issue = (over: Record<string, unknown> = {}) => ({
   number: 74,
@@ -166,6 +171,51 @@ describe('planClosures', () => {
 
   it('closes nothing when given nothing', () => {
     expect(planClosures([])).toEqual({ toClose: [], skipped: [] })
+  })
+})
+
+// ── selectCandidates — the fix for the 476-ref promotion ───────────
+describe('selectCandidates', () => {
+  const labeledMap = (...items: Array<Record<string, unknown>>) => new Map(items.map((i) => [i.number as number, i]))
+
+  it('keeps only the refs that are open and lifecycle-labeled', () => {
+    const labeled = labeledMap(issue({ number: 74 }), issue({ number: 75 }))
+    // 92 is a PR, 1194 is another project's issue — neither is in the label set,
+    // and neither costs an API call to reject any more.
+    const { matched, unmatched } = selectCandidates([74, 92, 75, 1194], labeled)
+    expect(matched.map((i) => i.number)).toEqual([74, 75])
+    expect(unmatched).toEqual([])
+  })
+
+  it('scales to a full release range without a single per-ref lookup', () => {
+    // The regression this function exists for: v2.0.0..main for 2.1.0 carried
+    // 775 commits / 476 distinct refs against 128 labeled issues. The old walk
+    // fetched refs until a 200 ceiling and then returned having closed NOTHING.
+    const refs = Array.from({ length: 476 }, (_, i) => i + 1)
+    const labeled = labeledMap(...Array.from({ length: 128 }, (_, i) => issue({ number: i + 1 })))
+    const { matched, unmatched } = selectCandidates(refs, labeled)
+    expect(matched).toHaveLength(128)
+    expect(unmatched).toEqual([])
+  })
+
+  it('reports a labeled issue no commit cites, so the caller can expand PR bodies', () => {
+    const labeled = labeledMap(issue({ number: 74 }), issue({ number: 555 }))
+    expect(selectCandidates([74, 92], labeled).unmatched).toEqual([555])
+  })
+
+  it('never reports a labeled PULL REQUEST as a shortfall', () => {
+    // A labeled PR can never close, so chasing it would buy 200 useless lookups.
+    const labeled = labeledMap(issue({ number: 74 }), issue({ number: 600, pull_request: { url: 'x' } }))
+    expect(selectCandidates([74], labeled).unmatched).toEqual([])
+  })
+
+  it('does not double-count a ref cited twice in the range', () => {
+    const labeled = labeledMap(issue({ number: 74 }))
+    expect(selectCandidates([74, 74], labeled).matched).toHaveLength(1)
+  })
+
+  it('closes nothing when no ref is labeled', () => {
+    expect(selectCandidates([1, 2, 3], labeledMap())).toEqual({ matched: [], unmatched: [] })
   })
 })
 
