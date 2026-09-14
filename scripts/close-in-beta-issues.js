@@ -69,9 +69,14 @@ const LIFECYCLE_LABELS = ['in-beta', 'in-release']
 // closed nothing, which is the failure mode that made a 475-ref promotion a
 // no-op.)
 const MAX_EXPANSION_LOOKUPS = 200
-// Pause between issues while closing. See the close loop for why: three
-// content-generating requests per issue against a ~80/min secondary limit.
-const THROTTLE_MS = 250
+// Pause between EVERY content-generating request while closing (see closeOne).
+// GitHub's secondary limit is ~80 content-generating requests/minute and each
+// issue costs three, so a 128-issue promotion is 384 of them. Measured cost of a
+// `gh` invocation here is ~575 ms, but it is faster on an Actions runner, which
+// pushes the rate UP -- the pause, not the latency, is what has to hold the line.
+// 750 ms per call puts the run at ~45/min, comfortably clear, and the whole
+// promotion at roughly 5 minutes. This job is not in a hurry.
+const THROTTLE_MS = 750
 
 /** Block for `ms`. Sync on purpose — the whole script is synchronous execFileSync. */
 function sleepMs(ms) {
@@ -229,6 +234,45 @@ function expandViaPrBodies({ direct, labeled, unmatched, fetchItem: fetch, max =
 }
 
 /**
+ * Retire one issue: comment, CLOSE, then shed the lifecycle label(s).
+ *
+ * The ORDER is the whole point, and it is not the obvious one. `fetchLifecycleIssues`
+ * finds candidates by querying open issues BY LABEL, so the label is the only
+ * handle a later run has on an issue. Removing it before the close means a
+ * failure in between leaves the issue open AND unlabeled — matched by no query,
+ * invisible to this script forever, and (AGENTS.md, "Issue lifecycle") never
+ * rolled or closed by anything else either, while carrying a comment that says
+ * it shipped. Closing first inverts every partial state into a recoverable one:
+ *
+ *   comment fails  -> open, labeled            -> re-run closes it
+ *   close fails    -> open, labeled, commented -> re-run closes it (comment repeats)
+ *   unlabel fails  -> CLOSED, stale label      -> re-run skips it as "already closed"
+ *
+ * A stale label on a closed issue is cosmetic and visible. An absent label on an
+ * open one is a permanent silent loss, which is the class this whole script exists
+ * to remove.
+ *
+ * `pause` is called BETWEEN the calls, not just between issues: the secondary
+ * rate limit counts content-generating requests, and all three of these are.
+ * `run` and `pause` are injected so the interleavings are testable without
+ * touching a real issue.
+ */
+function closeOne({ issue, repo, version, sha, range, run, pause = () => {} }) {
+  // Comment first: whatever else fails, the issue carries the explanation rather
+  // than being silently half-processed.
+  const body = closeCommentBody({ version, sha, range, label: issue.closeLabel })
+  run(['issue', 'comment', String(issue.number), '--repo', repo, '--body', body])
+  pause()
+  run(['issue', 'close', String(issue.number), '--repo', repo, '--reason', 'completed'])
+  pause()
+  // Remove every lifecycle label the issue actually carries — never one it
+  // doesn't, and never leave one behind on a closed issue.
+  const removeFlags = (issue.closeCarried || []).flatMap((l) => ['--remove-label', l])
+  if (removeFlags.length) run(['issue', 'edit', String(issue.number), '--repo', repo, ...removeFlags])
+  pause()
+}
+
+/**
  * Pick the commit range to harvest.
  *
  * `before` is all-zeros on a branch's first push, and unreachable after a force
@@ -264,7 +308,7 @@ function closeCommentBody({ version, sha, range, label = 'in-beta' }) {
 // ── i/o ────────────────────────────────────────────────────────────
 
 // maxBuffer matters here, not just on gh: a promotion range is a whole release,
-// and `git log --format=%s%n%b v2.0.0..main` for 2.1.0 is ~2 MB of subjects and
+// and `git log --format=%s%n%b v2.0.0..main` for 2.1.0 is 1.4 MB of subjects and
 // bodies. Node's 1 MB default kills it with ENOBUFS, which the catch in main()
 // reports as a bare failure with nothing closed.
 function git(args) {
@@ -453,35 +497,22 @@ function main() {
     console.log(`  #${issue.number}  ${issue.title}  [${issue.closeLabel}]`)
     if (dryRun) continue
     try {
-      // Comment first: if the close call fails, the issue still carries the
-      // explanation rather than being silently half-processed.
-      const body = closeCommentBody({ version, sha: after, range, label: issue.closeLabel })
-      gh(['issue', 'comment', String(issue.number), '--repo', repo, '--body', body])
-      // Remove every lifecycle label the issue actually carries — never one it
-      // doesn't, and never leave one behind on a closed issue.
-      const removeFlags = issue.closeCarried.flatMap((l) => ['--remove-label', l])
-      gh(['issue', 'edit', String(issue.number), '--repo', repo, ...removeFlags])
-      gh(['issue', 'close', String(issue.number), '--repo', repo, '--reason', 'completed'])
+      closeOne({ issue, repo, version, sha: after, range, run: gh, pause: () => sleepMs(THROTTLE_MS) })
     } catch (err) {
-      // One issue failing must not abandon the other 127. A promotion closes a
-      // whole release's worth at once, and the common failure here is GitHub's
-      // secondary rate limit, which is transient — so record it, keep going, and
-      // fail the job at the end with the list. Re-running is safe and resumes:
-      // an already-closed or already-unlabeled issue is skipped by the filter.
+      // One issue failing must not abandon the other 127. The common failure is
+      // GitHub's secondary rate limit, which is transient — so record it, keep
+      // going, and fail the job at the end with the list. The call ORDER inside
+      // closeOne is what makes the advertised re-run actually work.
       failed.push({ number: issue.number, message: (err && err.message) || String(err) })
       console.log(`    FAILED — ${failed[failed.length - 1].message.split('\n')[0]}`)
     }
-    // GitHub's secondary rate limit is on CONTENT-GENERATING requests, and each
-    // issue costs three of them. 128 issues is 384 calls; sent flat out that is
-    // roughly double the documented ceiling and trips partway through. A short
-    // pause keeps the whole promotion under it — this job is not in a hurry.
-    sleepMs(THROTTLE_MS)
   }
   console.log(dryRun ? '\nDry run — nothing was changed.' : `\nClosed ${toClose.length - failed.length} of ${toClose.length}.`)
   if (failed.length) {
     throw new Error(
       `${failed.length} issue(s) could not be closed: ${failed.map((f) => `#${f.number}`).join(' ')}. ` +
-        `Re-run the workflow (Close in-beta issues -> Run workflow) with the same range; it resumes safely.`,
+        `Each is still open and still carries its lifecycle label, so re-running the workflow ` +
+        `(Close in-beta issues -> Run workflow) with the same range picks them up.`,
     )
   }
 }
@@ -496,6 +527,7 @@ module.exports = {
   selectCandidates,
   expandViaPrBodies,
   fetchLifecycleIssues,
+  closeOne,
   resolveRange,
   closeCommentBody,
   parseArgv,

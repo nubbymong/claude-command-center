@@ -29,6 +29,15 @@ const closer = require('../../../scripts/close-in-beta-issues.js') as {
     runGh: (args: string[]) => string,
     maxPages?: number,
   ) => Map<number, { number: number }>
+  closeOne: (opts: {
+    issue: { number: number; title?: string; closeLabel?: string; closeCarried?: string[] }
+    repo: string
+    version?: string
+    sha?: string
+    range?: string
+    run: (args: string[]) => string
+    pause?: () => void
+  }) => void
   resolveRange: (opts: {
     explicit?: string
     before?: string
@@ -48,6 +57,7 @@ const {
   selectCandidates,
   expandViaPrBodies,
   fetchLifecycleIssues,
+  closeOne,
   resolveRange,
   closeCommentBody,
   parseArgv,
@@ -160,8 +170,9 @@ describe('classifyCandidate', () => {
 
   it('skips a ref that does not resolve', () => {
     expect(classifyCandidate(null)).toEqual({ action: 'skip', reason: 'not found' })
-    // main() substitutes this marker so an unresolvable ref is still REPORTED
-    // rather than dropped from the run log.
+    // Defence-in-depth only: nothing in the script produces this marker any more,
+    // now that candidates come from a `state=open&labels=` query rather than a
+    // per-ref fetch that could 404.
     expect(classifyCandidate({ number: 1194, notFound: true })).toEqual({ action: 'skip', reason: 'not found' })
   })
 
@@ -393,6 +404,74 @@ describe('fetchLifecycleIssues', () => {
     // Without a ceiling this spins until the Actions job times out.
     const full = Array.from({ length: 100 }, (_, i) => i + 1)
     expect(() => fetchLifecycleIssues('o/n', () => page(full), 3)).toThrow(/refusing to page further/i)
+  })
+})
+
+// ── closeOne — the call ORDER is the fail-safe ─────────────────────
+describe('closeOne', () => {
+  const target = { number: 74, title: 'x', closeLabel: 'in-beta', closeCarried: ['in-beta'] }
+  const verbs = (calls: string[][]) => calls.map((c) => c[1])
+
+  const runCapturing = (failOn?: string) => {
+    const calls: string[][] = []
+    const run = (args: string[]) => {
+      calls.push(args)
+      if (failOn && args[1] === failOn) throw new Error(`HTTP 403: secondary rate limit on ${failOn}`)
+      return ''
+    }
+    return { calls, run }
+  }
+
+  it('comments, then CLOSES, then removes the label — in that order', () => {
+    const { calls, run } = runCapturing()
+    closeOne({ issue: target, repo: 'o/n', version: '2.1.0', sha: 'abc1234', range: 'v2.0.0..main', run })
+    expect(verbs(calls)).toEqual(['comment', 'close', 'edit'])
+    expect(calls[2]).toContain('--remove-label')
+    expect(calls[2]).toContain('in-beta')
+  })
+
+  it('leaves the issue STILL LABELED when the close fails, so a re-run finds it again', () => {
+    // The defect this ordering exists to prevent. Candidates are discovered by
+    // querying open issues BY LABEL, so unlabelling before the close would strand
+    // a failed issue open-and-unlabeled: matched by no query, never closed by
+    // anything, and carrying a comment saying it shipped.
+    const { calls, run } = runCapturing('close')
+    expect(() => closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run })).toThrow(/secondary rate limit/)
+    expect(verbs(calls)).toEqual(['comment', 'close'])
+    expect(verbs(calls)).not.toContain('edit')
+  })
+
+  it('leaves the issue CLOSED when only the unlabel fails — a stale label is recoverable', () => {
+    const { calls, run } = runCapturing('edit')
+    expect(() => closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run })).toThrow()
+    expect(verbs(calls)).toEqual(['comment', 'close', 'edit'])
+  })
+
+  it('touches nothing beyond the comment when the comment itself fails', () => {
+    const { calls, run } = runCapturing('comment')
+    expect(() => closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run })).toThrow()
+    expect(verbs(calls)).toEqual(['comment'])
+  })
+
+  it('pauses between every content-generating call, not just between issues', () => {
+    // All three are content-generating and count against the same secondary
+    // limit, so pausing only between issues does not bound the rate.
+    let pauses = 0
+    const { run } = runCapturing()
+    closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run, pause: () => pauses++ })
+    expect(pauses).toBe(3)
+  })
+
+  it('sheds BOTH lifecycle labels when an issue somehow carries both', () => {
+    const { calls, run } = runCapturing()
+    closeOne({ issue: { ...target, closeCarried: ['in-beta', 'in-release'] }, repo: 'o/n', version: '2.1.0', run })
+    expect(calls[2].filter((a) => a === '--remove-label')).toHaveLength(2)
+  })
+
+  it('skips the edit entirely rather than sending an empty label list', () => {
+    const { calls, run } = runCapturing()
+    closeOne({ issue: { ...target, closeCarried: [] }, repo: 'o/n', version: '2.1.0', run })
+    expect(verbs(calls)).toEqual(['comment', 'close'])
   })
 })
 

@@ -29,7 +29,9 @@ Inverted the algorithm. The label set now drives the lookups, not the refs:
   200 useless lookups.
 
 Second bug, and only a real run found it: `git()` had no `maxBuffer`, so the
-~2 MB `git log --format=%s%n%b` for a release-long range died with `ENOBUFS`.
+1.4 MB `git log --format=%s%n%b` for a release-long range died with `ENOBUFS` --
+the margin over Node's 1 MB default was only 40%, which is why this waited for a
+release-length range to fire.
 `gh()` already had 16 MB; `git()` now has 64 MB.
 
 Verified end to end against the real range, not just in unit tests:
@@ -88,18 +90,47 @@ URLs; made relative so they survive the rename without depending on whether
   promote goes through a `release/2.1.0` branch cut from beta. No code change.
 - The updater soft-switch still owes the adversarial pass its own fragment asked
   for before the official cut.
-- `scripts/gen-changelog.js`'s `REPO_URL` constant still carries the old slug. It
-  builds the version links in `CHANGELOG.md` and the "Full changelog" footer of
-  every GitHub release note, so it is the one rename-fragile constant that needs
-  updating at rename time -- not before, or the links 404 until the rename lands.
+**Rename checklist -- change these AT rename time, not before** (pointing them at
+the new slug early breaks them until the rename lands):
+
+- `scripts/gen-changelog.js` `REPO_URL` -- builds the version links in
+  `CHANGELOG.md` AND the "Full changelog" footer of every GitHub release note.
+- `README.md:6` -- the shields.io release badge.
+- `README.md:127-128` -- `git clone .../claude-command-center.git` + `cd`.
+
+The README screenshots and the `../../releases` / `../../actions` links are
+already rename-agnostic and need nothing.
 
 ### Review
 
-Two independent reviews (spec compliance, code quality) returned FINDINGS and
-all four real ones were fixed: the factual error in the 2.1.0 GPU entry (the
+Two independent reviews (spec compliance, code quality), each re-run after the
+fixes. Round 1 returned four real findings, all fixed: the factual error in the 2.1.0 GPU entry (the
 atlas is still one per process -- the fix is that only the focused terminal holds
 a context and a victim drops its own render model before repainting); the
 `labeled.has(n)` skip that also skipped labeled PRs, whose bodies are the reason
 the expansion pass exists; unbounded pagination with no non-array guard (now
 matching `release-gate.mjs`'s `githubListAll`); and 384 unthrottled mutating API
 calls that would trip GitHub's secondary rate limit partway through the close.
+
+Round 2 then found a defect the round-1 fix had INTRODUCED, and both reviewers
+found it independently. The close path ran comment -> remove-label -> close, so a
+failure at the close left the issue **open and unlabeled** -- and candidates are
+discovered by querying open issues BY LABEL, so nothing would ever find it again,
+while it carried a comment saying it shipped. The try/catch had turned that from
+at-most-one issue into potentially many, and the error message told the operator
+to re-run, which would not have recovered them. Fixed by inverting the order to
+comment -> CLOSE -> remove-label, which makes every partial state recoverable: a
+stale label on a closed issue is cosmetic, an absent label on an open one is
+permanent. `closeOne` is extracted and exported for this; 7 tests cover the
+orderings, and reverting the order fails 4 of them. `THROTTLE_MS` also went
+250 -> 750 and now pauses between every call rather than between issues -- at 250
+the measured rate was ~91 content-generating calls/min against a ~80/min limit,
+so the throttle was making the trip it was meant to prevent more likely.
+
+Deliberately NOT done, so the "all fixed" above is not read wider than it is:
+`classifyCandidate`'s `notFound` branch is kept as defence-in-depth though nothing
+produces the marker any more (its stale comment was corrected); `matched` is left
+unsorted, so expansion results print out of numeric order; and
+`scripts/verify-release-manifest.js` has the same missing-`maxBuffer` latent bug
+that bit here -- not on this PR's path, worth a follow-up ticket rather than
+widening this change.
