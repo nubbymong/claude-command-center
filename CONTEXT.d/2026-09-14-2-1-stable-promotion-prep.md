@@ -34,8 +34,14 @@ Second bug, and only a real run found it: `git()` had no `maxBuffer`, so the
 
 Verified end to end against the real range, not just in unit tests:
 `--range v2.0.0..origin/beta --dry-run` -> 475 refs, 128 labeled, **"Would close
-128 issue(s)"**, zero expansion lookups. Mutation-checked: restoring the old
-bail-out fails the 476-ref regression test.
+128 issue(s)"**, zero expansion lookups.
+
+Mutation-checked, stated precisely: the old bail-out lived in `main()`, which is
+not exported, so it cannot itself be reinstated under test. What was checked is
+the equivalent behaviour in the new pure function -- making `selectCandidates`
+return nothing above 200 refs fails the 475-ref regression test -- and, after
+review, reverting the labeled-PR guard in `expandViaPrBodies` fails its own test.
+The live dry run is the real evidence for the whole change.
 
 ### User-facing surface sweep (AGENTS.md)
 
@@ -82,3 +88,18 @@ URLs; made relative so they survive the rename without depending on whether
   promote goes through a `release/2.1.0` branch cut from beta. No code change.
 - The updater soft-switch still owes the adversarial pass its own fragment asked
   for before the official cut.
+- `scripts/gen-changelog.js`'s `REPO_URL` constant still carries the old slug. It
+  builds the version links in `CHANGELOG.md` and the "Full changelog" footer of
+  every GitHub release note, so it is the one rename-fragile constant that needs
+  updating at rename time -- not before, or the links 404 until the rename lands.
+
+### Review
+
+Two independent reviews (spec compliance, code quality) returned FINDINGS and
+all four real ones were fixed: the factual error in the 2.1.0 GPU entry (the
+atlas is still one per process -- the fix is that only the focused terminal holds
+a context and a victim drops its own render model before repainting); the
+`labeled.has(n)` skip that also skipped labeled PRs, whose bodies are the reason
+the expansion pass exists; unbounded pagination with no non-array guard (now
+matching `release-gate.mjs`'s `githubListAll`); and 384 unthrottled mutating API
+calls that would trip GitHub's secondary rate limit partway through the close.

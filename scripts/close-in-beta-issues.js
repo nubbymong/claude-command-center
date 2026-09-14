@@ -31,22 +31,27 @@
  * (body says "Closes #74"; the API returns []). So: harvest `#NNN` from the
  * promoted commit messages, then from the title/body of each referenced PR.
  *
- * Over-collecting candidates is deliberately safe. The FAIL-SAFE is the filter,
- * not the harvest: a candidate is only ever closed if it is an issue (not a PR),
- * is currently OPEN, and carries the `in-beta` or `in-release` label. Anything
- * else is skipped and reported.
+ * The FAIL-SAFE is the filter, not the harvest: a candidate is only ever closed
+ * if it is an issue (not a PR), is currently OPEN, and carries the `in-beta` or
+ * `in-release` label.
  *
  * Why the LABEL SET drives the lookups, not the refs: a promotion range is as
- * long as a release. `v2.0.0..main` for 2.1.0 spans 775 commits carrying 476
- * distinct refs — almost all of them PR numbers. Fetching every ref to discover
- * that 348 of them are pull requests is both slow and, at one API call each,
- * enough to bite the Actions token's hourly budget. Worse, the old ceiling
- * `return`ed without closing anything, so the single run that matters most —
- * the first stable promotion in months — would have silently closed nothing.
- * So: list the open `in-beta`/`in-release` issues once (bounded by how many
- * issues carry the label, which is inherently small), intersect with the refs
- * harvested from the commit log for free, and pay for a PR-body lookup only
- * when a labeled issue was NOT cited directly.
+ * long as a release. `v2.0.0..main` for 2.1.0 spans 775 commits carrying 475
+ * distinct refs — almost all of them PR numbers — against 128 labeled issues.
+ * Fetching every ref to discover that most are pull requests is both slow and,
+ * at one API call each, enough to bite the Actions token's hourly budget. Worse,
+ * the old ceiling `return`ed without closing anything, so the single run that
+ * matters most — the first stable promotion in months — would have silently
+ * closed nothing. So: list the open `in-beta`/`in-release` issues once (bounded
+ * by how many issues carry the label, which is inherently small), intersect with
+ * the refs harvested from the commit log for free, and pay for a PR-body lookup
+ * only when a labeled issue was NOT cited directly.
+ *
+ * What that trades away, deliberately: a ref that is foreign, a PR, or unlabeled
+ * is now rejected by set lookup and never appears in the run log, where the old
+ * ref-driven walk listed it under "Skipped". The reporting that matters is kept
+ * and is stronger — every labeled issue is accounted for, and any that the range
+ * does not reference is named as staying open.
  */
 
 const { execFileSync } = require('child_process')
@@ -61,9 +66,18 @@ const LIFECYCLE_LABELS = ['in-beta', 'in-release']
 // whose cost is not bounded by the label set. Hitting it no longer discards the
 // run: whatever was already matched still closes, and the shortfall is reported
 // by number so a human can finish the job. (Before, the ceiling `return`ed and
-// closed nothing, which is the failure mode that made a 476-ref promotion a
+// closed nothing, which is the failure mode that made a 475-ref promotion a
 // no-op.)
 const MAX_EXPANSION_LOOKUPS = 200
+// Pause between issues while closing. See the close loop for why: three
+// content-generating requests per issue against a ~80/min secondary limit.
+const THROTTLE_MS = 250
+
+/** Block for `ms`. Sync on purpose — the whole script is synchronous execFileSync. */
+function sleepMs(ms) {
+  if (!ms) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────
 
@@ -154,6 +168,7 @@ function planClosures(items) {
  * guard skips them and reports why.
  */
 function selectCandidates(refs, labeledByNumber) {
+  if (!labeledByNumber || !labeledByNumber.size) return { matched: [], unmatched: [] }
   const matched = []
   const hit = new Set()
   for (const n of refs || []) {
@@ -167,6 +182,50 @@ function selectCandidates(refs, labeledByNumber) {
     .map(([n]) => n)
     .sort((a, b) => a - b)
   return { matched, unmatched }
+}
+
+/**
+ * Chase the labeled issues no commit cited, through the BODIES of the PRs the
+ * range does cite (`Closes #NNN`). Extracted from main() and given an injected
+ * `fetchItem` so it is testable: it is the one part of the run whose cost is not
+ * bounded by the label set, and the part where a silent miss is most likely.
+ *
+ * Note the PR guard on the skip. `labeled` holds issues AND pull requests, since
+ * REST `/issues?labels=` returns both. Skipping everything already in `labeled`
+ * would skip labeled PRs too — and a labeled PR's body is exactly what this pass
+ * exists to read, so the issue it closes would be reported as "not referenced
+ * anywhere in this range" when it plainly is.
+ *
+ * Returns the newly-found items and whatever is still missing, so the caller can
+ * report the shortfall honestly rather than closing the gap in silence.
+ */
+function expandViaPrBodies({ direct, labeled, unmatched, fetchItem: fetch, max = MAX_EXPANSION_LOOKUPS, log = () => {} }) {
+  const wanted = new Set(unmatched)
+  const found = []
+  let lookups = 0
+  for (const n of direct || []) {
+    if (!wanted.size) break
+    const known = labeled.get(n)
+    if (known && !known.pull_request) continue
+    // A labeled PR is already in hand, body included — reading it costs nothing
+    // and must not be charged against the lookup ceiling.
+    let item = known
+    if (!item) {
+      if (lookups >= max) {
+        log(`  Stopped after ${max} lookups with ${wanted.size} still unaccounted for.`)
+        break
+      }
+      lookups++
+      item = fetch(n)
+    }
+    if (!item || !item.pull_request) continue
+    for (const ref of extractRefs(`${item.title || ''}\n${item.body || ''}`)) {
+      if (!wanted.has(ref)) continue
+      wanted.delete(ref)
+      found.push(labeled.get(ref))
+    }
+  }
+  return { found, stillMissing: [...wanted].sort((a, b) => a - b), lookups }
 }
 
 /**
@@ -243,15 +302,30 @@ function fetchItem(repo, number) {
  * returns `"OPEN"` and would silently fail classifyCandidate's `state !== 'open'`
  * check, closing nothing. Paged explicitly rather than via `--paginate`, which
  * concatenates raw pages into invalid JSON.
+ *
+ * `runGh` is injectable so the paging boundaries are testable without network,
+ * matching scripts/release-gate.mjs's `githubListAll` — which is also where the
+ * `maxPages` ceiling and the non-array guard come from. Without the ceiling a
+ * server that ignores `page` and keeps returning full pages spins until the job
+ * times out; without the guard a non-array body dies as "items is not iterable"
+ * instead of naming what went wrong.
  */
-function fetchLifecycleIssues(repo) {
+function fetchLifecycleIssues(repo, runGh = gh, maxPages = 20) {
   const byNumber = new Map()
   for (const label of LIFECYCLE_LABELS) {
-    for (let page = 1; ; page++) {
-      const raw = gh(['api', `repos/${repo}/issues?state=open&labels=${label}&per_page=100&page=${page}`])
-      const items = JSON.parse(raw)
+    for (let page = 1; page <= maxPages; page++) {
+      const items = JSON.parse(runGh(['api', `repos/${repo}/issues?state=open&labels=${label}&per_page=100&page=${page}`]))
+      if (!Array.isArray(items)) {
+        throw new Error(`GitHub API returned a non-array for open \`${label}\` issues (page ${page})`)
+      }
       for (const item of items) byNumber.set(item.number, item)
       if (items.length < 100) break
+      if (page === maxPages) {
+        throw new Error(
+          `More than ${maxPages * 100} open \`${label}\` issues — refusing to page further. ` +
+            `Either the label is being applied wrongly or the API is ignoring \`page\`.`,
+        )
+      }
     }
   }
   return byNumber
@@ -321,7 +395,7 @@ function main() {
   console.log(`Range: ${range}${dryRun ? '   [DRY RUN]' : ''}`)
 
   // 1. Refs straight out of the promoted commits (PR numbers, mostly). Local
-  //    git, so the 476 refs of a full release range cost nothing.
+  //    git, so the 475 refs of a full release range cost nothing.
   const direct = refsFromCommitLog(commitLogFor(range))
   console.log(`\nRefs in promoted commits: ${direct.length}`)
   if (!direct.length) {
@@ -343,28 +417,18 @@ function main() {
   //    there is a shortfall to chase, and stops the moment the shortfall closes.
   if (unmatched.length) {
     console.log(`\nNot cited directly (${unmatched.length}) — expanding PR bodies: ${unmatched.map((n) => `#${n}`).join(' ')}`)
-    const wanted = new Set(unmatched)
-    let lookups = 0
-    for (const n of direct) {
-      if (!wanted.size) break
-      if (labeled.has(n)) continue
-      if (lookups >= MAX_EXPANSION_LOOKUPS) {
-        console.log(`  Stopped after ${MAX_EXPANSION_LOOKUPS} lookups with ${wanted.size} still unaccounted for.`)
-        break
-      }
-      lookups++
-      const item = fetchItem(repo, n)
-      if (!item || !item.pull_request) continue
-      for (const ref of extractRefs(`${item.title || ''}\n${item.body || ''}`)) {
-        if (!wanted.has(ref)) continue
-        wanted.delete(ref)
-        matched.push(labeled.get(ref))
-      }
-    }
-    if (wanted.size) {
+    const { found, stillMissing } = expandViaPrBodies({
+      direct,
+      labeled,
+      unmatched,
+      fetchItem: (n) => fetchItem(repo, n),
+      log: (line) => console.log(line),
+    })
+    matched.push(...found)
+    if (stillMissing.length) {
       console.log(
-        `  ${wanted.size} labeled issue(s) are not referenced anywhere in this range and stay OPEN: ` +
-          `${[...wanted].sort((a, b) => a - b).map((n) => `#${n}`).join(' ')}`,
+        `  ${stillMissing.length} labeled issue(s) are not referenced anywhere in this range and stay OPEN: ` +
+          `${stillMissing.map((n) => `#${n}`).join(' ')}`,
       )
     }
   }
@@ -384,20 +448,42 @@ function main() {
   const version = args.version || readPackageVersion()
 
   console.log(`\n${dryRun ? 'Would close' : 'Closing'} ${toClose.length} issue(s):`)
+  const failed = []
   for (const issue of toClose) {
     console.log(`  #${issue.number}  ${issue.title}  [${issue.closeLabel}]`)
     if (dryRun) continue
-    // Comment first: if the close call fails, the issue still carries the
-    // explanation rather than being silently half-processed.
-    const body = closeCommentBody({ version, sha: after, range, label: issue.closeLabel })
-    gh(['issue', 'comment', String(issue.number), '--repo', repo, '--body', body])
-    // Remove every lifecycle label the issue actually carries — never one it
-    // doesn't, and never leave one behind on a closed issue.
-    const removeFlags = issue.closeCarried.flatMap((l) => ['--remove-label', l])
-    gh(['issue', 'edit', String(issue.number), '--repo', repo, ...removeFlags])
-    gh(['issue', 'close', String(issue.number), '--repo', repo, '--reason', 'completed'])
+    try {
+      // Comment first: if the close call fails, the issue still carries the
+      // explanation rather than being silently half-processed.
+      const body = closeCommentBody({ version, sha: after, range, label: issue.closeLabel })
+      gh(['issue', 'comment', String(issue.number), '--repo', repo, '--body', body])
+      // Remove every lifecycle label the issue actually carries — never one it
+      // doesn't, and never leave one behind on a closed issue.
+      const removeFlags = issue.closeCarried.flatMap((l) => ['--remove-label', l])
+      gh(['issue', 'edit', String(issue.number), '--repo', repo, ...removeFlags])
+      gh(['issue', 'close', String(issue.number), '--repo', repo, '--reason', 'completed'])
+    } catch (err) {
+      // One issue failing must not abandon the other 127. A promotion closes a
+      // whole release's worth at once, and the common failure here is GitHub's
+      // secondary rate limit, which is transient — so record it, keep going, and
+      // fail the job at the end with the list. Re-running is safe and resumes:
+      // an already-closed or already-unlabeled issue is skipped by the filter.
+      failed.push({ number: issue.number, message: (err && err.message) || String(err) })
+      console.log(`    FAILED — ${failed[failed.length - 1].message.split('\n')[0]}`)
+    }
+    // GitHub's secondary rate limit is on CONTENT-GENERATING requests, and each
+    // issue costs three of them. 128 issues is 384 calls; sent flat out that is
+    // roughly double the documented ceiling and trips partway through. A short
+    // pause keeps the whole promotion under it — this job is not in a hurry.
+    sleepMs(THROTTLE_MS)
   }
-  console.log(dryRun ? '\nDry run — nothing was changed.' : '\nDone.')
+  console.log(dryRun ? '\nDry run — nothing was changed.' : `\nClosed ${toClose.length - failed.length} of ${toClose.length}.`)
+  if (failed.length) {
+    throw new Error(
+      `${failed.length} issue(s) could not be closed: ${failed.map((f) => `#${f.number}`).join(' ')}. ` +
+        `Re-run the workflow (Close in-beta issues -> Run workflow) with the same range; it resumes safely.`,
+    )
+  }
 }
 
 module.exports = {
@@ -408,6 +494,8 @@ module.exports = {
   classifyCandidate,
   planClosures,
   selectCandidates,
+  expandViaPrBodies,
+  fetchLifecycleIssues,
   resolveRange,
   closeCommentBody,
   parseArgv,

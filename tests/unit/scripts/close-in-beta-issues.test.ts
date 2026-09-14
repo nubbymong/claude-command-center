@@ -16,6 +16,19 @@ const closer = require('../../../scripts/close-in-beta-issues.js') as {
     refs: number[],
     labeled: Map<number, unknown>,
   ) => { matched: Array<{ number: number }>; unmatched: number[] }
+  expandViaPrBodies: (opts: {
+    direct: number[]
+    labeled: Map<number, unknown>
+    unmatched: number[]
+    fetchItem: (n: number) => unknown
+    max?: number
+    log?: (line: string) => void
+  }) => { found: Array<{ number: number }>; stillMissing: number[]; lookups: number }
+  fetchLifecycleIssues: (
+    repo: string,
+    runGh: (args: string[]) => string,
+    maxPages?: number,
+  ) => Map<number, { number: number }>
   resolveRange: (opts: {
     explicit?: string
     before?: string
@@ -27,8 +40,18 @@ const closer = require('../../../scripts/close-in-beta-issues.js') as {
   parseArgv: (argv: string[]) => { dryRun: boolean; range?: string; version?: string; repo?: string }
 }
 
-const { extractRefs, refsFromCommitLog, classifyCandidate, planClosures, selectCandidates, resolveRange, closeCommentBody, parseArgv } =
-  closer
+const {
+  extractRefs,
+  refsFromCommitLog,
+  classifyCandidate,
+  planClosures,
+  selectCandidates,
+  expandViaPrBodies,
+  fetchLifecycleIssues,
+  resolveRange,
+  closeCommentBody,
+  parseArgv,
+} = closer
 
 const issue = (over: Record<string, unknown> = {}) => ({
   number: 74,
@@ -174,7 +197,7 @@ describe('planClosures', () => {
   })
 })
 
-// ── selectCandidates — the fix for the 476-ref promotion ───────────
+// ── selectCandidates — the fix for the 475-ref promotion ───────────
 describe('selectCandidates', () => {
   const labeledMap = (...items: Array<Record<string, unknown>>) => new Map(items.map((i) => [i.number as number, i]))
 
@@ -189,9 +212,9 @@ describe('selectCandidates', () => {
 
   it('scales to a full release range without a single per-ref lookup', () => {
     // The regression this function exists for: v2.0.0..main for 2.1.0 carried
-    // 775 commits / 476 distinct refs against 128 labeled issues. The old walk
+    // 775 commits / 475 distinct refs against 128 labeled issues. The old walk
     // fetched refs until a 200 ceiling and then returned having closed NOTHING.
-    const refs = Array.from({ length: 476 }, (_, i) => i + 1)
+    const refs = Array.from({ length: 475 }, (_, i) => i + 1)
     const labeled = labeledMap(...Array.from({ length: 128 }, (_, i) => issue({ number: i + 1 })))
     const { matched, unmatched } = selectCandidates(refs, labeled)
     expect(matched).toHaveLength(128)
@@ -216,6 +239,160 @@ describe('selectCandidates', () => {
 
   it('closes nothing when no ref is labeled', () => {
     expect(selectCandidates([1, 2, 3], labeledMap())).toEqual({ matched: [], unmatched: [] })
+  })
+})
+
+// ── expandViaPrBodies — the only unbounded pass ────────────────────
+describe('expandViaPrBodies', () => {
+  const pr = (number: number, body: string, over: Record<string, unknown> = {}) => ({
+    number,
+    title: `fix: something (#${number})`,
+    body,
+    state: 'open',
+    pull_request: { url: 'x' },
+    labels: [],
+    ...over,
+  })
+
+  it('finds a labeled issue through the body of a cited PR', () => {
+    const labeled = new Map<number, unknown>([[555, issue({ number: 555 })]])
+    const fetched: number[] = []
+    const r = expandViaPrBodies({
+      direct: [600],
+      labeled,
+      unmatched: [555],
+      fetchItem: (n) => {
+        fetched.push(n)
+        return pr(600, 'Closes #555.')
+      },
+    })
+    expect(r.found.map((i) => i.number)).toEqual([555])
+    expect(r.stillMissing).toEqual([])
+    expect(fetched).toEqual([600])
+  })
+
+  it('reads a LABELED pull request already in hand, without spending a lookup', () => {
+    // Regression: `labeled` holds issues AND pull requests, because REST
+    // /issues?labels= returns both. Skipping everything already in `labeled`
+    // skipped labeled PRs too — and a labeled PR's body is the entire reason
+    // this pass exists, so #555 was reported as "not referenced anywhere in
+    // this range" when it plainly was.
+    const labeled = new Map<number, unknown>([
+      [555, issue({ number: 555 })],
+      [600, pr(600, 'Closes #555.', { labels: [{ name: 'in-beta' }] })],
+    ])
+    const r = expandViaPrBodies({
+      direct: [600],
+      labeled,
+      unmatched: [555],
+      fetchItem: () => {
+        throw new Error('must not fetch a PR we already hold')
+      },
+    })
+    expect(r.found.map((i) => i.number)).toEqual([555])
+    expect(r.lookups).toBe(0)
+  })
+
+  it('stops at the ceiling but KEEPS what it already found', () => {
+    // The old overflow path returned and discarded the run. Whatever matched
+    // before the ceiling must survive it.
+    const labeled = new Map<number, unknown>([
+      [555, issue({ number: 555 })],
+      [556, issue({ number: 556 })],
+    ])
+    const lines: string[] = []
+    const r = expandViaPrBodies({
+      direct: [600, 601, 602, 603],
+      labeled,
+      unmatched: [555, 556],
+      max: 2,
+      log: (l) => lines.push(l),
+      fetchItem: (n) => (n === 600 ? pr(600, 'Closes #555.') : pr(n, 'no refs here')),
+    })
+    expect(r.found.map((i) => i.number)).toEqual([555])
+    expect(r.stillMissing).toEqual([556])
+    expect(r.lookups).toBe(2)
+    expect(lines.join('\n')).toContain('Stopped after 2 lookups')
+  })
+
+  it('stops early the moment the shortfall closes, buying no further lookups', () => {
+    const labeled = new Map<number, unknown>([[555, issue({ number: 555 })]])
+    const r = expandViaPrBodies({
+      direct: [600, 601, 602],
+      labeled,
+      unmatched: [555],
+      fetchItem: (n) => pr(n, n === 600 ? 'Closes #555.' : 'nothing'),
+    })
+    expect(r.lookups).toBe(1)
+  })
+
+  it('never pushes undefined when a PR body cites a ref that is not labeled', () => {
+    const labeled = new Map<number, unknown>([[555, issue({ number: 555 })]])
+    const r = expandViaPrBodies({
+      direct: [600],
+      labeled,
+      unmatched: [555],
+      fetchItem: () => pr(600, 'Closes #555. Also mentions #999 and #1000.'),
+    })
+    expect(r.found).toHaveLength(1)
+    expect(r.found.every(Boolean)).toBe(true)
+  })
+
+  it('skips a labeled ISSUE without a lookup, and ignores a ref that is not a PR', () => {
+    const labeled = new Map<number, unknown>([
+      [74, issue({ number: 74 })],
+      [555, issue({ number: 555 })],
+    ])
+    const r = expandViaPrBodies({
+      direct: [74, 900],
+      labeled,
+      unmatched: [555],
+      fetchItem: () => issue({ number: 900, labels: [] }),
+    })
+    expect(r.lookups).toBe(1)
+    expect(r.stillMissing).toEqual([555])
+  })
+})
+
+// ── fetchLifecycleIssues — paging bounds ───────────────────────────
+describe('fetchLifecycleIssues', () => {
+  const page = (numbers: number[]) => JSON.stringify(numbers.map((n) => ({ number: n, title: `#${n}`, state: 'open', labels: [] })))
+
+  it('merges both lifecycle labels into one map', () => {
+    const gh = (args: string[]) => (args[1].includes('in-beta') ? page([1, 2]) : page([3]))
+    expect([...fetchLifecycleIssues('o/n', gh).keys()].sort((a, b) => a - b)).toEqual([1, 2, 3])
+  })
+
+  it('stops after a short page', () => {
+    let calls = 0
+    const gh = () => {
+      calls++
+      return page([1])
+    }
+    fetchLifecycleIssues('o/n', gh)
+    expect(calls).toBe(2) // one short page per label
+  })
+
+  it('pages past an exactly-full first page', () => {
+    // The real boundary: `in-release` returned exactly 100 on page 1 and 9 on
+    // page 2. Breaking on `length < 100` must not stop at the full page.
+    const first = Array.from({ length: 100 }, (_, i) => i + 1)
+    let call = 0
+    const gh = () => {
+      call++
+      return call % 2 === 1 ? page(first) : page([1000 + call])
+    }
+    expect(fetchLifecycleIssues('o/n', gh).size).toBe(102)
+  })
+
+  it('throws a NAMED error on a non-array body rather than "items is not iterable"', () => {
+    expect(() => fetchLifecycleIssues('o/n', () => JSON.stringify({ message: 'Bad credentials' }))).toThrow(/non-array/)
+  })
+
+  it('refuses to page forever when the API ignores `page`', () => {
+    // Without a ceiling this spins until the Actions job times out.
+    const full = Array.from({ length: 100 }, (_, i) => i + 1)
+    expect(() => fetchLifecycleIssues('o/n', () => page(full), 3)).toThrow(/refusing to page further/i)
   })
 })
 
