@@ -75,7 +75,7 @@
     "tailwindcss": "^4.3.1",
     "typescript": "^7.0.2",
     "vite": "^7.3.5",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.0"
   },
   "overrides": {
     "esbuild": "$esbuild",
@@ -104,7 +104,7 @@
     },
     "body-parser": "^2.3.0",
     "immutable": "^4.3.9",
-    "js-yaml": "^4.3.1",
+    "js-yaml": "^4.3.2",
     "brace-expansion": "^5.0.7",
     "dompurify": "^3.4.13",
     "undici": "^7.29.0",
