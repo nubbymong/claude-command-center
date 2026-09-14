@@ -73,10 +73,20 @@ package.json, releases are created from the workflow's own repo context.
 the owner, because an underscored slug would never match and `httpGetJson` is a
 bare `https.get` that does not follow the 301 a renamed repo returns.
 
-One consequence worth recording: 2.0.0 predates the soft-switch (17 Aug), so a
-user who never takes the 2.1.0 update before the rename is stranded on a dead
-update feed and needs a manual reinstall. Shipping 2.1.0 stable *before* the
-rename is what carries everyone else across.
+One consequence worth recording, because it sets the rename schedule. `v2.0.0` is
+the newest non-prerelease on the feed, so it is what every stable-channel user is
+running; the soft-switch first shipped in `v2.1.0-beta.13` (18 Aug), so no 2.0.0
+install has it. A renamed repo's API returns **301** (verified live against an
+unrelated renamed repo), and `httpGetJson` is a bare `https.get` with no `Location`
+handling -- unlike `httpsDownload`, which follows. So a build without the probe does
+not follow the rename and its update check quietly returns "up to date" forever.
+
+That is why the rename is a separate step roughly a week after the stable release
+(owner decision, 2026-09-14): the week is the window in which 2.0.0 users take the
+update and land on a build that carries the probe. Users who never launch in that
+window need a manual reinstall. Re-creating a repo at the old name would also serve
+them, at the cost of killing GitHub's redirect -- available later as a safety net if
+the tail is larger than expected.
 
 README screenshots were 7 absolute `raw.githubusercontent.com/.../claude-command-center/beta/`
 URLs; made relative so they survive the rename without depending on whether
@@ -88,8 +98,11 @@ URLs; made relative so they survive the rename without depending on whether
   milestone fails closed.
 - `promote.js` refuses to run from `beta` (it requires `release/X.Y.Z`), so the
   promote goes through a `release/2.1.0` branch cut from beta. No code change.
-- The updater soft-switch still owes the adversarial pass its own fragment asked
-  for before the official cut.
+- ~~The updater soft-switch still owes the adversarial pass its own fragment asked
+  for before the official cut.~~ **Run 2026-09-14.** It surfaced pre-existing
+  findings that predate this change; they are routed privately and are recorded
+  nowhere in this repo, per `SECURITY.md` ("Embargo") and ADR-011. Do not restate
+  them here, in a commit message, or in a PR comment.
 **Rename checklist -- change these AT rename time, not before** (pointing them at
 the new slug early breaks them until the rename lands):
 
