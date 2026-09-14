@@ -74,14 +74,20 @@ const MAX_EXPANSION_LOOKUPS = 200
 // issue costs three, so a 128-issue promotion is 384 of them. Measured cost of a
 // `gh` invocation here is ~575 ms, but it is faster on an Actions runner, which
 // pushes the rate UP -- the pause, not the latency, is what has to hold the line.
-// 750 ms per call puts the run at ~45/min, comfortably clear, and the whole
-// promotion at roughly 5 minutes. This job is not in a hurry.
+// 750 ms is exactly 60000/80, so the pause ALONE pins the worst case at the
+// documented ceiling however fast `gh` becomes; real latency is pure headroom
+// (~45/min measured). The whole promotion then takes 7-8 minutes against a job
+// with no timeout-minutes and a 360-minute default. This job is not in a hurry.
 const THROTTLE_MS = 750
+
+// One buffer for the whole run rather than one per call: a 128-issue promotion
+// pauses ~384 times.
+const SLEEP_BUF = new Int32Array(new SharedArrayBuffer(4))
 
 /** Block for `ms`. Sync on purpose — the whole script is synchronous execFileSync. */
 function sleepMs(ms) {
   if (!ms) return
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  Atomics.wait(SLEEP_BUF, 0, 0, ms)
 }
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────
@@ -254,22 +260,30 @@ function expandViaPrBodies({ direct, labeled, unmatched, fetchItem: fetch, max =
  *
  * `pause` is called BETWEEN the calls, not just between issues: the secondary
  * rate limit counts content-generating requests, and all three of these are.
+ * It is also called from `finally`, so a THROWN call still backs off — a
+ * rate-limit cascade is precisely when the pause matters, and letting the
+ * failure path run flat out would fire the next request at an API that has
+ * just returned 403 telling us to slow down, extending the block.
+ *
  * `run` and `pause` are injected so the interleavings are testable without
  * touching a real issue.
  */
 function closeOne({ issue, repo, version, sha, range, run, pause = () => {} }) {
-  // Comment first: whatever else fails, the issue carries the explanation rather
-  // than being silently half-processed.
-  const body = closeCommentBody({ version, sha, range, label: issue.closeLabel })
-  run(['issue', 'comment', String(issue.number), '--repo', repo, '--body', body])
-  pause()
-  run(['issue', 'close', String(issue.number), '--repo', repo, '--reason', 'completed'])
-  pause()
-  // Remove every lifecycle label the issue actually carries — never one it
-  // doesn't, and never leave one behind on a closed issue.
-  const removeFlags = (issue.closeCarried || []).flatMap((l) => ['--remove-label', l])
-  if (removeFlags.length) run(['issue', 'edit', String(issue.number), '--repo', repo, ...removeFlags])
-  pause()
+  try {
+    // Comment first: whatever else fails, the issue carries the explanation
+    // rather than being silently half-processed.
+    const body = closeCommentBody({ version, sha, range, label: issue.closeLabel })
+    run(['issue', 'comment', String(issue.number), '--repo', repo, '--body', body])
+    pause()
+    run(['issue', 'close', String(issue.number), '--repo', repo, '--reason', 'completed'])
+    pause()
+    // Remove every lifecycle label the issue actually carries — never one it
+    // doesn't, and never leave one behind on a closed issue.
+    const removeFlags = (issue.closeCarried || []).flatMap((l) => ['--remove-label', l])
+    if (removeFlags.length) run(['issue', 'edit', String(issue.number), '--repo', repo, ...removeFlags])
+  } finally {
+    pause()
+  }
 }
 
 /**
@@ -511,8 +525,11 @@ function main() {
   if (failed.length) {
     throw new Error(
       `${failed.length} issue(s) could not be closed: ${failed.map((f) => `#${f.number}`).join(' ')}. ` +
-        `Each is still open and still carries its lifecycle label, so re-running the workflow ` +
-        `(Close in-beta issues -> Run workflow) with the same range picks them up.`,
+        `Each is either still open and still labeled -- a re-run picks those up -- or already ` +
+        `closed with a stale label, which is cosmetic and needs nothing. No issue is ever left ` +
+        `open without its label, so none can be stranded. Re-run via ` +
+        `Close in-beta issues -> Run workflow with the same range; if the run failed wholesale, ` +
+        `wait an hour first, because ${toClose.length * 3} content-creating calls is most of the 500/hour budget.`,
     )
   }
 }

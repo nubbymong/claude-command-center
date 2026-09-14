@@ -462,6 +462,19 @@ describe('closeOne', () => {
     expect(pauses).toBe(3)
   })
 
+  it('still backs off when a call THREW — the failure path is where it matters', () => {
+    // A rate-limit cascade skipped every pause, so the failure path ran ~30x the
+    // request rate of the success path, aimed at an API that had just returned
+    // 403 telling us to slow down. Repeated violations extend the block, so that
+    // turned a partial failure into a total one.
+    for (const failOn of ['comment', 'close', 'edit']) {
+      let pauses = 0
+      const { run } = runCapturing(failOn)
+      expect(() => closeOne({ issue: target, repo: 'o/n', version: '2.1.0', run, pause: () => pauses++ })).toThrow()
+      expect(pauses).toBeGreaterThan(0)
+    }
+  })
+
   it('sheds BOTH lifecycle labels when an issue somehow carries both', () => {
     const { calls, run } = runCapturing()
     closeOne({ issue: { ...target, closeCarried: ['in-beta', 'in-release'] }, repo: 'o/n', version: '2.1.0', run })
