@@ -259,6 +259,38 @@ describe('makeHeuristicBinder', () => {
     expect(binding!.path).toBe(path.normalize(newestPath))
   })
 
+  it('#480 skips a .jsonl whose uuid is owned by another session (no cross)', () => {
+    const root = makeTmpProjectsRoot()
+    const cwd = 'F:\\shared-repo'
+    const projDir = path.join(root, mangleCwdToProjectDir(cwd))
+    fs.mkdirSync(projDir, { recursive: true })
+    const startedAt = 1_000_000
+    const SIBLING = '11111111-1111-4111-8111-111111111111'
+    const MINE = '22222222-2222-4222-8222-222222222222'
+    // The sibling's conversation is the NEWEST file — it would win a plain scan.
+    writeJsonl(projDir, `${SIBLING}.jsonl`, startedAt + 10_000)
+    // Mine is older but still in-window.
+    const minePath = writeJsonl(projDir, `${MINE}.jsonl`, startedAt + 1_000)
+
+    const binder = makeHeuristicBinder({ projectsRoot: root })
+    const binding = binder.bindOnce('sess-x', cwd, startedAt, new Set([SIBLING]))
+    expect(binding).not.toBeNull()
+    expect(binding!.path).toBe(path.normalize(minePath))
+  })
+
+  it('#480 returns null rather than cross when the only in-window file is excluded', () => {
+    const root = makeTmpProjectsRoot()
+    const cwd = 'F:\\solo-sibling'
+    const projDir = path.join(root, mangleCwdToProjectDir(cwd))
+    fs.mkdirSync(projDir, { recursive: true })
+    const startedAt = 1_000_000
+    const SIBLING = '33333333-3333-4333-8333-333333333333'
+    writeJsonl(projDir, `${SIBLING}.jsonl`, startedAt + 5_000)
+
+    const binder = makeHeuristicBinder({ projectsRoot: root })
+    expect(binder.bindOnce('sess-y', cwd, startedAt, new Set([SIBLING]))).toBeNull()
+  })
+
   it('ignores .jsonl files older than startedAtMs - 60_000', () => {
     const root = makeTmpProjectsRoot()
     const cwd = 'F:\\old-project'

@@ -4,9 +4,20 @@ import { saveConfigNow } from '../utils/config-saver'
 export interface AppMeta {
   setupVersion?: string
   lastSeenVersion?: string
+  /** The version that last RAN: stamped with __APP_VERSION__ at every boot, after the launch
+   *  decision has read the previous value. The witness that a "seen" stamp was written by the
+   *  build it names (#369); `lastRunVersionOf` falls back to setupVersion on metas older than it. */
+  lastRunVersion?: string
   lastTrainingVersion?: string
+  /** The build that showed the Allow Multi Spawn startup page. A version stamp
+   *  rather than a boolean, exactly like lastSeenVersion — see
+   *  onboarding/multi-spawn-intro-gate.ts. */
+  multiSpawnIntroVersion?: string
   commandsSeeded?: boolean
   colorMigrated?: boolean
+  /** Set once the saved config the RETIRED "Ask the Conductor" path used to
+   *  create has been removed from Saved Configs. See retireAskConfig. */
+  askConfigRetired?: boolean
   hasCreatedFirstConfig?: boolean
   firstRunCardDismissed?: boolean
   accountWizardDismissed?: boolean

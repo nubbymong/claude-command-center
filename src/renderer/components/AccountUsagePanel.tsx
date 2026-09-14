@@ -1,11 +1,21 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useReauthAccount } from '../hooks/useReauthAccount'
 import { resolveAccountColourKey } from '../../shared/account-chip-color'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { formatResetTime } from '../utils/terminalFormatting'
 import PageFrame from './PageFrame'
+import { describeAuthWindow, type AuthWindowTone, type ProfileAuthInfo } from '../../shared/account-auth'
 import type { AccountUsage, UsageBucket } from '../../shared/usage-types'
+import type { AccountProfile } from '../../shared/account-types'
+
+const TONE_TEXT: Record<AuthWindowTone, string> = {
+  expired: 'text-red',
+  critical: 'text-red',
+  warning: 'text-yellow',
+  ok: 'text-overlay0',
+  unknown: 'text-overlay0',
+}
 
 const peopleIcon = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -27,18 +37,53 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
 }) {
   const theme = useResolvedTheme()
   const reauth = useReauthAccount()
-  const [rows, setRows] = useState<AccountUsage[] | null>(null)
-  const [loading, setLoading] = useState(true)
+  // The account list drives the SKELETON rows (a local read, so it resolves at
+  // once); usage streams in per account and fills each row as it lands. null =
+  // the list has not resolved yet (a placeholder skeleton or two show meanwhile).
+  const [profiles, setProfiles] = useState<AccountProfile[] | null>(null)
+  const [usageByProfile, setUsageByProfile] = useState<Record<string, AccountUsage>>({})
+  const [authInfo, setAuthInfo] = useState<Record<string, ProfileAuthInfo>>({})
+  // True while a stream is in flight: a profile with no result yet reads as a
+  // skeleton WHILE streaming, and as a terminal "couldn't load" row once the
+  // stream has settled — so a failed load never shimmers forever.
+  const [streaming, setStreaming] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  // Generation guard: a Refresh supersedes any in-flight load, so a late result
+  // from the previous stream (or its settle) is ignored rather than repopulating
+  // a row the new load has just reset.
+  const genRef = useRef(0)
 
   const load = useCallback(async () => {
-    setLoading(true)
+    const gen = ++genRef.current
+    // Clear usage so every row returns to a skeleton, then re-stream. The account
+    // list and the credential state are both local file reads, so they resolve at
+    // once and independently of the network usage fetch — one slow account must
+    // not hold back the others' rows or the forced-login countdown.
+    setUsageByProfile({})
+    setLoadError(false)
+    setStreaming(true)
     try {
-      const data = await window.electronAPI.accountUsage.fetchAll()
-      setRows(data)
+      const [profs, auth] = await Promise.all([
+        window.electronAPI.accountProfiles.list(),
+        window.electronAPI.accountProfiles.authInfo().catch(() => [] as ProfileAuthInfo[]),
+      ])
+      if (genRef.current !== gen) return // a newer Refresh took over
+      setProfiles(profs)
+      setAuthInfo(Object.fromEntries(auth.map((a) => [a.profileId, a])))
+      // Stream each account's usage in as it resolves (plan P3): an OPEN account
+      // snaps in instantly from its live figure (no call), a CLOSED one fills in
+      // as its staggered call lands. No all-or-nothing "Loading…" gate.
+      await window.electronAPI.accountUsage.fetchAllStream((usage) => {
+        if (genRef.current !== gen) return // ignore a superseded stream's result
+        setUsageByProfile((prev) => ({ ...prev, [usage.profileId]: usage }))
+      })
     } catch {
-      setRows([])
+      // A rejected list()/stream (a corrupt profiles read, say) must not leave the
+      // page shimmering: record the error so unresolved rows show a terminal state
+      // and an empty list reads as an error rather than "No accounts found".
+      if (genRef.current === gen) { setLoadError(true); setProfiles((prev) => prev ?? []) }
     } finally {
-      setLoading(false)
+      if (genRef.current === gen) setStreaming(false)
     }
   }, [])
 
@@ -47,7 +92,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   const refreshOne = useCallback(async (profileId: string) => {
     try {
       const one = await window.electronAPI.accountUsage.fetchOne(profileId)
-      if (one) setRows((prev) => (prev ? prev.map((r) => (r.profileId === profileId ? one : r)) : prev))
+      if (one) setUsageByProfile((prev) => ({ ...prev, [profileId]: one }))
     } catch { /* leave the stale row */ }
   }, [])
 
@@ -70,17 +115,78 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   return (
     <PageFrame title="Account usage" icon={peopleIcon} iconAccent="mauve" onClose={onClose} actions={refreshAction}>
       <div className="max-w-3xl mx-auto p-4 space-y-3">
-        {loading && !rows && <p className="text-[0.8125rem] text-overlay0">Loading usage for all accounts…</p>}
-        {rows && rows.length === 0 && <p className="text-[0.8125rem] text-overlay0">No accounts found.</p>}
-        {rows?.map((row) => (
-          <AccountCard key={row.profileId} row={row} theme={theme} onSignIn={() => onSignIn(row)} />
-        ))}
+        {profiles === null
+          // The list is a local read; the placeholders below cover only the frame
+          // or two before it resolves, so the page never flashes empty.
+          ? [0, 1].map((i) => <UsageSkeletonCard key={`sk-${i}`} />)
+          : profiles.length === 0
+            ? <p className="text-[0.8125rem] text-overlay0">{loadError ? 'Couldn’t load account usage. Use Refresh to try again.' : 'No accounts found.'}</p>
+            : profiles.map((p) => {
+                const usage = usageByProfile[p.id]
+                if (usage) return <AccountCard key={p.id} row={usage} auth={authInfo[p.id]} theme={theme} onSignIn={() => onSignIn(usage)} />
+                // No result yet: a skeleton while the stream runs; once it has
+                // settled without one (a rare stream-level failure), a terminal
+                // row with a per-account retry rather than an endless shimmer.
+                return streaming
+                  ? <UsageSkeletonCard key={p.id} />
+                  : <UsageUnavailableRow key={p.id} onRetry={() => void refreshOne(p.id)} />
+              })}
         <p className="text-[0.6875rem] text-overlay0 leading-relaxed pt-1">
-          Usage is read live from each account, no session required. An account whose sign-in has expired shows a
-          Sign in button; signing in refreshes only that account.
+          Usage is read live from each account, no session required. Signing in refreshes only that account.
+          The countdown is the point at which an interactive sign-in becomes unavoidable — the shorter-lived
+          token behind each session renews itself and is not shown.
         </p>
       </div>
     </PageFrame>
+  )
+}
+
+// One loading row (plan P3): the card frame with its identity and bars replaced by
+// a calm sweep, shown until this account's usage streams in. Reuses the statusline
+// pending-track shimmer (styles.css) so there is no second animation to maintain,
+// and it stops under prefers-reduced-motion. role=status/aria-busy announces the
+// load without reading empty shimmer as content.
+function UsageSkeletonCard() {
+  const shimmer = 'statusline-pending-track bg-surface1 rounded'
+  return (
+    <div
+      className="rounded-xl border border-surface0/70 px-4 py-3.5 bg-surface0/20"
+      role="status"
+      aria-busy="true"
+      aria-label="Loading account usage"
+      data-testid="account-usage-skeleton"
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <span className={`${shimmer} w-2.5 h-2.5 rounded-[3px] shrink-0`} />
+        <span className={`${shimmer} h-3.5`} style={{ width: '11rem' }} />
+        <span className={`${shimmer} ml-auto h-3 rounded-full`} style={{ width: '3.5rem' }} />
+      </div>
+      <div className="flex flex-col gap-2.5">
+        {['5h', 'Weekly'].map((lbl) => (
+          <div key={lbl} className="flex items-center gap-2.5">
+            <span className="text-[0.8125rem] text-overlay0 shrink-0" style={{ minWidth: '3.625rem' }}>{lbl}</span>
+            <span className={`${shimmer} flex-1 h-2 rounded-full`} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Terminal state for a row whose usage never arrived because the stream itself
+// failed (rare — a per-account fetch resolves to an error-status row, not a
+// missing one). Shown instead of an endless skeleton, with a per-account retry.
+function UsageUnavailableRow({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="rounded-xl border border-surface0/70 px-4 py-3.5 bg-surface0/20 flex items-center justify-between gap-2" data-testid="account-usage-unavailable">
+      <span className="text-[0.8125rem] text-overlay0">Couldn’t load this account’s usage.</span>
+      <button
+        onClick={onRetry}
+        className="text-[0.75rem] px-2 py-0.5 rounded border border-surface1 text-overlay1 hover:text-text hover:border-blue/40 transition-colors shrink-0"
+      >
+        Retry
+      </button>
+    </div>
   )
 }
 
@@ -112,16 +218,70 @@ function creditsText(c: NonNullable<AccountUsage['credits']>): string {
   return `${fmtMoney(c.used, c.currency)} used`
 }
 
-function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark' | 'light'; onSignIn: () => void }) {
+export function AccountCard({
+  row,
+  auth,
+  theme,
+  onSignIn,
+}: {
+  row: AccountUsage
+  auth?: ProfileAuthInfo
+  theme: 'dark' | 'light'
+  onSignIn: () => void
+}) {
   const dot = resolveIdentityColor(resolveAccountColourKey(row.email ?? undefined, undefined, undefined), theme)
+  // Parked account: undefined active is treated as active (a main process that
+  // predates the field never greys a card). Inactive accounts are never network
+  // fetched, so they carry no live buckets — the card just states that and
+  // offers no sign-in (opening a login shell for an account the user parked
+  // bypasses the switcher's own active-guard).
+  const isInactive = row.status === 'inactive' || row.active === false
+  // Computed at render against the wall clock; the calculation itself is pure and
+  // lives in shared/ so main and renderer cannot disagree about what a credential
+  // state means.
+  const window_ = auth ? describeAuthWindow(auth, Date.now()) : null
+  const duplicates = auth?.duplicateOfProfileIds ?? []
   return (
-    <div className="rounded-xl border border-surface0/70 bg-surface0/20 px-4 py-3.5">
+    <div className={`rounded-xl border border-surface0/70 px-4 py-3.5 ${isInactive ? 'bg-surface0/10 opacity-60' : 'bg-surface0/20'}`}>
       <div className="flex items-center gap-2 mb-2.5">
         <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ backgroundColor: dot }} />
         {/* Full email, never truncated (accounts are distinct even when emails look similar). */}
         <span className="text-[0.9375rem] text-text font-medium break-all">{row.email || row.name}</span>
         {row.isPrimary && <span className="text-[0.625rem] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Primary</span>}
+        {isInactive && <span className="ml-auto text-[0.625rem] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Inactive</span>}
+        {/* A working sign-in gets a refresh too, not just a broken one: the whole
+            point is to act BEFORE the forced login, and previously the only way to
+            learn it was coming was for it to arrive. Never for a parked account. */}
+        {!isInactive && row.status !== 'needs-login' && (
+          <button
+            onClick={onSignIn}
+            title="Sign in again now to reset this account's countdown"
+            className="ml-auto text-[0.75rem] px-2 py-0.5 rounded border border-surface1 text-overlay1 hover:text-text hover:border-blue/40 transition-colors shrink-0"
+          >
+            Refresh sign-in
+          </button>
+        )}
       </div>
+
+      {isInactive && (
+        <p className="text-[0.8125rem] text-overlay0">
+          Parked — not polled. Reactivate this account in Settings › Accounts to use it again.
+        </p>
+      )}
+
+      {!isInactive && duplicates.length > 0 && (
+        <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-red/10 border border-red/25 text-[0.75rem] text-red">
+          This profile and {duplicates.length === 1 ? 'another profile' : `${duplicates.length} other profiles`} are
+          signed into the SAME account. Each time one refreshes, the others&apos; sign-ins are invalidated — which is
+          why they keep expiring. Sign the duplicates in as their own accounts.
+        </div>
+      )}
+
+      {!isInactive && auth?.identityMismatch && duplicates.length === 0 && (
+        <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-yellow/10 border border-yellow/25 text-[0.75rem] text-yellow">
+          Labelled {auth.accountEmail} but signed in as {auth.oauthEmail}.
+        </div>
+      )}
 
       {row.status === 'ok' && row.buckets.length > 0 && (
         <div className="flex flex-col gap-2">
@@ -139,7 +299,7 @@ function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark
         <p className="text-[0.8125rem] text-overlay0">No usage limits reported.</p>
       )}
 
-      {row.status === 'needs-login' && (
+      {!isInactive && row.status === 'needs-login' && (
         <div className="flex items-center justify-between gap-2">
           <span className="text-[0.8125rem] text-overlay0">{row.detail === 'session expired' ? 'Sign-in expired' : 'Not signed in'}</span>
           <button
@@ -159,10 +319,19 @@ function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark
         </p>
       )}
 
-      {row.status === 'ok' && (
-        <p className="text-[0.6875rem] text-overlay0 mt-2">
-          {row.stale ? `Last updated ${relAgo(row.fetchedAt)} · couldn't refresh` : `Updated ${relAgo(row.fetchedAt)}`}
-        </p>
+      {!isInactive && (
+        <div className="flex items-center justify-between gap-2 mt-2">
+          {row.status === 'ok' ? (
+            <p className="text-[0.6875rem] text-overlay0">
+              {row.stale ? `Last updated ${relAgo(row.fetchedAt)} · couldn't refresh` : `Updated ${relAgo(row.fetchedAt)}`}
+            </p>
+          ) : (
+            <span />
+          )}
+          {window_ && (
+            <p className={`text-[0.6875rem] tabular-nums shrink-0 ${TONE_TEXT[window_.tone]}`}>{window_.label}</p>
+          )}
+        </div>
       )}
     </div>
   )

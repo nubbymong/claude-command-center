@@ -1,295 +1,162 @@
-<div align="center">
+<p align="center">
+  <img src="docs/screenshots/hero-banner.png" alt="AI Code Conductor — mission control for Claude Code" width="100%">
+</p>
 
-<img src="docs/screenshots/splash.png" alt="Claude Command Center" width="180" />
+<p align="center">
+  <a href="../../releases"><img src="https://img.shields.io/github/v/release/nubbymong/claude-command-center?include_prereleases&label=release&color=cba6f7&labelColor=313244" alt="Release"></a>
+  <img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20(arm64)%20%7C%20Linux%20(experimental)-89b4fa?labelColor=313244" alt="Windows, macOS, Linux">
+  <a href="../../actions"><img src="https://img.shields.io/badge/tests-passing-a6e3a1?labelColor=313244" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/MIT-fab387?labelColor=313244" alt="MIT"></a>
+</p>
 
-# Claude Command Center
+# AI Code Conductor
 
-### **v2.0** &middot; Mission control for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+**Mission control for Claude Code** — run dozens of Claude Code and Codex sessions in parallel, each with its own account, working directory and saved config, and see every session's spend, identity and attention at a glance.
 
-Run dozens of Claude Code and Codex sessions in parallel, each with its own account, working directory, and saved config. See every session's spend, identity, and attention at a glance. Read back any conversation, track every cent, and prune your memory before it bloats your context.
+Claude Code is a remarkable CLI. But the moment you have more than one project, more than one account, or more than one machine, the experience fragments: you lose track of which terminal is which, which sessions are paused, what they have spent, and where their attention is going. AI Code Conductor wraps Claude Code and Codex in a desktop app that treats **the session as the first-class object**. Every session has a colour, a name, an account, a working directory and a saved config; every spawn surfaces its tokens, model, rate-limit window and identity; every cent is captured and pivotable. It does not replace Claude Code. It conducts it.
 
-<br/>
-
-[![Release](https://img.shields.io/github/v/release/nubbymong/claude-command-center?include_prereleases&label=release&color=cba6f7&labelColor=313244)](../../releases)
-[![Opus 4.8](https://img.shields.io/badge/Opus%204.8-day--one-f9e2af?labelColor=313244)](https://www.anthropic.com/news/claude-opus-4-8)
-[![Tests](https://img.shields.io/badge/tests-passing-a6e3a1?labelColor=313244)](../../actions)
-[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20(arm64)-89b4fa?labelColor=313244)](../../releases)
-[![License](https://img.shields.io/badge/MIT-fab387?labelColor=313244)](LICENSE)
-
-[Download](#install) &middot; [Features](#what-it-does) &middot; [Architecture](#under-the-hood) &middot; [Security](#security)
-
-<br/>
-
-<sub>An independent, community-built project &middot; not affiliated with, endorsed by, or sponsored by Anthropic. See [Disclaimer](#disclaimer-and-trademarks).</sub>
-
-<br/>
-
-<img src="docs/screenshots/v2-shell-hero.jpg" alt="Claude Command Center v2.0 multi-session shell" width="100%" />
-
-</div>
+> Formerly **Claude Command Center**. Same app, same data — the rename is cosmetic and updates carry across on their own. An independent, community-built project — see [Trademarks](#trademarks).
 
 ---
 
-## What it does
+## Sessions, accounts, and a sidebar that knows what is going on
 
-Claude Code is a remarkable CLI. But the moment you have more than one project, more than one account, or more than one machine, the experience fragments. You lose track of which terminal is which, which sessions are paused, what they have spent, and where their attention is going.
+<p align="center">
+  <img src="docs/screenshots/shot-sessions.png" alt="The session sidebar — live sessions across three accounts" width="88%">
+</p>
 
-Claude Command Center (CCC) wraps Claude Code and Codex in a desktop app that treats the session as the first-class object. Every session has a colour, a name, an account, a working directory, and a saved config. Every spawn surfaces its tokens, its model, its rate-limit window, and its identity. Every cent is captured and pivotable.
+Every workspace starts as a **saved config**: a label, a colour, a working directory, a starting model and effort, its own permission preset and any extra CLI arguments, and any agent templates you want pre-loaded. Configs live in **sections and groups** you arrange yourself, and the sidebar has two modes — **Saved** for launching and **Running** for tending what is live — with a **Quick Start** row for the configs you pin. A config runs one session at a time unless you tick **Allow Multi Spawn**, which trades the play button for a copy count and lets you start several at once; **Select** on either tab turns the rows into tick boxes and launches a whole set in one press. Each session card carries the whole picture on one line: status, the model and effort actually in use (read live from Claude, never guessed) and whether **Fast Mode** is on, context consumed, the account it is signed in as, and its type — Claude Code, Codex or a plain terminal, over SSH or not.
 
-It does not replace Claude Code. It conducts it.
+- **Multiple accounts, real isolation** — your existing login is captured into a protected primary account on first run, and every session runs under a saved, isolated home. Pick the account at launch, **switch it mid-session** without losing the session, and **park** the ones you are not using. Add one by running `/login` in any session; the Conductor notices and offers to save it.
+- **In-app claude.ai sign-in** — each account also carries its own claude.ai web session, signed in inside the app rather than by handing you off to a browser.
+- **Attention, activity and sleep — read the card** — a session that needs you pulses (driven by Claude's own hooks, never a guessed spinner); a Claude session actively producing output wears a green **working** pill and a matching green sweep along its context bar; and, with the Session Watchdog enabled, one that has gone quiet earns a **moon** telling you how long it has been silent. The three are mutually exclusive, so a glance is enough.
+- **Command buttons** — a bar of your own buttons under every terminal. A button does one of three things — sends a prompt to Claude, runs a line in a shell, or opens a page in the browser pane — and the dialog asks that first, then shows you the button and the exact text it will type as you fill it in. Rows are named for where a button runs, a button shared by every config carries a `global` mark, and an argument that is a secret (a token, a key) lives in the OS keychain and is typed as a reference, so it never reaches your shell history.
+- **Help where you are** — the tip of the day and **Ask Conductor** sit at the foot of the sidebar. Ask Conductor opens a real Claude session that has read the app's documentation and its known issues; Discuss on any tip hands the question to it. Right-click either to switch it off.
 
----
+## Remote sessions that survive the link
 
-## Highlights
+Remote sessions run over SSH with the same session model as local ones — same dialog, same statusline, same account handling — and the Conductor's own MCP server reaches the remote through an automatically injected reverse tunnel. **Same means same**: a remote session reports its status back over that connection rather than painting escape codes through the terminal, so it fills in the account line on its card, the account pill in its header and its own bars in the multi-account strip — 5-hour, weekly and per-model alike — and Windows, Linux and macOS remotes all behave identically.
 
-<br/>
+How a config connects is one choice of three: **Local**, **SSH**, or **SSH Persistent**. The third runs the remote Claude under `tmux`, so a dropped VPN, a closed lid or a flaky network no longer kills the work: Claude keeps going on the remote, and reconnecting reattaches to the same session with your conversation and scrollback intact. If the remote has no tmux the app can fetch a verified copy for it, or push one down the existing connection when the remote has no internet of its own. Ending a session and leaving it running are separate, explicit choices, and a pill on the session says which it is. **Launching a config always starts a new session**, so picking a left-running one back up is its own visible gesture: it waits in a **Remote Resumable** section docked at the foot of the Running tab — a card each, with the host, how long ago you left it, and a *Resumable* or *Unreachable* pill — and one click puts you back in the same Claude and the same conversation. Right-click gives you Remove, which ends it on the host too. The cards survive closing the app, and they are checked cheaply: a ping while the section is on screen, a real sign-in to the host only when there is a reason to. The three kinds of remote session are told apart wherever they appear — a blue **SSH** mark, a green one with a chain link for persistent, a teal container mark on its own. A separate **Runtime** section decides where the session lands once it has connected — on the host, or **inside a Docker or Podman container** the app execs into for you: pick the engine, name the container, exec into a running one or start a stopped one, and Claude runs in there with the statusline, account and usage intact. Ending the session stops that session's Claude inside the container and leaves any co-tenant alone. (Container sessions are not persistent yet: they run bare and resume with `--continue`.)
 
-### Sessions and saved configs
+## Agent Canvas — review what Claude built by pointing at it
 
-<img src="src/renderer/assets/training/step-session-options.jpg" alt="Session configuration" width="100%" />
+<p align="center">
+  <img src="docs/screenshots/shot-canvas.png" alt="The Agent Canvas — annotating a rendered mockup" width="88%">
+</p>
 
-Every workspace starts as a **saved config**: a label, a colour, a working directory, a model, and any agent templates you want pre-loaded. New sessions land on **Opus 4.8**. Effort is a live setting you change inside Claude with `/effort` and read off the statusline and the session card, not a config field. Drag a folder onto the sidebar to bootstrap a working-directory config in one drop. Local or SSH, the same form drives both.
+Claude renders a design mockup, a plan, or your project's real built site onto a canvas inside the app. You mark it up directly — pin a note to an element, draw over a region, paste screenshots of your own — and then decide: **approve or reject the version in front of you**. Claude receives the notes **anchored to the actual elements you pointed at**, works through them in one pass, renders the next version and hands back; the pane returns you to the terminal on its own. It is a review loop rather than a screenshot: the page is laid out by a real browser engine, so what you annotate is what will ship. **Approving owes the agent nothing** — notes you send with an approval are kept as *observations* rather than work — and once nothing else on the canvas is open the artefact signs itself off into the project Library. Only one round is ever live at a time, and a settled round stays settled: reopening a note, or a whole round, is yours alone. Answer a note in chat instead of the pane and Claude marks it addressed, but the decision is still yours. Each canvas holds one subject, so a new topic never inherits an old one's notes, and History moves you between the artefacts a session has built up. Not every render is a review: when you only want to *see* something, Claude can put it up as a **show-and-tell** that joins no queue and you dismiss in a click (or tell the agent to). The Canvas button counts what is still open across every canvas the session owns, so nothing waits out of sight, and **Mark complete** closes an artefact yourself, naming exactly what it will close as not done before you confirm. The canvas also has a **plan mode**: before starting anything large, Claude puts the plan on the canvas rather than in the chat, and you review it per step, anchored, before a line of code is written. A plan is reviewed as a plan — **Approve** or **Submit Revisions**, never Reject, because a plan is meant to go round again — and Approve stays out of reach while the plan carries an open question or you have a note you have not sent, so an approval never arrives carrying work the agent has not seen.
 
-<br/>
+**Testing mode** turns the same surface on a running build: Claude serves the app and you use it. The moment you start writing a note the screen pauses and locks the evidence together — a screenshot with your drawings over it, the page state (route, open dialogs, where the focus is, which fields are filled, changed or invalid, and never a character of what you typed) and a timed trail of what you did to get there. Notes collect into a **test pack** that takes one pass-or-fail verdict per build, and afterwards the pack is a record you page back through rather than a site to re-run; Claude reads its structure first and asks for the pictures only when it needs pixels. Work is no longer tied to the session that made it, either: a canvas in flight is private to its own session, and when that session goes away any session on the project can **Resume** it — first press wins — or dismiss it, with a quiet dot on the Canvas button when there is something to pick up. The **Library** searches every artefact in the project by title and note text, filters by kind and state, expands a test pack to page through its evidence, and archives or deletes in bulk; signed-off work is readable by every session on the project. And **Canvas Explained** — a card on the canvas front page, and the same page inside the Feature Guide — draws the whole model rather than describing it.
 
-### Multiple accounts, per-session isolation
+## Tokenomics — every cent, pivotable
 
-<img src="docs/screenshots/settings.jpg" alt="Settings" width="100%" />
+<p align="center">
+  <img src="docs/screenshots/shot-tokenomics.png" alt="The Tokenomics dashboard" width="88%">
+</p>
 
-Run more than one Claude account side by side. Your existing login is captured into a protected **primary** account on first run, and every session runs under a saved, isolated account, so signing in to one never disturbs another or your default login. You pick the account at **launch time**, the first time a session spawns this run. Add an account by running `/login` in any session: CCC detects the new login and offers to save it as a separate named account. Name and colour each one in **Settings, Accounts**; the colour follows the account onto the session card, the statusline, and the launch picker. Memory, settings, and history stay shared across all accounts.
+A background indexer reads all of your transcripts — subagent and sidechain files included — dedups globally, and computes cost at query time from live pricing, so the dashboard opens instantly. A KPI row, a daily-spend chart, a per-model breakdown and a sessions table with cost, model and config attribution; filter the whole view by date, model, **account** or project. Codex spend is segmented automatically. Pricing comes from LiteLLM's open pricing data, cached for a day.
 
-<br/>
+## Logs — your conversations, readable
 
-### Logs, a chat-transcript viewer
+<p align="center">
+  <img src="docs/screenshots/shot-logs.png" alt="The Logs viewer with its timeline rail" width="88%">
+</p>
 
-<img src="docs/screenshots/logs.jpg" alt="Logs chat-transcript viewer with timeline rail" width="100%" />
+The Conductor indexes Claude's own transcripts and renders them back as a readable chat — messages, tool calls, thinking. A **timeline rail** beside the transcript scrubs the whole conversation; click to jump. **Full-text search** spans every conversation and lands you on the matching turn. A per-session **Conversation** tab live-follows the running session. Deleting the index never touches your conversations, which stay in `~/.claude/projects`.
 
-CCC indexes Claude's own conversation transcripts and renders them back as a readable chat: messages, tool calls, and thinking. A **timeline rail** beside the transcript scrubs the whole conversation; click to jump. **Full-text search** spans every conversation and jumps you straight to the matching turn. A per-session **Conversation** tab live-follows the running session. Deleting the index never touches your conversations, which stay in `~/.claude/projects`.
+## Memory — catch the drift before it costs you context
 
-<br/>
+<p align="center">
+  <img src="docs/screenshots/shot-memory.png" alt="The Memory dashboard" width="88%">
+</p>
 
-### Tokenomics
+A dashboard over Claude's auto-memory across every project. A KPI strip — memories, projects, total size, stale-over-30-days, index health — and charts summarise the store; a ranked project list shows staleness, index warnings and live-session activity. Drill into any project for a sortable table, open a memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search runs across everything.
 
-<img src="docs/screenshots/tokenomics.jpg" alt="Tokenomics dashboard" width="100%" />
+## Insights — what actually happened, across every account
 
-Track every dollar Claude and Codex cost you across every session. A background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the dashboard opens instantly with a **KPI row** (total spend, tokens, sessions, daily burn), a **daily-spend chart** and **per-model breakdown**, and a **sessions table** with cost, model, and config attribution. Filter the whole view by date, model, **account**, or project. Pricing comes from LiteLLM open pricing (cached 24 hours).
+<p align="center">
+  <img src="docs/screenshots/shot-insights.png" alt="Insights — a cross-account report" width="88%">
+</p>
 
-<br/>
+Scheduled and on-demand reports over your own usage, runnable across **all of your accounts at once** rather than one at a time. Where Tokenomics answers what things cost, Insights answers what you did with them.
 
-### Memory dashboard
+## And the rest of the surface
 
-<img src="docs/screenshots/memory.jpg" alt="Memory dashboard" width="100%" />
-
-A dashboard over Claude's auto-memory across every project. A **KPI strip** (memories, projects, total size, stale-over-30-days, index health) and charts summarise the whole store; a **ranked project list** shows staleness dots, index warnings, and live-session activity. Drill into any project for a sortable memory table, then open a memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search runs across everything. Catches drift before it bloats your context.
-
----
-
-## The rest of the surface
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### CCC Sentinel
-
-<img src="docs/screenshots/settings.jpg" alt="Settings, CCC Sentinel" width="100%" />
-
-An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect CCC. Findings surface in a labelled **Sentinel** chip in the title bar and a panel. It proposes **model and effort registry** fixes you apply yourself and never changes anything automatically. A hot-reloadable registry means brand-new models still get a colour, label, and pricing. Fail-open, so it never blocks the app. Toggle it in **Settings, CCC Sentinel**.
-
-</td>
-<td width="50%" valign="top">
-
-### Conductor MCP
-
-<img src="docs/screenshots/vision.jpg" alt="Conductor MCP page" width="100%" />
-
-A local MCP server exposing 17 browser-vision tools (screenshot, navigate, click, type, eval) plus `codex_review`, so Claude can ask Codex to spot-check its own work. One global Chrome instance is shared across every session, so cookies and logins persist. SSH sessions reach the same server transparently through an auto-injected reverse tunnel.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### Agent Hub
-
-<img src="docs/screenshots/agent-hub.jpg" alt="Agent Hub" width="100%" />
-
-Two surfaces in one. **Tasks** dispatch headless Claude as background jobs with live status and output streaming. The **Library** is where you author agent templates (name, prompt, model, tool whitelist) that surface as tickable subagents in every Edit Config dialog, so Claude can delegate to them via the Task tool inside a running session. **Teams** chain agents with shared context and per-step prompts.
-
-</td>
-<td valign="top">
-
-### Codex provider, first-class
-
-<img src="src/renderer/assets/training/step-codex.jpg" alt="Codex provider configuration" width="100%" />
-
-OpenAI Codex CLI sits alongside Claude in the New Session dialog. Pick the provider per spawn. The gpt-5 series sits in the model dropdown, with read-only / standard / auto / unrestricted permission presets in the toolbar. The resume picker mirrors the Claude flow. Tokenomics segments Codex spend automatically.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### GitHub PR context where you work
-
-<img src="src/renderer/assets/training/github-panel.jpg" alt="GitHub sidebar" width="100%" />
-
-A collapsible right-rail panel surfaces PR status, CI runs, reviews, unresolved threads, and inferred issue context from your branch and transcript. Sign in via OAuth or PAT, or adopt your existing `gh` CLI auth. Per-session opt-in; toggles with `Ctrl+/` (`Cmd+/` on macOS).
-
-</td>
-<td valign="top">
-
-### Combined Mode and Draw
-
-<img src="src/renderer/assets/training/step-combined.jpg" alt="Combined Mode pairs Claude with a partner shell" width="100%" />
-
-Pair Claude with a partner shell (`pwsh`, `bash`, `cmd`) in the same tab for the build, git, and docker commands you want one keystroke from your prompt. The Draw scratchpad is a per-session Excalidraw whiteboard that persists with the config; freeze the webview pane to annotate a snapshot, or export the canvas straight into Claude as an image.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### Snap and Vision capture
-
-<img src="src/renderer/assets/training/step-snap.jpg" alt="Snap region capture" width="100%" />
-
-Region or window capture from any screen, encoded at 1920px / JPEG 85 to stay under Claude's image budget. Local sessions get a file path inline; SSH fetches the image over the Conductor MCP tunnel. Paste images from the clipboard with **Alt+V**.
-
-</td>
-<td valign="top">
-
-### Dynamic workflows, surfaced
-
-<img src="docs/screenshots/dynamic-workflows.jpg" alt="Dynamic workflows" width="100%" />
-
-Invoke an Opus 4.8 dynamic workflow three ways: include the word `workflow` in a prompt for a one-off, run `/effort ultracode` so every substantive task auto-orchestrates, or run the bundled `/deep-research <question>`. Watch active runs with `/workflows`. CCC rolls workflow spend into your session totals, and a Settings toggle disables dynamic workflows globally if you want them off.
-
-</td>
-</tr>
-</table>
+- **Conductor MCP** — a local MCP server giving Claude eighteen browser-vision tools (screenshot, navigate, click, type, eval), a host-screenshot fetch, the Agent Canvas tools and `codex_review`, so Claude can ask Codex to spot-check its own work. One global Chrome instance is shared across every session so logins persist; SSH sessions reach it through the tunnel.
+- **Cloud Agents** — dispatch headless Claude as background tasks with live status and streaming output. (2.1 deprecates the old Agent Hub's Pipelines and agent Library; a richer replacement is planned for 2.2.)
+- **Codex** — OpenAI's Codex CLI sits beside Claude in the New Session dialog. Pick the provider per spawn, the gpt-5 series in the model dropdown, read-only / standard / auto / unrestricted permission presets. Still marked Beta, behind a master switch.
+- **GitHub panel** — PR status, CI runs, reviews, unresolved threads and inferred issue context in a collapsible right rail; OAuth, PAT, or adopt your `gh` login. `Ctrl+/` (`Cmd+/`).
+- **Sentinel** — an opt-in watcher that notices when Claude Code updates and checks whether the new version might affect the Conductor, proposing model and effort registry fixes you apply yourself. Fail-open; a hot-reloadable registry means brand-new models still get a colour, label and pricing.
+- **Session Watchdog** — an opt-in, per-session watcher that reads a rate-limit, overload or safeguard-stop banner, waits out the reset and submits the retry itself — never over text you are mid-typing — with an hourglass and countdown on the card while it waits. It also flags a session gone quiet (the moon on the card), and the Conductor's services panel lists every background service with a per-service restart.
+- **Feature Guide** — a searchable in-app reference with a card for every feature (what it does, how to open it, a tip) plus the complete What's New history, a click away from the sidebar's help button.
+- **Browser pane** — every session has a browser beside its terminal: an address bar (type `localhost:5173` and press Enter), working history, a home page per config, saved favourites, and a button to open the page in your real browser. Pages load in a sandbox with every permission off. A command button can point it at a dev server as it starts ("watch for a page") or simply open a page; freeze the page to annotate a snapshot in Excalidraw.
+- **Partner terminal and scratchpad** — every session carries a partner shell in the same tab, and a per-session Excalidraw whiteboard that persists with the config; export the drawing straight into Claude.
+- **Multi-account usage strip** — every signed-in account's usage along the bottom of the window, and a minimal mode that shows just the account name and two traffic-light dots (green under 70 %, amber to 89 %, red from 90 %) so the strip stays readable with many accounts.
+- **Snap and Vision capture** — region or window capture from any screen at 1920px / JPEG 85, a file path inline for local sessions and over the tunnel for SSH; `Alt+V` pastes clipboard images.
+- **A first-run tour and What's New that know where you came from** — a fresh install gets the tour; an upgrade across a release line gets everything new since your last version and walks the tour again; a move within a line gets the notes only.
 
 ---
 
-## Install
+## Getting started
 
-### Download
+1. **Download** the installer for your platform from **[Releases](../../releases)** — `AI-Code-Conductor-x.y.z.exe`, `-mac.dmg` (Apple Silicon) or `-linux-x86_64.AppImage` — and verify its SHA-256 against `CHECKSUMS.txt` on the release page.
+2. **Run it** and choose your Data and Resources directories.
+3. The **setup wizard** finds your Claude Code CLI — and, if it is not there, stops with the install command to copy and a Retry, because every session the app launches is a Claude Code process — then walks you through accounts and hands off to Claude's own auth. Every feature is optional and asks before it turns on.
+4. **Create a config**, launch a session, and the sidebar starts filling in.
 
-1. Grab the latest installer from **[Releases](../../releases)**.
-   - Windows: `ClaudeCommandCenter-x.y.z.exe`
-   - macOS (Apple Silicon): `ClaudeCommandCenter-x.y.z-mac.dmg`
-2. Verify the **SHA-256** of the file you downloaded against the checksum printed on the release page.
-3. Run the installer and choose your Data and Resources directories.
-4. The setup wizard hands off to Claude CLI auth.
+> Internally the app still identifies itself as `claude-conductor` (npm name) and `com.claudeconductor.app` (Windows application id). Those are frozen on purpose — changing them would break the upgrade path and orphan existing data — so you may see them in paths and installer metadata.
 
 ### Requirements
 
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (a recent version, for Opus 4.8 and dynamic workflows)
-- Node.js 20+ (a Claude Code dependency)
-- Windows 10 or 11 (x64), or macOS 12+ on **Apple Silicon (arm64)**
+| | |
+|---|---|
+| **Claude Code** | The [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), installed and authenticated |
+| **Node.js** | 20+ (a Claude Code dependency) |
+| **Windows** | 10 or 11, x64. Installers are code-signed (SSL.com, publisher "Nicholas Moger"); SmartScreen may still prompt on a brand-new release — More info → Run anyway |
+| **macOS** | 12+ on Apple Silicon. Builds are signed and notarised |
+| **Linux** | Experimental — glibc 2.39+ (Ubuntu 24.04+, Rocky 10+, Fedora 40+), x64. `chmod +x` the AppImage; needs FUSE and GTK 3. The vision browser needs a deb/rpm Chrome — the snap build's confinement blocks the debug profile |
 
-> **Windows SmartScreen** &middot; These installers are **not code-signed**. This is an independent, single-maintainer build, and a code-signing certificate is not in place yet, so Windows SmartScreen will warn the first time you run a new release: click **More info**, then **Run anyway**. To convince yourself the download is intact, verify the SHA-256 against the value on the release page before running it. Releases produced by the CI pipeline are additionally scanned through VirusTotal (70+ engines); the scan link is included in those release notes.
+## Under the hood
 
-> **macOS** &middot; The DMG is not notarised. Gatekeeper will block it on first open: right-click the app and choose **Open**, or allow it under **System Settings, Privacy & Security**.
+Electron 43 with a frameless, sandboxed renderer and zod-validated IPC; React 19 with Tailwind CSS v4 (dark, light and system themes); Zustand 5 hydrated from disk on boot; xterm.js 6 over node-pty (ConPTY on Windows) — GPU rendering is on by default and only ever drives the terminal you are looking at, because the WebGL addon keeps one glyph cache per process and a session rebuilding it blanked every other until a victim was taught to drop its own render model before repainting; electron-vite; `@modelcontextprotocol/sdk` for the Conductor MCP server. The main process owns config persistence, the PTY pool, the hooks HTTP gateway that drives the attention pulse, the tokenomics aggregator, the statusline ingest, the MCP server and cloud-agent dispatch; the renderer talks to it exclusively through typed IPC channels.
 
----
-
-## Build from source
+Over six thousand unit tests plus a native suite that runs under Electron's own runtime — for better-sqlite3, node-pty, and anything whose behaviour differs between Electron and plain Node — green on Windows and macOS in CI on every labelled PR. Security-sensitive changes go through an adversarial review pass before merge: independent agents attack the change with distinct lenses, and the verdict is recorded on the pull request.
 
 ```bash
 git clone https://github.com/nubbymong/claude-command-center.git
 cd claude-command-center
 npm install
-npm run typecheck    # tsc, no emit
-npx vitest run       # unit suite
-npm run dev          # HMR dev
-npm run build        # production build
+npm run typecheck && npx vitest run    # tsc, then the unit suite
+npm run dev                            # HMR dev
+npm run package:win | package:mac | package:linux
 ```
 
-```bash
-npm run package:win  # Windows NSIS installer
-npm run package:mac  # macOS DMG (Apple Silicon)
-```
+## Security & privacy
 
-The repository ships well over two thousand unit tests plus a native (better-sqlite3 / node-pty) suite; both run green on Windows and macOS in CI on every labelled PR. See the [Actions](../../actions) tab for current status.
-
----
-
-## Under the hood
-
-| Layer | Stack |
-|:------|:------|
-| Shell | Electron (frameless, sandboxed renderer, zod-validated IPC) |
-| UI | React 18 + Tailwind CSS v4 (`@theme` tokens, Catppuccin Mocha by default, with light and system themes) |
-| State | Zustand 5 (hydrated from disk on boot) |
-| Terminal | xterm.js 5.5 + node-pty (ConPTY on Windows) |
-| Build | electron-vite |
-| MCP | `@modelcontextprotocol/sdk` (Conductor MCP server: browser vision + Codex review) |
-| Tests | Vitest unit + native suites, Playwright E2E |
-
-The main process owns config persistence, the PTY pool, the hooks HTTP gateway (which drives the session attention pulse), the tokenomics aggregator, the statusline ingest, the Conductor MCP server, and cloud-agent dispatch. The renderer is a React SPA that hydrates from disk and talks to main exclusively through typed IPC channels. SSH sessions get a per-session settings file, a per-session MCP config, and a reverse tunnel injected automatically.
-
----
-
-## Security
-
-| Layer | What we do |
-|:------|:-----------|
-| **Credentials** | SSH passwords, sudo passwords, and encrypted notes are stored as encrypted blobs via the OS keystore (DPAPI on Windows, Keychain on macOS, libsecret on Linux). Machine-bound, never plaintext. |
-| **Account isolation** | Each session runs under its own isolated home so signing in to one account never touches another or your default login. The original global login is snapshotted read-only on first run. |
-| **Permissions** | CCC honors Claude Code's own permission prompts and settings. It is not a gate and never auto-approves or intercepts tool calls on your behalf. |
-| **Telemetry** | None of our own. The Claude API goes through the Claude CLI directly. Outbound is limited to: GitHub Releases (update check), `status.claude.com` (status pills), the GitHub API (opt-in GitHub sidebar after sign-in), and LiteLLM open-pricing JSON (cached 24 hours). |
-| **Data integrity** | Atomic config writes (`.tmp` + rename). Daily snapshots of `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/`, 7-day retention. Sandboxed renderer; typed IPC with schema validation on data-bearing channels. |
-| **Releases** | Installers are unsigned (see [Install](#install)). Releases built by the CI pipeline are scanned through VirusTotal across 70+ engines; verify the SHA-256 from the release page before running any installer. |
+| | |
+|---|---|
+| **Credentials** | SSH passwords, sudo passwords and encrypted notes are stored as encrypted blobs via the OS keystore — DPAPI, Keychain, libsecret. Machine-bound, never plaintext |
+| **Account isolation** | Each session runs under its own isolated home; the original global login is snapshotted read-only on first run and never touched |
+| **Permissions** | Claude Code's own permission prompts surface in the app. You can grant a **standing approval** so a repeated prompt stops interrupting you — yours to create and revoke, high-risk payloads excluded, nothing approved that you did not choose |
+| **Telemetry** | None of our own. Outbound traffic is limited to GitHub Releases (update check), `status.claude.com` (status pills), `api.anthropic.com` (usage and rate-limit figures, with your own token), `claude.ai` (in-app sign-in and the per-account web session), the GitHub API (opt-in panel, after you sign in), and LiteLLM's open-pricing JSON. The full list, with what each request carries, is in [PRIVACY.md](PRIVACY.md) |
+| **Data integrity** | Atomic config writes; daily snapshots of `CONFIG/*.json` with 7-day retention; typed IPC with schema validation on every data-bearing channel |
+| **Releases** | Windows code-signed, macOS signed and notarised, Linux unsigned by convention. Every download verifiable by SHA-256 against `CHECKSUMS.txt` — the in-app updater checks this on each update — and CI scans installers through VirusTotal |
 
 Report vulnerabilities privately via [GitHub Security Advisories](../../security/advisories/new). See [SECURITY.md](SECURITY.md) for scope.
 
----
-
 ## Keyboard shortcuts
 
-| Shortcut | Action |
-|:---------|:-------|
-| `Ctrl+T` | New config |
-| `Ctrl+W` | Close session |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous session |
-| `Ctrl+1` &hellip; `Ctrl+9` | Jump to session N |
-| `Ctrl+B` | Toggle sidebar |
-| `Ctrl+/` (`Cmd+/` on macOS) | Toggle GitHub sidebar |
-| `Alt+V` | Paste clipboard image |
-| `Escape` | Interrupt Claude |
-| `Shift+Enter` | New line without sending |
+`Ctrl+T` new config · `Ctrl+W` close session · `Ctrl+Tab` / `Ctrl+Shift+Tab` next / previous · `Ctrl+1…9` jump to session · `Ctrl+B` sidebar · `Ctrl+/` GitHub panel · `Alt+V` paste image · `F2` rename. Most are rebindable in **Settings → Shortcuts**; `Ctrl+1…9` and `Ctrl+/` are fixed. Keys you press *inside* a session — `Escape` to interrupt, `Shift+Enter` for a newline — belong to Claude Code, not to the Conductor.
 
-All shortcuts are rebindable in **Settings, Shortcuts**.
+## Contributing & history
+
+Developed privately from late 2025 and open-sourced in April 2026 as Claude Command Center; everything from v1.0 forward is in the open. Per-release detail lives in [`src/renderer/changelog.ts`](src/renderer/changelog.ts), which also drives the in-app What's New. See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR process, and [AGENTS.md](AGENTS.md) if you are pointing an AI agent at this repository.
+
+## Trademarks
+
+Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. This project is an independent, community-built tool. All references to "Claude", "Claude Code", "Codex", "Anthropic" or "OpenAI" are nominative, used solely to identify the third-party software this tool interoperates with. AI Code Conductor wraps and orchestrates the official Claude Code and Codex CLIs; it does not include, modify or redistribute their code, and it requires you to install and authenticate those tools yourself under their own terms. If you are a rights holder with a concern about this project's use of a name or mark, please open a [GitHub issue](../../issues) or contact the maintainer and it will be addressed promptly.
 
 ---
 
-## Project history
-
-CCC was developed privately from late 2025 and open-sourced in April 2026. The git history was squashed for the initial public release; everything from v1.0 forward is in the open.
-
-Per-release detail lives in [`src/renderer/changelog.ts`](src/renderer/changelog.ts).
-
----
-
-## Contributing
-
-Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, coding standards, and the PR process.
-
----
-
-## Disclaimer and trademarks
-
-Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. This project is an independent, community-built tool. It is **not affiliated with, endorsed by, sponsored by, or supported by Anthropic or OpenAI**.
-
-All references to "Claude", "Claude Code", "Codex", "Anthropic", or "OpenAI" are nominative, used solely to identify the third-party software this tool interoperates with. Claude Command Center is a separate work that wraps and orchestrates the official Claude Code and Codex CLIs. It does not include, modify, or redistribute their code, and it requires you to install and authenticate those tools yourself under their own terms.
-
-If you are a rights holder with a concern about this project's use of a name or mark, please open a [GitHub issue](../../issues) or contact the maintainer and it will be addressed promptly.
-
----
-
-## License
-
-[MIT](LICENSE).
-</content>
-</invoke>
+<p align="center"><sub>AI Code Conductor © Nicholas Moger · <a href="LICENSE">MIT</a> · Built on top of the <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> CLI</sub></p>

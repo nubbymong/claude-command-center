@@ -1,1 +1,1 @@
-export type ViewType = 'cloud-agents' | 'sessions' | 'logs' | 'settings' | 'insights' | 'tokenomics' | 'vision' | 'memory' | 'account-usage'
+export type ViewType = 'cloud-agents' | 'sessions' | 'logs' | 'settings' | 'insights' | 'tokenomics' | 'vision' | 'memory' | 'account-usage' | 'help'

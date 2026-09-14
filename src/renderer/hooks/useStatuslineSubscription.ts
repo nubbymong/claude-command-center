@@ -41,10 +41,27 @@ export function useStatuslineSubscription(sessionId: string) {
       // bucket that disappeared upstream clears from the strip.
       if (data.usageBuckets) updates.usageBuckets = data.usageBuckets
       // v1.5.9: do NOT copy accountEmail / accountColour into the session
-      // store. The statusline bridge reads ~/.claude.json:oauthAccount which
-      // is a GLOBAL field -- every per-session tick was clobbering the chip
-      // with whichever account was logged in last. The chip is gone; the
-      // ledger-side capture in tokenomics-manager remains (different concern).
+      // store FOR LOCAL SESSIONS. The local bridge reads
+      // ~/.claude.json:oauthAccount which is a GLOBAL field -- every
+      // per-session tick was clobbering the chip with whichever account was
+      // logged in last; the spawn-time capture (useAccountIdentitySubscription)
+      // is the drift-immune local source.
+      //
+      // Phase 3 (harmonise-remote): SSH sessions are the exception -- their
+      // ticks arrive over the session's own tunnel from the REMOTE's
+      // ~/.claude.json, which is exactly that session's signed-in account
+      // (a remote /login shows up on the next tick; two sessions to the same
+      // host+user genuinely share the account). The spawn-time capture never
+      // covers remotes, so the tick is the live source here, superseding the
+      // setup-sentinel snapshot (sshRemoteAccount) the render sites fall
+      // back to.
+      if (data.accountEmail) {
+        const sess = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+        if (sess?.sessionType === 'ssh') {
+          updates.accountEmail = data.accountEmail
+          if (data.accountColour) updates.accountColour = data.accountColour
+        }
+      }
       if (Object.keys(updates).length > 0) {
         updateSession(sessionId, updates)
       }

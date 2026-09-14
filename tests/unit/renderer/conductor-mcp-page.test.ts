@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 /**
  * P7.4 regression: ConductorMcpPage renders the umbrella header
- * + three sub-tool cards (Vision, Codex review, Host transfer).
- * Each sub-tool card is independent -- the page does not gate
- * codex_review or host transfer on browser state.
+ * + every sub-tool card (Vision, Agent Canvas, Codex review, Host
+ * transfer). Each sub-tool card is independent -- the page does not
+ * gate codex_review or host transfer on browser state.
+ *
+ * The Agent Canvas card landed with the canvas phases; this file is the
+ * only place that pins it to the *page*, so a card that stops being
+ * mounted fails here rather than passing on its own isolated render test.
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -61,10 +65,11 @@ describe('ConductorMcpPage umbrella (P7.4)', () => {
     expect(text).toContain('19333')
   })
 
-  it('renders all three sub-tool cards', () => {
+  it('renders all four sub-tool cards', () => {
     act(() => { root.render(React.createElement(ConductorMcpPage)) })
     const text = container.textContent ?? ''
     expect(text).toContain('Vision (browser automation)')
+    expect(text).toContain('Agent Canvas')
     expect(text).toContain('Codex review (Claude-driven)')
     expect(text).toContain('Host transfer')
   })
@@ -73,5 +78,22 @@ describe('ConductorMcpPage umbrella (P7.4)', () => {
     act(() => { root.render(React.createElement(ConductorMcpPage)) })
     const html = container.innerHTML
     expect(html).toContain('Available')
+  })
+
+  it('names every tool the server takes down with it when it is not running', () => {
+    // The degraded state used to list three tools while four ship, so the
+    // canvas looked like it had failed for some other reason.
+    mockState.serverRunning = false
+    try {
+      act(() => { root.render(React.createElement(ConductorMcpPage)) })
+      const text = container.textContent ?? ''
+      expect(text).toContain('Conductor MCP server is not running')
+      expect(text).toContain('Vision')
+      expect(text).toContain('Codex review')
+      expect(text).toContain('host transfer')
+      expect(text).toContain('Agent Canvas')
+    } finally {
+      mockState.serverRunning = true
+    }
   })
 })

@@ -40,13 +40,21 @@ export function cleanupStaleHookEntries(activeSessionIds: ReadonlySet<string>): 
   return cleaned
 }
 
-// Non-greedy before `.json` so `mcp-foo.json.bak` does not match.
+// Non-greedy before the extension so `mcp-foo.json.bak` does not match.
+//
+// Both token-bearing per-session sidecars are swept by one pass: the MCP config
+// (`?token=` in its server URL) and the status-URL file (ADR-009 token custody
+// — the same secret, moved off the statusLine command line and into a 0600
+// file). A crash that leaves one behind leaves the other behind for the same
+// reason, and neither should outlive its session.
 const MCP_SID_FROM_FILENAME = /^mcp-([^.]+)\.json$/
+const STATUS_URL_SID_FROM_FILENAME = /^ccc-status-([^.]+)\.url$/
 
 /**
- * Sweep leaked per-session ~/.claude/mcp-<sid>.json sidecars. These are removed
- * on normal session dispose (removeLocalSessionMcpConfig) but a crash leaves them
- * behind. Deletes any whose sid is not in the active set. Returns the count.
+ * Sweep leaked per-session ~/.claude/mcp-<sid>.json and ccc-status-<sid>.url
+ * sidecars. These are removed on normal session dispose
+ * (removeLocalSessionMcpConfig / removeLocalSessionStatusUrl) but a crash leaves
+ * them behind. Deletes any whose sid is not in the active set. Returns the count.
  */
 export function cleanupStaleMcpConfigs(activeSessionIds: ReadonlySet<string>): number {
   const dir = path.join(os.homedir(), '.claude')
@@ -54,7 +62,7 @@ export function cleanupStaleMcpConfigs(activeSessionIds: ReadonlySet<string>): n
   const files = fs.readdirSync(dir)
   let cleaned = 0
   for (const name of files) {
-    const m = MCP_SID_FROM_FILENAME.exec(name)
+    const m = MCP_SID_FROM_FILENAME.exec(name) ?? STATUS_URL_SID_FROM_FILENAME.exec(name)
     if (!m) continue
     if (activeSessionIds.has(m[1])) continue
     try {

@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { buildAnalysisPrompt, parseAnalysisOutput, runAnalysis, analysisFailureMessage } from '../../src/main/sentinel/sentinel-analysis'
+import { buildAnalysisPrompt, parseAnalysisOutput, runAnalysis, analysisFailureMessage, envelopeError } from '../../src/main/sentinel/sentinel-analysis'
+
+/** The real shape claude -p prints on a 429 (captured from CC 2.1.239, #430). */
+const rateLimitEnvelope = JSON.stringify({
+  is_error: true,
+  api_error_status: 429,
+  terminal_reason: 'api_error',
+  subtype: 'success',
+  result: "You've hit your weekly limit · resets 4am (Europe/London)",
+})
 
 const goodJson = JSON.stringify({ breakingChanges: [{
   title: 'Hooks schema changed',
@@ -79,6 +88,29 @@ describe('runAnalysis', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/deterministic checks still ran/i)
   })
+  it('a 429 envelope -> a rate-limit message that names the account and stops after ONE attempt (#430)', async () => {
+    let calls = 0
+    const runner = async () => { calls++; return { code: 1, stdout: rateLimitEnvelope, stderr: '' } }
+    const r = await runAnalysis({ runner, changelog: 'x', from: '1', to: '2', accountLabel: 'nick@example.com' })
+    expect(calls).toBe(1)                                   // a weekly limit will not clear on retry
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error).toMatch(/usage limit/i)
+      expect(r.error).toMatch(/resets 4am/)
+      expect(r.error).toContain('nick@example.com')
+      expect(r.error).toMatch(/Settings . Sentinel/)
+      expect(r.error).toMatch(/deterministic checks still ran/i)
+    }
+  })
+  it('a non-rate-limit API error envelope -> the real reason, still retried', async () => {
+    let calls = 0
+    const env = JSON.stringify({ is_error: true, api_error_status: 500, result: 'Internal server error' })
+    const runner = async () => { calls++; return { code: 1, stdout: env, stderr: '' } }
+    const r = await runAnalysis({ runner, changelog: 'x', from: '1', to: '2' })
+    expect(calls).toBe(2)                                   // a transient 500 is worth the retry
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/Internal server error/)
+  })
   it('timeout degrades to a calm message that never leaks raw stderr', async () => {
     const runner = async () => ({ code: 1, stdout: '', stderr: '\nTimed out after 180s' })
     const r = await runAnalysis({ runner, changelog: 'x', from: '1', to: '2' })
@@ -103,5 +135,44 @@ describe('analysisFailureMessage', () => {
     expect(m).toMatch(/could not complete/i)
     expect(m).toMatch(/deterministic checks still ran/i)
     expect(m).not.toContain('not logged in')
+  })
+  it('a rate-limit envelope -> names the limit, the account, and points at Settings not Re-run', () => {
+    const m = analysisFailureMessage('', { rateLimited: true, reason: "You've hit your weekly limit · resets 4am" }, 'nick@example.com')
+    expect(m).toMatch(/usage limit/i)
+    expect(m).toContain('nick@example.com')
+    expect(m).toMatch(/resets 4am/)
+    expect(m).toMatch(/Settings . Sentinel/)
+  })
+})
+
+describe('envelopeError', () => {
+  it('reads a 429 as rate-limited with the CLI reason', () => {
+    const e = envelopeError(rateLimitEnvelope)!
+    expect(e.rateLimited).toBe(true)
+    expect(e.reason).toContain("weekly limit")
+  })
+  it('reads the RAW top-level envelope, not the peeled .result (the error string is not JSON)', () => {
+    // Regression for the first cut: routing through unwrapPayload peeled `.result`
+    // to "You've hit your weekly limit …", which then failed JSON.parse → null,
+    // so the rate limit was never detected. Parsing raw is what fixes it.
+    const e = envelopeError(rateLimitEnvelope)
+    expect(e?.rateLimited).toBe(true)
+  })
+  it('a 500 is an error but not rate-limited', () => {
+    const e = envelopeError(JSON.stringify({ is_error: true, api_error_status: 500, result: 'boom' }))!
+    expect(e.rateLimited).toBe(false)
+    expect(e.reason).toBe('boom')
+  })
+  it('a clean success envelope is not an error', () => {
+    expect(envelopeError(JSON.stringify({ is_error: false, result: '{"breakingChanges":[]}' }))).toBeNull()
+  })
+  it('non-JSON / non-envelope -> null (falls back to the generic message)', () => {
+    expect(envelopeError('garbage')).toBeNull()
+    expect(envelopeError('')).toBeNull()
+  })
+  it('strips control chars and caps a pathological result', () => {
+    const e = envelopeError(JSON.stringify({ is_error: true, api_error_status: 400, result: 'a\n\tb' + 'x'.repeat(500) }))!
+    expect(e.reason).not.toMatch(/[\n\t]/)
+    expect(e.reason.length).toBeLessThanOrEqual(160)
   })
 })

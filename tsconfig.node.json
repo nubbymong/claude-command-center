@@ -15,5 +15,7 @@
     "declaration": true,
     "composite": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
+  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*"],
+  "//": "The canvas bridge sits under src/main but is content-frame DOM code with no Node types — tsconfig.bridge.json owns it.",
+  "exclude": ["src/main/canvas/bridge/**"]
 }

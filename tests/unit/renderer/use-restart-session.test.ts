@@ -151,6 +151,27 @@ describe('useRestartSession (P4 Task A)', () => {
     expect(stored!.rateLimitWeekly).toBeUndefined()
     expect(stored!.rateLimitWeeklyResets).toBeUndefined()
     expect(stored!.rateLimitExtra).toBeUndefined()
+    expect(stored!.usageBuckets).toBeUndefined()
+  })
+
+  // 1b. Regression (Fable usage): a hit per-model limit must not linger across
+  //     the remount that a mid-session account switch also routes through.
+  it("restart() clears usageBuckets so a prior account's hit limit does not linger", () => {
+    const session = makeSession({
+      sessionType: 'local',
+      shellOnly: false,
+      usageBuckets: [
+        { key: 'weekly:Fable', label: 'Fable', group: 'weekly', percent: 100, resetsAt: '', severity: 'critical' },
+      ],
+    })
+    useSessionStore.getState().addSession(session)
+
+    renderHarness(session)
+    act(() => { capturedActions!.restart() })
+
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === session.id)
+    expect(stored).toBeDefined()
+    expect(stored!.usageBuckets).toBeUndefined()
   })
 
   it('restart() does NOT call markSessionForResumePicker for shell sessions', () => {

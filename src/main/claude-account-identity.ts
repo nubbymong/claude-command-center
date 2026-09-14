@@ -5,7 +5,8 @@
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs, { promises as fsp } from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
-import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles } from './account-profiles'
+import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles, isValidProfileId, backupProfileHomeToCanonical } from './account-profiles'
+import { hasTransientProfileConsumer } from './profile-consumers'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -82,6 +83,16 @@ export function pushAccountIdentity(sessionId: string): void {
 
 const watched = new Map<string, string | undefined>() // sessionId -> profileId
 const lastMtimeMs = new Map<string, number>()         // sessionId -> last seen identity-file mtime
+// profileId -> last seen `.credentials.json` mtime of that PROFILE home (rc.14
+// review F6). A change with the email unchanged is a token ROTATION, and the
+// canonical backup must follow it: it used to be refreshed only at exit, so a
+// capture/restore mid-session could put a pre-rotation (spent) refresh token
+// back and strand the account. Keyed by PROFILE, not session: several sessions
+// on one account share one credential file, and one rotation must cost one
+// backup, not one per session. Only ever observed by stat; never read here.
+// profileId -> the last credential stamp seen, and whether it changed on the
+// previous poll (armed = "back up once it has stopped moving").
+const rotationStampByProfile = new Map<string, { last: string; armed: boolean }>()
 // profileId -> the email we last broadcast a "new account detected" prompt for.
 // Sessions sharing a profile home all observe the same /login, so this dedups the
 // prompt to one per (profile, email) instead of one per session.
@@ -99,7 +110,10 @@ const POLL_MS = 5000
  *  session this is the account's shared profile home (Bug 2); for the default
  *  account it is ~/.claude.json. */
 function identityFilePath(profileId: string | undefined): string {
-  return profileId
+  // Validate before the join. This runs on a 5s poll timer, so letting
+  // getProfileConfigDir's throw escape here would take down the main process on
+  // a bad id; an invalid one resolves the shared identity file instead.
+  return isValidProfileId(profileId)
     ? path.join(getProfileConfigDir(profileId), '.claude.json')
     : path.join(path.dirname(sharedRoot()), '.claude.json')
 }
@@ -161,12 +175,31 @@ export function getWatchedProfileId(sessionId: string): string | undefined {
   return watched.get(sessionId)
 }
 
-/** True when any LIVE session is running under `profileId` -- i.e. that profile's
- *  home is the active USERPROFILE/credential store of an open session. Used to
- *  refuse a profile delete that would half-destroy a live account's creds (R-006).
- *  Checks both the active-watcher map (added at spawn, removed at exit) and the
- *  spawn-captured map (cleared on exit) for defense in depth.
- *  KNOWN GAP: SSH sessions never enter either map (they spawn ssh.exe without
+/** The email of a NEW account currently detected in this profile's shared home
+ *  (a `/login` to a different account than the profile's known one), or null.
+ *  Set when the new-account prompt is broadcast, cleared when the home returns
+ *  to a known account.
+ *
+ *  ADR-009 adversarial review (Lens B, R4): the capture-detected IPC gates on
+ *  this. Without it, a compromised renderer could name ANY watched session and
+ *  the handler would capture that session's live account into a new profile and
+ *  -- since R4 -- wipe the source's credentials, a renderer-triggerable forced
+ *  sign-out. Capture may proceed only for a profile where a new account was
+ *  actually detected. */
+export function detectedNewAccountEmail(profileId: string): string | null {
+  return detectedByProfile.get(profileId) ?? null
+}
+
+/** True when `profileId` is in use by a live session OR a transient credential
+ *  consumer -- i.e. that profile's home is the active USERPROFILE/credential
+ *  store of something running now. Used to refuse a profile delete that would
+ *  half-destroy a live account's creds (R-006) and to gate the usage page's auto
+ *  token refresh (a rotation under a live consumer strands its token).
+ *  Checks the active-watcher map (added at spawn, removed at exit), the
+ *  spawn-captured map (cleared on exit), AND the transient-consumer registry
+ *  (the `claude auth status` probe, #258 -- which spawns the CLI under a profile
+ *  home and can rotate the token itself; it registers for its short duration).
+ *  KNOWN GAP: SSH sessions never enter any of these (they spawn ssh.exe without
  *  account capture). Safe today because SSH sessions don't use account-home
  *  isolation -- nothing of theirs lives in the profile dir -- but if SSH ever
  *  gains profile binding this check must learn about it. */
@@ -174,6 +207,7 @@ export function isProfileInUseByLiveSession(profileId: string): boolean {
   if (!profileId) return false
   for (const pid of watched.values()) if (pid === profileId) return true
   for (const pid of profileBySession.values()) if (pid === profileId) return true
+  if (hasTransientProfileConsumer(profileId)) return true
   return false
 }
 
@@ -217,6 +251,15 @@ export async function recheckAllAsync(): Promise<void> {
 }
 
 async function recheckAllAsyncInner(): Promise<void> {
+  // rc.15 review R2 (aicc_planning#50): the rotation follower runs ONCE per
+  // DISTINCT profile per poll, before the per-session loop. Its state is per
+  // profile, so calling it once per session let two sessions on one profile
+  // arm the changed stamp and back it up inside the SAME poll -- the
+  // "settled, not merely changed" barrier it exists to enforce, bypassed, and a
+  // snapshot taken between the CLI's credential write and its identity write.
+  for (const profileId of new Set([...watched.values()].filter((p): p is string => !!p))) {
+    try { await followCredentialRotation(profileId) } catch { /* best-effort per profile; never abort the poll */ }
+  }
   for (const [sessionId, profileId] of [...watched]) {
     // Guard the WHOLE per-session body (not just the stat) so a throw in
     // pushAccountIdentity/listProfiles/classify/broadcast can never abort the poll
@@ -240,6 +283,49 @@ async function recheckAllAsyncInner(): Promise<void> {
   }
 }
 
+/**
+ * The stat stamp the rotation follower compares between polls: the credential
+ * file's mtime. Stat-only -- the file's CONTENTS are never read here. null when
+ * there is no credential file to follow. Deliberately NOT the identity file
+ * (`.claude.json`) as well: that is the CLI's general state file, rewritten on
+ * ordinary turns, and a stamp that included it would keep moving for as long
+ * as the user is working -- starving the very backup this exists to deliver
+ * (quality review of the #598 pass).
+ */
+async function credentialRotationStamp(profileId: string): Promise<string | null> {
+  try { return String((await fsp.stat(path.join(getProfileConfigDir(profileId), '.claude', '.credentials.json'))).mtimeMs) } catch { return null }
+}
+
+/**
+ * Keep the canonical backup current through a mid-session token rotation
+ * (rc.14 review F6, aicc_planning#50). Stat-only: the first observation just
+ * records the stamp; a later change re-snapshots the profile home into
+ * canonical. `backupProfileHomeToCanonical` is itself EMAIL-GUARDED, so a
+ * /login that switched the home to a different account is refused there --
+ * this only ever lands rotations of the profile's own account.
+ *
+ * SETTLED, not merely changed (adversarial pass on #598): a change is backed up
+ * only once the same stamp has been seen on the poll AFTER it appeared. The
+ * CLI's /login rewrites `.credentials.json` and `.claude.json` (the email the
+ * guard reads) as two separate writes, and a poll landing between them saw the
+ * profile's own email beside another account's token -- the one state the
+ * email guard cannot see through, and a snapshot of it would have restored a
+ * mixed identity later. Never snapshotting on the poll that first sees the
+ * credential move gives the identity write a whole poll to land, so the guard
+ * judges the finished picture. A rotation (one file, one write) costs the same
+ * single backup, one poll later.
+ */
+async function followCredentialRotation(profileId: string): Promise<void> {
+  const stamp = await credentialRotationStamp(profileId)
+  if (stamp === null) return
+  const seen = rotationStampByProfile.get(profileId)
+  if (!seen) { rotationStampByProfile.set(profileId, { last: stamp, armed: false }); return }
+  if (stamp !== seen.last) { seen.last = stamp; seen.armed = true; return } // still moving: look again next poll
+  if (!seen.armed) return
+  seen.armed = false
+  try { backupProfileHomeToCanonical(profileId) } catch { /* best-effort, like the exit-time backup */ }
+}
+
 /** Start polling a live session's identity file for mid-session account changes. */
 export function startWatchingAccountIdentity(sessionId: string, profileId: string | undefined): void {
   watched.set(sessionId, profileId)
@@ -252,8 +338,12 @@ export function startWatchingAccountIdentity(sessionId: string, profileId: strin
 
 /** Stop polling a session (called alongside clearClaudeAccount on PTY exit). */
 export function stopWatchingAccountIdentity(sessionId: string): void {
+  const profileId = watched.get(sessionId)
   watched.delete(sessionId)
   lastMtimeMs.delete(sessionId)
+  // The rotation stamp is per profile: drop it only when no watched session is
+  // left on that profile, so the next session starts with a fresh observation.
+  if (profileId && ![...watched.values()].includes(profileId)) rotationStampByProfile.delete(profileId)
   if (watched.size === 0 && pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
@@ -282,6 +372,7 @@ export function _resetClaudeAccounts(): void {
   profileBySession.clear()
   watched.clear()
   lastMtimeMs.clear()
+  rotationStampByProfile.clear()
   detectedByProfile.clear()
   recheckInFlight = false
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }

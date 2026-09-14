@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, existsSync, statSync } from 'fs'
+import { mkdtempSync, readFileSync, existsSync, statSync, rmSync } from 'fs'
 import { join } from 'path'
 import * as path from 'path'
 import { tmpdir } from 'os'
+import { isHomeOrAncestor } from './path-utils'
 import { z } from 'zod'
 import { runCodexStreaming, readCodexAuthStatus } from './providers/codex/auth'
 import { recordReview } from './codex-review-usage'
@@ -144,7 +145,7 @@ export async function runCodexReview(
   if (!args.cccSessionId) {
     return {
       isError: true,
-      text: 'Codex review unavailable: no CCC session id bound to this MCP connection. Spawn the Claude session from inside the Conductor app.',
+      text: 'Codex review unavailable: no Conductor session id bound to this MCP connection. Spawn the Claude session from inside AI Code Conductor.',
     }
   }
   // Narrow once and reuse so a future refactor adding an `await` between
@@ -157,7 +158,21 @@ export async function runCodexReview(
   if (!optedInSessions.has(cccSessionId)) {
     return {
       isError: true,
-      text: `Codex review is not enabled for session ${cccSessionId}. Toggle "Enable Codex code review" in the session config.`,
+      text: `Codex review is not enabled for session ${cccSessionId}. It is available to local Claude Code sessions when Codex is enabled in Settings → Codex, and only when the session has a real project directory.`,
+    }
+  }
+
+  // 2.5. SECURITY (adversarial review, #188): defence-in-depth against the
+  // home-directory review root. Registration already refuses when the launch cwd
+  // is home or an ancestor of it (pty-manager), so such a session should never be
+  // in optedInSessions — but re-check here so mode:'paths' can never reach
+  // ~/.ssh, ~/.claude, ~/.aws even if a future caller re-introduces one.
+  // isHomeOrAncestor canonicalises with realpath so a case-variant / \\?\ /
+  // junction form of home is caught, not just the exact string.
+  if (isHomeOrAncestor(resolvedCwd)) {
+    return {
+      isError: true,
+      text: 'Codex review refused: the session has no project directory (its working directory resolves to your home folder). Set a real project directory in the session config.',
     }
   }
 
@@ -199,83 +214,103 @@ export async function runCodexReview(
     }
   }
 
-  // 4. Tmpfile for last-message capture
+  // 4. Tmpfile for last-message capture. Never removed anywhere below this
+  // point in the original code -- including every early-return error path
+  // (timeout, non-zero exit, missing tmpfile) -- so one dir + up to ~50KB
+  // review.md leaked into %TEMP% per invocation, forever (#487 audit).
+  // try/finally below guarantees cleanup on every path, including a throw.
   const tmpDir = mkdtempSync(join(tmpdir(), 'ccc-codex-review-'))
   const tmpfile = join(tmpDir, 'review.md')
-
-  // 5. Build argv
-  const argv = buildArgv(args, resolvedCwd, tmpfile)
-
-  // P7.7.9: log spawn args so the debug log shows exactly what flags were
-  // passed to codex on each invocation. Useful when diagnosing future CLI
-  // drift or argv-construction regressions.
-  logInfo('[codex-review] spawning: codex ' + argv.join(' '))
-
-  // 6. Spawn streaming. P7.7.15: honour caller-supplied timeoutSeconds when
-  // provided; zod already clamped it to [TIMEOUT_SECONDS_MIN, TIMEOUT_SECONDS_MAX].
-  const timeoutMs = args.timeoutSeconds != null ? args.timeoutSeconds * 1000 : REVIEW_TIMEOUT_MS
-  let observed: TokenCountObserved | null = null
-  const result = await runCodexStreaming(argv, {
-    timeoutMs,
-    cwd: resolvedCwd,
-    onStdoutLine: (line: string) => {
-      const parsedLine = parseTokenCountLine(line)
-      if (parsedLine) observed = parsedLine
-    },
-  })
-
-  // 7. Error mapping
-  if (result.timedOut) {
-    return { isError: true, text: `Codex review timed out after ${formatTimeoutForMessage(timeoutMs)}. Try a smaller scope (e.g. mode: "paths") or raise timeoutSeconds (max ${TIMEOUT_SECONDS_MAX}).` }
-  }
-  if (result.code !== 0) {
-    const excerpt = (result.stderr || '').slice(0, 500)
-    return { isError: true, text: `Codex review failed (exit ${result.code}): ${excerpt}${formatFooter(observed)}` }
-  }
-
-  // 8. Read tmpfile
-  if (!existsSync(tmpfile)) {
-    return { isError: true, text: 'Codex review produced no output (tmpfile missing).' }
-  }
-  let review = readFileSync(tmpfile, 'utf-8')
-  if (statSync(tmpfile).size > MAX_DIFF_BYTES) {
-    review = '[review truncated -- output exceeded 50KB]\n\n' + review.slice(-MAX_DIFF_BYTES)
-  }
-
-  // 9. Record usage
-  if (observed) {
-    const obsInner = observed as TokenCountObserved
-    recordReview(cccSessionId, {
-      inputTokens: obsInner.inputTokens,
-      outputTokens: obsInner.outputTokens,
-      rateLimit: obsInner.rateLimit,
-    })
-  }
-
-  // Emit internal event so channel rules (Codex Routing) can forward the
-  // review to the PR author session. Best-effort: never breaks the review result.
   try {
-    // Count numbered list items or "issue:" lines as a rough finding count.
-    const findingCount = (review.match(/^\s*\d+\./gm) ?? []).length || 1
-    emitCodexReviewComplete({
-      prNumber: undefined,
-      authorSessionId: cccSessionId,
-      findingCount,
-      findings: review.slice(0, 500),
-    })
-  } catch { /* channels emit is best-effort */ }
+    // 5. Build argv
+    const argv = buildArgv(args, resolvedCwd, tmpfile)
 
-  return { isError: false, text: review + formatFooter(observed) }
+    // P7.7.9: log spawn args so the debug log shows exactly what flags were
+    // passed to codex on each invocation. Useful when diagnosing future CLI
+    // drift or argv-construction regressions.
+    logInfo('[codex-review] spawning: codex ' + argv.join(' '))
+
+    // 6. Spawn streaming. P7.7.15: honour caller-supplied timeoutSeconds when
+    // provided; zod already clamped it to [TIMEOUT_SECONDS_MIN, TIMEOUT_SECONDS_MAX].
+    const timeoutMs = args.timeoutSeconds != null ? args.timeoutSeconds * 1000 : REVIEW_TIMEOUT_MS
+    let observed: TokenCountObserved | null = null
+    const result = await runCodexStreaming(argv, {
+      timeoutMs,
+      cwd: resolvedCwd,
+      onStdoutLine: (line: string) => {
+        const parsedLine = parseTokenCountLine(line)
+        if (parsedLine) observed = parsedLine
+      },
+    })
+
+    // 7. Error mapping
+    if (result.timedOut) {
+      return { isError: true, text: `Codex review timed out after ${formatTimeoutForMessage(timeoutMs)}. Try a smaller scope (e.g. mode: "paths") or raise timeoutSeconds (max ${TIMEOUT_SECONDS_MAX}).` }
+    }
+    if (result.code !== 0) {
+      const excerpt = (result.stderr || '').slice(0, 500)
+      return { isError: true, text: `Codex review failed (exit ${result.code}): ${excerpt}${formatFooter(observed)}` }
+    }
+
+    // 8. Read tmpfile
+    if (!existsSync(tmpfile)) {
+      return { isError: true, text: 'Codex review produced no output (tmpfile missing).' }
+    }
+    let review = readFileSync(tmpfile, 'utf-8')
+    if (statSync(tmpfile).size > MAX_DIFF_BYTES) {
+      review = '[review truncated -- output exceeded 50KB]\n\n' + review.slice(-MAX_DIFF_BYTES)
+    }
+
+    // 9. Record usage
+    if (observed) {
+      const obsInner = observed as TokenCountObserved
+      recordReview(cccSessionId, {
+        inputTokens: obsInner.inputTokens,
+        outputTokens: obsInner.outputTokens,
+        rateLimit: obsInner.rateLimit,
+      })
+    }
+
+    // Emit internal event so channel rules (Codex Routing) can forward the
+    // review to the PR author session. Best-effort: never breaks the review result.
+    try {
+      // Count numbered list items or "issue:" lines as a rough finding count.
+      const findingCount = (review.match(/^\s*\d+\./gm) ?? []).length || 1
+      emitCodexReviewComplete({
+        prNumber: undefined,
+        authorSessionId: cccSessionId,
+        findingCount,
+        findings: review.slice(0, 500),
+      })
+    } catch { /* channels emit is best-effort */ }
+
+    return { isError: false, text: review + formatFooter(observed) }
+  } finally {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3 })
+    } catch { /* best effort -- a stray dir here is a slow leak, not correctness */ }
+  }
 }
 
 /** Register the codex_review tool on a conductor-mcp-server McpServer instance.
  *
- * P7.7.10: the `getBoundSessionId` callback returns the CCC session id parsed
- * from the SSE transport URL (`?cccSessionId=<sid>` query, baked in by the
- * per-session --mcp-config writer). When present it takes precedence over
- * any `cccSessionId` the LLM passes as a tool arg -- prevents Claude from
- * dispatching against a stale id cached from a prior conversation. The arg
- * remains a fallback for in-flight sessions written by older CCC builds.
+ * The session id comes SOLELY from `getBoundSessionId()` — the CCC session id
+ * parsed from the transport URL (`?cccSessionId=<sid>`, baked in per-session by
+ * writeLocalSessionMcpConfig). The `cccSessionId` tool ARG is ignored entirely
+ * (adversarial review, #188): once every local session is opted-in, trusting an
+ * LLM-supplied id would let a session name another session's id and review its
+ * tree. An unbound connection (legacy/in-flight, pre-P7.7.10 URL bake) is refused
+ * and self-heals on the session's next respawn.
+ *
+ * NOTE — this binds the id to the transport URL, not to an unforgeable secret.
+ * The endpoint is still gated only by the loopback token, which is written into
+ * each session's readable ~/.claude/mcp-<sid>.json (a documented local-trust
+ * posture, SECURITY.md). A local process already running as the user could read
+ * that token and POST a chosen ?cccSessionId — but such a process can read the
+ * target files directly and needs no codex_review, so this is not an escalation
+ * over the existing local-trust boundary. Minting a per-session capability token
+ * (so the sid can't be restated in the URL) is tracked as a follow-up; it is a
+ * pre-existing hardening, not introduced by this change.
  */
 export function registerCodexReviewTool(
   server: any,  // McpServer (lazy-typed in conductor-mcp-server.ts)
@@ -286,9 +321,9 @@ export function registerCodexReviewTool(
 ): void {
   server.tool(
     'codex_review',
-    'Get a Codex (gpt-5.5) code review on a change. Use when the user asks for a "Codex review" or "second opinion". The mode arg picks scope: "working" for uncommitted changes (no extra arg), "range" for a git revision range (provide range, e.g. "HEAD~1..HEAD"), "paths" for specific files (provide paths). Optional focus directs Codex\'s attention. Returns the review markdown plus a residual rate-limit footer so you can self-govern usage. The CCC session id is resolved automatically from the MCP connection -- no need to pass it.',
+    'Get a Codex (gpt-5.5) code review on a change. Use when the user asks for a "Codex review" or "second opinion". The mode arg picks scope: "working" for uncommitted changes (no extra arg), "range" for a git revision range (provide range, e.g. "HEAD~1..HEAD"), "paths" for specific files (provide paths). Optional focus directs Codex\'s attention. Returns the review markdown plus a residual rate-limit footer so you can self-govern usage. The Conductor session id is resolved automatically from the MCP connection -- no need to pass it.',
     {
-      cccSessionId: zMod.string().optional().describe('Internal: normally resolved automatically from the MCP connection. Set this only as a back-compat fallback for legacy / in-flight sessions where the server has not bound a session id; new code should leave it unset.'),
+      cccSessionId: zMod.string().optional().describe('Ignored — the session id is resolved from the MCP connection and cannot be set here. Leave unset.'),
       mode: zMod.enum(['working', 'range', 'paths']).describe('Scope: working diff, git range, or explicit paths'),
       range: zMod.string().optional().describe('Git range (e.g. "HEAD~1..HEAD") -- required when mode === "range"'),
       paths: zMod.array(zMod.string()).optional().describe('File paths -- required when mode === "paths"'),
@@ -296,16 +331,31 @@ export function registerCodexReviewTool(
       timeoutSeconds: zMod.number().int().min(30).max(900).optional().describe('Optional override of the default 5-minute timeout. Allowed range 30-900 seconds. Raise for large diffs that overshoot the default; lower for fast-fail experiments.'),
     },
     async (rawArgs: any) => {
-      // Prefer the transport-bound session id; fall back to the LLM-supplied
-      // arg only when the connection didn't bind one (e.g. in-flight sessions
-      // from a CCC build that pre-dates P7.7.10's URL bake).
-      const sid = getBoundSessionId() ?? rawArgs?.cccSessionId ?? null
-      const cwd = (sid && getCwdForSession(sid)) ?? process.cwd()
-      // Pass cccSessionId only when resolved; null would fail zod validation
-      // (the schema is `z.string().optional()` -- undefined ok, null is not).
-      const mergedArgs: Record<string, unknown> = { ...rawArgs }
-      if (sid != null) mergedArgs.cccSessionId = sid
-      else delete mergedArgs.cccSessionId
+      // SECURITY (adversarial review, #188): trust ONLY the transport-bound
+      // session id. The old code fell back to the LLM-supplied cccSessionId when
+      // the connection hadn't bound one — harmless while the opt-in set was tiny
+      // and user-curated, but once every local session is opted-in that fallback
+      // becomes a cross-session read primitive: a prompt-injected session could
+      // pass ANOTHER session's id, clear the (now-universal) ACL, and have codex
+      // review that session's working tree. Binding the id to the transport URL
+      // (baked in per-session by writeLocalSessionMcpConfig) makes it
+      // unforgeable from inside the model. Legacy in-flight sessions that
+      // pre-date the URL bake self-heal on their next respawn.
+      const sid = getBoundSessionId()
+      if (!sid) {
+        return {
+          content: [{ type: 'text' as const, text: 'Codex review unavailable: this MCP connection has no bound Conductor session. Restart the Claude session from inside AI Code Conductor.' }],
+          isError: true,
+        }
+      }
+      const cwd = getCwdForSession(sid)
+      if (!cwd) {
+        return {
+          content: [{ type: 'text' as const, text: `Codex review is not enabled for this session. It is available to local Claude Code sessions with a real project directory when Codex is enabled in Settings → Codex.` }],
+          isError: true,
+        }
+      }
+      const mergedArgs: Record<string, unknown> = { ...rawArgs, cccSessionId: sid }
       const result = await runCodexReview(mergedArgs, getOptedIn(), cwd)
       return {
         content: [{ type: 'text' as const, text: result.text }],

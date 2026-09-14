@@ -7,12 +7,14 @@ import { BrowserWindow } from 'electron'
 import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
-import { readConfig, writeConfig } from './config-manager'
+import { createReadFailureLatch, loadConfigLatched, saveConfigLatched, mergeById } from './persist-latch'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
 import { isValidLegacyVersion } from '../shared/legacy-version'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
+import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
+import { randomId } from '../shared/id'
 
 export interface CloudAgentData {
   id: string
@@ -54,10 +56,13 @@ function resolveAgentEnv(profileId: string | undefined): {
   }
 
   let resolvedProfileId: string | null = null
-  if (profileId && fs.existsSync(getProfileConfigDir(profileId))) {
+  // Same guard as the insights/headless resolvers: validate before the join so a
+  // crafted id can't resolve a home outside the profiles root (it becomes the
+  // spawned agent's HOME).
+  if (profileId && isValidProfileId(profileId) && fs.existsSync(getProfileConfigDir(profileId))) {
     resolvedProfileId = profileId
   } else {
-    if (profileId) logWarn(`[cloud-agent] profile dir missing for profileId=${profileId}; falling back to primary/default`)
+    if (profileId) logWarn(`[cloud-agent] profile dir missing or invalid for profileId=${profileId}; falling back to primary/default`)
     const primary = getPrimaryProfileId()
     if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
   }
@@ -72,24 +77,45 @@ function resolveAgentEnv(profileId: string | undefined): {
 
 const MAX_OUTPUT_BYTES = 512 * 1024 // 500KB cap per agent
 
-// Completion callbacks — used by team-manager to detect when agents finish
-type AgentCompletionCallback = (agent: CloudAgentData) => void
-const completionCallbacks: AgentCompletionCallback[] = []
-
-export function onAgentCompletion(cb: AgentCompletionCallback): void {
-  completionCallbacks.push(cb)
-}
-
 const activeProcesses = new Map<string, ChildProcess>()
 let agents: CloudAgentData[] = []
 let getWindow: () => BrowserWindow | null = () => null
 
 function generateId(): string {
-  return 'ca-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  return randomId('ca-')
 }
 
-function persist(): void {
-  writeConfig('cloudAgents', agents)
+/** #371: a failed read of cloud-agents.json must not become an empty list that
+ *  the very next `cleanupStuckAgents()` writes back over the file. */
+const cloudAgentsLatch = createReadFailureLatch('cloud-agent')
+
+/**
+ * Returns false when the agent list did NOT reach disk. Callers must surface
+ * that: `initCloudAgentManager` runs once, at boot, so before the retry inside
+ * `saveConfigLatched` existed a single transient lock at startup silently
+ * discarded every agent dispatched for the rest of the process.
+ */
+function persist(removedIds?: readonly string[]): boolean {
+  return saveConfigLatched('cloudAgents', () => agents, cloudAgentsLatch, {
+    onRecovered: (recovered) => {
+      // The file is readable again: everything that was on disk before the
+      // failed load comes back, and anything dispatched since wins on its id.
+      agents = mergeById(recovered, agents)
+      // …but a REMOVAL must not be undone by the merge — the removed row is
+      // still on disk, so folding disk back in would resurrect it.
+      if (removedIds && removedIds.length > 0) {
+        const gone = new Set(removedIds)
+        agents = agents.filter((a) => !gone.has(a.id))
+      }
+    },
+  })
+}
+
+/** Why the last write did not land, in words a user can act on. */
+function persistFailure(): string {
+  return cloudAgentsLatch.failed()
+    ? 'Your cloud agents could not be saved: the agents file could not be read, so it was left alone rather than overwritten. Nothing on disk was lost — try again once it is readable.'
+    : 'Your cloud agents could not be written to disk.'
 }
 
 function broadcastStatus(agent: CloudAgentData): void {
@@ -108,9 +134,15 @@ function broadcastOutputChunk(id: string, chunk: string): void {
 
 export function initCloudAgentManager(windowGetter: () => BrowserWindow | null): void {
   getWindow = windowGetter
-  // Load persisted agents
-  const saved = readConfig<CloudAgentData[]>('cloudAgents')
-  agents = saved || []
+  // Load persisted agents. A read FAILURE latches writes off (see persist-latch)
+  // so the empty list below is never saved over a file we could not read.
+  const saved = loadConfigLatched<CloudAgentData[]>('cloudAgents', cloudAgentsLatch)
+  agents = Array.isArray(saved) ? saved : []
+}
+
+/** Test seam — the latch is module state and outlives a test file otherwise. */
+export function _resetCloudAgentLatchForTest(): void {
+  cloudAgentsLatch.reset()
 }
 
 export function cleanupStuckAgents(): void {
@@ -161,6 +193,22 @@ export async function dispatchAgent(params: {
   persist()
   broadcastStatus(agent)
 
+  // rc.15 review R5 (aicc_planning#49): a Cancel (or a Remove) can land while
+  // dispatch is parked on an await below -- the legacy install, the account
+  // refresh. cancelAgent finds no process then and marks the record cancelled;
+  // the resumed dispatch must see that and spawn nothing, or the work runs
+  // labelled cancelled with no control left to stop it. Checked after EVERY
+  // pre-spawn await; `agent` is the very object in `agents`, so a cancel is
+  // visible on it even after a Remove filtered it out of the list.
+  const abandoned = (): boolean => agent.status === 'cancelled' || !agents.includes(agent)
+  const abandon = (where: string): CloudAgentData => {
+    logInfo(`[cloud-agent] Agent ${agent.id} was cancelled during ${where}; not spawning`)
+    agent.updatedAt = Date.now()
+    agent.duration = agent.updatedAt - agent.createdAt
+    if (agents.includes(agent)) { persist(); broadcastStatus(agent) }
+    return agent
+  }
+
   // Resolve Claude binary (use legacy version if configured)
   let claudeBin = 'claude'
   if (params.legacyVersion?.enabled && params.legacyVersion.version) {
@@ -175,6 +223,7 @@ export async function dispatchAgent(params: {
         if (!result.ok) {
           logInfo(`[cloud-agent] Legacy install failed, using system claude: ${result.error}`)
         }
+        if (abandoned()) return abandon('the legacy CLI install')
       }
       const legacyBin = resolveVersionBinary(params.legacyVersion.version)
       if (legacyBin) {
@@ -201,22 +250,49 @@ export async function dispatchAgent(params: {
   const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
   const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin}${permFlag}`
 
-  const child = spawn(shellCmd, [], {
-    cwd: params.projectPath,
-    shell: true,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: spawnEnvVars,
-  })
+  // #48: the agent runs in the profile's credential home for as long as its
+  // process lives, so the profile reads as in-use for exactly that long (the
+  // usage refresh and the account delete defer to it). ACQUIRED FIRST: the hold
+  // is what stops a new rotation from starting, and taking it before the wait
+  // below closes the microtask between "the in-flight rotation settled" and
+  // "we are registered" in which a fresh refresh could otherwise begin and
+  // rotate the token this agent is about to read (adversarial pass on #598).
+  // Released on 'close' and on 'error' -- one of which always fires for a
+  // spawned child -- so the ref needs no leak clock; an agent that runs for an
+  // hour is in use for an hour.
+  const releaseProfile = resolvedProfileId ? acquireProfileConsumer(resolvedProfileId, { maxAgeMs: Infinity }) : () => { /* default home: nothing held */ }
+  let child: ChildProcess
+  try {
+    // #49: if the usage page is rotating this profile's token right now, let
+    // the new lineage land before the agent's claude reads the credential file.
+    // The hold above means no OTHER rotation can begin while we wait.
+    if (resolvedProfileId) await waitForProfileRefresh(resolvedProfileId)
+    if (abandoned()) {
+      releaseProfile()
+      cleanupTmpFileFor(tmpFile)
+      return abandon('the account refresh wait')
+    }
+    child = spawn(shellCmd, [], {
+      cwd: params.projectPath,
+      shell: true,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: spawnEnvVars,
+    })
+  } catch (e) {
+    // spawn() itself throws only synchronously (bad argv); a hold with no child
+    // to release it would otherwise outlive the failure.
+    releaseProfile()
+    cleanupTmpFileFor(tmpFile)
+    throw e
+  }
 
   activeProcesses.set(agent.id, child)
   logInfo(`[cloud-agent] Dispatched agent ${agent.id} (${agent.name}) pid=${child.pid} profile=${resolvedProfileId ?? '(default/global)'} account=${accountEmail ?? '(none)'}`)
   logInfo(`[cloud-agent] Shell cmd: ${shellCmd}`)
   logInfo(`[cloud-agent] CWD: ${params.projectPath}, prompt length: ${params.description.length}`)
 
-  const cleanupTmpFile = (): void => {
-    try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
-  }
+  const cleanupTmpFile = (): void => cleanupTmpFileFor(tmpFile)
 
   child.stdout?.on('data', (data: Buffer) => {
     const chunk = data.toString()
@@ -252,6 +328,7 @@ export async function dispatchAgent(params: {
   })
 
   child.on('close', (code) => {
+    releaseProfile()
     cleanupTmpFile()
     activeProcesses.delete(agent.id)
     const agentRef = agents.find(a => a.id === agent.id)
@@ -269,12 +346,12 @@ export async function dispatchAgent(params: {
       parseCostFromOutput(agentRef)
       persist()
       broadcastStatus(agentRef)
-      for (const cb of completionCallbacks) cb(agentRef)
       logInfo(`[cloud-agent] Agent ${agentRef.id} finished: status=${agentRef.status} code=${code} output=${agentRef.output.length}b`)
     }
   })
 
   child.on('error', (err) => {
+    releaseProfile()
     cleanupTmpFile()
     activeProcesses.delete(agent.id)
     const agentRef = agents.find(a => a.id === agent.id)
@@ -285,12 +362,15 @@ export async function dispatchAgent(params: {
       agentRef.duration = agentRef.updatedAt - agentRef.createdAt
       persist()
       broadcastStatus(agentRef)
-      for (const cb of completionCallbacks) cb(agentRef)
       logError(`[cloud-agent] Agent ${agentRef.id} error: ${err.message}`)
     }
   })
 
   return agent
+}
+
+function cleanupTmpFileFor(tmpFile: string): void {
+  try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
 }
 
 function parseCostFromOutput(agent: CloudAgentData): void {
@@ -359,18 +439,25 @@ export function cancelAgent(id: string): boolean {
   return true
 }
 
-export function removeAgent(id: string): boolean {
+export function removeAgent(id: string): { ok: boolean; removed: boolean; error?: string } {
   const idx = agents.findIndex(a => a.id === id)
-  if (idx < 0) return false
+  if (idx < 0) return { ok: true, removed: false }
 
   // Cancel if running
   if (agents[idx].status === 'running') {
     cancelAgent(id)
   }
 
-  agents.splice(idx, 1)
-  persist()
-  return true
+  const snapshot = agents
+  agents = agents.filter(a => a.id !== id)
+  // #371 BLOCKER-1: a refused write used to return true, so the row vanished
+  // from the UI and came back on restart. Roll the in-memory list back so the
+  // screen keeps matching the disk.
+  if (!persist([id])) {
+    agents = snapshot
+    return { ok: false, removed: false, error: persistFailure() }
+  }
+  return { ok: true, removed: true }
 }
 
 export async function retryAgent(id: string): Promise<CloudAgentData | null> {
@@ -396,12 +483,16 @@ export function getAgentOutput(id: string): string {
   return agent?.output || ''
 }
 
-export function clearCompletedAgents(): number {
-  const before = agents.length
+export function clearCompletedAgents(): { ok: boolean; removed: number; error?: string } {
+  const snapshot = agents
+  const clearedIds = agents.filter(a => a.status !== 'running' && a.status !== 'pending').map(a => a.id)
+  if (clearedIds.length === 0) return { ok: true, removed: 0 }
   agents = agents.filter(a => a.status === 'running' || a.status === 'pending')
-  const removed = before - agents.length
-  if (removed > 0) persist()
-  return removed
+  if (!persist(clearedIds)) {
+    agents = snapshot
+    return { ok: false, removed: 0, error: persistFailure() }
+  }
+  return { ok: true, removed: clearedIds.length }
 }
 
 export function killAllAgents(): void {

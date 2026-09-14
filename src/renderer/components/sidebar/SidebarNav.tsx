@@ -18,7 +18,6 @@ interface SidebarNavProps {
   serverRunning?: boolean
   tokenomicsIndexComplete?: boolean
   collapsed?: boolean
-  onShowHelp?: () => void
   /** Opens the all-accounts usage overview. Button shown only with 2+ accounts. */
   onShowAccountUsage?: () => void
 }
@@ -26,7 +25,7 @@ interface SidebarNavProps {
 const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
   {
     view: 'cloud-agents',
-    label: 'Agent Hub',
+    label: 'Cloud Agents',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z" />
@@ -127,7 +126,12 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
     : insightsStatus === 'complete' ? 'var(--status-success)'
     : insightsStatus === 'failed' ? 'var(--status-danger)'
     : null
-  const isInsightsAnimating = insightsStatus === 'running' || insightsStatus === 'extracting_kpis'
+  // Scope to the Insights item, like isCloudAgentsRunning above. Unscoped, a
+  // running Insights job rewrote EVERY nav button's title -> aria-label (so
+  // screen readers announced the whole rail as "Insights running...", and any
+  // aria-label selector — the guided tour's Settings step — stopped matching)
+  // and tinted every icon blue.
+  const isInsightsAnimating = isInsightsActive && (insightsStatus === 'running' || insightsStatus === 'extracting_kpis')
   const isCloudAgentsRunning = item.view === 'cloud-agents' && cloudAgentRunning > 0
   // P7.7: dot reflects MCP server health, not browser CDP attach. Show
   // the dot whenever serverRunning has been reported (defined) so users
@@ -162,6 +166,9 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
         onViewChange(item.view)
       }}
       aria-label={title}
+      // Stable tour anchor: `title` is legitimately dynamic (collapsed state,
+      // logs-disabled, running jobs), so the tour must not target aria-label.
+      data-tour={`nav-${item.view}`}
       aria-disabled={isLogsDisabled || undefined}
       tabIndex={isLogsDisabled ? -1 : undefined}
       className={`group ${isCollapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors relative ${
@@ -241,7 +248,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   )
 }
 
-export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowHelp, onShowAccountUsage }: SidebarNavProps) {
+export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowAccountUsage }: SidebarNavProps) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
   // Account-usage button lives here in the nav rail (alongside Insights etc.),
   // shown only with 2+ accounts (never single-account or macOS).
@@ -273,11 +280,15 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
     </button>
   ) : null
 
-  const helpButton = onShowHelp ? (
+  const helpActive = currentView === 'help'
+  const helpButton = (
     <button
-      onClick={onShowHelp}
+      onClick={() => onViewChange('help')}
       aria-label="Feature Guide"
-      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring relative`}
+      aria-current={helpActive ? 'page' : undefined}
+      data-tour="help-button"
+      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors ${helpActive ? 'bg-surface0/60' : 'text-overlay0 hover:text-text hover:bg-surface0/50'} focus-ring relative`}
+      style={helpActive ? { color: 'var(--accent)' } : undefined}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -293,7 +304,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
         Feature Guide
       </span>
     </button>
-  ) : null
+  )
 
   const primary = navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
   const system = navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view))

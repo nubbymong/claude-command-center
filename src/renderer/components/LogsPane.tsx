@@ -4,6 +4,7 @@ import LogEmptyState, { type LogEmptyReason } from './logs/LogEmptyState'
 import { useWindowedTurns, type Logs2Scope } from '../hooks/useWindowedTurns'
 import { useLogsStore } from '../stores/useLogsStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { sessionCapabilities } from '../lib/session-capabilities'
 import { useConfigStore } from '../stores/configStore'
 import { useSettingsStore } from '../stores/settingsStore'
 
@@ -52,13 +53,11 @@ export default function LogsPane({ sessionId }: Props) {
 
   // Precedence: structural reasons (can never index) before logging-off before
   // no-transcript-yet. shell-only first because a shell has no Claude at all.
-  const structuralReason: LogEmptyReason | null = isShell
-    ? 'shell-only'
-    : isSSH
-      ? 'ssh'
-      : isCodex
-        ? 'codex'
-        : null
+  // ONE source of truth for "can this session have a transcript": the command
+  // bar and the Logs button read the same function (lib/session-capabilities),
+  // so the pane and the bar cannot drift. (ADR-018 D2)
+  const structuralReason: LogEmptyReason | null = sessionCapabilities(session).logsEmptyReason
+  void isShell; void isSSH; void isCodex
 
   // ---- no-transcript-yet detection via ingestStatus -------------------------
   // Only relevant when the session COULD index (no structural reason, logging on).

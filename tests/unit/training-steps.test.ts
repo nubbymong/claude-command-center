@@ -8,18 +8,27 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 19 steps', () => {
+    it('has exactly 21 steps', () => {
       // v1.5.12 added dynamic-workflows; permission-tray step removed with the
       // feature; v2-readiness added multi-account + sentinel steps (16 -> 18);
-      // v2.0.0 added the ai-usage-meter step (18 -> 19).
-      expect(trainingSteps).toHaveLength(19)
+      // v2.0.0 added the ai-usage-meter step (18 -> 19); the Agent Canvas got
+      // an entry of its own (19 -> 20) -- FinishStep promises the Feature Guide
+      // "explains every feature", and it was the one shipped feature missing.
+      // Ask Conductor was the next one missing (20 -> 21): it shipped in 2.0 as
+      // "Ask Command Center" and was renamed, but never got a card (#372).
+      // #443 deprecated the Agent Hub, so its card left (21 -> 20). The 2.1
+      // canvas rework's Canvas Explained page got a card (20 -> 21).
+      expect(trainingSteps).toHaveLength(21)
     })
 
     it('every step has required fields', () => {
       for (const step of trainingSteps) {
         expect(step.id).toBeTruthy()
         expect(step.title).toBeTruthy()
-        expect(step.sinceVersion).toMatch(/^\d+\.\d+\.\d+$/)
+        // Prerelease suffixes are legal since canvas-explained shipped on the
+        // rc.10 line; compareVersions ignores the suffix, so '2.1.0-rc.10'
+        // ranks as 2.1.0 for tour-resurfacing purposes.
+        expect(step.sinceVersion).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/)
         expect(step.bullets.length).toBeGreaterThan(0)
         expect(step.screenshotFilename).toMatch(/\.jpg$/)
       }
@@ -39,6 +48,65 @@ describe('training-steps', () => {
     it('steps are in logical order starting with session-options and ending with github-sidebar', () => {
       expect(trainingSteps[0].id).toBe('session-options')
       expect(trainingSteps[trainingSteps.length - 1].id).toBe('github-sidebar')
+    })
+  })
+
+  describe('the Ask Conductor entry (#372)', () => {
+    // Fail loudly on a missing step rather than letting a non-null assertion
+    // throw an opaque TypeError three lines later.
+    const ask = (): TrainingStep => {
+      const step = trainingSteps.find((s) => s.id === 'ask-conductor')
+      if (!step) throw new Error('no trainingSteps entry with id "ask-conductor" (#372)')
+      return step
+    }
+
+    it('exists, so the Feature Guide covers the help surface itself', () => {
+      // Asserted against the id list rather than through ask(), which finds BY
+      // id and so could only ever agree with itself.
+      expect(trainingSteps.map((s) => s.id)).toContain('ask-conductor')
+    })
+
+    it('is filed under its current name, never the retired 2.0 one', () => {
+      const step = ask()
+      expect(step.title).toBe('Ask Conductor')
+      // It shipped as "Ask Command Center". The card is user-facing copy about
+      // what the feature is TODAY, so the old name must not leak into it.
+      // Every user-facing string on the card, howToTrigger labels and values
+      // included -- those render in the card's right column.
+      const copy = [
+        step.title,
+        step.summary ?? '',
+        step.proTip ?? '',
+        ...step.bullets,
+        ...(step.highlights ?? []),
+        ...(step.howToTrigger ?? []).flatMap((t) => [t.label, t.value]),
+      ].join(' ')
+      expect(copy).not.toContain('Ask Command Center')
+      expect(copy).not.toContain('Command Center')
+    })
+
+    it('uses the hero layout and names a screenshot asset', () => {
+      const step = ask()
+      // `summary` is what switches FeatureGuidePage to the hero layout; without
+      // it the card silently falls back to the flat bullet list.
+      expect(step.summary).toBeTruthy()
+      expect(step.highlights?.length).toBeGreaterThan(0)
+      expect(step.howToTrigger?.length).toBeGreaterThan(0)
+      // Only the shape is asserted here; that the file actually exists on disk
+      // is covered for every step by training-screenshots-exist.test.ts.
+      expect(step.screenshotFilename).toMatch(/\.jpg$/)
+    })
+
+    it('is surfaced to beta users who already ran the 2.1 tour, and alone', () => {
+      // The whole point of the entry. A user who finished the 2.1 tour holds
+      // lastTrainingVersion '2.1.0'; getNewSteps keeps sinceVersion > that, so
+      // the card has to sit ABOVE 2.1.0 or shouldShowTraining() stays false and
+      // the cohort that already has the feature is never shown it (#372).
+      // Equally it must be the ONLY thing re-surfaced -- one new card is a
+      // proportionate interruption, replaying the 2.1 set is not.
+      expect(getNewSteps('2.1.0').map((s) => s.id)).toEqual(['ask-conductor'])
+      // Users arriving from 2.0.x get it as part of the normal backlog.
+      expect(getNewSteps('2.0.0').map((s) => s.id)).toContain('ask-conductor')
     })
   })
 

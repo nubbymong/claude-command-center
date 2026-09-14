@@ -1,13 +1,71 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
+import { randomId } from '../shared/id'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
+import type { WebviewNavState } from '../shared/browser-url'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
+import type {
+  CanvasAnnotationDraft,
+  CanvasChangedEvent,
+  CanvasRenderSource,
+  CanvasReviewChangedEvent,
+  CanvasReviewState,
+  CanvasSketchExport,
+  CanvasSnapshotReply,
+  CanvasDismissRefusal,
+  CanvasDismissResult,
+  CanvasLibraryFilter,
+  CanvasLibraryResult,
+  CanvasLibraryTab,
+  CanvasResumeResult,
+  ResumableRow,
+  CanvasLibraryEntry,
+  CanvasSnapshotRequestEvent,
+  CanvasState,
+  ComposerDraftInput,
+  EvidenceCaptureResult,
+  EvidenceStateStamp,
+  ForceClosures,
+  Rect,
+  TrailEntry,
+} from '../shared/canvas'
+
+/** Mirrors src/main/watchdog/session-watchdog.ts's WatchdogPublicState — kept
+ *  as a structural copy (not imported) so preload never pulls in main-only
+ *  code, matching this file's existing convention for other main-side types. */
+export interface WatchdogChecks {
+  rateLimit: boolean
+  overload: boolean
+  safeguard: boolean
+}
+
+export interface WatchdogPublicState {
+  sessionId: string
+  status: 'monitoring' | 'waiting' | 'overload' | 'safeguard'
+  /** #605: false on the state pushed when a watcher is torn down. */
+  armed: boolean
+  /** #605: which auto-retry checks are live for this session right now. */
+  checks: WatchdogChecks
+  attempts: number
+  overloadAttempts: number
+  safeguardAttempts: number
+  waitUntil: number | null
+  gaveUp: boolean
+  lastAction: string | null
+  updatedAt: number
+}
 
 export interface ElectronAPI {
+  /** True when this is a dev build (npm run dev / ccc), false for a packaged
+   *  prod install. Drives DEV window labeling (title + badge + accent). */
+  appIsDev: () => Promise<boolean>
   config: {
-    loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
+    /** `readFailed` = the CONFIG dir could not be reached (nothing read);
+     *  `failedKeys` = files that exist but could not be read or parsed. Either
+     *  means "latch writes off", never "fresh install". */
+    loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean; readFailed?: boolean; failedKeys?: string[] }>
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
   }
@@ -15,15 +73,21 @@ export interface ElectronAPI {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
     create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    /** Credential generation (stat stamp + signed-in), never token contents. */
+    credentialStamp: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>
+    /** Per-profile credential state: forced-login countdown + identity cross-check. */
+    authInfo: () => Promise<import('../shared/account-auth').ProfileAuthInfo[]>
     globalEmail: () => Promise<string | null>
     captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
   }
   accountUsage: {
     fetchAll: () => Promise<import('../shared/usage-types').AccountUsage[]>
-    fetchOne: (id: string) => Promise<import('../shared/usage-types').AccountUsage | null>
+    fetchAllStream: (onResult: (usage: import('../shared/usage-types').AccountUsage) => void) => Promise<void>
+    fetchOne: (id: string, opts?: { noRefresh?: boolean }) => Promise<import('../shared/usage-types').AccountUsage | null>
   }
   window: {
     minimize: () => void
@@ -41,10 +105,16 @@ export interface ElectronAPI {
   }
   clipboard: {
     saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
+    /** Focus-independent clipboard text read, retried for Windows delayed-render (#145). */
+    readText: () => Promise<string>
+  }
+  /** Input diagnostics (#145), gated on CCC_INPUT_DEBUG=1 in the main process. */
+  inputDebug: {
+    enabled: () => Promise<boolean>
+    log: (line: string) => void
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
-    load: (configId: string) => Promise<string | null>
     delete: (configId: string) => Promise<boolean>
   }
   pty: {
@@ -58,6 +128,16 @@ export interface ElectronAPI {
         username: string
         remotePath: string
         postCommand?: string
+        /** #242 tier 5: respawning a session that previously reached
+         *  claude-running -- drives `--continue` when no tmux persistence
+         *  is available. See SSHOptions.reconnect in pty-manager.ts. */
+        reconnect?: boolean
+        /** SSH tmux enhancement (item 1): "Detachable" toggle (default ON;
+         *  only false disables tmux persistence). */
+        detachable?: boolean
+        /** SSH tmux enhancement (item 3): remote OS ('windows' uses the Windows
+         *  setup path; auto/unix use POSIX). */
+        remoteOs?: 'auto' | 'unix' | 'windows'
       }
       configId?: string
       configLabel?: string
@@ -68,8 +148,16 @@ export interface ElectronAPI {
         model?: string; tools?: string[]
       }>
       effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+      permissionMode?: string
+      extraArgs?: string
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
+      /** Ask Conductor's opening question. Travels in the spawn ENVIRONMENT as
+       *  CCC_ASK_PROMPT; the launch line carries only the env reference, never
+       *  the text. Claude + local + non-shell only. */
+      askPrompt?: string
+      /** Session kind: an Ask Conductor one-shot. Keeps a watchdog off it (#266). */
+      isAsk?: boolean
       resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
@@ -102,12 +190,39 @@ export interface ElectronAPI {
     getState: (sessionId: string) => Promise<{ state: string; info?: string }>
     /** Subscribe to flow-state changes for a session. */
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
+    /** SSH tmux enhancement (items 8/9/10): subscribe to per-session
+     *  persistence + remote-account descriptors pushed by main. */
+    onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
+    /** item 4: END the remote session (tmux kill-session + sidecar cleanup via
+     *  a separate ssh exec) then kill the local PTY.
+     *
+     *  A bare id ends a LIVE session, whose target main captured at spawn. The
+     *  object form (Phase 3.5) ends a DETACHED one from the resume registry:
+     *  main has no captured target for it, so it rebuilds the connection from
+     *  the SAVED config named by `configId` (host/user/port + that config's own
+     *  keychain secrets). Passing ids is the whole of the caller's power — the
+     *  host is never named here, and neither is the tmux session. */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
+    /** SSH Persistent (resume liveness): ask main whether a config's detached
+     *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
+    checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../shared/types').DetachedRemoteLiveness>
+    /** SSH Persistent (resume liveness, tier 1): is a host answering at all?
+     *  ICMP + TCP:22 fallback, no ssh/auth. Demote-only — see host-ping.ts. */
+    pingHost: (payload: { host: string }) => Promise<import('../shared/types').HostPingResult>
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
   }
   effort: {
     onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
+  /** Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard. */
+  watchdog: {
+    getStates: () => Promise<WatchdogPublicState[]>
+    onUpdate: (callback: (state: WatchdogPublicState) => void) => () => void
+    /** #605: runtime-only per-session check toggle. Resolves false when the
+     *  session has no armed watcher. */
+    setChecks: (sessionId: string, checks: Partial<WatchdogChecks>) => Promise<boolean>
   }
   registry: {
     get: () => Promise<ModelRegistry>
@@ -157,6 +272,7 @@ export interface ElectronAPI {
     search: (args: { query: string; limit?: number }) => Promise<unknown[]>
     deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
       Promise<{ deletedRuns: number; deletedMessages: number }>
+    renameSession: (args: { sessionId: string; configLabel: string; customName?: string }) => Promise<{ ok: boolean }>
     clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
     ingestStatus: (args: { sessionId: string }) => Promise<{
       transcripts: { path: string; status: string; ord: number }[]
@@ -165,9 +281,201 @@ export interface ElectronAPI {
     sessionConfig: (args: { sessionId: string }) => Promise<{ configId: string | null } | null>
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
-  discovery: {
-    getProjects: () => Promise<unknown>
-    getSessionHistory: (projectPath: string) => Promise<unknown>
+  /** Per-account claude.ai web session (#216). */
+  accountWeb: {
+    status: (profileId: string) => Promise<
+      | {
+          ok: true
+          web: any
+          cli: any
+          authCommand: string
+          authMethod: 'claudeai' | 'sso' | 'console'
+          authBrowser: 'chrome' | 'edge'
+          webSignInMode: 'auto' | 'internal-pane'
+          detectedBrowsers: Array<'chrome' | 'edge'>
+        }
+      | { ok: false; error: string }
+    >
+    /** Web-session status only — a local read, no CLI subprocess. */
+    webStatus: (profileId: string) => Promise<{ ok: true; web: any } | { ok: false; error: string }>
+    signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
+    signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
+    cancel: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    signOut: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    setSignInMode: (args: { profileId: string; mode: 'auto' | 'internal-pane' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    /** The pane's account surface (#439/#475): claude.ai on the account's partition. */
+    paneOpen: (args: { sessionId: string; profileId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean; error?: string }>
+    paneClose: (sessionId: string) => Promise<{ ok: boolean }>
+    paneBounds: (args: { sessionId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean }>
+    paneVisible: (args: { sessionId: string; visible: boolean }) => Promise<{ ok: boolean }>
+    paneReload: (sessionId: string) => Promise<{ ok: boolean }>
+    paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
+    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
+    onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
+  }
+  canvas: {
+    getState: (args: { sessionId: string }) => Promise<CanvasState | null>
+    render: (args: { sessionId: string; source: CanvasRenderSource }) => Promise<{ canvasId: string; versionId: string }>
+    setActiveVersion: (args: { sessionId: string; versionId: string }) => Promise<CanvasState>
+    onChanged: (cb: (e: CanvasChangedEvent) => void) => () => void
+    /** main asks the renderer to capture the live content frame; the renderer
+     *  answers exactly once per requestId via sendSnapshotResult. */
+    onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
+    sendSnapshotResult: (reply: CanvasSnapshotReply) => void
+    /** THE PROJECT LIBRARY (M4), one row per ARTEFACT RUN. Search, tab, chip
+     *  and the cap are applied in MAIN, so `truncated` is honest and another
+     *  live session's in-flight work never crosses the boundary at all. */
+    libraryList: (args: {
+      sessionId: string
+      openTileSessionIds?: string[]
+      query?: string
+      tab?: CanvasLibraryTab
+      filter?: CanvasLibraryFilter
+      sort?: 'recent'
+    }) => Promise<CanvasLibraryResult>
+    /** OWNERLESS IN-FLIGHT canvases on this project. Pure read; nothing moves
+     *  until the user picks one. Each row carries the owner it was listed
+     *  with — pass it straight back to `resume`. */
+    listResumables: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ResumableRow[]>
+    /** RESUME one, first-wins. `expectedOwnerSessionId` is the row's own
+     *  `expectedOwnerSessionId`: main compares and sets in one synchronous
+     *  step, so a second session racing you is told 'changed'. */
+    resume: (args: {
+      sessionId: string
+      canvasId: string
+      expectedOwnerSessionId: string
+      openTileSessionIds?: string[]
+    }) => Promise<CanvasResumeResult>
+    /** DISCARD an in-flight canvas and its evidence. Owner, or a same-project
+     *  caller when it is ownerless; never while another session is live-owner. */
+    dismiss: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<CanvasDismissResult>
+    /** READ a COMPLETED canvas owned by another session in this project, for
+     *  the read-only view. Never transfers ownership and grants no write. */
+    getReadonly: (args: { sessionId: string; canvasId: string }) => Promise<CanvasState | null>
+    /** The canvases for this session's PROJECT, for the totals sweep. Pure
+     *  read: listing a canvas never binds it to a session. sessionId scopes the
+     *  list to that project AND names the caller for the privacy rule; main
+     *  resolves the directory itself. */
+    listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
+    /** The user deletes a canvas and its files. The only destructive canvas
+     *  call, and OWNER-GUARDED since M4: `sessionId` says who is asking, and a
+     *  canvas a live other session owns — or somebody else's signed-off one —
+     *  is refused with a reason. */
+    deleteCanvas: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; reason?: CanvasDismissRefusal }>
+    /** Archive/unarchive one artifact (item C): reversible, returns the state.
+     *  Owner-guarded since M4, same rule as delete. */
+    archiveArtifact: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      archived: boolean
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; state: CanvasState | null; reason?: CanvasDismissRefusal }>
+    /** Permanently delete one artifact, its versions and their review notes.
+     *  Owner-guarded since M4, same rule as delete. */
+    deleteArtifact: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      openTileSessionIds?: string[]
+    }) => Promise<
+      | { ok: true; deletedVersions: number; notesDeleted: number }
+      | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' | CanvasDismissRefusal }
+    >
+    /** OPEN HERE: point this session at a canvas IT ALREADY OWNS. Transfers
+     *  nothing; a foreign canvas is refused (taking one is `resume`). */
+    reclaim: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; state: CanvasState | null }>
+    // P3 — the review loop (drafts, submit, resolution)
+    reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
+    annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
+    annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The decision is REQUIRED: the user's word is version-level, and a submit
+     *  that carried none is what produced rounds nobody could close. */
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
+    /** The zero-note verdict on a version (plain Approve / Reject / Dismiss).
+     *  An approve or reject also settles that artefact's earlier rounds; an
+     *  approve auto-completes when nothing else is owed. */
+    versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
+    /** #580: the chat line that tells the agent a verdict/review was filed. Queued while the agent's turn is open. */
+    agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' | 'unwired' | 'refused'; reason?: string }>
+    /** C1: reopen a version for review; later ready versions become withdrawn.
+     *  Wakes no ROUND — settled stays settled. */
+    versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
+    /** The user puts a closed note back in play. With `reviewReopen`, one of the
+     *  only two writes that may revive a settled round. */
+    annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user puts a whole settled ROUND back in play. Names the canvas it was
+     *  composed against — review ids are ordinals within the active canvas. */
+    reviewReopen: (args: { sessionId: string; canvasId: string; reviewId: string }) => Promise<CanvasReviewState>
+    /** The user has these addressed notes on screen. The only input to the agent
+     *  close-out barrier that no MCP tool can produce — renderer-only by design. */
+    reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
+    /** Persist the half-written note (W14) — text, decision, target, pasted
+     *  images and the sketch scene. Owner-scoped; no MCP path reaches it. */
+    composerDraftSet: (args: { sessionId: string; canvasId: string; draft: ComposerDraftInput }) => Promise<CanvasReviewState>
+    /** Drop it: the round was submitted, or the user emptied the composer. */
+    composerDraftClear: (args: { sessionId: string; canvasId: string }) => Promise<CanvasReviewState>
+    /** Sign the subject off (#476). Refused (`ok:false` + reason) while
+     *  anything is owed either way; the pane then falls back to its front page. */
+    complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** Force-close what is owed, then sign off (W3) — so Mark complete is never
+     *  dead. USER-only: `canvas_complete` (the agent's mouth) keeps every refusal. */
+    completeForce: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** What that force would close, so the armed confirm can name it. `null`
+     *  when the review store could not be read, or for a session that does not
+     *  own the canvas — never zeroes. */
+    describeForceClosures: (args: { sessionId: string; canvasId: string }) => Promise<ForceClosures | null>
+    /** The one-click undo: clear a canvas's completed stamp. */
+    completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
+    /** TESTING MODE (M3) — a note is a locked evidence record.
+     *  Screenshot the framed page and hold it, with the state stamp and the
+     *  trail slice taken at the same instant, until a note locks it. The rect is
+     *  clamped in main against the window's content box; the refusal is one word
+     *  from a closed set. */
+    evidenceCapture: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      rect: Rect
+      stamp: EvidenceStateStamp
+      trail: TrailEntry[]
+    }) => Promise<EvidenceCaptureResult>
+    /** The user cancelled the note: the pending capture is thrown away. */
+    evidenceDiscard: (args: { sessionId: string; canvasId: string; evidenceId: string }) => Promise<{ ok: boolean }>
+    /** Read back one image this canvas RECORDS — a note's evidence shot, a
+     *  pasted image, a sketch export, a composer image. The path must be one on
+     *  the record; anything else answers null. Owner session, or one in the same
+     *  project (the Library opens memorialised packs). */
+    evidenceRead: (args: { sessionId: string; canvasId: string; path: string }) => Promise<{ dataUrl: string } | null>
+    /** Name the test pack (the inline rename in the Testing header). `null`
+     *  clears it back to the generated default. Owner-only; a refused rename
+     *  answers with the state main kept, so the header snaps back to the truth. */
+    setPackName: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      name: string | null
+    }) => Promise<CanvasState | null>
+    /** A full-document navigation inside the canvas frame, for the action trail.
+     *  The session is resolved in main from the canvas record — never from the
+     *  page. */
+    onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => () => void
   }
   update: {
     check: () => Promise<boolean>
@@ -180,6 +488,9 @@ export interface ElectronAPI {
     onAvailable: (callback: (available: boolean, version?: string) => void) => () => void
     onSourceConfigured: (callback: (configured: boolean) => void) => () => void
     onServerConnected: (callback: (connected: boolean) => void) => () => void
+  }
+  diagnostics: {
+    captureGlyph: (payload: unknown) => Promise<{ ok: boolean; jsonPath?: string; imagePath?: string; error?: string }>
   }
   screenshot: {
     captureRectangle: () => Promise<string | null>
@@ -195,6 +506,8 @@ export interface ElectronAPI {
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
     /** Detach + destroy the session's view. */
     close: (sessionId: string) => Promise<boolean>
+    /** Session closed for good: destroy the view AND wipe its browser profile. */
+    forget: (sessionId: string) => Promise<boolean>
     /** Re-position on resize/scroll. */
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
     /** Attach/detach without destroying — used to hide on session switch. */
@@ -206,6 +519,11 @@ export interface ElectronAPI {
     navBack: (sessionId: string) => Promise<void>
     navForward: (sessionId: string) => Promise<void>
     goHome: (sessionId: string) => Promise<void>
+    /** Load an http/https URL in the session's EXISTING view (the address bar, favourites, home).
+     *  Resolves false when there is no view yet -- the pane then opens one instead. */
+    navigate: (sessionId: string, url: string) => Promise<boolean>
+    /** Hand an http/https URL to the OS default browser. Main re-validates and passes only the normalised href. */
+    openExternal: (url: string) => Promise<boolean>
     /** Emergency: destroy every WebContentsView. Used by the global Esc / "Close webview" pill. */
     closeAll: () => Promise<boolean>
     /**
@@ -215,6 +533,14 @@ export interface ElectronAPI {
      * be dismissed by keyboard. Returns an unsubscribe fn.
      */
     onEscapePressed: (handler: (sessionId: string) => void) => () => void
+    /** Subscribe to navigation state from the session's view: the page it is
+     *  actually on, its title, whether back/forward are possible, loading. */
+    onNavigated: (handler: (state: WebviewNavState) => void) => () => void
+    /** Subscribe to an AGENT PUSH: the agent asked to show the user a page in
+     *  this in-app browser (the open_in_app_browser MCP tool). Carries
+     *  { sessionId, url }; the store records it as pending and raises the
+     *  Browser-tool pill. It NEVER navigates on its own. Returns an unsubscribe fn. */
+    onAgentPush: (handler: (payload: { sessionId: string; url: string }) => void) => () => void
   }
   session: {
     save: (state: unknown) => Promise<boolean>
@@ -257,6 +583,17 @@ export interface ElectronAPI {
     getUsage: (sessionId: string) => Promise<import('../shared/types').CodexReviewUsageRecord | null>
     onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../shared/types').CodexReviewUsageRecord }) => void) => () => void
   }
+  /** GUI-subsystem executables (#379). See shared/gui-exe.ts. */
+  exe: {
+    probe: (req: { command: string; cwd?: string }) => Promise<import('../shared/gui-exe').ExeProbeResult>
+    runCaptured: (req: { command: string; cwd?: string }) => Promise<import('../shared/gui-exe').CapturedRunStart>
+    /** Stop capturing; the program keeps running. */
+    releaseRun: (runId: string) => Promise<boolean>
+    /** Force-stop the program. */
+    cancelRun: (runId: string) => Promise<boolean>
+    onRunData: (callback: (chunk: import('../shared/gui-exe').CapturedRunChunk) => void) => () => void
+    onRunExit: (callback: (exit: import('../shared/gui-exe').CapturedRunExit) => void) => () => void
+  }
   channels: {
     send: (req: unknown) => Promise<unknown>
     retract: (p: unknown) => Promise<unknown>
@@ -280,11 +617,13 @@ export interface ElectronAPI {
     selectResourcesDir: () => Promise<string | null>
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
+    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
     spawnCliSetup: (cols: number, rows: number) => Promise<string>
     killCliSetup: () => Promise<boolean>
   }
   insights: {
     run: (opts?: { profileId?: string }) => Promise<string>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
     getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
@@ -297,8 +636,16 @@ export interface ElectronAPI {
     stop: () => Promise<{ ok: boolean }>
     status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
-    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
-    getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
+    /**
+     * #371. `generation` is the token handed out by `getConfig` alongside the
+     * config the form was built from. Pass it back so main can refuse a save
+     * built from defaults it showed while the settings file was unreadable
+     * (`ok:false, stale:true`). `ok:false` means IT IS NOT ON DISK.
+     */
+    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }, generation?: number) => Promise<{ ok: boolean; stale?: boolean; error?: string }>
+    /** `readFailed` distinguishes "no config yet" from "could not read it" — the
+     *  caller must not present defaults as saved settings in the latter case. */
+    getConfig: () => Promise<{ config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null; generation: number; readFailed: boolean }>
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
   legacyVersion: {
@@ -312,22 +659,15 @@ export interface ElectronAPI {
   cloudAgent: {
     dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent>
     cancel: (id: string) => Promise<boolean>
-    remove: (id: string) => Promise<boolean>
+    /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
+    remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
     retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
     list: () => Promise<import('../shared/types').CloudAgent[]>
     getOutput: (id: string) => Promise<string>
-    clearCompleted: () => Promise<number>
+    /** #371: `ok:false` means nothing was cleared — do not filter the list. */
+    clearCompleted: () => Promise<{ ok: true; removed: number } | { ok: false; error: string }>
     onStatusChanged: (callback: (agent: import('../shared/types').CloudAgent) => void) => () => void
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
-  }
-  team: {
-    list: () => Promise<import('../shared/types').TeamTemplate[]>
-    save: (team: import('../shared/types').TeamTemplate) => Promise<import('../shared/types').TeamTemplate>
-    delete: (id: string) => Promise<boolean>
-    run: (teamId: string, projectPath?: string) => Promise<import('../shared/types').TeamRun | null>
-    cancelRun: (runId: string) => Promise<boolean>
-    listRuns: () => Promise<import('../shared/types').TeamRun[]>
-    onRunStatusChanged: (callback: (run: import('../shared/types').TeamRun) => void) => () => void
   }
   serviceStatus: {
     get: () => Promise<unknown>
@@ -456,6 +796,7 @@ interface GitHubBridge {
 }
 
 const electronAPI: ElectronAPI = {
+  appIsDev: () => ipcRenderer.invoke(IPC.APP_IS_DEV),
   config: {
     loadAll: () => ipcRenderer.invoke(IPC.CONFIG_LOAD_ALL),
     save: (key, data) => ipcRenderer.invoke(IPC.CONFIG_SAVE, key, data),
@@ -465,8 +806,11 @@ const electronAPI: ElectronAPI = {
     list: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_LIST),
     create: (name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREATE, { name }),
     rename: (id, name) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_RENAME, { id, name }),
+    setActive: (id, active) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id, active }),
     delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
     refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
+    credentialStamp: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, { id }),
+    authInfo: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_AUTH_INFO),
     globalEmail: () => ipcRenderer.invoke(IPC.ACCOUNT_GLOBAL_EMAIL_GET),
     captureDetected: (sessionId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sessionId, name }),
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => {
@@ -477,7 +821,17 @@ const electronAPI: ElectronAPI = {
   },
   accountUsage: {
     fetchAll: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL),
-    fetchOne: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id }),
+    // Streaming variant (plan P3): each account's usage arrives via `onResult` as
+    // it resolves. A private per-call channel is subscribed before the invoke and
+    // torn down when the stream completes, so overlapping calls never cross-talk.
+    fetchAllStream: (onResult: (usage: import('../shared/usage-types').AccountUsage) => void): Promise<void> => {
+      const channel = `accountUsage:result:${randomId()}`
+      const handler = (_e: unknown, usage: import('../shared/usage-types').AccountUsage) => onResult(usage)
+      ipcRenderer.on(channel, handler)
+      return ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, { channel })
+        .finally(() => ipcRenderer.removeListener(channel, handler))
+    },
+    fetchOne: (id: string, opts?: { noRefresh?: boolean }) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id, noRefresh: opts?.noRefresh }),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
@@ -502,11 +856,18 @@ const electronAPI: ElectronAPI = {
     openFolder: () => ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER)
   },
   clipboard: {
-    saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE)
+    saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE),
+    readText: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_TEXT)
   },
+  inputDebug: {
+    enabled: () => ipcRenderer.invoke(IPC.DEBUG_INPUT_ENABLED),
+    log: (line: string) => ipcRenderer.send(IPC.DEBUG_LOG_INPUT, line)
+  },
+  // Deliberately no `load`: the renderer never needs a credential's VALUE --
+  // main injects it into the shell's environment at spawn (ADR-018 security
+  // notes). The plaintext read bridge had zero callers and was removed.
   credentials: {
     save: (configId, password) => ipcRenderer.invoke(IPC.CREDENTIALS_SAVE, configId, password),
-    load: (configId) => ipcRenderer.invoke(IPC.CREDENTIALS_LOAD, configId),
     delete: (configId) => ipcRenderer.invoke(IPC.CREDENTIALS_DELETE, configId)
   },
   pty: {
@@ -549,6 +910,16 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(channel, handler)
       return () => ipcRenderer.removeListener(channel, handler)
     },
+    onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => {
+      const channel = `${IPC.SSH_SESSION_INFO}:${sessionId}`
+      const handler = (_: unknown, msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => callback(msg)
+      ipcRenderer.on(channel, handler)
+      return () => ipcRenderer.removeListener(channel, handler)
+    },
+    endRemote: (target: string | { sessionId: string; configId?: string }) => ipcRenderer.invoke(IPC.SSH_END_REMOTE, target),
+    checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) =>
+      ipcRenderer.invoke(IPC.SSH_CHECK_DETACHED_LIVE, payload),
+    pingHost: (payload: { host: string }) => ipcRenderer.invoke(IPC.SSH_PING_HOST, payload),
   },
   statusline: {
     onUpdate: (callback) => {
@@ -562,6 +933,15 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; effortLevel: string })
       ipcRenderer.on(IPC.HOOKS_EFFORT_UPDATE, handler)
       return () => ipcRenderer.removeListener(IPC.HOOKS_EFFORT_UPDATE, handler)
+    },
+  },
+  watchdog: {
+    getStates: () => ipcRenderer.invoke(IPC.WATCHDOG_GET_STATES),
+    setChecks: (sessionId, checks) => ipcRenderer.invoke(IPC.WATCHDOG_SET_CHECKS, sessionId, checks),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, data: unknown) => callback(data as WatchdogPublicState)
+      ipcRenderer.on(IPC.WATCHDOG_STATE, handler)
+      return () => ipcRenderer.removeListener(IPC.WATCHDOG_STATE, handler)
     },
   },
   registry: {
@@ -632,6 +1012,8 @@ const electronAPI: ElectronAPI = {
     search: (args: { query: string; limit?: number }) => ipcRenderer.invoke(IPC.LOGS2_SEARCH, args),
     deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
       ipcRenderer.invoke(IPC.LOGS2_DELETE_SLOT, args),
+    renameSession: (args: { sessionId: string; configLabel: string; customName?: string }) =>
+      ipcRenderer.invoke(IPC.LOGS2_RENAME_SESSION, args),
     clearAll: () => ipcRenderer.invoke(IPC.LOGS2_CLEAR_ALL),
     ingestStatus: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_INGEST_STATUS, args),
     sessionConfig: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_SESSION_CONFIG, args),
@@ -641,10 +1023,129 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.LOGS2_NEW_MESSAGES, handler)
     },
   },
-  discovery: {
-    getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),
-    getSessionHistory: (projectPath) =>
-      ipcRenderer.invoke(IPC.DISCOVERY_SESSIONS, projectPath)
+  accountWeb: {
+    status: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_STATUS, profileId),
+    webStatus: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_WEB_STATUS, profileId),
+    signIn: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SIGN_IN, profileId),
+    signInState: () => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SIGN_IN_STATE),
+    cancel: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_CANCEL, profileId),
+    signOut: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SIGN_OUT, profileId),
+    openArtifacts: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_OPEN_ARTIFACTS, profileId),
+    setAuthMethod: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, args),
+    setAuthBrowser: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_BROWSER, args),
+    setSignInMode: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_SIGN_IN_MODE, args),
+    paneOpen: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_OPEN, args),
+    paneClose: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_CLOSE, sessionId),
+    paneBounds: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_BOUNDS, args),
+    paneVisible: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_VISIBLE, args),
+    paneReload: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_RELOAD, sessionId),
+    paneGetState: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_GET_STATE, sessionId),
+    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => {
+      const handler = (_e: unknown, state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => cb(state)
+      ipcRenderer.on(IPC.ACCOUNT_WEB_PANE_STATE, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_WEB_PANE_STATE, handler)
+    },
+    onPaneClosed: (cb: (e: { sessionId: string }) => void) => {
+      const handler = (_e: unknown, payload: { sessionId: string }) => cb(payload)
+      ipcRenderer.on(IPC.ACCOUNT_WEB_PANE_CLOSED, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_WEB_PANE_CLOSED, handler)
+    },
+  },
+  // Agent Canvas — per-session review surface state + change push. Content
+  // itself loads straight into the canvas iframe over ccc-ux://, not IPC.
+  canvas: {
+    getState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_GET_STATE, args),
+    render: (args: { sessionId: string; source: CanvasRenderSource }) => ipcRenderer.invoke(IPC.CANVAS_RENDER, args),
+    setActiveVersion: (args: { sessionId: string; versionId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_SET_ACTIVE_VERSION, args),
+    onChanged: (cb: (e: CanvasChangedEvent) => void) => {
+      const handler = (_e: unknown, e: CanvasChangedEvent) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_CHANGED, handler)
+    },
+    onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => {
+      const handler = (_e: unknown, e: CanvasSnapshotRequestEvent) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_SNAPSHOT_REQUEST, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_SNAPSHOT_REQUEST, handler)
+    },
+    sendSnapshotResult: (reply: CanvasSnapshotReply) => ipcRenderer.send(IPC.CANVAS_SNAPSHOT_RESULT, reply),
+    libraryList: (args: {
+      sessionId: string
+      openTileSessionIds?: string[]
+      query?: string
+      tab?: CanvasLibraryTab
+      filter?: CanvasLibraryFilter
+      sort?: 'recent'
+    }) => ipcRenderer.invoke(IPC.CANVAS_LIBRARY_LIST, args),
+    listResumables: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_LIST_RESUMABLES, args),
+    resume: (args: { sessionId: string; canvasId: string; expectedOwnerSessionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_RESUME, args),
+    dismiss: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DISMISS, args),
+    getReadonly: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_GET_READONLY, args),
+    reclaim: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_RECLAIM, args),
+    listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_LIST_ALL, args ?? {}),
+    deleteCanvas: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DELETE, args),
+    archiveArtifact: (args: { sessionId: string; canvasId: string; versionId: string; archived: boolean; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ARCHIVE_ARTIFACT, args),
+    deleteArtifact: (args: { sessionId: string; canvasId: string; versionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DELETE_ARTIFACT, args),
+    reviewGetState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_GET_STATE, args),
+    annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_UPSERT, args),
+    annotationDelete: (args: { sessionId: string; annotationId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
+    versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_VERSION_VERDICT, args),
+    agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => ipcRenderer.invoke(IPC.CANVAS_AGENT_MARKER, args),
+    versionReopen: (args: { sessionId: string; versionId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_VERSION_REOPEN, args),
+    annotationReopen: (args: { sessionId: string; annotationId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_REOPEN, args),
+    reviewReopen: (args: { sessionId: string; canvasId: string; reviewId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_REOPEN, args),
+    reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_MARK_SEEN, args),
+    composerDraftSet: (args: { sessionId: string; canvasId: string; draft: ComposerDraftInput }) =>
+      ipcRenderer.invoke(IPC.CANVAS_COMPOSER_DRAFT_SET, args),
+    composerDraftClear: (args: { sessionId: string; canvasId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_COMPOSER_DRAFT_CLEAR, args),
+    complete: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE, args),
+    completeForce: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_FORCE, args),
+    describeForceClosures: (args: { sessionId: string; canvasId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DESCRIBE_FORCE_CLOSURES, args),
+    completeReopen: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_REOPEN, args),
+    // TESTING MODE (M3) — the evidence channels.
+    evidenceCapture: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      rect: Rect
+      stamp: EvidenceStateStamp
+      trail: TrailEntry[]
+    }) => ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_CAPTURE, args),
+    evidenceDiscard: (args: { sessionId: string; canvasId: string; evidenceId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_DISCARD, args),
+    evidenceRead: (args: { sessionId: string; canvasId: string; path: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_READ, args),
+    setPackName: (args: { sessionId: string; canvasId: string; versionId: string; name: string | null }) =>
+      ipcRenderer.invoke(IPC.CANVAS_SET_PACK_NAME, args),
+    onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => {
+      const handler = (_e: unknown, e: { sessionId: string; canvasId: string; route: string }) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_FRAME_NAVIGATED, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_FRAME_NAVIGATED, handler)
+    },
+    onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
+      const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_REVIEW_CHANGED, handler)
+    },
   },
   update: {
     check: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
@@ -680,8 +1181,12 @@ const electronAPI: ElectronAPI = {
     selectResourcesDir: () => ipcRenderer.invoke(IPC.SETUP_SELECT_RESOURCES_DIR),
     setResourcesDir: (dir: string) => ipcRenderer.invoke(IPC.SETUP_SET_RESOURCES_DIR, dir),
     isCliReady: () => ipcRenderer.invoke(IPC.SETUP_IS_CLI_READY),
+    probeCli: () => ipcRenderer.invoke(IPC.SETUP_PROBE_CLI),
     spawnCliSetup: (cols: number, rows: number) => ipcRenderer.invoke(IPC.SETUP_SPAWN_CLI_SETUP, cols, rows),
     killCliSetup: () => ipcRenderer.invoke(IPC.SETUP_KILL_CLI_SETUP),
+  },
+  diagnostics: {
+    captureGlyph: (payload: unknown) => ipcRenderer.invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, payload),
   },
   screenshot: {
     captureRectangle: () => ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE_RECTANGLE),
@@ -694,6 +1199,8 @@ const electronAPI: ElectronAPI = {
     check: (url: string) => ipcRenderer.invoke(IPC.WEBVIEW_CHECK, url),
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_OPEN, sessionId, url, bounds),
     close: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE, sessionId),
+    /** Session closed for good: destroy the view AND wipe its browser profile. */
+    forget: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_FORGET, sessionId),
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_SET_BOUNDS, sessionId, bounds),
     setVisible: (sessionId: string, visible: boolean) => ipcRenderer.invoke(IPC.WEBVIEW_SET_VISIBLE, sessionId, visible),
     reload: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_RELOAD, sessionId),
@@ -701,11 +1208,23 @@ const electronAPI: ElectronAPI = {
     navBack: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_BACK, sessionId),
     navForward: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_FORWARD, sessionId),
     goHome: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_GO_HOME, sessionId),
+    navigate: (sessionId: string, url: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAVIGATE, sessionId, url),
+    openExternal: (url: string) => ipcRenderer.invoke(IPC.WEBVIEW_OPEN_EXTERNAL, url),
     closeAll: () => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE_ALL),
     onEscapePressed: (handler: (sessionId: string) => void) => {
       const fn = (_e: unknown, sessionId: string) => handler(sessionId)
       ipcRenderer.on(IPC.WEBVIEW_ESCAPE_PRESSED, fn)
       return () => ipcRenderer.removeListener(IPC.WEBVIEW_ESCAPE_PRESSED, fn)
+    },
+    onNavigated: (handler: (state: WebviewNavState) => void) => {
+      const fn = (_e: unknown, state: WebviewNavState) => handler(state)
+      ipcRenderer.on(IPC.WEBVIEW_NAVIGATED, fn)
+      return () => ipcRenderer.removeListener(IPC.WEBVIEW_NAVIGATED, fn)
+    },
+    onAgentPush: (handler: (payload: { sessionId: string; url: string }) => void) => {
+      const fn = (_e: unknown, payload: { sessionId: string; url: string }) => handler(payload)
+      ipcRenderer.on(IPC.WEBVIEW_AGENT_PUSH, fn)
+      return () => ipcRenderer.removeListener(IPC.WEBVIEW_AGENT_PUSH, fn)
     },
   },
   session: {
@@ -717,6 +1236,7 @@ const electronAPI: ElectronAPI = {
   },
   insights: {
     run: (opts?: { profileId?: string }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
+    runAll: (opts?: { profileIds?: string[] }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN_ALL, opts),
     getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),
     getKpis: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_KPIS, runId),
@@ -754,7 +1274,8 @@ const electronAPI: ElectronAPI = {
     status: () => ipcRenderer.invoke(IPC.VISION_STATUS),
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) =>
       ipcRenderer.invoke(IPC.VISION_LAUNCH, browser, debugPort, url, headless ?? true),
-    saveConfig: (config: any) => ipcRenderer.invoke(IPC.VISION_SAVE_CONFIG, config),
+    saveConfig: (config: any, generation?: number) =>
+      ipcRenderer.invoke(IPC.VISION_SAVE_CONFIG, config, generation),
     getConfig: () => ipcRenderer.invoke(IPC.VISION_GET_CONFIG),
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => {
       const handler = (_: unknown, data: any) => callback(data)
@@ -780,19 +1301,6 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, data: any) => callback(data)
       ipcRenderer.on(IPC.CLOUD_AGENT_OUTPUT_CHUNK, handler)
       return () => ipcRenderer.removeListener(IPC.CLOUD_AGENT_OUTPUT_CHUNK, handler)
-    },
-  },
-  team: {
-    list: () => ipcRenderer.invoke(IPC.TEAM_LIST),
-    save: (team: any) => ipcRenderer.invoke(IPC.TEAM_SAVE, team),
-    delete: (id: string) => ipcRenderer.invoke(IPC.TEAM_DELETE, id),
-    run: (teamId: string, projectPath?: string) => ipcRenderer.invoke(IPC.TEAM_RUN, teamId, projectPath),
-    cancelRun: (runId: string) => ipcRenderer.invoke(IPC.TEAM_CANCEL_RUN, runId),
-    listRuns: () => ipcRenderer.invoke(IPC.TEAM_LIST_RUNS),
-    onRunStatusChanged: (callback: (run: any) => void) => {
-      const handler = (_: unknown, run: any) => callback(run)
-      ipcRenderer.on(IPC.TEAM_RUN_STATUS_CHANGED, handler)
-      return () => ipcRenderer.removeListener(IPC.TEAM_RUN_STATUS_CHANGED, handler)
     },
   },
   serviceStatus: {
@@ -942,6 +1450,22 @@ const electronAPI: ElectronAPI = {
       const wrapped = (_e: Electron.IpcRendererEvent, payload: { sessionId: string; record: import('../shared/types').CodexReviewUsageRecord }) => callback(payload)
       ipcRenderer.on(IPC.CODEX_REVIEW_USAGE_UPDATED, wrapped)
       return () => ipcRenderer.removeListener(IPC.CODEX_REVIEW_USAGE_UPDATED, wrapped)
+    },
+  },
+  exe: {
+    probe: (req) => ipcRenderer.invoke(IPC.EXE_PROBE, req),
+    runCaptured: (req) => ipcRenderer.invoke(IPC.EXE_RUN_START, req),
+    releaseRun: (runId: string) => ipcRenderer.invoke(IPC.EXE_RUN_RELEASE, { runId }),
+    cancelRun: (runId: string) => ipcRenderer.invoke(IPC.EXE_RUN_CANCEL, { runId }),
+    onRunData: (callback) => {
+      const wrapped = (_e: Electron.IpcRendererEvent, payload: import('../shared/gui-exe').CapturedRunChunk) => callback(payload)
+      ipcRenderer.on(IPC.EXE_RUN_DATA, wrapped)
+      return () => ipcRenderer.removeListener(IPC.EXE_RUN_DATA, wrapped)
+    },
+    onRunExit: (callback) => {
+      const wrapped = (_e: Electron.IpcRendererEvent, payload: import('../shared/gui-exe').CapturedRunExit) => callback(payload)
+      ipcRenderer.on(IPC.EXE_RUN_EXIT, wrapped)
+      return () => ipcRenderer.removeListener(IPC.EXE_RUN_EXIT, wrapped)
     },
   },
   channels: {

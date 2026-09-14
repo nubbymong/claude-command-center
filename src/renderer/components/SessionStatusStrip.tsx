@@ -1,7 +1,7 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
-import RateLimitBar from './terminal/RateLimitBar'
+import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
 import { formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
@@ -10,15 +10,18 @@ import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { isAccountActive } from '../../shared/account-types'
 import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
-  modelsFromRegistry,
-  effortsFromRegistry,
+  modelGroupsFromRegistry,
+  effortsForModel,
   shortModelName,
   isModelActive,
+  isWritablePickerValue,
 } from '../lib/claude-cli-options'
+import { resolvePickedModelId } from '../../shared/model-registry'
 import { useRegistryStore } from '../stores/registryStore'
 import AiUsageChip from './github/AiUsageChip'
 
@@ -26,6 +29,16 @@ interface SessionStatusStripProps {
   /** The PTY/session id for THIS terminal. Telemetry is read for this
    *  session and control writes (/model, /compact, ...) target its PTY. */
   sessionId: string
+}
+
+/** Defense in depth for the extra-usage block: the main-process sanitiser
+ *  already drops a malformed rateLimitExtra, but this render reads
+ *  `.usedUsd.toFixed()` etc., so guard the numeric fields at the point of use
+ *  too -- a partial object (a hostile SSH host's `{enabled:true}`) must never
+ *  reach `.toFixed` and blank the window via the ErrorBoundary (ADR-009 R1). */
+function validExtraUsage(e: Session['rateLimitExtra']): e is NonNullable<Session['rateLimitExtra']> {
+  return !!e && e.enabled === true
+    && typeof e.utilization === 'number' && typeof e.usedUsd === 'number' && typeof e.limitUsd === 'number'
 }
 
 // Shared pill styling for the control cluster (Mode / Model / Compact /
@@ -59,7 +72,12 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // telemetry band; the Claude controls cluster (Mode/Model/Restart/account)
   // stays regardless. Absent (pre-upgrade config) means on.
   const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
-  const codexReview = useCodexReviewUsage(session?.enableCodexReview ? sessionId : null)
+  // Codex review is authorised globally (2 Aug decision): every local Claude
+  // session registers for it, so the usage pill polls whenever this session
+  // qualifies — the gate is the global Codex master, not a per-config flag.
+  const codexReviewOn = useSettingsStore((s) => s.settings.codexEnabled !== false)
+  const codexReviewEligible = codexReviewOn && session?.provider === 'claude' && !session?.shellOnly && session?.sessionType !== 'ssh'
+  const codexReview = useCodexReviewUsage(codexReviewEligible ? sessionId : null)
   const { restart } = useRestartSession(session, false)
   const switchAccount = useSwitchAccount(session)
   const theme = useResolvedTheme()
@@ -83,11 +101,28 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const [lastEffort, setLastEffort] = useState<string | null>(null)
   const isClaude = (session?.provider ?? 'claude') === 'claude'
 
+  // Model rows are grouped now (alias rows, then the pinned versions under each
+  // family, #385), so the popover has N model sections instead of one. The
+  // Effort section is whatever follows them — onModel dispatches on that
+  // boundary, never on a hardcoded index.
+  const modelGroups = useMemo(() => modelGroupsFromRegistry(registry), [registry])
+
   const write = (cmd: string) => {
     window.electronAPI.pty.write(sessionId, cmd)
   }
   const onModel = (si: number, v: string) => {
-    if (si === 0) {
+    // These values are written straight into a live PTY as a slash-command
+    // LINE, with no schema in front of them. Pinned rows are derived from the
+    // registry and `registry-overlay.json` is hand-editable, so hold picker
+    // values to the same charset the `--model` IPC boundary enforces rather
+    // than trusting the row (ADR-009 MINOR on #404).
+    if (!isWritablePickerValue(v)) {
+      // eslint-disable-next-line no-console
+      console.warn('[model-picker] refusing to write a picker value outside the accepted charset:', v)
+      setOpenPicker(null)
+      return
+    }
+    if (si < modelGroups.length) {
       write(`/model ${v}\n`)
     } else {
       setLastEffort(v)
@@ -108,9 +143,53 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   }
 
   if (!session) return null
+
+  // Terminal-only (shell) sessions get just a Restart control, in the same
+  // bottom-right position and styling as a Claude session — no telemetry and no
+  // Claude-only Model/Compact/account controls (those write slash-commands a raw
+  // shell would not understand). restart() already handles a shell session (kill
+  // PTY + remount → generic respawn, skipping the resume picker). Placed before
+  // the status-line guard so Restart shows regardless of the status-line toggle.
+  if (session.shellOnly) {
+    return (
+      <div
+        className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t border-b"
+        style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
+      >
+        <div className="flex-1" aria-hidden />
+        <button
+          onClick={() => restart()}
+          className={CONTROL_PILL}
+          style={{ background: 'transparent', border: '1px solid transparent', color: 'var(--text-muted)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--status-danger) 14%, transparent)'; e.currentTarget.style.color = 'var(--status-danger)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
+          title="Restart session"
+        >
+          Restart
+        </button>
+      </div>
+    )
+  }
+
   // A Codex strip is telemetry-only (no controls cluster), so with the master
   // off there is nothing left to show — collapse the band entirely.
   if (!statusLineEnabled && !isClaude) return null
+
+  // "The meters should appear, but nothing has arrived yet." Shimmering forever
+  // on a session that has nothing to say is worse than the blank it replaces, so
+  // this excludes the two cases that will never report: a shell-only session
+  // runs no Claude, and a disconnected one is finished.
+  //
+  // Deliberately NOT re-checking statusLineEnabled here. The whole telemetry
+  // band below is already inside `{statusLineEnabled ? ... }`, so a clause for
+  // it would be unreachable -- verified by mutation: deleting it changes no test
+  // result. The footer needs its own check because it has no such wrapper.
+  const awaitingStatusline =
+    isClaude &&
+    !session.shellOnly &&
+    session.status !== 'disconnected' &&
+    (session.usageBuckets == null || session.usageBuckets.length === 0) &&
+    session.rateLimitCurrent == null
 
   const pct = session.contextPercent ?? 0
   // Context-meter thresholds: >85 danger, >=70 warning -- carried over from
@@ -119,9 +198,23 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
 
   // Model pill label: the real short model name, never a bare confusing
   // "default". Falls back to a muted "model" placeholder when unknown.
-  const rawModelLabel = shortModelName(session.modelName)
-  const hasModelLabel = !!session.modelName && rawModelLabel !== 'default'
+  //
+  // `session.modelName` is the statusline display_name, which is undefined at
+  // spawn and reset to undefined on every restart — so on its own the pill
+  // showed the placeholder until the first tick even though session.model
+  // already held the exact id the user picked. Fall back to it, as
+  // SessionRow.tsx:56 does. The registry is passed so a PINNED selection shows
+  // its curated name ("Opus 4.8 Fast", not a regex-flattened "Opus 4.8") — #385.
+  const activeModelReading = session.modelName ?? session.model ?? ''
+  const rawModelLabel = shortModelName(activeModelReading, registry)
+  const hasModelLabel = !!activeModelReading && rawModelLabel !== 'default'
   const modelLabel = hasModelLabel ? rawModelLabel : 'model'
+  // Effort gating needs a model the registry can place EXACTLY. The statusline
+  // reading ("Opus 4.6") only ever pattern-matches, which buildEffortRows
+  // deliberately distrusts, so gating would be inert here; the spawn-time id
+  // resolves exactly, and the label lookup keeps it right after a mid-session
+  // /model change (#385).
+  const effortModelId = resolvePickedModelId(registry, session.modelName, session.model)
 
   // Account chip (always-on when the session has a resolved account). Name
   // and colour are resolved by live email: a mid-session /login that updates
@@ -137,18 +230,83 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
 
   // Account chooser: every profile (resolved name + truncated email hint).
   // The current account is marked active; selecting it is a no-op in switchAccount.
-  const accountItems = profiles.map((p) => ({
-    label: resolveAccountName(p.accountEmail, p.name, accountAliases),
-    value: p.id,
-    active: p.id === session.profileId,
-    hint: middleTruncateEmail(p.accountEmail),
-  }))
+  // Inactive accounts stay listed but are disabled (greyed, unselectable); the
+  // current account is never disabled, even if it was deactivated while in use.
+  const accountItems = profiles.map((p) => {
+    const isCurrent = p.id === session.profileId
+    const inactive = !isAccountActive(p)
+    return {
+      label: resolveAccountName(p.accountEmail, p.name, accountAliases),
+      value: p.id,
+      active: isCurrent,
+      disabled: inactive && !isCurrent,
+      hint: inactive
+        ? `${middleTruncateEmail(p.accountEmail)} · inactive`
+        : middleTruncateEmail(p.accountEmail),
+    }
+  })
 
   return (
     <div
       className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t border-b"
       style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)', ...statusType }}
     >
+      {/* Account — ALWAYS the far-left item of the strip (owner UX, live testing
+          2026-08-31). Rendered as the FIRST child, before the statusLineEnabled
+          split, so it sits at the absolute left whether or not the telemetry band
+          is on. One element, never doubled: the interactive switch pill when the
+          account is switchable (multi-account local — a control, so not gated on
+          sl.showAccount and the ToolbarPopup keeps its upward anchor), otherwise
+          the read-only chip (single-account / SSH — honours sl.showAccount).
+          Previously this was split between the telemetry cluster (chip) and the
+          controls cluster (pill), so the account jumped left/right by session. */}
+      {canSwitchAccount ? (
+        <div className="relative shrink-0">
+          <button
+            onClick={() => setOpenPicker(openPicker === 'account' ? null : 'account')}
+            className={CONTROL_PILL}
+            style={{
+              background: 'var(--surface-raised)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+            title="Switch account (respawns + resumes this session)"
+          >
+            <span className="flex items-center gap-1">
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ backgroundColor: accountDot }}
+                aria-hidden
+              />
+              <span className="truncate max-w-[16rem]">{accountName ?? 'Account'}</span>
+            </span>
+          </button>
+          {openPicker === 'account' && (
+            <ToolbarPopup
+              sections={[{ title: 'Switch account', items: accountItems }]}
+              onSelect={onSwitchAccount}
+              onClose={() => setOpenPicker(null)}
+            />
+          )}
+        </div>
+      ) : sl.showAccount && accountName ? (
+        <span
+          className="flex items-center gap-1 shrink-0"
+          style={{ color: 'var(--text-muted)' }}
+          title={session.accountEmail}
+          data-testid="account-chip"
+        >
+          <span
+            className="w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ backgroundColor: accountDot }}
+            aria-hidden
+          />
+          <span className="truncate max-w-[14rem]">{accountName}</span>
+        </span>
+      ) : null}
+
       {/* Telemetry. The whole strip (this cluster + the controls) scales as one
           via the Status-bars region on the Font & Size page (zoom on the outer
           wrapper), so there is no per-element font size here anymore -- that split
@@ -180,24 +338,8 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
             )}
           </span>
         )}
-        {/* Bug 6: when the interactive account-switch pill is shown (multi-account),
-            it already displays the account + dot, so this read-only chip would
-            double it. Single-account sessions (no switch pill) keep this chip. */}
-        {sl.showAccount && accountName && !canSwitchAccount && (
-          <span
-            className="flex items-center gap-1 shrink-0"
-            style={{ color: 'var(--text-muted)' }}
-            title={session.accountEmail}
-            data-testid="account-chip"
-          >
-            <span
-              className="w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ backgroundColor: accountDot }}
-              aria-hidden
-            />
-            <span className="truncate max-w-[14rem]">{accountName}</span>
-          </span>
-        )}
+        {/* Account moved to the far-left of the strip (first child, above) — it
+            is no longer part of the telemetry cluster. */}
         {sl.showTokens && session.inputTokens != null && session.contextWindowSize && (
           <span className="tabular-nums shrink-0">{formatTokens(session.inputTokens)} / {formatTokens(session.contextWindowSize)}</span>
         )}
@@ -228,19 +370,37 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           // return limits[]. Hidden-set keyed by label (see hiddenUsageBuckets).
           const shown = (session.usageBuckets ?? []).filter((b) => !hiddenBuckets.includes(b.label))
           if (session.usageBuckets && session.usageBuckets.length > 0) {
-            if (shown.length === 0 && !session.rateLimitExtra?.enabled) return null
+            if (shown.length === 0 && !validExtraUsage(session.rateLimitExtra)) return null
             return (
               <span className="flex items-center gap-3 shrink-0">
                 {shown.map((b) => (
                   <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} showReset={sl.showResetTime} />
                 ))}
-                {session.rateLimitExtra?.enabled && (
+                {validExtraUsage(session.rateLimitExtra) && (
                   <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
                 )}
               </span>
             )
           }
-          if (session.rateLimitCurrent == null) return null
+          if (session.rateLimitCurrent == null) {
+            // Nothing has been reported yet. Rendering null here is what made a
+            // cold session look broken: the statusline is written by a detached
+            // child process and can trail the terminal by several seconds, so
+            // the meters were simply absent with no indication they were coming.
+            // Only for a session that should actually produce them -- a dead or
+            // shell-only session never will, and a permanent shimmer there would
+            // be a worse lie than showing nothing.
+            if (!awaitingStatusline) return null
+            const pendingLabels = ['5h', 'Weekly'].filter((l) => !hiddenBuckets.includes(l))
+            if (pendingLabels.length === 0) return null
+            return (
+              <span className="flex items-center gap-3 shrink-0" data-testid="statusline-pending">
+                {pendingLabels.map((l) => (
+                  <RateLimitBarPending key={l} label={l === 'Weekly' ? '7d' : l} />
+                ))}
+              </span>
+            )
+          }
           return (
             <span className="flex items-center gap-3 shrink-0">
               {!hiddenBuckets.includes('5h') && <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} showReset={sl.showResetTime} />}
@@ -289,42 +449,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           danger-on-hover treatment. (UAT R2 Tasks 2 + 4.) */}
       {isClaude && (
         <div className="flex items-center gap-1 shrink-0">
-          {/* Account switch (multi-account only): respawns the session under the
-              chosen profile and resumes the transcript. Same pill styling as the
-              Mode/Model controls; opens upward (ToolbarPopup is bottom-anchored)
-              so it isn't clipped by the telemetry zone's overflow. */}
-          {canSwitchAccount && (
-            <div className="relative">
-              <button
-                onClick={() => setOpenPicker(openPicker === 'account' ? null : 'account')}
-                className={CONTROL_PILL}
-                style={{
-                  background: 'var(--surface-raised)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-secondary)',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
-                title="Switch account (respawns + resumes this session)"
-              >
-                <span className="flex items-center gap-1">
-                  <span
-                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                    style={{ backgroundColor: accountDot }}
-                    aria-hidden
-                  />
-                  <span className="truncate max-w-[16rem]">{accountName ?? 'Account'}</span>
-                </span>
-              </button>
-              {openPicker === 'account' && (
-                <ToolbarPopup
-                  sections={[{ title: 'Switch account', items: accountItems }]}
-                  onSelect={onSwitchAccount}
-                  onClose={() => setOpenPicker(null)}
-                />
-              )}
-            </div>
-          )}
+          {/* Account switch moved to the far-left of the strip (first child,
+              above) so the account sits in one consistent place for every
+              session type. The Model / Compact / Restart controls remain here. */}
           <div className="relative">
             <button
               onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
@@ -352,13 +479,15 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
               <ToolbarPopup
                 alignRight
                 sections={[
+                  ...modelGroups.map((g) => ({
+                    title: g.title,
+                    items: g.items.map((m) => ({ ...m, active: isModelActive(m.value, activeModelReading, registry) })),
+                  })),
                   {
-                    title: 'Models',
-                    items: modelsFromRegistry(registry).map((m) => ({ ...m, active: isModelActive(m.value, session.modelName || session.model || '') })),
-                  },
-                  {
+                    // Levels the running model does not support come back
+                    // `disabled` — greyed and unselectable rather than hidden.
                     title: 'Effort',
-                    items: effortsFromRegistry(registry).map((e) => ({ ...e, active: e.value === lastEffort })),
+                    items: effortsForModel(registry, effortModelId).map((e) => ({ ...e, active: e.value === lastEffort })),
                   },
                 ]}
                 onSelect={onModel}

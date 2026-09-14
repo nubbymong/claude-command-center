@@ -1,8 +1,12 @@
 // tests/unit/statusline-account-cache.test.ts
-// Asserts that the deployed statusline bridge script uses a per-account cache
-// file (keyed by email) rather than a single shared cache file.
+// The deployed LOCAL statusline bridge script embeds the SHARED gather snippet
+// (statusline-gather.ts — same source as both SSH remote shims) and delivers
+// POST-first to the conductor /status endpoint with the watched status file as
+// fallback (harmonise-remote local-unification slice). These tests pin that
+// unification: per-account usage cache keying, the shared gather wiring, and
+// the POST-first/file-fallback delivery order.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -13,8 +17,9 @@ vi.mock('../../src/main/ipc/setup-handlers', () => ({
 let _mockResources = ''
 
 import { deployClaudeStatuslineScript } from '../../src/main/providers/claude/statusline'
+import { SHIM_GATHER_JS } from '../../src/main/providers/claude/statusline-gather'
 
-describe('statusline cache: per-account keying', () => {
+describe('local statusline bridge: shared gather + POST-first delivery', () => {
   let resDir: string
   let sandboxHome: string
   let homeBackup: string | undefined
@@ -52,30 +57,51 @@ describe('statusline cache: per-account keying', () => {
     vi.clearAllMocks()
   })
 
-  it('deployed script uses per-account cache file prefix', () => {
-    expect(scriptContent).toContain('claude-command-center-usage-cache-')
+  it('embeds the SHARED gather snippet verbatim (one source with the SSH shims)', () => {
+    expect(scriptContent).toContain(SHIM_GATHER_JS)
   })
 
-  it('deployed script does NOT use the old single shared cache filename', () => {
-    // The legacy fixed name must not appear anywhere in the generated script
-    expect(scriptContent).not.toContain("'claude-command-center-usage-cache.json'")
-    expect(scriptContent).not.toContain('"claude-command-center-usage-cache.json"')
+  it('uses the per-account usage cache file prefix from the shared gather', () => {
+    expect(scriptContent).toContain("'ccc-usage-cache-'+cacheKey+'.json'")
   })
 
-  it('getCachedUsageLimits is called with accountEmail argument', () => {
-    expect(scriptContent).toContain('getCachedUsageLimits(accountEmail)')
+  it('does NOT carry the retired local-only gather (old cache prefix, promise helpers)', () => {
+    expect(scriptContent).not.toContain('claude-command-center-usage-cache')
+    expect(scriptContent).not.toContain('getCachedUsageLimits')
+    expect(scriptContent).not.toContain('fetchUsageLimits')
   })
 
-  it('getCachedUsageLimits function accepts accountEmail parameter', () => {
-    expect(scriptContent).toContain('async function getCachedUsageLimits(accountEmail)')
+  it('cache key sanitises email to alphanumeric+underscore with a default fallback', () => {
+    expect(scriptContent).toContain("String(s.accountEmail||'default').toLowerCase().replace(/[^a-z0-9]/g,'_')")
   })
 
-  it('cache key sanitises email to alphanumeric+underscore', () => {
-    // The sanitise expression must be present
-    expect(scriptContent).toContain("replace(/[^a-z0-9]/g, '_')")
+  it('reads the signed-in account from ~/.claude.json via the shared gather', () => {
+    expect(scriptContent).toContain('oauthAccount')
   })
 
-  it('falls back to "default" key when accountEmail is falsy', () => {
-    expect(scriptContent).toContain("accountEmail || 'default'")
+  it('delivers POST-first (argv[3] URL-or-file / CCC_STATUS_URL[_FILE]) with the status file as fallback', () => {
+    // ADR-009 token custody: argv[3] is normally the PATH of a 0600 file holding
+    // the token-bearing URL; a literal `http…` is still accepted so a settings
+    // file written by an older build keeps delivering until it is rewritten.
+    expect(scriptContent).toContain("var statusArg=process.argv[3]||''")
+    expect(scriptContent).toContain("statusArg.slice(0,4)==='http'?statusArg:readStatusUrlFile(statusArg)")
+    expect(scriptContent).toContain("process.env.CCC_STATUS_URL||readStatusUrlFile(process.env.CCC_STATUS_URL_FILE||'')")
+    expect(scriptContent).toContain('deliverLegacy')
+    // Fallback still writes <statusDir>/<sid>.json for the directory watcher.
+    expect(scriptContent).toContain("path.join(statusDir, sid + '.json')")
+    // POST failure routes to the file fallback, not silence: fin(false) paths exist.
+    expect(scriptContent).toContain('fin(false)')
+  })
+
+  it('resolves identity by the same argv[2]/env ladder as the remote shims', () => {
+    expect(scriptContent).toContain('process.argv[2] || process.env.CLAUDE_MULTI_SESSION_ID')
+  })
+
+  it('stdin rate_limits win; gather only fills gaps', () => {
+    // stdin 5h/weekly are applied unconditionally before the gather runs...
+    expect(scriptContent).toContain('rl.five_hour')
+    expect(scriptContent).toContain('rl.seven_day')
+    // ...and the shared applyUsage guards on undefined (stdin-wins semantics).
+    expect(scriptContent).toContain('s.rateLimitCurrent===undefined')
   })
 })

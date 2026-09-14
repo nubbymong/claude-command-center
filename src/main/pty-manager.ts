@@ -1,46 +1,73 @@
-import { BrowserWindow, nativeTheme } from 'electron'
+import { BrowserWindow, nativeTheme, app } from 'electron'
 import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
+import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ssh-tmux'
+import { buildTmuxListCommand, parseTmuxLivenessOutput, computeLiveSessionIds, TMUX_LIVENESS_END } from './ssh-liveness'
+import { stripAnsiForSentinel } from './ansi-strip'
+import { randomId } from '../shared/id'
+import {
+  composeRuntimeCommand, composeContainerEntryCommand, parseDockerPostCommand, isContainerRuntime,
+  isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand,
+} from '../shared/container-command'
+import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
+import type { SshRuntime, DetachedRemoteLiveness } from '../shared/types'
+import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
+import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
+import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
 import * as os from 'os'
-import { execSync } from 'child_process'
+import * as https from 'https'
+import * as crypto from 'crypto'
+import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath } from './spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
+import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { buildRemoteSessionCleanupCommand } from './providers/claude/ssh-shim'
+import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
-import { resolveClaudeBinary, resolveHostColorScheme } from './providers/claude/spawn'
-import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
+import { buildSshArgs, buildSshExecArgs } from './ssh-args'
+import { getRemoteMcpPort } from './ssh-remote-port'
+import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
+import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
-import { resolveCwd } from './path-utils'
-import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
+import { resolveCwd, isHomeOrAncestor } from './path-utils'
+import { buildTerminalLaunchLine } from './terminal-launch-line'
+import { dispatchSSHStatuslineUpdate, cleanupStatusFile, sanitiseRemoteAccountEmail } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
-import { getGateway } from './hooks'
+import { getGateway, isExactBindSourceActive } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
 import {
   writeLocalSessionSettings,
   removeLocalSessionSettings,
   writeLocalSessionMcpConfig,
   removeLocalSessionMcpConfig,
+  removeLocalSessionStatusUrl,
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
+import { ensureCanvasPlugin } from './canvas/canvas-plugin'
+import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
+import { designatedWorktreeDir } from './canvas/canvas-worktree'
+import { forgetSessionForCanvas } from './canvas/canvas-session-link'
+import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
+import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import type { AccountIdentity } from '../shared/types'
-import { updateSessionMeta, clearSessionMeta } from './session-registry'
-import { readConfig } from './config-manager'
+import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
+import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
+import { getWatchdogManager } from './watchdog/watchdog-manager'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -83,7 +110,15 @@ export function withProfileHome(env: Record<string, string>, home: string | null
     GIT_CONFIG_GLOBAL: path.join(realHome, '.gitconfig'),
     npm_config_userconfig: path.join(realHome, '.npmrc'),
   }
-  if (process.platform !== 'win32') next.HOME = home
+  // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
+  // Pointing HOME at the fake profile home — which mirrors only dot-entries, never
+  // ~/Library (see mirrorRealHome) — leaves the spawned `claude` with no keychain to
+  // resolve, surfacing the macOS "A keychain cannot be found to store ..." dialog (#117).
+  // Multi-account is disabled on macOS anyway (see AccountsPanel), so HOME-based identity
+  // isolation buys nothing there; leaving HOME at the real home restores keychain access
+  // and resolves the single global account correctly. Linux keychains (Secret Service /
+  // D-Bus) are not HOME-path-based, so keep the redirect there for multi-account isolation.
+  if (process.platform === 'linux') next.HOME = home
   // Claude's native install lives at `$HOME/.local/bin`. With the home redirected,
   // CC computes that as `<home>/.local/bin` (a junction to the real ~/.local) but
   // PATH still carries the *real* home's `.local/bin`, so `/doctor` falsely warns
@@ -102,6 +137,613 @@ function escapeShellArg(str: string): string {
   return str.replace(/[\\"$`]/g, '\\$&')
 }
 
+/**
+ * Escape a string for literal (non-special) use inside `new RegExp(...)`.
+ * #242 finding F1 (b): the per-session nonce is interpolated into
+ * parseTmuxSentinel/parseTmuxStageSentinel's dynamically-built regexes below
+ * -- randomId() (src/shared/id.ts) only ever produces lowercase hex, which
+ * has no regex meaning, but this call site takes a plain `string` (the test
+ * seam `_getSshNonceForTest` and any future caller aren't bound to that
+ * guarantee), so escaping defends against a future nonce source that isn't
+ * charset-limited the same way.
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** The two usable tmux CLASSES `parseTmuxSentinel` can return -- see its doc
+ *  comment and generateRemoteSetupScript (ssh-shim.ts) for what each means. */
+export type TmuxDetectionClass = 'path' | 'home'
+
+/**
+ * Parse the `tmux=<path|home|none>` CLASS field off the `setup ok`
+ * completion sentinel (#242 — the tmux detection result rides the SAME
+ * sentinel the setup script already emits, rather than a second
+ * round-trip), AND gate the sentinel's own nonce match in one place so
+ * every caller (the outer completion latch AND the tmux-class read) shares
+ * the identical match (#242 finding I1/I2 correction, below).
+ *
+ * #242 round-3 correction (finding I3): the field is a fixed three-way
+ * CLASS, never a path. `generateRemoteSetupScript` (ssh-shim.ts) reports
+ * `path` (tier 1 — tmux found via `command -v tmux` on the remote's PATH),
+ * `home` (tier 2 — a pre-existing, executable `~/.claude/bin/tmux`, the
+ * SAME fixed location tier 3/4 stage/push a binary to), or `none`. There is
+ * no free-text capture left for `isSafeTmuxBin`/`isPinnedTmuxPath` to
+ * validate — the fixed alternation IS the allowlist — so both of those
+ * checks (and the wire-reported path they used to gate) are gone; see
+ * ssh-tmux.ts's `ON_PATH_TMUX_BIN_EXPR`/`STAGED_TMUX_BIN_EXPR` for the two
+ * host-authored literal tokens a caller picks between using ONLY the class
+ * this function returns, never a value read off the wire.
+ *
+ * Returns THREE distinct outcomes, because "the field wasn't there" and
+ * "the field explicitly said none" are not the same thing (adversarial
+ * review, #242 MINOR — call sites used to do `parseTmuxSentinel(data) ??
+ * detectedTmuxSource`, which cannot tell them apart and so lets a
+ * `tmux=none` from a LATER stage, e.g. container setup, inherit an EARLIER
+ * stage's detected class instead of clearing it):
+ *   - `undefined` — the sentinel is not present in THIS data (regex miss),
+ *     the nonce is missing/wrong, or the chunk ends before the class token's
+ *     trailing line terminator. Callers must leave any detected-tmux state
+ *     untouched.
+ *     - #242 finding I1 fix: callers pass the ACCUMULATED per-session
+ *       buffer (`bufferSetupLine`, below), not just the current chunk — a
+ *       real SSH link routinely segments this single logical line across
+ *       multiple PTY chunks (`setup ok <nonce> tmux=pa` | `th\r\n`), and the
+ *       chunk-boundary discipline above (require the trailing terminator)
+ *       correctly refuses a truncated read from the FIRST chunk alone; the
+ *       bug was that nothing ever re-parsed the SECOND chunk once an
+ *       earlier, unrelated latch had already fired off a bare substring
+ *       check, so the tmux probe was lost silently on every segmented line
+ *       (adversarial review / live-test repro, #242 finding I1).
+ *     - #242 finding I2 fix: this is ALSO what a spoofed bare `setup ok`
+ *       (no nonce, or the wrong one) now produces for BOTH purposes — the
+ *       outer completion latch is gated on this SAME nonce-bearing match,
+ *       not a separate bare-substring check, so a write-only attacker can
+ *       no longer latch completion early (starving the genuine, later
+ *       sentinel of ever being parsed and forcing an unwanted tier-3/4
+ *       staging attempt on a host that already had tmux).
+ *   - `null` — the field parsed and explicitly reported `none`. Callers
+ *     must CLEAR any detected-tmux state.
+ *   - `'path'` or `'home'` — a validated CLASS (see `TmuxDetectionClass`).
+ *
+ * `nonce` (#242 finding F1 (b)): this session's host-generated random token.
+ * The sentinel must carry it, immediately after "setup ok", or the WHOLE
+ * match fails (returns `undefined`, i.e. "not present in this chunk") —
+ * this is what makes a spoofed sentinel (a co-tenant's `wall`/`write`, a
+ * MOTD script, any other PTY writer that doesn't know this session's nonce)
+ * indistinguishable from "no sentinel here" rather than a rejected-but-seen
+ * value. SECOND layer only: an attacker who can also read the tty can copy
+ * the nonce verbatim (this line's own echo is not suppressed) — but even
+ * then there is no path left to substitute; the worst a copied nonce buys
+ * is forcing CCC to pick between the two fixed literal tokens, never an
+ * arbitrary one.
+ */
+export function parseTmuxSentinel(data: string, nonce: string): TmuxDetectionClass | null | undefined {
+  // ConPTY can glue title-OSC/cursor-CSI escapes between the class token and
+  // its line terminator, making the lookahead unsatisfiable — strip complete
+  // sequences first (see ansi-strip.ts for the incident + class rationale).
+  const m = stripAnsiForSentinel(data).match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(path|home|none)(?: acct=[A-Za-z0-9+/=]*)?(?=[\\r\\n])`))
+  if (!m) return undefined
+  if (m[1] === 'none') return null
+  return m[1] as TmuxDetectionClass
+}
+
+/**
+ * SSH tmux enhancement (item 10): parse the `acct=<base64email>` field the
+ * setup-ok sentinel now carries AFTER the tmux class (generateRemoteSetupScript,
+ * ssh-shim.ts). Same chunk-boundary + nonce discipline as parseTmuxSentinel:
+ * requires the FULL nonce-bearing line (anchored on the line terminator via
+ * the tmux-class lookahead), so a truncated or spoofed sentinel yields nothing.
+ *
+ * The wire token is base64 of the remote's oauthAccount.emailAddress. This is
+ * a DESCRIPTOR the remote host controls, surfaced only as a label -- treated as
+ * UNTRUSTED-FOR-DISPLAY: after base64-decode it is charset-filtered to the
+ * characters a real email uses and length-capped, and anything else yields
+ * `undefined` (no account shown) rather than passing an arbitrary string to the
+ * renderer. It is never interpreted, never a credential, never an auth key.
+ *
+ * Returns the sanitized descriptor, or `undefined` when the field is absent,
+ * empty, undecodable, or fails the display charset (never throws).
+ */
+// ADR-009: the max + display charset now live in ONE place
+// (sanitiseRemoteAccountEmail, statusline-watcher.ts) and gate BOTH deliveries
+// of this field -- this setup sentinel and the /status ingest, which used to
+// copy it verbatim and, because the renderer prefers its value, silently won.
+export function parseSetupAccountSentinel(data: string, nonce: string): string | undefined {
+  // Same ConPTY-glue hazard as parseTmuxSentinel above (ansi-strip.ts).
+  const m = stripAnsiForSentinel(data).match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(?:path|home|none) acct=([A-Za-z0-9+/=]*)(?=[\\r\\n])`))
+  if (!m || !m[1]) return undefined
+  let decoded: string
+  try {
+    decoded = Buffer.from(m[1], 'base64').toString('utf-8')
+  } catch {
+    return undefined
+  }
+  // Display gate: an email address only, length-capped. Anything else (a hostile
+  // host trying to plant markup / control chars in the label) is dropped.
+  return sanitiseRemoteAccountEmail(decoded)
+}
+
+/**
+ * Parse the tier-3 staging sentinel (#242) that `buildTmuxStageCommand`
+ * (ssh-tmux-stage.ts) writes to the remote PTY: either
+ * `ccc-tmux-stage ok path=<abs-path>` or `ccc-tmux-stage fail=<reason>`.
+ *
+ * Same chunk-boundary discipline as parseTmuxSentinel above: the captured
+ * token must be immediately followed by a line terminator, so a chunk that
+ * ends mid-path/mid-reason (before the trailing `\n` the shell's own `echo`
+ * always appends) returns `undefined` rather than a truncated value — the
+ * caller leaves staging pending and waits for the next chunk instead of
+ * treating a half-arrived line as the real result.
+ *
+ * The `ok` path is raw remote output — re-applies the SAME charset
+ * allowlist (`isSafeTmuxBin`) here, before the value is returned in the
+ * parse result. #242 finding F1(a), ROUND-2 CORRECTION: this function used
+ * to ALSO apply a path-pin (`isPinnedTmuxPath`, requiring the path end in
+ * "/.claude/bin/tmux") as a security gate on this field -- removed, because
+ * "ends with the right suffix" is satisfiable from an attacker-writable
+ * directory (`/tmp/.claude/bin/tmux`, or the double-slash
+ * `/tmp/x//.claude/bin/tmux`) and is NOT equivalent to "really is under
+ * $HOME" (verified end to end, adversarial review round 5, WITH a valid
+ * nonce). The fix is not a stronger check on this field -- it is to stop
+ * needing this field for anything security-relevant at all:
+ * `buildTmuxLaunchCommand` (ssh-tmux.ts) never reads the result's `path` for
+ * a staged tier, embedding `STAGED_TMUX_BIN_EXPR` (a fixed, host-authored
+ * `"$HOME"/.claude/bin/tmux` literal) instead. #242 round-3 MINOR correction:
+ * the result's `path` is never assigned to any state at all — the only
+ * consumer is the adjacent `logInfo` call at each call site, inline. The
+ * charset check that remains here exists purely so a malformed/garbage
+ * capture can't pollute logs with control characters, not as a security
+ * boundary.
+ *
+ * `nonce` (#242 finding F1 (b)): required immediately after
+ * TMUX_STAGE_SENTINEL_PREFIX, same contract as parseTmuxSentinel's own
+ * `nonce` param above -- a sentinel missing it, or carrying the wrong one,
+ * is indistinguishable from "not present in this chunk" (`undefined`), not
+ * a rejected-but-seen value.
+ *
+ * `reason` (#242 M2, MINOR): capped to a bounded, charset-guarded value
+ * before it flows into flow-state IPC and logs -- the failure sentinel's
+ * fail=<reason> field is raw remote output like the path is, and previously
+ * `\S+` let an unbounded/garbage value straight through. The script itself
+ * only ever emits arch/download/digest/extract/terminfo (ssh-tmux-stage.ts,
+ * ssh-tmux-push.ts), all short lowercase words, so a real reply always
+ * passes; anything else degrades to 'invalid-reason' rather than being
+ * echoed verbatim.
+ *
+ * #242 finding I5: both capture groups are now BOUNDED (`\S{1,4096}`), not
+ * unbounded `\S+`. This value is informational-only (never reaches a launch
+ * command), but it still gets written into the remote shell's own recovery
+ * path (nothing here does that today, but nothing prevents a future editor
+ * from assuming a capped value) and unconditionally into logs/flow-state
+ * IPC -- a multi-kilobyte capture is resource/log noise regardless. 4096 is
+ * ample headroom for any real path or reason word this script emits.
+ */
+const MAX_FAIL_REASON_LEN = 32
+const SAFE_FAIL_REASON_RE = /^[A-Za-z0-9_-]+$/
+const MAX_TMUX_STAGE_CAPTURE_LEN = 4096
+
+function sanitizeFailReason(raw: string): string {
+  if (raw.length > MAX_FAIL_REASON_LEN) return 'invalid-reason'
+  return SAFE_FAIL_REASON_RE.test(raw) ? raw : 'invalid-reason'
+}
+
+export function parseTmuxStageSentinel(
+  data: string,
+  nonce: string,
+): { ok: true; path: string } | { ok: false; reason: string } | undefined {
+  // 2026-08-27 Pi incident: ConPTY glued escapes between `path=…/tmux` and
+  // the `\r\n`, `\S+` swallowed them, and isSafeTmuxBin declared a SUCCESSFUL
+  // remote stage `unsafe-path` — strip complete sequences before matching
+  // (see ansi-strip.ts). The charset gate below still guards real garbage.
+  const m = stripAnsiForSentinel(data).match(new RegExp(`${TMUX_STAGE_SENTINEL_PREFIX} ${escapeRegExp(nonce)} (ok path=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}})|fail=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}}))(?=[\\r\\n])`))
+  if (!m) return undefined
+  if (m[2]) return isSafeTmuxBin(m[2]) ? { ok: true, path: m[2] } : { ok: false, reason: 'unsafe-path' }
+  return { ok: false, reason: sanitizeFailReason(m[3] ?? 'unknown') }
+}
+
+// === #242 tier 4: host-side tmux archive cache ===
+//
+// Tier 4 pushes the SAME v3.7b release asset tier 3 would have curled, over
+// the SSH tunnel itself, for remotes with no outbound egress at all. The
+// host downloads each arch's archive AT MOST ONCE (per app install) into
+// `app.getPath('userData')/tmux-cache/`, sha256-verifying it against the
+// SAME `TMUX_STAGE_SHA256` constants ssh-tmux-stage.ts uses, and reuses the
+// cached file for every later session that needs that arch. `userData`
+// (not `getDataDirectory()`, the pattern github-update.ts uses for the
+// ~100-200MB installer) is fine here — this archive is a few hundred KB and
+// is not itself an executable staged for direct execution on THIS machine.
+
+function tmuxCacheDir(): string {
+  return path.join(app.getPath('userData'), 'tmux-cache')
+}
+
+function tmuxCachePath(arch: TmuxStageTarget): string {
+  return path.join(tmuxCacheDir(), `tmux-${arch}.tar.gz`)
+}
+
+function sha256Hex(buf: Buffer): string {
+  return crypto.createHash('sha256').update(buf).digest('hex')
+}
+
+/**
+ * Read a previously-cached archive for `arch`, re-verifying its sha256
+ * before trusting it. A cache file that fails verification (disk
+ * corruption, a manual edit, a leftover from a since-changed pinned tag) is
+ * deleted rather than returned, so the caller re-downloads instead of
+ * repeatedly pushing a bad archive down every future session to this arch.
+ */
+function readCachedTmuxArchive(arch: TmuxStageTarget): Buffer | null {
+  try {
+    const p = tmuxCachePath(arch)
+    if (!fs.existsSync(p)) return null
+    const buf = fs.readFileSync(p)
+    if (sha256Hex(buf) !== TMUX_STAGE_SHA256[arch]) {
+      try { fs.unlinkSync(p) } catch { /* best-effort */ }
+      return null
+    }
+    return buf
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Download the v3.7b release asset for `arch` from the SAME pinned URL
+ * ssh-tmux-stage.ts's remote script would have curled, sha256-verify it
+ * against the SAME embedded digest, and cache it on success. Resolves
+ * `null` (never rejects) on ANY failure -- network error, non-2xx status,
+ * or a digest mismatch -- so the caller's fallback path (fall through to the
+ * unwrapped launch) is a single, uniform check regardless of WHY the bytes
+ * couldn't be obtained.
+ */
+/**
+ * Per-request timeout for the tier-4 archive fetch -- applied to BOTH the
+ * initial request and the redirect hop. Matches httpsDownload's shape
+ * (github-update.ts:515, its 'timeout' handler ~:640) rather than inventing
+ * a second one: a bare `https.get(url, cb)` with no `timeout` option and no
+ * `req.on('timeout')` handler never gives up on a stalled connection on its
+ * own (#242 finding F1). A few-hundred-KB release asset over a healthy link
+ * completes in low single-digit seconds; 20s is generous without eating
+ * meaningfully into DOWNLOAD_TIMEOUT_MS's 45s flow-level backstop
+ * (pty-manager.ts's SSH branch, attemptTmuxPush).
+ */
+const TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS = 20000
+
+/**
+ * Hard ceiling on the accumulated response body -- mirrors httpsDownload's
+ * `maxBytes` parameter (github-update.ts:515). The real v3.7b release asset
+ * is a few hundred KB; capping at a few MB catches a hostile/misbehaving
+ * host serving an unbounded body long before it becomes a meaningful memory
+ * concern (#242 finding F5). Checked ON THE WIRE in the `data` handler, not
+ * after landing -- same reasoning as httpsDownload's own comment on this.
+ */
+const TMUX_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
+
+/**
+ * Follow-up adversarial pass (coverage MAJOR): exported for tests.
+ *
+ * Every guard in this function was previously unreachable from the suite --
+ * `attemptTmuxPush` goes through the `tmuxArchiveResolver` seam, which tests
+ * stub ABOVE this level, so raising TMUX_ARCHIVE_MAX_BYTES to
+ * Number.MAX_SAFE_INTEGER, or deleting the https-only redirect refusal
+ * outright, left the entire targeted suite green. This is the function whose
+ * unbounded body was a round-4 BLOCKER; its guards must be able to fail a test.
+ * Exported (rather than reached through a new seam) so the tests drive the real
+ * https path with a mocked `https.get`.
+ */
+export function _downloadAndCacheTmuxArchiveForTest(arch: TmuxStageTarget): Promise<Buffer | null> {
+  return downloadAndCacheTmuxArchive(arch)
+}
+
+function downloadAndCacheTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
+  // #242 finding F6: same URL parts buildTmuxStageScript's remote curl/wget
+  // fragment builds its `_url` from (ssh-tmux-stage.ts) -- see
+  // ssh-tmux-push.test.ts's regression test tying the two together.
+  const url = tmuxStageAssetUrl(arch)
+  const collect = (res: import('http').IncomingMessage, resolve: (v: Buffer | null) => void, redirectsLeft: number, currentUrl: string): void => {
+    // GitHub release assets 302 to a signed S3 URL -- one redirect hop is
+    // the real-world shape; refuse to follow more than a couple to avoid an
+    // unbounded chain against a misbehaving/hostile host.
+    const loc = res.headers.location
+    if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && loc && redirectsLeft > 0) {
+      res.resume()
+      // #242 round-2 MAJOR fix: `https.get` THROWS SYNCHRONOUSLY (not via
+      // 'error') when its URL argument is not https or is relative/malformed
+      // -- verified in this worktree (`https.get('http://x')` ->
+      // ERR_INVALID_PROTOCOL; `https.get('/relative')` -> ERR_INVALID_URL).
+      // `loc` here is a `Location` header taken straight from the response,
+      // i.e. attacker/proxy-controlled -- a captive portal or misbehaving
+      // proxy answering with a 302 to an `http://` login page or a relative
+      // path would throw OUT of this response callback, past the try/catch
+      // that wraps only the FIRST request below, into
+      // process.on('uncaughtException') (debug-logger.ts) which re-throws
+      // anything that isn't EPIPE/EIO -> Electron main process death.
+      // Resolve `loc` against the CURRENT request's URL first (so a
+      // relative Location is handled the way browsers/curl handle it, not
+      // rejected outright) and refuse anything that resolves to a
+      // non-https scheme, THEN wrap the redirect `https.get` call itself in
+      // a try/catch -- the initial call already has one; this hop must not
+      // be the exception.
+      let nextUrl: URL
+      try {
+        nextUrl = new URL(loc, currentUrl)
+      } catch {
+        resolve(null)
+        return
+      }
+      if (nextUrl.protocol !== 'https:') {
+        resolve(null)
+        return
+      }
+      try {
+        // #242 finding F1: the redirect hop needs the SAME timeout handling
+        // as the initial request below -- httpsDownload's shape
+        // (github-update.ts:640) covers both hops, not just the first.
+        const redirectReq = https.get(nextUrl, { timeout: TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS }, (res2) => collect(res2, resolve, redirectsLeft - 1, nextUrl.toString()))
+        redirectReq.on('error', () => resolve(null))
+        redirectReq.on('timeout', () => { try { redirectReq.destroy(new Error('tmux tier-4 download timeout')) } catch {} })
+      } catch {
+        resolve(null)
+      }
+      return
+    }
+    if (!res.statusCode || res.statusCode >= 400) {
+      res.resume()
+      resolve(null)
+      return
+    }
+    const chunks: Buffer[] = []
+    // #242 finding F5: track accumulated length on the wire and bail past
+    // TMUX_ARCHIVE_MAX_BYTES -- destroy(), not resume(), so the socket
+    // actually stops instead of draining an unbounded body to /dev/null.
+    let received = 0
+    let overLimit = false
+    res.on('data', (c: Buffer) => {
+      if (overLimit) return
+      received += c.length
+      if (received > TMUX_ARCHIVE_MAX_BYTES) {
+        overLimit = true
+        logError(`[ssh] tmux tier-4 download for arch=${arch} exceeded the ${TMUX_ARCHIVE_MAX_BYTES}-byte cap -- discarding`)
+        res.destroy()
+        resolve(null)
+        return
+      }
+      chunks.push(c)
+    })
+    res.on('end', () => {
+      if (overLimit) return
+
+      const buf = Buffer.concat(chunks)
+      if (sha256Hex(buf) !== TMUX_STAGE_SHA256[arch]) {
+        logError(`[ssh] tmux tier-4 download for arch=${arch} failed sha256 verification -- discarding`)
+        resolve(null)
+        return
+      }
+      try {
+        fs.mkdirSync(tmuxCacheDir(), { recursive: true })
+        fs.writeFileSync(tmuxCachePath(arch), buf)
+      } catch (err) {
+        // Cache write failing doesn't invalidate the verified bytes already
+        // in hand -- this session's push still proceeds, just re-downloads
+        // next time.
+        logError(`[ssh] tmux tier-4 cache write failed for arch=${arch}: ${(err as Error)?.message ?? err}`)
+      }
+      resolve(buf)
+    })
+    res.on('error', () => resolve(null))
+  }
+  return new Promise((resolve) => {
+    try {
+      // #242 finding F1: httpsDownload's shape (github-update.ts:515/:640) --
+      // the `timeout` option alone does not abort anything; only this
+      // `req.on('timeout')` handler, destroying the request, actually does.
+      const req = https.get(url, { timeout: TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS }, (res) => collect(res, resolve, 2, url))
+      req.on('error', () => resolve(null))
+      req.on('timeout', () => { try { req.destroy(new Error('tmux tier-4 download timeout')) } catch {} })
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
+/** Cache hit first; only reaches the network on a miss/failed verification. */
+async function getOrDownloadTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
+  const cached = readCachedTmuxArchive(arch)
+  if (cached) return cached
+  return downloadAndCacheTmuxArchive(arch)
+}
+
+// #242 round-3 MAJOR fix (test coverage): attemptTmuxPush calls this
+// indirection rather than getOrDownloadTmuxArchive directly, so tests can
+// stub the tier-4 archive source (cache hit or fresh download) without
+// touching the real filesystem/network -- mirrors the `_set*ForTest` seam
+// pattern already used elsewhere in this codebase (see
+// claude-account-identity.ts's `_setRootsForTest`). Reassigned ONLY by
+// `_setTmuxArchiveResolverForTest`; every production code path always goes
+// through the real `getOrDownloadTmuxArchive`.
+let tmuxArchiveResolver: (arch: TmuxStageTarget) => Promise<Buffer | null> = getOrDownloadTmuxArchive
+
+/** Test-only: override (or, passing `null`, restore) the tier-4 archive
+ *  source `attemptTmuxPush` calls, so a test can drive a full push without
+ *  hitting disk or the network. */
+export function _setTmuxArchiveResolverForTest(fn: ((arch: TmuxStageTarget) => Promise<Buffer | null>) | null): void {
+  tmuxArchiveResolver = fn ?? getOrDownloadTmuxArchive
+}
+
+/**
+ * #242 finding F1 (b): per-session nonce, keyed by sessionId, set once at
+ * spawn time (see spawnPty's SSH branch) and read by both the setup/stage/
+ * push writers (to bake it into the scripts they build) and the onData
+ * parsers (to require it in the sentinels they accept). Cleared in
+ * cleanupSessionResources so a stale nonce can never leak into a future,
+ * unrelated spawn of the same sessionId.
+ */
+const sshNonceBySession = new Map<string, string>()
+
+/** Test-only: read the REAL per-session nonce spawnPty generated, so a test
+ *  can construct a genuinely nonce-carrying sentinel to drive the real flow
+ *  end to end, rather than guessing/hardcoding a value that would never
+ *  match production randomId() output. */
+export function _getSshNonceForTest(sessionId: string): string | undefined {
+  return sshNonceBySession.get(sessionId)
+}
+
+/**
+ * rc.15 review R1 (aicc_planning#45): the container-entry nonce of the CURRENT
+ * attempt, keyed by sessionId. Unlike sshNonceBySession (one per session, baked
+ * into every setup/stage/push script) this one is minted per ATTEMPT -- every
+ * runPostCommand, including Run again -- and the entry watch accepts only the
+ * current one, so a delayed IN from an earlier attempt can never promote a
+ * later one. The watch reads the flow's own closure variable (entryNonce); this
+ * map MIRRORS it for the test getter below, so a test can print the genuine
+ * sentinel. Cleared with it on failure/exit and in cleanupSessionResources.
+ */
+const sshEntryNonceBySession = new Map<string, string>()
+
+/** Test-only: the entry nonce of the current attempt, so a test can print the
+ *  genuine `__CCC_<nonce>_IN__` sentinel into the mocked PTY rather than guess. */
+export function _getSshEntryNonceForTest(sessionId: string): string | undefined {
+  return sshEntryNonceBySession.get(sessionId)
+}
+
+/** Test-only: whether this session still has a captured end-remote target. Pins
+ *  the lifecycle fix that the target must SURVIVE a natural PTY exit (a transient
+ *  drop, so a later End can still reach the host) and be dropped only on a
+ *  deliberate close (killPty) -- adversarial review 2026-08-18. */
+export function _hasSshTargetForTest(sessionId: string): boolean {
+  return sshTargetBySession.has(sessionId)
+}
+
+/**
+ * #242 finding I1: per-session buffer for the not-yet-terminated tail of
+ * the `setup ok` completion sentinel line, mirroring `sshOscBuffers`/
+ * `extractSshOscSentinels` above -- same per-session map shape, same
+ * accumulate-then-clear discipline, same size cap. A real SSH link
+ * routinely segments a single logical line across multiple PTY chunks
+ * (`setup ok <nonce> tmux=pa` | `th\r\n`); `parseTmuxSentinel`'s
+ * chunk-boundary discipline (require the captured token be immediately
+ * followed by a line terminator) correctly refuses to match a truncated
+ * read off the FIRST chunk alone, but nothing re-parsed the SECOND chunk
+ * once the (pre-fix) bare-substring completion latch had already fired off
+ * the first one -- the tmux probe was then lost silently for the rest of
+ * the session on every segmented line, which is exactly the shape a real
+ * SSH connection produces (live-test repro, #242 finding I1). Buffering the
+ * accumulated text (not just the latest chunk) and re-testing the SAME
+ * nonce-bearing regex against it on every chunk, until it actually
+ * resolves, closes that gap.
+ */
+const MAX_SETUP_LINE_BUFFER = 4096
+
+/**
+ * ROUND-3 CORRECTION. The first cut of this buffer covered only the two
+ * setup-ok latches, leaving the tier-3/4 stage sentinel and the tier-4 arch
+ * probe parsing the raw chunk -- so I1 stayed live on exactly the tiers a
+ * tmux-less remote depends on. Proven in review by driving the real flow: a
+ * stage `ok path=` split across two chunks never resolves, the flow stalls to
+ * the 20s STAGE_TIMEOUT and silently loses tmux; an arch probe split across
+ * two chunks leaves detectedArch null, so tier 4 is unreachable on any
+ * segmenting link.
+ *
+ * Each sentinel gets its OWN buffer rather than sharing one, because they can
+ * interleave: the arch probe and the stage result are emitted by the same
+ * remote fragment and may arrive in one chunk, in either order, or split.
+ * Sharing a buffer would let one sentinel's resolve-and-clear discard the
+ * other's partial line.
+ */
+type SshLineBufferKind = 'setup' | 'stage' | 'arch' | 'runtime'
+
+/**
+ * DEFINITIVE failure shapes for `<engine> exec -it <name> <shell>` (rc.14
+ * review F1, aicc_planning#45): the engine refusing (stopped or missing
+ * container, daemon down, socket permission denied, the OCI runtime unable to
+ * start the process, podman's stopped-container message) and sudo refusing
+ * (attempts exhausted, no password given, not in sudoers, not allowed, or the
+ * engine binary missing as seen by sudo -- sudo runs on the host). The plain
+ * shell's own "command not found" is NOT here: see CONTAINER_ENGINE_NOT_FOUND_RE.
+ * Matched against the ANSI-stripped, line-buffered output of the post-command
+ * ONLY (container sessions, from the moment the command has been WRITTEN until
+ * the inner shell is accepted), so a banner or a log line elsewhere cannot trip
+ * it. The `sudo:` not-found shape is anchored at a line start; `\r` counts as
+ * one because ConPTY repaints a line with a bare carriage return.
+ */
+export const CONTAINER_ENTRY_ERROR_RE = /Error response from daemon|No such container|Cannot connect to (?:the )?(?:Docker|Podman)|permission denied while trying to connect to the (?:Docker|Podman) daemon|(?:^|[\r\n])sudo: (?:docker|podman): command not found|Error: no container with name|can only create exec sessions on running containers|OCI runtime exec failed|unable to start container process|sudo: \d+ incorrect password attempts|sudo: a password is required|sudo: no password was provided|is not in the sudoers file|Sorry, user [^\r\n]{0,200} is not allowed to execute/i
+/**
+ * The SHELL's "no such command" for the engine binary. Definitive when the HOST
+ * shell printed it (no engine installed: the entry failed), but the same line
+ * can come from inside a healthy container whose rc file calls `docker` (a
+ * completion hook, say), so it is only a SUSPICION here (rc.14 review F1
+ * round 2): the prompt that follows decides. The host's own prompt returning
+ * confirms the failure; a different prompt is the inner shell; no prompt at
+ * all by the time the pane goes idle is also a failure (a zsh host whose `%`
+ * prompt never matches SHELL_PROMPT_RE reaches the idle path only).
+ */
+export const CONTAINER_ENGINE_NOT_FOUND_RE = /(?:^|[\r\n])[^\r\n]{0,40}(?:docker|podman): (?:command )?not found\s*(?:\r|$)|(?:^|[\r\n])[^\r\n]{0,40}command not found: (?:docker|podman)\s*(?:\r|$)/im
+const sshLineBuffers = new Map<string, string>()
+const sshLineBufferKey = (sessionId: string, kind: SshLineBufferKind): string => `${sessionId}:${kind}`
+
+/**
+ * Accumulate `chunk` onto session `sessionId`'s setup-line buffer and return
+ * the FULL combined text callers should parse against instead of `chunk`
+ * alone -- mirroring `extractSshOscSentinels` above, which parses the
+ * complete combined text first and caps only what it RETAINS for next time.
+ * ROUND-2 CORRECTION: an earlier version capped the RETURNED value at
+ * `MAX_SETUP_LINE_BUFFER` too, not just what got stored -- so a genuine,
+ * correctly-nonced sentinel followed by more than the cap's worth of trailing
+ * bytes in the SAME chunk was silently dropped from the text actually
+ * parsed, and the session never latched setupDone at all (regression proven
+ * in review). The sentinel is not guaranteed to be near the end of the
+ * combined text -- trailing output in the same chunk is exactly the failure
+ * mode this correction closes -- so only the STORED copy (what the next
+ * chunk will be appended to) is capped, keeping its tail. A remote that
+ * never emits the line's terminating `\r`/`\n` (hostile, or simply chatty
+ * pre-setup output) must not grow the stored buffer without bound for the
+ * rest of the session.
+ */
+function bufferSshLine(sessionId: string, kind: SshLineBufferKind, chunk: string): string {
+  const key = sshLineBufferKey(sessionId, kind)
+  const combined = (sshLineBuffers.get(key) ?? '') + chunk
+  sshLineBuffers.set(
+    key,
+    combined.length > MAX_SETUP_LINE_BUFFER ? combined.slice(combined.length - MAX_SETUP_LINE_BUFFER) : combined
+  )
+  return combined
+}
+
+/** Back-compat alias for the setup-ok latches, which read more clearly named. */
+function bufferSetupLine(sessionId: string, chunk: string): string {
+  return bufferSshLine(sessionId, 'setup', chunk)
+}
+
+/** Drop one of `sessionId`'s sentinel buffers once that sentinel has resolved --
+ *  nothing left to accumulate for it for the rest of the session. */
+function clearSshLineBuffer(sessionId: string, kind: SshLineBufferKind): void {
+  sshLineBuffers.delete(sshLineBufferKey(sessionId, kind))
+}
+
+function clearSetupLineBuffer(sessionId: string): void {
+  clearSshLineBuffer(sessionId, 'setup')
+}
+
+/** Teardown: drop EVERY sentinel buffer for the session. Called from
+ *  cleanupSessionResources -- a per-kind clear on resolve is not enough,
+ *  because a session can die with a sentinel still unresolved. */
+function clearAllSshLineBuffers(sessionId: string): void {
+  for (const kind of ['setup', 'stage', 'arch', 'runtime'] as const) clearSshLineBuffer(sessionId, kind)
+}
+
+/** Test-only: read the current length of `sessionId`'s setup-line buffer
+ *  (mirrors `_getSshNonceForTest`'s role) -- `undefined` once cleared/never
+ *  populated. Lets tests assert the buffer is actually bounded and actually
+ *  torn down, rather than just asserting on end-to-end launch behaviour that
+ *  a leak/unbounded-growth mutation would leave unchanged. */
+export function _getSetupLineBufferLenForTest(
+  sessionId: string,
+  kind: SshLineBufferKind = 'setup',
+): number | undefined {
+  return sshLineBuffers.get(sshLineBufferKey(sessionId, kind))?.length
+}
+
 interface PtySession {
   ptyProcess: pty.IPty
   sessionId: string
@@ -110,6 +752,17 @@ interface PtySession {
 // Buffer writes for PTYs that haven't spawned yet (e.g., partner terminal initially hidden)
 const pendingWrites = new Map<string, string[]>()
 
+/**
+ * Sessions whose PTY exists but is still the bare shell, waiting for the launch
+ * line queued 300ms behind it. A write that lands in that window used to go
+ * straight to the shell, and a trailing `\r` submitted it as a SHELL COMMAND --
+ * an Ask Conductor question typed at a session that was still starting was
+ * executed by PowerShell instead of being asked of Claude. `writePty` buffers
+ * while a session is in here, and the launch timer replays once the real
+ * program owns the terminal.
+ */
+const launchPendingSessions = new Set<string>()
+
 export interface SSHOptions {
   host: string
   port: number
@@ -117,7 +770,37 @@ export interface SSHOptions {
   remotePath: string
   password?: string
   postCommand?: string
+  /** Structured container runtime (item e) — injected from the SAVED config by
+   *  spawn-credential-binding, composed into the effective post-command below. */
+  runtime?: SshRuntime
   sudoPassword?: string
+  /**
+   * #242 tier 5: true when this spawn respawns a session that had
+   * previously reached `claude-running` over THIS SSH config — set by the
+   * renderer session store (never persisted to disk; see Session.
+   * sshReachedClaudeRunning in sessionStore.ts) when it re-spawns, e.g. via
+   * the Restart control after a dropped connection. Consumed by
+   * writeClaudeCmd via buildSshClaudeFlags (ssh-tmux.ts) to decide whether
+   * the bare (non-tmux) launch should carry `--continue`. Undefined/false
+   * on a session's first-ever spawn, where there is no prior conversation
+   * to continue.
+   */
+  reconnect?: boolean
+  /**
+   * SSH tmux enhancement (item 1): "Detachable" (persistent remote session)
+   * toggle, from SshConfig.detachable. DEFAULT ON — only an explicit `false`
+   * disables the #242 tmux-persistence ladder (no detection, no staging, no
+   * silent install), leaving a bare `claude` that resumes via `--continue`
+   * on reconnect. Owner requirement: tmux must never be installed silently,
+   * so persistence is user-controlled by this flag.
+   */
+  detachable?: boolean
+  /**
+   * SSH tmux enhancement (item 3): remote OS. 'windows' selects the Windows
+   * setup path (PowerShell delivery + CONOUT$ shim + cmd.exe launch, no tmux);
+   * 'auto'/'unix'/undefined keep the POSIX path unchanged. PROTOTYPE.
+   */
+  remoteOs?: 'auto' | 'unix' | 'windows'
 }
 
 /**
@@ -129,6 +812,12 @@ export interface SshFlowController {
   launchClaude: () => void
   skip: () => void
   destroy: () => void
+  /** item 5 (resume cascade, "no host"): called from the shared PTY onExit when
+   *  the ssh process dies. If the flow never reached a good terminal state
+   *  (i.e. the connection failed at/around connect), emit `failed` with a
+   *  'connection' reason so the overlay can offer Retry rather than sitting on
+   *  a dead "connecting…". A no-op once claude-running/shell-only/skipped. */
+  handlePtyExit: () => void
   /** Returns the latest emitted state, used by the renderer overlay
    * on mount to catch up if it missed earlier emits. */
   getState: () => { state: SshFlowState; info?: string }
@@ -160,7 +849,60 @@ function emitSshFlowState(win: BrowserWindow, sessionId: string, state: SshFlowS
   } catch { /* renderer gone */ }
 }
 
+/**
+ * SSH tmux enhancement (items 8/9/10): push per-session persistence status +
+ * the remote account descriptor to the renderer. Separate from the flow-state
+ * channel because these outlive the connect flow (they label the session in
+ * the sidebar/header for its whole life) and update the session store, not the
+ * transient overlay. Fire-and-forget; a destroyed window is a no-op.
+ */
+function emitSshSessionInfo(win: BrowserWindow, sessionId: string, info: { tmuxPersistent?: boolean; remoteAccount?: string }): void {
+  if (win.isDestroyed()) return
+  try {
+    win.webContents.send(`ssh:sessionInfo:${sessionId}`, info)
+  } catch { /* renderer gone */ }
+}
+
 const ptySessions = new Map<string, PtySession>()
+
+// #48: a shell-only session pinned to a profile (a plain shell, or the
+// add-account /login shell) runs in that profile's credential home for its whole
+// life, but by design never captures an identity (B3), so it was invisible to
+// isProfileInUseByLiveSession -- the usage page could rotate the token under a
+// /login in progress, and the account could be deleted under an open shell.
+// Each such session holds a transient-consumer ref instead, keyed by session id.
+// Re-established per spawn (spawnPty opens with killPty -> cleanupSessionResources,
+// which releases the previous hold) and released on both exit paths through
+// cleanupSessionResources. Interactive Claude sessions are NOT here: the
+// identity maps already cover them.
+const shellOnlyProfileHolds = new Map<string, () => void>()
+
+// rc.15 review R3 (aicc_planning#49): a LOCAL spawn whose profile is mid-refresh
+// waits for the refresh to settle before its PTY exists. The hold is taken
+// BEFORE the wait (so no further rotation can start), the session is known to
+// killPty/writePty only through this map until the real spawn runs, and a kill
+// during the wait releases the hold and spawns nothing. Writes that arrive
+// during the wait are dropped and logged, never queued: a queued line would
+// replay into a shell the user never saw start.
+const refreshWaitSpawns = new Map<string, {
+  cancel: () => void
+  /** The teardown of the PTY this spawn replaced, whose exit arrived while the
+   *  wait was armed and was treated as stale (the deferred spawn being the
+   *  session's next process). Run by the cancel path and by a failed re-entry
+   *  that registered no PTY, because then nothing else ends the session
+   *  (review round 2); carried over, not run, by a spawn of the same id that
+   *  supersedes this wait (quality round 3, M1). */
+  abandonedTeardown?: () => void
+  /** The window this spawn was for. ADR-009 round 2 (Lens C2): when killPty
+   *  cancels a parked wait that has NO predecessor teardown (a FRESH spawn that
+   *  never had a live PTY -- the common case), the card is left showing a
+   *  starting spinner with no exit event. On a killAllPty that does not quit the
+   *  app (the update-install path re-throws on a failed installer launch), that
+   *  card is stranded. killPty emits a synthetic pty:exit through this window so
+   *  the card always resolves. NOT used on the supersede path (which deletes the
+   *  entry before killPty runs) or the destroyed-window path. */
+  win: BrowserWindow
+}>()
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
 const codexTelemetrySources = new Map<string, TelemetrySource>()
@@ -180,6 +922,426 @@ function getLastResumeTarget(sessionId: string): { uuid: string; cwd: string } |
 
 function clearLastResumeTarget(sessionId: string): void {
   lastResumeTarget.delete(sessionId)
+}
+
+// SSH tmux enhancement (item 4): the connection target for each live SSH
+// session, captured at spawn so endSshRemote can open a SEPARATE ssh exec to
+// kill the remote tmux session + sidecars without touching the live PTY (where
+// the keystrokes would land in Claude). Cleared on DELIBERATE close (killPty),
+// NOT on a natural PTY exit: after a transient drop the tab stays (Retry), and
+// a later "End remote" must still be able to reach the host to kill the
+// now-detached remote -- clearing it on every exit made End a silent no-op
+// after any wifi blip (adversarial review, 2026-08-18).
+// #572: the saved SSH password (when the session authed that way) rides along
+// so End can actually reach a password-only host -- see endSshRemote. It stays
+// in this main-process map exactly as long as the target itself (cleared on
+// deliberate close), is never IPC'd, logged or embedded in argv, and is only
+// ever WRITTEN to the End exec's own PTY in answer to a real password prompt.
+// Container runtime (#572 one hop deeper): `runtime` rides along so End knows
+// claude is NOT on the connected host but inside `<engine> exec <name>`, and
+// `sudoPassword` so a ROOTFUL container's kill can answer sudo's own prompt.
+// Both obey the same custody rule as `password` above — main-process only,
+// never IPC'd, never logged, never in argv.
+/**
+ * Everything the End exec needs to reach a host and clean up after one session.
+ *
+ * Captured at spawn into `sshTargetBySession` for a LIVE session, and — since
+ * Phase 3.5 — rebuildable from the SAVED config for a DETACHED one, which the
+ * map cannot hold (see endSshRemote's `fallbackTarget`). Both producers are
+ * main-process only: the renderer never supplies a field of this, it only names
+ * a session id and a config id.
+ */
+export interface SshEndTarget {
+  username: string
+  host: string
+  port: number
+  password?: string
+  runtime?: SshRuntime
+  sudoPassword?: string
+}
+
+const sshTargetBySession = new Map<string, SshEndTarget>()
+
+// SSH tmux enhancement (items 1/4): sessions whose launch actually wrapped in a
+// tmux persistence session (`tmuxWrapped` at writeClaudeCmd). The remote for
+// these SURVIVES a local PTY teardown, so close/quit must DETACH, never destroy:
+//   - killPty must NOT type the U8 in-band `rm` cleanup down the live PTY -- for
+//     a tmux-wrapped launch the foreground is Claude, so the bytes land in its
+//     composer (LF doesn't submit) and are left PRE-TYPED in a session the user
+//     chose to leave running; the End-remote exec already removes the sidecars.
+//   - gracefulExitPty (app quit) must NOT send `/exit` -- inside tmux that quits
+//     Claude and tears the session down; killing the local PTY detaches instead.
+// Both are the exact regressions the persistence feature introduced against the
+// pre-existing close/quit paths (adversarial review, 2026-08-18). Cleared on
+// deliberate close alongside sshTargetBySession.
+const sshTmuxWrappedBySession = new Set<string>()
+
+/**
+ * SSH tmux enhancement (item 4): deliberately END a persistent remote session.
+ * Opens a fresh, non-interactive ssh exec (buildSshExecArgs) that runs
+ * buildRemoteTmuxKillCommand -- `tmux kill-session -t ccc-<sid>` (both
+ * host-authored tmux-bin forms) plus sidecar cleanup -- then exits. Fire-and-
+ * forget with a bounded lifetime; the caller kills the local PTY separately.
+ *
+ * A no-op when we have no target for the session (never an SSH session, or
+ * already cleaned up).
+ *
+ * #572: on a key/agent host this is the original BatchMode execFile. On a host
+ * whose session authed by SAVED PASSWORD, BatchMode made End a SILENT NO-OP --
+ * the exec failed fast, the remote tmux+claude survived, and every "ended"
+ * session kept ~350MB of the host's RAM forever (the mongminer exhaustion,
+ * 2026-08-30: a box with zero visible sessions held two orphaned claudes).
+ * Password targets now run the SAME argv (minus BatchMode, plus
+ * NumberOfPasswordPrompts=1) under a small dedicated PTY, answer exactly one
+ * real password prompt with the session's saved password, and wait for exit.
+ * The prompt match reuses the connect flow's tightened rule: strip escapes
+ * first (ConPTY glues them onto the prompt -- the RC9 lesson), then require
+ * the last non-empty line to END with `password:`/`password?` so a mid-line
+ * mention of passwords (the usual MOTD shape) can't trigger the write. A
+ * banner line deliberately ENDING in `password:` would still fire it — that
+ * is accepted, because the write's only possible destination is this PTY,
+ * which dials the credential's own host-key-verified host (accept-new
+ * REFUSES a changed key): a premature write to the password's owner, never a
+ * third-party leak (adversarial pass, 2026-08-30).
+ *
+ * Returns the outcome so callers that care (the live matrix) can await it;
+ * the IPC caller stays fire-and-forget.
+ *
+ * CONTAINER RUNTIME (#572, one hop deeper -- live-proven by T20,
+ * ssh-statusline-docker.live.ts, 2026-08-31): when the session's runtime is a
+ * container, claude runs INSIDE `<engine> exec <name> bash`, so the tmux kill
+ * above only drops the exec CLIENT and leaves claude alive in the container
+ * forever (three orphans measured after a single End). The container kill
+ * (buildContainerKillCommand -- scoped to THIS session by the
+ * `settings-<safeSid>` marker in the in-container argv, so a co-tenant session
+ * in the same container is untouched) is prepended to the same remote command,
+ * and it must run BEFORE the tmux kill: the tmux teardown drops the exec client
+ * the kill travels through.
+ *
+ * Which exec variant runs:
+ *
+ *   ssh auth | container | sudo | sudoPw |  variant             | prompts
+ *   ---------+-----------+------+--------+----------------------+---------
+ *   key      | no        |  -   |   -    | BatchMode execFile   | 0
+ *   password | no        |  -   |   -    | PTY                  | 1 (ssh)
+ *   key      | yes       | no   |   -    | BatchMode execFile   | 0
+ *   key      | yes       | yes  |  yes   | PTY                  | 1 (sudo)
+ *   key      | yes       | yes  |  no    | BatchMode (`sudo -n`)| 0
+ *   password | yes       | no   |   -    | PTY                  | 1 (ssh)
+ *   password | yes       | yes  |  yes   | PTY                  | 2 (ssh, sudo)
+ *   password | yes       | yes  |  no    | PTY (`sudo -n`)      | 1 (ssh)
+ *
+ * The PTY variant answers each prompt with the secret whose PROMPT SHAPE it
+ * matches -- never by arrival position (adversarial review, ADR-009).
+ *
+ * Position was the wrong key. It assumed the prompts arrive exactly as the table
+ * predicts, and two ordinary situations break that:
+ *
+ *   - A host configured with a password that now authenticates by KEY (a key was
+ *     added later; the password is still in the keychain). ssh never prompts, so
+ *     the FIRST prompt to arrive is sudo's -- and the positional rule fed it the
+ *     SSH password, sending one credential into a different authority's audit
+ *     log and its retry loop.
+ *   - A key-auth host whose key is refused, degrading to a password prompt. The
+ *     positional rule fed sshd the SUDO password: a credential for the remote
+ *     root path, typed at a prompt that, on a first connect under `accept-new`,
+ *     an on-path attacker can be the one presenting.
+ *
+ * Shape discriminates cleanly because CCC authors one of the two prompts:
+ * `sudo -S -p password:` (buildContainerKillCommand, ssh-shim.ts) forces sudo's
+ * to be exactly `password:` -- lowercase, bare, nothing before it (verified
+ * byte-for-byte on a real host: 9 bytes, no trailing space). ssh's own prompt is
+ * never that: the client prints `<user>@<host>'s password:` for the password
+ * method, and keyboard-interactive/PAM prints a capitalised `Password:`. So a
+ * BARE LOWERCASE `password:` is sudo's and nothing else; anything else that ends
+ * in a password prompt is ssh's.
+ *
+ * A prompt matching neither secret's shape is left UNANSWERED -- End then fails
+ * on its timeout with the cleanup incomplete, which is the correct trade against
+ * writing a credential to the wrong authority. Answering CONSUMES the rolling
+ * tail, so the just-answered prompt (which stays the last non-empty line until
+ * fresh output arrives) cannot re-trigger and burn the other secret.
+ */
+const END_REMOTE_TIMEOUT_MS = 12000
+const END_REMOTE_PASSWORD_TIMEOUT_MS = 20000
+/**
+ * sudo's prompt, forced to this exact shape by `-p password:`. Case-SENSITIVE
+ * and anchored at BOTH ends: the capitalised `Password:` that PAM/
+ * keyboard-interactive shows over ssh must NOT match here, and a prefixed
+ * `<user>@<host>'s password:` must not either.
+ */
+const END_REMOTE_SUDO_PROMPT_RE = /^password:\s*$/
+/**
+ * ssh's own password prompt: any line ending in a password prompt that is not
+ * sudo's bare lowercase form. Deliberately broad on this side -- the client's
+ * wording varies with the auth method and the server's PAM config -- because the
+ * one shape it must not swallow is already excluded above.
+ */
+const END_REMOTE_SSH_PROMPT_RE = /password[:?]\s*$/i
+export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<'completed' | 'failed' | 'no-target'> {
+  // Phase 3.5 — the DETACHED case. `sshTargetBySession` is captured at spawn and
+  // dropped by killPty, and "Leave running" IS a killPty: so for every remote in
+  // the resume registry the map is empty, and before this the End IPC resolved
+  // 'no-target' and left the remote tmux + claude alive forever. That is the
+  // #572 orphan class arriving by a different road — a user pressing Remove and
+  // being told nothing while ~350MB of their host stays spoken for.
+  //
+  // The fallback is rebuilt by the CALLER from the saved config + keychain (see
+  // the SSH_END_REMOTE handler), never from the renderer. A live target still
+  // WINS: it carries the session's real runtime and the credentials it actually
+  // authed with, which is strictly better evidence than the config on disk.
+  const target = sshTargetBySession.get(sessionId) ?? fallbackTarget
+  if (!target) return Promise.resolve('no-target')
+  const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
+  const hasSudoPassword = Boolean(target.sudoPassword)
+  const containerKill = buildContainerKillCommand(sessionId, target.runtime, { hasSudoPassword })
+  // Container kill FIRST, then the host tmux kill + sidecar cleanup.
+  const remoteCommand = containerKill
+    ? `${containerKill}; ${buildRemoteTmuxKillCommand(sessionId)}`
+    : buildRemoteTmuxKillCommand(sessionId)
+  // A rootful container whose sudo password we hold is the ONLY case that adds
+  // a second prompt; `sudo -n` (no saved password) never prompts at all.
+  const needsSudoPrompt = Boolean(containerKill && target.runtime?.sudo && hasSudoPassword)
+  if (containerKill) {
+    logInfo(`[ssh] ${sessionId}: end-remote includes an in-container kill (engine exec; sudo=${Boolean(target.runtime?.sudo)})`)
+  }
+  if (target.password || needsSudoPrompt) {
+    // Prompt-answering host and/or rootful container: PTY + answered prompts.
+    // Each secret carries the SHAPE of the prompt it is allowed to answer (see
+    // the doc comment above); nothing is keyed on arrival position.
+    const pending: Array<{ kind: 'ssh' | 'sudo'; secret: string; accepts: (line: string) => boolean }> = []
+    if (target.password) {
+      pending.push({
+        kind: 'ssh',
+        secret: target.password,
+        // ssh's prompt, and explicitly NOT sudo's bare lowercase `password:`.
+        accepts: (l) => END_REMOTE_SSH_PROMPT_RE.test(l) && !END_REMOTE_SUDO_PROMPT_RE.test(l),
+      })
+    }
+    if (needsSudoPrompt) {
+      pending.push({
+        kind: 'sudo',
+        secret: target.sudoPassword!,
+        accepts: (l) => END_REMOTE_SUDO_PROMPT_RE.test(l),
+      })
+    }
+    logInfo(`[ssh] ${sessionId}: ending remote session (kill exec under a dedicated PTY; ${pending.length} prompt(s) expected: ${pending.map((p) => p.kind).join(',')})`)
+    return new Promise((resolve) => {
+      let settled = false
+      let child: pty.IPty | null = null
+      const done = (r: 'completed' | 'failed', why: string): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(deadline)
+        try { child?.kill() } catch { /* already gone */ }
+        logInfo(`[ssh] ${sessionId}: end-remote (password) ${r} (${why})`)
+        resolve(r)
+      }
+      const deadline = setTimeout(() => done('failed', 'timeout'), END_REMOTE_PASSWORD_TIMEOUT_MS)
+      try {
+        // Argv build INSIDE the executor's try (adversarial pass): a sync throw
+        // here must resolve 'failed' like every other failure, not escape as an
+        // exception into a fire-and-forget IPC caller.
+        const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
+        child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+      } catch (err) {
+        done('failed', `spawn: ${(err as Error)?.message ?? err}`)
+        return
+      }
+      // Each secret is REMOVED from `pending` once used, so no amount of
+      // prompt-shaped output can extract more than the prompts this variant
+      // genuinely expects (1 for a password host, 2 when a rootful container's
+      // sudo prompt follows it) and none can be replayed.
+      let tail = ''
+      child.onData((d) => {
+        // Bounded rolling tail; the prompt always sits at the end of it.
+        tail = (tail + d).slice(-2048)
+        // `settled` too (adversarial pass): after the timeout killed the child,
+        // a final ConPTY flush ending in a prompt-shaped line must not write
+        // into the dead PTY from inside the emitter.
+        if (settled || pending.length === 0) return
+        const lines = stripAnsiForSentinel(tail).split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0)
+        const last = lines[lines.length - 1] ?? ''
+        // Route by SHAPE: the secret answered is the one whose prompt this is,
+        // whatever order the prompts arrive in. A prompt matching no secret's
+        // shape is left alone -- End then times out with cleanup incomplete,
+        // which beats typing a credential at the wrong authority's prompt.
+        const idx = pending.findIndex((p) => p.accepts(last))
+        if (idx >= 0) {
+          const [{ secret, kind }] = pending.splice(idx, 1)
+          logInfo(`[ssh] ${sessionId}: end-remote answering the ${kind} prompt`)
+          // CONSUME the tail. ssh answers its own prompt with a bare newline,
+          // so the very next chunk would otherwise still end on that same
+          // (already-answered) prompt line and immediately burn the sudo secret
+          // into ssh's prompt. The next prompt must be re-proven by FRESH output.
+          tail = ''
+          // CR/LF stripped: a saved password cannot legitimately contain one
+          // (single-line field), and an embedded newline would otherwise split
+          // this into extra PTY lines. try/catch: the exit/data race can leave
+          // the PTY closed mid-callback, and a throw here is inside node-pty's
+          // emitter — main-process uncaughtException territory.
+          try {
+            child!.write(`${secret.replace(/[\r\n]/g, '')}\r`)
+          } catch {
+            /* PTY already closed; onExit/timeout settles the outcome */
+          }
+        }
+      })
+      child.onExit(({ exitCode }) => done(exitCode === 0 ? 'completed' : 'failed', `exit=${exitCode}`))
+    })
+  }
+  // Key/agent host with no prompt to answer (rootless container, or `sudo -n`):
+  // the original fire-fast BatchMode exec, now with an awaitable outcome.
+  return new Promise((resolve) => {
+    try {
+      const args = buildSshExecArgs(target, remoteCommand, os.platform())
+      logInfo(`[ssh] ${sessionId}: ending remote session (tmux kill-session + sidecar cleanup over a separate exec)`)
+      const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err) => {
+        if (err) logInfo(`[ssh] ${sessionId}: end-remote exec exited non-zero (host was already gone, or refused key auth): ${err.message}`)
+        else logInfo(`[ssh] ${sessionId}: end-remote exec completed`)
+        resolve(err ? 'failed' : 'completed')
+      })
+      // Never let a stuck child keep a handle alive; execFile's own timeout also
+      // covers this, but unref so it can't hold the process open.
+      try { child.unref() } catch { /* noop */ }
+    } catch (err) {
+      logError(`[ssh] ${sessionId}: endSshRemote failed to dispatch: ${(err as Error)?.message ?? err}`)
+      resolve('failed')
+    }
+  })
+}
+
+const LIVENESS_TIMEOUT_MS = 10000
+const LIVENESS_PASSWORD_TIMEOUT_MS = 15000
+
+/**
+ * SSH Persistent — probe whether the `ccc-<safeSid(id)>` tmux sessions for a set
+ * of DETACHED remotes are still alive on `target`'s host, so the resume flow never
+ * offers (or silently auto-resumes) a dead session.
+ *
+ * The connection target is built by the CALLER from the SAVED config (never the
+ * renderer), exactly like endSshRemote's — host/user/port + the same keychain
+ * password. This mirrors endSshRemote's two shapes: a key/agent host runs a
+ * fire-fast BatchMode `execFile`; a password host runs the same argv under a PTY
+ * and answers the ssh password prompt by SHAPE (END_REMOTE_SSH_PROMPT_RE), reusing
+ * that path's matcher. The remote command (buildTmuxListCommand) is a host-authored
+ * literal with no wire operand; the candidate ids are matched LOCALLY via safeSid.
+ *
+ * Outcome is fail-OPEN: any connection failure, auth failure, or a run with no
+ * completion sentinel returns 'unverified' (NOT "all dead"), so a host that is
+ * merely asleep does not wipe a user's reattachable sessions. Only a run that came
+ * back WITH the sentinel is 'verified', and only then are absent ids treated as
+ * dead. Never throws — every failure path resolves 'unverified'.
+ */
+export function probeTmuxLive(
+  target: { username: string; host: string; port: number; password?: string },
+  sessionIds: string[],
+): Promise<DetachedRemoteLiveness> {
+  const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
+  const remoteCommand = buildTmuxListCommand()
+  const unverified: DetachedRemoteLiveness = { outcome: 'unverified', liveSessionIds: [] }
+  // Turn captured output into a result. `connected` is the sentinel test done by
+  // the caller (execFile) OR here (parseTmuxLivenessOutput.completed). Since
+  // rc.14 review F11 `completed` also requires that at least one tmux binary
+  // actually ran (the FOUND marker): END without FOUND is a host whose tmux
+  // lives outside every candidate path, and that is unverified, never death.
+  const finish = (raw: string): DetachedRemoteLiveness => {
+    const parsed = parseTmuxLivenessOutput(raw)
+    if (!parsed.completed) {
+      // rc.15 review R8: an operational failure of a found tmux client (a
+      // protocol mismatch, a permission error) is logged and answered
+      // 'unverified' -- never 'verified' with no names, which pruned live
+      // sessions as dead.
+      logWarn(`[ssh] tmux liveness probe of ${target.host} is not authoritative: ${parsed.unverifiedReason ?? 'unknown'}`)
+      return unverified
+    }
+    return { outcome: 'verified', liveSessionIds: computeLiveSessionIds(sessionIds, parsed.names) }
+  }
+
+  if (target.password) {
+    // Password host: PTY that answers the single ssh prompt with the saved
+    // password. We resolve as soon as the END sentinel arrives (don't wait for
+    // exit), and on timeout still parse whatever came back (a completed run that
+    // just didn't EOF cleanly is still verified).
+    return new Promise((resolve) => {
+      let settled = false
+      let child: pty.IPty | null = null
+      let out = ''
+      let tail = ''
+      let passwordSent = false
+      const done = (result: DetachedRemoteLiveness, why: string): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(deadline)
+        try { child?.kill() } catch { /* already gone */ }
+        logInfo(`[ssh] liveness probe (password) ${result.outcome} (${why}; ${result.liveSessionIds.length}/${sessionIds.length} live)`)
+        resolve(result)
+      }
+      const deadline = setTimeout(() => done(finish(out), 'timeout'), LIVENESS_PASSWORD_TIMEOUT_MS)
+      try {
+        // Argv build INSIDE the try (adversarial posture, as in endSshRemote): a
+        // sync throw here must resolve 'unverified', never escape the promise.
+        const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
+        child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+      } catch (err) {
+        done(unverified, `spawn: ${(err as Error)?.message ?? err}`)
+        return
+      }
+      child.onData((d) => {
+        out += d
+        tail = (tail + d).slice(-2048)
+        if (settled) return
+        // The command completed the moment the END sentinel appears.
+        if (out.includes(TMUX_LIVENESS_END)) { done(finish(out), 'sentinel'); return }
+        if (passwordSent) return
+        const lines = stripAnsiForSentinel(tail).split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0)
+        const last = lines[lines.length - 1] ?? ''
+        // Only the ssh password prompt is expected here (no sudo — a read-only
+        // `tmux ls` needs no elevation). Answer it once, then consume the tail so
+        // the just-answered prompt cannot re-fire.
+        if (END_REMOTE_SSH_PROMPT_RE.test(last)) {
+          passwordSent = true
+          tail = ''
+          try { child!.write(`${target.password!.replace(/[\r\n]/g, '')}\r`) } catch { /* PTY closed; exit/timeout settles */ }
+        }
+      })
+      child.onExit(() => done(finish(out), 'exit'))
+    })
+  }
+
+  // Key/agent host: fire-fast BatchMode exec, capture stdout, parse.
+  return new Promise((resolve) => {
+    try {
+      const args = buildSshExecArgs(target, remoteCommand, os.platform())
+      execFile(bin, args, { timeout: LIVENESS_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+        const raw = (stdout ?? '').toString()
+        // A non-zero exit is NOT a failure here: `tmux ls` exits non-zero when no
+        // server is running, yet the echo'd END sentinel still prints, so a
+        // completed-but-empty run is correctly 'verified' with zero live ids. A
+        // missing END sentinel (connection/auth failure) yields 'unverified', and
+        // so does END without any FOUND marker (no tmux binary could be run).
+        const result = finish(raw)
+        logInfo(`[ssh] liveness probe ${result.outcome} (${err ? `exit err: ${err.message}` : 'ok'}; ${result.liveSessionIds.length}/${sessionIds.length} live)`)
+        resolve(result)
+      }).unref?.()
+    } catch (err) {
+      logError(`[ssh] liveness probe failed to dispatch: ${(err as Error)?.message ?? err}`)
+      resolve(unverified)
+    }
+  })
+}
+
+/** Test-only: seed an End target without a live spawn (unit tests for #572). */
+export function _setSshTargetForTest(
+  sessionId: string,
+  target: { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string }
+): void {
+  sshTargetBySession.set(sessionId, target)
+}
+
+/** Test-only: read back what the spawn captured for End (runtime + secrets). */
+export function _getSshTargetForTest(sessionId: string): { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string } | undefined {
+  return sshTargetBySession.get(sessionId)
 }
 
 // === SSH OSC sentinel parser ===
@@ -257,7 +1419,46 @@ function getResumePickerPath(): string | null {
   return null
 }
 
-export function spawnPty(
+/** The spawn options `pty:spawn` builds field by field (see pty-handlers). */
+type SpawnPtyOptions = NonNullable<Parameters<typeof spawnPtyResolved>[2]>
+
+/**
+ * Spawn (or respawn) the PTY of a session.
+ *
+ * rc.15 review R3 (quality round 3, M1): a spawn of an id whose EARLIER spawn
+ * is still parked on a refresh wait supersedes that wait. The wait is cancelled
+ * here (its hold goes with it; nothing spawns from it) and the teardown it may
+ * be carrying -- the exit of the PTY that earlier spawn replaced, suppressed as
+ * stale -- is carried over to THIS spawn rather than run: this spawn is the
+ * session's next process, and running it now would send the renderer a
+ * pty:exit for a session about to get its PTY and wipe the canvas stamps
+ * pty:spawn wrote a moment ago. If this spawn waits too, the new wait carries
+ * it (a cancel or a failed re-entry still ends the session once); if it spawns
+ * now, its PTY's own exit ends the session and the carried teardown is
+ * dropped, exactly as a replaced PTY's exit is ignored once its successor is
+ * live. If it THROWS before it has a PTY (node-pty refused, a bad cwd), nothing
+ * else would end the session the carried teardown was for, so it runs here,
+ * once, before the error goes on to the caller.
+ */
+export function spawnPty(win: BrowserWindow, sessionId: string, options?: SpawnPtyOptions): void {
+  const supersededWait = refreshWaitSpawns.get(sessionId)
+  const inheritedTeardown = supersededWait?.abandonedTeardown
+  if (supersededWait) {
+    logInfo(`[pty] Session ${sessionId} was still waiting for a profile refresh; this spawn supersedes that wait`)
+    supersededWait.cancel()
+  }
+  try {
+    spawnPtyResolved(win, sessionId, options, inheritedTeardown)
+  } catch (err) {
+    if (inheritedTeardown && !ptySessions.has(sessionId)) {
+      logInfo(`[pty] Session ${sessionId}: the superseding spawn failed before it had a PTY -- ending the session its predecessor's exit was told to leave alone`)
+      inheritedTeardown()
+    }
+    throw err
+  }
+}
+
+function spawnPtyResolved(
   win: BrowserWindow,
   sessionId: string,
   options?: {
@@ -266,6 +1467,21 @@ export function spawnPty(
     rows?: number
     ssh?: SSHOptions
     shellOnly?: boolean
+    /** Terminal-only launcher: command + args run once when the shell opens. */
+    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+    /** Secret argument resolved from the OS keychain in the IPC handler (main only). */
+    terminalSecret?: string
+    /** Command-button secrets for this shell, keyed by command id (main only). */
+    commandSecrets?: Record<string, string>
+    /** Ask Conductor's opening question. Travels in the spawn ENV; the launch
+     *  line carries only a reference to it (see askPromptRef). */
+    askPrompt?: string
+    /** True when this session is an Ask Conductor one-shot (session.kind ===
+     *  'ask'). Threaded explicitly rather than inferred from askPrompt, which
+     *  is empty for a question-less Ask launch and cleared on every restart
+     *  (#266 MAJOR-5): those inferences armed a watchdog on an ephemeral,
+     *  badge-less surface. */
+    isAsk?: boolean
     elevated?: boolean
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
@@ -282,10 +1498,20 @@ export function spawnPty(
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
     // Widened to string — the IPC schema's charset guard (/^[a-zA-Z0-9_-]+$/) is the real contract.
     effortLevel?: string
+    // Per-config permission mode -> `--permission-mode`. 'default'/'' => no flag.
+    // IPC schema constrains to the CLI's own mode choices.
+    permissionMode?: string
+    // Advanced escape hatch appended verbatim to the claude command. IPC schema
+    // charset-guards it (no shell metacharacters) and rejects CCC-managed flags.
+    extraArgs?: string
     disableAutoMemory?: boolean
     model?: string
     /** Per-session account isolation: spawn claude under this profile's CLAUDE_CONFIG_DIR. */
     profileId?: string
+    /** MAIN-INTERNAL (rc.15 review R3): set by the deferred re-entry after a
+     *  profile refresh wait. Never accepted from the renderer -- pty:spawn builds
+     *  its options object field by field and does not copy this one. */
+    refreshAwaited?: boolean
     /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
     enableCodexReview?: boolean
     /**
@@ -302,7 +1528,11 @@ export function spawnPty(
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
     }
-  }
+  },
+  /** MAIN-INTERNAL: the teardown carried over from a superseded refresh wait
+   *  (see spawnPty). Attached to this spawn's own wait if it parks; dropped
+   *  once its PTY is registered. */
+  inheritedTeardown?: () => void,
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
 
@@ -318,7 +1548,24 @@ export function spawnPty(
   let capturedResumeTarget: { uuid: string; cwd: string } | null = null
   if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
     try {
-      const latest = getTranscriptBinder()?.getLatestTranscriptPath(sessionId)
+      // #480: resume ONLY from an EXACT (authenticated) bind. The previous
+      // getLatestTranscriptPath() also returned heuristic binds — a newest-file
+      // scan of the shared per-repo transcript folder — which resumed a SIBLING
+      // card's conversation when several cards ran in one repo. An exact-only
+      // capture means "resume the conversation the hook confirmed for THIS
+      // session, or start fresh"; a fresh start beats reopening a stranger.
+      const binder = getTranscriptBinder()
+      let latest = binder?.getExactResumeTarget(sessionId) ?? null
+      // Hooks-off fallback: when no EXACT source can ever arrive (hooks disabled
+      // or gateway down), fall back to the heuristic bind and WARN. In that
+      // degraded config there is no authenticated source, so best-effort resume
+      // beats never resuming — but it can cross if cards share a repo folder.
+      if (!latest && !isExactBindSourceActive()) {
+        latest = binder?.getLatestTranscriptPath(sessionId) ?? null
+        if (latest) {
+          logWarn(`[pty] #480 hooks-off resume fallback for ${sessionId}: hooks inactive, using heuristic bind ${latest} (best-effort; may cross if multiple cards share this repo)`)
+        }
+      }
       if (latest) {
         capturedResumeTarget = resolveResumeTargetFromTranscript(latest)
       }
@@ -356,6 +1603,38 @@ export function spawnPty(
   let resumeUuidForBind: string | null = null
   let resolvedProfileId: string | undefined = undefined
 
+  // See `launchPendingSessions`. A session with a launch line is not ready for
+  // input until that line has been written, so hold writes until then and flush
+  // here. Always paired with `launchPendingSessions.delete` so a failed or
+  // raced launch releases the hold instead of buffering forever.
+  let launchWriteScheduled = false
+  const releaseLaunchHold = () => {
+    launchPendingSessions.delete(sessionId)
+    const pending = pendingWrites.get(sessionId)
+    if (!pending) return
+    logInfo(`[pty] Replaying ${pending.length} buffered write(s) for ${sessionId}`)
+    for (const data of pending) {
+      // Same chunking rule the live path uses: a paste larger than
+      // WRITE_CHUNK_SIZE overflows/truncates ConPTY's input buffer if written in
+      // one go. Holding a write must not change how it is delivered.
+      if (data.length > WRITE_CHUNK_SIZE) writeChunked(sessionId, ptyProcess, data)
+      else ptyProcess.write(data)
+    }
+    pendingWrites.delete(sessionId)
+  }
+  /**
+   * The launch never landed (the PTY was killed/replaced inside the window, or
+   * the launch write threw). There is no program to deliver held writes to, so
+   * drop them with the hold -- leaving them buffered orphans them: nothing
+   * replays that buffer, and it survives until session teardown.
+   */
+  const abandonLaunchHold = () => {
+    launchPendingSessions.delete(sessionId)
+    const dropped = pendingWrites.get(sessionId)?.length ?? 0
+    if (dropped > 0) logWarn(`[pty] Dropping ${dropped} held write(s) for ${sessionId}: launch never completed`)
+    pendingWrites.delete(sessionId)
+  }
+
   if (options?.ssh) {
     // Defensive guard: Codex over SSH is not yet supported. The renderer-side
     // dialog prevents this combination, but guard here in case of direct IPC calls.
@@ -365,30 +1644,73 @@ export function spawnPty(
 
     // SSH session: spawn ssh command, then chain claude after cd
     const ssh = options.ssh
+    // SSH tmux enhancement (item 1): the "Detachable" toggle. DEFAULT ON --
+    // only an explicit `false` opts out of the #242 tmux-persistence ladder.
+    // When off: no tier-3/4 staging (proceedAfterSetup skips it, so nothing is
+    // ever installed on the remote) AND no wrap even if the host already has
+    // tmux (writeClaudeCmd's gate), leaving a bare `claude` that resumes via
+    // `--continue` on reconnect.
+    // Container runtime (item e): the ladder is FORCED OFF for now. The wrap
+    // would run tmux INSIDE the container (hop 2), and that model is
+    // live-proven broken — claude runs but its statusline ticks never reach
+    // the app through the in-container tmux client (T23,
+    // ssh-statusline-docker.live.ts, 2026-08-31: states reach claude-running,
+    // updates=0). A silently dead statusline is worse than no persistence, so
+    // container sessions run a bare claude that resumes via `--continue`;
+    // persistence for containers is the hop-1 design follow-up (host tmux
+    // wrapping the exec client — the owner's stated model).
+    //
+    // EFFECTIVE runtime, derived once and used by every container-conditional
+    // decision below (adversarial review, ADR-009). A config written before the
+    // structured Runtime field existed says `postCommand: 'sudo docker exec -it
+    // <name> bash'` and carries no `runtime` at all — but claude still ends up
+    // one hop deeper, inside the container, exactly as a structured container
+    // session does. Keying only on `ssh.runtime` classed those sessions as plain
+    // hosts, and they got BOTH container defects the structured path had already
+    // fixed: the tmux ladder wrapped them at hop 2 (live-proven to leave the
+    // statusline dead), and End composed no in-container kill, so their claude
+    // orphaned in the container forever (#572).
+    //
+    // A structured `runtime` always wins; the parse is only consulted when there
+    // is none. This changes the persistence GATE and the End KILL only — the
+    // launch command for a legacy config is untouched, because its postCommand
+    // already enters the container and composeRuntimeCommand below still reads
+    // the structured field alone.
+    const effectiveRuntime = ssh.runtime ?? parseDockerPostCommand(ssh.postCommand ?? '') ?? undefined
+    const isContainerSession = isContainerRuntime(effectiveRuntime)
+    // rc.15 review R1 (aicc_planning#45): can this entry be PROVEN? Only an
+    // `exec` into a named container can -- the app composes it so a process
+    // inside that container prints a per-attempt nonce sentinel, and the flow
+    // marks "inner" on that sentinel ALONE (never on prompt shape or silence).
+    // `start -ai` cannot be proven (it attaches an entrypoint that need not be
+    // a shell) and is never auto-promoted: the overlay asks for consent.
+    const entryProvable = isProvableContainerEntry(effectiveRuntime)
+    if (!ssh.runtime && isContainerSession) {
+      logInfo(`[ssh] ${sessionId}: legacy docker post-command detected — treating this session as a container runtime (persistence gate + End kill + proven entry)`)
+    }
+    const persistenceEnabled = ssh.detachable !== false && !isContainerSession
+    if (ssh.detachable !== false && isContainerSession) {
+      logInfo(`[ssh] ${sessionId}: container runtime — tmux persistence skipped (hop-2 wrap breaks statusline delivery; hop-1 design pending)`)
+    }
     // Lift: SSH setup script + per-session settings path live on the
     // ClaudeProvider's SSH-capable surface (see providers/claude/ssh-shim.ts).
     const claudeProvider = getProvider('claude')
     if (!isSshCapable(claudeProvider)) throw new Error('Claude provider must be SSH-capable')
-    const sshArgs = [
-      `${ssh.username}@${ssh.host}`,
-      '-p', String(ssh.port),
-      '-t', // force TTY allocation
-      '-o', 'StrictHostKeyChecking=accept-new'
-    ]
-
-    // Add reverse tunnel for the Conductor MCP server so remote sessions can reach
-    // both fetch_host_screenshot (always) and vision tools (when browser connected).
-    // Host-side target is 127.0.0.1, NOT `localhost`: the MCP server binds IPv4-only
-    // (conductor-mcp-server.ts listens on '127.0.0.1'), but Windows resolves
-    // `localhost` IPv6-first (::1) — a dead address here — so ssh.exe's forward
-    // connect lands on [::1]:port, gets ECONNREFUSED, and the channel dies
-    // ("socket connection closed unexpectedly" on the remote MCP client). Pinning
-    // the middle field to 127.0.0.1 forwards straight to the address the server
-    // actually binds, with no name resolution and no IPv6-fallback dependency.
-    const mcpPort = getConductorMcpPort()
-    if (mcpPort > 0) {
-      sshArgs.push('-R', `${mcpPort}:127.0.0.1:${mcpPort}`)
-    }
+    // Base ssh argv (target, port, TTY, host-key policy) + a win32-only
+    // ControlMaster/ControlPath override (#241) + the Conductor MCP reverse
+    // tunnel, built in ./ssh-args so the exact flag list is unit-tested. The
+    // tunnel host-side target is 127.0.0.1, not `localhost`: the MCP server binds
+    // IPv4-only (conductor-mcp-server.ts listens on '127.0.0.1'), but Windows
+    // resolves `localhost` IPv6-first (::1) -- a dead address that would
+    // ECONNREFUSED and kill the channel ("socket connection closed unexpectedly"
+    // on the remote MCP client).
+    // #24: a STABLE per-session remote listen port for the MCP reverse tunnel,
+    // so multiple sessions to the SAME host don't collide on one fixed port.
+    // Forward `-R <remoteMcpPort>:127.0.0.1:<localMcpPort>` and bake the remote
+    // Claude's MCP URL with the same per-session port (setupOpts below).
+    const localMcpPort = getConductorMcpPort()
+    const remoteMcpPort = getRemoteMcpPort(sessionId, localMcpPort)
+    const sshArgs = buildSshArgs(ssh, localMcpPort, os.platform(), remoteMcpPort)
 
     // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
     // Claude Code inside the SSH session can reach it via http://localhost:<port>.
@@ -411,12 +1733,17 @@ export function spawnPty(
 
     const sshBinary = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
 
+    // SSH sessions never designate a canvas worktree (their cwd is remote); pass
+    // a clone with any inherited CCC_SESSION_WORKTREE removed, never process.env
+    // by reference (which we must not mutate).
+    const sshEnv = { ...(process.env as Record<string, string>) }
+    delete sshEnv.CCC_SESSION_WORKTREE
     ptyProcess = pty.spawn(sshBinary, sshArgs, {
       name: 'xterm-256color',
       cols,
       rows,
       cwd: os.homedir(),
-      env: process.env as Record<string, string>,
+      env: sshEnv,
       useConpty: true
     })
 
@@ -440,12 +1767,251 @@ export function spawnPty(
     let setupDone = false
     let setupShellReady = false
     let postCommandSent = false
+    // rc.14 review F1: the post-command (container entry) printed an engine
+    // failure, or the HOST shell's own prompt came back (round 2). The prompt
+    // that follows is NOT the inner shell.
+    let runtimeEntryFailed = false
+    // rc.15 review R1: WHY the entry failed, re-emitted by launchClaude's refusal
+    // so the overlay keeps saying the right thing ('container entry failed' = it
+    // was never proven; 'left the container' = proven, then the container shell
+    // exited or the launch-time guard found a different shell attached).
+    let entryFailureReason: SshEntryFailureReason = SSH_ENTRY.FAILED
+    // rc.15 review R1: the CURRENT attempt's entry nonce (null while no attempt
+    // is in flight, or when the entry cannot be proven at all). Minted in
+    // writePostCommand, so Run again judges its attempt on a fresh sentinel.
+    let entryNonce: string | null = null
+    // rc.15 review R1: the current attempt's `__CCC_<nonce>_IN__` has been seen
+    // -- the ONLY thing that sets inInnerShell for a provable container entry.
+    let entryProven = false
+    // rc.15 review R1: the post-command finished but nothing could prove where
+    // it landed (a `start -ai` attach, a free-text command with no recognised
+    // container shape). Reaches 'awaiting-claude' with info 'unverified' and
+    // launches ONLY on the user's explicit Launch-anyway click; never sets
+    // inInnerShell, so it can never read as a verified entry.
+    let entryUnverified = false
+    // rc.15 review R1: the launch-time guard (buildEntryGuardCommand) is out and
+    // its HERE answer is awaited; every ordinary launch write waits behind it.
+    let entryGuardPending = false
+    /** What the launch guard does once the attached shell has answered with
+     *  this attempt's nonce: the container setup (first launch write) or, after
+     *  `setup ok`, the claude command (second). Dropped with the guard. */
+    let entryGuardContinuation: (() => void) | null = null
+    /** rc.15 review R1 round 2: the claude command has passed its own guard.
+     *  Reset with the rest of the attempt (failEntry, Run again). */
+    let claudeReproven = false
+    /** rc.15 review R1 round 2: the user clicked Skip after the entry was proven
+     *  and is managing the shell by hand -- the after-entry watch stands down
+     *  until a later Launch re-engages it. */
+    let entrySkipped = false
+    // ADR-009 adversarial review (Lens A, R1 BLOCKER): the saved HOST sudo
+    // secret exists ONLY for the post-command's own `sudo <engine> exec`, which
+    // prompts on the host BEFORE any container shell. Once THIS session has ever
+    // been proven inside the container (an IN sentinel), that secret is never
+    // offered again -- not after a failEntry clears inInnerShell, not after Run
+    // again resets sudoPasswordSent, not on a launch-guard timeout. Without this
+    // latch, a forged OUT, a `su -`/`env -i` inside the container, a guard
+    // timeout, or a container prompt coinciding with the host's could revoke
+    // inInnerShell and hand the host secret to a `[sudo]` prompt the container
+    // printed. The cost is a saved secret not auto-typed after a genuine exit +
+    // Run again on the host (the one case host and container cannot be told
+    // apart): fail safe -- the user types it. Sticky for the flow's life.
+    let containerEverEntered = false
+    let entryGuardTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // rc.15 review R1: after IN, the container's first prompt-shaped line and
+    // the live trailing line. A fail-ONLY hint for the wait-for-click window:
+    // when the container's prompt is known to DIFFER from the host's and the
+    // host's exact prompt line is back on screen, the exec client has detached
+    // (or the container stopped) with no OUT to say so. Never a proof of
+    // presence -- the launch guard is -- and inert for identical prompts.
+    let innerPromptLine = ''
+    let afterEntryTrailingLine = ''
+    // rc.14 review F1 round 2 (aicc_planning#45): the post-command has actually
+    // been WRITTEN (writePostCommand defers the write 200ms behind its state
+    // change). The entry watch buffers output only from here, so a host prompt
+    // repaint in flight during that window is never read as the prompt coming
+    // BACK.
+    let postCommandWritten = false
+    // The host shell's prompt as last seen before the post-command went out
+    // (the chunk-final line that matched SHELL_PROMPT_RE). That exact line
+    // reappearing in the post-command's output means the entry fell back to the
+    // host shell -- sudo refused or was cancelled, the socket denied us, an
+    // engine message CONTAINER_ENTRY_ERROR_RE does not know. '' when no such
+    // line was ever seen (an odd PS1 the idle fallback carried), which disables
+    // the identity check and leaves the regex fast path alone.
+    let hostPromptLine = ''
+    // CONTAINER_ENGINE_NOT_FOUND_RE hit in the post-command's output: suspect
+    // until the prompt that follows decides (see its doc comment).
+    let entrySuspect = false
+    // Anything beyond the command's own echo has come back since the post-
+    // command was written. Until it has, the pane going idle is a hang or a
+    // still-starting container, not an inner shell with an unrecognised
+    // prompt, and the idle fallback holds instead of promoting.
+    let entryOutputSeen = false
+    // The trailing visible line of the post-command's output, for the idle
+    // fallback's password-prompt hold: read from the buffer rather than the
+    // sticky lastPromptLineSeen, which ignores `❯` lines and would keep a
+    // sudo prompt "on screen" long after a starship inner shell replaced it.
+    let entryTrailingLine = ''
     let postCommandShellReady = false
     let containerSetupSent = false
     let containerSetupDone = false
     let containerSetupShellReady = false
     let claudeSent = false
+    // ADR-009 round 3 (Codex finding 1): the after-entry lifetime watch is stood
+    // down only once the claude command is ACTUALLY written, not merely when
+    // claudeSent latches. writeClaudeCmd sets claudeSent then defers the write by
+    // 200ms; an OUT (or a host prompt) arriving in that window used to be ignored
+    // (the watch gated on !claudeSent) and the command still landed on the
+    // returned host. The watch now gates on !claudeWritten and the deferred write
+    // re-checks the destination, so definitive exit evidence in the gap prevents
+    // the write.
+    let claudeWritten = false
+    // ADR-009 round 3 (Codex finding 1): true while a proven-entry payload (the
+    // container setup or the claude command) is scheduled but not yet written.
+    // While it is set, the after-entry watch fails the entry on a host prompt
+    // returning with no OUT (a plain detach), so the pending write bails.
+    let deferredEntryWritePending = false
+    // ADR-009 round 3, R1 re-attack (MINOR): the handle of that scheduled write.
+    // failEntry, skip and destroy cancel it, so a write scheduled by an attempt that
+    // has since failed can neither fire into the NEXT attempt (a Run again
+    // inside its 200/300 ms window: the callback's own runtimeEntryFailed check
+    // is reset by Run again, so the stale claude timer typed the command onto
+    // the host before the new exec was even out) nor clear
+    // deferredEntryWritePending under the next attempt's own pending write,
+    // which disarmed the host-back check (the after-entry watch's
+    // `deferredEntryWritePending && isHostBackLine` test) for the rest of that
+    // window.
+    // The two writers (container setup, claude command) are sequential by
+    // construction -- the claude command is only scheduled after the setup's
+    // `setup ok` -- so one handle covers both; scheduling cancels any
+    // predecessor regardless, as defence in depth.
+    let deferredEntryWriteHandle: ReturnType<typeof setTimeout> | null = null
+    const cancelDeferredEntryWrite = () => {
+      if (deferredEntryWriteHandle) {
+        clearTimeout(deferredEntryWriteHandle)
+        deferredEntryWriteHandle = null
+      }
+      deferredEntryWritePending = false
+    }
+    const scheduleDeferredEntryWrite = (delayMs: number, write: () => void) => {
+      // Review: the predecessor cancel is defence in depth against an overlap
+      // the call graph does not allow today -- if it ever happens, say so
+      // rather than drop a payload silently.
+      if (deferredEntryWriteHandle) logError(`[ssh] ${sessionId}: a deferred entry write was still pending when the next was scheduled -- the earlier one is withdrawn`)
+      cancelDeferredEntryWrite()
+      deferredEntryWritePending = true
+      deferredEntryWriteHandle = setTimeout(() => {
+        deferredEntryWriteHandle = null
+        deferredEntryWritePending = false
+        write()
+      }, delayMs)
+    }
     let claudeRunning = false
+    // #25: rolling tail of recent PTY output, so the idle-fallback can tell a
+    // running-but-marker-less claude from one that exited to a bare shell.
+    let recentSshTail = ''
+    // #242 finding F1 (b), BLOCKER (adversarial review round 5): per-session
+    // nonce, generated ONCE here via randomId() (src/shared/id.ts -- the
+    // repo's CSPRNG helper, NOT Math.random) and baked into every setup/
+    // stage/push script this flow writes. Every sentinel the parsers below
+    // accept must carry it -- SECOND layer only, defeated by an attacker who
+    // can also read the tty (and so can copy the nonce verbatim). #242
+    // round-3 correction (I3): what survives that stronger attacker is now
+    // the SAME for every tier -- ON_PATH_TMUX_BIN_EXPR (tier 1) and
+    // STAGED_TMUX_BIN_EXPR (tier 2/3/4), both fixed host-authored literals
+    // (ssh-tmux.ts) that never read a wire-reported path at all. A copied
+    // nonce buys the attacker nothing beyond forcing CCC to pick between
+    // those two fixed tokens -- there is no longer a wire-reported operand
+    // for tier 1/2 to substitute (see parseTmuxSentinel's own doc comment).
+    // Registered in sshNonceBySession so the (test-only) _getSshNonceForTest
+    // accessor and cleanupSessionResources' teardown can both reach it.
+    const sshNonce = randomId()
+    sshNonceBySession.set(sessionId, sshNonce)
+    // item 4: remember this session's connection target so a deliberate End can
+    // reach the host over a separate exec. Cleared in cleanupSessionResources.
+    // The structured runtime + sudo password ride along for the SAME reason the
+    // ssh password does (#572, one hop deeper): for a container runtime the End
+    // exec must also reach INSIDE the container to kill this session's claude,
+    // and a rootful container needs sudo's prompt answered to get there.
+    sshTargetBySession.set(sessionId, {
+      username: ssh.username,
+      host: ssh.host,
+      port: ssh.port,
+      password: ssh.password,
+      // The EFFECTIVE runtime (see above): a legacy free-text docker
+      // post-command gets an End container-kill too, instead of orphaning its
+      // claude inside the container.
+      runtime: effectiveRuntime,
+      sudoPassword: ssh.sudoPassword,
+    })
+    // #242 round-3 correction (I3): which entry of buildTmuxLaunchCommand's
+    // fixed literal table to use, once a 'setup ok'/stage/push sentinel
+    // reports a usable tmux -- never a wire-reported path. `null` means "not
+    // found" or "not yet known" -- writeClaudeCmd treats both the same way,
+    // writing the bare claudeCmd. `'onpath'` (tier 1, parseTmuxSentinel's
+    // `path` class) selects `ON_PATH_TMUX_BIN_EXPR`; `'staged'` (tier 2's
+    // `home` class, OR tier 3/4's stage/push `ok`) selects
+    // `STAGED_TMUX_BIN_EXPR` -- both are the SAME fixed remote location, so
+    // tier 2 and tier 3/4 share one outcome here.
+    let detectedTmuxSource: 'onpath' | 'staged' | null = null
+    // item 10: the remote account descriptor parsed off the setup-ok sentinel
+    // (charset/length-capped, display-only). Emitted to the renderer on latch
+    // and re-sent alongside the persistence flag at launch.
+    let remoteAccount: string | undefined = undefined
+    // #242 tier 3: staging flags. `stagingAttempted` gates a SINGLE staging
+    // attempt per session regardless of which setup path (host vs
+    // container) reaches it -- host and container setup never both run in
+    // the same session (see writeContainerSetupCmd/runPostCommand), so one
+    // flag is enough. `stagingSent`/`stagingDone` mirror the setupSent/
+    // setupDone idempotency shape used for the other writers.
+    let stagingAttempted = false
+    let stagingSent = false
+    let stagingDone = false
+    let stagingTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // #242 tier 4: arch learned from the probe writeTmuxStageCmd fires
+    // alongside the tier-3 staging command (see buildArchProbeCommandBracketed)
+    // -- known well before a possible `fail=download` sentinel arrives, since
+    // `uname` resolves near-instantly while curl/wget's failure (no egress)
+    // typically takes longer. Stays null if the probe's reply never arrives
+    // (chunk loss, non-standard remote shell) or reports an arch tier 4
+    // doesn't recognise -- either way, attemptTmuxPush never runs and the
+    // flow degrades to exactly its pre-tier-4 behaviour (bare launch).
+    let detectedArch: TmuxStageTarget | null = null
+    // #242 round-3 MINOR fix: `detectedArch === null` cannot distinguish
+    // "not yet resolved" from "resolved to an unrecognised arch" -- both
+    // leave detectedArch null, so gating re-parses on THAT condition kept
+    // re-running the arch-probe regex against every later PTY chunk for the
+    // rest of the session, and unrelated later output shaped like the
+    // sentinel could set detectedArch long after the probe. This latch
+    // flips true the first time `parseArchProbeSentinel` returns anything
+    // other than `undefined` (a real match OR an unrecognised-combo `null`),
+    // so the onData gate below considers the probe resolved either way.
+    let archProbeResolved = false
+    // Tier 4 push flags, mirroring stagingSent/stagingDone's idempotency
+    // shape. Only ever set when detectedArch is known AND tier 3 reported
+    // fail=download specifically -- see the stage-sentinel handler below.
+    let pushSent = false
+    let pushDone = false
+    let pushTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // #242 finding F1 (adversarial review round 4, BLOCKER): separate timer
+    // for the DOWNLOAD phase specifically -- armPushSentinelTimeout (below)
+    // is reached only from runChunkedWrite's onDone, i.e. only once every
+    // chunk has actually been WRITTEN. Between `pushSent = true` and the
+    // archive-resolver's promise settling (a network fetch that can stall
+    // indefinitely -- a dead/slow HTTPS response, a hung proxy) there was no
+    // timer of any kind: attemptTmuxPush's own doc comment promises tier 4
+    // is "never a NEW way for the flow to get stuck with claude never
+    // launched", and an unbounded download phase broke exactly that.
+    let downloadTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // #242 finding F3 (adversarial review round 4, MAJOR): flips true at the
+    // TOP of flowController.destroy() so any write callback still reachable
+    // from a timer destroy() couldn't clear in time (an anonymous setTimeout
+    // with no stored handle, or one whose handle a future edit forgets to
+    // clear) bails instead of driving ptyProcess.write() into a PTY destroy()
+    // just tore down -- the exact invariant destroy() exists to enforce
+    // (mirrors setupTimeoutHandle/idleFallbackHandle already being cleared
+    // there).
+    let destroyed = false
     // Tracks whether we're now in the inner shell (after postCommand
     // completed — e.g. inside the docker container). Drives whether
     // launchClaude() runs the container-setup re-run path or the
@@ -455,8 +2021,81 @@ export function spawnPty(
     let currentFlowInfo: string | undefined = undefined
     const SETUP_TIMEOUT_MS = 10000
     let setupTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // #242 tier 3: generous vs. SETUP_TIMEOUT_MS -- staging downloads a
+    // ~1MB archive over the SSH connection itself before it can even start
+    // verifying/installing, so a slow link needs materially more room than
+    // the node setup blob (which touches no network). On timeout we treat
+    // it exactly like an explicit fail=* sentinel: fall through to the bare
+    // launch rather than leaving the flow stuck with claude never written.
+    const STAGE_TIMEOUT_MS = 20000
+    // #242 tier 4: a full push is a ~1.27 MB base64 transfer driven through
+    // runChunkedWrite at WRITE_CHUNK_SIZE(256B)/WRITE_CHUNK_DELAY(12ms) --
+    // roughly a minute of byte-chunking ALONE, before accounting for the
+    // remote shell actually executing ~650+ individual `echo … >> file`
+    // lines (each a fork+exec) as they arrive. Generous on purpose; a
+    // push that's still genuinely in flight must never be mistaken for a
+    // hung one.
+    const PUSH_TIMEOUT_MS = 120000
+    // #242 finding F1 (adversarial review round 4, BLOCKER): the DOWNLOAD
+    // phase (host-side fetch/cache-lookup of the archive, BEFORE a single
+    // chunk is written) had no timeout of its own -- see
+    // downloadTimeoutHandle's doc comment above. Sized well under
+    // PUSH_TIMEOUT_MS: this only bounds a network fetch/disk read of a
+    // few-hundred-KB file (or a cache hit, which is synchronous), nowhere
+    // near the ~60s+ the chunked transfer itself is budgeted for.
+    const DOWNLOAD_TIMEOUT_MS = 45000
 
     const setFlowState = (s: SshFlowState, info?: string) => {
+      // Follow-up adversarial pass (lifecycle MAJOR): `destroyed` used to gate
+      // only the PTY WRITES, not this emit. A flow torn down mid-tier (the
+      // download promise, a push abort) still resolved afterwards and emitted
+      // onto `ssh:flowState:<sessionId>` -- a channel a RESPAWNED session with
+      // the same id is already subscribed to, so the dead flow's
+      // 'running-claude'/failure state painted the new session's overlay and
+      // could falsely latch "reached claude-running" on it (which then adds
+      // --continue with no conversation to continue). A destroyed flow emits
+      // nothing: it no longer exists as far as the renderer is concerned.
+      if (destroyed) return
+      // Watchdog (#235, SSH): arm only once claude is actually RUNNING on the
+      // remote — not at spawn, as local does. At spawn an SSH PTY carries the
+      // handshake: banner/MOTD, password and sudo prompts, a bare remote
+      // shell. Those bytes are remote-controlled, and a rate-limit/safeguard
+      // pattern appearing in them could otherwise trip a retry send() into an
+      // auth prompt. The claude-running latch is the "claude prompt present"
+      // signal this flow already owns; every latch site funnels through here.
+      // Same eligibility as the spawn-time gate (never shell-only/Codex/Ask);
+      // startWatchdog itself tears down any prior entry, so a reconnect
+      // re-latching claude-running re-arms cleanly.
+      // `claudeSent` guard (adversarial pass, 2026-08-31): arm only once the
+      // flow has actually WRITTEN the claude command. detectClaudeUi's strict
+      // box-rule (`╭─{5,}`) matches in ANY phase regardless of claudeSent, so a
+      // hostile/odd remote can print box drawing in its pre-auth MOTD and drive
+      // the flow to claude-running while the pane is still a password prompt.
+      // claudeSent is false until writeClaudeCmd runs (on fresh launch AND
+      // reconnect), so it cleanly separates a genuine claude from a forged
+      // banner. (The send gate's positive-chrome precondition is the real
+      // safety net; this keeps the watchdog from even arming on a forge.)
+      // One source for both the guard and the payload, so a future edit cannot
+      // desync them (the manager's isWatchableClaudeSession is a real second
+      // gate, not fed a hard-coded false — adversarial pass MINOR).
+      const sshShellOnly = options?.shellOnly === true
+      const sshAsk = options?.isAsk === true
+      if (s === 'claude-running' && currentFlowState !== 'claude-running' && claudeSent
+          && !sshShellOnly && (options?.provider ?? 'claude') === 'claude' && !sshAsk) {
+        // LIVE geometry, not the spawn options: the handshake→claude-running
+        // gap can be long (tmux staging/push), noteResize no-ops before an
+        // entry exists, and the headless pane must wrap exactly like the real
+        // one for the line-anchored detectors to read true.
+        const livePty = ptySessions.get(sessionId)?.ptyProcess
+        getWatchdogManager()?.startWatchdog(sessionId, {
+          provider: options?.provider,
+          ssh: true,
+          shellOnly: sshShellOnly,
+          ask: sshAsk,
+          cols: livePty?.cols ?? options?.cols,
+          rows: livePty?.rows ?? options?.rows,
+        })
+      }
       currentFlowState = s
       currentFlowInfo = info
       logInfo(`[ssh] ${sessionId}: flow → ${s}${info ? ` (${info})` : ''}`)
@@ -474,6 +2113,11 @@ export function spawnPty(
     let idleFallbackHandle: ReturnType<typeof setTimeout> | null = null
     let receivedAnyData = false
     const armIdleFallback = () => {
+      // Follow-up adversarial pass (lifecycle MAJOR): destroy() clears this
+      // timer, but any data arriving during the PTY's teardown grace window
+      // re-armed it immediately afterwards -- resurrecting the whole ladder
+      // (up to a 'claude-running' emit) on a session that no longer exists.
+      if (destroyed) return
       if (idleFallbackHandle) clearTimeout(idleFallbackHandle)
       idleFallbackHandle = setTimeout(() => {
         idleFallbackHandle = null
@@ -482,8 +2126,24 @@ export function spawnPty(
 
         // connecting → awaiting-{postcommand|claude} or shell-only.
         if (currentFlowState === 'connecting') {
+          // Do not advance over a waiting auth prompt: the pane being quiet is
+          // exactly what a password prompt looks like. Stay in connecting and
+          // re-arm — the prompt resolving (auto-type or the user typing)
+          // produces output that re-enters the ladder normally. BOUNDED: if
+          // the sticky line is stale (a host whose real post-login prompt
+          // strips to '' never overwrites it), the cap lets the fallback
+          // advance on the fire after the cap (~13.5s) instead of
+          // wedging the session here forever. Logged once per engagement.
+          if (PASSWORD_PROMPT_RE.test(lastPromptLineSeen) && authHoldFires < MAX_AUTH_HOLD_FIRES) {
+            authHoldFires++
+            if (authHoldFires === 1) {
+              logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms but an auth prompt is waiting — holding in connecting (bounded)`)
+            }
+            armIdleFallback()
+            return
+          }
           logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms → advancing from connecting`)
-          if (ssh.postCommand) setFlowState('awaiting-postcommand', 'idle-fallback')
+          if (postCommand) setFlowState('awaiting-postcommand', 'idle-fallback')
           else if (options?.shellOnly) setFlowState('shell-only', 'idle-fallback')
           else setFlowState('awaiting-claude', 'host (fallback)')
           return
@@ -499,9 +2159,10 @@ export function spawnPty(
           setupShellReady = true
           logInfo(`[ssh] ${sessionId}: idle after host setup ok → writing claudeCmd`)
           // Host setup runs only because user clicked Launch Claude (on
-          // host). Write claudeCmd — don't chain to postCommand even if
-          // configured. shellOnly is ignored: the click is consent.
-          if (!claudeSent) writeClaudeCmd()
+          // host). Proceed to claude (via tier-3 staging first if tmux
+          // wasn't found) — don't chain to postCommand even if configured.
+          // shellOnly is ignored: the click is consent.
+          if (!claudeSent) proceedAfterSetup()
           return
         }
 
@@ -515,12 +2176,116 @@ export function spawnPty(
           currentFlowState === 'running-postcommand'
           && postCommandSent
           && !postCommandShellReady
+          && !runtimeEntryFailed
         ) {
+          if (isContainerSession) {
+            // rc.14 review F1 (aicc_planning#45), round 2+. The prompt path did
+            // not promote, so what is on screen is not a recognised NON-host
+            // prompt. Decide, in order:
+            // (0) the host's own prompt is on screen and nothing followed it in
+            //     1.5s -- the container was not entered (Ctrl-C at the sudo
+            //     prompt, a refusal no regex lists, the socket denied us).
+            //     isHostBackLine reads the sticky trailing line, so a `\r`/BEL
+            //     repaint or the user typing at the returned prompt cannot hide
+            //     it, and the echo (host prompt + a prefix of the command) does
+            //     not count -- that is the slow-start case, held below.
+            if (isHostBackLine(entryTrailingLine)) {
+              failEntry(SSH_ENTRY.FAILED, 'the host prompt is back and nothing followed it -- staying on the host shell, not marking inner')
+              return
+            }
+            // (1) the shell said the engine binary is missing and there is no
+            //     host prompt to confirm against (a zsh `%` host we could not
+            //     capture) -- take the idle as the failure the suspicion feared.
+            if (entrySuspect) {
+              failEntry(SSH_ENTRY.FAILED, 'idle after postCommand with an engine-not-found line and no entry')
+              return
+            }
+            // (2) nothing beyond the command's echo has come back: the engine is
+            //     hung or the container is still starting. Hold, bounded; a
+            //     container that never prints anything is not one claude can be
+            //     launched in, so the cap FAILS the entry (Run again / Skip on
+            //     the overlay) rather than promoting the host.
+            if (!entryOutputSeen) {
+              if (entrySilentHoldFires < MAX_ENTRY_SILENT_HOLD_FIRES) {
+                entrySilentHoldFires++
+                if (entrySilentHoldFires === 1) logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms after postCommand but nothing beyond its echo has come back -- holding (bounded)`)
+                armIdleFallback()
+                return
+              }
+              failEntry(SSH_ENTRY.FAILED, `no output from the container entry for ${(MAX_ENTRY_SILENT_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms`)
+              return
+            }
+            // (3) the trailing line is a password/sudo prompt: a human is typing
+            //     (no saved secret, or a refused one). Hold while it is really on
+            //     screen -- the LIVE trailing line, so an inner shell that
+            //     replaced it never holds; the cap FAILS (a prompt still showing
+            //     after ~61s is unanswered, i.e. still the host), never promotes.
+            if (PASSWORD_PROMPT_RE.test(entryTrailingLine) || SUDO_PROMPT_RE.test(entryTrailingLine)) {
+              if (entryPromptHoldFires < MAX_ENTRY_PROMPT_HOLD_FIRES) {
+                entryPromptHoldFires++
+                if (entryPromptHoldFires === 1) logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms after postCommand but a password prompt is waiting -- holding (bounded)`)
+                armIdleFallback()
+                return
+              }
+              failEntry(SSH_ENTRY.FAILED, `a password prompt was still waiting ${(MAX_ENTRY_PROMPT_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms after postCommand`)
+              return
+            }
+            // (4) rc.15 review R1 (aicc_planning#45): a PROVABLE entry that has
+            //     not announced itself. Reaching here means the data path saw
+            //     no `__CCC_<nonce>_IN__` (that path promotes at once). Nothing
+            //     else ever promotes such an entry -- not an unrecognised
+            //     prompt, not silence: absence of evidence is not entry.
+            if (entryProvable) {
+              // A shell prompt the regex knows is waiting for input and it is
+              // not our command's echo. IN precedes the container shell by
+              // construction, so a prompt with no IN is the HOST's (a changing
+              // command counter, a cd -- a shape the identity check could not
+              // match) or a container that failed to start its wrapper.
+              if (SHELL_PROMPT_RE.test(entryTrailingLine) && !isPostCommandEcho(entryTrailingLine)) {
+                failEntry(SSH_ENTRY.FAILED, 'a shell prompt is waiting after the post-command but the entry sentinel never arrived')
+                return
+              }
+              // No prompt the regex knows (a zsh `%` host after a cancelled
+              // sudo, a container still starting): hold briefly, then fail.
+              if (entryUnprovenHoldFires < MAX_ENTRY_UNPROVEN_HOLD_FIRES) {
+                entryUnprovenHoldFires++
+                if (entryUnprovenHoldFires === 1) logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms after postCommand with output but no entry sentinel yet -- holding (bounded)`)
+                armIdleFallback()
+                return
+              }
+              failEntry(SSH_ENTRY.FAILED, `no entry sentinel within ${(MAX_ENTRY_UNPROVEN_HOLD_FIRES + 1) * IDLE_FALLBACK_MS}ms of the last output`)
+              return
+            }
+            // `start -ai`: an attach to the container's entrypoint, which need
+            // not be a shell -- nothing can be typed into it to prove where it
+            // landed. Fall through to the explicit-consent state.
+          }
+          // rc.15 review R1: NOT inner. A free-text post-command (or a start -ai
+          // attach) finished and the pane went idle, but nothing proves which
+          // shell -- or which machine -- is attached now. Say so, and launch
+          // only on the user's explicit Launch-anyway click.
           postCommandShellReady = true
-          inInnerShell = true
-          logInfo(`[ssh] ${sessionId}: idle after postCommand → inner shell ready`)
-          // User decides next via overlay (Launch Claude vs Skip).
-          setFlowState('awaiting-claude', 'inner')
+          entryUnverified = true
+          entrySkipped = false // the flow is live again, like the IN promotion
+          clearSshLineBuffer(sessionId, 'runtime')
+          logInfo(`[ssh] ${sessionId}: idle after postCommand -- entry could not be verified, asking for explicit consent before any launch`)
+          setFlowState('awaiting-claude', SSH_ENTRY.UNVERIFIED)
+          return
+        }
+
+        // rc.15 review R1: the wait-for-click window after a PROVEN entry. If
+        // the host's exact prompt line is back on screen and the container's
+        // own prompt is known to be a different line, the exec client has gone
+        // (detach keys, a stopped container) without an OUT: fail closed now
+        // rather than at the launch guard, so the overlay stops saying "inner"
+        // over a host prompt. Fail-only; identical prompts never trip it.
+        if (
+          currentFlowState === 'awaiting-claude'
+          && inInnerShell && entryProven && !entryGuardPending && !claudeSent
+          && hostPromptLine !== '' && innerPromptLine !== '' && innerPromptLine !== hostPromptLine
+          && isHostBackLine(afterEntryTrailingLine)
+        ) {
+          failEntry(SSH_ENTRY.LEFT, 'the host prompt is back after entry and the container prompt was a different line')
           return
         }
 
@@ -535,10 +2300,12 @@ export function spawnPty(
           && containerSetupDone
           && !containerSetupShellReady
           && !claudeSent
+          // Defence in depth: failEntry drops the setup latches first (R1 review).
+          && !runtimeEntryFailed
         ) {
           containerSetupShellReady = true
           logInfo(`[ssh] ${sessionId}: idle after container setup ok → writing claudeCmd`)
-          writeClaudeCmd()
+          proceedAfterSetup()
           return
         }
 
@@ -551,6 +2318,16 @@ export function spawnPty(
         // almost certainly running — flip the latch so the overlay
         // can disappear and no more auto-writes ever fire.
         if (currentFlowState === 'running-claude' && claudeSent) {
+          // #25: don't FALSE-GREEN. If the pane has dropped back to a bare shell
+          // prompt, claude exited (e.g. the first-run trust prompt was declined,
+          // or claude crashed) — surface it as failed instead of latching
+          // claude-running. Conservative detector: never mis-flags a running
+          // claude (whose UI uses ❯/box drawing, not a bare $/#).
+          if (looksLikeShellPromptTail(recentSshTail)) {
+            logError(`[ssh] ${sessionId}: idle after claudeCmd but pane is a bare shell → claude exited (not latching claude-running)`)
+            setFlowState('failed', 'claude exited to shell')
+            return
+          }
           logInfo(`[ssh] ${sessionId}: idle after claudeCmd → assuming claude-running (fallback)`)
           claudeRunning = true
           setFlowState('claude-running', 'idle-fallback')
@@ -562,12 +2339,58 @@ export function spawnPty(
     // Clickable question options (CC >= 2.1.195) default OFF in CCC -- the
     // clickable layer misfires inside xterm.js. Read fresh per spawn so the
     // Settings toggle applies to the next session without a restart.
-    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean }>('settings')
+    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean; theme?: string; classicTerminalCopyPaste?: boolean }>('settings')
     const clickableQuestions = spawnCfg?.clickableQuestions === true
-    const claudeEnvPrefix = [
+    // #546: classic terminal copy/paste (default on) must reach the REMOTE Claude
+    // too. The local spawn sets CLAUDE_CODE_DISABLE_MOUSE=1 +
+    // CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 (spawn.ts) so xterm owns the mouse →
+    // classic drag-selection + right-click copy/paste. Over SSH the local env
+    // never crosses, so these ride the remote launch line as env-prefix tokens
+    // just like the sibling *_MOUSE_CLICKS var below. Without them the remote
+    // Claude keeps SGR mouse tracking on, xterm forwards drags to Claude, and
+    // selection is dead — no parity with a local session.
+    const classicTerminalCopyPaste = spawnCfg?.classicTerminalCopyPaste !== false
+    // item 3: PROTOTYPE Windows remote. Isolated behind this flag; every branch
+    // below falls back to the unchanged POSIX path for auto/unix/undefined.
+    const isWindowsRemote = ssh.remoteOs === 'windows'
+    // The host's light/dark scheme rides the REMOTE launch line as COLORFGBG
+    // (book item 34). The local spawn puts it in the shell's env; over SSH the
+    // local env never reaches the remote, so it is a prefix on the command that
+    // starts claude -- quoted for POSIX (the value carries a `;`), bare inside
+    // the Windows `set "..."` wrapper. The tmux wrap single-quotes the whole
+    // inner command and escapes embedded quotes, so it survives that too.
+    const sshHostColorScheme = resolveHostColorScheme(spawnCfg?.theme, nativeTheme.shouldUseDarkColors)
+    const claudeEnvVars = [
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
+      // #546: mirror buildClaudeLocalSpawn — classic mode → xterm owns the mouse.
+      classicTerminalCopyPaste ? 'CLAUDE_CODE_DISABLE_MOUSE=1' : '',
+      classicTerminalCopyPaste ? 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1' : '',
       clickableQuestions ? '' : 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1',
       spawnCfg?.disableBackgroundTasks !== false ? 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1' : '',
+      colorFgBgEnvToken(sshHostColorScheme, isWindowsRemote ? 'windows-cmd' : 'posix'),
+    ].filter(Boolean)
+    const claudeEnvPrefix = claudeEnvVars.join(' ')
+    // Flags common to POSIX + Windows (everything EXCEPT --settings/--mcp-config,
+    // which differ by path shape: POSIX adds them inline below; the Windows
+    // builder re-adds them with %USERPROFILE% paths). The remote shell differs:
+    // POSIX single-quotes the model id (zsh globs `opus[1m]` otherwise, #144),
+    // but cmd.exe does NOT strip single quotes, so modelFlag()'s POSIX form gave
+    // a Windows launch a model id WITH literal quotes (adversarial review,
+    // 2026-08-18). cmd.exe uses DOUBLE quotes (claude.cmd strips them), so the
+    // Windows branch double-quotes via a local var -- the `${options.model}`
+    // shape the #144 source-scan forbids (correctly, for POSIX) never appears,
+    // and this is genuinely a different shell. effort/permissionMode/extraArgs
+    // are charset-safe in both shells (extraArgs is IPC-charset-guarded against
+    // every cmd + POSIX metachar).
+    const winModelId = options?.model ?? ''
+    const claudeModelCommonFlag = isWindowsRemote
+      ? (winModelId ? `--model "${winModelId}"` : '')
+      : modelFlag(options?.model, false)
+    const claudeCommonFlags = [
+      options?.effortLevel ? `--effort ${options.effortLevel}` : '',
+      claudeModelCommonFlag,
+      options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
+      options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : '',
     ].filter(Boolean).join(' ')
     const claudeFlags = [
       // --settings loads per-session config so concurrent sessions to the same
@@ -582,12 +2405,59 @@ export function spawnPty(
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
       // --model pins the Claude model for this session. Empty string in
       // the config form means "no override" — the CLI picks whatever
-      // the user's plan exposes by default.
-      options?.model ? `--model ${options.model}` : '',
+      // the user's plan exposes by default. Single-quoted (#144): 1M-context
+      // ids contain brackets (`opus[1m]`) which zsh parses as a glob class,
+      // aborting the remote command with "no matches found". The remote shell
+      // is always POSIX here, so POSIX escaping applies regardless of the
+      // local platform (hence isWin32: false).
+      modelFlag(options?.model, false),
+      // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
+      options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
+      // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded).
+      options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : '',
     ].filter(Boolean).join(' ')
-    const claudeCmd = [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
+    const claudeCmd = isWindowsRemote
+      // item 3: cmd.exe launch (set X=Y&& claude --settings "%USERPROFILE%\.claude\..."). No
+      // tmux wrap ever (Windows has none); writeClaudeCmd appends --continue on reconnect.
+      ? buildWindowsClaudeCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
+      : [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
-    const postCommand = ssh.postCommand
+    // Item e (structured Runtime): the app composes the container command from
+    // the saved runtime block; a free-text postCommand (Advanced) is arbitrary
+    // PREP and runs first in the same stage. The flow machinery below is
+    // untouched — it keys on postCommand presence exactly as before.
+    let runtimeCmd: string | undefined
+    // Sticky: a container runtime the validator REJECTED must never degrade into
+    // a host launch. Failing the flow alone was not enough — the failed overlay
+    // offers "Retry Launch", which calls launchClaude(), and launchClaude has no
+    // 'failed' guard, so it would have run host setup + claude on the BARE HOST.
+    // The user asked for a container; silently handing them the host instead is
+    // the same silent-fallback class the tmux ladder refuses elsewhere in this
+    // file. Latch it and refuse every launch path for the life of the session.
+    let runtimeInvalid = false
+    try {
+      runtimeCmd = composeRuntimeCommand(ssh.runtime)
+    } catch (err) {
+      logError(`[ssh] ${sessionId}: container runtime invalid: ${(err as Error)?.message ?? err}`)
+      runtimeInvalid = true
+      setFlowState('failed', 'container runtime invalid')
+    }
+    // The text of the CURRENT attempt. Presence (`if (postCommand)`) is decided
+    // once, here; for a provable container entry the text itself is re-composed
+    // by writePostCommand with that attempt's nonce (rc.15 review R1), and the
+    // echo/host-back comparisons below read whatever was actually typed.
+    let postCommand = [ssh.postCommand, runtimeCmd].filter(Boolean).join(' && ') || undefined
+    // rc.15 review R1 (aicc_planning#45): the sentinel-bearing entry for one
+    // attempt. A structured runtime keeps the free-text prep in front of it; a
+    // LEGACY free-text docker line IS the entry (it parsed into effectiveRuntime
+    // and nothing else is in it), so it is replaced by the composed shape --
+    // the one deliberate change to a legacy launch line, so legacy configs get
+    // the same proof (their shell -- bash or sh -- is preserved).
+    const composeEntryAttempt = (nonce: string): string => {
+      const entry = composeContainerEntryCommand(effectiveRuntime, nonce)
+      const prep = ssh.runtime ? ssh.postCommand : undefined
+      return [prep, entry].filter(Boolean).join(' && ')
+    }
     const sudoPassword = ssh.sudoPassword
 
     // Tight password-prompt match: `password:` or `password?` at the trimmed
@@ -596,12 +2466,65 @@ export function spawnPty(
     // 30 days" — the password then gets written into the PTY as stray input
     // before the real prompt arrives, leaking it visibly into the terminal.
     const PASSWORD_PROMPT_RE = /password[:?]\s*$/i
+    // The shapes sudo prompts with: `[sudo] password for X:`, `password for X:`,
+    // `Password:` (macOS). End-of-line anchored so a log line that mentions
+    // `[sudo]` or `password for` cannot trip it. Used by the sudo auto-type
+    // branch and (rc.14 review F1 round 2) by the post-command idle hold.
+    const SUDO_PROMPT_RE = /(\[sudo\].*password.*:|password for .+:|^password:)\s*$/i
     // Shell prompt match for the cd/setup gate. Real bash PS1s usually end
     // `$`/`#`/`>`/`~` with no whitespace before the sigil (e.g. `user@h:~$ `),
     // so we can't require pre-whitespace — but we DO exclude lines containing
     // Claude Code's `❯` glyph via lastPromptLineForClaude below. setupDone is the
     // hard latch that prevents any retrigger regardless.
     const SHELL_PROMPT_RE = /[$#>~]\s*$/
+    // The last prompt-shaped line seen on this PTY, kept for the idle fallback:
+    // an ssh auth prompt is EXACTLY a stretch of output silence, and the
+    // fallback used to advance `connecting → awaiting-claude` over a waiting
+    // password prompt (the "asks to Launch Claude at the password prompt" bug,
+    // 2026-08-27 — the prompt itself went undetected because the ConPTY title
+    // OSC glued to it defeated the old escape stripping; see ui-detection.ts).
+    // Detection is fixed there; this guard is belt-and-braces so the
+    // CONNECT-TIME idle path cannot walk past a visible auth prompt (including
+    // a manual-entry session with no saved password). The postCommand sudo
+    // path keeps its existing idle behavior. The hold is BOUNDED (below): a
+    // host whose post-login prompt strips to '' (a ❯-glyph PS1, a 2-char
+    // escape lead) would otherwise leave a stale "password:" sticky and wedge
+    // the flow in connecting forever.
+    let lastPromptLineSeen = ''
+    // Consecutive idle-fallback fires spent holding for an auth prompt; reset
+    // by every data chunk. At the cap the fallback advances anyway (release is
+    // the fire after the cap, (MAX+1) x 1.5s = ~13.5s),
+    // so a stale sticky delays a quiet host but can never wedge it.
+    let authHoldFires = 0
+    const MAX_AUTH_HOLD_FIRES = 8
+    // rc.14 review F1 round 2: consecutive idle fires spent holding in
+    // running-postcommand (container sessions only; see the idle branch), one
+    // counter per hold since they track different waits. Both reset by every
+    // data chunk, like authHoldFires. Silence cap: (10+1) x 1.5s = ~16.5s with
+    // NOTHING back from the entry -> failed. Prompt cap: (40+1) x 1.5s = ~61s
+    // with a password prompt still on screen -> failed (a human who has not
+    // answered sudo in a minute is still on the host, so Run again is safer than
+    // promoting). Longer than the connect-time auth hold's 13.5s because that
+    // one guards a STALE sticky line that must release quickly, whereas this
+    // reads the LIVE trailing line -- a prompt the inner shell has replaced
+    // never holds -- so it can afford a human's time to type.
+    let entrySilentHoldFires = 0
+    let entryPromptHoldFires = 0
+    const MAX_ENTRY_SILENT_HOLD_FIRES = 10
+    const MAX_ENTRY_PROMPT_HOLD_FIRES = 40
+    // rc.15 review R1: output came back from a provable entry but no IN sentinel
+    // yet and nothing on screen decides it (no recognised prompt, no password
+    // prompt) -- a slow container start, or a host whose prompt the regex does
+    // not know (zsh `%`) after a cancelled sudo. Hold, then FAIL: an entry
+    // that never announces itself is never promoted. Same budget as the silent
+    // hold, (10+1) x 1.5s = 16.5s after the last output: on a host whose prompt
+    // the regex cannot strip, the command's own echo already counts as output,
+    // so this IS the engine's start-up allowance (quality review).
+    let entryUnprovenHoldFires = 0
+    const MAX_ENTRY_UNPROVEN_HOLD_FIRES = 10
+    // rc.15 review R1: how long the launch-time guard waits for its HERE answer.
+    // A shell round trip, not a container start, so short.
+    const ENTRY_GUARD_TIMEOUT_MS = 5000
 
     /**
      * Writers for the four discrete SSH stages. The manual
@@ -624,21 +2547,178 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
-          includeStatusLine: s?.statusLineEnabled !== false,
-          includeConductorMcp: s?.conductorToolsEnabled !== false,
-        })
-        ptyProcess.write(setupCmd + '\r')
+        // configureRemoteSettings → assertSafeRemotePath throws on a bad path.
+        // Catch it HERE: an uncaught throw in a setTimeout is re-thrown by the
+        // global handler and crashes main (adversarial review, #188). Fail the
+        // flow instead. The IPC schema already rejects bad paths up front; this
+        // is defence-in-depth for any path that reaches here.
+        if (destroyed) return
+        try {
+          const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+          const setupOpts = {
+            includeStatusLine: s?.statusLineEnabled !== false,
+            includeConductorMcp: s?.conductorToolsEnabled !== false,
+            remoteMcpPort, // #24: bake the remote MCP URL with the per-session port
+          }
+          // item 3: Windows uses the PowerShell-delivered setup (no POSIX
+          // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
+          const setupCmd = isWindowsRemote
+            ? getWindowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
+            : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
+          ptyProcess.write(setupCmd + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: host setup failed: ${(err as Error)?.message ?? err}`)
+          setFlowState('failed', 'host setup error')
+        }
       }, 200)
+    }
+
+    /** The lines of an ANSI-stripped output buffer as the terminal shows them:
+     *  split on newlines; within a line a bare `\r` returns the cursor to
+     *  column 0, so the LAST non-empty carriage-return segment is what remains
+     *  visible (a trailing `\r` with nothing after it leaves the prior text on
+     *  screen -- taking `.pop()` blindly would read it as empty). C0 control
+     *  bytes a BEL or the like leaves behind are dropped (trim() does not remove
+     *  them), then each line is trimmed. */
+    const visibleLines = (stripped: string): string[] =>
+      stripped.split(/\r?\n/).map((line) => {
+        const segs = line.split('\r').filter((s) => s !== '')
+        return (segs.length ? segs[segs.length - 1] : '')
+          // eslint-disable-next-line no-control-regex
+          .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+          .trim()
+      })
+
+    /** The last non-empty visible line -- the terminal's trailing line, robust
+     *  to a chunk that ends in a newline or strips to nothing. */
+    const lastVisible = (lines: string[]): string => {
+      for (let i = lines.length - 1; i >= 0; i--) if (lines[i] !== '') return lines[i]
+      return ''
+    }
+
+    /** Is `line` nothing but the post-command's own echo -- the command, or a
+     *  PREFIX of it still arriving (bytes come in order, so a partial echo is
+     *  always a prefix) -- alone, or with the host prompt repainted in front of
+     *  it? Anything else is the entry answering. Prefix, not substring: a short
+     *  genuine line such as `bash` must count as output (rc.14 review F1). */
+    const isPostCommandEcho = (line: string): boolean => {
+      if (!postCommand || line === '') return false
+      const rest = hostPromptLine !== '' && line.startsWith(hostPromptLine)
+        ? line.slice(hostPromptLine.length).trim()
+        : line
+      return rest !== '' && postCommand.startsWith(rest)
+    }
+
+    /** Is `line` the HOST's prompt back on screen -- i.e. the container was not
+     *  entered? The host prompt alone, or with host/user activity after it (a
+     *  typed command, a Ctrl-C's `^C`), but NOT our command's echo (the host
+     *  prompt followed by a prefix of the post-command), which is transient
+     *  while the container starts. `hostPromptLine === ''` (an unrecognised host
+     *  PS1) disables this; the suspect/silence signals carry those hosts. */
+    const isHostBackLine = (line: string): boolean => {
+      if (hostPromptLine === '' || !line.startsWith(hostPromptLine)) return false
+      const rest = line.slice(hostPromptLine.length).trim()
+      if (rest === '') return true
+      return !(postCommand && postCommand.startsWith(rest))
+    }
+
+    const clearEntryGuardTimer = () => {
+      if (entryGuardTimeoutHandle) {
+        clearTimeout(entryGuardTimeoutHandle)
+        entryGuardTimeoutHandle = null
+      }
+    }
+    /** Withdraw an outstanding launch guard entirely: nothing it was going to
+     *  do runs, and its timer cannot fire. */
+    const dropEntryGuard = () => {
+      entryGuardPending = false
+      entryGuardContinuation = null
+      clearEntryGuardTimer()
+    }
+
+    /** The ONE way a container entry fails (rc.14 review F1 / rc.15 review R1).
+     *  Latches the refusal every launch path checks, records WHY for the
+     *  overlay's re-emit, drops the current attempt's proof and nonce (a late IN
+     *  from this attempt can never promote a later one), and stops any launch
+     *  guard in flight. inInnerShell is cleared too: a 'left the container'
+     *  failure is reached FROM the inner state, and the host ladder must never
+     *  see it set. */
+    const failEntry = (reason: SshEntryFailureReason, why: string) => {
+      runtimeEntryFailed = true
+      entryFailureReason = reason
+      inInnerShell = false
+      entryProven = false
+      entryNonce = null
+      innerPromptLine = ''
+      afterEntryTrailingLine = ''
+      sshEntryNonceBySession.delete(sessionId)
+      dropEntryGuard()
+      // ADR-009 round 3, R1 re-attack (MINOR): a setup or claude write scheduled
+      // by THIS attempt is cancelled outright -- see deferredEntryWriteHandle.
+      // A claude command that was scheduled but never written is un-sent again:
+      // claudeSent otherwise latched for the session's lifetime, so after an OUT
+      // in the deferred-claude window a Run again could never launch Claude.
+      cancelDeferredEntryWrite()
+      if (!claudeWritten) claudeSent = false
+      claudeReproven = false
+      // A container setup that was in flight when the shell was lost must not
+      // fire its own timeout over this failure, and a Run again + Launch must
+      // be able to run the setup afresh (quality review: the latch was never
+      // reset, so the re-entered container sat in running-setup forever).
+      if (setupTimeoutHandle) {
+        clearTimeout(setupTimeoutHandle)
+        setupTimeoutHandle = null
+      }
+      containerSetupSent = false
+      containerSetupDone = false
+      containerSetupShellReady = false
+      clearSshLineBuffer(sessionId, 'runtime')
+      logInfo(`[ssh] ${sessionId}: ${reason} (${why})`)
+      setFlowState('failed', reason)
     }
 
     const writePostCommand = () => {
       if (postCommandSent || !postCommand) return
       postCommandSent = true
+      // rc.15 review R1 round 3 (spec MAJOR): a Skip given at the post-command
+      // offer must not stand the after-entry watch down for the attempt that
+      // follows it -- every attempt starts watched.
+      entrySkipped = false
+      // rc.15 review R1: a fresh nonce per ATTEMPT, and the entry text composed
+      // around it. Only this nonce's sentinels are accepted from here on.
+      if (entryProvable) {
+        const nonce = randomId()
+        try {
+          postCommand = composeEntryAttempt(nonce)
+        } catch (err) {
+          // Unreachable for a runtime composeRuntimeCommand accepted at spawn
+          // (same validation) and for a regex-parsed legacy line, but a throw
+          // here must fail the flow, not escape into the IPC handler.
+          logError(`[ssh] ${sessionId}: container entry command invalid: ${(err as Error)?.message ?? err}`)
+          runtimeInvalid = true
+          setFlowState('failed', 'container runtime invalid')
+          return
+        }
+        entryNonce = nonce
+        entryProven = false
+        sshEntryNonceBySession.set(sessionId, nonce)
+      }
       setFlowState('running-postcommand')
       logInfo(`[ssh] ${sessionId}: writing post-command`)
-      setTimeout(() => ptyProcess.write(postCommand + '\r'), 200)
+      setTimeout(() => {
+        if (destroyed) return
+        postCommandWritten = true
+        // Drop the host output accumulated while capturing the host prompt
+        // below; the entry watch must see only the post-command's own output.
+        clearSshLineBuffer(sessionId, 'runtime')
+        ptyProcess.write(postCommand + '\r')
+        // The idle fallback is only re-armed by data. A flow that reached
+        // awaiting-postcommand on the idle path has no timer pending, so a
+        // remote that never even echoes would otherwise sit in
+        // running-postcommand with an inert overlay; arm it here so the
+        // silence cap below can fire (rc.14 review F1 round 2).
+        armIdleFallback()
+      }, 200)
     }
 
     const writeContainerSetupCmd = () => {
@@ -650,29 +2730,663 @@ export function spawnPty(
         setupTimeoutHandle = null
         if (!containerSetupDone) {
           logError(`[ssh] ${sessionId}: container setup ok not received within ${SETUP_TIMEOUT_MS}ms`)
+          // Release the latch so the overlay's Retry Launch can run the setup
+          // again (through the launch guard for a proven entry); before, the
+          // retry no-op'd and the failure sat there inert (quality review).
+          containerSetupSent = false
           setFlowState('failed', 'container setup timeout')
         }
       }, SETUP_TIMEOUT_MS)
-      setTimeout(() => {
-        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
-          includeStatusLine: s?.statusLineEnabled !== false,
-          includeConductorMcp: s?.conductorToolsEnabled !== false,
-        })
-        ptyProcess.write(setupCmd + '\r')
-      }, 300)
+      // ADR-009 round 3 (Codex finding 1): the after-entry watch fails the entry
+      // if the host prompt returns in this window, so the blob below bails --
+      // and (R1 re-attack MINOR) failEntry cancels the timer itself.
+      scheduleDeferredEntryWrite(300, () => {
+        // See writeHostSetupCmd: a throw here would crash main via the global
+        // handler; fail the flow instead (adversarial review, #188).
+        // rc.15 review R1 round 2: the shell can be lost inside these 300 ms (an
+        // OUT right after the guard answered, or a plain host-back detach caught
+        // by the after-entry watch) -- failEntry releases the latch, and the blob
+        // must not land on the host prompt behind it.
+        if (destroyed || runtimeEntryFailed || !containerSetupSent) return
+        try {
+          const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+          const setupOpts = {
+            includeStatusLine: s?.statusLineEnabled !== false,
+            includeConductorMcp: s?.conductorToolsEnabled !== false,
+            remoteMcpPort, // #24: bake the remote MCP URL with the per-session port
+          }
+          // item 3: Windows uses the PowerShell-delivered setup (no POSIX
+          // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
+          const setupCmd = isWindowsRemote
+            ? getWindowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
+            : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
+          ptyProcess.write(setupCmd + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: container setup failed: ${(err as Error)?.message ?? err}`)
+          setFlowState('failed', 'container setup error')
+        }
+      })
     }
 
-    const writeClaudeCmd = () => {
+    /**
+     * rc.15 review R1 (aicc_planning#45): the launch-time guard. Typed into the
+     * shell the flow believes is this attempt's container shell, BEFORE any
+     * ordinary launch write; the shell expands CCC_ENTRY itself, so only a shell
+     * descended from this attempt's exec answers `__CCC_<nonce>_HERE__`. The
+     * onData handler resolves it (HERE -> writeContainerSetupCmd; OUT -> left);
+     * silence past ENTRY_GUARD_TIMEOUT_MS fails closed with nothing written.
+     */
+    const startEntryGuard = (onAnswered: () => void) => {
+      if (destroyed || !entryNonce || entryGuardPending) return
+      entryGuardPending = true
+      entryGuardContinuation = onAnswered
+      clearSshLineBuffer(sessionId, 'runtime')
+      // Its own info: the overlay says what is happening (a probe, not an
+      // injection -- nothing has been written yet).
+      setFlowState('running-setup', SSH_ENTRY.VERIFYING)
+      logInfo(`[ssh] ${sessionId}: verifying the attached shell is this attempt's container shell before launching`)
+      entryGuardTimeoutHandle = setTimeout(() => {
+        entryGuardTimeoutHandle = null
+        if (destroyed || !entryGuardPending) return
+        failEntry(SSH_ENTRY.LEFT, `no answer to the launch guard within ${ENTRY_GUARD_TIMEOUT_MS}ms`)
+      }, ENTRY_GUARD_TIMEOUT_MS)
+      ptyProcess.write(buildEntryGuardCommand() + '\r')
+    }
+
+    // #242 round-2 MINOR fix: `runningClaudeInfo` lets a caller that just
+    // resolved a tier-3 staging failure (or timeout) carry that reason
+    // forward onto the 'running-claude' state this function emits, instead
+    // of it being silently overwritten. Before this fix, the staging
+    // sentinel handler called setFlowState('running-setup',
+    // `tmux-stage-fail:<reason>`) and then IMMEDIATELY called
+    // writeClaudeCmd(), whose own setFlowState('running-claude') fired in
+    // the same tick -- both IPC messages went out, but any renderer that
+    // paints only the CURRENT state (not a log of every emit) never showed
+    // the reason. Passing it through here means the state a listener
+    // actually observes carries the info.
+    const writeClaudeCmd = (runningClaudeInfo?: string) => {
+      // Follow-up adversarial pass (lifecycle MAJOR): bail at the TOP, not just
+      // in the deferred write callback below. Reached from a resolving download
+      // / push promise after teardown, the old code still ran the whole body --
+      // emitting flow state and session-info onto the id's channels and
+      // mutating sshTmuxWrappedBySession -- and only the final write was
+      // suppressed. Everything this function does is meaningless for a
+      // destroyed flow, and harmful once the id has been respawned.
+      if (destroyed) return
+      // rc.15 review R1 (spec review BLOCKER): the claude command is never
+      // written for a container entry that failed -- a shell lost after the
+      // setup went out would otherwise get claude typed onto the HOST by the
+      // next prompt-shaped line. Defence in depth, like proceedAfterSetup's.
+      if (runtimeEntryFailed) return
       // Idempotent. shellOnly is intentionally NOT gated: this writer
       // only runs after the user clicked Launch Claude (or after a
       // user-consented chain reached this stage), so the click is
       // their explicit consent regardless of any saved shellOnly flag.
       if (claudeSent) return
       claudeSent = true
-      setFlowState('running-claude')
-      logInfo(`[ssh] ${sessionId}: writing claudeCmd`)
-      setTimeout(() => ptyProcess.write(claudeCmd + '\r'), 200)
+      // #242: wrap in `tmux new-session -A` when detection found a binary
+      // on the remote, so a dropped SSH connection survives -- reconnecting
+      // and running this exact flow again lands on the SAME command, and
+      // `-A` attaches to the still-running claude instead of launching a
+      // second one. No wrap when detection found nothing (host has no tmux
+      // and no staged fallback) -- the bare claudeCmd is unchanged from
+      // pre-#242 behaviour.
+      let cmdToWrite = claudeCmd
+      let tmuxWrapped = false
+      // item 1: even a detected tmux is NOT used when persistence is off.
+      if (persistenceEnabled && detectedTmuxSource) {
+        // #242 round-3 correction (I3): buildTmuxLaunchCommand no longer
+        // takes a tmuxBin at all -- it picks ON_PATH_TMUX_BIN_EXPR /
+        // STAGED_TMUX_BIN_EXPR from `staged` alone, so there is no
+        // wire-reported operand left for this sink to trust. The try/catch
+        // stays as defence-in-depth: writeClaudeCmd is reached from
+        // setTimeout callbacks (armIdleFallback, ~line 546/583) AND directly
+        // from the onData listener -- an uncaught throw from either is
+        // re-thrown by the global uncaughtException handler and crashes main
+        // (adversarial review, #188, same shape documented on
+        // assertNotOptionLike in ssh-args.ts).
+        try {
+          cmdToWrite = buildTmuxLaunchCommand({ sessionId, innerCmd: claudeCmd, staged: detectedTmuxSource === 'staged', reconnect: !!ssh.reconnect })
+          tmuxWrapped = true
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: tmux launch command build failed, writing bare claudeCmd instead: ${(err as Error)?.message ?? err}`)
+        }
+      }
+      // #242 tier 5: `--continue` on a reconnect, but ONLY for the bare
+      // (non-tmux-wrapped) launch -- see buildSshClaudeFlags's doc comment
+      // (ssh-tmux.ts) for why `tmuxWrapped` (the ACTUAL outcome of the wrap
+      // attempt above, not merely `detectedTmuxSource`) is the right gate: a
+      // build-error in the try/catch above also means no tmux is in play
+      // for this write, even though a binary WAS detected.
+      const continueFlag = buildSshClaudeFlags({ reconnect: !!ssh.reconnect, tmuxInPlay: tmuxWrapped })
+      if (continueFlag) cmdToWrite = `${cmdToWrite} ${continueFlag}`
+      // #242 tier 5: resolveRunningClaudeInfo defaults the reason to
+      // 'probe=none' when this call carries no explicit one AND the launch
+      // ended up unwrapped -- every live tier-3/4 failure path already
+      // passes its own reason (stage-fail/push-fail) straight into
+      // runningClaudeInfo, but a defence-in-depth default means ANY future
+      // call site that reaches here unwrapped with no reason still tells
+      // the renderer SOMETHING rather than emitting 'running-claude' with
+      // no info at all -- the "failing silently" gap this tier closes.
+      // item 7 (resume-outcome messaging): on a reconnect that actually
+      // reattached (tmux in play), surface a friendly 'reattach' marker instead
+      // of the silent success (undefined) so the overlay can say "reconnecting
+      // to your session" rather than "launching Claude". Only when there is no
+      // failure reason to show (tmuxWrapped ⇒ runningClaudeInfo is undefined).
+      const runInfo = resolveRunningClaudeInfo(runningClaudeInfo, tmuxWrapped)
+      setFlowState('running-claude', (ssh.reconnect && tmuxWrapped) ? 'reattach' : runInfo)
+      // items 8/9: authoritative persistence signal for THIS session -- whether
+      // the launch actually wrapped in tmux. Re-send the account alongside so a
+      // renderer that missed the latch push still gets both.
+      emitSshSessionInfo(win, sessionId, { tmuxPersistent: tmuxWrapped, remoteAccount })
+      // Track locally so close/quit (killPty, gracefulExitPty) DETACH rather
+      // than destroy this session's surviving remote -- see the map's doc above.
+      if (tmuxWrapped) sshTmuxWrappedBySession.add(sessionId)
+      else sshTmuxWrappedBySession.delete(sessionId)
+      logInfo(`[ssh] ${sessionId}: writing claudeCmd${tmuxWrapped ? ' (tmux-wrapped)' : ''}${continueFlag ? ' (+continue)' : ''}`)
+      // ADR-009 round 3 (Codex finding 1): the after-entry watch stays live
+      // through this window (it gates on !claudeWritten, not !claudeSent), so an
+      // OUT or a host-back detach in the 200ms fails the entry and the write
+      // below bails -- the command never lands on the returned host. (R1
+      // re-attack MINOR: failEntry cancels the timer itself, so a Run again
+      // inside this window cannot inherit attempt-1's write.)
+      scheduleDeferredEntryWrite(200, () => {
+        // #242 finding F3 (adversarial review round 4, MAJOR): this write is
+        // reachable from a leaked timer (stagingTimeoutHandle/
+        // pushTimeoutHandle/downloadTimeoutHandle -- all now cleared in
+        // destroy(), but a future timer added to this ladder could just as
+        // easily forget to be) firing AFTER the session was torn down.
+        // `destroyed` bails before ever attempting the write; the try/catch
+        // is defence-in-depth against any OTHER reason ptyProcess.write()
+        // might throw post-teardown (killPty's own write wraps in the same
+        // /* best-effort */ shape for exactly this reason).
+        // R1: a genuine OUT or a plain host-back in this window set
+        // runtimeEntryFailed via the after-entry watch, which bails here.
+        if (destroyed || runtimeEntryFailed) return
+        try {
+          ptyProcess.write(cmdToWrite + '\r')
+          // The command is out: only now does the after-entry watch stand down.
+          claudeWritten = true
+          // Follow-up adversarial pass (fail-posture MAJOR): arm the
+          // wrapped-launch watchdog only once the wrapped command has actually
+          // been written -- see tmuxLaunchWatchUntil's doc comment.
+          if (tmuxWrapped) tmuxLaunchWatchUntil = Date.now() + TMUX_LAUNCH_WATCH_MS
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: writeClaudeCmd's write failed post-schedule: ${(err as Error)?.message ?? err}`)
+        }
+      })
+    }
+
+    /**
+     * Follow-up adversarial pass (fail-posture MAJOR): the umbrella fallback for
+     * a tmux-wrapped launch that the remote refuses.
+     *
+     * The stage/push scripts smoke-test the binary they install with `tmux -V`
+     * and `tmux new-session -d`, and their doc comments claim that surfaces the
+     * "missing or unsuitable terminal" (terminfo) failure. It does not: a
+     * DETACHED new-session never opens a client tty, so terminfo is never
+     * consulted, and the pinned static build ships without compiled-in fallback
+     * entries. On a remote with no terminfo database for $TERM -- the minimal
+     * container that is exactly this tier's target -- staging reports `ok`, the
+     * ATTACHED launch then dies with `open terminal failed`, and tier 2 selects
+     * the same binary on every later connect. Nothing recovered: claude never
+     * started, and Launch Claude is inert once `claudeSent` latched.
+     *
+     * Rather than teach the smoke test to predict every way a remote can refuse
+     * to run tmux (terminfo, an already-nested session, a wrong-arch or
+     * truncated binary, a tmux too old for `new-session -A`), watch the PTY for
+     * a short window after the wrapped launch and fall back to the BARE launch
+     * the moment the remote says it failed. That is safe precisely because a
+     * failed wrap means nothing is running: the pane is back at a shell prompt.
+     *
+     * The window is deliberately short and closes the instant claude latches, so
+     * this can never fire against claude's own output; every pattern below is a
+     * message a shell or tmux emits about the command we just typed.
+     */
+    const TMUX_LAUNCH_WATCH_MS = 6000
+    /** Deadline (epoch ms) until which the wrapped launch is being watched; 0 = not watching. */
+    let tmuxLaunchWatchUntil = 0
+    let tmuxLaunchFellBack = false
+    /**
+     * Round-2 adversarial pass (MAJOR): the first cut of this regex matched
+     * bare `command not found` / `permission denied` / `is a directory`
+     * anywhere in the chunk, which fires on output that has nothing to do with
+     * the wrap -- claude's own `EACCES: permission denied` startup stderr, and
+     * (worse) the transcript redraw when a RECONNECT successfully attaches to a
+     * live session, since a coding transcript routinely contains those exact
+     * words. The cost of a false positive is not cosmetic: the bare claude line
+     * is typed into a pane where claude is already running (so it lands in the
+     * composer as a chat message) and the session is dropped from
+     * sshTmuxWrappedBySession, which turns a later close into a KILL of the
+     * remote rather than a detach.
+     *
+     * Split in two, so a generic error only counts when it is demonstrably
+     * about tmux:
+     *  - UNAMBIGUOUS: phrases only tmux itself emits; match anywhere.
+     *  - GENERIC: shell/exec failures that must share a LINE with the word
+     *    `tmux` (every wrapped launch names the binary, so a real failure to
+     *    run it always does).
+     * `no server running on` was dropped entirely: buildTmuxLaunchCommand's own
+     * `|| <fresh create>` leg already self-heals that race, and reacting to it
+     * here fought the wrapper for the same case.
+     */
+    const TMUX_LAUNCH_FAILED_UNAMBIGUOUS_RE = /open terminal failed|sessions should be nested|missing or unsuitable terminal/i
+    const TMUX_LAUNCH_FAILED_GENERIC_RE = /^[^\r\n]*\btmux\b[^\r\n]*(command not found|not found|permission denied|exec format error|cannot execute binary file|is a directory)/im
+    const handleWrappedLaunchFailure = (data: string): void => {
+      if (destroyed || tmuxLaunchFellBack || !tmuxLaunchWatchUntil) return
+      if (Date.now() > tmuxLaunchWatchUntil) { tmuxLaunchWatchUntil = 0; return }
+      if (claudeRunning) { tmuxLaunchWatchUntil = 0; return }
+      // Round-2 adversarial pass (MAJOR): claude's UI appearing in THIS chunk is
+      // proof the wrap worked, and it is checked BEFORE the failure match --
+      // the claudeRunning latch below runs later in the same handler, so on a
+      // reattach the transcript's own text used to be judged before the UI that
+      // accompanied it. Any chunk carrying claude's UI closes the window for
+      // good.
+      if (detectClaudeUi(data, claudeSent)) { tmuxLaunchWatchUntil = 0; return }
+      const m = data.match(TMUX_LAUNCH_FAILED_UNAMBIGUOUS_RE) ?? data.match(TMUX_LAUNCH_FAILED_GENERIC_RE)
+      if (!m) return
+      tmuxLaunchFellBack = true
+      tmuxLaunchWatchUntil = 0
+      logError(`[ssh] ${sessionId}: tmux-wrapped launch was refused by the remote (${m[0]}) -- falling back to a bare claude launch`)
+      // The wrap is off for this session: correct the persistence signal the
+      // wrapped write already emitted, and stop close/quit from trying to
+      // DETACH from a tmux session that was never created.
+      sshTmuxWrappedBySession.delete(sessionId)
+      emitSshSessionInfo(win, sessionId, { tmuxPersistent: false, remoteAccount })
+      // Reconnecting with no tmux in play is exactly the case tier 5 exists
+      // for, so the bare retry carries --continue when this spawn is a respawn.
+      const bareFlags = buildSshClaudeFlags({ reconnect: !!ssh.reconnect, tmuxInPlay: false })
+      const bareCmd = bareFlags ? `${claudeCmd} ${bareFlags}` : claudeCmd
+      setFlowState('running-claude', 'tmux-launch-refused')
+      try {
+        ptyProcess.write(bareCmd + '\r')
+      } catch (err) {
+        logError(`[ssh] ${sessionId}: bare-launch fallback write failed: ${(err as Error)?.message ?? err}`)
+      }
+    }
+
+    /**
+     * #242 tier 3: write the curl/wget staging fragment. Reached only when
+     * tier 1/2 (PATH, ~/.claude/bin) both missed -- see proceedAfterSetup.
+     * Idempotent like the other writers; the timeout is the fallback path
+     * for a sentinel that never arrives (dead download, a `sh` that
+     * doesn't support a construct we assumed, etc.) -- either way we must
+     * still reach writeClaudeCmd so the session isn't left stuck forever.
+     */
+    const writeTmuxStageCmd = () => {
+      if (stagingSent) return
+      stagingSent = true
+      stagingAttempted = true
+      setFlowState('running-setup', 'tmux-stage')
+      logInfo(`[ssh] ${sessionId}: tmux not found on remote -- staging via curl/wget (#242 tier 3)`)
+      stagingTimeoutHandle = setTimeout(() => {
+        stagingTimeoutHandle = null
+        if (!stagingDone) {
+          stagingDone = true
+          logError(`[ssh] ${sessionId}: tmux stage sentinel not received within ${STAGE_TIMEOUT_MS}ms -- falling through to bare launch`)
+          writeClaudeCmd('tmux-stage-fail:timeout')
+        }
+      }, STAGE_TIMEOUT_MS)
+      setTimeout(() => {
+        // #242 finding F3 (adversarial review round 4, MAJOR): bail before
+        // ever touching ptyProcess if the session was torn down while this
+        // was scheduled -- same reasoning as writeClaudeCmd's write-callback
+        // above.
+        if (destroyed) return
+        // #242 M5 correction (adversarial review round 5): buildTmuxStageCommand
+        // is pure, but it is NOT argument-free and it CAN throw -- it takes
+        // `sshNonce` and calls assertSafeTmuxStageConstants (ssh-tmux-stage.ts),
+        // which validates the nonce's charset among other module constants.
+        // In production that nonce is always a valid randomId() (guaranteed
+        // by construction, so this throw is not expected to fire), but the
+        // guard against a future call site passing something else is exactly
+        // why the try/catch below exists -- same shape every other PTY writer
+        // in this function uses (adversarial review, #188 shape).
+        try {
+          // #242 tier 4: fire the arch probe ALONGSIDE staging, not only
+          // after a fail=download sentinel arrives. `uname` resolves near-
+          // instantly; curl/wget's failure on an egress-less host typically
+          // takes longer (DNS timeout, connect timeout) -- sending the probe
+          // now means detectedArch is very likely already known by the time
+          // (if ever) tier 3 reports fail=download, with zero added latency
+          // on the critical path (a separate write, not a blocking round
+          // trip). A probe write failing to build/send is swallowed exactly
+          // like a stage write failure would be -- it only ever degrades
+          // tier 4 to "arch unknown, don't attempt the push", never blocks
+          // tier 3 itself.
+          try {
+            // #242 round-3 MINOR fix: bracketed in stty -echo/stty echo, the
+            // same treatment buildTmuxStageCommand's payload gets, so the
+            // probe command and its plaintext reply are not the one thing on
+            // this ladder still visible in the user's pane. See
+            // buildArchProbeCommandBracketed's doc comment for why it's
+            // bracketed rather than base64-wrapped like the stage command.
+            ptyProcess.write(buildArchProbeCommandBracketed() + '\r')
+          } catch (err) {
+            logError(`[ssh] ${sessionId}: tmux arch probe failed to send (tier 4 disabled for this session): ${(err as Error)?.message ?? err}`)
+          }
+          ptyProcess.write(buildTmuxStageCommand(sshNonce) + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: tmux stage command build failed, falling through to bare launch: ${(err as Error)?.message ?? err}`)
+          stagingDone = true
+          if (stagingTimeoutHandle) {
+            clearTimeout(stagingTimeoutHandle)
+            stagingTimeoutHandle = null
+          }
+          writeClaudeCmd('tmux-stage-fail:build-error')
+        }
+      }, 200)
+    }
+
+    /**
+     * #242 tier 4: push a pre-downloaded/cached, sha256-verified tmux
+     * archive down the live PTY as base64, for a remote tier 3 could not
+     * reach because it has NO outbound egress at all. Reached ONLY from the
+     * tier-3 stage-sentinel handler below, and only when `arch` is known
+     * (see the arch probe fired alongside writeTmuxStageCmd above) -- never
+     * from a code path that could fire without it. Idempotent (`pushSent`)
+     * like every other writer in this flow.
+     *
+     * On ANY failure to obtain bytes (no cache, download failed, digest
+     * mismatch) or to build/drive the push command, falls through to
+     * writeClaudeCmd exactly like a tier-3 failure would -- tier 4 is a
+     * best-effort extra rung on the ladder, never a NEW way for the flow to
+     * get stuck with claude never launched.
+     */
+    const attemptTmuxPush = (arch: TmuxStageTarget) => {
+      if (pushSent) return
+      pushSent = true
+      // #242 finding F1 (adversarial review round 4, BLOCKER): arm the
+      // download-phase timeout IMMEDIATELY -- before the host-side resolver
+      // (cache lookup or network fetch) has even started -- so a resolver
+      // that never settles (a stalled HTTPS response) cannot leave this
+      // session wedged forever with claude never launched. Cleared in the
+      // resolver's `.then()`/`.catch()` below BEFORE the `pushDone` guard
+      // runs, so a buffer that arrives after the timeout already fired is
+      // still correctly discarded rather than acted on twice.
+      downloadTimeoutHandle = setTimeout(() => {
+        downloadTimeoutHandle = null
+        if (pushDone) return
+        pushDone = true
+        logError(`[ssh] ${sessionId}: tmux archive download/cache lookup did not settle within ${DOWNLOAD_TIMEOUT_MS}ms -- falling through to bare launch`)
+        writeClaudeCmd('tmux-push-fail:download-timeout')
+      }, DOWNLOAD_TIMEOUT_MS)
+      setFlowState('running-setup', 'tmux-push')
+      logInfo(`[ssh] ${sessionId}: tmux download failed on remote (no egress) -- pushing cached/downloaded archive down the PTY (#242 tier 4, arch=${arch})`)
+      // #242 round-2 MAJOR fix: PUSH_TIMEOUT_MS used to be armed HERE, before
+      // even the host-side download/cache lookup ran -- so a slow (first-run,
+      // possibly-proxied) download ate the SAME 120s budget as the ~60s+
+      // chunked transfer that follows it, and nothing stopped a still-running
+      // runChunkedWrite when the timer fired anyway: writeClaudeCmd wrote
+      // `claude ...\r` into the PTY while base64 chunk lines were still being
+      // written, interleaving the launch command into the middle of the
+      // payload. Fixed two ways, belt-and-braces:
+      //   1. The timer is armed ONLY once every chunk has actually been
+      //      written (see the `onDone` hook below) -- from then on the only
+      //      thing left to wait for is the remote decoding/verifying/
+      //      installing and echoing its sentinel, which is what
+      //      PUSH_TIMEOUT_MS is actually sized for.
+      //   2. `isAlive` folds in `!pushDone`, so ANY path that sets pushDone
+      //      (this timer, a download failure, a build error) makes the NEXT
+      //      liveness check inside runChunkedWrite bail before its next
+      //      write.
+      // #242 round-3 MAJOR fix: (2) above only ever protected THIS function's
+      // OWN write loop -- it said nothing about a Launch-Claude click landing
+      // on `proceedAfterSetup`/`flowController.launchClaude` from OUTSIDE
+      // this function while pushSent is true and pushDone is still false
+      // (the entire multi-second-to-multi-minute window this transfer is
+      // open). That path bypassed runChunkedWrite's isAlive check entirely --
+      // it called writeClaudeCmd() directly, mid-transfer. Both call sites
+      // now carry their own `if (pushSent && !pushDone) return` guard (same
+      // shape as their pre-existing stagingSent/stagingDone guard), which is
+      // what actually makes "there is no longer a window where writeClaudeCmd
+      // can fire while a chunk write is still in flight" true.
+      const armPushSentinelTimeout = () => {
+        if (pushDone) return
+        pushTimeoutHandle = setTimeout(() => {
+          pushTimeoutHandle = null
+          if (!pushDone) {
+            pushDone = true
+            logError(`[ssh] ${sessionId}: tmux push sentinel not received within ${PUSH_TIMEOUT_MS}ms -- falling through to bare launch`)
+            writeClaudeCmd('tmux-push-fail:timeout')
+          }
+        }, PUSH_TIMEOUT_MS)
+      }
+      // #242 round-3 MAJOR fix (test coverage): calls the injectable
+      // `tmuxArchiveResolver` seam rather than `getOrDownloadTmuxArchive`
+      // directly, so tests can drive a full push without touching disk or
+      // the network (see `_setTmuxArchiveResolverForTest`). Identical in
+      // production -- the seam defaults to the real function.
+      tmuxArchiveResolver(arch).then((buf) => {
+        // #242 finding F1: clear the download-phase timeout BEFORE the
+        // pushDone guard below runs -- a resolver that settles just as (or
+        // just after) the timeout fires must not leave a stray timer
+        // running; the guard immediately after still discards a buffer
+        // that arrives too late to matter.
+        if (downloadTimeoutHandle) {
+          clearTimeout(downloadTimeoutHandle)
+          downloadTimeoutHandle = null
+        }
+        // Timeout (or some other path) may have already resolved this
+        // attempt by the time the download/cache lookup settles -- never
+        // act twice.
+        if (pushDone) return
+        if (!buf) {
+          pushDone = true
+          logError(`[ssh] ${sessionId}: no cached/downloadable tmux archive for arch=${arch} -- falling through to bare launch`)
+          writeClaudeCmd('tmux-stage-fail:download')
+          return
+        }
+        try {
+          const pushCmd = buildTmuxPushCommand({ arch, tarGzBase64: buf.toString('base64'), nonce: sshNonce })
+          const totalLen = pushCmd.length
+          // #242 round-3 MINOR fix: runChunkedWrite's onDone alone can't
+          // tell "all bytes landed" apart from "bailed mid-transfer" (a
+          // respawn replaced the PTY, or a write threw) -- tracking the last
+          // onProgress byte count here is how attemptTmuxPush tells them
+          // apart below, so an ABORTED transfer can be recovered from
+          // (restore echo, drop the partial payload file) instead of being
+          // treated identically to a clean finish.
+          let bytesLanded = 0
+          // #242 round-2 MAJOR fix: onProgress fires once per chunk (~4961
+          // times for a ~1.27 MB payload at WRITE_CHUNK_SIZE=256B) -- forwarding
+          // every call straight to setFlowState/emitSshFlowState would be
+          // ~5000 log lines + ~5000 IPC sends for one push, and that work runs
+          // inside the SAME 12ms per-chunk timer loop the fixed-budget
+          // timeout above is racing. Throttle to one emit per INTEGER percent
+          // change (~100 emits total) -- runChunkedWrite's own per-chunk
+          // contract (pty-chunked-write.test.ts) is untouched; only this
+          // call site's use of it is throttled.
+          let lastPct = -1
+          runChunkedWrite(pushCmd, {
+            write: (slice) => ptyProcess.write(slice),
+            // Same identity-guarded liveness check writeChunked/writeEnvelopeChunked
+            // use -- a respawn replaces ptyProcess under the same sessionId --
+            // PLUS `!pushDone`, so the sentinel timer (armed below, once
+            // every byte has landed) or any other path that resolves this
+            // attempt can stop an in-flight write; see this function's own
+            // doc comment above for the interleaving hazard this closes.
+            // #242 M3 (adversarial review round 5): also gate on `!destroyed`
+            // -- the ptySessions identity check alone is keyed on caller
+            // discipline (killPty deletes the map entry in the SAME
+            // synchronous frame it kills the pty), not on an invariant. A
+            // direct `getSshFlow(id).destroy()` (bypassing killPty) flips
+            // `destroyed` without ever touching the ptySessions map entry,
+            // so the identity check alone would still report "alive" and let
+            // this write land on a flow that has explicitly torn itself down.
+            isAlive: () => ptySessions.get(sessionId)?.ptyProcess === ptyProcess && !pushDone && !destroyed,
+            onProgress: (sent, total) => {
+              bytesLanded = sent
+              const pct = total > 0 ? Math.min(100, Math.floor((sent / total) * 100)) : 100
+              if (pct === lastPct) return
+              lastPct = pct
+              setFlowState('running-setup', `staging tmux ${pct}%`)
+            },
+            onDone: () => {
+              if (pushDone) return
+              // #242 round-3 MINOR fix: runChunkedWrite's contract guarantees
+              // the LAST onProgress call reports `sent === data.length`
+              // exactly on a full, successful write -- anything less means
+              // this attempt bailed before finishing (isAlive went false, or
+              // a write threw). An aborted transfer must not be treated like
+              // a clean finish-then-wait-for-sentinel: the remote is still
+              // sitting at `stty -echo` with up to ~1.27 MB of partial
+              // base64 in $PUSH_ACCUMULATOR_PATH, and arming
+              // PUSH_TIMEOUT_MS on top of that would, 120s later, write the
+              // claude launch command into a no-echo shell with a dangling
+              // temp file still on disk.
+              const completed = bytesLanded === totalLen
+              // #242 M3: same `!destroyed` addition as isAlive above -- a
+              // flow torn down via a direct destroy() call (not killPty)
+              // must not have its recovery/sentinel-arming writes land here
+              // either.
+              const stillLive = ptySessions.get(sessionId)?.ptyProcess === ptyProcess && !destroyed
+              if (!completed) {
+                if (stillLive) {
+                  try {
+                    // #242 finding F2 (adversarial review round 4, MAJOR):
+                    // the last bytes actually delivered are an arbitrary
+                    // mid-line slice of an `echo '<base64...` chunk write --
+                    // the OPENING single quote landed, its CLOSING quote did
+                    // not, so the remote's line discipline is sitting inside
+                    // a still-open string. Writing the recovery text straight
+                    // after that (the pre-fix shape) becomes literal content
+                    // inside that open quote, and so does writeClaudeCmd's
+                    // `claude ...\r` a moment later -- the session hangs at a
+                    // '>' continuation prompt with echo still off instead of
+                    // falling through to the bare launch. Send an interrupt
+                    // as its OWN write FIRST: a Ctrl-C makes the remote
+                    // shell's line discipline discard the dangling partial
+                    // line (the same mechanism as pressing Ctrl-C to abandon
+                    // a half-typed command at an interactive prompt) before
+                    // the recovery command is ever typed, so it lands as
+                    // real, executable shell text.
+                    ptyProcess.write('\x03')
+                    // Restore echo and drop the partial accumulator file --
+                    // best-effort; this recovery write failing is no worse
+                    // than the abort itself, so it falls through to the bare
+                    // launch regardless.
+                    ptyProcess.write(`stty echo 2>/dev/null; rm -f "$${PUSH_ACCUMULATOR_VAR}"\r`)
+                  } catch { /* best-effort recovery; falling through regardless */ }
+                }
+                pushDone = true
+                logError(`[ssh] ${sessionId}: tmux push aborted mid-transfer (${bytesLanded}/${totalLen} bytes) -- falling through to bare launch`)
+                writeClaudeCmd('tmux-push-fail:aborted')
+                return
+              }
+              // Full, clean finish. Only start waiting for the remote's
+              // completion sentinel if this attempt is still open AND the
+              // PTY we just finished writing to is still the live one -- a
+              // session that died mid-transfer already has nothing further
+              // to wait for, and arming a timer that can only ever write
+              // into a stale/replaced PTY would be a new hazard of exactly
+              // the kind this fix closes.
+              if (stillLive) {
+                armPushSentinelTimeout()
+              }
+            },
+          })
+        } catch (err) {
+          pushDone = true
+          logError(`[ssh] ${sessionId}: tmux push command build failed, falling through to bare launch: ${(err as Error)?.message ?? err}`)
+          writeClaudeCmd('tmux-push-fail:build-error')
+        }
+      }).catch((err) => {
+        // #242 finding F4 (adversarial review round 4, MINOR; correction in
+        // round 5, M4): the production resolver (getOrDownloadTmuxArchive) is
+        // fully try/catch'd and can never reject, but `tmuxArchiveResolver`
+        // is an injectable test seam (_setTmuxArchiveResolverForTest) -- a
+        // rejecting resolver here would otherwise be an UNHANDLED REJECTION.
+        // debug-logger.ts's `process.on('unhandledRejection')` handler only
+        // LOGS it and returns -- it does NOT re-throw and cannot kill main;
+        // that re-throw behaviour belongs to the SEPARATE
+        // `process.on('uncaughtException')` handler, which only fires on a
+        // synchronous throw, never on a rejected promise (an earlier version
+        // of this comment conflated the two). This `.catch()` is still worth
+        // having even though nothing here would crash main: without it, a
+        // rejecting resolver leaves this session silently wedged until
+        // DOWNLOAD_TIMEOUT_MS (45s) fires instead of falling through in the
+        // same tick.
+        if (downloadTimeoutHandle) {
+          clearTimeout(downloadTimeoutHandle)
+          downloadTimeoutHandle = null
+        }
+        if (pushDone) return
+        pushDone = true
+        logError(`[ssh] ${sessionId}: tmux archive resolver rejected, falling through to bare launch: ${(err as Error)?.message ?? err}`)
+        writeClaudeCmd('tmux-push-fail:download-error')
+      })
+    }
+
+    /**
+     * Single choke point every setup-completion path (host AND container,
+     * idle-fallback AND prompt-detection, AND a Launch-Claude re-click that
+     * lands on already-completed setup -- see launchClaude's `setupDone`
+     * branch, wired through here in the #242 round-2 fix) now calls instead
+     * of writeClaudeCmd directly. If tier 1/2 already found a tmux binary
+     * (detectedTmuxSource set), or staging already ran once this session,
+     * proceed straight to the claude launch exactly as before #242 tier 3
+     * existed. Otherwise this is the FIRST time we've learned tmux is
+     * missing -- try staging it before giving up and launching bare.
+     */
+    const proceedAfterSetup = () => {
+      if (claudeSent) return
+      // rc.15 review R1: a container entry that failed -- including one lost
+      // AFTER its setup went out -- never proceeds to a claude launch. Defence
+      // in depth: failEntry also drops the setup latches, so today no caller
+      // reaches this line with the flag set; the invariant must not depend on
+      // that staying true.
+      if (runtimeEntryFailed) return
+      // #242 round-3 MINOR fix: the choke point itself had no
+      // staging-in-flight guard -- launchClaude() got one (`if (stagingSent
+      // && !stagingDone) return`) because a second click is an obvious
+      // re-entry path, but proceedAfterSetup is ALSO reached from four other
+      // call sites (idle-fallback after host/container setup, and the
+      // prompt-detection branches further down in onData), each latched only
+      // by its own `setupShellReady`/`containerSetupShellReady` flag -- not
+      // by staging state. Those flags prevent that SPECIFIC site from firing
+      // twice, but nothing stopped a DIFFERENT site (e.g. the container path)
+      // from reaching this function while the host path's staging attempt is
+      // still mid-curl, and falling straight through to writeClaudeCmd()
+      // below. Mirroring launchClaude's guard here means the invariant does
+      // not depend on "host and container setup never both run in one
+      // session" holding forever -- it holds even if that assumption breaks.
+      if (stagingSent && !stagingDone) return
+      // #242 round-3 MAJOR fix: same shape, for the tier-4 push. A tier-4
+      // push can be in flight for up to ~PUSH_TIMEOUT_MS (120s, plus however
+      // long the ~1.27 MB chunked transfer itself takes) while claudeSent is
+      // still false -- reaching proceedAfterSetup during that window (e.g.
+      // via the idle-fallback branches, which are NOT latched by push
+      // state) fell straight through to writeClaudeCmd() below, writing
+      // `claude ...\r` into the PTY while base64 chunk lines were still
+      // arriving and corrupting the in-flight transfer. Only the push's own
+      // sentinel/timeout/build-error handler (not this choke point) may
+      // call writeClaudeCmd from here on while a push is open.
+      if (pushSent && !pushDone) return
+      // item 1: skip tier-3/4 staging entirely when persistence is off -- this
+      // is the "no silent tmux install" guarantee; go straight to bare claude.
+      // item 3: also skip on a Windows remote -- the POSIX staging ladder
+      // (`stty`/`uname`/`base64 -d | sh`) is meaningless on cmd.exe and, since
+      // the Windows setup deliberately reports tmux=none, this gate would fire
+      // and type ~3 KB of POSIX shell into cmd.exe + stall 20s + show a false
+      // "Installing tmux…" overlay. Windows never persists via tmux; go straight
+      // to the bare cmd.exe launch (adversarial review, 2026-08-18).
+      if (persistenceEnabled && !isWindowsRemote && !detectedTmuxSource && !stagingAttempted) {
+        writeTmuxStageCmd()
+        return
+      }
+      // rc.15 review R1 round 2 (quality MAJOR): the launch guard proved the
+      // container shell once, before the setup went out. A detach or a stopped
+      // container in the seconds between `setup ok` and this point prints no
+      // OUT, and a host prompt the regex cannot strip is never recognised
+      // coming back -- so the claude command, the second ordinary write, gets
+      // its own proof. No answer within ENTRY_GUARD_TIMEOUT_MS fails closed as
+      // LEFT with nothing typed.
+      if (entryProvable && entryProven && inInnerShell && !claudeReproven) {
+        startEntryGuard(() => { claudeReproven = true; proceedAfterSetup() })
+        return
+      }
+      writeClaudeCmd()
     }
 
     /**
@@ -694,10 +3408,102 @@ export function spawnPty(
         //     the user only wanted to enter the container.
         // Users who want claude on the bare HOST can use "Launch
         // Claude on host" instead, which DOES run host setup.
+        if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
+        // rc.14 review F1 round 2 (aicc_planning#45): a FAILED container entry
+        // can be run again in-session -- the user starts the container (or
+        // fixes sudo / the engine) elsewhere, then clicks Run again on the
+        // failed overlay. Everything the entry watch latched is reset so the
+        // second attempt is judged on its own output; sudoPasswordSent too, so
+        // a saved sudo secret is offered to the new prompt. Still refused from
+        // any other state: this is the one re-entry, not a general reset.
+        if (currentFlowState === 'failed' && runtimeEntryFailed) {
+          runtimeEntryFailed = false
+          entryFailureReason = SSH_ENTRY.FAILED
+          postCommandSent = false
+          postCommandWritten = false
+          postCommandShellReady = false
+          entrySuspect = false
+          entryOutputSeen = false
+          entryTrailingLine = ''
+          entrySilentHoldFires = 0
+          entryPromptHoldFires = 0
+          // rc.15 review R1: the new attempt starts unproven, with no nonce until
+          // writePostCommand mints one, and no consent carried over.
+          entryUnprovenHoldFires = 0
+          entryProven = false
+          entryNonce = null
+          entryUnverified = false
+          inInnerShell = false
+          innerPromptLine = ''
+          afterEntryTrailingLine = ''
+          dropEntryGuard()
+          claudeReproven = false
+          sudoPasswordSent = false
+          clearSshLineBuffer(sessionId, 'runtime')
+          logInfo(`[ssh] ${sessionId}: re-running the post-command after a failed container entry`)
+          writePostCommand()
+          return
+        }
         if (currentFlowState !== 'awaiting-postcommand') return
         writePostCommand()
       },
       launchClaude: () => {
+        // Item e: an unusable container runtime is terminal for this session.
+        // Without this, the failed overlay's "Retry Launch" button walks the
+        // host ladder (inInnerShell false, setupSent false -> writeHostSetupCmd)
+        // and starts claude OUTSIDE the container the config asked for. Re-emit
+        // so the overlay keeps saying why instead of appearing inert; the user's
+        // route out is Skip (an explicit choice to drive the raw shell) or
+        // fixing the config.
+        entrySkipped = false
+        if (runtimeInvalid) { setFlowState('failed', 'container runtime invalid'); return }
+        // rc.14 review F1: same shape for a container the engine could not enter.
+        // inInnerShell is still false here, so without this guard Retry Launch
+        // would take the host ladder and start claude on the host.
+        if (runtimeEntryFailed) { setFlowState('failed', entryFailureReason); return }
+        // rc.15 review R1 round 2 (quality MAJOR): once the claude command has
+        // been typed, Launch is inert -- the latch proceedAfterSetup already
+        // has, applied before the container branch below. Without it, Retry
+        // Launch after claude exited to the container shell typed the launch
+        // guard into the live pane, and because the after-entry watch stands
+        // down at claudeSent its answer was never read: the timeout then called
+        // a healthy container shell "gone". Re-emitted so the overlay's busy
+        // state clears.
+        if (claudeSent) { setFlowState(currentFlowState, currentFlowInfo); return }
+        // #242 round-2 MAJOR fix: tier-3 staging can be in flight for up to
+        // STAGE_TIMEOUT_MS (20s) while claudeSent is still false, a window
+        // that didn't exist pre-#242 (claudeSent used to flip true in the
+        // same tick setup completed). A second Launch-Claude click in that
+        // window used to write a fresh claude command into a PTY that's
+        // mid-curl. No-op until the in-flight attempt's own sentinel/timeout
+        // handler resolves it -- that handler (not a re-click) is the only
+        // thing allowed to call writeClaudeCmd from here on.
+        if (stagingSent && !stagingDone) return
+        // #242 round-3 MAJOR fix: same shape, for the tier-4 push. Without
+        // this, a Launch-Claude click during the ~60-120s tier-4 base64
+        // transfer falls through (inInnerShell false, setupSent true,
+        // setupDone true) straight into the setupDone branch below ->
+        // proceedAfterSetup() -- which the fix just above this one also now
+        // guards, but a defence-in-depth guard at BOTH call sites means the
+        // invariant doesn't depend on proceedAfterSetup being the only path
+        // that can reach writeClaudeCmd while a push is open.
+        if (pushSent && !pushDone) return
+        // rc.15 review R1: a launch guard is already out -- its answer (or its
+        // timeout) decides; a second click must not write anything meanwhile.
+        if (entryGuardPending) return
+        // rc.15 review R1: once the post-command has gone out on a container
+        // session, the host ladder is no longer an option -- the user asked for
+        // the container, and an entry that is neither proven nor explicitly
+        // consented to must not launch ANYWHERE (a Launch reaching main while
+        // the entry is still in flight used to write the host setup). Skip is
+        // the explicit route onto the raw host shell; "Launch Claude on host"
+        // is only offered BEFORE the post-command runs.
+        if (isContainerSession && postCommandSent && !inInnerShell && !entryUnverified) {
+          logInfo(`[ssh] ${sessionId}: launch refused -- the container entry is neither proven nor consented to (state=${currentFlowState})`)
+          // Re-emitted for the overlay's benefit; the state itself has not changed.
+          setFlowState(currentFlowState, currentFlowInfo)
+          return
+        }
         // Two paths depending on whether we already entered the inner
         // shell. Inner shell → container setup + claudeCmd. Host shell
         // (no postCommand or user skipped it) → host setup + claudeCmd.
@@ -705,18 +3511,104 @@ export function spawnPty(
         // Launch Claude — that IS their consent, overriding any saved
         // shellOnly preference on the config.
         if (inInnerShell) {
+          // rc.15 review R1: a PROVEN entry is re-proven at launch time. IN said
+          // the container shell was attached THEN; detach keys or a stopped
+          // container hand the host prompt back without any OUT, and a host
+          // whose prompt the regex never captured cannot be recognised coming
+          // back. So before any ordinary launch write goes out, the attached
+          // shell is asked for this attempt's CCC_ENTRY (buildEntryGuardCommand)
+          // -- only a shell descended from THIS exec answers with the nonce.
+          // No answer, or the wrong one, fails closed: nothing is written.
+          // R1 re-attack round 5 (MINOR): with the container setup already done
+          // -- a Skip inside the deferred-claude window withdrew the command --
+          // the relaunch is the claude step, and proceedAfterSetup re-proves the
+          // shell itself (claudeReproven was dropped with the command).
+          // Re-running writeContainerSetupCmd was a no-op on its latch that left
+          // the flow stranded behind an answered guard.
+          if (containerSetupDone) { proceedAfterSetup(); return }
+          if (entryProvable) { startEntryGuard(writeContainerSetupCmd); return }
+          writeContainerSetupCmd()
+        } else if (entryUnverified) {
+          // rc.15 review R1: the user clicked Launch anyway on the overlay that
+          // said the entry could not be verified. Their explicit consent, with
+          // the warning that this may run on the SSH host or whatever process
+          // is attached. It never becomes a verified entry (inInnerShell stays
+          // false); the setup simply re-runs in the attached shell.
+          logInfo(`[ssh] ${sessionId}: launching in an UNVERIFIED shell on the user's explicit consent`)
+          // Same relaunch shape as the proven leg (no guard: unverified by design).
+          if (containerSetupDone) { proceedAfterSetup(); return }
           writeContainerSetupCmd()
         } else if (!setupSent) {
           writeHostSetupCmd()
         } else if (setupDone) {
           // Setup already done from a prior runPostCommand → claude now.
-          writeClaudeCmd()
+          // #242 round-2 MAJOR fix: routed through proceedAfterSetup, not
+          // writeClaudeCmd directly -- pre-#242 this branch was effectively
+          // inert (claudeSent flipped true in the same tick setup
+          // completed), so it never got exercised by tier-3 staging. Left
+          // as a direct writeClaudeCmd() call, this path skipped staging
+          // entirely even when tier 1/2 had reported tmux=none.
+          proceedAfterSetup()
         }
       },
       skip: () => {
+        // rc.15 review R1 round 2: the user took the shell over. An `exit` they
+        // type in a container they are managing by hand is not a lost entry to
+        // re-raise the overlay for; a later Launch re-engages the watch. A
+        // launch guard still out is withdrawn with it (round 3): its answer
+        // could no longer be read, so its timeout would call the shell gone.
+        dropEntryGuard()
+        // R1 re-attack MINOR (independent review): a setup or claude payload
+        // scheduled but not yet written is withdrawn with the guard -- "Manage
+        // manually" means no auto writes, and a Skip can land inside the
+        // 200/300 ms window (an unverified Launch anyway schedules the setup
+        // synchronously, with the Skip button live). Nothing went out, so the
+        // latches say so: the setup can run afresh (and its timeout must not
+        // fail a payload that was never sent), and Launch is live again
+        // instead of inert on claudeSent.
+        if (deferredEntryWriteHandle) {
+          cancelDeferredEntryWrite()
+          if (!containerSetupDone) {
+            containerSetupSent = false
+            if (setupTimeoutHandle) {
+              clearTimeout(setupTimeoutHandle)
+              setupTimeoutHandle = null
+            }
+          }
+          if (!claudeWritten) {
+            claudeSent = false
+            // The next launch re-proves the shell before the claude step, as
+            // after a failEntry: the user has been driving it by hand since.
+            claudeReproven = false
+          }
+        }
+        entrySkipped = true
         setFlowState('skipped')
       },
+      handlePtyExit: () => {
+        // rc.15 review R1: a launch guard cannot be answered by a dead PTY; stop
+        // its timer so it does not overwrite the connection failure below with
+        // 'left the container' five seconds later (quality review).
+        dropEntryGuard()
+        // Only a connection failure BEFORE a good terminal state matters here.
+        // A mid-session drop (already claude-running) is left to the user's
+        // Restart; a deliberate close destroys the flow first, so this never
+        // runs for it (sshFlows no longer has the session by onExit time).
+        if (
+          currentFlowState === 'claude-running'
+          || currentFlowState === 'shell-only'
+          || currentFlowState === 'skipped'
+          || currentFlowState === 'failed'
+        ) return
+        setFlowState('failed', 'connection')
+      },
       destroy: () => {
+        // #242 finding F3 (adversarial review round 4, MAJOR): flip this
+        // FIRST -- writeClaudeCmd's/writeTmuxStageCmd's write-callbacks
+        // check this flag before ever touching ptyProcess, so they bail
+        // even in the window between this call starting and the
+        // clearTimeout calls below actually running.
+        destroyed = true
         if (setupTimeoutHandle) {
           clearTimeout(setupTimeoutHandle)
           setupTimeoutHandle = null
@@ -725,6 +3617,34 @@ export function spawnPty(
           clearTimeout(idleFallbackHandle)
           idleFallbackHandle = null
         }
+        // rc.15 review R1: the launch guard's timer fails the entry on fire; a
+        // torn-down flow must not emit that (setFlowState is destroyed-gated,
+        // but the timer is cleared here like every other one).
+        dropEntryGuard()
+        // ADR-009 round 3, R1 re-attack (MINOR): the deferred setup / claude
+        // write. Its callback is destroyed-gated too; cleared here so no ladder
+        // timer outlives teardown.
+        cancelDeferredEntryWrite()
+        // #242 finding F3 (adversarial review round 4, MAJOR): stagingTimeoutHandle
+        // was the one timer on this ladder NOT cleared here -- it outlives
+        // session teardown and, unguarded, drives a full claude-launch write
+        // into the PTY destroy() just tore down (proved: "WRITES AFTER
+        // DESTROY" logged from exactly this timer in the reviewer's probe).
+        // pushTimeoutHandle and downloadTimeoutHandle have the identical
+        // shape (armed, never cleared on teardown), so all three are
+        // cleared together here, next to the two timers that already were.
+        if (stagingTimeoutHandle) {
+          clearTimeout(stagingTimeoutHandle)
+          stagingTimeoutHandle = null
+        }
+        if (pushTimeoutHandle) {
+          clearTimeout(pushTimeoutHandle)
+          pushTimeoutHandle = null
+        }
+        if (downloadTimeoutHandle) {
+          clearTimeout(downloadTimeoutHandle)
+          downloadTimeoutHandle = null
+        }
         sshFlows.delete(sessionId)
       },
     }
@@ -732,11 +3652,40 @@ export function spawnPty(
 
     ptyProcess.onData((rawData) => {
       if (win.isDestroyed()) return
+      // rc.15 review R9: a replaced ssh process's late bytes must not reach the
+      // new terminal or the sentinel parsers (same guard as the local branch).
+      if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
       // Strip SSH statusline OSC sentinels before forwarding to xterm.
       // Parsed sentinels are dispatched to the statusline pipeline as a side effect.
       const data = extractSshOscSentinels(sessionId, rawData)
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
+      // Watchdog (#235, SSH): feed the SAME terminal bytes the renderer gets
+      // into the headless pane. No-op until this session arms its watchdog (at
+      // the claude-running latch, above) and when the feature is off. This is
+      // pure observation — like the renderer send it belongs ABOVE the
+      // flow-destroyed guard below — and is what makes the SSH watchdog live;
+      // the b515cbce claim that "feedData already flows for every session" was
+      // true only of the local branch, so silence detection and every banner
+      // detector read an empty pane over SSH until this line.
+      getWatchdogManager()?.feedData(sessionId, data)
+
+      // Follow-up adversarial pass (lifecycle MAJOR): once the flow is
+      // destroyed, terminal bytes still belong on the renderer's data channel
+      // (above) but NOTHING below this line does -- every latch, sentinel
+      // parse, settings-patch write and claude launch beneath is flow logic for
+      // a session that has been torn down. Proven reachable: destroying
+      // mid-tier-3 and then feeding the stage sentinel drove a
+      // buildTmuxBinPatchCommand write into the dead PTY and re-armed the idle
+      // fallback. The individual `destroyed` guards on setFlowState /
+      // writeClaudeCmd / armIdleFallback stay as defence in depth for the
+      // promise-driven call sites that never pass through here.
+      if (destroyed) return
+
+      // Follow-up adversarial pass (fail-posture MAJOR): watch a tmux-wrapped
+      // launch for a remote refusal and fall back to the bare launch. No-op
+      // unless a wrapped command was just written -- see its doc comment.
+      handleWrappedLaunchFailure(data)
 
       // Arm the idle-data fallback. Re-arms on every chunk so the timer
       // tracks the most recent activity. The handler itself decides
@@ -747,6 +3696,14 @@ export function spawnPty(
       // since once Claude is running we never want auto-writes again.
       if (data.length > 0 && !claudeRunning) {
         receivedAnyData = true
+        recentSshTail = (recentSshTail + data).slice(-800) // #25: for claude-exit detection in the fallback
+        // Fresh output resets the auth-hold budget: the hold cap only counts
+        // CONSECUTIVE quiet fallback fires, so a genuinely waiting prompt that
+        // repaints keeps its full hold window.
+        authHoldFires = 0
+        entrySilentHoldFires = 0
+        entryPromptHoldFires = 0
+        entryUnprovenHoldFires = 0
         armIdleFallback()
       }
 
@@ -776,33 +3733,416 @@ export function spawnPty(
       }
 
       // Step 1 completion sentinel: the remote node script writes
-      // `setup ok\n` to stdout right before exiting. We only treat
-      // sentinels seen AFTER setupSent as completion — otherwise an
-      // earlier sentinel echoed by a previous session in the same
-      // long-running shell could spuriously latch this on connect.
-      if (setupSent && !setupDone && data.includes('setup ok')) {
-        setupDone = true
-        if (setupTimeoutHandle) {
-          clearTimeout(setupTimeoutHandle)
-          setupTimeoutHandle = null
+      // `setup ok <nonce> tmux=<class>\n` to stdout right before exiting.
+      //
+      // #242 findings I1+I2 correction: the completion latch used to be a
+      // bare `data.includes('setup ok')` substring check against the
+      // CURRENT chunk only -- two independent bugs shared that one line.
+      // I2: a write-only attacker (no read access to the tty, so no way to
+      // learn this session's nonce) could feed the literal text "setup ok"
+      // and latch completion early with no usable tmux ever recorded,
+      // silently losing persistence AND forcing an unwanted tier-3 staging
+      // attempt (network fetch + a write into ~/.claude/bin) on a host that
+      // already had tmux. I1: even for a GENUINE sentinel, a real SSH link
+      // routinely splits this line across multiple PTY chunks -- the bare
+      // substring check fired on chunk 1 alone, latching `setupDone` before
+      // the (correctly chunk-boundary-safe) tmux-class parse could ever see
+      // the completed line in chunk 2, so the class was silently lost for
+      // the rest of the session.
+      //
+      // The fix for both: the completion latch is now gated on the SAME
+      // nonce-bearing, chunk-boundary-safe match `parseTmuxSentinel` uses
+      // for the tmux class itself, run against the ACCUMULATED per-session
+      // buffer (`bufferSetupLine`, not just this chunk) -- so a bare/wrong
+      // sentinel can never latch completion at all, and a genuine one
+      // latches exactly once the full line (nonce + resolved class) has
+      // actually arrived, however many chunks that took. We only consider
+      // sentinels seen AFTER setupSent as completion — otherwise an earlier
+      // sentinel echoed by a previous session in the same long-running
+      // shell could spuriously latch this on connect.
+      if (setupSent && !setupDone) {
+        const combined = bufferSetupLine(sessionId, data)
+        const tmuxResult = parseTmuxSentinel(combined, sshNonce)
+        if (tmuxResult !== undefined) {
+          setupDone = true
+          clearSetupLineBuffer(sessionId)
+          // `null` (explicit 'none') CLEARS detected state; a class STAGES
+          // it -- see parseTmuxSentinel's doc comment for why `??` cannot
+          // be used here (adversarial review, #242 MINOR).
+          detectedTmuxSource = tmuxResult === null ? null : (tmuxResult === 'path' ? 'onpath' : 'staged')
+          if (setupTimeoutHandle) {
+            clearTimeout(setupTimeoutHandle)
+            setupTimeoutHandle = null
+          }
+          logInfo(`[ssh] ${sessionId}: host setup ok received (tmux=${tmuxResult ?? 'none'})`)
+          // item 10: stamp + push the remote account descriptor (if the sentinel
+          // carried a decodable, display-valid one).
+          const hostAcct = parseSetupAccountSentinel(combined, sshNonce)
+          if (hostAcct) { remoteAccount = hostAcct; emitSshSessionInfo(win, sessionId, { remoteAccount }) }
         }
-        logInfo(`[ssh] ${sessionId}: host setup ok received`)
       }
 
-      // Container setup completion: same sentinel, but we only consider
-      // it after the second setupCmd was written (inside the container).
-      if (containerSetupSent && !containerSetupDone && data.includes('setup ok')) {
-        containerSetupDone = true
-        if (setupTimeoutHandle) {
-          clearTimeout(setupTimeoutHandle)
-          setupTimeoutHandle = null
+      // Container setup completion: same sentinel, same nonce-gated/buffered
+      // latch as the host branch above, but we only consider it after the
+      // second setupCmd was written (inside the container).
+      if (containerSetupSent && !containerSetupDone) {
+        const combined = bufferSetupLine(sessionId, data)
+        const tmuxResult = parseTmuxSentinel(combined, sshNonce)
+        if (tmuxResult !== undefined) {
+          containerSetupDone = true
+          clearSetupLineBuffer(sessionId)
+          detectedTmuxSource = tmuxResult === null ? null : (tmuxResult === 'path' ? 'onpath' : 'staged')
+          if (setupTimeoutHandle) {
+            clearTimeout(setupTimeoutHandle)
+            setupTimeoutHandle = null
+          }
+          logInfo(`[ssh] ${sessionId}: container setup ok received (tmux=${tmuxResult ?? 'none'})`)
+          const contAcct = parseSetupAccountSentinel(combined, sshNonce)
+          if (contAcct) { remoteAccount = contAcct; emitSshSessionInfo(win, sessionId, { remoteAccount }) }
         }
-        logInfo(`[ssh] ${sessionId}: container setup ok received`)
+      }
+
+      // #242 tier 4: the arch probe fired alongside writeTmuxStageCmd. Not
+      // gated on stagingDone (arch is useful the instant it's known, and
+      // must be known BEFORE the stage sentinel resolves for
+      // attemptTmuxPush below to ever fire) -- only on stagingSent (the
+      // probe is never sent otherwise) and on !archProbeResolved.
+      //
+      // #242 round-3 MINOR fix: this used to gate on `detectedArch ===
+      // null`, which cannot tell "not yet resolved" apart from "resolved to
+      // an unrecognised combo" -- both leave detectedArch null, so the
+      // regex kept re-running against every later PTY chunk for the rest of
+      // the session, and unrelated later output shaped like the sentinel
+      // could set detectedArch long after the real probe. `archProbeResolved`
+      // latches the FIRST time parseArchProbeSentinel returns anything other
+      // than `undefined` (a real match OR an unrecognised-combo `null`), so
+      // a stray later repeat can never re-parse or overwrite the result.
+      if (stagingSent && !archProbeResolved) {
+        // Parse the accumulated text, not this chunk (#242 I1 round-3): a probe
+        // split across two chunks otherwise leaves detectedArch null and makes
+        // tier 4 unreachable on any link that segments the line.
+        const archResult = parseArchProbeSentinel(bufferSshLine(sessionId, 'arch', data))
+        if (archResult !== undefined) {
+          archProbeResolved = true
+          clearSshLineBuffer(sessionId, 'arch')
+          detectedArch = archResult
+          logInfo(`[ssh] ${sessionId}: tmux tier-4 arch probe resolved -> ${detectedArch ?? 'unrecognised'}`)
+        }
+      }
+
+      // #242 tier 3: the staging fragment's own completion sentinel. Only
+      // considered once writeTmuxStageCmd has actually run (stagingSent)
+      // and only the FIRST match counts (stagingDone) -- same shape as the
+      // setup-ok latches above. `ok path=` sets detectedTmuxSource ='staged'
+      // (so the upcoming writeClaudeCmd wraps in tmux); `fail=<reason>`
+      // surfaces the reason via emitSshFlowState info and leaves
+      // detectedTmuxSource null, so writeClaudeCmd falls through to the unwrapped launch
+      // exactly as it already does for tier 1/2's tmux=none -- UNLESS tier 4
+      // can take over: reason is specifically 'download' (no egress, the
+      // one failure mode tier 4 exists for) AND the arch probe above already
+      // resolved a recognised arch. Any other reason (arch/digest/extract/
+      // terminfo/timeout/build-error/unsafe-path), or an unknown arch,
+      // behaves exactly as it did before tier 4 existed.
+      if (stagingSent && !stagingDone) {
+        // Accumulated text, not this chunk (#242 I1 round-3) -- a split
+        // `ok path=` otherwise never resolves and the flow stalls to the 20s
+        // STAGE_TIMEOUT, silently losing tmux on exactly the tiers a
+        // tmux-less remote depends on.
+        const stageResult = parseTmuxStageSentinel(bufferSshLine(sessionId, 'stage', data), sshNonce)
+        if (stageResult !== undefined) {
+          stagingDone = true
+          clearSshLineBuffer(sessionId, 'stage')
+          if (stagingTimeoutHandle) {
+            clearTimeout(stagingTimeoutHandle)
+            stagingTimeoutHandle = null
+          }
+          if (stageResult.ok) {
+            detectedTmuxSource = 'staged' // tier 3 staged this path
+            logInfo(`[ssh] ${sessionId}: tmux staged ok -> ${stageResult.path}`)
+            // #242 finding F3 (MAJOR, adversarial review round 5): patch the
+            // ALREADY-WRITTEN settings-<safeSid>.json's CCC_TMUX_BIN before
+            // the claude launch write below -- see buildTmuxBinPatchCommand's
+            // doc comment (ssh-shim.ts) for why this is required (tiers 3/4
+            // run strictly after configureRemoteSettings baked in the
+            // tier-1/2 probe result, which is empty on exactly the hosts
+            // tier 3 exists to serve). Deliberately NOT passed
+            // `stageResult.path` (#242 finding F1(a), round-2 correction) --
+            // buildTmuxBinPatchCommand computes the fixed
+            // `$HOME/.claude/bin/tmux` location on the REMOTE, at the same
+            // trust boundary buildTmuxLaunchCommand's STAGED_TMUX_BIN_EXPR
+            // uses, rather than trusting this wire-reported value. Best-
+            // effort: a failed/throwing write here must not block the claude
+            // launch that follows -- the statusline degrading is strictly
+            // better than the session never launching at all.
+            try {
+              ptyProcess.write(buildTmuxBinPatchCommand(sessionId) + '\r')
+            } catch (err) {
+              logError(`[ssh] ${sessionId}: tmux CCC_TMUX_BIN settings patch failed to send (statusline may not reflect tmux): ${(err as Error)?.message ?? err}`)
+            }
+            writeClaudeCmd()
+          } else if (stageResult.reason === 'download' && detectedArch) {
+            logInfo(`[ssh] ${sessionId}: tmux staging failed (download, no egress) -- attempting tier-4 push instead`)
+            attemptTmuxPush(detectedArch)
+          } else {
+            logInfo(`[ssh] ${sessionId}: tmux staging failed (${stageResult.reason}) -- falling back to bare launch`)
+            // #242 round-2 MINOR fix: pass the reason straight to
+            // writeClaudeCmd rather than calling
+            // setFlowState('running-setup', `tmux-stage-fail:...`) here --
+            // that call was immediately overwritten in the same tick by
+            // writeClaudeCmd's own setFlowState('running-claude'), so a
+            // renderer watching current state only ever saw the LATER
+            // state with no reason attached.
+            writeClaudeCmd(`tmux-stage-fail:${stageResult.reason}`)
+          }
+          return
+        }
+      }
+
+      // #242 tier 4: the push's own completion sentinel -- reuses the EXACT
+      // same parser and sentinel shape as tier 3 (buildTmuxPushControlScript
+      // emits the identical `ccc-tmux-stage ok/fail` text), so pty-manager
+      // needs no second parser. Gated on pushSent/pushDone the same way the
+      // tier-3 block above is gated on stagingSent/stagingDone.
+      if (pushSent && !pushDone) {
+        // Accumulated text, not this chunk (#242 I1 round-3). Reuses the
+        // 'stage' buffer deliberately: tier 4 only runs after tier 3 has
+        // resolved and cleared it, and both emit the identical sentinel shape,
+        // so there is no interleaving to keep apart between these two.
+        const pushResult = parseTmuxStageSentinel(bufferSshLine(sessionId, 'stage', data), sshNonce)
+        if (pushResult !== undefined) {
+          pushDone = true
+          clearSshLineBuffer(sessionId, 'stage')
+          if (pushTimeoutHandle) {
+            clearTimeout(pushTimeoutHandle)
+            pushTimeoutHandle = null
+          }
+          if (pushResult.ok) {
+            detectedTmuxSource = 'staged' // tier 4 staged this path
+            logInfo(`[ssh] ${sessionId}: tmux pushed ok -> ${pushResult.path}`)
+            // #242 finding F3: same CCC_TMUX_BIN patch as the tier-3 ok
+            // branch above -- see that branch's comment.
+            try {
+              ptyProcess.write(buildTmuxBinPatchCommand(sessionId) + '\r')
+            } catch (err) {
+              logError(`[ssh] ${sessionId}: tmux CCC_TMUX_BIN settings patch failed to send (statusline may not reflect tmux): ${(err as Error)?.message ?? err}`)
+            }
+            writeClaudeCmd()
+          } else {
+            logInfo(`[ssh] ${sessionId}: tmux push failed (${pushResult.reason}) -- falling back to bare launch`)
+            writeClaudeCmd(`tmux-push-fail:${pushResult.reason}`)
+          }
+          return
+        }
+      }
+
+      // The current chunk's prompt-shaped last line, computed once for the
+      // password check, the sudo check, and the stage transitions below. The
+      // STICKY copy (lastPromptLineSeen) feeds the idle fallback's auth-prompt
+      // guard; a chunk whose last line strips to '' (a bare \r\n ack, a pure
+      // control-sequence repaint) does not clear it — the prompt is still on
+      // screen through those.
+      const promptLineNow = lastPromptLineForClaude(data)
+      if (promptLineNow !== '') lastPromptLineSeen = promptLineNow
+      // rc.14 review F1 round 2: remember the HOST shell's prompt while we are
+      // still on the host, so the entry watch below can recognise it coming
+      // back. Frozen once the post-command has been written (nothing after that
+      // is the host's prompt for this purpose) -- and live again while the entry
+      // is FAILED, since the user is back on the host then and may `cd` before
+      // Run again: the second attempt is judged against the prompt as it stands.
+      // Read through the same stripper and line model as the entry watch
+      // (stripAnsiForSentinel + visibleLines), not lastPromptLineForClaude's --
+      // the two strip different escape families, and a prompt one of them
+      // reduces to '' would otherwise never be compared equal by the other.
+      if (isContainerSession && (!postCommandWritten || runtimeEntryFailed)) {
+        // From the ACCUMULATED host output (line-buffered), not one chunk -- a
+        // real SSH link splits the login prompt across chunks (#242 I1), and a
+        // fragment captured here would never compare equal to the prompt coming
+        // back. The 'runtime' buffer is unused until the post-command is written
+        // (which clears it), so it is free to hold host output until then. The
+        // < 200 guard mirrors lastPromptLineForClaude: a prompt is a short line.
+        const tail = lastVisible(visibleLines(stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))))
+        if (tail !== '' && tail.length < 200 && SHELL_PROMPT_RE.test(tail)) hostPromptLine = tail
+      }
+
+      // rc.14 review F1 (aicc_planning#45): a container entry that FAILED returns
+      // to the HOST shell, whose next prompt used to be read as the inner shell
+      // (the transition further down, and the idle fallback), so Launch Claude
+      // wrote the container setup and the claude command to the host. Watch the
+      // post-command's own output instead. Two things are DECIDED here, on the
+      // line-buffered, ANSI-stripped output read as the terminal shows it
+      // (visibleLines): an engine/sudo failure SHAPE (CONTAINER_ENTRY_ERROR_RE)
+      // fails at once; the shell's engine-not-found line raises a SUSPICION the
+      // idle fallback resolves. The host prompt coming BACK is NOT judged here
+      // -- it is recorded as the sticky trailing line and decided by the idle
+      // fallback (isHostBackLine), because readline repaints `\r` + prompt and
+      // then the echoed command, and a chunk can end between the two. Both
+      // inner-shell transitions refuse a host-back trailing line, launchClaude()
+      // re-emits the failure rather than walking the host ladder, Skip is the
+      // explicit way onto the raw host shell, and Run again re-enters. Only from
+      // the moment the command has actually been WRITTEN (postCommandWritten;
+      // the 'runtime' buffer was cleared then), so a host prompt repaint in
+      // flight during writePostCommand's 200ms defer is never read as output.
+      // rc.15 review R1: the chunk that proved the entry has already been read
+      // for an OUT (above) and its buffer dropped; the after-entry watch below
+      // must not re-buffer it.
+      let entryProvenThisChunk = false
+      if (isContainerSession && postCommandWritten && !postCommandShellReady && !runtimeEntryFailed) {
+        const recent = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
+        const lines = visibleLines(recent)
+        const trailing = lastVisible(lines)
+        // ADR-009 round 3 (Codex finding 2): a genuine current-attempt IN proves
+        // this session reached the container, so latch the host-sudo gate closed
+        // BEFORE any early return below. Otherwise a single chunk carrying the IN
+        // and a container-side engine diagnostic ("Cannot connect to the Docker
+        // daemon") takes the engine-error return without recording the entry, and
+        // a later container [sudo] prompt is answered with the host secret. The
+        // latch is permanent and independent of whether the entry ultimately
+        // succeeds; the IN+OUT and engine-error paths still fail the entry.
+        if (entryProvable && entryNonce && parseEntrySentinels(recent, entryNonce).includes('IN')) {
+          containerEverEntered = true
+        }
+        if (CONTAINER_ENTRY_ERROR_RE.test(recent)) {
+          failEntry(SSH_ENTRY.FAILED, 'engine error after the post-command -- staying on the host shell, not marking inner')
+          return
+        }
+        // rc.15 review R1 (aicc_planning#45): the entry sentinel is judged HERE,
+        // before anything else in this handler reads the chunk -- the sudo
+        // auto-answer below in particular. `__CCC_<nonce>_IN__` was printed by
+        // a process the engine ran INSIDE the named container, before that
+        // container's shell started (composeContainerEntryCommand); it is the
+        // ONLY thing that marks inner for a provable entry. An IN and a
+        // container-side `[sudo]` prompt arriving in one chunk therefore set
+        // inInnerShell first, and the host's sudo secret is refused. An OUT
+        // after the IN (an rc file that runs `exit`) means the shell is already
+        // gone: fail closed, never promote.
+        if (entryProvable && entryNonce) {
+          const words = parseEntrySentinels(recent, entryNonce)
+          const inAt = words.indexOf('IN')
+          if (inAt !== -1) {
+            if (words.indexOf('OUT', inAt) !== -1) {
+              // IN and OUT in one chunk: the shell exited at once (an rc file
+              // that runs `exit`; the configured shell missing from the image,
+              // in which case the wrapper's own `sh: bash: not found` sits
+              // between them on screen as the diagnosis). Either way the
+              // container shell is gone: fail closed as LEFT, never promote.
+              failEntry(SSH_ENTRY.LEFT, 'the container shell exited immediately after entry (an rc-file exit, or the configured shell is missing from the image)')
+              return
+            }
+            postCommandShellReady = true
+            inInnerShell = true
+            entryProven = true
+            // ADR-009 (Lens A): sticky proof that this session reached the
+            // container at least once. Gates the host sudo secret off for good.
+            containerEverEntered = true
+            // A Skip given while the attempt was in flight (IPC only; the overlay
+            // offers none there) is overridden by the promotion it did not stop:
+            // the flow is live again, so its watch is too (R1 review round 4).
+            entrySkipped = false
+            entryProvenThisChunk = true
+            // The container's prompt, if this chunk already shows it (the line
+            // after the IN token); see innerPromptLine.
+            const afterIn = lastVisible(lines)
+            innerPromptLine = afterIn !== '' && !afterIn.includes('__CCC_') && SHELL_PROMPT_RE.test(afterIn) ? afterIn.slice(0, 200) : ''
+            afterEntryTrailingLine = ''
+            clearSshLineBuffer(sessionId, 'runtime')
+            logInfo(`[ssh] ${sessionId}: container entry proven by this attempt's sentinel -> inner shell ready`)
+            setFlowState('awaiting-claude', SSH_ENTRY.INNER)
+            // No return: the rest of the chunk is judged with inInnerShell set.
+          }
+        }
+        if (!entryProven) {
+          // The trailing line for the idle fallback's host-back and password-
+          // prompt reads. lastVisible already skips empty lines and reads through
+          // `\r`/BEL repaints, so an empty or eol-only chunk still yields the
+          // buffered prompt -- no separate stickiness needed. Capped like a
+          // prompt line, which bounds the regex work on it.
+          entryTrailingLine = trailing.slice(0, 200)
+          // The shell said the engine binary is missing: a SUSPICION only where
+          // the identity check cannot decide (no known host prompt). An rc file
+          // inside a healthy container can print the same line, and there the
+          // host prompt NOT coming back is the tell. The following prompt decides.
+          if (!entrySuspect && hostPromptLine === '' && CONTAINER_ENGINE_NOT_FOUND_RE.test(recent)) {
+            entrySuspect = true
+            logInfo(`[ssh] ${sessionId}: post-command output says the engine binary was not found and the host PS1 is unrecognised -- suspect entry, waiting for idle to decide`)
+          }
+          // Real output has appeared once a visible line is neither the
+          // command's echo nor the host's prompt (alone or with host activity
+          // after it). Latched: the idle fallback then stops holding for
+          // silence (a provable entry still needs its sentinel; a start -ai
+          // attach goes to the explicit-consent state).
+          if (!entryOutputSeen && lines.some((l) => l !== '' && !isPostCommandEcho(l) && !isHostBackLine(l))) {
+            entryOutputSeen = true
+          }
+        }
+      }
+
+      // rc.15 review R1: after a PROVEN entry the wrapper prints
+      // `__CCC_<nonce>_OUT__` when the container shell exits (the user typed
+      // exit, an rc file ran it), and the launch guard's `__CCC_<nonce>_HERE__`
+      // answers buildEntryGuardCommand. Both ride the runtime buffer up to the
+      // moment the claude command is written; after that the flow is claude's.
+      if (entryProven && entryNonce && !runtimeEntryFailed && !claudeWritten && !entrySkipped && !entryProvenThisChunk) {
+        const afterEntry = stripAnsiForSentinel(bufferSshLine(sessionId, 'runtime', data))
+        const words = parseEntrySentinels(afterEntry, entryNonce)
+        if (words.includes('OUT')) {
+          failEntry(SSH_ENTRY.LEFT, entryGuardPending ? 'the container shell exited while the launch guard was out' : 'the container shell exited')
+          return
+        }
+        // Bookkeeping for the idle host-back hint (see innerPromptLine).
+        const trailingNow = lastVisible(visibleLines(afterEntry)).slice(0, 200)
+        if (trailingNow !== '' && !trailingNow.includes('__CCC_')) {
+          afterEntryTrailingLine = trailingNow
+          if (innerPromptLine === '' && SHELL_PROMPT_RE.test(trailingNow)) innerPromptLine = trailingNow
+          // ADR-009 round 3 (Codex finding 1): while a proven-entry payload (the
+          // container setup or the claude command) is scheduled but not yet
+          // written, a host prompt on the trailing line means the container shell
+          // was left with no OUT (a plain detach). Fail the entry so the pending
+          // deferred write bails instead of landing on the host.
+          //
+          // Codex PR600 final re-review (P2): require the inner and host prompts
+          // to be KNOWN and DISTINCT, exactly as the idle host-back hint below
+          // does. When the container's prompt is byte-identical to the host's, a
+          // healthy container prompt arriving in its own chunk after HERE is not
+          // evidence of a return, and this prompt-only test would otherwise
+          // cancel a legitimate launch. Current-attempt OUT stays caught
+          // unconditionally (above); a real detach with a distinct prompt still
+          // trips here. Only fires with a write in flight and a positively
+          // recognised, distinct host prompt.
+          if (
+            deferredEntryWritePending
+            && hostPromptLine !== '' && innerPromptLine !== '' && innerPromptLine !== hostPromptLine
+            && isHostBackLine(trailingNow)
+          ) {
+            failEntry(SSH_ENTRY.LEFT, 'the host prompt returned before the proven-entry payload was written')
+            return
+          }
+        }
+        if (entryGuardPending && words.includes('HERE')) {
+          const next = entryGuardContinuation
+          dropEntryGuard()
+          clearSshLineBuffer(sessionId, 'runtime')
+          logInfo(`[ssh] ${sessionId}: launch guard answered -- the attached shell is this attempt's container shell`)
+          next?.()
+          return
+        }
       }
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
-      // line containing the word.
-      if (!passwordSent && password && PASSWORD_PROMPT_RE.test(lastPromptLineForClaude(data))) {
+      // line containing the word -- and only while still AUTHENTICATING (rc.14
+      // review F13, aicc_planning#57): `connecting` ends with the first shell
+      // prompt (or the idle fallback carrying the flow past it), and from then
+      // on the connection is up, so a prompt shaped like a bare `Password:` is
+      // sudo's (the macOS shape), not sshd's -- whether or not this session has
+      // a post-command to send (round 2: the first version gated on
+      // postCommandSent, which left the common no-post-command session open to
+      // typing the SSH secret into a sudo the user ran by hand). Key auth leaves
+      // `passwordSent` false, so without this gate the saved SSH secret was typed
+      // into sudo and the handler returned before the sudo branch below could
+      // act. Accepted edge: a host that pauses more than the idle window between
+      // its pre-auth output and its password prompt (a banner, then a slow PAM)
+      // has already carried the flow out of `connecting`, and that password is
+      // typed by hand.
+      if (!passwordSent && password && currentFlowState === 'connecting' && PASSWORD_PROMPT_RE.test(promptLineNow)) {
         passwordSent = true
         setTimeout(() => {
           ptyProcess.write(password + '\r')
@@ -814,11 +4154,29 @@ export function spawnPty(
       // emits: `[sudo] password for X:`, `password for X:`, `Password:`.
       // End-of-line match avoids false-triggering on a log message that
       // happens to mention `[sudo]` or `password for`.
-      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent) {
-        const promptLine = lastPromptLineForClaude(data)
-        if (promptLine && /(\[sudo\].*password.*:|password for .+:|^password:)\s*$/i.test(promptLine)) {
+      // And only BEFORE the inner shell (adversarial pass on #598): the saved
+      // secret exists for the post-command's own `sudo docker exec`, which
+      // prompts on the HOST before the container shell appears. Once the flow
+      // is in the inner shell -- by prompt, or by the idle fallback, which
+      // promotes even with the secret unsent -- a `[sudo] password for` line is
+      // printed by something INSIDE the container (a MOTD, a .bashrc, a process
+      // the user ran), and typing the host's sudo secret into it hands that
+      // secret to the container. Same shape as the SSH-password gate above.
+      // rc.15 review R1 (spec review): an UNVERIFIED entry (start -ai, free
+      // text) is past the host's own sudo too -- whatever is attached printed
+      // that prompt, and it gets no host secret either.
+      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent && !inInnerShell && !entryUnverified && !containerEverEntered) {
+        const promptLine = promptLineNow
+        if (promptLine && SUDO_PROMPT_RE.test(promptLine)) {
           sudoPasswordSent = true
           setTimeout(() => {
+            // ADR-009 round 3 (Codex finding 2): re-check the gate at WRITE time.
+            // A current-attempt IN (containerEverEntered) or a failed entry in the
+            // 100ms between the prompt and this write means the host sudo secret
+            // must not land -- in a container that has since proven itself, or a
+            // host the flow has since left. The pre-schedule gate above is not
+            // enough because IN can arrive inside this window.
+            if (containerEverEntered || runtimeEntryFailed) return
             ptyProcess.write(sudoPassword + '\r')
           }, 100)
           return
@@ -831,7 +4189,7 @@ export function spawnPty(
         return
       }
 
-      const lastLine = lastPromptLineForClaude(data)
+      const lastLine = promptLineNow
       const sawShellPrompt = !!lastLine && SHELL_PROMPT_RE.test(lastLine)
 
       // ---- STAGE TRANSITION DETECTION ----
@@ -864,22 +4222,40 @@ export function spawnPty(
       // claude is the only sensible next stage.
       if (setupSent && setupDone && !setupShellReady && sawShellPrompt) {
         setupShellReady = true
-        if (!claudeSent) writeClaudeCmd()
+        if (!claudeSent) proceedAfterSetup()
         return
       }
 
       // Inner shell prompt after postCommand → emit awaiting-claude.
       // User picks Launch Claude (→ container setup → claudeCmd) or
       // Skip (→ drops to inner shell).
+      // postCommandWritten (rc.14 review F1 round 2): the command goes out
+      // 200ms after the click; a host prompt repaint landing inside that window
+      // is not the inner shell -- nothing has been asked of the host yet. And
+      // the HOST's own prompt is never the inner shell (isHostBackLine): the
+      // idle fallback decides whether it came back after 1.5s of silence.
       if (
         postCommandSent
+        && postCommandWritten
         && !postCommandShellReady
         && sawShellPrompt
         && (!sudoPassword || sudoPasswordSent)
+        && !runtimeEntryFailed
+        && !isHostBackLine(entryTrailingLine)
+        // rc.15 review R1: a PROVABLE container entry is never promoted by
+        // prompt shape -- its sentinel (judged above) is the only proof, and
+        // the idle fallback fails an entry that never sends it.
+        && !entryProvable
       ) {
+        // Everything else (a free-text prep, a start -ai attach) finished on
+        // SOME shell nobody can identify: awaiting-claude, but marked
+        // unverified, so the launch needs the user's explicit consent and
+        // never reads as inner.
         postCommandShellReady = true
-        inInnerShell = true
-        setFlowState('awaiting-claude', 'inner')
+        entryUnverified = true
+        entrySkipped = false // the flow is live again, like the IN promotion
+        clearSshLineBuffer(sessionId, 'runtime')
+        setFlowState('awaiting-claude', SSH_ENTRY.UNVERIFIED)
         return
       }
 
@@ -891,10 +4267,12 @@ export function spawnPty(
         && containerSetupDone
         && !containerSetupShellReady
         && !claudeSent
+        // Defence in depth: failEntry drops the setup latches first (R1 review).
+        && !runtimeEntryFailed
         && sawShellPrompt
       ) {
         containerSetupShellReady = true
-        writeClaudeCmd()
+        proceedAfterSetup()
       }
     })
   } else if ((options?.provider ?? 'claude') === 'codex' && !options?.shellOnly) {
@@ -919,8 +4297,15 @@ export function spawnPty(
         rows,
         useResumePicker: options?.useResumePicker,
         codexOptions: options?.codexOptions,
+        // Same light/dark signal the local Claude spawn gets (book item 34).
+        hostColorScheme: resolveHostColorScheme(
+          readConfig<{ theme?: string }>('settings')?.theme,
+          nativeTheme.shouldUseDarkColors,
+        ),
       })
       logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+      // Codex sessions never designate a canvas worktree; drop any inherited hint.
+      delete (spawnEnv as Record<string, string>).CCC_SESSION_WORKTREE
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
@@ -933,6 +4318,7 @@ export function spawnPty(
       })
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
         getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
@@ -985,7 +4371,9 @@ export function spawnPty(
       cols,
       rows,
       shellOnly: options?.shellOnly,
-      elevated: options?.elevated,
+      elevated: options?.elevated ?? options?.terminalOptions?.elevated,
+      terminalSecret: options?.terminalSecret,
+      commandSecrets: options?.commandSecrets,
       legacyVersion: options?.legacyVersion,
       effortLevel: options?.effortLevel,
       disableAutoMemory: options?.disableAutoMemory,
@@ -996,18 +4384,95 @@ export function spawnPty(
       clickableQuestions,
       disableBackgroundTasks,
       hostColorScheme,
+      askPrompt: options?.askPrompt,
     })
     const wantProfileId = options?.profileId
-    if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {
+    // Validate before the join. This is the FOURTH site with the resolver shape,
+    // and the only one that is inline rather than a named function, which is why
+    // it was missed when the other three were guarded. `pty:spawn` types
+    // profileId as `z.string().optional()` — a type check, not a charset one — so
+    // a renderer-supplied `../x` reaches here. Without this, getProfileConfigDir
+    // throws and the spawn hard-fails; with it, a crafted id takes the existing
+    // warn-and-fall-back-to-primary branch below, matching the other three
+    // resolvers and keeping that throw genuinely unreachable.
+    if (wantProfileId && isValidProfileId(wantProfileId) && fs.existsSync(getProfileConfigDir(wantProfileId))) {
       resolvedProfileId = wantProfileId
     } else if (wantProfileId) {
-      logWarn(`[profiles] session ${sessionId}: profile dir missing for profileId=${wantProfileId}; falling back to primary/default`)
+      logWarn(`[profiles] session ${sessionId}: profile dir missing or invalid for profileId=${wantProfileId}; falling back to primary/default`)
     }
     // Clobber-proofing: a non-shell Claude session never runs on the bare global
     // home -- fall back to the captured primary profile.
     if (!shellOnly && !resolvedProfileId) {
       const primary = getPrimaryProfileId()
       if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
+    }
+    // rc.15 review R3 (aicc_planning#49): if the usage page is rotating this
+    // profile's token right now, a PTY that starts would read the credential
+    // generation being replaced -- and registering it afterwards cannot retract
+    // the in-flight POST. Both local paths, the profile-pinned shell and the
+    // interactive session, wait it out exactly as the background consumers do:
+    // hold first (no further rotation can begin), wait, then re-enter with the
+    // flag set; the pre-wait hold is released once the real spawn has taken its
+    // own (shell-only) or is watched (interactive). No pending refresh: the
+    // synchronous spawn below, exactly as before.
+    if (resolvedProfileId && !options?.refreshAwaited) {
+      const pending = pendingProfileRefresh(resolvedProfileId)
+      if (pending) {
+        const waitedProfile = resolvedProfileId
+        const release = acquireProfileConsumer(waitedProfile, { maxAgeMs: Infinity })
+        let cancelled = false
+        refreshWaitSpawns.set(sessionId, {
+          cancel: () => { cancelled = true; refreshWaitSpawns.delete(sessionId); release() },
+          // Carried over from the wait this spawn superseded (see spawnPty).
+          abandonedTeardown: inheritedTeardown,
+          win,
+        })
+        logInfo(`[profiles] session ${sessionId}: profile ${waitedProfile} is mid-refresh -- holding the spawn until it settles`)
+        void pending.then(() => {
+          if (cancelled) return
+          const wait = refreshWaitSpawns.get(sessionId)
+          refreshWaitSpawns.delete(sessionId)
+          // ADR-009 (Lens C, U13): the window can be destroyed while the wait
+          // holds (app quit, a renderer crash) -- never spawn a PTY into a gone
+          // window. End the session its predecessor's exit deferred, release the
+          // hold, and stop.
+          if (win.isDestroyed()) {
+            logInfo(`[profiles] session ${sessionId}: window destroyed during the refresh wait -- not spawning`)
+            wait?.abandonedTeardown?.()
+            release()
+            return
+          }
+          try {
+            spawnPty(win, sessionId, { ...options, refreshAwaited: true })
+          } catch (err) {
+            logError(`[profiles] session ${sessionId}: the spawn after the refresh wait failed: ${(err as Error)?.message ?? err}`)
+            // No successor: end the session the replaced PTY's exit was told to
+            // leave alone. Only when the failed spawn registered no PTY (quality
+            // round 3, M2): a throw AFTER registration leaves a live PTY that
+            // killPty ends later, exactly as a synchronous spawn that throws
+            // there does, and the teardown would delete that PTY's entry and
+            // report an exit the renderer would act on.
+            if (!ptySessions.has(sessionId)) {
+              if (wait?.abandonedTeardown) {
+                wait.abandonedTeardown()
+              } else if (!win.isDestroyed()) {
+                // ADR-009 round 3 (Codex finding 3): a FRESH deferred spawn has no
+                // predecessor teardown. Its pty:spawn IPC already resolved, so
+                // without a notification the renderer is left with a blank
+                // terminal treated as spawned (no error/exit handler fires). Tell
+                // it the start ended and drop the canvas stamp the spawn handler
+                // wrote before spawnPty ran.
+                logError(`[profiles] session ${sessionId}: fresh deferred spawn failed with no PTY -- notifying the renderer the start ended`)
+                forgetSessionForCanvas(sessionId)
+                win.webContents.send(`pty:exit:${sessionId}`, -1)
+              }
+            }
+          } finally {
+            release()
+          }
+        })
+        return
+      }
     }
     // Home selection (Bug 2): EVERY session of an account -- shell-only (plain
     // shells + the add-account login flow) AND interactive Claude -- runs in the
@@ -1027,6 +4492,29 @@ export function spawnPty(
       home = getProfileConfigDir(resolvedProfileId)
     }
     const finalSpawnEnv = withProfileHome(spawnEnv, home)
+    // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
+    // session-state.json and label conversations with their CCC work name
+    // (customName). Read-only, best-effort — never block the spawn (#130).
+    try { finalSpawnEnv.CCC_CONFIG_DIR = getConfigDir() } catch { /* best-effort */ }
+    // Session isolation + Agent Canvas (ADR-016): CCC DESIGNATES where this
+    // session's guard worktree lives — `<worktree base>/<ccc-session-short>`,
+    // derived from the CONFIGURED project directory and CCC's own session id,
+    // never from anything the agent writes — tells the guard through
+    // CCC_SESSION_WORKTREE, and (below, once the project itself is registered
+    // as a served root) designates the same path as a pending canvas root, so
+    // a mockup the agent writes into its own worktree is renderable by
+    // htmlPath. Interactive Claude sessions only: the canvas is bound to those.
+    // Null when the project is not a primary git checkout (the guard has
+    // nothing to anchor to there either).
+    const designatedWorktree = !shellOnly && !isHomeOrAncestor(resolvedCwd)
+      ? designatedWorktreeDir(resolvedCwd, sessionId)
+      : null
+    // Set only when THIS session designates; otherwise DELETE any value inherited
+    // from CCC's own environment (a dev CCC launched from inside a guarded tile
+    // inherits the outer tile's CCC_SESSION_WORKTREE — it must not leak into a
+    // shell-only / home-project / non-designated session and misdirect its guard).
+    if (designatedWorktree) finalSpawnEnv.CCC_SESSION_WORKTREE = designatedWorktree
+    else delete finalSpawnEnv.CCC_SESSION_WORKTREE
     logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(none/bare-global)'} shellOnly=${shellOnly} USERPROFILE=${home ?? '(real home)'}`)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
@@ -1046,19 +4534,52 @@ export function spawnPty(
         useConpty: true
       })
 
+      // #48: hold the profile for this shell's life (see shellOnlyProfileHolds).
+      // Only after pty.spawn succeeded, mirroring B3 for the identity capture:
+      // a spawn throw must not leave a ref nothing will ever release.
+      if (resolvedProfileId) {
+        shellOnlyProfileHolds.get(sessionId)?.()
+        shellOnlyProfileHolds.set(sessionId, acquireProfileConsumer(resolvedProfileId, { maxAgeMs: Infinity }))
+      }
+
       // Explicitly cd to ensure the shell is in the right directory
       // (PowerShell profiles can change cwd before the user sees the prompt)
-      const escapedShellCwd = resolvedCwd.replace(/'/g, "''")
-      const cdCmd = os.platform() === 'win32'
-        ? `Set-Location '${escapedShellCwd}'`
-        : `cd '${resolvedCwd.replace(/'/g, "'\\''")}' 2>/dev/null; clear`
+      const isWin = os.platform() === 'win32'
+      // Through the shared helper, NOT a local re-escape. This line is the
+      // shell-only twin of the Claude launch path and carries the identical
+      // value (resolveCwd of the config's workingDirectory) into the identical
+      // PowerShell construct — so the hand-rolled ASCII-only doubling here was
+      // the same injection, reachable the same way, and it fires on the `cd`
+      // before any binary runs. -LiteralPath because Set-Location otherwise
+      // treats its argument as a WILDCARD: a real directory named `proj[1m]`
+      // never matches, and the session silently starts in the wrong place.
+      const cdCmd = isWin
+        ? `Set-Location -LiteralPath ${quoteArgForShell(resolvedCwd, true)}`
+        : `cd ${quoteArgForShell(resolvedCwd, false)} 2>/dev/null; clear`
+
+      // Terminal-only first-run command. `{secret}` becomes a REFERENCE to the
+      // CCC_ARG_SECRET env var (set from the keychain in buildClaudeLocalSpawn),
+      // never the secret itself — see terminal-launch-line.ts for the contract.
+      const launchLine = buildTerminalLaunchLine(options?.terminalOptions, isWin)
+
+      launchWriteScheduled = true
+      launchPendingSessions.add(sessionId)
       setTimeout(() => {
         // Liveness guard: a kill / Restart / app-quit can land inside this 300ms
         // window — writing to a dead or already-replaced PTY here would throw
         // inside the timer (uncaught in main). Only write when our PTY is still
         // the registered one.
-        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
-        try { ptyProcess.write(cdCmd + '\r') } catch { /* session died mid-launch */ }
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { abandonLaunchHold(); return }
+        try {
+          ptyProcess.write(cdCmd + '\r')
+          // Queued straight after the cd: the shell runs them in order, so the
+          // command always starts in the configured directory.
+          if (launchLine) {
+            logInfo(`[pty-manager] shell-only first-run command for ${sessionId}: ${launchLine}`)
+            ptyProcess.write(launchLine + '\r')
+          }
+          releaseLaunchHold()
+        } catch { abandonLaunchHold() /* session died mid-launch */ }
       }, 300)
     } else {
       // Launch Claude Code interactive mode.
@@ -1141,7 +4662,34 @@ export function spawnPty(
           resumeUuidForBind = launch.resumeUuid
           logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${claudeCwd} (was ${resolvedCwd})`)
         } else {
-          logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check) — uuid=${effectiveTarget.uuid}`)
+          // #535: the exact gate failed. When the ONLY reason is a deleted
+          // worktree cwd, the conversation transcript still exists under the
+          // worktree's mangled project folder — relocate it into the surviving
+          // configured cwd's folder and resume there rather than opening fresh.
+          const recovered = recoverOrphanResumeLaunch(effectiveTarget, resolvedCwd, {
+            existsSync: fs.existsSync,
+            statSync: (p) => fs.statSync(p),
+            mkdirp: (dir) => { fs.mkdirSync(dir, { recursive: true }) },
+            renameFile: (src, dst) => { fs.renameSync(src, dst) },
+            copyFile: (src, dst) => { fs.copyFileSync(src, dst) },
+            removeFile: (p) => { fs.rmSync(p, { force: true }) },
+            pid: () => process.pid,
+            warn: (msg) => { logWarn(msg) },
+            homedir: os.homedir,
+            mangleCwdToProjectDir,
+            projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
+            isHomeOrAncestor,
+            ensureCompanionDir: (projectDir, uuid) => { ensureCompanionDir(projectDir, uuid, nodeFsCompanionDeps) },
+          })
+          if (recovered) {
+            resumeUuid = recovered.resumeUuid
+            claudeCwd = recovered.claudeCwd
+            effectiveLaunchCwd = claudeCwd
+            resumeUuidForBind = recovered.resumeUuid
+            logInfo(`[pty] T8b ORPHAN-RECOVERED resume for ${sessionId}: uuid=${resumeUuid} relocated to cwd=${claudeCwd} (dead worktree was ${effectiveTarget.cwd})`)
+          } else {
+            logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check; no orphan recovery) — uuid=${effectiveTarget.uuid} cwd=${effectiveTarget.cwd}`)
+          }
         }
       }
 
@@ -1166,11 +4714,95 @@ export function spawnPty(
       // without a respawn), so the strip/card/statusline follow the new account.
       startWatchingAccountIdentity(sessionId, resolvedProfileId)
 
-      // P6: register for codex_review opt-in if the session config requested it.
-      // Only Claude sessions can opt in; Codex sessions never reach this branch
-      // (they go through the codex provider branch above).
-      if (options?.enableCodexReview) {
-        registerCodexReviewSession(sessionId, resolvedCwd)
+      // codex_review is authorised globally (2 Aug decision): every LOCAL Claude
+      // session registers. Availability is still governed at tool-registration
+      // time by the global Codex master + conductor tool toggles
+      // (conductor-mcp-server createServer), and SSH sessions never reach this
+      // branch, so the tool keeps running only against paths that exist on this
+      // machine. The per-config enableCodexReview flag is retired (ignored).
+      //
+      // SECURITY (adversarial review, #188): register the ACTUAL launch cwd
+      // (`claudeCwd`, post-resume-override) — not the pre-override `resolvedCwd`
+      // — and REFUSE to register when that cwd is the bare home directory. A
+      // config whose workingDirectory is '.', empty, or a stale/deleted path
+      // makes resolveCwd() silently fall back to os.homedir(); registering that
+      // would let a prompt-injected session review ~/.ssh, ~/.claude, ~/.aws via
+      // mode:'paths' (containment holds, but the ROOT is wrong). Since universal
+      // opt-in removed the per-config gate that used to bound this, block it at
+      // the source: no legitimate review targets the bare home dir.
+      if (isHomeOrAncestor(claudeCwd)) {
+        logWarn(`[pty] codex_review NOT registered for ${sessionId}: launch cwd resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home). Set a real project directory to enable review.`)
+      } else {
+        registerCodexReviewSession(sessionId, claudeCwd)
+      }
+
+      // The Agent Canvas serving allowlist rides the same decision, for the same
+      // reason — but NOT against the same directory (adversarial review,
+      // 2026-08-15, second pass).
+      //
+      // `claudeCwd` is TRANSCRIPT-DERIVED whenever an exact-resume applies. It
+      // starts as `resolvedCwd` and is then overwritten with
+      // `resolveResumeLaunch(effectiveTarget).claudeCwd`, which is
+      // `target.cwd` — and `target` is either the persisted `options.resume` or
+      // the self-captured `resolveResumeTargetFromTranscript()`, whose cwd is
+      // THE FIRST `cwd` STRING IN THE TRANSCRIPT JSONL, verbatim. That file is
+      // one the agent can write. So an agent that rewrites its own transcript's
+      // first line to `"cwd":"C:\\Users\\<u>\\.claude"` and creates the matching
+      // mangled projects directory names its own served root the next time the
+      // user hits Restart or Switch-account. `isHomeOrAncestor` does not catch
+      // it: `~/.claude` is a CHILD of home, not an ancestor. From there
+      // `canvas_render { htmlPath: '…/.claude/.credentials.json' }` reads the
+      // OAuth token and the pre-allowed `canvas_snapshot` reads it back out of
+      // the DOM. The previous fix moved the registration to this file and
+      // claimed "no served root is derived from transcript content any more";
+      // moving the CALL did not change where the VALUE came from.
+      //
+      // So the canvas root is `resolvedCwd` — `resolveCwd(options.cwd)`, the
+      // session's CONFIGURED project directory, which no transcript can reach —
+      // and never the resume override. The cost is bounded and known: a session
+      // that exact-resumes a conversation from OUTSIDE its configured project
+      // directory can serve nothing (renders are refused, not misdirected).
+      //
+      // codex_review above deliberately keeps `claudeCwd`: changing what it
+      // reviews is a separate behavioural decision, and its exposure is
+      // different in kind (it reads for a review the user reads, with no
+      // pre-allowed tool reading the bytes back). It is flagged, not changed.
+      if (isHomeOrAncestor(resolvedCwd)) {
+        logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the configured project directory resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home).`)
+        setCanvasRootRefusal(sessionId, describeCanvasRootRefusal('home-or-ancestor', resolvedCwd))
+      } else if (!registerCanvasUatRoot(sessionId, resolvedCwd)) {
+        // Floor-checked again inside the store (absolute, real, a directory, not
+        // home, not a volume root, not a dot-dir under home, not the resources
+        // directory) — two independent refusals rather than one, because this is
+        // the only thing standing between a prompt-injected agent and a file
+        // read with the app's privileges.
+        //
+        // NAME the floor that refused (#371). "Refused by the canvas store" in a
+        // log file, with the agent told to write where it already wrote, is an
+        // undiagnosable dead end for the one configuration the resources-dir
+        // floor exists for.
+        const reason = canvasRootRefusalReason(sessionId, resolvedCwd)
+        const explanation = reason ? describeCanvasRootRefusal(reason, resolvedCwd) : 'the canvas store refused it.'
+        logWarn(`[pty] canvas serving root NOT registered for ${sessionId} (${reason ?? 'unknown'}): ${explanation}`)
+        setCanvasRootRefusal(sessionId, explanation)
+      }
+
+      // The worktree designation is INDEPENDENT of the project root (#371). It
+      // used to sit in the same else-if chain, so a project directory refused
+      // by any floor also cost the session its worktree root — even though
+      // `<parent>/ccc-wt/<sid>` neither contains nor sits under the resources
+      // directory and would have been accepted. One refusal, not two.
+      //
+      // PENDING: the store consults it only once it exists as a real, un-linked
+      // directory (canvas-store.designateCanvasWorktreeRoot). The path is CCC's,
+      // the contents are the agent's own; nothing an agent can write moves it
+      // (ADR-016).
+      if (designatedWorktree) {
+        if (designateCanvasWorktreeRoot(sessionId, designatedWorktree)) {
+          logInfo(`[pty] canvas: designated session worktree ${designatedWorktree} for ${sessionId} (served once it exists)`)
+        } else {
+          logWarn(`[pty] canvas: designated session worktree ${designatedWorktree} for ${sessionId} was refused by the canvas store floor.`)
+        }
       }
 
       // Explicitly cd to the project directory, then launch Claude.
@@ -1189,31 +4821,58 @@ export function spawnPty(
       if (options?.effortLevel) {
         extraFlags += ` --effort ${options.effortLevel}`
       }
-      if (options?.model) {
-        extraFlags += ` --model ${options.model}`
+      // MUST be quoted (#144): 1M-context ids contain brackets (`opus[1m]`),
+      // which zsh treats as a glob class and aborts the whole launch line.
+      // modelFlag builds the entire flag so this site cannot interpolate the
+      // raw value by accident. (--effort / --permission-mode need no quoting:
+      // their IPC guards — a `^[a-zA-Z0-9_-]+$` charset and a fixed enum —
+      // exclude every glob and shell metacharacter.)
+      const mFlag = modelFlag(options?.model, os.platform() === 'win32')
+      if (mFlag) extraFlags += ` ${mFlag}`
+      // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
+      if (options?.permissionMode && options.permissionMode !== 'default') {
+        extraFlags += ` --permission-mode ${options.permissionMode}`
+      }
+      // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded, no
+      // shell metacharacters, CCC-managed flags rejected at the IPC seam).
+      if (options?.extraArgs && options.extraArgs.trim()) {
+        extraFlags += ` ${options.extraArgs.trim()}`
       }
 
       // P7.7.2: seed a per-session settings file for hooks/statusLine
       // overrides. P7.7.3: also seed a per-session MCP config file
       // (--mcp-config), because claude.exe ignores mcpServers in --settings
       // and reads it ONLY from --mcp-config or ~/.claude.json.
-      const quoteForShell = (p: string): string =>
-        os.platform() === 'win32' ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
+      //
+      // Read the app settings ONCE for this spawn: the settings block, the MCP
+      // block and the canvas-plugin block below all key off them, and reading
+      // fresh per spawn is what lets a Settings toggle apply to the next
+      // session without an app restart.
+      const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+      // Built-in tools master (onboarding p6 / Settings): also gates the
+      // canvas workflow plugin + pre-allowed canvas tools — without the
+      // conductor MCP entry there is nothing for either to talk to.
+      const conductorOn = appSettings?.conductorToolsEnabled !== false
       try {
         // v1.5.12: thread the CCC AppSettings.disableClaudeWorkflows flag
         // through so Claude Code's dynamic-workflow feature can be killed
         // at the per-session level without the user hand-editing
-        // ~/.claude/settings.json. Read fresh on every spawn so a Settings
-        // toggle takes effect on the next session without an app restart.
-        const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean }>('settings')
+        // ~/.claude/settings.json.
         const disableWorkflows = !!appSettings?.disableClaudeWorkflows
         // Master status-line switch (onboarding p4 / Settings -> Status line):
         // absent means ON (pre-upgrade configs). Off = no resourcesDir, so the
         // per-session clone gets no statusLine key and Claude runs without the
-        // bundled script. Read fresh per spawn; sessions already running keep
-        // theirs until restarted.
+        // bundled script. Sessions already running keep theirs until restarted.
         const statusLineOn = appSettings?.statusLineEnabled !== false
-        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows, resourcesDir: statusLineOn ? getResourcesDirectory() : undefined })
+        const sesPath = writeLocalSessionSettings(sessionId, {
+          disableWorkflows,
+          resourcesDir: statusLineOn ? getResourcesDirectory() : undefined,
+          // SEC-BATCH FLAG (2026-08-14): pre-allow CCC's own canvas tools so
+          // the render->review loop doesn't stall in approval prompts (the VM
+          // transcript lost 11 minutes to one). Additive allow only — a user
+          // deny still wins under Claude's permission semantics.
+          allowCanvasTools: conductorOn,
+        })
         // injectHooks rewrites the per-session settings file to point Claude's
         // hook events at our local gateway, which drives the session attention
         // pulse, statusline ingest, and conversation logging. Skipped only when
@@ -1224,38 +4883,67 @@ export function spawnPty(
         if (gw && gwStatus?.listening && gwStatus.port) {
           try {
             const secret = gw.registerSession(sessionId)
-            injectHooks({ sessionId, settingsPath: sesPath, port: gwStatus.port, secret })
+            injectHooks({ sessionId, settingsPath: sesPath, port: gwStatus.port, secret, cwd: claudeCwd })
           } catch (err) {
             logError(`[pty] Failed to inject hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
           }
         }
-        extraFlags += ` --settings '${quoteForShell(sesPath)}'`
+        // Only pass --settings if the file was actually written. The per-session
+        // writers fail closed now (no insecure fallback), so a transient write
+        // failure can leave no file -- and claude exits 1 on a missing --settings
+        // path. Omit the flag instead so the session still launches on defaults.
+        if (fs.existsSync(sesPath)) {
+          extraFlags += ` --settings ${quoteArgForShell(sesPath, os.platform() === 'win32')}`
+        } else {
+          logWarn(`[pty] per-session settings not written for ${sessionId}; launching without --settings`)
+        }
       } catch (err) {
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
       try {
-        // Built-in tools master (onboarding p6 / Settings): off = the session's
-        // mcp-config carries no conductor entry. Read fresh per spawn.
-        const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
         const mcpCfgPath = writeLocalSessionMcpConfig(sessionId, conductorOn)
-        extraFlags += ` --mcp-config '${quoteForShell(mcpCfgPath)}'`
+        // Only pass --mcp-config if the file exists: the writer fails closed, and
+        // claude exits 1 on a missing --mcp-config path. Omit it on a write
+        // failure so the session still launches (without built-in conductor tools).
+        if (fs.existsSync(mcpCfgPath)) {
+          extraFlags += ` --mcp-config ${quoteArgForShell(mcpCfgPath, os.platform() === 'win32')}`
+        } else {
+          logWarn(`[pty] per-session MCP config not written for ${sessionId}; launching without --mcp-config`)
+        }
       } catch (err) {
         logError(`[pty] Failed to seed per-session MCP config for ${sessionId}: ${(err as Error)?.message ?? err}`)
+      }
+
+      // Agent Canvas workflow plugin (P6 seed): the skill that drives the
+      // render->review loop so the user never has to know a tool name.
+      // Session-scoped via --plugin-dir (nothing written to ~/.claude).
+      // Skipped for pinned legacy CLI versions — they may predate the flag,
+      // and an unknown flag fails the whole launch.
+      if (conductorOn && !options?.legacyVersion?.enabled) {
+        try {
+          // existsSync for the same reason --settings and --mcp-config check:
+          // a flag pointing at a missing path is at best ignored and at worst
+          // exits the CLI, and this one is appended to every session.
+          const pluginDir = ensureCanvasPlugin()
+          if (pluginDir && fs.existsSync(pluginDir)) {
+            extraFlags += ` --plugin-dir ${quoteArgForShell(pluginDir, os.platform() === 'win32')}`
+          }
+        } catch (err) {
+          logWarn(`[pty] canvas plugin unavailable for ${sessionId}: ${(err as Error)?.message ?? err}`)
+        }
       }
 
       // Build --agents flag if agent templates are configured
       let agentsFlag = ''
       if (options?.agentsConfig && options.agentsConfig.length > 0) {
         const agentsJson = JSON.stringify(options.agentsConfig)
-        if (os.platform() === 'win32') {
-          // PowerShell: single-quote the JSON, escape internal single quotes by doubling
-          const escaped = agentsJson.replace(/'/g, "''")
-          agentsFlag = ` --agents '${escaped}'`
-        } else {
-          // Bash: single-quote the JSON, escape internal single quotes
-          const escaped = agentsJson.replace(/'/g, "'\\''")
-          agentsFlag = ` --agents '${escaped}'`
-        }
+        // Through the shared helper. Agent templates are free text a user
+        // types (and JSON from the resources dir), so a curly apostrophe in a
+        // description is ORDINARY PROSE — it broke launches by accident long
+        // before anyone crafted one deliberately. The old hand-inlined
+        // doubling escaped U+0027 only, and this value is concatenated
+        // straight into the same launch line the quoting fix hardened.
+        agentsFlag = ` --agents ${quoteArgForShell(agentsJson, os.platform() === 'win32')}`
         logInfo(`[pty] Agents flag for ${sessionId}: ${agentsFlag.slice(0, 200)}...`)
       }
 
@@ -1278,35 +4966,79 @@ export function spawnPty(
         useResumePicker: !!options?.useResumePicker,
         pickerScript: getResumePickerPath(),
         resumeUuid,
+        // Boolean only: the question itself travels in the spawn env
+        // (CCC_ASK_PROMPT), never through the command string.
+        //
+        // Read off the ENV THIS SPAWN ACTUALLY GOT — `finalSpawnEnv` is the
+        // object handed to pty.spawn above — rather than re-deciding from the
+        // question. "Does the variable exist" and "does the line reference the
+        // variable" are the same question, so they must not be two answers that
+        // happen to agree: asked of the raw string, a question made only of
+        // control characters left the variable unset while the line still
+        // referenced it, and `"$CCC_ASK_PROMPT"` on POSIX is QUOTED — an unset
+        // variable expands to one EMPTY argument, not to none. That is
+        // `claude -- ""`, the blank opening prompt the env route exists to avoid.
+        askPrompt: finalSpawnEnv.CCC_ASK_PROMPT !== undefined,
       })
+      launchWriteScheduled = true
+      launchPendingSessions.add(sessionId)
       setTimeout(() => {
         // Liveness guard (see shell-only branch): the 300ms launch-write can race
         // a kill / Restart / app-quit; writing to a dead/replaced PTY from this
         // timer would crash main. Only write when our PTY is still registered.
-        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
-        try { ptyProcess.write(escapedCmd + '\r') } catch { /* session died mid-launch */ }
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { abandonLaunchHold(); return }
+        try {
+          ptyProcess.write(escapedCmd + '\r')
+          releaseLaunchHold()
+        } catch { abandonLaunchHold() /* session died mid-launch */ }
       }, 300)
     }
 
     ptyProcess.onData((data) => {
       if (win.isDestroyed()) return
+      // rc.15 review R9 (aicc_planning#52 adjacent): the generation guard the
+      // stale-exit path has, applied to DATA too. A restart replaces this id's
+      // PTY synchronously and node-pty still delivers the old process's late
+      // output afterwards; it must not reach the new terminal, its integrity
+      // monitor or its watchdog (all keyed by session id, not by process).
+      if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
+      // Watchdog (#235): no-op when off or when this session never got a
+      // watchdog started (shell-only sessions never do — see below).
+      getWatchdogManager()?.feedData(sessionId, data)
       win.webContents.send(`pty:data:${sessionId}`, data)
     })
   }
 
   ptySessions.set(sessionId, { ptyProcess, sessionId })
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
-
-  // Replay any buffered writes (from commands sent before PTY was ready)
-  const pending = pendingWrites.get(sessionId)
-  if (pending) {
-    logInfo(`[pty] Replaying ${pending.length} buffered write(s) for ${sessionId}`)
-    for (const data of pending) {
-      ptyProcess.write(data)
-    }
-    pendingWrites.delete(sessionId)
+  // Watchdog (#235): any interactive Claude session — LOCAL or SSH (owner
+  // 2026-08-31: it observes the PTY, which an SSH session has too; the headless
+  // xterm renders the escapes and the retry send() reaches the remote claude).
+  // LOCAL arms here at spawn (the PTY runs claude directly). SSH arms LATER, at
+  // the claude-running latch inside the SSH flow (see setFlowState) — at spawn
+  // its PTY carries the handshake (auth prompts, remote-controlled MOTD), which
+  // the watchdog must never be in a position to type into.
+  // Never Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
+  // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op when
+  // the feature is off (default). feedData already flows for every session.
+  if (!options?.shellOnly && !options?.ssh && (options?.provider ?? 'claude') === 'claude') {
+    getWatchdogManager()?.startWatchdog(sessionId, {
+      provider: options?.provider,
+      ssh: false,
+      shellOnly: false,
+      // Explicit kind flag (#266 MAJOR-5), never the askPrompt heuristic: that
+      // was false for a question-less Ask launch and after every restart.
+      ask: options?.isAsk === true,
+      cols: options?.cols,
+      rows: options?.rows,
+    })
   }
+
+  // Replay any buffered writes (from commands sent before PTY was ready). When a
+  // launch line is queued, its timer owns the replay so the buffered write lands
+  // in the process the user meant, not in the shell that is about to be replaced.
+  if (!launchWriteScheduled) releaseLaunchHold()
 
   // Record the run via the transcripts worker pipeline (Logs v2). Gated on the
   // live `loggingEnabled` setting (default-true) and never for shell-only
@@ -1378,9 +5110,25 @@ export function spawnPty(
     }
   })
 
+  // A PTY IS RUNNING FOR THIS ID — armed HERE, immediately beside the exit
+  // handler that clears it, and deliberately NOT beside `updateSessionMeta`
+  // above.
+  //
+  // Recorded separately from the metadata map because that map is also written
+  // by github-handlers for sessions that never spawn, and the canvas ownership
+  // lease needs the lifecycle fact rather than "somebody described this id".
+  //
+  // Recorded LATE because of what sits between: `spawnPty` runs from an
+  // uncaught `ipcMain.on('pty:spawn')`, and the ninety-odd lines after the
+  // metadata write (config reads, run registration, the data hook) can throw.
+  // A throw there used to leave the id marked live with no exit handler ever
+  // armed to unmark it — stranding that session's canvas as un-resumable,
+  // un-dismissable and invisible for the rest of the run, which is the exact
+  // failure this signal exists to end. The mark and its only eraser are now
+  // adjacent, so the window is one statement wide.
+  markPtySessionAlive(sessionId)
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
-
     // Restart-race guard: the renderer's restart flow kills the old PTY
     // and re-spawns synchronously with the SAME sessionId. node-pty's
     // exit callback is async — by the time it fires, the new PTY has
@@ -1394,10 +5142,38 @@ export function spawnPty(
     // Identity-check the map: only run cleanup when the entry still
     // points at OUR ptyProcess (or there's no entry at all).
     const current = ptySessions.get(sessionId)
-    const weAreCurrent = !current || current.ptyProcess === ptyProcess
-    if (weAreCurrent) {
+    // rc.15 review R3: while a respawn of this id is still waiting for its
+    // profile's refresh there is no entry either -- but the exit of the PTY it
+    // replaced is STALE, not the session's end (the deferred spawn is the
+    // session's next process). Without this, a Switch account under a
+    // mid-refresh profile marked the session exited and dropped its resume
+    // target and canvas link while the new PTY was seconds away.
+    const pendingWait = current ? undefined : refreshWaitSpawns.get(sessionId)
+    const weAreCurrent = current ? current.ptyProcess === ptyProcess : !pendingWait
+    // Everything that ends the session, as ONE unit: run at once when this exit
+    // is the session's own, or handed to the pending respawn wait (below) so a
+    // wait that never lands can still end the session its spawn replaced.
+    const finishSession = (): void => {
+      // item 5 (resume cascade): an SSH session whose ssh process exited before
+      // reaching claude-running failed to connect -- tell the overlay so it can
+      // offer Retry (never strand). Runs only while the flow still exists (a
+      // deliberate close destroys it first). CRITICAL: this MUST sit inside the
+      // weAreCurrent guard. sshFlows is keyed by sessionId only, so on a restart
+      // it holds the NEW flow while the OLD pty exits; poking it here (as the
+      // first cut did, above this guard) flipped a healthy just-respawned session
+      // to failed('connection'), and the overlay's only escape was Retry -> the
+      // same restart -> the same stale exit, wedged forever (adversarial review,
+      // 2026-08-18, BLOCKER). When we are NOT current a newer spawn owns the flow;
+      // its own onExit handles its own drops.
+      if (sshFlows.has(sessionId)) {
+        try { getSshFlow(sessionId)?.handlePtyExit() } catch { /* best-effort */ }
+      }
       ptySessions.delete(sessionId)
       clearSessionMeta(sessionId)
+      // ...and the PTY is gone. Paired with the spawn-side mark above; a
+      // canvas this session owned becomes ownerless from here, which is what
+      // makes it resumable again.
+      markPtySessionGone(sessionId)
       // Close the run (the worker final-drains + retires its transcript tails).
       // Gated on weAreCurrent so the restart-race stale exit can't end the
       // just-respawned session's run. No-op when logging is disabled / this
@@ -1406,13 +5182,21 @@ export function spawnPty(
       // Logs v2 (Task 8): cancel any pending heuristic timer + clear the binder's
       // per-session bind state so a reused sessionId (restart) binds fresh.
       getTranscriptBinder()?.endRun(sessionId)
+      // #536: retire any remembered CCC name so a renamed-but-never-bound session
+      // does not leak an entry in the pending-name registry for the process life.
+      forgetSessionName(sessionId)
       getPtyIntegrityMonitor()?.endSession(sessionId)
+      // (watchdog teardown now lives UNCONDITIONALLY in cleanupSessionResources
+      //  below — see FINDING 1 — so the restart-race stale exit tears it down too)
       try {
         const gwExit = getGateway()
         if (gwExit) gwExit.unregisterSession(sessionId)
       } catch { /* gateway may have already stopped during shutdown */ }
       removeLocalSessionSettings(sessionId)
       removeLocalSessionMcpConfig(sessionId)
+      // ADR-009 token custody: the status-URL sidecar carries this session's MCP
+      // token, so it is swept on the SAME teardown as the other two.
+      removeLocalSessionStatusUrl(sessionId)
       // P6: clear opt-in registration and per-session usage record.
       unregisterCodexReviewSession(sessionId)
       disposeCodexReviewUsage(sessionId)
@@ -1442,15 +5226,50 @@ export function spawnPty(
       try { syncPrimaryCredentialsWithGlobal() } catch { /* best-effort */ }
       // Bug 4: release this session's pinned vision browser target/context.
       try { teardownVisionSession(sessionId) } catch { /* best-effort */ }
-    } else {
-      logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
+      // Canvas link state (the cwd / resume uuid / profile used to LABEL and
+      // order the reclaim list). `forgetSessionForCanvas` had no caller at all
+      // until now, so spawnInfo grew for the life of the install and a dead
+      // session's project directory kept ordering other sessions' reclaim
+      // lists (adversarial review, 2026-08-15).
+      //
+      // It is HERE and not in cleanupSessionResources on purpose: the entry is
+      // written by the pty:spawn IPC handler BEFORE spawnPty runs, and spawnPty
+      // opens with killPty → cleanupSessionResources, so clearing it there
+      // would wipe every restart's stamps a moment after they were set. This
+      // block only runs when no newer PTY has taken the session over — i.e.
+      // when the PTY really is gone for good, which is the contract the
+      // function documents.
+      forgetSessionForCanvas(sessionId)
+      if (win.isDestroyed()) {
+        logDebug(`[pty] Window already destroyed, skipping exit notification for ${sessionId}`)
+        return
+      }
+      win.webContents.send(`pty:exit:${sessionId}`, exitCode)
     }
-
-    if (win.isDestroyed()) {
-      logDebug(`[pty] Window already destroyed, skipping exit notification for ${sessionId}`)
+    if (weAreCurrent) {
+      finishSession()
       return
     }
-    win.webContents.send(`pty:exit:${sessionId}`, exitCode)
+    if (pendingWait) {
+      // rc.15 review R3 (review round 2): stale only if the deferred spawn lands.
+      // If the wait is cancelled (the card closed meanwhile) or the re-entry
+      // fails, nothing else ends this session: the wait carries the teardown.
+      logInfo(`[pty] Exit of the replaced PTY for ${sessionId} while its respawn waits for a profile refresh -- teardown handed to the wait`)
+      // ADR-009 (Lens C): two predecessors can exit stale before the wait
+      // settles (respawn twice under one mid-refresh profile). Keep the FIRST
+      // teardown rather than clobbering it -- both do the same session-global
+      // cleanup, so one run ends the session once; overwriting merely swapped
+      // which exit code the single pty:exit carried.
+      if (!pendingWait.abandonedTeardown) pendingWait.abandonedTeardown = finishSession
+      return
+    }
+    // Skip the renderer notification too (rc.14 review F8): the event above
+    // is keyed by session id only, so TerminalView would mark the LIVE
+    // replacement as exited (ptyExited + spawn tracker cleared), Ask
+    // Conductor would treat a healthy session as dead and respawn it, and a
+    // remount would spawn yet again. The exit that matters -- the current
+    // PTY's -- still reaches the renderer through finishSession.
+    logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup and exit notification`)
   })
 }
 
@@ -1521,10 +5340,30 @@ function isSubmittedPayload(data: string): boolean {
 }
 
 export function writePty(sessionId: string, data: string): void {
+  // Focus-report chunks (RC8): xterm emits the DECSET-1004 focus events
+  // (\x1b[I focus-in, \x1b[O focus-out) as standalone writes when a session
+  // pane gains or loses focus — i.e. on every session click/switch, for BOTH
+  // sides of the switch. Claude Code's TUI enables 1004 and answers with a
+  // small redraw, which must not count as the session "waking" from silence.
+  // Arm the watchdog's activation grace so that redraw is excluded from sleep
+  // bookkeeping. EXACT match only (user keystrokes and pastes never arrive as
+  // exactly one of these two chunks), and the write itself is never altered,
+  // blocked, or delayed by this.
+  if (data === '\x1b[I' || data === '\x1b[O') {
+    getWatchdogManager()?.noteRedrawTrigger(sessionId)
+  }
   // Dedupe guard: suppress identical repeats of submitted payloads within a short window.
   // This protects against double-sends from double-clicks, React effect races, event
   // listeners firing twice, etc. Only applies to "submitted" writes (ending in \r or \n)
   // so keystrokes and escape sequences are never blocked.
+  // rc.15 review R3: nothing is queued across a refresh wait -- the shell the
+  // line was typed for has not started, and a replay into it would be a command
+  // the user never saw run. Judged BEFORE the duplicate-submit suppressor, so a
+  // dropped line does not arm it against the user's own resend.
+  if (refreshWaitSpawns.has(sessionId)) {
+    logInfo(`[pty] Dropped write for ${sessionId} (${data.length} bytes): the spawn is waiting for a profile refresh`)
+    return
+  }
   if (isSubmittedPayload(data)) {
     const recent = recentWrites.get(sessionId)
     const now = Date.now()
@@ -1540,7 +5379,9 @@ export function writePty(sessionId: string, data: string): void {
 
   try {
     const session = ptySessions.get(sessionId)
-    if (session) {
+    // The PTY can exist while still being the bare shell (see
+    // launchPendingSessions): writing now hands the text to THAT shell.
+    if (session && !launchPendingSessions.has(sessionId)) {
       if (data.length > WRITE_CHUNK_SIZE) {
         writeChunked(sessionId, session.ptyProcess, data)
       } else {
@@ -1549,11 +5390,17 @@ export function writePty(sessionId: string, data: string): void {
     } else if (sessionId === '__cli_setup__') {
       writeCliSetupPty(data)
     } else {
-      // PTY not spawned yet — buffer the write (e.g., partner terminal command clicked before PTY ready)
+      // Buffer: either there is no PTY yet (partner terminal command clicked
+      // before it was ready) or there is one but it is still the bare shell
+      // waiting for its launch line. The two are different states and the log
+      // says which, because "not yet spawned" against a live PTY reads as a bug.
+      const held = launchPendingSessions.has(sessionId)
       const pending = pendingWrites.get(sessionId) || []
       pending.push(data)
       pendingWrites.set(sessionId, pending)
-      logInfo(`[pty] Buffered write for ${sessionId} (PTY not yet spawned, ${pending.length} pending)`)
+      logInfo(
+        `[pty] Buffered write for ${sessionId} (${held ? 'launch line still pending' : 'PTY not yet spawned'}, ${pending.length} pending)`,
+      )
     }
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
@@ -1569,6 +5416,8 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
   try {
     ptySessions.get(sessionId)?.ptyProcess.resize(cols, rows)
     getPtyIntegrityMonitor()?.recordResizeApplied(sessionId, cols, rows)
+    // Keep the watchdog's rendered pane wrapping like the real one (#266).
+    getWatchdogManager()?.noteResize(sessionId, cols, rows)
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {
@@ -1589,9 +5438,31 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
  * naturally-exiting sessions.
  */
 function cleanupSessionResources(sessionId: string): void {
+  // #48: release the shell-only profile hold. No-op for every other session.
+  const profileHold = shellOnlyProfileHolds.get(sessionId)
+  if (profileHold) {
+    shellOnlyProfileHolds.delete(sessionId)
+    profileHold()
+  }
   pendingWrites.delete(sessionId)
+  launchPendingSessions.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  // #242 finding I1: drop ALL of this session's sentinel buffers alongside its
+  // OSC sibling above -- same per-session-map shape, same leak risk if omitted.
+  // All three kinds, not just 'setup': a session can die with its stage or arch
+  // sentinel still unresolved, and a per-kind clear only runs on resolve.
+  clearAllSshLineBuffers(sessionId)
+  // #242 finding F1 (b): drop this session's nonce so it can never leak into
+  // a future, unrelated spawn reusing the same sessionId.
+  sshNonceBySession.delete(sessionId)
+  sshEntryNonceBySession.delete(sessionId)
+  // item 4: the SSH connection target + tmux-persistence flag are DELIBERATELY
+  // NOT cleared here -- cleanupSessionResources runs on a natural PTY exit (a
+  // transient drop) too, where the tab stays and a later End must still reach
+  // the host. They are cleared only on deliberate close, in killPty (a respawn
+  // overwrites them, so a stale entry from an exited-but-open session is bounded
+  // and self-healing). See the maps' doc comment (adversarial review 2026-08-18).
   pasteQueues.get(sessionId)?.cancel() // stop draining + drop pending before dropping the ref (P1.5)
   pasteQueues.delete(sessionId)
   // Delete the per-session statusline status file so the watcher's poll
@@ -1622,6 +5493,57 @@ function cleanupSessionResources(sessionId: string): void {
     try { flow.destroy() } catch { /* noop */ }
     sshFlows.delete(sessionId)
   }
+  // SECURITY (adversarial review, #188): deregister codex_review here so
+  // registration is strictly RE-ESTABLISHED per spawn. spawnPty calls killPty
+  // (→ this) before it re-registers, so a session that restarts into a
+  // home-rooted, SSH, shell-only or Codex state cannot INHERIT the stale
+  // registration (and stale cwd) from a prior local-Claude spawn — which would
+  // otherwise defeat the home-dir refusal and the "SSH never registers"
+  // invariant. Idempotent: a no-op when the session was never registered.
+  unregisterCodexReviewSession(sessionId)
+  // SECURITY (adversarial review, 2026-08-15 — BLOCKER 1): the canvas serving
+  // allowlist dies with the session, for the identical reason. The first cut
+  // had NO production revocation at all — a root registered by any local spawn
+  // stayed servable for the life of the app process, so a session that exited
+  // hours ago still contributed a readable project to whichever agent was
+  // running now. Re-established per spawn (spawnPty calls killPty → here before
+  // it re-registers), so a session that restarts into a home-rooted, SSH,
+  // shell-only or Codex state inherits nothing.
+  revokeCanvasUatRoots(sessionId)
+  // SECURITY (adversarial review, 2026-09-01 — HIGH): drop this session's
+  // canvas markers here, for the same per-spawn isolation invariant as the
+  // watchdog below.
+  //
+  // `forgetCanvasMarkers` was wired ONLY to the `pty:kill` IPC listener
+  // (pty-handlers.ts). That listener fires when the RENDERER closes a tab — it
+  // does not fire for the two paths that respawn a session UNDER THE SAME ID:
+  // Restart, and switch-account. So a marker queued against the old
+  // conversation ("Approved v7 on the canvas · canvas_version_verdict
+  // recorded") survived the teardown with `turnOpen` still true, and the NEW
+  // process's first `SessionStart` hook — an event this queue treats as a
+  // boundary and flushes on — wrote it straight into the fresh conversation.
+  // The agent is then told a verdict was filed on work it has never seen, in a
+  // line whose whole purpose is to trigger the canvas skill. A natural PTY exit
+  // reached neither the listener nor any other clear, so the marker simply sat
+  // there until something flushed it.
+  //
+  // Here it is covered by BOTH callers (killPty and the natural-exit block), and
+  // spawnPty calls killPty → here before a respawn, so the new session inherits
+  // nothing. Idempotent: a no-op for a session with no queue. The module holds
+  // no static import of pty-manager (its PTY end is injected at boot from
+  // index.ts), so importing it here introduces no cycle.
+  forgetCanvasMarkers(sessionId)
+  // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
+  // here too, for the identical per-spawn isolation invariant. This runs from
+  // BOTH killPty (restart / deliberate close) and the natural-exit cleanup, and
+  // UNCONDITIONALLY — unlike onExit's own stopWatchdog, which sat under the
+  // weAreCurrent guard that a restart's stale exit skips. Without this, a
+  // watchdog armed by a local-Claude spawn survived a same-sessionId restart
+  // into a Codex / SSH / shell-only session and could send() its retry into that
+  // new PTY (shell-only + a custom retryMessage = arbitrary command execution).
+  // spawnPty calls killPty → here before the new spawn arms its own, so the new
+  // session inherits no watcher. Idempotent (no-op when none was running).
+  try { getWatchdogManager()?.stopWatchdog(sessionId) } catch { /* best-effort teardown */ }
 }
 
 // U8: grace before killing an SSH PTY so the in-band remote-cleanup command has
@@ -1629,19 +5551,52 @@ function cleanupSessionResources(sessionId: string): void {
 const REMOTE_CLEANUP_GRACE_MS = 400
 
 export function killPty(sessionId: string): void {
+  // rc.15 review R3: a spawn still waiting for its profile's refresh has no PTY
+  // yet -- cancel the wait (its hold goes with it); there is nothing else to kill.
+  const waiting = refreshWaitSpawns.get(sessionId)
+  if (waiting) {
+    logInfo(`[pty] Session ${sessionId} was still waiting for a profile refresh; the spawn is cancelled`)
+    waiting.cancel()
+    // The replaced PTY's exit, if it already arrived, was left to this spawn to
+    // supersede; with the spawn cancelled it ends the session now (once).
+    if (waiting.abandonedTeardown) {
+      waiting.abandonedTeardown()
+    } else if (!waiting.win.isDestroyed()) {
+      // ADR-009 round 2 (Lens C2): a FRESH parked wait (no predecessor PTY) has
+      // no teardown to run, so nothing tells the renderer its card is done. On a
+      // killAllPty that does not quit the app (a failed update-installer launch
+      // re-throws without app.exit), that card is stranded on a starting spinner.
+      // Emit a synthetic exit so it always resolves. Not reached on the supersede
+      // path (the entry is deleted before killPty) or the destroyed-window path.
+      logInfo(`[pty] Session ${sessionId}: parked spawn cancelled with no PTY -- notifying the renderer the start ended`)
+      waiting.win.webContents.send(`pty:exit:${sessionId}`, -1)
+    }
+  }
   const entry = ptySessions.get(sessionId)
+  // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
+  // these, but killPty does, at the end).
+  const tmuxPersistent = sshTmuxWrappedBySession.has(sessionId)
   if (entry) {
-    logInfo(`[pty] Killing PTY for session ${sessionId}`)
-    if (sshFlows.has(sessionId)) {
+    logInfo(`[pty] Killing PTY for session ${sessionId}${tmuxPersistent ? ' (tmux-persistent: detach only)' : ''}`)
+    if (sshFlows.has(sessionId) && !tmuxPersistent) {
       // U8: sweep the per-session files we planted on the remote, in-band down the
       // still-live PTY, then kill after a short grace so the `rm` runs before the
       // tunnel dies. No SSH creds retained. A crash / natural exit can't do this
       // (the tunnel is already gone), which is acceptable -- the files are inert.
       // ptySessions.delete below means the delayed kill's onExit no-ops.
+      //
+      // Only for a NON-persistent SSH session. For a tmux-WRAPPED one the remote
+      // survives this teardown, so (a) the foreground is Claude and this line
+      // would land in its composer and stay pre-typed (LF doesn't submit), and
+      // (b) the sidecars must either survive (Leave running -- Claude still uses
+      // them) or be removed by the End-remote exec (which does its own rm). So we
+      // write nothing and just detach (adversarial review, 2026-08-18).
       const proc = entry.ptyProcess
       try { proc.write(buildRemoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
       setTimeout(() => { try { proc.kill() } catch { /* already gone */ } }, REMOTE_CLEANUP_GRACE_MS)
     } else {
+      // Non-SSH, or a tmux-persistent SSH session (killing the local PTY detaches
+      // the tmux client; the remote survives for reattach on relaunch).
       try { entry.ptyProcess.kill() } catch (err) {
         logError(`[pty] Error killing PTY ${sessionId}:`, err)
       }
@@ -1649,11 +5604,23 @@ export function killPty(sessionId: string): void {
     ptySessions.delete(sessionId)
   }
   cleanupSessionResources(sessionId)
+  // Deliberate close: NOW drop the end-target + persistence flag (see the maps'
+  // doc). A natural exit reaches cleanupSessionResources but not here, so the
+  // target survives a transient drop for a later End.
+  sshTargetBySession.delete(sessionId)
+  sshTmuxWrappedBySession.delete(sessionId)
 }
 
 export function killAllPty(): void {
-  logInfo(`[pty] Killing all PTYs (${ptySessions.size} active)`)
-  for (const [id] of ptySessions) {
+  // ADR-009 adversarial review (Lens C, R3 BLOCKER U13): a spawn parked on a
+  // profile-refresh wait has no PTY in ptySessions yet, so a ptySessions-only
+  // sweep left its Infinity hold alive AND let its deferred spawn start a real
+  // PTY behind an already-destroyed window (the darwin window-all-closed sweep,
+  // the update-install teardown). killPty(id) cancels a parked wait, so sweep
+  // the union. Snapshot the keys first: killPty mutates both maps.
+  const ids = new Set<string>([...ptySessions.keys(), ...refreshWaitSpawns.keys()])
+  logInfo(`[pty] Killing all PTYs (${ptySessions.size} active, ${refreshWaitSpawns.size} parked on a refresh wait)`)
+  for (const id of ids) {
     killPty(id)
   }
 }
@@ -1684,6 +5651,18 @@ export function gracefulExitPty(sessionId: string, timeoutMs = 5000): Promise<vo
       resolve()
     }, timeoutMs)
 
+    // SSH tmux enhancement (item 4): a tmux-persistent remote must be DETACHED,
+    // not exited, on app quit. `/exit` inside the tmux-wrapped pane quits Claude
+    // and tears the remote session down -- defeating the persistence the header
+    // pill just promised, on the most common exit path. Killing the local PTY
+    // detaches the tmux client; the remote survives for reattach on relaunch
+    // (adversarial review, 2026-08-18). The onExit listener above resolves.
+    if (sshTmuxWrappedBySession.has(sessionId)) {
+      logInfo(`[pty-manager] ${sessionId} is tmux-persistent -- detaching (no /exit) so the remote survives app quit`)
+      try { entry.ptyProcess.kill() } catch { /* already gone */ }
+      return
+    }
+
     // Send Escape (cancel any pending input), then /exit
     entry.ptyProcess.write('\x1b')  // Escape
     setTimeout(() => {
@@ -1704,6 +5683,12 @@ export function gracefulExitPty(sessionId: string, timeoutMs = 5000): Promise<vo
  * Returns when all have exited or timed out.
  */
 export async function gracefulExitAllPty(timeoutMs = 5000): Promise<void> {
+  // ADR-009 adversarial review (Lens C, R3 BLOCKER U13): cancel any spawn parked
+  // on a refresh wait first -- it has no PTY to /exit, but left armed its
+  // deferred spawn would start a PTY after this graceful shutdown returns. A
+  // cancel releases the hold and ends the session its predecessor's exit was
+  // told to leave alone.
+  for (const id of Array.from(refreshWaitSpawns.keys())) killPty(id)
   const sessionIds = Array.from(ptySessions.keys())
   if (sessionIds.length === 0) return
 

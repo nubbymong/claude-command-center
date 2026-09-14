@@ -14,9 +14,13 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { listProfiles, getProfileConfigDir, readProfileAccountEmail } from '../account-profiles'
-import { isProfileInUseByLiveSession } from '../claude-account-identity'
+import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile } from '../account-profiles'
+import { isAccountActive } from '../../shared/account-types'
+import type { AccountProfile } from '../../shared/account-types'
+import { isProfileInUseByLiveSession, getClaudeProfileId } from '../claude-account-identity'
+import { noteProfileRefreshInFlight } from '../profile-consumers'
 import { parseUsage } from './usage-buckets'
+import { loadSnapshots, saveSnapshots, type UsageSnapshot } from './usage-snapshots'
 import type { AccountUsage, UsageBucket, CreditsInfo } from '../../shared/usage-types'
 import { logWarn, logInfo } from '../debug-logger'
 
@@ -244,9 +248,10 @@ async function writeRefreshedCreds(
         return false
       }
       c.claudeAiOauth = { ...(c.claudeAiOauth ?? {}), accessToken: t.accessToken, refreshToken: t.refreshToken, expiresAt: t.expiresAt }
-      const tmp = credsPath + '.ccc-refresh.tmp'
-      fs.writeFileSync(tmp, JSON.stringify(c, null, 2), { mode: 0o600 })
-      fs.renameSync(tmp, credsPath)
+      atomicWriteSecure(credsPath, JSON.stringify(c, null, 2), 0o600)
+      // This path had no re-assert, unlike account-profiles' writeCredentialFile.
+      // Keep the two credential writers symmetric so neither is a lone weak point.
+      hardenCredentialFile(credsPath)
       return true
     } catch (e) {
       if (attempt < 2) { await sleep(100); continue }
@@ -280,14 +285,139 @@ async function refreshProfileToken(profileId: string, refreshToken: string, cred
     return { accessToken: parsed.accessToken, expiresAt: parsed.expiresAt }
   })()
   refreshInFlight.set(profileId, run)
+  // #49: publish the rotation so a consumer that starts NOW (a session, a
+  // headless run, a cloud agent) waits for the new lineage to land instead of
+  // reading a credential file whose refresh token this POST is about to spend.
+  // Registered synchronously with the guard check that let us get here, so no
+  // consumer can slip between "not in use" and "rotating".
+  noteProfileRefreshInFlight(profileId, run)
   try { return await run } finally { refreshInFlight.delete(profileId) }
 }
 
-/** Last successful usage per profile, in-memory for the app's lifetime. When a
- *  later fetch can't complete but the account is still signed in (lapsed token,
- *  429 burst, network blip), we show these last-known figures flagged stale
- *  instead of blanking the card. Cleared naturally on app restart. */
-const lastGoodUsage = new Map<string, { buckets: UsageBucket[]; credits?: CreditsInfo; fetchedAt: number }>()
+/** Last successful usage per profile. When a later fetch can't complete but the
+ *  account is still signed in (lapsed token, 429 burst, network blip), we show
+ *  these last-known figures flagged stale instead of blanking the card.
+ *
+ *  This used to be memory-only and was cleared on restart, which meant the one
+ *  case it was most wanted in -- reopening the app and picking an account before
+ *  any session has run -- was the one case it could not serve. It is now backed
+ *  by usage-snapshots.json (see usage-snapshots.ts): the same map, rehydrated
+ *  once per process and written through on every success. Nothing about the
+ *  DECISION changes -- `resolveUsageOutcome` already models "stale figures with
+ *  an age" and the UI already renders `stale` + `fetchedAt`. */
+const lastGoodUsage = new Map<string, UsageSnapshot>()
+
+let snapshotsLoaded = false
+
+/** Rehydrate from disk once per process, on first use. */
+function hydrateSnapshots(): void {
+  if (snapshotsLoaded) return
+  snapshotsLoaded = true
+  for (const [id, snap] of loadSnapshots()) lastGoodUsage.set(id, snap)
+}
+
+// -- Live per-account usage harvested from open sessions (plan P2) -----------
+//
+// An OPEN account -- one with a live session -- already has its usage on screen:
+// that session's statusline bridge fetched api.anthropic.com/api/oauth/usage
+// seconds ago and the watcher fanned the buckets out. Making the account-usage
+// page fetch the same thing AGAIN is a redundant call against an endpoint that
+// rate-limits by IP, and Phase 1 already forbids the only DANGEROUS call for an
+// in-use account -- the single-use token rotation. So an open account reuses the
+// delivered figure and makes NO network call; only CLOSED accounts call, one at
+// a time. `recordLiveUsageForSession` is wired to the statusline fan-out
+// (setStatuslineUsageSink, main/index).
+//
+// The delivered figure carries buckets but NOT the page's full CreditsInfo (the
+// statusline has only the dollar `rateLimitExtra` shape -- no currency). So when
+// the page would show a credits row the buckets-only figure cannot express (the
+// delivered payload had extra usage, or a prior real fetch cached credits for
+// this profile), the open account falls back to ONE GET with its live token --
+// never a rotation; the refresh guard forbids that while in use. This is the
+// agreed Q1b behaviour.
+
+/** How stale a delivered figure may be and still count as "live". A session
+ *  writes its statusline 1-3x/s, so a healthy open account is always well inside
+ *  this; the bound only stops a wedged or paused session's minutes-old figure
+ *  from being served as current -- past it, the open account takes the GET path. */
+export const LIVE_USAGE_MAX_AGE_MS = 90_000
+
+interface LiveUsageEntry {
+  buckets: UsageBucket[]
+  /** The delivered payload indicated paid credit (statusline sets rateLimitExtra
+   *  only when extra usage is enabled). The page would then show a credits row
+   *  the buckets-only figure cannot, so the open account fills it with one GET. */
+  hasCredits: boolean
+  fetchedAt: number
+}
+
+/** Latest session-delivered usage per profile: one entry per open account,
+ *  overwritten on each statusline tick and read only for an in-use account. */
+const liveUsageByProfile = new Map<string, LiveUsageEntry>()
+
+/** A delivered bucket, defensively -- the local bridge file is trusted, but a
+ *  malformed record must not paint wrong numbers on the account page. */
+function isLiveBucket(v: unknown): v is UsageBucket {
+  if (!v || typeof v !== 'object') return false
+  const b = v as Record<string, unknown>
+  return typeof b.key === 'string' && typeof b.label === 'string' && typeof b.group === 'string'
+    && typeof b.percent === 'number' && Number.isFinite(b.percent) && typeof b.resetsAt === 'string'
+}
+
+/**
+ * Record the usage a live session just delivered, keyed by the PROFILE it runs
+ * under. An empty or all-malformed set is ignored (nothing to serve), and an SSH
+ * or default-home session has no local profile id so it stores nothing -- both
+ * leave the account on the GET path, which is correct.
+ */
+export function recordLiveUsageForSession(sessionId: string, buckets: unknown, hasCredits: boolean, now: number = Date.now()): void {
+  const profileId = getClaudeProfileId(sessionId)
+  if (!profileId) return
+  if (!Array.isArray(buckets)) return
+  const clean = buckets.filter(isLiveBucket)
+  if (clean.length === 0) return
+  liveUsageByProfile.set(profileId, { buckets: clean, hasCredits: !!hasCredits, fetchedAt: now })
+}
+
+/** The delivered figure for a profile if one is recorded and still fresh. */
+function freshLiveUsage(profileId: string, now: number): LiveUsageEntry | undefined {
+  const e = liveUsageByProfile.get(profileId)
+  if (!e || now - e.fetchedAt > LIVE_USAGE_MAX_AGE_MS) return undefined
+  return e
+}
+
+/**
+ * The delivered figure to SERVE for an open account without any network call, or
+ * null when the account must take the GET path. Null when: no fresh figure yet
+ * (a session just spawned), the delivered payload had credits (Q1b -> GET), or a
+ * prior fetch cached credits the buckets-only figure cannot carry (Q1b -> GET).
+ * The ONE decision, shared by fetchAccountUsage and the fetchAll stagger so the
+ * two never disagree about which accounts hit the network.
+ */
+function servableLiveUsage(profileId: string, now: number = Date.now()): LiveUsageEntry | null {
+  const live = freshLiveUsage(profileId, now)
+  if (!live || live.hasCredits) return null
+  if (lastGoodUsage.get(profileId)?.credits) return null
+  return live
+}
+
+/** Whether fetchAllAccountsUsage should count a profile toward the network
+ *  stagger: active, and either primary/closed or an open account that cannot be
+ *  served from its delivered figure. Primary keeps the network path (its creds
+ *  are shared with the global CLI), exactly as the refresh guard excludes it. */
+function accountUsageWillNetwork(profile: AccountProfile): boolean {
+  if (!isAccountActive(profile)) return false
+  if (profile.isPrimary) return true
+  if (!isProfileInUseByLiveSession(profile.id)) return true
+  return servableLiveUsage(profile.id) === null
+}
+
+/** Test seam: the live cache is module state and outlives a test file otherwise. */
+export function _resetLiveUsageForTest(): void { liveUsageByProfile.clear() }
+
+/** Test seam: reset the hydrate latch + last-good map so a test can seed fresh
+ *  snapshots. Without it the once-per-process hydrate keeps the first test's view. */
+export function _resetSnapshotsForTest(): void { lastGoodUsage.clear(); snapshotsLoaded = false }
 
 /** Pure decision: given the account's signed-in state, whether its token was
  *  usable, the fetch result (if we made one), and any cached usage, produce the
@@ -322,23 +452,56 @@ export function resolveUsageOutcome(
   return { ...base, status: 'ok', stale: false, buckets: parsed.buckets, credits: parsed.credits }
 }
 
-/** Fetch usage for one profile. Signed-out -> needs-login; signed-in but not
- *  fetchable -> last-known (stale) or a soft refresh hint; success -> fresh.
- *  Auto-refreshes a lapsed token (guarded) so idle accounts still show live usage. */
-export async function fetchAccountUsage(profileId: string): Promise<AccountUsage> {
+/**
+ * Fetch usage for one profile. Signed-out -> needs-login; signed-in but not
+ * fetchable -> last-known (stale) or a soft refresh hint; success -> fresh.
+ * Auto-refreshes a lapsed token (guarded) so idle accounts still show live usage.
+ *
+ * `noRefresh` suppresses the single-use refresh-token rotation entirely (#447):
+ * the account-switch snapshot fires this the instant BEFORE the session
+ * respawns onto the same profile, and the live-session guard cannot see that
+ * imminent consumer yet — so a rotation here would spend the very token the
+ * child is about to use and log the account out. With `noRefresh` a lapsed
+ * token simply falls back to the last-known snapshot; a valid token still
+ * fetches live. Never rotates, so it is always safe next to a spawn.
+ */
+export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: boolean }): Promise<AccountUsage> {
+  hydrateSnapshots()
   const profiles = listProfiles()
   const profile = profiles.find((p) => p.id === profileId)
   const isPrimary = !!profile?.isPrimary
+  const active = profile ? isAccountActive(profile) : true
   const base: AccountUsage = {
     profileId,
     email: profile?.accountEmail || readProfileAccountEmail(profileId),
     name: profile?.name || 'Account',
     isPrimary,
+    active,
     status: 'error',
     buckets: [],
     fetchedAt: Date.now(),
   }
   if (!profile) return { ...base, detail: 'unknown profile' }
+
+  // Parked account: list it, but do NO network poll and NO token refresh. A
+  // refresh rotates the single-use token — doing that to an account the user
+  // deliberately parked is the opposite of parked, and burns a request against
+  // the IP burst limit for a card that only needs to say "inactive". Return
+  // before readProfileToken/refresh/fetch so none of that runs.
+  if (!active) return { ...base, status: 'inactive' }
+
+  // OPEN account (plan P2): a live session is using this profile, so its usage
+  // was just delivered by that session's statusline -- reuse it and make no call.
+  // Primary is excluded (its creds are shared with the global CLI; it keeps the
+  // network path). `servableLiveUsage` returns null when there is nothing fresh
+  // to serve or the page would show a credits row the delivered figure cannot
+  // carry (Q1b), in which case we fall through to the GET below. The refresh
+  // guard there already forbids a rotation while in use, so any fall-through is a
+  // read with the live token, never a token rotation.
+  if (!isPrimary && isProfileInUseByLiveSession(profileId)) {
+    const live = servableLiveUsage(profileId)
+    if (live) return { ...base, status: 'ok', stale: false, buckets: live.buckets, fetchedAt: live.fetchedAt }
+  }
 
   const creds = await readProfileToken(profileId, isPrimary)
   let token = creds.token
@@ -355,12 +518,20 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   //  - PRIMARY is excluded outright: its credentials are shared with the global
   //    ~/.claude (credsPath can literally BE the global file), which `claude` runs
   //    OUTSIDE CCC read — rotating under them strands every external terminal.
-  //    Non-primary profiles live in CCC-managed isolated homes, so CCC sessions
-  //    are their only consumers and the live-session guard below is sufficient.
-  //  - isProfileInUseByLiveSession covers BOTH interactive sessions and the
-  //    profile-pinned shell-only login shells (re-auth / add-account), whose
-  //    in-flight /login a refresh could otherwise clobber.
-  if (!tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
+  //    Non-primary profiles live in CCC-managed isolated homes, so their only
+  //    consumers are things CCC knows about, and the live-session guard below
+  //    covers them.
+  //  - isProfileInUseByLiveSession covers interactive sessions (the identity
+  //    maps) AND every registered consumer in profile-consumers.ts: the
+  //    `claude auth status` probe (#258), and since #48 the headless spawner,
+  //    Insights runs, cloud agents and the profile-pinned shell-only shells
+  //    (plain shells + the add-account /login shell) -- each of which reads,
+  //    and can rotate, the profile's token for as long as it runs.
+  //  - The other ordering (#49) is closed by the refresh itself: it publishes
+  //    its in-flight promise (noteProfileRefreshInFlight) and a consumer that
+  //    starts mid-rotation waits for it (waitForProfileRefresh) before reading
+  //    the credential file.
+  if (!opts?.noRefresh && !tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
     const refreshed = await refreshProfileToken(profileId, creds.refreshToken, creds.credsPath)
     if (refreshed) {
       token = refreshed.accessToken
@@ -380,6 +551,7 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   const result = resolveUsageOutcome(base, { signedIn: creds.signedIn, tokenUsable, fetch: fetched }, lastGoodUsage.get(profileId))
   if (result.status === 'ok' && !result.stale) {
     lastGoodUsage.set(profileId, { buckets: result.buckets, credits: result.credits, fetchedAt: result.fetchedAt })
+    saveSnapshots(lastGoodUsage)
   }
   return result
 }
@@ -389,11 +561,48 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
  *  at once (the old Promise.all) drew 429s on otherwise-valid tokens. Order
  *  matches listProfiles (primary first is the store's responsibility). */
 export async function fetchAllAccountsUsage(): Promise<AccountUsage[]> {
-  const profiles = listProfiles()
+  // The batch shape, for callers that want the whole set at once (SettingsPage).
+  // The streaming variant owns the ordering, pacing and the hydrate-before-stagger
+  // fix; this collects its results in order.
   const out: AccountUsage[] = []
-  for (let i = 0; i < profiles.length; i++) {
-    if (i > 0) await sleep(STAGGER_MS)
-    out.push(await fetchAccountUsage(profiles[i].id))
-  }
+  await fetchAllAccountsUsageStreaming((usage) => out.push(usage))
   return out
+}
+
+/**
+ * Fetch every account's usage in the same order and pacing as fetchAllAccountsUsage,
+ * but deliver each result to `onResult` AS IT RESOLVES rather than collecting them
+ * into one array (plan P3): the usage page shows a skeleton per account up front and
+ * fills each row when its result lands -- open accounts resolve instantly (no call),
+ * closed ones as their staggered calls arrive. `onResult` is called once per account,
+ * in listProfiles order; a throw in it is the caller's problem, not this loop's.
+ * `shouldContinue`, when given, is asked before each account's stagger and
+ * again before its call: a caller that no longer wants the rest (its window
+ * closed, or it opened a newer stream) stops the loop there rather than after a
+ * fan-out nobody will read (adversarial pass on #598). Accounts already
+ * delivered are not affected; the promise still resolves.
+ */
+export async function fetchAllAccountsUsageStreaming(
+  onResult: (usage: AccountUsage) => void,
+  opts: { shouldContinue?: () => boolean } = {},
+): Promise<void> {
+  // Hydrate BEFORE the stagger decision: accountUsageWillNetwork reads lastGoodUsage
+  // (a prior fetch's cached credits force an open account onto the GET path, Q1b),
+  // and fetchAccountUsage only hydrates on its first call -- so without this the
+  // first page-open of the process would mis-pace a cached-credits account.
+  hydrateSnapshots()
+  const profiles = listProfiles()
+  const wanted = () => !opts.shouldContinue || opts.shouldContinue()
+  let networkedCount = 0
+  for (const p of profiles) {
+    if (!wanted()) return
+    // An OPEN account served from its delivered figure (plan P2) makes no request,
+    // so -- like a parked account -- it must not consume a stagger slot, or N open
+    // accounts would add N*STAGGER_MS of dead wait before a closed one loads.
+    const willNetwork = accountUsageWillNetwork(p)
+    if (willNetwork && networkedCount > 0) await sleep(STAGGER_MS)
+    if (!wanted()) return
+    onResult(await fetchAccountUsage(p.id))
+    if (willNetwork) networkedCount++
+  }
 }

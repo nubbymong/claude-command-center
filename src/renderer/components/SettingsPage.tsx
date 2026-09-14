@@ -1,27 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react'
-import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
+import WhatsNewModal from './WhatsNewModal'
+import { markWhatsNewSeen } from '../onboarding/whats-new-gate'
 import TrainingWalkthrough from './TrainingWalkthrough'
-import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, DEFAULT_TYPOGRAPHY, UpdateChannel } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, DEFAULT_TYPOGRAPHY, DEFAULT_WATCHDOG_SETTINGS, gpuRenderingEnabled, UpdateChannel } from '../stores/settingsStore'
 import type { AppSettings, StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode, UiFontFamily, TypographyRegionKey, TypographySettings, RegionTypography } from '../stores/settingsStore'
 import { familyCss } from '../utils/typography'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
+import { formatInstalledVersion } from '../utils/versionLabel'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import CopilotMeterSettings from './settings/CopilotMeterSettings'
 import { isSentinelEnabled } from '../../shared/sentinel-enabled'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
+import { CustomCommandsTab } from './settings/CustomCommandsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
+import { resolveDefaultPanelTab, type PanelTab } from './sidebar/sessionsPanelState'
+import { resolveResumeAccountMode } from '../utils/sessionLaunch'
 import { Kbd } from './ui/Kbd'
+import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
+import { BuildIdentityLine } from './BuildIdentityLine'
+import { shortSha } from '../../shared/build-identity'
 declare const __BUILD_TIME__: string
+declare const __BUILD_SHA__: string
 declare const __APP_VERSION__: string
 
-export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
+export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'commands', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
 
 const TABS: { id: SettingsTab; label: string }[] = [
@@ -32,6 +41,7 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'github', label: 'GitHub' },
   { id: 'codex', label: 'Codex' },
+  { id: 'commands', label: 'Custom Commands' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'about', label: 'About' }
 ]
@@ -65,9 +75,14 @@ interface SettingsPageProps {
   // Called after the user triggers "Add another account" so the parent can
   // switch the view to Sessions (where the login shell opens).
   onNavigateToSessions?: () => void
+  // Install the pending update. Supplied by App so the Settings button uses the
+  // SAME path as the bottom-bar Update pill — which saves session state via the
+  // 'update' close dialog when sessions are open, instead of restarting on top
+  // of them (#142). Omitted => the field falls back to a direct install.
+  onUpdateRequested?: () => void
 }
 
-export default function SettingsPage({ initialTab, onNavigateToSessions }: SettingsPageProps = {}) {
+export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdateRequested }: SettingsPageProps = {}) {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const updateAppMeta = useAppMetaStore((s) => s.update)
@@ -116,7 +131,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   }
 
   const handleClearAllLogs = async () => {
-    if (!window.confirm('Permanently delete the CCC conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude\'s own files (~/.claude/projects).')) return
+    if (!window.confirm('Permanently delete the app\'s conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude\'s own files (~/.claude/projects).')) return
     try {
       const res = await window.electronAPI.logs2.clearAll()
       window.alert(`Index cleared: ${res.deletedRuns} run(s), ${res.deletedMessages} message(s) removed. Active sessions are kept. Your conversations remain in Claude's own files.`)
@@ -128,6 +143,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   const sl = settings.statusLine || DEFAULT_STATUS_LINE
 
   const toggleStatusLine = (key: keyof StatusLineSettings) => {
+    // Someone editing what the status line shows has plainly found the feature
+    // the "you can customise your status line" tip exists to point at.
+    trackUsage('productivity.statusline-config')
     save({ statusLine: { ...sl, [key]: !sl[key] } })
   }
 
@@ -175,7 +193,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 <Field label="Update Channel">
                   <select
                     value={settings.updateChannel}
-                    onChange={(e) => save({ updateChannel: e.target.value as UpdateChannel })}
+                    // updateChannelChosen records that this is a real choice, so the
+                    // onboarding recap never pre-selects over the top of it.
+                    onChange={(e) => save({ updateChannel: e.target.value as UpdateChannel, updateChannelChosen: true })}
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
                   >
                     <option value="stable">Stable -- production releases only</option>
@@ -193,7 +213,10 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     <option value="system">System -- follow OS preference</option>
                   </select>
                 </Field>
-                <CheckForUpdatesField />
+                <CheckForUpdatesField onUpdateRequested={onUpdateRequested} />
+                {/* Both of these are also switchable from the sidebar dock's own
+                    right-click menu, which is how most people will turn them off.
+                    This is the only way back, so the hide dialog names it. */}
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-3">
                   <input
                     type="checkbox"
@@ -202,8 +225,32 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     className="rounded border-surface1"
                   />
                   Show intelligent tips
-                  <span className="text-[10px] text-overlay0">(Contextual feature discovery in session header)</span>
+                  <span className="text-[10px] text-overlay0">(the tip row in the sidebar, under Ask Conductor)</span>
                 </label>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    checked={settings.showAskConductor ?? true}
+                    onChange={(e) => save({ showAskConductor: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Show Ask Conductor
+                  <span className="text-[10px] text-overlay0">(The button at the bottom of the sidebar)</span>
+                </label>
+                {/* Sessions panel (the two-mode left panel, design pass
+                    2026-08-24; supersedes the #362 layout picker). One choice:
+                    which tab the app opens on. */}
+                <Field label="Sessions panel — default tab">
+                  <select
+                    value={resolveDefaultPanelTab(settings.sessionsPanelDefaultTab)}
+                    onChange={(e) => save({ sessionsPanelDefaultTab: e.target.value as PanelTab })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    data-ux-id="settings-sessions-panel-default-tab"
+                  >
+                    <option value="running">Running -- your live sessions (default)</option>
+                    <option value="saved">Saved -- the config launcher</option>
+                  </select>
+                </Field>
               </Section>
 
               <Section title="Security" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
@@ -226,7 +273,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   />
                   <span>
                     Index conversation logs
-                    <span className="block text-[10px] text-overlay0">CCC indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
+                    <span className="block text-[10px] text-overlay0">The Conductor indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
                   </span>
                 </label>
                 <div className="flex items-center gap-2 mt-1">
@@ -236,7 +283,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   >
                     Clear index
                   </button>
-                  <span className="text-[10px] text-overlay0">(removes CCC's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
+                  <span className="text-[10px] text-overlay0">(removes the app's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
                 </div>
               </Section>
 
@@ -263,6 +310,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     ['vision', 'Vision: see & drive a browser'],
                     ['codexReview', 'Code review'],
                     ['hostTransfer', 'Host screenshots (incl. over SSH)'],
+                    ['canvas', 'Agent Canvas: read the rendered page'],
                   ] as const).map(([key, label]) => {
                     // Code review runs the codex CLI: with the Codex master off
                     // the MCP server never registers the tool, so a live
@@ -301,7 +349,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 </div>
               </Section>
 
-              <Section title="CCC Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
+              <Section title="Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
                     type="checkbox"
@@ -348,6 +396,98 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 </Field>
               </Section>
 
+              <Section title="Session Watchdog" icon={<path d="M8 2v4M8 2a6 6 0 1 0 3.5 1.1M11 2l1.5 1.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />}>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.watchdog?.enabled === true}
+                    onChange={(e) => save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), enabled: e.target.checked } })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    Session Watchdog (auto-retry on rate limit / overload)
+                    <span className="block text-[10px] text-overlay0">Auto-types a retry message into a session's terminal after a rate-limit reset, an overload/server-error backoff, or a flagged-safeguard clears. Off by default. Applies to newly launched sessions.</span>
+                  </span>
+                </label>
+                {settings.watchdog?.enabled === true && (
+                  <>
+                    <div className="pl-6 pt-1" data-testid="watchdog-checks">
+                      <div className="text-[10px] text-overlay0 mb-1">
+                        Which checks may auto-type. Each session can switch these for itself from its right-click menu; changing them here sets what a newly launched session starts with.
+                      </div>
+                      {([
+                        { key: 'rateLimit', label: 'Rate-limit resume', hint: 'Waits out a usage-limit reset, then continues.' },
+                        { key: 'overload', label: 'API overload', hint: 'Backs off and retries on 429/5xx and overloaded_error.' },
+                        { key: 'safeguard', label: 'Safeguard', hint: 'Retries after a flagged-safeguard message clears.' },
+                      ] as const).map(({ key, label, hint }) => {
+                        const wd = settings.watchdog || {}
+                        const checked = key === 'rateLimit'
+                          ? wd.rateLimitEnabled !== false
+                          : key === 'overload'
+                            ? wd.overload?.enabled !== false
+                            : wd.safeguard?.enabled !== false
+                        const write = (v: boolean) => {
+                          const base = { ...DEFAULT_WATCHDOG_SETTINGS, ...wd }
+                          if (key === 'rateLimit') return save({ watchdog: { ...base, rateLimitEnabled: v } })
+                          if (key === 'overload') return save({ watchdog: { ...base, overload: { ...(wd.overload || {}), enabled: v } } })
+                          return save({ watchdog: { ...base, safeguard: { ...(wd.safeguard || {}), enabled: v } } })
+                        }
+                        return (
+                          <label key={key} className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mb-1">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => write(e.target.checked)}
+                              className="mt-0.5 rounded border-surface1"
+                              data-testid={`watchdog-check-${key}`}
+                            />
+                            <span>
+                              {label}
+                              <span className="block text-[10px] text-overlay0">{hint}</span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <Field label="Retry message">
+                      <input
+                        type="text"
+                        value={settings.watchdog?.retryMessage ?? DEFAULT_WATCHDOG_SETTINGS.retryMessage}
+                        onChange={(e) => save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), retryMessage: e.target.value } })}
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus:outline-none focus:border-blue/50 transition-colors"
+                      />
+                    </Field>
+                    <Field label="Max retries">
+                      <input
+                        type="number"
+                        min={1}
+                        value={settings.watchdog?.maxRetries ?? DEFAULT_WATCHDOG_SETTINGS.maxRetries}
+                        onChange={(e) => {
+                          const n = parseInt(e.target.value, 10)
+                          save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), maxRetries: Number.isFinite(n) && n > 0 ? n : DEFAULT_WATCHDOG_SETTINGS.maxRetries } })
+                        }}
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
+                      />
+                    </Field>
+                    <Field label="Silence alert (seconds)">
+                      <input
+                        type="number"
+                        min={0}
+                        max={3600}
+                        value={Math.round((settings.watchdog?.silenceWindowMs ?? DEFAULT_WATCHDOG_SETTINGS.silenceWindowMs ?? 0) / 1000)}
+                        onChange={(e) => {
+                          const secs = parseInt(e.target.value, 10)
+                          const clamped = Number.isFinite(secs) ? Math.max(0, Math.min(3600, secs)) : 0
+                          save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), silenceWindowMs: clamped * 1000 } })
+                        }}
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
+                      />
+                      <span className="block text-[10px] text-overlay0 mt-1">Flags a watched session in the services view when its provider stops streaming for this long. Status only — never triggers a retry. 0 turns it off.</span>
+                    </Field>
+                  </>
+                )}
+              </Section>
+
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <p className="text-[11px] text-overlay0 leading-relaxed">
                   Terminal font, size and line height moved to the Font &amp; Size tab.
@@ -376,6 +516,18 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     label="Cursor Blink"
                   />
                 </Field>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    checked={gpuRenderingEnabled(settings.terminal || DEFAULT_TERMINAL_SETTINGS)}
+                    onChange={(e) => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), gpuRendering: e.target.checked } })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    GPU rendering
+                    <span className="block text-[10px] text-overlay0">Draws terminals on the GPU, which is faster with several busy sessions. ON by default. The GPU renderer shares one cache of character images across every open terminal; when one session rebuilds that cache, each other session now redraws its own view the way a window resize does, so the text no longer drops out. If you ever do see characters go missing while backgrounds stay, press Ctrl+Alt+G to save a diagnostic (an event log plus a screenshot) and send it over. Turn this off to fall back to the plain renderer. Applies to terminals opened after the change.</span>
+                  </span>
+                </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
                   <input
                     type="checkbox"
@@ -425,7 +577,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                       onClick={() => save({ debugMode: !settings.debugMode })}
                       label="Verbose Logging"
                     />
-                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-green' : 'text-overlay0'}`}>
+                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-blue' : 'text-overlay0'}`}>
                       {settings.debugMode ? 'ON' : 'OFF'}
                     </span>
                   </div>
@@ -456,7 +608,28 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
           )}
 
           {activeTab === 'accounts' && (
-            <AccountsPanel onAdd={handleAddAccount} />
+            <>
+              {/* #446: which account a RESUMED session (app-relaunch restore)
+                  runs under. Only meaningful with 2+ accounts; default keeps
+                  today's silent continue-under-last behaviour. */}
+              <Section title="Resuming sessions" icon={<path d="M8 3a5 5 0 1 0 4.5 2.8M8 3V1M8 3l2 1.2" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />}>
+                <Field label="Account for a resumed session">
+                  <select
+                    value={resolveResumeAccountMode(settings.resumeAccountMode)}
+                    onChange={(e) => save({ resumeAccountMode: e.target.value as 'ask' | 'auto-last' })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    data-ux-id="settings-resume-account-mode"
+                  >
+                    <option value="auto-last">Auto-resume last — the account it ran under (default)</option>
+                    <option value="ask">Ask each time — pick the account when a session resumes</option>
+                  </select>
+                </Field>
+                <p className="text-[11px] text-overlay0 mt-1">
+                  Only matters when you have two or more accounts. Applies when the app restarts and restores your sessions.
+                </p>
+              </Section>
+              <AccountsPanel onAdd={handleAddAccount} />
+            </>
           )}
 
           {activeTab === 'statusline' && (
@@ -506,6 +679,8 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
 
           {activeTab === 'codex' && <CodexSettingsTab />}
 
+          {activeTab === 'commands' && <CustomCommandsTab />}
+
           {activeTab === 'hooks' && <HooksGatewaySection />}
 
           {activeTab === 'about' && (
@@ -519,8 +694,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Build</span>
-                  <span className="text-xs text-overlay0 font-mono tabular-nums">{formatBuildTime(__BUILD_TIME__)}</span>
+                  <span className="text-xs text-overlay0 font-mono tabular-nums">
+                    {/* #384: commit short sha first, then the build time. */}
+                    {shortSha(__BUILD_SHA__)} · {formatBuildTime(__BUILD_TIME__)}
+                  </span>
                 </div>
+                {/* #384: the one-line build identity — identical to the splash. */}
+                <BuildIdentityLine className="pt-0.5" />
                 <div className="pt-1 flex items-center gap-1.5">
                   <button
                     onClick={() => setShowWhatsNew(true)}
@@ -604,7 +784,7 @@ function StatusLineTab({
   return (
     <>
       {/* Master switch */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 flex items-center gap-3">
+      <div className="settings-card px-4 py-3 flex items-center gap-3">
         <Toggle on={statusLineEnabled} onClick={() => setMaster(!statusLineEnabled)} label="Status line" />
         <div className="min-w-0">
           <div className="text-sm text-text leading-tight">Show the status line</div>
@@ -619,8 +799,8 @@ function StatusLineTab({
         className={statusLineEnabled ? 'space-y-4' : 'space-y-4 opacity-40 pointer-events-none'}
       >
       {/* Live Preview */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
+      <div className="settings-card overflow-hidden">
+        <div className="px-4 py-2.5 border-b settings-divider flex items-center gap-2">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
             <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
             <path d="M2 6h12" stroke="currentColor" strokeWidth="1.2" />
@@ -638,8 +818,8 @@ function StatusLineTab({
       </div>
 
       {/* Toggle Grid */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
+      <div className="settings-card overflow-hidden">
+        <div className="px-4 py-2.5 border-b settings-divider flex items-center gap-2">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
             <path d="M4 8h8M8 4v8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
           </svg>
@@ -702,8 +882,8 @@ function BucketToggleCard({ title, subtitle, labels, hidden, onToggle }: {
   onToggle: (label: string) => void
 }): React.ReactElement {
   return (
-    <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-surface0/40">
+    <div className="settings-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b settings-divider">
         <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">{title}</h3>
         <p className="text-[11px] text-overlay0 mt-0.5">{subtitle}</p>
       </div>
@@ -746,14 +926,14 @@ function UsageBucketToggles(): React.ReactElement | null {
 
   if (labels === null) {
     return (
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 text-[11px] text-overlay0">
+      <div className="settings-card px-4 py-3 text-[11px] text-overlay0">
         Loading your current usage limits…
       </div>
     )
   }
   if (labels.length === 0) {
     return (
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 text-[11px] text-overlay0">
+      <div className="settings-card px-4 py-3 text-[11px] text-overlay0">
         Per-limit toggles appear here once your usage limits load (start a session or open the account usage view once).
       </div>
     )
@@ -774,6 +954,37 @@ function UsageBucketToggles(): React.ReactElement | null {
         hidden={footerHidden}
         onToggle={(l) => toggle(footerHidden, 'footer', l)}
       />
+      <FooterDisplayCard />
+    </div>
+  )
+}
+
+/* Minimal mode for the multi-account footer. It sits under the footer bucket
+ * toggles because it reads the SAME denylist -- whichever bars you left on above
+ * are the dots you get here. */
+function FooterDisplayCard(): React.ReactElement {
+  const minimal = useSettingsStore((s) => s.settings.footerAccountDisplay === 'dots')
+  return (
+    <div className="settings-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b settings-divider">
+        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Multi-account footer style</h3>
+        <p className="text-[11px] text-overlay0 mt-0.5">
+          Minimal replaces each account&apos;s bars with traffic-light dots -- one for usage (the worse of your
+          time windows) and one per model -- and shows the account&apos;s name instead of its email where you
+          have set one. Green under 70%, amber to 89%, red at 90% and above: the same points the bars change
+          colour. Exact figures move to the tooltip.
+        </p>
+      </div>
+      <div className="p-4 flex items-center gap-3">
+        <Toggle
+          on={minimal}
+          onClick={() => void useSettingsStore.getState().updateSettings({
+            footerAccountDisplay: minimal ? 'meters' : 'dots',
+          })}
+          label="Minimal dots"
+        />
+        <div className="text-sm text-text leading-tight">Minimal dots instead of bars</div>
+      </div>
     </div>
   )
 }
@@ -859,9 +1070,28 @@ function MockRateDots({ label, pct }: { label: string; pct: number }) {
 
 type UpdateCheckStatus = 'idle' | 'checking' | 'up-to-date' | 'available'
 
-function CheckForUpdatesField() {
+export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?: () => void }) {
   const [status, setStatus] = useState<UpdateCheckStatus>('idle')
   const [foundVersion, setFoundVersion] = useState<string | null>(null)
+  const [installing, setInstalling] = useState(false)
+  // #250: surface the running build (full tag) + release channel in the
+  // up-to-date and update-available states. Channel comes from the store so it
+  // stays in sync with the channel selector and the BottomBar Beta pill; version
+  // is the build-time define already shown in the footer.
+  const channel = useSettingsStore((s) => s.settings.updateChannel)
+
+  // Route through App's handler so an install with sessions open goes via the
+  // 'update' close dialog (session state saved first). The direct call is only
+  // a fallback for a parent that didn't pass the prop — same shape as BottomBar.
+  const handleInstall = () => {
+    if (installing) return
+    setInstalling(true)
+    if (onUpdateRequested) {
+      onUpdateRequested()
+      return
+    }
+    window.electronAPI.update.installAndRestart().catch(() => setInstalling(false))
+  }
 
   const handleCheck = async () => {
     if (status === 'checking') return
@@ -894,18 +1124,43 @@ function CheckForUpdatesField() {
     status === 'available' ? 'text-yellow' :
     'text-overlay0'
 
+  // Once a check finds an update, the primary button BECOMES the install action
+  // — previously this screen only printed "Update available" and left the user to
+  // hunt for the bottom-bar Update pill (#142).
+  const updateFound = status === 'available'
+
   return (
     <Field label="Check for Updates">
       <div className="flex items-center gap-3">
-        <button
-          onClick={handleCheck}
-          disabled={status === 'checking'}
-          className="px-3 py-1.5 text-sm bg-surface1 hover:bg-surface2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait border border-surface0/80"
-        >
-          {status === 'checking' ? 'Checking...' : 'Check now'}
-        </button>
+        {updateFound ? (
+          <button
+            onClick={handleInstall}
+            disabled={installing}
+            title="Install the update and restart -- open sessions are saved first"
+            className="px-3 py-1.5 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait font-medium"
+            style={{ background: 'var(--status-success)', color: 'var(--color-crust)' }}
+          >
+            {installing ? 'Installing...' : 'Install now'}
+          </button>
+        ) : (
+          <button
+            onClick={handleCheck}
+            disabled={status === 'checking'}
+            className="px-3 py-1.5 text-sm bg-surface1 hover:bg-surface2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait border border-surface0/80"
+          >
+            {status === 'checking' ? 'Checking...' : 'Check now'}
+          </button>
+        )}
         {statusText && status !== 'checking' && (
           <span className={`text-xs ${statusColor}`}>{statusText}</span>
+        )}
+        {(status === 'up-to-date' || status === 'available') && (
+          <span className="text-[10px] text-overlay0" title="Installed version and release channel">
+            Installed: {formatInstalledVersion(__APP_VERSION__, channel)}
+          </span>
+        )}
+        {updateFound && !installing && (
+          <span className="text-[10px] text-overlay0">Restarts the app; open sessions are saved.</span>
         )}
       </div>
     </Field>
@@ -1111,10 +1366,9 @@ function FontSizeTab({ settings, save }: {
 export function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div
-      className="rounded-xl overflow-hidden"
-      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      className="settings-card overflow-hidden"
     >
-      <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div className="px-4 py-2.5 flex items-center gap-2 border-b settings-divider">
         {icon && (
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-secondary)' }}>
             {icon}
@@ -1156,7 +1410,7 @@ export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => voi
       aria-pressed={on}
       aria-label={label}
       className="relative shrink-0 rounded-full transition-colors duration-200"
-      style={{ width: 44, height: 24, background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
+      style={{ width: 44, height: 24, background: on ? 'var(--color-blue)' : 'var(--surface-overlay)' }}
     >
       <span
         className="absolute rounded-full bg-white shadow-sm transition-transform duration-200"
@@ -1177,9 +1431,9 @@ export function TabsRail({ activeTab, onChange }: { activeTab: SettingsTab; onCh
             onClick={() => onChange(tab.id)}
             className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
             style={{
-              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
-              color: active ? 'var(--accent)' : 'var(--text-secondary)',
-              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+              background: active ? 'color-mix(in srgb, var(--color-blue) 15%, transparent)' : 'transparent',
+              color: active ? 'var(--color-blue)' : 'var(--text-secondary)',
+              borderLeft: `2px solid ${active ? 'var(--color-blue)' : 'transparent'}`,
             }}
           >
             {tab.label}
@@ -1226,6 +1480,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
           <div
             ref={inputRef}
             tabIndex={0}
+            data-shortcut-capture
             className="px-2.5 py-1 bg-crust border border-blue/50 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center outline-none animate-pulse"
             onKeyDown={(e) => {
               e.preventDefault()
@@ -1251,6 +1506,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
           <div
             ref={testRef}
             tabIndex={0}
+            data-shortcut-capture
             className="px-2.5 py-1 bg-crust border border-green/40 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center outline-none"
             onKeyDown={(e) => {
               e.preventDefault()

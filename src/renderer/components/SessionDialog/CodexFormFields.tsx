@@ -25,7 +25,7 @@ export function CodexFormFields({ value, onChange, onOpenSettings }: Props) {
   return (
     <div className="space-y-4 my-2">
       {!installed && (
-        <div className="rounded-md bg-yellow/10 border border-yellow/30 p-3 text-sm text-yellow">
+        <div className="rounded-[9px] border p-3 text-xs leading-snug" style={{ borderColor: 'color-mix(in srgb, var(--status-warning) 40%, transparent)', background: 'color-mix(in srgb, var(--status-warning) 9%, transparent)', color: 'var(--status-warning)' }}>
           Codex CLI is not installed.{' '}
           <button type="button" onClick={onOpenSettings} className="underline">
             Open Settings for install instructions
@@ -33,7 +33,7 @@ export function CodexFormFields({ value, onChange, onOpenSettings }: Props) {
         </div>
       )}
       {unauthed && (
-        <div className="rounded-md bg-yellow/10 border border-yellow/30 p-3 text-sm text-yellow">
+        <div className="rounded-[9px] border p-3 text-xs leading-snug" style={{ borderColor: 'color-mix(in srgb, var(--status-warning) 40%, transparent)', background: 'color-mix(in srgb, var(--status-warning) 9%, transparent)', color: 'var(--status-warning)' }}>
           Sign in to Codex first.{' '}
           <button type="button" onClick={onOpenSettings} className="underline">
             Sign in to Codex
@@ -42,42 +42,42 @@ export function CodexFormFields({ value, onChange, onOpenSettings }: Props) {
       )}
 
       <div>
-        <label className="block text-xs text-subtext0 mb-1">Model</label>
+        <label className="block text-xs text-[var(--text-secondary)] mb-1">Model</label>
         <select
           value={value.model ?? 'gpt-5.5'}
           onChange={(e) => onChange({ ...value, model: e.target.value })}
-          className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+          className="w-full bg-[var(--surface-base)] border border-[var(--border-strong)] rounded-lg px-2.5 py-1.5 text-[12.5px] text-[var(--text-primary)] outline-none focus-ring"
         >
           {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
 
       <div>
-        <label className="block text-xs text-subtext0 mb-1">Reasoning effort</label>
+        <label className="block text-xs text-[var(--text-secondary)] mb-1">Reasoning effort</label>
         <select
           value={value.reasoningEffort ?? 'medium'}
           onChange={(e) => onChange({ ...value, reasoningEffort: e.target.value as CodexOptions['reasoningEffort'] })}
-          className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+          className="w-full bg-[var(--surface-base)] border border-[var(--border-strong)] rounded-lg px-2.5 py-1.5 text-[12.5px] text-[var(--text-primary)] outline-none focus-ring"
         >
           {EFFORTS.map((eff) => <option key={eff} value={eff}>{eff}</option>)}
         </select>
       </div>
 
       <fieldset>
-        <legend className="text-xs text-subtext0 mb-1">Permissions</legend>
+        <legend className="text-xs text-[var(--text-secondary)] mb-1">Permissions</legend>
         <div className="space-y-1">
           {PRESETS.map((p) => (
-            <label key={p.id} className="flex cursor-pointer items-start gap-2 rounded p-2 hover:bg-surface0">
+            <label key={p.id} className="flex cursor-pointer items-start gap-2 rounded p-2 hover:bg-[var(--surface-overlay)]">
               <input
                 type="radio"
                 name="codex-permissions"
                 checked={value.permissionsPreset === p.id}
                 onChange={() => onChange({ ...value, permissionsPreset: p.id })}
-                className="mt-0.5"
+                className="mt-0.5 accent-[var(--brand)]"
               />
               <div>
-                <div className="text-sm text-text">{p.label}</div>
-                <div className="text-xs text-subtext0">{p.desc}</div>
+                <div className="text-sm text-[var(--text-primary)]">{p.label}</div>
+                <div className="text-xs text-[var(--text-secondary)]">{p.desc}</div>
               </div>
             </label>
           ))}

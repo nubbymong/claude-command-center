@@ -3,6 +3,7 @@
 // (overlay wins per id), pushes hot reloads to renderer + subscribers.
 import * as fs from 'fs'
 import * as path from 'path'
+import { atomicWriteFileSync } from './atomic-write'
 import baselineJson from '../../resources/model-registry.json'
 import {
   mergeRegistry, type ModelRegistry, type RegistryOverlay, type OverlayModelEntry,
@@ -35,9 +36,7 @@ function writeOverlay(overlay: RegistryOverlay): void {
   const p = overlayPath()
   if (!p) return
   fs.mkdirSync(path.dirname(p), { recursive: true })
-  const tmp = p + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(overlay, null, 2))
-  fs.renameSync(tmp, p)                      // atomic (spec §5)
+  atomicWriteFileSync(p, JSON.stringify(overlay, null, 2))   // atomic (spec §5)
 }
 
 export function reloadRegistry(): void {

@@ -9,7 +9,7 @@ import {
   canonicaliseEmail,
 } from '../../shared/account-chip-color'
 import { resolveIdentityColor, type IdentityColorKey } from '../../shared/identity-colors'
-import RateLimitBar from './terminal/RateLimitBar'
+import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
 import type { AccountProfile } from '../../shared/account-types'
 import type { UsageBucket } from '../../shared/usage-types'
 
@@ -51,6 +51,13 @@ function sessionUsageBuckets(s: Session): UsageBucket[] {
  * Aggregate the live (running) sessions into one entry per distinct account.
  * "Running" = any session still open (excludes `disconnected`/exited). Sessions
  * without a resolved account (shell-only, Codex, not-yet-captured) are skipped.
+ * An SSH session has no LOCAL account identity, but the remote signed-in email
+ * (`sshRemoteAccount`, parsed off the nonce'd setup sentinel, display-only)
+ * attributes it to the matching account row — #571: without this, an SSH
+ * session showed neither its account name nor the account's per-model buckets
+ * (Fable), because those buckets come from the app-side usage API that only a
+ * local session can feed. Local identity wins when both fields exist. This is
+ * presentation grouping only; nothing here grants account authority.
  * Per account, per bucket label, we take the WORST-CASE (max) utilisation so the
  * number is never falsely low when one of an account's sessions has a stale tick.
  * Ordered primary-first, then by name. Pure + unit-tested; the component gates on >=2.
@@ -70,14 +77,15 @@ export function liveAccountUsage(
 
   for (const s of sessions) {
     if (s.status === 'disconnected') continue
-    if (!s.accountEmail) continue
-    const key = canonicaliseEmail(s.accountEmail)
+    const email = s.accountEmail || s.sshRemoteAccount
+    if (!email) continue
+    const key = canonicaliseEmail(email)
     let acc = byEmail.get(key)
     if (!acc) {
       acc = {
-        email: s.accountEmail,
-        name: resolveAccountNameByEmail(s.accountEmail, profiles, aliases),
-        colourKey: resolveAccountColourKey(s.accountEmail, colourOverrides, s.accountColour),
+        email,
+        name: resolveAccountNameByEmail(email, profiles, aliases),
+        colourKey: resolveAccountColourKey(email, colourOverrides, s.accountColour),
         buckets: [],
         count: 0,
         isPrimary: primaryCanon === key,
@@ -103,10 +111,671 @@ export function liveAccountUsage(
   })
 }
 
-function tooltip(a: LiveAccount): string {
+/** The footer grows to at most two rows; past that the tail goes behind the
+ *  "+N" overflow control rather than eating more of the terminal's height. */
+export const FOOTER_MAX_ROWS = 2
+/** Horizontal gap between pills, in px. Applied as an INLINE style (not a
+ *  Tailwind `gap-x-*` class) so the number the layout is computed with and the
+ *  number the browser lays out with are the same one -- rem-based utilities
+ *  scale with the global UI font size, a px constant does not. */
+export const FOOTER_PILL_GAP_PX = 12
+/** Room held back on the last row for the "+N" control when anything
+ *  overflows, so the control never pushes the row past the zone. Generous for
+ *  a two-digit count at 10px text; the popover itself is position: fixed. */
+export const FOOTER_OVERFLOW_RESERVE_PX = 40
+/** Sub-pixel slack on the fit test: getBoundingClientRect() returns fractional
+ *  widths and a pill that is 0.3px "too wide" still paints on the row. */
+const FIT_EPSILON_PX = 0.5
+
+export interface FooterRowLayout<T> {
+  /** Rendered rows, in order, each filled before the next starts. */
+  rows: T[][]
+  /** Everything that does not fit in FOOTER_MAX_ROWS rows -- shown via the
+   *  "+N" overflow control on the last row. */
+  overflow: T[]
+}
+
+export interface FooterLayoutOptions {
+  /** Free width of the footer's centre zone, in px. <= 0 means "not measured
+   *  yet" and yields one row of everything (CSS flex-wrap then wraps it). */
+  available: number
+  gap?: number
+  maxRows?: number
+  overflowReserve?: number
+}
+
+/**
+ * Lay the account pills out in rows by MEASURED width (#378).
+ *
+ * The previous split was by count (<=3 one row, 4..6 two rows balanced 2+2 /
+ * 3+2 / 3+3, >6 overflow) and so put four accounts on two rows at 1900px with
+ * empty footer either side of them. This one answers the owner's actual rule:
+ * one row whenever everything fits in the free width; wrap only when it truly
+ * does not, filling each row before starting the next; never more than
+ * FOOTER_MAX_ROWS rows, the rest behind "+N".
+ *
+ *   - `widths[i]` is item i's measured width. An item with no measurement yet
+ *     (never painted -- e.g. it appeared straight into the overflow) is
+ *     estimated at the WIDEST measured pill, which errs towards wrapping
+ *     earlier rather than spilling out of the zone; it is corrected the first
+ *     time the pill is painted and measured.
+ *   - With no `available` width, or no measurement at all, the answer is a
+ *     single row: the first frame before the layout effect has run, and jsdom.
+ *   - A pill wider than the whole zone sits alone on a row (it can ellipsise).
+ *   - When anything overflows, the last row keeps `overflowReserve` px free for
+ *     the control, moving pills into the overflow until it fits.
+ *
+ * Pure and generic so the fit boundaries are unit-testable without a DOM.
+ */
+export function layoutFooterRows<T>(
+  items: T[],
+  widths: ReadonlyArray<number | undefined>,
+  opts: FooterLayoutOptions,
+): FooterRowLayout<T> {
+  if (items.length === 0) return { rows: [], overflow: [] }
+  const gap = opts.gap ?? FOOTER_PILL_GAP_PX
+  const maxRows = Math.max(1, opts.maxRows ?? FOOTER_MAX_ROWS)
+  const reserve = opts.overflowReserve ?? FOOTER_OVERFLOW_RESERVE_PX
+  const available = opts.available
+  const isWidth = (w: number | undefined): w is number => typeof w === 'number' && Number.isFinite(w) && w > 0
+  const measured = widths.filter(isWidth)
+  if (!(available > 0) || measured.length === 0) return { rows: [items], overflow: [] }
+  const estimate = Math.max(...measured)
+  const widthOf = (i: number): number => {
+    const w = widths[i]
+    return isWidth(w) ? w : estimate
+  }
+  const fits = (w: number) => w <= available + FIT_EPSILON_PX
+
+  const rows: T[][] = []
+  let cur: T[] = []
+  let curW = 0
+  let overflowFrom = -1
+  for (let i = 0; i < items.length; i++) {
+    const w = widthOf(i)
+    if (cur.length > 0 && !fits(curW + gap + w)) {
+      if (rows.length === maxRows - 1) {
+        overflowFrom = i
+        break
+      }
+      rows.push(cur)
+      cur = []
+      curW = 0
+    }
+    cur.push(items[i])
+    curW = cur.length === 1 ? w : curW + gap + w
+  }
+  if (cur.length > 0) rows.push(cur)
+  const overflow = overflowFrom >= 0 ? items.slice(overflowFrom) : []
+
+  // The "+N" control lives on the last row: make room for it, pulling pills
+  // into the overflow from the end until it fits (never emptying the row).
+  if (overflow.length > 0) {
+    const last = rows[rows.length - 1]
+    const lastStart = items.length - overflow.length - last.length
+    let lastW = curW
+    while (last.length > 1 && !fits(lastW + gap + reserve)) {
+      overflow.unshift(last.pop() as T)
+      lastW -= gap + widthOf(lastStart + last.length)
+    }
+  }
+  return { rows, overflow }
+}
+
+/** Measured geometry the row layout is computed from: the centre zone's free
+ *  width and each painted pill's width, keyed by account. */
+interface FooterMetrics {
+  available: number
+  widths: Record<string, number>
+}
+
+const EMPTY_METRICS: FooterMetrics = { available: 0, widths: {} }
+
+/**
+ * Fold a fresh measurement into the previous one. Returns `prev` itself when
+ * nothing moved by more than the fit epsilon, so the state update is a no-op
+ * and the measure -> set -> render -> measure cycle terminates. Keys no longer
+ * live are dropped; keys live but not currently painted (behind "+N") keep
+ * their last measurement.
+ */
+export function reconcileFooterMetrics(
+  prev: FooterMetrics,
+  available: number,
+  fresh: Record<string, number>,
+  liveKeys: ReadonlySet<string>,
+): FooterMetrics {
+  let changed = Math.abs(prev.available - available) > FIT_EPSILON_PX
+  const widths: Record<string, number> = {}
+  for (const k of liveKeys) {
+    const w = fresh[k] ?? prev.widths[k]
+    if (w === undefined) continue
+    widths[k] = w
+    const before = prev.widths[k]
+    if (before === undefined || Math.abs(before - w) > FIT_EPSILON_PX) changed = true
+  }
+  for (const k of Object.keys(prev.widths)) if (!liveKeys.has(k)) changed = true
+  return changed ? { available, widths } : prev
+}
+
+/**
+ * Rows for the footer from REAL widths. Measures the strip's free width and
+ * every painted pill synchronously in a layout effect when the set of accounts
+ * or what the pills show changes (so the first paint is already laid out), and
+ * via a ResizeObserver on the strip and the pills for everything else --
+ * window resize, font scale, a meter appearing. Widths are cached by account
+ * so a pill currently behind the "+N" control keeps the width it had when it
+ * was last painted.
+ */
+function useMeasuredFooterRows(
+  accounts: LiveAccount[],
+  contentSignature: string,
+): {
+  layout: FooterRowLayout<LiveAccount>
+  rootRef: React.RefObject<HTMLDivElement | null>
+  pillRef: (key: string) => (el: HTMLElement | null) => void
+} {
+  const rootRef = React.useRef<HTMLDivElement | null>(null)
+  const pillEls = React.useRef(new Map<string, HTMLElement>())
+  const [metrics, setMetrics] = React.useState<FooterMetrics>(EMPTY_METRICS)
+  const liveKeys = React.useMemo(() => new Set(accounts.map((a) => a.email)), [accounts])
+  const liveKeysRef = React.useRef(liveKeys)
+  liveKeysRef.current = liveKeys
+
+  const measure = React.useCallback(() => {
+    const root = rootRef.current
+    if (!root) return
+    const available = root.getBoundingClientRect().width
+    const fresh: Record<string, number> = {}
+    for (const [k, el] of pillEls.current) fresh[k] = el.getBoundingClientRect().width
+    setMetrics((prev) => reconcileFooterMetrics(prev, available, fresh, liveKeysRef.current))
+  }, [])
+
+  // Callback refs keep a live key -> element map without a querySelectorAll
+  // sweep per render. One stable function per key, so React does not detach
+  // and re-attach every pill on every render.
+  const refCache = React.useRef(new Map<string, (el: HTMLElement | null) => void>())
+  const pillRef = React.useCallback((key: string) => {
+    let fn = refCache.current.get(key)
+    if (!fn) {
+      fn = (el) => {
+        if (el) pillEls.current.set(key, el)
+        else pillEls.current.delete(key)
+      }
+      refCache.current.set(key, fn)
+    }
+    return fn
+  }, [])
+
+  const layout = React.useMemo(
+    () => layoutFooterRows(accounts, accounts.map((a) => metrics.widths[a.email]), { available: metrics.available }),
+    [accounts, metrics],
+  )
+
+  // Re-run when the set of accounts, what a pill shows, or the row assignment
+  // changes: each can mount/unmount pill ELEMENTS (a pill that moves to another
+  // row is a new node under a new parent) that the observer must (un)watch.
+  // Bounded: a re-measure that changes nothing returns the same metrics object,
+  // so no re-render follows and the cycle ends.
+  const keysSignature = accounts.map((a) => a.email).join(' ')
+  const rowsSignature = layout.rows.map((r) => r.length).join('/') + ':' + layout.overflow.length
+  React.useLayoutEffect(() => {
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => measure())
+    if (rootRef.current) ro.observe(rootRef.current)
+    for (const el of pillEls.current.values()) ro.observe(el)
+    return () => ro.disconnect()
+  }, [measure, keysSignature, contentSignature, rowsSignature])
+
+  return { layout, rootRef, pillRef }
+}
+
+function tooltip(a: LiveAccount, opts?: { withPercent?: boolean }): string {
   const lines = [`${a.name} — ${a.count} live session${a.count === 1 ? '' : 's'}`]
-  for (const b of a.buckets) if (b.resetsAt) lines.push(`${b.label} resets ${b.resetsAt}`)
+  // The email can be ellipsised in the two-row layout, so keep it in the
+  // tooltip -- the account is otherwise unidentifiable when it is clipped.
+  if (a.name !== a.email) lines.push(a.email)
+  for (const b of a.buckets) {
+    // In minimal mode the dots carry a BAND, not a figure, so the exact number
+    // has nowhere else to live and the tooltip is the whole readout rather than
+    // a supplement to a visible bar.
+    const parts = [b.label]
+    if (opts?.withPercent) parts.push(`${Math.round(b.percent)}%`)
+    if (b.resetsAt) parts.push(`resets ${b.resetsAt}`)
+    if (parts.length > 1) lines.push(parts.join(' — '))
+  }
   return lines.join('\n')
+}
+
+function shownBuckets(a: LiveAccount, hidden: string[]): UsageBucket[] {
+  return a.buckets.filter((b) => !hidden.includes(b.label))
+}
+
+/**
+ * Whether a bucket is a PER-MODEL weekly (Fable, and whatever follows it) as
+ * opposed to a time window (5h, Weekly-all).
+ *
+ * Group alone cannot decide this: `usage-buckets.ts` gives a per-model weekly
+ * `group: 'weekly'`, the same as weekly-all. What it does do is encode the model
+ * into the key as `<kind>:<model display name>`, leaving that segment empty for
+ * the time windows -- so the key is the producer's own answer to the question.
+ * The legacy synthesis in this file uses bare keys with no colon at all, which
+ * lands on "not a model bucket", which is right.
+ */
+export function isModelBucket(b: UsageBucket): boolean {
+  const i = b.key.indexOf(':')
+  return i >= 0 && b.key.slice(i + 1).trim() !== ''
+}
+
+export type RagState = 'green' | 'amber' | 'red'
+
+/**
+ * Traffic-light state for a utilisation percentage.
+ *
+ * These are the boundaries RateLimitBar already paints at -- its fill turns
+ * peach at 70 and red at 90 -- deliberately, so a dot can never disagree with
+ * the bar the user sees when they switch the setting back, and so there is no
+ * second set of thresholds to keep in step.
+ */
+export function ragFor(percent: number): RagState {
+  if (percent >= 90) return 'red'
+  if (percent >= 70) return 'amber'
+  return 'green'
+}
+
+export interface AccountDotSummary {
+  /** Worst of the time-window buckets, plus the windows that fed it. Null when
+   *  the account has no time-window bucket to show (all hidden, or none yet). */
+  usage: { worst: UsageBucket; windows: UsageBucket[] } | null
+  /** One entry per per-model bucket, in the API's order. Usually just Fable. */
+  models: UsageBucket[]
+}
+
+/**
+ * Minimal mode's counterpart to RateLimitBarPending: an account whose statusline
+ * has not reported yet. Neutral and hollow, in none of the three traffic-light
+ * hues, because any of them would be a claim about usage nobody has measured.
+ */
+function PendingDot() {
+  return (
+    <span
+      role="img"
+      aria-label="waiting for the status line"
+      title="Waiting for the status line"
+      data-testid="account-usage-dot-pending"
+      className="statusline-pending-track"
+      style={{
+        width: 9,
+        height: 9,
+        borderRadius: 999,
+        border: '1.5px dashed var(--text-muted)',
+        background: 'transparent',
+        flex: 'none',
+        display: 'inline-block',
+      }}
+    />
+  )
+}
+
+/**
+ * Reduce an account's buckets to what minimal mode draws: one dot for usage and
+ * one per model. "Usage" is the WORST of the time windows rather than an
+ * average -- the question the strip answers is "is anything about to run out",
+ * and averaging 5h 10% with Weekly 95% would answer it wrongly.
+ *
+ * Honours the same footer denylist as the meters, so hiding Fable drops its dot
+ * and hiding Weekly leaves the usage dot tracking 5h alone. Pure + tested.
+ */
+export function summariseAccountDots(a: LiveAccount, hidden: string[]): AccountDotSummary {
+  const shown = shownBuckets(a, hidden)
+  const models = shown.filter(isModelBucket)
+  const windows = shown.filter((b) => !isModelBucket(b))
+  const worst = windows.reduce<UsageBucket | null>(
+    (acc, b) => (!acc || b.percent > acc.percent ? b : acc),
+    null,
+  )
+  return { usage: worst ? { worst, windows } : null, models }
+}
+
+const RAG_TOKEN: Record<RagState, string> = {
+  green: 'var(--color-green)',
+  amber: 'var(--color-yellow)',
+  red: 'var(--color-red)',
+}
+
+const RAG_WORD: Record<RagState, string> = {
+  green: 'fine',
+  amber: 'running low',
+  red: 'nearly exhausted',
+}
+
+/**
+ * One traffic-light dot.
+ *
+ * Shape carries the state as well as hue -- hollow ring, half-filled, solid with
+ * a halo -- because the pill's own tint is the ACCOUNT IDENTITY. A state told in
+ * colour alone would be a second colour language inside the same nine pixels,
+ * and would be unreadable to anyone who cannot separate the two hues.
+ */
+function UsageDot({ rag, title, label }: { rag: RagState; title: string; label: string }) {
+  const c = RAG_TOKEN[rag]
+  const base: React.CSSProperties = {
+    width: 9,
+    height: 9,
+    borderRadius: 999,
+    border: `1.5px solid ${c}`,
+    flex: 'none',
+  }
+  const shape: React.CSSProperties =
+    rag === 'green'
+      ? { background: 'transparent' }
+      : rag === 'amber'
+        ? { backgroundColor: 'transparent', backgroundImage: `linear-gradient(180deg, transparent 0 50%, ${c} 50% 100%)` }
+        : { background: c, boxShadow: `0 0 0 2.5px color-mix(in srgb, ${c} 22%, transparent)` }
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={title}
+      data-testid="account-usage-dot"
+      data-rag={rag}
+      style={{ ...base, ...shape, display: 'inline-block' }}
+    />
+  )
+}
+
+/**
+ * Placeholder meters for an account whose statusline has not reported yet.
+ * These two always exist once a payload lands (model buckets like Fable are
+ * discovered from the API and cannot be predicted), so showing exactly these
+ * keeps the pill close to its eventual width without inventing a bucket that
+ * may never appear.
+ */
+export const PENDING_FOOTER_LABELS = ['5h', 'Weekly']
+
+/**
+ * One account: identity dot + full email + its meters. `compact` is the two-row
+ * layout -- the pill may shrink and the email ellipsises (tooltip keeps it), so
+ * three pills survive a narrow window. Single-row keeps `shrink-0` + the full
+ * email, i.e. exactly the pre-two-row rendering.
+ */
+function AccountPill({
+  account,
+  hidden,
+  theme,
+  compact,
+  showPending,
+  minimal,
+  pillRef,
+}: {
+  account: LiveAccount
+  hidden: string[]
+  theme: 'dark' | 'light'
+  compact: boolean
+  /** Measurement hook-up: the row layout is computed from this element's
+   *  rendered width (#378). */
+  pillRef?: (el: HTMLElement | null) => void
+  /** Whether a payload is still expected -- see the gate in the parent. */
+  showPending: boolean
+  /** Minimal mode: the meters collapse to traffic-light dots and the label
+   *  becomes the account's NAME, which is the friendly name when one is set and
+   *  the full email when it is not. */
+  minimal: boolean
+}) {
+  // The pill is tinted with the account's OWN identity colour, so the rim ties
+  // the row to the account instead of drawing a neutral box around it.
+  //
+  // There is no dot any more (user call 2026-08-21: "we dont need the account
+  // colour dot as well as the pill colour"). The rim, the fill and the dot were
+  // three statements of one fact, and the dot was the one costing horizontal
+  // room in the tightest bar in the app. The overflow list KEEPS its dot —
+  // those rows carry no pill tint, so there the dot is the only identity signal
+  // rather than the third.
+  //
+  // It previously asked for `var(--surface1)`, which does not exist: the token
+  // is `--color-surface1`. An undefined custom property makes `border-color`
+  // invalid, so it fell back to `currentColor` and the rim was drawn in the
+  // TEXT colour — a near-white outline on the chrome — and the `color-mix()`
+  // background silently dropped, leaving no fill at all.
+  const accent = resolveIdentityColor(account.colourKey, theme)
+  const shown = shownBuckets(account, hidden)
+  const dots = summariseAccountDots(account, hidden)
+  // "Nothing to show" has two causes and they need opposite treatments:
+  // nothing has been REPORTED yet (waiting -- shimmer), or the user has hidden
+  // every bucket for the footer (their choice -- show nothing). Keying the
+  // placeholder off `shown` conflated them and overrode the setting with a
+  // shimmer that never resolves. Key it off the raw buckets instead.
+  const reportedNothing = account.buckets.length === 0
+  return (
+    <span
+      ref={pillRef}
+      // Each account sits in its own subtle rounded pill so the boundary between
+      // accounts reads at a glance, rather than relying on whitespace alone.
+      className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${compact ? 'min-w-0' : 'shrink-0'}`}
+      style={{
+        // Softer than it was (38/9): with the dot gone the rim is no longer
+        // competing with a saturated disc beside it, so it can do the job at
+        // lower intensity. The bar carries one of these per account and they
+        // were shouting over the meters they exist to frame.
+        borderColor: `color-mix(in srgb, ${accent} 26%, transparent)`,
+        background: `color-mix(in srgb, ${accent} 6%, transparent)`,
+      }}
+      title={tooltip(account, { withPercent: minimal })}
+      data-testid="multi-account-pill"
+      data-minimal={minimal ? 'true' : undefined}
+    >
+      <span
+        className={`font-medium ${compact ? 'truncate' : ''}`}
+        style={{ color: 'var(--text-on-chrome)' }}
+        data-testid="multi-account-pill-label"
+      >
+        {minimal ? account.name : account.email}
+      </span>
+      {/* Meters never shrink -- the email is what gives way when space is tight.
+          COMPACT here: short codes and no trailing percentage. With four accounts
+          on the strip the words and numbers repeated twelve times and crowded out
+          the bars, which are the part you actually read. The exact figure is in
+          each bar's tooltip, and the "+N" popover below stays fully labelled --
+          glanceable strip, detailed popover. */}
+      <span className={`flex items-center shrink-0 ${minimal ? 'gap-1.5' : 'gap-2'}`}>
+        {minimal && shown.length > 0
+          ? // Usage first, then a dot per model, matching the order the meters
+            // were in. B1: bare dots, no keys -- the labelled variant was measured
+            // wider than the meters saved and cost minimal mode its single row.
+            <>
+              {dots.usage && (
+                <UsageDot
+                  rag={ragFor(dots.usage.worst.percent)}
+                  title={dots.usage.windows.map((b) => `${b.label} ${Math.round(b.percent)}%`).join(' · ')}
+                  label={`Usage ${RAG_WORD[ragFor(dots.usage.worst.percent)]} — worst is ${dots.usage.worst.label} at ${Math.round(dots.usage.worst.percent)}%`}
+                />
+              )}
+              {dots.models.map((b) => (
+                <UsageDot
+                  key={b.key}
+                  rag={ragFor(b.percent)}
+                  title={`${b.label} ${Math.round(b.percent)}%`}
+                  label={`${b.label} ${RAG_WORD[ragFor(b.percent)]} at ${Math.round(b.percent)}%`}
+                />
+              ))}
+            </>
+          : shown.length > 0
+          ? shown.map((b) => (
+              <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact />
+            ))
+          : // The account is live but its statusline has not reported yet. An
+            // account with no meters at all reads as an account with no usage,
+            // which is the opposite of the truth on a fresh session.
+            //
+            // Only when a payload is actually coming: something must still be
+            // unreported, and the status line must be on. With the switch off,
+            // or with every bucket hidden by choice, nothing will ever replace
+            // the shimmer -- and one that never resolves is worse than blank.
+            reportedNothing &&
+            showPending &&
+            (minimal
+              ? // One neutral placeholder, NOT a green dot. Green is a claim that
+                // the account has room; nothing has been reported, so the honest
+                // signal is "waiting" -- same reasoning as the pending meter,
+                // which shows no colour and no number until there is one.
+                <PendingDot />
+              : PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l)).map((l) => (
+                  <RateLimitBarPending key={l} label={l} compact />
+                )))}
+      </span>
+    </span>
+  )
+}
+
+const OVERFLOW_POPOVER_W = 320
+
+/**
+ * "+N" control for the accounts past the two rows. Opens a small popover with
+ * the same dot/email/meters, one per line.
+ *
+ * Positioning: `position: fixed` off the button's rect (the ScreenshotButton
+ * pattern) because BottomBar and its centre zone are `overflow-hidden` -- an
+ * absolutely-positioned popover would be clipped by the footer.
+ *
+ * Dismissal follows the app's existing popover pattern (AiUsagePopover /
+ * ScreenshotButton): a document mousedown probe, deliberately NOT a full-screen
+ * backdrop div -- house rule, a backdrop that closes on click is dismissed
+ * spuriously because Ctrl+C fires click events. Escape closes and hands focus
+ * back to the button.
+ */
+function AccountOverflow({
+  accounts,
+  hidden,
+  theme,
+}: {
+  accounts: LiveAccount[]
+  hidden: string[]
+  theme: 'dark' | 'light'
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [pos, setPos] = React.useState<{ left: number; bottom: number } | null>(null)
+  const btnRef = React.useRef<HTMLButtonElement>(null)
+  const popRef = React.useRef<HTMLDivElement>(null)
+
+  const close = React.useCallback((refocus: boolean) => {
+    setOpen(false)
+    if (refocus) btnRef.current?.focus()
+  }, [])
+
+  React.useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close(true)
+    }
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null
+      if (!t) return
+      if (popRef.current?.contains(t)) return
+      if (btnRef.current?.contains(t)) return
+      close(false)
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    // Move focus into the popover so it is reachable (and Escapable) from the
+    // keyboard, not just discoverable by mouse.
+    popRef.current?.focus()
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [open, close])
+
+  const toggle = () => {
+    if (open) {
+      close(false)
+      return
+    }
+    const r = btnRef.current?.getBoundingClientRect()
+    const left = r
+      ? Math.max(8, Math.min(r.left, window.innerWidth - OVERFLOW_POPOVER_W - 8))
+      : 8
+    const bottom = r ? Math.max(8, window.innerHeight - r.top + 6) : 8
+    setPos({ left, bottom })
+    setOpen(true)
+  }
+
+  const label = `${accounts.length} more account${accounts.length === 1 ? '' : 's'}`
+
+  return (
+    <span className="flex items-center shrink-0">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`Show ${label}`}
+        title={`${label} -- click for their usage`}
+        data-testid="multi-account-overflow-toggle"
+        className="px-1.5 py-px rounded-full text-[10px] font-medium tabular-nums focus-ring"
+        style={{
+          color: 'var(--text-secondary)',
+          background: 'color-mix(in srgb, var(--brand) 14%, transparent)',
+          border: '1px solid var(--border-strong)',
+        }}
+      >
+        +{accounts.length}
+      </button>
+      {open && pos && (
+        <div
+          ref={popRef}
+          role="dialog"
+          aria-label="More account usage"
+          tabIndex={-1}
+          data-testid="multi-account-overflow-popover"
+          className="account-overflow-pop fixed z-50 rounded-lg shadow-xl p-2.5 flex flex-col gap-2 focus-ring"
+          style={{
+            left: pos.left,
+            bottom: pos.bottom,
+            width: OVERFLOW_POPOVER_W,
+            background: 'var(--surface-overlay)',
+            border: '1px solid var(--border-strong)',
+            color: 'var(--text-primary)',
+          }}
+        >
+          <div
+            className="text-[10px] uppercase tracking-wide"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {label}
+          </div>
+          {accounts.map((a) => (
+            <div
+              key={a.email}
+              className="flex flex-col gap-1 min-w-0"
+              data-testid="multi-account-overflow-row"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ background: resolveIdentityColor(a.colourKey, theme) }}
+                />
+                <span className="font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                  {a.email}
+                </span>
+                <span
+                  className="ml-auto shrink-0 tabular-nums text-[10px]"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {a.count} live
+                </span>
+              </span>
+              <span className="flex flex-wrap items-center gap-2 pl-4">
+                {shownBuckets(a, hidden).map((b) => (
+                  <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} />
+                ))}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </span>
+  )
 }
 
 /**
@@ -115,6 +784,14 @@ function tooltip(a: LiveAccount): string {
  * already in the session store (statusline-driven) -- no new polling/IPC. Which
  * bars appear is curated INDEPENDENTLY of the per-session strip via
  * footerHiddenUsageBuckets (a footer-scoped denylist by bucket label).
+ *
+ * Layout (owner request, #378): one row whenever every pill fits in the free
+ * footer width; wrap only when they truly do not, filling each row before the
+ * next; at most two rows, the tail behind a "+N" overflow control. The rows are
+ * computed from MEASURED widths (useMeasuredFooterRows), not from a count. The
+ * footer is `min-h-7` (a MINIMUM) inside a flex column whose terminal pane
+ * re-fits from a ResizeObserver, so growing it is safe -- nothing measures the
+ * bar's height.
  */
 export default function MultiAccountStatusline() {
   const sessions = useSessionStore((s) => s.sessions)
@@ -122,6 +799,14 @@ export default function MultiAccountStatusline() {
   const aliases = useSettingsStore((s) => s.settings.accountAliases)
   const overrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const hidden = useSettingsStore((s) => s.settings.footerHiddenUsageBuckets) ?? EMPTY_HIDDEN
+  // Master status-line switch, same flag the session strip gates on. It does NOT
+  // gate the live bars here (the footer has always shown whatever the store
+  // holds); it gates only the PENDING placeholder, which is a promise that data
+  // is on its way. With the switch off that promise is false. Absent
+  // (pre-upgrade config) means on.
+  const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
+  // Absent means the meters, so nobody's footer changes shape on upgrade.
+  const minimal = useSettingsStore((s) => s.settings.footerAccountDisplay === 'dots')
   const theme = useResolvedTheme()
 
   const accounts = React.useMemo(
@@ -129,34 +814,64 @@ export default function MultiAccountStatusline() {
     [sessions, profiles, aliases, overrides],
   )
 
+  // What a pill SHOWS decides its width: the denylist, minimal mode and the
+  // pending placeholder all change it without changing the set of accounts.
+  // The hook re-measures when this signature changes.
+  const contentSignature = `${hidden.join(',')}|${minimal ? 'dots' : 'meters'}|${statusLineEnabled ? 'p' : '-'}`
+  const { layout, rootRef, pillRef } = useMeasuredFooterRows(accounts, contentSignature)
+  const { rows, overflow } = layout
+
   if (accounts.length < 2) return null
 
   // Bug 3: per account show the FULL email + the real statusline progress bars
   // (RateLimitBar, same as SessionStatusStrip). BottomBar centres this cluster
   // along the footer. The footer-scoped denylist filters which bars show here,
   // so the user can e.g. keep only Fable in the footer to narrow the cluster.
+  const multiRow = rows.length > 1
+
   return (
     <div
-      className="flex items-center gap-6 min-w-0"
+      ref={rootRef}
+      // w-full: the strip spans its centre zone so its measured width IS the
+      // free width between the runtime band and the disclaimer -- the number
+      // the row layout is computed against. Shrink-to-fit (the old behaviour)
+      // measured the cluster's own width, which is useless for deciding how
+      // much room there is. Rows centre their pills inside it.
+      className={`flex flex-col items-center w-full min-w-0 ${multiRow ? 'gap-1 py-1' : ''}`}
       data-testid="multi-account-statusline"
+      data-account-rows={rows.length}
     >
-      {accounts.map((a) => {
-        const shown = a.buckets.filter((b) => !hidden.includes(b.label))
-        return (
-          <span key={a.email} className="flex items-center gap-2 shrink-0" title={tooltip(a)}>
-            <span
-              className="w-2 h-2 rounded-full shrink-0"
-              style={{ background: resolveIdentityColor(a.colourKey, theme) }}
+      {rows.map((row, i) => (
+        <div
+          key={i}
+          // The rows are sized by measurement, so a row never exceeds the zone
+          // once the layout effect has run. flex-wrap stays as the safety net
+          // for the frames before it has (first paint, a resize in flight):
+          // an over-wide row wraps onto an extra line the footer can absorb
+          // (its height is a MINIMUM, min-h-7), instead of spilling out of
+          // BOTH sides of its centred zone and being clipped.
+          className="flex flex-wrap items-center justify-center min-w-0 gap-y-1"
+          // Inline px gap, the same constant the layout was computed with.
+          style={{ columnGap: FOOTER_PILL_GAP_PX }}
+          data-testid="multi-account-row"
+        >
+          {row.map((a) => (
+            <AccountPill
+              key={a.email}
+              account={a}
+              hidden={hidden}
+              theme={theme}
+              compact={multiRow}
+              showPending={statusLineEnabled}
+              minimal={minimal}
+              pillRef={pillRef(a.email)}
             />
-            <span className="font-medium" style={{ color: 'var(--text-on-chrome)' }}>
-              {a.email}
-            </span>
-            {shown.map((b) => (
-              <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} />
-            ))}
-          </span>
-        )
-      })}
+          ))}
+          {i === rows.length - 1 && overflow.length > 0 && (
+            <AccountOverflow accounts={overflow} hidden={hidden} theme={theme} />
+          )}
+        </div>
+      ))}
     </div>
   )
 }

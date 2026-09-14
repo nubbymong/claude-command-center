@@ -2,7 +2,10 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    # `unlabeled` added alongside `labeled` (#309): the desktop-test gate below
+    # keys on a label, so removing `desktop-tested` must re-run the check and
+    # turn it red again, not leave a stale green.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main, beta, 'release/**']
   push:
     branches: [main]
@@ -11,6 +14,71 @@ permissions:
   contents: read
 
 jobs:
+  # Fast, always-on guard (not gated on the `ci-run` label): CHANGELOG.md is
+  # generated from src/renderer/changelog.ts, so it must never drift. The
+  # generator is zero-dependency, so no npm install is needed.
+  changelog:
+    name: Changelog in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - name: Verify CHANGELOG.md matches changelog.ts
+        run: node scripts/gen-changelog.js --check
+
+  # Desktop-test merge gate (#309). Headless CI can pass while the packaged app
+  # fails to run usefully on a real desktop (it has), so "was the built app
+  # actually exercised?" is the real acceptance gate — and it should be enforced
+  # by the merge button, not left to a reviewer's memory or a PR-body note.
+  # Two ways to satisfy it (aicc_planning D#20, the Master Test Process):
+  #   - `desktop-tested`    a HUMAN opened and exercised the packaged app
+  #   - `runtime-validated` AUTOMATED runtime validation passed — VM Playwright
+  #                         e2e and/or the live SSH statusline matrix
+  #
+  # This is the INVERSE of the `ci-run` label below: `ci-run` is opt-in (present
+  # => run the matrix); this one is required-to-allow (the check FAILS unless the
+  # PR carries `desktop-tested`, `runtime-validated`, or `skip-desktop-test`).
+  # Only PRs are gated; direct pushes to `main` have no label and are exempt by
+  # the event guard.
+  #
+  # The job's only `if` is event-scoped (`pull_request`), and that is the whole
+  # design: on every PR it ALWAYS runs, then decides pass/fail from the labels
+  # INTERNALLY. Do not "optimise" this into a label-based `if:`. A required check
+  # that is *skipped* never reports, so GitHub treats it as pending and the PR
+  # blocks forever — a label-gated skip would deadlock exactly the PRs it was
+  # meant to wave through. Decide inside the job; never skip it.
+  #
+  # That matters once @nubbymong marks this a required status check in branch
+  # protection — the step that turns it from an advisory red X into an actual
+  # merge block (admin-only, tracked in #309).
+  desktop-gate:
+    name: Desktop test gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require desktop-tested / runtime-validated (or skip-desktop-test) label
+        env:
+          HAS_TESTED: ${{ contains(github.event.pull_request.labels.*.name, 'desktop-tested') }}
+          HAS_RUNTIME: ${{ contains(github.event.pull_request.labels.*.name, 'runtime-validated') }}
+          HAS_SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'skip-desktop-test') }}
+        run: |
+          if [ "$HAS_TESTED" = "true" ]; then
+            echo "PR carries 'desktop-tested' — a human exercised the packaged app on a real desktop. Gate open."
+            exit 0
+          fi
+          if [ "$HAS_RUNTIME" = "true" ]; then
+            echo "PR carries 'runtime-validated' — automated runtime validation passed (VM Playwright e2e and/or the live SSH statusline matrix). Gate open."
+            exit 0
+          fi
+          if [ "$HAS_SKIP" = "true" ]; then
+            echo "PR carries 'skip-desktop-test' — no runtime test required (docs/deps/CI/changelog-only). Gate open."
+            exit 0
+          fi
+          echo "::error::Desktop-test merge gate: this PR must carry 'desktop-tested' (a human launched and exercised the packaged app), 'runtime-validated' (automated VM e2e and/or the live SSH statusline matrix passed), or 'skip-desktop-test' (docs/deps/CI/changelog-only) before it can merge. See CONTRIBUTING.md > Desktop-test gate."
+          exit 1
+
   test:
     # Gate the test matrix on a `ci-run` label for PRs.
     # Rationale: this repo accumulates many WIP commits per PR (multi-phase v1.x
@@ -34,14 +102,14 @@ jobs:
         os: [windows-2025, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -54,17 +122,16 @@ jobs:
       - name: Install Electron binary
         run: node node_modules/electron/install.js
 
-      # GitHub's 2026 Windows images ship only Visual Studio 2026 ("18"), which
-      # @electron/node-gyp (fork frozen at 10.2.0-electron.2, Oct 2024) cannot
-      # use: VS18 is absent from its version table, so discovery fails even in
-      # VS-Command-Prompt mode. Install VS2022 Build Tools (the toolchain CI was
-      # green on) until the electron toolchain learns VS 2026. ~6-8 min.
-      - name: Install VS2022 Build Tools (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre --includeRecommended --quiet --norestart"
-
+      # Windows: no VS Build Tools / native rebuild. node-pty and better-sqlite3
+      # ship N-API prebuilt binaries (prebuilds/win32-x64) that load unchanged under
+      # Electron (verified: test:unit:native loads SQLite under electron-as-node from
+      # the prebuild), so we skip the rebuild on Windows and use them as-is. This drops
+      # a dependency on community.chocolatey.org, whose per-IP rate limiting (behind
+      # Cloudflare) intermittently blocks GitHub's SHARED runner IPs and failed the VS
+      # Build Tools install at random with "not valid XML". macOS/Linux still rebuild
+      # from source below.
       - name: Rebuild native modules
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           node -e "
@@ -97,21 +164,26 @@ jobs:
       # uses, so the macOS DMG is unsigned and Gatekeeper will warn on
       # first launch (right-click → Open). The Windows installer is also
       # unsigned, same SmartScreen warning as the release pipeline.
+      # Gate on runner.os, NOT a matrix image name: `matrix.os` carries whatever
+      # image is pinned above, so a re-pin silently turns these steps off while
+      # the job stays green.
       - name: Package Windows installer (release/* branches only)
-        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
-        run: npx electron-builder --win
+        if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')
+        # --config.npmRebuild=false: the Windows rebuild step is skipped (prebuilds),
+        # so tell electron-builder not to rebuild either; package the prebuilds as-is.
+        run: npx electron-builder --win --config.npmRebuild=false
 
       - name: Verify native modules unpacked (release/* branches only)
-        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
+        if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')
         run: npm run verify:package
 
       - name: Package macOS DMG (release/* branches only)
-        if: matrix.os == 'macos-latest' && startsWith(github.head_ref, 'release/')
+        if: runner.os == 'macOS' && startsWith(github.head_ref, 'release/')
         run: npx electron-builder --mac
 
       - name: Upload Windows installer
-        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
-        uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')
+        uses: actions/upload-artifact@v7
         with:
           name: windows-installer-${{ github.sha }}
           path: dist/*.exe
@@ -119,10 +191,74 @@ jobs:
           retention-days: 14
 
       - name: Upload macOS DMG
-        if: matrix.os == 'macos-latest' && startsWith(github.head_ref, 'release/')
-        uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS' && startsWith(github.head_ref, 'release/')
+        uses: actions/upload-artifact@v7
         with:
           name: macos-dmg-${{ github.sha }}
           path: dist/*.dmg
           if-no-files-found: error
           retention-days: 14
+
+  # SSH multi-session smoke (#24 regression gate; aicc_planning#28). Real `ssh`
+  # against an EPHEMERAL localhost sshd — no external hosts or credentials, so
+  # unlike the manual live matrix (AGENTS.md) this CAN run in CI. It proves the
+  # per-session MCP reverse-tunnel ports coexist (two sessions to one host) and
+  # that the old single-fixed-port shape collides. It exercises only the SSH
+  # connection / `-R` / argv layer (child_process ssh + the pure argv builder) —
+  # NOT claude/tmux/statusline, which still need the manual matrix.
+  #
+  # ALWAYS runs on PRs (not `ci-run`-gated) so it can be a REQUIRED status check
+  # without the skipped-required deadlock the desktop-gate comment describes.
+  ssh-smoke:
+    name: SSH multi-session smoke (#24)
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Provision an ephemeral key-auth sshd (TCP forwarding on)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server netcat-openbsd
+          # The runner account is password-locked in /etc/shadow; sshd (UsePAM no)
+          # refuses locked accounts even for pubkey auth. Set a throwaway password
+          # to UNLOCK it — PasswordAuthentication stays off, so it's never usable
+          # for login; the ephemeral runner is discarded after the job.
+          echo "$(whoami):ci-ssh-smoke-$(date +%s)" | sudo chpasswd
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 -q
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          D="$RUNNER_TEMP/sshd"; mkdir -p "$D"
+          ssh-keygen -t ed25519 -N '' -f "$D/hostkey" -q
+          cat > "$D/sshd_config" <<EOF
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey $D/hostkey
+          PidFile $D/sshd.pid
+          AuthorizedKeysFile $HOME/.ssh/authorized_keys
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          AllowTcpForwarding yes
+          UsePAM no
+          StrictModes no
+          LogLevel VERBOSE
+          EOF
+          sudo mkdir -p /run/sshd
+          sudo "$(command -v sshd)" -t -f "$D/sshd_config"
+          sudo "$(command -v sshd)" -f "$D/sshd_config" -E "$D/sshd.log"
+          for i in $(seq 1 20); do nc -z 127.0.0.1 2222 && break; sleep 0.5; done
+          nc -z 127.0.0.1 2222 || { echo "sshd failed to start"; sudo cat "$D/sshd.log" 2>/dev/null || true; exit 1; }
+          # prove key auth + forwarding before the test, surfacing sshd errors early
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 2222 "$(whoami)@127.0.0.1" 'echo SSHD_UP' || { sudo cat "$D/sshd.log" 2>/dev/null || true; exit 1; }
+      - name: Write live host entry (localhost)
+        run: |
+          mkdir -p tests/live
+          printf '{ "linuxKey": { "host": "127.0.0.1", "username": "%s", "port": 2222 } }\n' "$(whoami)" > tests/live/hosts.local.json
+      - name: SSH multi-session -R test (#24)
+        run: npx vitest run --config vitest.live.config.ts tests/live/ssh-multisession.live.ts

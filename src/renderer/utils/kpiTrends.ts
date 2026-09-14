@@ -1,19 +1,13 @@
 import type { KpiMetric } from '../types/electron'
+import { formatMetricValue } from '../../shared/kpi-format'
 
-export function formatValue(value: number, format?: string): string {
-  if (format === 'percent') {
-    return (value * 100).toFixed(1) + '%'
-  }
-  if (format === 'duration') {
-    if (value >= 60000) return (value / 60000).toFixed(1) + 'm'
-    if (value >= 1000) return (value / 1000).toFixed(1) + 's'
-    return Math.round(value) + 'ms'
-  }
-  if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M'
-  if (value >= 1000) return (value / 1000).toFixed(1) + 'K'
-  if (Number.isInteger(value)) return value.toString()
-  return value.toFixed(1)
-}
+/**
+ * Re-exported from shared/kpi-format so the main process can render the SAME
+ * values into the cross-account synthesis prompt. The model's prose is shown
+ * beside these numbers; two formatters would let it cite a value the table
+ * disagrees with.
+ */
+export const formatValue = formatMetricValue
 
 // Compare two KPI sets and compute delta/direction for each metric
 export interface MetricWithTrend extends KpiMetric {

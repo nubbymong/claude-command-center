@@ -4,6 +4,8 @@ import {
   noteSessionStart,
   noteSubagentStart,
   noteSubagentStop,
+  noteBackgroundToolStart,
+  noteBackgroundToolStop,
   noteTurnEnd,
   forgetSession,
   isBackgroundContext,
@@ -46,6 +48,58 @@ describe('background-context — subagent depth', () => {
   it('turn end clears a dangling subagent depth (missed SubagentStop)', () => {
     noteSubagentStart('s1')
     noteTurnEnd('s1')
+    expect(isBackgroundContext('s1')).toBe(false)
+  })
+})
+
+describe('background-context — spawn-tool bracket (Task/Agent/Workflow)', () => {
+  it('an open spawn-tool bracket marks background until the matching close', () => {
+    noteBackgroundToolStart('s1')
+    expect(isBackgroundContext('s1')).toBe(true)
+    noteBackgroundToolStop('s1')
+    expect(isBackgroundContext('s1')).toBe(false)
+  })
+
+  it('handles nested / parallel spawns via a depth counter', () => {
+    noteBackgroundToolStart('s1')
+    noteBackgroundToolStart('s1')
+    noteBackgroundToolStop('s1')
+    expect(isBackgroundContext('s1')).toBe(true) // one still open
+    noteBackgroundToolStop('s1')
+    expect(isBackgroundContext('s1')).toBe(false)
+  })
+
+  it('never goes negative on an unmatched close', () => {
+    noteBackgroundToolStop('s1')
+    expect(isBackgroundContext('s1')).toBe(false)
+    noteBackgroundToolStart('s1')
+    expect(isBackgroundContext('s1')).toBe(true)
+  })
+
+  it('turn end clears a dangling tool bracket (missed PostToolUse)', () => {
+    noteBackgroundToolStart('s1')
+    noteTurnEnd('s1')
+    expect(isBackgroundContext('s1')).toBe(false)
+  })
+
+  it('SessionStart clears a stale tool bracket', () => {
+    noteBackgroundToolStart('s1')
+    noteSessionStart('s1', MAIN)
+    expect(isBackgroundContext('s1', MAIN)).toBe(false)
+  })
+
+  it('is independent of subagent depth — both must close to leave background', () => {
+    noteBackgroundToolStart('s1')
+    noteSubagentStart('s1')
+    noteBackgroundToolStop('s1')
+    expect(isBackgroundContext('s1')).toBe(true) // subagent depth still open
+    noteSubagentStop('s1')
+    expect(isBackgroundContext('s1')).toBe(false)
+  })
+
+  it('forgetSession drops a tool bracket too', () => {
+    noteBackgroundToolStart('s1')
+    forgetSession('s1')
     expect(isBackgroundContext('s1')).toBe(false)
   })
 })

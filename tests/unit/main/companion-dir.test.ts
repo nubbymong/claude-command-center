@@ -14,7 +14,7 @@
  * — see [[feedback-no-wipe-configs]]. Tests run against a real fs temp dir
  * (mkdtemp isolation) using the production node-fs deps.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, rmSync,
 } from 'fs'
@@ -23,6 +23,7 @@ import { tmpdir } from 'os'
 import {
   ensureCompanionDir,
   backfillCompanionDirs,
+  backfillCompanionDirsAsync,
   nodeFsCompanionDeps,
   type CompanionDirDeps,
 } from '../../../src/main/logging/companion-dir'
@@ -186,5 +187,35 @@ describe('backfillCompanionDirs', () => {
     // the good folder was still processed
     expect(statSync(join(projGood, UUID_A)).isDirectory()).toBe(true)
     expect(res.created).toBe(1)
+  })
+})
+
+// ── backfillCompanionDirsAsync (#120: chunked, non-blocking) ────────
+describe('backfillCompanionDirsAsync', () => {
+  let projectsRoot: string
+  beforeEach(() => { projectsRoot = mkdtempSync(join(tmpdir(), 'ccc-backfill-async-')) })
+  afterEach(() => { try { rmSync(projectsRoot, { recursive: true, force: true }) } catch {} })
+
+  it('produces the same result as the sync version and yields to the event loop', async () => {
+    const projA = join(projectsRoot, 'F--proj-a')
+    const projB = join(projectsRoot, 'F--proj-b')
+    seedTranscript(projA, UUID_A) // dir-less
+    seedTranscript(projA, UUID_B)
+    mkdirSync(join(projA, UUID_B), { recursive: true }) // already has a dir
+    seedTranscript(projB, UUID_C) // dir-less
+
+    const yieldFn = vi.fn(() => Promise.resolve())
+    const res = await backfillCompanionDirsAsync(projectsRoot, nodeFsCompanionDeps, yieldFn)
+
+    expect(statSync(join(projA, UUID_A)).isDirectory()).toBe(true)
+    expect(statSync(join(projB, UUID_C)).isDirectory()).toBe(true)
+    expect(res).toEqual({ projectFolders: 2, scanned: 3, created: 2 })
+    // It must yield between folders so it can never freeze the event loop.
+    expect(yieldFn).toHaveBeenCalled()
+  })
+
+  it('returns zero counts (no throw) when the projects root does not exist', async () => {
+    const res = await backfillCompanionDirsAsync(join(projectsRoot, 'nope'), nodeFsCompanionDeps, () => Promise.resolve())
+    expect(res).toEqual({ projectFolders: 0, scanned: 0, created: 0 })
   })
 })

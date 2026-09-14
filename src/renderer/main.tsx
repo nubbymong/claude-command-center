@@ -1,3 +1,7 @@
+// FIRST: set window.EXCALIDRAW_ASSET_PATH before @excalidraw/excalidraw (pulled
+// in by App's static import graph) evaluates and bakes its font URLs. Must stay
+// above `import App`. See the module for why it can't live in this file's body.
+import './excalidraw-asset-path'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'

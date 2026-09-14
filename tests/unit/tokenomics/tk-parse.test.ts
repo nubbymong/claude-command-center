@@ -79,3 +79,62 @@ describe('codexEventsFromRollout', () => {
     expect(evs[0].dedupKey).toBe('x:cx1:1')
   })
 })
+
+describe('codexEventsFromRollout — subagent identity (#307)', () => {
+  // A subagent rollout carries TWO session_meta lines: its own id first, then a
+  // second naming the parent (thread_source 'subagent', forked_from_id). Taking
+  // the LAST id re-labelled the subagent's turns with the parent's session, so
+  // their per-file ordinals collided with the parent's and INSERT OR IGNORE
+  // dropped ~half of all Codex turns. The identity must be the FIRST session_meta.
+  const turn = (i: number) => JSON.stringify({
+    type: 'event_msg', timestamp: `2026-06-01T09:0${i}:00Z`,
+    payload: { type: 'token_count', info: { total_token_usage: {
+      input_tokens: 100, cached_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0, total_tokens: 110 } } } })
+
+  const subagentText = [
+    JSON.stringify({ type: 'session_meta', timestamp: '2026-06-01T09:00:00Z', payload: { id: 'sub', cwd: 'F:\cx', model: '' } }),
+    // the parent-metadata line a subagent rollout also carries
+    JSON.stringify({ type: 'session_meta', timestamp: '2026-06-01T09:00:01Z', payload: { id: 'parent', thread_source: 'subagent', forked_from_id: 'parent', parent_thread_id: 'parent' } }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }),
+    turn(1), turn(2),
+  ].join('\n')
+
+  it('keys the subagent turns under its OWN id, not the parent (first session_meta wins)', () => {
+    const evs = codexEventsFromRollout(subagentText, PRICE_KEYS, 0)
+    expect(evs).toHaveLength(2)
+    expect(evs.map((e) => e.dedupKey)).toEqual(['x:sub:0', 'x:sub:1'])
+    // The bug (last-id-wins) would have produced x:parent:* here.
+    expect(evs.some((e) => e.dedupKey.startsWith('x:parent:'))).toBe(false)
+    expect(evs.every((e) => e.sessionId === 'sub')).toBe(true)
+  })
+
+  it('does not collide with the parent rollout — their dedup keys are disjoint', () => {
+    const parentText = [
+      JSON.stringify({ type: 'session_meta', timestamp: '2026-06-01T09:00:00Z', payload: { id: 'parent', cwd: 'F:\cx', model: '' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }),
+      turn(1), turn(2),
+    ].join('\n')
+    const sub = codexEventsFromRollout(subagentText, PRICE_KEYS, 0).map((e) => e.dedupKey)
+    const par = codexEventsFromRollout(parentText, PRICE_KEYS, 0).map((e) => e.dedupKey)
+    expect(par).toEqual(['x:parent:0', 'x:parent:1'])
+    // No shared key -> INSERT OR IGNORE keeps all four turns, not two.
+    expect(sub.filter((k) => par.includes(k))).toEqual([])
+  })
+
+  it('keeps appended subagent turns under the subagent id', () => {
+    const evs = codexEventsFromRollout(subagentText, PRICE_KEYS, 1)
+    expect(evs.map((e) => e.dedupKey)).toEqual(['x:sub:1'])
+  })
+
+  it('a seeded mid-file read is not hijacked by a later parent session_meta', () => {
+    // The seed is the header a resuming reader already learned; a parent
+    // session_meta appearing in the slice must not overwrite it.
+    const slice = [
+      JSON.stringify({ type: 'session_meta', timestamp: '2026-06-01T09:00:01Z', payload: { id: 'parent', thread_source: 'subagent' } }),
+      turn(3),
+    ].join('\n')
+    const evs = codexEventsFromRollout(slice, PRICE_KEYS, 0, { sessionId: 'sub', cwd: 'F:\cx', model: 'gpt-5.5' })
+    expect(evs).toHaveLength(1)
+    expect(evs[0].dedupKey).toBe('x:sub:0')
+  })
+})

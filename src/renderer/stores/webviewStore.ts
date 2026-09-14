@@ -1,27 +1,80 @@
 import { create } from 'zustand'
+import { isAllowedBrowserUrl, type WebviewNavState } from '../../shared/browser-url'
+// A deliberate import cycle (altPane reads this store too): the one-surface
+// rule is enforced HERE, at the two writes that open the pane, so no caller can
+// bypass it. Only ever called inside actions, never at module evaluation.
+import { closeOtherAltPanes } from './altPane'
 
 /**
- * Per-session state for the webview tool.
+ * Per-session state for the browser pane (the "webview").
  *
- *   idle      → no webview command has fired; URL not yet probed
- *   pending   → URL is being polled; button shows neutral pulse
- *   available → URL responded; button pulses GREEN ("ready to view")
- *   failed    → polling timed out / server died; button shows RED
+ * Two things live here and they are deliberately separate:
  *
- * The button is rendered whenever the session has at least one
- * webview-enabled command (`hasWebviewCommand` prop on WebviewButton).
- * In the `idle` state the button is greyed out + disabled with a
- * tooltip explaining how to activate it. Clicking when non-idle
- * toggles `isOpen`, which the App-level layout uses to swap the
- * webview pane in for the Claude/Partner pane.
+ *  1. The WATCH -- a command can "watch for a page": the command bar polls
+ *     the command's URL and the Browser button is tinted by the outcome.
+ *       idle      -> nothing is being watched
+ *       pending   -> URL is being polled; button shows a neutral pulse
+ *       available -> URL responded; button pulses GREEN ("ready to view")
+ *       failed    -> polling timed out / server died; button shows RED
+ *     `watchUrl` is what is being watched.
+ *
+ *  2. The PANE -- `isOpen`, and `currentUrl`: the page the pane has been
+ *     ASKED to show (by a watch that fired, the address bar, a favourite,
+ *     home, or an "open a page" command). `page` is what main reports the
+ *     view is ACTUALLY on -- after redirects, with title and history flags.
+ *
+ * The pane is always there (item 26): the Browser button renders for every
+ * session, and clicking it with nothing loaded opens the pane on its start
+ * page. The watch is a convenience that can point the pane somewhere; it is
+ * not the door in.
  */
 export type WebviewStatus = 'idle' | 'pending' | 'available' | 'failed'
 
+export interface WebviewPageState {
+  url: string
+  title: string
+  canGoBack: boolean
+  canGoForward: boolean
+  loading: boolean
+}
+
 export interface WebviewSessionState {
   status: WebviewStatus
+  /** The URL a command watch is polling / last polled. Null when nothing was watched. */
+  watchUrl: string | null
+  /** The page the pane has been asked to show. Null = start page. */
   currentUrl: string | null
+  /**
+   * Bumped on every ASK (navigate / startActivation), even when the url is
+   * the same as last time. The page can have moved on since -- Back, a link
+   * -- so "go to X" must mean go to X now, not "X is already what I asked
+   * for". The pane reacts to (currentUrl, navSeq), not currentUrl alone.
+   * Found on the desktop: an "Open a page" button whose page was the last
+   * request did nothing after Back.
+   */
+  navSeq: number
   loadedAt: number | null
   isOpen: boolean
+  /** What main reports the view is actually on. Null until the first navigation event. */
+  page: WebviewPageState | null
+  /** A home page set for THIS session and not persisted (config-less sessions;
+   *  the persisted per-config home lives in browserStore). */
+  homeUrl: string | null
+  /**
+   * True only after an explicit Clear (#481): the user asked for the START
+   * page, so the pane's "opened blank with a home set -> go home" convenience
+   * must not immediately bounce them back to the home page. Any navigation,
+   * watch activation, or fresh pane open clears it — the Clear applied to
+   * that viewing, not to the session forever.
+   */
+  atStartPage: boolean
+  /**
+   * The pane's ACCOUNT surface (#439/#475): non-null while the pane shows the
+   * claude.ai view bound to this account's partition instead of the ordinary
+   * browser view. The two are mutually exclusive — main enforces it too.
+   * `authed` is null until the first cookie read lands.
+   */
+  accountPane: { profileId: string; authed: boolean | null; email: string | null } | null
   /**
    * Monotonically-incremented per session on every `startActivation`.
    * Long-running pollers capture this token and pass it back to
@@ -31,6 +84,17 @@ export interface WebviewSessionState {
    * poll win the race and clobber the newer state.
    */
   activationId: number
+  /**
+   * The AGENT PUSH (the open_in_app_browser MCP tool). The agent handed the
+   * user a page worth looking at; `pendingAgentUrl` is that page and `unread`
+   * raises the notification pill on the Browser tool. Set by the
+   * WEBVIEW_AGENT_PUSH event only — never by a navigation the user drove — and
+   * it deliberately does NOT touch `currentUrl`/`isOpen`/`navSeq`, so a page the
+   * user is actively viewing is never yanked. The user opening the pane /
+   * clicking the pill consumes it (navigate to it, then clear both fields).
+   */
+  pendingAgentUrl: string | null
+  unread: boolean
 }
 
 interface State {
@@ -43,11 +107,18 @@ interface Actions {
    * and returns a fresh activation token. Callers that run a long
    * poll afterwards must pass this token back to mark*() so a stale
    * resolution doesn't overwrite a newer activation's result.
+   *
+   * An activation is the user pressing a command that watches a page, so it
+   * also points the pane at that page.
    */
   startActivation: (sessionId: string, url: string) => number
   /**
    * Polling found content. When `token` is provided and doesn't
    * match the latest activationId, the call is dropped (stale poll).
+   *
+   * Points the pane at the URL ONLY when it is showing nothing yet. A
+   * re-probe (any command-button press re-checks the watch URLs) must not
+   * yank a page the user navigated to out from under them.
    */
   markAvailable: (sessionId: string, url: string, token?: number) => void
   /** Polling timed out. Same stale-token guard as markAvailable. */
@@ -56,6 +127,38 @@ interface Actions {
   togglePane: (sessionId: string) => void
   /** Explicit set, used by main when WebContentsView errors out. */
   setOpen: (sessionId: string, open: boolean) => void
+  /** Ask the pane to show `url` and open it. The address bar, favourites,
+   *  home and "open a page" commands all come through here. The caller has
+   *  already normalised + validated (shared/browser-url). */
+  navigate: (sessionId: string, url: string) => void
+  /**
+   * The agent pushed a page (the open_in_app_browser MCP tool). Records it as
+   * pending and raises the unread pill. Deliberately does NOT set currentUrl,
+   * open the pane, or bump navSeq — the never-yank rule: the page loads only
+   * when the user consumes it. http/https only (defence in depth; main
+   * validated already at the IPC boundary).
+   */
+  pushAgentUrl: (sessionId: string, url: string) => void
+  /**
+   * The user answered the pill (opened the pane / clicked it). Returns the
+   * pending agent URL and clears pending + unread; the caller navigates to it.
+   * Returns null when there was nothing pending.
+   */
+  consumeAgentPush: (sessionId: string) => string | null
+  /** Clear the pane back to its start page (#481): drops the requested URL and
+   *  the page report, keeps the pane open. The caller closes the native view. */
+  clearPage: (sessionId: string) => void
+  /** Show the account surface (#439/#475). Opens the pane; the WebviewPane
+   *  component closes the ordinary view and opens the account view via IPC. */
+  openAccountPane: (sessionId: string, profileId: string) => void
+  /** Back to the ordinary browser. The component closes the account view. */
+  closeAccountPane: (sessionId: string) => void
+  /** Main's push of the account surface's auth state. */
+  setAccountPaneState: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void
+  /** Main's report of where the view actually is. */
+  setPage: (state: WebviewNavState) => void
+  /** Session-scoped home (not persisted). */
+  setHomeUrl: (sessionId: string, url: string | null) => void
   /** Wipe state for a session — e.g. on session removal. */
   reset: (sessionId: string) => void
   /**
@@ -68,10 +171,18 @@ interface Actions {
 
 const defaultState = (): WebviewSessionState => ({
   status: 'idle',
+  watchUrl: null,
   currentUrl: null,
+  navSeq: 0,
   loadedAt: null,
   isOpen: false,
+  page: null,
+  homeUrl: null,
+  atStartPage: false,
+  accountPane: null,
   activationId: 0,
+  pendingAgentUrl: null,
+  unread: false,
 })
 
 export const useWebviewStore = create<State & Actions>((set, get) => ({
@@ -79,14 +190,25 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   startActivation: (sessionId, url) => {
     const cur = get().bySessionId[sessionId] || defaultState()
     const nextToken = cur.activationId + 1
+    // A watch URL comes from commands.json (user data, hand-editable). Main
+    // refuses anything but http(s) at every door, so a bad one could only
+    // make the pane open and close again; refuse it here so it fails visibly
+    // (status 'failed') instead.
+    if (!isAllowedBrowserUrl(url)) {
+      set((s) => ({ bySessionId: { ...s.bySessionId, [sessionId]: { ...cur, status: 'failed', watchUrl: url, activationId: nextToken } } }))
+      return nextToken
+    }
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
         [sessionId]: {
           ...cur,
           status: 'pending',
+          watchUrl: url,
           currentUrl: url,
+          navSeq: cur.navSeq + 1,
           loadedAt: null,
+          atStartPage: false,
           activationId: nextToken,
         },
       },
@@ -96,17 +218,24 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   markAvailable: (sessionId, url, token) => {
     const cur = get().bySessionId[sessionId]
     if (token !== undefined && cur && cur.activationId !== token) return
-    set((s) => ({
-      bySessionId: {
-        ...s.bySessionId,
-        [sessionId]: {
-          ...(s.bySessionId[sessionId] || defaultState()),
-          status: 'available',
-          currentUrl: url,
-          loadedAt: Date.now(),
+    set((s) => {
+      const prev = s.bySessionId[sessionId] || defaultState()
+      return {
+        bySessionId: {
+          ...s.bySessionId,
+          [sessionId]: {
+            ...prev,
+            status: 'available',
+            watchUrl: url,
+            // After an explicit Clear (#481) the blank pane is deliberate: a
+            // background re-probe must not point it anywhere. An explicit watch
+            // press comes through startActivation, which resets the flag.
+            currentUrl: prev.atStartPage ? prev.currentUrl : (prev.currentUrl ?? url),
+            loadedAt: Date.now(),
+          },
         },
-      },
-    }))
+      }
+    })
   },
   markFailed: (sessionId, token) => {
     const cur = get().bySessionId[sessionId]
@@ -123,13 +252,25 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   },
   // Flip `isOpen` only — status (idle/pending/available/failed) is
   // owned by activation / probe / poll callers and unaffected by
-  // showing or hiding the pane.
+  // showing or hiding the pane. Opening ANEW forgets a previous Clear
+  // (#481): the explicit "show me the start page" applied to that viewing;
+  // a fresh open gets the ordinary go-home convenience back.
   togglePane: (sessionId) => {
+    // Opening evicts the canvas/logs like every other open. No production
+    // caller today (the buttons use the coordinator); kept honest so this
+    // cannot become a bypass.
+    if (!get().bySessionId[sessionId]?.isOpen) closeOtherAltPanes(sessionId, 'browser')
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: !cur.isOpen },
+        // Closing leaves account mode, same as setOpen — the gestures agree.
+        [sessionId]: {
+          ...cur,
+          isOpen: !cur.isOpen,
+          atStartPage: cur.isOpen ? cur.atStartPage : false,
+          accountPane: cur.isOpen ? null : cur.accountPane,
+        },
       },
     }))
   },
@@ -138,7 +279,146 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: open },
+        // Closing the pane leaves account mode too (#439): Esc and the strip's
+        // Close must agree — reopening the browser later starts at the ordinary
+        // browser, never straight into claude.ai.
+        [sessionId]: {
+          ...cur,
+          isOpen: open,
+          atStartPage: open && !cur.isOpen ? false : cur.atStartPage,
+          accountPane: open ? cur.accountPane : null,
+        },
+      },
+    }))
+  },
+  navigate: (sessionId, url) => {
+    // One session surface at a time: opening the pane evicts the canvas and
+    // logs. Done at the source so the agent-push open, a "page" command and any
+    // future caller honour it without having to remember to. Before the read
+    // of `cur`, so the snapshot spread below can never resurrect what the
+    // eviction cleared.
+    closeOtherAltPanes(sessionId, 'browser')
+    const cur = get().bySessionId[sessionId] || defaultState()
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, currentUrl: url, navSeq: cur.navSeq + 1, isOpen: true, atStartPage: false },
+      },
+    }))
+  },
+  pushAgentUrl: (sessionId, url) => {
+    // Defence in depth: main already validated at the IPC boundary, but the
+    // store is a door the pill/UX read from, so it enforces the same rule.
+    if (!isAllowedBrowserUrl(url)) return
+    const cur = get().bySessionId[sessionId] || defaultState()
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        // NOT currentUrl / isOpen / navSeq: the never-yank rule. Only the
+        // pending URL and the unread pill move; the page loads on consume.
+        [sessionId]: { ...cur, pendingAgentUrl: url, unread: true },
+      },
+    }))
+  },
+  consumeAgentPush: (sessionId) => {
+    const cur = get().bySessionId[sessionId]
+    if (!cur) return null
+    const url = cur.pendingAgentUrl
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, pendingAgentUrl: null, unread: false },
+      },
+    }))
+    return url
+  },
+  clearPage: (sessionId) => {
+    const cur = get().bySessionId[sessionId]
+    // Nothing to clear for a session whose pane has no state; and `page` must
+    // go too — the address bar and star read page.url ahead of currentUrl.
+    if (!cur) return
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, currentUrl: null, page: null, atStartPage: true },
+      },
+    }))
+  },
+  openAccountPane: (sessionId, profileId) => {
+    // Opens the pane too (the Artifacts buttons, Settings' internal-browser
+    // sign-in), so it evicts the canvas and logs exactly as `navigate` does —
+    // this was the third path that left two surfaces flagged open. Before the
+    // read of `cur`, for the same reason as there.
+    closeOtherAltPanes(sessionId, 'browser')
+    const cur = get().bySessionId[sessionId] || defaultState()
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        // `page` is dropped: it described the ordinary view this mode replaces.
+        // `atStartPage` is deliberately KEPT — a Cleared start page must still
+        // be there on "Back to browser" (and clearing it here would fire the
+        // auto-home navigate underneath the account view); setPage instead
+        // lets account-mode nav reports through explicitly.
+        [sessionId]: { ...cur, isOpen: true, page: null, accountPane: { profileId, authed: null, email: null } },
+      },
+    }))
+  },
+  closeAccountPane: (sessionId) => {
+    const cur = get().bySessionId[sessionId]
+    if (!cur?.accountPane) return
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, accountPane: null, page: null },
+      },
+    }))
+  },
+  setAccountPaneState: (state) => {
+    const cur = get().bySessionId[state.sessionId]
+    // Only while the surface is showing, and only for the account it shows — a
+    // late push from a replaced view must not repaint the new account's strip.
+    if (!cur?.accountPane || cur.accountPane.profileId !== state.profileId) return
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [state.sessionId]: { ...cur, accountPane: { profileId: state.profileId, authed: state.authed, email: state.email } },
+      },
+    }))
+  },
+  setPage: (state) => {
+    const cur = get().bySessionId[state.sessionId]
+    // A report for a session whose pane has never existed is a stale event
+    // from a view that has since been torn down; there is nothing to update.
+    if (!cur) return
+    // Same for a view Clear just closed (#481): a late navigation report must
+    // not repopulate `page` under the start page (the address bar reads it).
+    // The account surface (#439) is exempt: its reports are live — the strip's
+    // loading indicator reads them — and `page` is dropped again on mode exit.
+    if (cur.atStartPage && !cur.accountPane) return
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [state.sessionId]: {
+          ...cur,
+          page: {
+            url: state.url,
+            title: state.title,
+            canGoBack: state.canGoBack,
+            canGoForward: state.canGoForward,
+            loading: state.loading,
+          },
+        },
+      },
+    }))
+  },
+  setHomeUrl: (sessionId, url) => {
+    // Same rule as every other door: only http(s) may become a home.
+    if (url !== null && !isAllowedBrowserUrl(url)) return
+    const cur = get().bySessionId[sessionId] || defaultState()
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, homeUrl: url },
       },
     }))
   },
@@ -153,7 +433,8 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => {
       const next: Record<string, WebviewSessionState> = {}
       for (const [id, st] of Object.entries(s.bySessionId)) {
-        next[id] = { ...st, isOpen: false }
+        // Account mode goes with the pane, same as every other close gesture.
+        next[id] = { ...st, isOpen: false, accountPane: null }
       }
       return { bySessionId: next }
     })

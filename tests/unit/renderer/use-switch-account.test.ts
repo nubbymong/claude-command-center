@@ -15,6 +15,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
 import type { Session } from '../../../src/renderer/stores/sessionStore'
+import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
 import { shouldSwitch } from '../../../src/renderer/hooks/useSwitchAccount'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
@@ -37,10 +38,12 @@ vi.mock('../../../src/renderer/utils/resumePicker', () => ({
 }))
 
 const ptyKillMock = vi.fn()
+const fetchOneMock = vi.fn(async () => null)
 ;(globalThis as any).window = (globalThis as any).window ?? {}
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   pty: { kill: ptyKillMock },
+  accountUsage: { fetchOne: (...args: unknown[]) => fetchOneMock(...args) },
 }
 
 const { useSwitchAccount } = await import('../../../src/renderer/hooks/useSwitchAccount')
@@ -99,10 +102,13 @@ describe('useSwitchAccount', () => {
 
   beforeEach(() => {
     useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    useAccountProfilesStore.setState({ profiles: [] })
     killSessionPtyMock.mockReset()
     clearSpawnedMock.mockReset()
     ptyKillMock.mockReset()
     markSessionForResumePickerMock.mockReset()
+    fetchOneMock.mockReset()
+    fetchOneMock.mockResolvedValue(null)
     captured = null
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -167,6 +173,96 @@ describe('useSwitchAccount', () => {
     const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
     expect(stored!.profileId).toBeUndefined()
     expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+  })
+
+  it('is a no-op when the target account is inactive (backstop)', () => {
+    useAccountProfilesStore.setState({
+      profiles: [
+        { id: 'profile-b', name: 'B', accountEmail: 'b@example.com', active: false, createdAt: 1 },
+      ],
+    })
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
+    expect(stored!.profileId).toBe('profile-a') // unchanged: the switch was refused
+    expect(killSessionPtyMock).not.toHaveBeenCalled()
+    expect(markSessionForResumePickerMock).not.toHaveBeenCalled()
+    // #447: a refused switch must not fetch either — the fetch sits BELOW the
+    // inactive guard, so rotating/polling a parked account can never happen.
+    expect(fetchOneMock).not.toHaveBeenCalled()
+  })
+
+  it('#447: a refused switch (non-claude provider) does not fetch usage', () => {
+    const session = makeSession({ profileId: 'profile-a', provider: 'codex' as Session['provider'] })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+    expect(killSessionPtyMock).not.toHaveBeenCalled()
+    expect(fetchOneMock).not.toHaveBeenCalled()
+  })
+
+  it('still switches to an active target when other profiles are inactive', () => {
+    useAccountProfilesStore.setState({
+      profiles: [
+        { id: 'profile-b', name: 'B', accountEmail: 'b@example.com', active: true, createdAt: 1 },
+      ],
+    })
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
+    expect(stored!.profileId).toBe('profile-b')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+  })
+
+  it('#447: refreshes the picked account’s usage snapshot on the switch, with noRefresh, BEFORE the respawn', () => {
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+    // noRefresh is load-bearing: it is what stops the fetch rotating the token
+    // the respawn is about to consume (adversarial review).
+    expect(fetchOneMock).toHaveBeenCalledWith('profile-b', { noRefresh: true })
+    // It fires before the respawn's PTY teardown — a minor "best shot at a live
+    // token before the session claims it" ordering, no longer a safety
+    // requirement now noRefresh never rotates. Pinned to hold current behaviour.
+    expect(fetchOneMock.mock.invocationCallOrder[0]).toBeLessThan(killSessionPtyMock.mock.invocationCallOrder[0])
+  })
+
+  it('#447: does NOT fetch usage when switching to the default account (no profile row)', () => {
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', undefined) })
+    expect(fetchOneMock).not.toHaveBeenCalled()
+    // ...and the switch itself still happens.
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+  })
+
+  it('#447: a failed usage fetch never blocks or fails the switch', () => {
+    fetchOneMock.mockRejectedValueOnce(new Error('offline'))
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
+    expect(stored!.profileId).toBe('profile-b')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+  })
+
+  it('#447: a no-op switch (same account) does not fetch usage', () => {
+    const session = makeSession({ profileId: 'profile-a' })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-a') })
+    expect(fetchOneMock).not.toHaveBeenCalled()
   })
 
   it('is a no-op when the sessionId does not match the hook session', () => {

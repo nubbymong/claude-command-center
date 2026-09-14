@@ -40,6 +40,9 @@ export interface TipsState {
   markTipActed: (tipId: string) => void
   silenceUntilRestart: () => void
   pickNextTip: () => void
+  /** Record that a tip actually REACHED THE SCREEN. Called by whatever draws it,
+   *  never by whatever chooses it -- see pickNextTip. */
+  markTipShown: (tipId: string) => void
   getCurrentTip: () => { tip: Tip; content: TipContent } | null
 }
 
@@ -50,17 +53,135 @@ const EMPTY_TRACKING: UsageTracking = {
   tipsActed: {},
 }
 
+/** A UsageTracking whose four maps all exist, whatever shape arrived. */
+export function normaliseTracking(raw: unknown): UsageTracking {
+  const obj = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  const map = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, never>) : {})
+  return {
+    features: map(obj.features),
+    tipsShown: map(obj.tipsShown),
+    tipsDismissed: map(obj.tipsDismissed),
+    tipsActed: map(obj.tipsActed),
+  } as UsageTracking
+}
+
+/**
+ * Every feature id THIS BUILD can still write, as one list.
+ *
+ * `VIEW_FEATURE_IDS` is imported by App.tsx and is the only place the view →
+ * feature mapping lives. The rest are recorded from literal call sites; they are
+ * repeated here because the prune below needs to know what is still live, and a
+ * grep is not something the code can do at runtime.
+ *
+ * ADD AN ID HERE WHEN YOU ADD A trackUsage CALL. Forgetting is not silent: the
+ * prune drops rows nothing can write and no tip refers to, so an id missing from
+ * this list would have its row deleted on the next launch, and the round-trip
+ * test below fails on any literal call site that is not represented.
+ */
+export const VIEW_FEATURE_IDS: Readonly<Record<string, string>> = {
+  memory: 'memory.memory-page',
+  tokenomics: 'tokenomics.dashboard',
+  vision: 'vision.toggle-vision',
+  insights: 'advanced.insights',
+  logs: 'advanced.log-viewer',
+  'cloud-agents': 'agents.cloud-agent-dispatch',
+}
+
+const DIRECT_FEATURE_IDS: readonly string[] = [
+  'sessions.create-config',
+  'sessions.pin-config',
+  'sessions.watchdog-check-toggle',
+  'sessions.duplicate-config',
+  'sessions.effort-level',
+  'sessions.session-type',
+  'commands.create-command',
+  'commands.command-sections',
+  'commands.ctrl-click-args',
+  'security.encrypted-notes',
+  'webview.opened',
+  'artifacts.opened',
+  'productivity.statusline-config',
+  'github.signed-in',
+  'github.panel-toggled',
+  'github.rate-limit-seen',
+  'github.session-enabled',
+  'github.session-context-seen',
+  'github.ai-usage-enabled',
+  'canvas.opened',
+  'sessions.codex-config',
+  'accounts.switch-session-account',
+]
+
+/**
+ * Every id this build can actually RECORD. Anything else in a user's file is a
+ * row for a feature that no longer exists.
+ *
+ * Deliberately does NOT fold in the ids the tips library gates on. Doing that
+ * was the first cut and it quietly destroyed the one test worth having: if the
+ * set contains every id the library mentions, then "is every id the library
+ * mentions in the set" is true by construction, and a tip gated on something
+ * nothing writes sails through. The library is CHECKED against this set, so it
+ * must not be a member of it.
+ */
+export function knownFeatureIds(): Set<string> {
+  return new Set<string>([...Object.values(VIEW_FEATURE_IDS), ...DIRECT_FEATURE_IDS])
+}
+
+/**
+ * Drop usage rows for features that no longer exist.
+ *
+ * By RULE rather than by a hand-written list of retired ids. A list would have to
+ * be guessed from memory of what the app used to have -- and a guessed id that
+ * never existed makes a prune that cannot fire, which is worse than no prune at
+ * all because it reads as if it were doing something. The rule is checkable
+ * against a real file: on this machine it drops `hooks.gateway-seen`, a row from
+ * the removed hooks gateway, and leaves all thirteen live ones alone.
+ *
+ * Returns the SAME object when there is nothing to drop, so hydrate does not
+ * write a file on every launch for no reason. The write-back is deliberate:
+ * pruning in memory but not on disk would resurrect the rows on the next load.
+ */
+export function pruneRetiredFeatures(tracking: UsageTracking): UsageTracking {
+  const known = knownFeatureIds()
+  const dead = Object.keys(tracking.features ?? {}).filter((id) => !known.has(id))
+  if (dead.length === 0) return tracking
+  const features = { ...tracking.features }
+  for (const id of dead) delete features[id]
+  const next = { ...tracking, features }
+  saveConfigNow('usageTracking', next)
+  return next
+}
+
 /** Decide which content variant to show for a tip given usage state */
 function resolveContent(tip: Tip, tracking: UsageTracking): TipContent | null {
   // Check excludes — if the user has done something that makes this tip irrelevant
-  if (tip.excludes && tip.excludes.some((f) => tracking.features[f])) {
+  if (tip.excludes && tip.excludes.some((f) => (tracking.features ?? {})[f])) {
     return tip.variants.postUse ?? null
   }
   // Check requires — user must have done prerequisite
-  if (tip.requires && !tip.requires.every((f) => tracking.features[f])) {
+  if (tip.requires && !tip.requires.every((f) => (tracking.features ?? {})[f])) {
     return null
   }
   return tip.variants.primary
+}
+
+/**
+ * How many tips this user has never had surfaced, and could still see: not
+ * permanently dismissed, never yet shown, and currently relevant (their
+ * requires/excludes resolve to real content).
+ *
+ * `tipsShown` is now stamped by whoever DRAWS the tip (`markTipShown`, called
+ * from the dock row's render effect), not by whoever picks it -- so this counts
+ * tips that have never been put on screen. It still is not "unread" in the
+ * strict sense: a rendered row you never looked at is counted as shown, which is
+ * the closest the renderer can honestly get. Hence "new", not "unread".
+ */
+export function countUnseenTips(tracking: UsageTracking): number {
+  return TIPS_LIBRARY.filter((tip) => {
+    if ((tracking.tipsDismissed ?? {})[tip.id]) return false
+    if ((tracking.tipsShown ?? {})[tip.id]) return false
+    return resolveContent(tip, tracking) !== null
+  }).length
 }
 
 /** Pick the best tip to show given current state */
@@ -70,9 +191,9 @@ function selectNextTip(tracking: UsageTracking, excludeId?: string): Tip | null 
   const candidates = TIPS_LIBRARY.filter((tip) => {
     if (excludeId && tip.id === excludeId) return false
     // Skip permanently dismissed
-    if (tracking.tipsDismissed[tip.id]) return false
+    if ((tracking.tipsDismissed ?? {})[tip.id]) return false
     // Skip recently shown unless it's been 7+ days
-    const shownAt = tracking.tipsShown[tip.id]
+    const shownAt = (tracking.tipsShown ?? {})[tip.id]
     if (shownAt && Date.now() - shownAt < MIN_REPEAT_MS) return false
     // Must have resolvable content (passes requires/excludes)
     const content = resolveContent(tip, tracking)
@@ -100,7 +221,14 @@ export const useTipsStore = create<TipsState>((set, get) => ({
   currentTipId: null,
   silencedUntilRestart: false,
 
-  hydrate: (tracking) => set({ tracking: tracking || EMPTY_TRACKING, isLoaded: true }),
+  // Whatever arrives becomes a VALID UsageTracking: a corrupt or partial
+  // usage-tracking.json is coerced to a plain object (or {}) by hydration, and
+  // an object with no maps used to pass straight through -- then the dock's
+  // render called countUnseenTips on it, threw, and the app-wide ErrorBoundary
+  // took the whole window down on every launch (ADR-009 pass, beta.16). Each
+  // missing map is filled; a non-object map is dropped.
+  hydrate: (tracking) =>
+    set({ tracking: pruneRetiredFeatures(normaliseTracking(tracking)), isLoaded: true }),
 
   recordUsage: (featureId) => {
     set((state) => {
@@ -114,7 +242,21 @@ export const useTipsStore = create<TipsState>((set, get) => ({
       }
       const tracking = { ...state.tracking, features }
       saveConfigNow('usageTracking', tracking)
-      return { tracking }
+      // Usage can UNRESOLVE the current tip: an `excludes` gate firing on a tip
+      // with no postUse variant makes resolveContent null, and the dock row
+      // only renders while the current tip RESOLVES — with pickNextTip running
+      // once per launch, using the very feature a tip pointed at hid the whole
+      // row for the rest of the session (same symptom as the "Got it" bug,
+      // different trigger). Advance to a successor instead; the row lives on.
+      let currentTipId = state.currentTipId
+      if (currentTipId && !state.silencedUntilRestart) {
+        const tip = TIPS_LIBRARY.find((t) => t.id === currentTipId)
+        if (!tip || !resolveContent(tip, tracking)) {
+          const next = selectNextTip(tracking, currentTipId)
+          currentTipId = next ? next.id : null
+        }
+      }
+      return { tracking, currentTipId }
     })
   },
 
@@ -136,11 +278,22 @@ export const useTipsStore = create<TipsState>((set, get) => ({
         tipsActed: { ...state.tracking.tipsActed, [tipId]: Date.now() },
       }
       saveConfigNow('usageTracking', tracking)
-      // Acknowledged tips disappear from the pill for the rest of this session.
-      // They can come back in a future launch (unlike permanent dismiss).
+      // Acknowledging ADVANCES the rotation; it never empties it. This used to
+      // null currentTipId with no successor, and because the dock row only
+      // renders while a current tip exists, one "Got it" (or Discuss, or the
+      // tip's action button) hid the ENTIRE tip row for the rest of the
+      // session — read as the panel vanishing (owner bug, 2026-08-24). The
+      // acted tip itself cannot bounce straight back: it was stamped shown
+      // when drawn, and selectNextTip skips shown-within-7-days (plus the
+      // explicit exclude here). While silenced no successor is ever picked —
+      // the state cannot arise today (silencing nulls currentTipId), but a
+      // guard that surfaces tips through a silence would be the wrong default
+      // if it ever did.
+      const acted = state.currentTipId === tipId
+      const next = acted && !state.silencedUntilRestart ? selectNextTip(tracking, tipId) : null
       return {
         tracking,
-        currentTipId: state.currentTipId === tipId ? null : state.currentTipId,
+        currentTipId: acted ? (next ? next.id : null) : state.currentTipId,
       }
     })
   },
@@ -152,18 +305,29 @@ export const useTipsStore = create<TipsState>((set, get) => ({
     if (state.silencedUntilRestart) return
     const excludeId = state.currentTipId || undefined
     const tip = selectNextTip(state.tracking, excludeId)
-    if (tip) {
-      set((s) => {
-        const tracking = {
-          ...s.tracking,
-          tipsShown: { ...s.tracking.tipsShown, [tip.id]: Date.now() },
-        }
-        saveConfigNow('usageTracking', tracking)
-        return { tracking, currentTipId: tip.id }
-      })
-    } else {
-      set({ currentTipId: null })
-    }
+    // Picking is NOT showing. This used to stamp tipsShown right here, about two
+    // seconds after launch, whether or not anything ever rendered -- and a
+    // stamped tip does not come back for seven days. Launch onto a page tab
+    // instead of a session, or with the sidebar collapsed and the pane closed,
+    // and the tip was burnt without a single pixel of it reaching the screen.
+    // The stamp now belongs to whoever actually draws it: markTipShown.
+    set({ currentTipId: tip ? tip.id : null })
+  },
+
+  markTipShown: (tipId) => {
+    set((state) => {
+      // Idempotent, and deliberately keeps the FIRST timestamp: this runs from a
+      // render effect, so it fires again on every remount, and refreshing the
+      // stamp would keep pushing the seven-day window out and stop the tip ever
+      // rotating away.
+      if (state.tracking.tipsShown[tipId]) return state
+      const tracking = {
+        ...state.tracking,
+        tipsShown: { ...state.tracking.tipsShown, [tipId]: Date.now() },
+      }
+      saveConfigNow('usageTracking', tracking)
+      return { tracking }
+    })
   },
 
   getCurrentTip: () => {

@@ -10,6 +10,15 @@ export interface SpawnOptions {
   ssh?: SshConfig
   shellOnly?: boolean
   elevated?: boolean
+  /** Terminal-only secret argument, resolved from the OS keychain in main. Placed
+   *  in the spawn ENV (never interpolated into the command text) so it cannot land
+   *  in the shell's on-disk history. See buildSpawnCommand + the shell-only write. */
+  terminalSecret?: string
+  /** Secret arguments of command BUTTONS visible to this config, keyed by
+   *  command id, resolved from the keychain in main (collectCommandSecrets).
+   *  Each becomes CCC_CMD_SECRET_<id> in a SHELL spawn's env; the button types
+   *  the reference. Never accepted from the renderer. */
+  commandSecrets?: Record<string, string>
   configLabel?: string
   useResumePicker?: boolean
   legacyVersion?: LegacyVersion
@@ -19,9 +28,12 @@ export interface SpawnOptions {
   disableAutoMemory?: boolean
   model?: string
   /** v1.5.32: when true (or undefined = default), sets CLAUDE_CODE_DISABLE_MOUSE=1
-   *  in the Claude spawn env so xterm owns the mouse (classic selection, right-click
-   *  copy/paste). When false, CC's mouse mode is preserved. Shell-only sessions
-   *  are never affected regardless of this flag. */
+   *  in the spawn env so xterm owns the mouse (classic selection, right-click
+   *  copy/paste). When false, CC's mouse mode is preserved. Applies to shell-only
+   *  sessions too: the var is inert for the shell itself but governs any `claude`
+   *  the user starts by hand (the re-auth flow does exactly that), so exempting
+   *  them left that claude in mouse mode where right-click pasted — and at a
+   *  shell prompt executed — the clipboard. */
   classicTerminalCopyPaste?: boolean
   /** v2.0: CC >= 2.1.195 renders question options as CLICKABLE targets, which
    *  misfire inside xterm.js. False (or undefined = CCC default) stamps
@@ -37,6 +49,13 @@ export interface SpawnOptions {
    *  Code's startup theme auto-detection matches the terminal. Resolved by the
    *  caller from AppSettings.theme + the OS preference. Absent = no COLORFGBG. */
   hostColorScheme?: 'light' | 'dark'
+  /** Ask Conductor: the user's question, launched as Claude's opening prompt so
+   *  nobody has to paste it. Like {@link terminalSecret} this goes in the spawn
+   *  ENV and the command text carries only a REFERENCE to the variable, so the
+   *  question is never parsed by the shell — free text is exactly the input that
+   *  would otherwise need quoting to be safe — and never reaches PSReadLine's
+   *  on-disk history. Absent = no opening prompt (an ordinary session). */
+  askPrompt?: string
   // Codex-specific (only present when provider === 'codex')
   codexOptions?: CodexOptions
 }
@@ -103,12 +122,17 @@ export interface SshCapableProvider extends SessionProvider {
   /** Returns shell command to write settings + statusline shim on remote.
    *  opts mirror the renderer master switches (absent = on):
    *  includeStatusLine=false omits the statusLine stanza; includeConductorMcp=false
-   *  writes an empty remote mcpServers (no built-in tools). */
+   *  writes an empty remote mcpServers (no built-in tools).
+   *  `nonce` (#242 finding F1 (b)): host-generated per-session random token
+   *  (randomId(), src/shared/id.ts) baked into the `setup ok` sentinel this
+   *  command's script emits -- required, not optional, so a caller cannot
+   *  silently regress to the pre-nonce sentinel shape. */
   configureRemoteSettings(
     sessionId: string,
     remotePath: string,
     hooksConfig: { port: number; secret: string } | null,
-    opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
+    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
+    nonce: string,
   ): string
 }
 

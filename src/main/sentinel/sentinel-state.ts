@@ -2,6 +2,7 @@
 // writes; corrupt file -> empty state (fail-open invariant, spec §7).
 import * as fs from 'fs'
 import * as path from 'path'
+import { atomicWriteFileSync } from '../atomic-write'
 import type { SentinelFinding, SentinelStateSnapshot, FindingStatus } from '../../shared/sentinel-types'
 
 export class SentinelState {
@@ -27,9 +28,14 @@ export class SentinelState {
   private persist(): void {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true })
-      const tmp = this.file + '.tmp'
-      fs.writeFileSync(tmp, JSON.stringify(this.state, null, 2))
-      fs.renameSync(tmp, this.file)
+      // Retry left ON, deliberately. An earlier revision passed retry:false to
+      // keep the boot loop (one persist per finding) off a blocking wait -- but
+      // persist() is ALSO the user-click path: setStatus(id, 'dismissed') calls
+      // it once per dismissal, and upsertFinding's "never resurrect dismissed"
+      // dedup reads the file. Dropping that write silently resurrects a finding
+      // the user dismissed, at the next boot. The retry only engages when a
+      // rename has already failed, so the normal path costs nothing.
+      atomicWriteFileSync(this.file, JSON.stringify(this.state, null, 2))
     } catch { /* persistence failure must not break the app */ }
     for (const fn of this.subs) { try { fn(this.state) } catch { /* subscriber */ } }
   }

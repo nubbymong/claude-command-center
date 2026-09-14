@@ -14,9 +14,19 @@ import {
   noteSessionStart,
   noteSubagentStart,
   noteSubagentStop,
+  noteBackgroundToolStart,
+  noteBackgroundToolStop,
   noteTurnEnd,
   isBackgroundContext,
 } from './background-context'
+
+// Tool calls that launch a BACKGROUND agent whose model/effort must not repaint
+// the main strip. The tool's Pre/PostToolUse bracket the background window
+// RACE-FREE (they fire on the main transcript, in order, around the whole
+// agent), which is what the fire-and-forget SubagentStart signal cannot do.
+// Names span CC versions/features: Task + Agent launch subagents; Workflow
+// launches a dynamic workflow.
+const BACKGROUND_SPAWN_TOOLS: ReadonlySet<string> = new Set(['Task', 'Agent', 'Workflow'])
 
 // DELIBERATE behaviour change (spec 2026-06-11 §3/§4): unknown effort levels
 // now display verbatim instead of being silently dropped. A hardcoded VALID set
@@ -64,15 +74,35 @@ function track(e: HookEvent): void {
   // unbounded, and clear any dangling subagent depth. Mirrors
   // channel-permissions.ts clearing per-session state on Stop.
   if (e.event === 'Stop') { lastBySession.delete(e.sessionId); noteTurnEnd(e.sessionId); return }
+
+  // A background-spawning tool call (Task/Agent/Workflow) brackets the whole
+  // background agent race-free. BOTH bracket ops run AFTER this event's own
+  // effort is evaluated, so the spawn tool's own Pre/PostToolUse events are
+  // themselves treated as still-background at the effort check:
+  //   - PreToolUse: the main window's effort is still active, so it is pushed,
+  //     THEN we enter background for the agent about to run.
+  //   - PostToolUse: the closing event's own effort.level is the finishing
+  //     agent's, not the main window's, so it stays SUPPRESSED (still in
+  //     background); we exit only after. This mirrors SubagentStop, which never
+  //     trusts its own event's effort, and closes a one-tick flicker to the
+  //     subagent's / workflow agent's effort on the closing event that trusting
+  //     it there would open (adversarial review, #285). The next genuine
+  //     main-window event repaints the strip.
+  const spawnTool = !!e.toolName && BACKGROUND_SPAWN_TOOLS.has(e.toolName)
+
   const level = effortFromEvent(e)
-  if (!level || !e.sessionId) return
   // A subagent / workflow agent's effort must not repaint the main strip: its
   // PreToolUse/PostToolUse events reach the main session's hook endpoint, but
   // the effort is the agent's, not the main window's.
-  if (isBackgroundContext(e.sessionId, transcriptOf(e))) return
-  if (lastBySession.get(e.sessionId) === level) return
-  lastBySession.set(e.sessionId, level)
-  pushEffort(e.sessionId, level)
+  if (level && e.sessionId
+      && !isBackgroundContext(e.sessionId, transcriptOf(e))
+      && lastBySession.get(e.sessionId) !== level) {
+    lastBySession.set(e.sessionId, level)
+    pushEffort(e.sessionId, level)
+  }
+
+  if (spawnTool && e.event === 'PreToolUse') noteBackgroundToolStart(e.sessionId)
+  if (spawnTool && e.event === 'PostToolUse') noteBackgroundToolStop(e.sessionId)
 }
 
 /** Test seam. */

@@ -48,6 +48,27 @@ describe('session-persistence — resumeUuid/resumeCwd (T8b)', () => {
     expect(state.sessions[0].resumeCwd).toBe('F:/wt')
   })
 
+  it('buildSessionState serializes the custom work name (survives restart by id)', () => {
+    useSessionStore.setState({
+      sessions: [makeSession({ customName: 'IM-8315 keychain fix' })],
+      activeSessionId: 'sess-resume-1',
+      isRestoring: false,
+    })
+    const state = buildSessionState()
+    expect(state.sessions[0].id).toBe('sess-resume-1')
+    expect(state.sessions[0].customName).toBe('IM-8315 keychain fix')
+    expect(state.sessions[0].label).toBe('test') // origin preserved alongside
+  })
+
+  it('omits customName when unset (sparse)', () => {
+    useSessionStore.setState({
+      sessions: [makeSession()],
+      activeSessionId: 'sess-resume-1',
+      isRestoring: false,
+    })
+    expect(buildSessionState().sessions[0].customName).toBeUndefined()
+  })
+
   it('omits the fields when unset (sparse)', () => {
     useSessionStore.setState({
       sessions: [makeSession()],
@@ -129,5 +150,16 @@ describe('session-persistence — resumeUuid/resumeCwd (T8b)', () => {
     })
     const state = await buildSessionStateWithResumeTargets()
     expect(state.sessions[0].resumeUuid).toBe('r')
+  })
+
+  it('#397: round-trips permissionMode/extraArgs through claudeOptions', () => {
+    useSessionStore.setState({
+      sessions: [makeSession({ permissionMode: 'plan', extraArgs: '--verbose' })],
+      activeSessionId: 'sess-resume-1',
+      isRestoring: false,
+    })
+    const co = buildSessionState().sessions[0].claudeOptions
+    expect(co?.permissionMode).toBe('plan')
+    expect(co?.extraArgs).toBe('--verbose')
   })
 })

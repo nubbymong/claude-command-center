@@ -38,7 +38,12 @@ CREATE TABLE IF NOT EXISTS tk_files (
   size           INTEGER NOT NULL,
   mtime          INTEGER NOT NULL,
   lastOffset     INTEGER NOT NULL DEFAULT 0,
-  lastIngestedAt INTEGER NOT NULL DEFAULT 0
+  lastIngestedAt INTEGER NOT NULL DEFAULT 0,
+  scannedTo      INTEGER NOT NULL DEFAULT 0,
+  codexSessionId TEXT    NOT NULL DEFAULT '',
+  codexModel     TEXT    NOT NULL DEFAULT '',
+  codexCwd       TEXT    NOT NULL DEFAULT '',
+  codexTurns     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tk_events (
@@ -121,7 +126,36 @@ CREATE TABLE IF NOT EXISTS tk_configs (
 );
 `
 
-export interface TkFileCursor { path: string; size: number; mtime: number; lastOffset: number; lastIngestedAt: number }
+export interface TkFileCursor {
+  path: string
+  size: number
+  mtime: number
+  /** Where PARSING resumes: the end of the last complete line consumed. */
+  lastOffset: number
+  lastIngestedAt: number
+  /** How far the file has been LOOKED AT, which runs ahead of `lastOffset`
+   *  whenever the tail is a partial line. "Have we seen all of this file yet"
+   *  is `scannedTo >= size` — asking that of `lastOffset` is wrong for any
+   *  file whose last line has no newline, and re-reading such a tail on every
+   *  sweep is how a healthy file turns into permanent background I/O. */
+  scannedTo?: number
+  /** Codex only: the rollout's identity, carried across ticks. A resumed tick
+   *  used to re-derive this from a bounded read of the file's head, which
+   *  silently yielded ZERO events for the whole tick whenever the head did not
+   *  hold it — the parser returns nothing without a session id. */
+  codexSessionId?: string
+  /** Codex only: last model seen. The model is announced by `turn_context`
+   *  lines near the top of a rollout, so a tick starting past them priced its
+   *  turns as 'unknown' — which matches no pricing row and costs $0. */
+  codexModel?: string
+  codexCwd?: string
+  /** Codex only: token_count lines already ingested FROM THIS FILE — the base
+   *  for the dedup ordinal. Per-FILE, and written in the same transaction as
+   *  the rows themselves, so it can never drift from what is stored. Deriving
+   *  it from a per-session row count instead let a replayed byte range mint
+   *  fresh keys for turns already stored, double-counting real money. */
+  codexTurns?: number
+}
 
 export interface TkDb {
   raw: Database.Database
@@ -129,6 +163,13 @@ export interface TkDb {
   setMeta(key: string, value: string): void
   getFileCursor(path: string): TkFileCursor | null
   setFileCursor(c: TkFileCursor): void
+  /** Insert events AND advance that file's cursor in ONE transaction. Two
+   *  separate transactions leave a window where the rows are committed and the
+   *  cursor is not; the next tick then re-reads the same bytes against a moved
+   *  ordinal base and inserts the same turns under fresh dedup keys, inflating
+   *  spend permanently. The supervisor hard-kills the worker on app quit, so
+   *  that window is hit in normal use, not only in a crash. */
+  insertEventsWithCursor(events: TkEvent[], cursor: TkFileCursor): number
   eventCount(): number
   insertEvents(events: TkEvent[]): number
   upsertConfigs(configs: Array<{ configId: string; label: string; workingDirectory: string }>): void
@@ -144,11 +185,57 @@ export function openTkDb(dbPath: string): TkDb {
   const sqlite = new Database(dbPath)
   sqlite.exec(DDL)
 
+  // `CREATE TABLE IF NOT EXISTS` leaves an existing tk_files alone, so the
+  // per-file streaming state added after the first release has to be grafted
+  // on. Every column is NOT NULL DEFAULT, so an existing row migrates to the
+  // "nothing known yet" state and simply re-derives on its next tick.
+  {
+    const have = new Set((sqlite.pragma('table_info(tk_files)') as Array<{ name: string }>).map((c) => c.name))
+    const added: Array<[string, string]> = [
+      ['scannedTo', 'INTEGER NOT NULL DEFAULT 0'],
+      ['codexSessionId', "TEXT NOT NULL DEFAULT ''"],
+      ['codexModel', "TEXT NOT NULL DEFAULT ''"],
+      ['codexCwd', "TEXT NOT NULL DEFAULT ''"],
+      ['codexTurns', 'INTEGER NOT NULL DEFAULT 0'],
+    ]
+    for (const [col, ddl] of added) if (!have.has(col)) sqlite.exec(`ALTER TABLE tk_files ADD COLUMN ${col} ${ddl}`)
+    // A pre-migration row has scannedTo=0 but was in fact scanned to
+    // lastOffset; leaving it at 0 would report every known file as unscanned
+    // and hold the index at "not complete" forever.
+    if (!have.has('scannedTo')) sqlite.exec('UPDATE tk_files SET scannedTo = lastOffset WHERE scannedTo = 0')
+    // A pre-migration Codex cursor cannot say how many turns of ITS file are
+    // already stored — `codexTurns` arrives as 0 while `lastOffset` is deep
+    // into the file. Numbering the next turns from zero would collide with the
+    // rows already there, and `INSERT OR IGNORE` would drop them: a silent,
+    // permanent UNDERCOUNT, once, for every existing user. Rewind those cursors
+    // instead. A Codex file re-read from the top numbers its turns exactly as
+    // they were numbered before, so the stored rows dedup against themselves
+    // and nothing is lost or duplicated. Costs one re-read per rollout, once.
+    if (!have.has('codexTurns')) sqlite.exec("UPDATE tk_files SET lastOffset = 0, scannedTo = 0 WHERE path LIKE '%rollout-%'")
+  }
+
   const getMetaStmt = sqlite.prepare('SELECT value FROM tk_meta WHERE key = ?')
   const setMetaStmt = sqlite.prepare('INSERT INTO tk_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
-  const getCursorStmt = sqlite.prepare('SELECT path,size,mtime,lastOffset,lastIngestedAt FROM tk_files WHERE path = ?')
-  const setCursorStmt = sqlite.prepare(`INSERT INTO tk_files(path,size,mtime,lastOffset,lastIngestedAt) VALUES(@path,@size,@mtime,@lastOffset,@lastIngestedAt)
-    ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,lastOffset=excluded.lastOffset,lastIngestedAt=excluded.lastIngestedAt`)
+
+  // The #307 one-off re-index runs further down, once the rollup upserts it
+  // rebuilds with have been prepared (see `reindex307`).
+  const getCursorStmt = sqlite.prepare('SELECT path,size,mtime,lastOffset,lastIngestedAt,scannedTo,codexSessionId,codexModel,codexCwd,codexTurns FROM tk_files WHERE path = ?')
+  const setCursorStmt = sqlite.prepare(`INSERT INTO tk_files(path,size,mtime,lastOffset,lastIngestedAt,scannedTo,codexSessionId,codexModel,codexCwd,codexTurns)
+      VALUES(@path,@size,@mtime,@lastOffset,@lastIngestedAt,@scannedTo,@codexSessionId,@codexModel,@codexCwd,@codexTurns)
+    ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,lastOffset=excluded.lastOffset,lastIngestedAt=excluded.lastIngestedAt,
+      scannedTo=excluded.scannedTo,codexSessionId=excluded.codexSessionId,codexModel=excluded.codexModel,codexCwd=excluded.codexCwd,codexTurns=excluded.codexTurns`)
+
+  // Fill the columns a caller predating them does not know about. `scannedTo`
+  // defaults to lastOffset (the honest reading of "scanned this far") rather
+  // than 0, so an old caller never reports a file as unscanned.
+  const cursorRow = (c: TkFileCursor): Record<string, unknown> => ({
+    path: c.path, size: c.size, mtime: c.mtime, lastOffset: c.lastOffset, lastIngestedAt: c.lastIngestedAt,
+    scannedTo: c.scannedTo ?? c.lastOffset,
+    codexSessionId: c.codexSessionId ?? '',
+    codexModel: c.codexModel ?? '',
+    codexCwd: c.codexCwd ?? '',
+    codexTurns: c.codexTurns ?? 0,
+  })
   const countStmt = sqlite.prepare('SELECT COUNT(*) AS n FROM tk_events')
 
   const insEvent = sqlite.prepare(`INSERT OR IGNORE INTO tk_events
@@ -209,12 +296,111 @@ export function openTkDb(dbPath: string): TkDb {
     return inserted
   })
 
+  // One transaction over both writes. better-sqlite3 turns the nested
+  // transaction into a savepoint, so a failure anywhere rolls back the rows
+  // AND the cursor together — the invariant the ordinal base depends on.
+  const insertEventsWithCursorTxn = sqlite.transaction((events: Array<TkEvent & { configId?: string | null }>, c: TkFileCursor) => {
+    const n = events.length ? insertEventsTxn(events) : 0
+    setCursorStmt.run(cursorRow(c))
+    return n
+  })
+
+  // #307 one-off re-index. The Codex subagent-identity fix (tk-parse.ts /
+  // tokenomics-worker.ts) changes a subagent rollout's dedup keys from the
+  // parent's id to its own, so re-ingesting on top of rows stored under the OLD
+  // keys would count those turns a second time. Codex rows therefore have to go
+  // and come back from source.
+  //
+  // CODEX ROWS ONLY. The first cut of this wiped every event and rewound every
+  // cursor "because the rollups are mixed" -- and anything whose source file was
+  // gone could never come back: Claude Code deletes transcripts past its
+  // retention window and people prune the Codex tree, so life-to-date Claude
+  // spend older than the window was silently lost on first launch (found by the
+  // ADR-009 pass before the build shipped). The rollups ARE pure aggregations of
+  // tk_events, so they are rebuilt HERE, in the same transaction, by replaying
+  // the surviving events through the very upserts the live ingest uses -- same
+  // day/bucket maths, same first-config / last-model rules -- rather than by
+  // hoping every source file still exists. Only Codex cursors are rewound (a
+  // rollout is identified by its parsed header or its filename; a Claude
+  // transcript that happens to sit under a directory called "rollout-…" merely
+  // gets re-read, and its unchanged dedup keys make that a no-op). One
+  // transaction: a crash mid-way leaves the old state intact. Guarded by a
+  // tk_meta marker so it runs exactly once.
+  // Pages by rowid: better-sqlite3 refuses other statements while an
+  // `iterate()` cursor is open on the connection, and rowid order IS the
+  // original ingest order, which is what the first-config / last-model upsert
+  // rules were computed in the first time.
+  // `day` is the STORED day (computed at ingest, in the ingest-time zone), not
+  // re-derived from ts here: re-deriving would make the rebuilt rollups depend
+  // on the machine's zone at re-index time and disagree with tk_events.day.
+  // (`bucket` is not stored, so the heatmap is recomputed -- same maths the
+  // live ingest uses, and the only value that exists for it.)
+  const eventsPageStmt = sqlite.prepare('SELECT rowid AS rid,sessionId,provider,model,priceModel,ts,day,configId,projectDir,inTok,outTok,cacheReadTok,cacheCreateTok FROM tk_events WHERE rowid > ? ORDER BY rowid ASC LIMIT 5000')
+  const reindex307 = sqlite.transaction(() => {
+    sqlite.exec(`
+      DELETE FROM tk_events WHERE provider = 'codex';
+      DELETE FROM tk_daily;
+      DELETE FROM tk_session_models;
+      DELETE FROM tk_heatmap;
+      DELETE FROM tk_sessions;
+      UPDATE tk_files SET lastOffset = 0, scannedTo = 0, codexTurns = 0,
+        codexSessionId = '', codexModel = '', codexCwd = ''
+        WHERE codexSessionId <> '' OR path LIKE '%rollout-%';
+      DELETE FROM tk_meta WHERE key = 'firstIndexComplete';
+    `)
+    // ^ The index is NOT complete once every Codex row is gone and its files
+    // are queued for re-read: leaving the flag would have the worker's first
+    // `ready` report a complete total that is missing all Codex spend until the
+    // re-ingest sweeps drain. Cleared, the worker takes its honest first-index
+    // path and the UI says "indexing" until `drained`.
+    let lastRid = 0
+    for (;;) {
+      const page = eventsPageStmt.all(lastRid) as Array<Record<string, unknown>>
+      if (page.length === 0) break
+      lastRid = page[page.length - 1].rid as number
+      for (const row of page) {
+      const e = {
+        sessionId: row.sessionId as string,
+        provider: row.provider as string,
+        model: row.model as string,
+        priceModel: row.priceModel as string,
+        ts: row.ts as number,
+        configId: (row.configId as string | null) ?? '',
+        projectDir: (row.projectDir as string) ?? '',
+        cwd: (row.projectDir as string) ?? '',
+        inTok: row.inTok as number,
+        outTok: row.outTok as number,
+        cacheReadTok: row.cacheReadTok as number,
+        cacheCreateTok: row.cacheCreateTok as number,
+      }
+      upSession.run(e)
+      upSessionModel.run(e)
+      upDaily.run({ ...e, day: (row.day as string | null) || dayOf(e.ts) })
+      upHeat.run({ ...e, bucket: bucketOf(e.ts) })
+      }
+    }
+    setMetaStmt.run('codexReindex307', 'done')
+  })
+  if ((getMetaStmt.get('codexReindex307') as { value?: string } | undefined)?.value !== 'done') {
+    try {
+      reindex307()
+    } catch (err) {
+      // The transaction has rolled back (the DB is exactly as it was and the
+      // marker is unset, so the next open retries). Do not leak the handle on
+      // the way out: a failed open that kept the file open left a worker
+      // alive-but-never-ready with the database held until the next launch.
+      try { sqlite.close() } catch { /* already closed */ }
+      throw err
+    }
+  }
+
   return {
     raw: sqlite,
     getMeta: (key) => (getMetaStmt.get(key) as { value: string } | undefined)?.value ?? null,
     setMeta: (key, value) => { setMetaStmt.run(key, value) },
     getFileCursor: (path) => (getCursorStmt.get(path) as TkFileCursor | undefined) ?? null,
-    setFileCursor: (c) => { setCursorStmt.run(c) },
+    setFileCursor: (c) => { setCursorStmt.run(cursorRow(c)) },
+    insertEventsWithCursor: (events, cursor) => insertEventsWithCursorTxn(events as any, cursor),
     eventCount: () => (countStmt.get() as { n: number }).n,
     insertEvents: (events) => insertEventsTxn(events as any),
     upsertConfigs: (configs) => { const txn = sqlite.transaction((cs: any[]) => { for (const c of cs) upConfig.run(c) }); txn(configs) },

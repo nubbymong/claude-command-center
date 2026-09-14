@@ -8,7 +8,7 @@ export default function PrivacySettings() {
   return (
     <section>
       <h3 className="text-sm uppercase text-subtext0 mb-3">Privacy</h3>
-      <div className="bg-mantle p-3 rounded">
+      <div className="settings-card p-3">
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"

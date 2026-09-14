@@ -14,6 +14,7 @@ import LocalGitSection from './sections/LocalGitSection'
 import NotificationsSection from './sections/NotificationsSection'
 import SessionGitHubConfig from '../session/SessionGitHubConfig'
 import RateLimitBanner from './RateLimitBanner'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton } from '../ui/Dialog'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 
@@ -132,31 +133,27 @@ export default function GitHubPanel({
           </svg>
         </button>
         {showSetup && (
-          <div className="fixed inset-0 bg-base/80 z-50 flex items-center justify-center">
-            <div
-              ref={setupDialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="gh-setup-title"
-              className="bg-mantle p-6 rounded max-w-md w-full"
-            >
-              <h3 id="gh-setup-title" className="text-lg mb-3 text-text">
-                Configure GitHub for this session
-              </h3>
-              <SessionGitHubConfig
-                sessionId={sessionId}
-                cwd={session?.workingDirectory ?? ''}
-                initial={session?.githubIntegration}
-              />
-              <button
-                onClick={closeSetup}
-                className="mt-4 text-xs text-subtext0 hover:text-text transition-colors"
-                aria-label="Close GitHub configuration"
-              >
-                Close
-              </button>
-            </div>
-          </div>
+          <DialogOverlay>
+            <DialogPanel width="w-[448px]" labelledBy="gh-setup-title" panelRef={setupDialogRef}>
+              <DialogHeader titleId="gh-setup-title" title="Configure GitHub for this session" />
+              <DialogBody>
+                <SessionGitHubConfig
+                  sessionId={sessionId}
+                  cwd={session?.workingDirectory ?? ''}
+                  initial={session?.githubIntegration}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogButton
+                  variant="ghost"
+                  onClick={closeSetup}
+                  aria-label="Close GitHub configuration"
+                >
+                  Close
+                </DialogButton>
+              </DialogFooter>
+            </DialogPanel>
+          </DialogOverlay>
         )}
       </>
     )

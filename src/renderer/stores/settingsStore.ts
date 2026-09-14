@@ -37,6 +37,39 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   fontSize: 12
 }
 
+// ── Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard ──
+export interface WatchdogSettings {
+  /** Default OFF: watchdog auto-types into the session PTY, so it must be an
+   *  explicit opt-in (mirrors sentinelEnabled's shape). Applies to newly
+   *  spawned local Claude sessions only — see main/watchdog/watchdog-manager.ts. */
+  enabled?: boolean
+  /** Text auto-typed (+ Enter) to resume after a usage-limit reset clears. */
+  retryMessage?: string
+  /** Max usage-limit retry attempts before the watchdog gives up on this incident. */
+  maxRetries?: number
+  /** Silence window in MS: a watched session with no PTY output for this long is
+   *  reported "silent" (provider stopped streaming) in the services view. STATUS
+   *  ONLY — never triggers a retry. 0 disables silence detection. Absent = the
+   *  manager default (see main/watchdog/watchdog-manager.ts). */
+  silenceWindowMs?: number
+  /** #605: the three auto-retry checks, switchable independently. These decide
+   *  what a NEWLY LAUNCHED session starts with; a running session is switched
+   *  from its own right-click menu and is not affected by a change here. */
+  rateLimitEnabled?: boolean
+  overload?: { enabled?: boolean }
+  safeguard?: { enabled?: boolean }
+}
+
+export const DEFAULT_WATCHDOG_SETTINGS: WatchdogSettings = {
+  enabled: false,
+  retryMessage: 'continue',
+  maxRetries: 5,
+  silenceWindowMs: 120_000,
+  rateLimitEnabled: true,
+  overload: { enabled: true },
+  safeguard: { enabled: true },
+}
+
 // ── UI typography (Font & Size settings page, spec 2026-07-04) ──
 // Global scale drives the <html> root font-size (rem-based Tailwind utilities
 // scale in lockstep; the canvas terminal is immune). Each region factor is a
@@ -71,12 +104,14 @@ export interface ConductorToolsSettings {
   vision: boolean
   codexReview: boolean
   hostTransfer: boolean
+  canvas: boolean
 }
 
 export const DEFAULT_CONDUCTOR_TOOLS: ConductorToolsSettings = {
   vision: true,
   codexReview: true,
   hostTransfer: true,
+  canvas: true,
 }
 
 export type UpdateChannel = 'stable' | 'beta'
@@ -96,6 +131,48 @@ export interface TerminalSettings {
   cursorStyle: CursorStyle
   cursorBlink: boolean
   background?: string   // optional user terminal-background override; undefined => --surface-stage token
+  /**
+   * GPU (WebGL) rendering for terminals. **Default ON** (owner decision
+   * 2026-08-22, #374) — absent means on; only an explicit `false` opts out.
+   * Read it through `gpuRenderingEnabled`, never by comparing directly.
+   *
+   * The fault it once had: `@xterm/addon-webgl` keeps ONE glyph atlas per
+   * process, so one terminal's `clearTextureAtlas()` blanked the glyphs of every
+   * other open session — backgrounds intact, text gone — until that terminal was
+   * resized/scrolled/activated. The repair that works is in (#311): a victim
+   * drops its OWN render model first (a same-value theme reassignment, which is
+   * what a resize does) and only then repaints, coordinated process-wide by
+   * `atlasCoordinator` with a generation counter and an activation backstop; and
+   * only the visible terminal holds a WebGL context. The earlier #312 attempt
+   * (refresh the others, nothing more) did NOT hold and is gone.
+   *
+   * Now default-on, with an always-on atlas event ring and a user-triggered
+   * glyph-capture (Ctrl+Alt+G, #374) so any residual corruption in the field can
+   * be captured the moment it happens. Applies to terminals opened after a
+   * change to the setting.
+   */
+  gpuRendering?: boolean
+}
+
+/**
+ * Whether a terminal should render through WebGL.
+ *
+ * **Default ON** (owner decision 2026-08-22, #374): on unless the user has
+ * explicitly turned it off, so absent / a corrupt non-boolean both mean ON.
+ * `false` — and only `false` — is the opt-out. Every reader goes through this
+ * predicate rather than comparing the field itself: two call sites each spelling
+ * their own check is how "unset" comes to mean one thing in the terminal and the
+ * opposite in the settings checkbox.
+ *
+ * It is safe to default on because the shared-atlas corruption is repaired the
+ * way a resize repairs it — the victim drops its OWN render model first, then
+ * repaints (see `atlasCoordinator` / `createAtlasResync`) — not by the #312
+ * refresh-the-others attempt that an adversarial pass disproved. The always-on
+ * atlas event ring + the Ctrl+Alt+G glyph-capture exist to catch any residual in
+ * the field.
+ */
+export function gpuRenderingEnabled(ts: Pick<TerminalSettings, 'gpuRendering'> | undefined): boolean {
+  return ts?.gpuRendering !== false
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -104,7 +181,8 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fontWeight: 450,
   lineHeight: 1.2,
   cursorStyle: 'bar',
-  cursorBlink: false,
+  cursorBlink: true,
+  gpuRendering: true,
 }
 
 export interface AppSettings {
@@ -115,6 +193,9 @@ export interface AppSettings {
   debugMode: boolean
   keyboardShortcuts: Record<string, string>
   inputBarMaxHeight: number
+  /** @deprecated The fly-out it pinned open retired with the two-mode
+   *  Sessions panel (design pass 2026-08-24). Retained (with its default) so
+   *  older saved settings hydrate unchanged; no longer read anywhere. */
   configPanelPinned: boolean
   statusLine: StatusLineSettings
   statusLineEnabled?: boolean
@@ -141,9 +222,84 @@ export interface AppSettings {
    *  the per-session strip -- e.g. keep only Fable there to narrow the cluster.
    *  Same denylist model (by label); absent/empty = show every discovered bucket. */
   footerHiddenUsageBuckets?: string[]
+  /** How the multi-account footer draws each account. 'meters' (absent/default)
+   *  is the labelled progress bars; 'dots' is minimal mode -- the account's NAME
+   *  plus one traffic-light dot for usage and one per model bucket, with the
+   *  figures in the tooltip. Absent means meters, so no existing footer changes
+   *  shape on upgrade. Minimal mode reads the SAME footerHiddenUsageBuckets
+   *  denylist, so hiding Fable there drops its dot here. */
+  footerAccountDisplay?: 'meters' | 'dots'
+  /** Which Claude account a RESUMED session (an app-relaunch restore) runs
+   *  under (#446). 'auto-last' continues silently under the account it ran
+   *  under; 'ask' opens the account picker per restored session. Absent =>
+   *  'auto-last' (via resolveResumeAccountMode), so no existing install
+   *  changes on upgrade. Inert for anyone with fewer than two account
+   *  profiles — there is nothing to pick. */
+  resumeAccountMode?: 'ask' | 'auto-last'
   updateChannel: UpdateChannel
+  /** True once the user has explicitly picked an update channel (onboarding
+   *  Transparency recap, or Settings -> General). Absent/false means
+   *  `updateChannel` is still just the default, which lets onboarding
+   *  pre-select the channel matching the running build WITHOUT ever
+   *  overriding a real choice. */
+  updateChannelChosen?: boolean
   showTips: boolean
-  // Agent Hub first-run "How it works" banner: true once the user dismisses it.
+  /** Ask Conductor's entry point in the sidebar dock. Hidden from the dock's own
+   *  right-click menu, restored in Settings -> General. Absent (pre-upgrade
+   *  config) means shown, so an existing install never loses the entry point on
+   *  upgrade. Turning it off removes the way IN; it deliberately does not close
+   *  an Ask session that is already open, because a display toggle must not
+   *  destroy a running session. */
+  showAskConductor: boolean
+  /** #362: how the sidebar's Saved Configs panel lays configs out. 'list' is
+   *  the sections-and-groups list that shipped first; 'cards' and 'find' are
+   *  the two views from the design pass (both search with auto-complete, both
+   *  hide running configs). Absent = 'list', so no existing install changes
+   *  shape on upgrade.
+   *  @deprecated Superseded by the two-mode Sessions panel (Saved ⇄ Running
+   *  tabs, canvas design pass 2026-08-24). Retained so older saved settings
+   *  still hydrate; no longer surfaced or read. */
+  savedConfigsView?: 'list' | 'cards' | 'find'
+  /** Sessions panel (the left panel's two-mode redesign): which tab opens when
+   *  the app starts. Absent = 'running' (owner decision, plan Q1) — sessions
+   *  are what you work in; Saved is one click away. Read via
+   *  resolveDefaultPanelTab, never by comparing the field. */
+  sessionsPanelDefaultTab?: 'saved' | 'running'
+  /** Sessions panel: the Quick Start section on the Running tab is collapsed.
+   *  Absent = expanded. Persisted so the choice survives restarts. */
+  quickStartCollapsed?: boolean
+  /** Sessions panel: the Remote Resumable section docked at the bottom of the
+   *  Running tab is collapsed. Absent = expanded. Persisted like Quick Start's,
+   *  and read via resolveRemoteResumableCollapsed — never by comparing the
+   *  field, so an older settings file with no value opens expanded. */
+  remoteResumableCollapsed?: boolean
+  /** #461: the expanded sidebar's width in px, set by the drag handle on its
+   *  right edge. Absent = the built-in default. Read via resolveSidebarWidth,
+   *  which clamps — never trust the raw number. */
+  sidebarWidth?: number
+  /** Where "Open artifacts" (the command-bar Artifacts tool AND the session
+   *  menu's action) goes: the dedicated hardened window (today's behaviour) or
+   *  the session's in-app browser pane on the account's own partition (#475's
+   *  surface). GLOBAL, one knob for every entry point. Absent = 'window' — the
+   *  default is deliberately unchanged. Read via resolveArtifactsOpenTarget. */
+  artifactsOpenTarget?: 'window' | 'pane'
+  /** Where the claude.ai sign-in flow runs — GLOBAL successor to the
+   *  per-account mode #439 shipped. Absent = fall back to the account's stored
+   *  per-account choice (so nobody's beta-era selection is lost), else the
+   *  default window. Read via resolveSignInOpenTarget, never directly. */
+  signInOpenTarget?: 'window' | 'pane'
+  /** #367: the Agent Canvas x-ray hover mode. 'on' is the outline + label chip
+   *  drawn over the content (what shipped); 'stealth' still resolves the
+   *  hovered element but draws nothing, reading it out in the canvas side panel
+   *  instead; 'off' does no hover work at all, so the content behaves like a
+   *  normal browser tab. PER USER, not per canvas (owner, book item 52) — which
+   *  is why it lives here rather than in the canvas store, where the canvas's
+   *  own interaction mode lives. Absent = 'on', so no existing install changes
+   *  behaviour on upgrade. Every reader goes through resolveCanvasXrayMode
+   *  (src/renderer/canvas/xray-mode.ts) rather than comparing the field. */
+  canvasXrayMode?: 'off' | 'stealth' | 'on'
+  // Cloud Agents first-run "How it works" banner: true once the user dismisses
+  // it. (Key name keeps the pre-#443 'agentHub' spelling -- it is persisted.)
   // Optional/absent = not yet dismissed (banner shows).
   agentHubExplainerDismissed?: boolean
   hooksEnabled: boolean
@@ -151,6 +307,7 @@ export interface AppSettings {
   theme: ThemeMode
   tokenomicsAccountFilter?: string  // 'all' | '__mixed__' | '__unknown__' | <email>
   fontMigratedV2?: boolean  // one-time guard: existing installs moved off the old Cascadia Code/14 default
+  gpuDefaultOnMigrated?: boolean  // one-time guard (#374): existing installs that had GPU rendering off (incl. the value auto-persisted while it was opt-in) moved to the new default-on
   identityColorMigratedV2?: boolean      // one-time guard: saved-config colours migrated to identity keys
   colourMigrationNoticePending?: boolean // a colour migration changed records and the notice should show
   colourMigrationNoticeDismissed?: boolean
@@ -167,6 +324,10 @@ export interface AppSettings {
   /** v1.5.19: friendly names for accounts WITHOUT a profile (the default/single
    *  account), keyed by canonical email. Profiles carry their own `name`. */
   accountAliases?: Record<string, string>
+  /** The profile id of the account the user most recently launched a session
+   *  under (global, across sessions). Surfaced as a "Last used" line in the
+   *  account-launch gate so a new session can adopt it in one click. */
+  lastUsedAccountId?: string
   /** v1.5.12: when true, CCC writes `disableWorkflows: true` into every
    *  per-session Claude settings file so Claude Code's dynamic-workflow
    *  feature is disabled at session boot. Affects newly spawned sessions
@@ -236,6 +397,8 @@ export interface AppSettings {
    *  the frozen global hangs at auth or carries stale usage limits). Switchable
    *  in Settings when the chosen account hits its usage limit. */
   sentinelAccountProfileId?: string | null
+  /** Session Watchdog (#235). Opt-in, default off — see WatchdogSettings. */
+  watchdog?: WatchdogSettings
 }
 
 interface SettingsState {
@@ -266,6 +429,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   localMachineName: '',
   updateChannel: 'stable' as const,
   showTips: true,
+  showAskConductor: true,
   hooksEnabled: true,
   hooksPort: 19334,
   theme: 'dark',
@@ -275,6 +439,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sentinelEnabled: false,
   sentinelAutoOpen: true,
   githubAiUsageEnabled: false,
+  watchdog: { ...DEFAULT_WATCHDOG_SETTINGS },
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains
@@ -299,6 +464,23 @@ export function migrateV2Font(settings: AppSettings): { settings: AppSettings; c
   }
 }
 
+// #374: GPU rendering flipped from opt-in to default-on. Existing installs carry
+// `terminal.gpuRendering: false` on disk — either a genuine experimental-era
+// opt-out OR the value migrateV2Font auto-persisted while it was opt-in — and the
+// hydrate merge lets that on-disk false override the new `true` default, so the
+// flip would miss every upgraded user. Turn it on exactly ONCE, guarded by
+// gpuDefaultOnMigrated: an on-disk false becomes true so the default applies.
+// A user who unticks it AFTER this has fired is respected (the guard has already
+// set). Caveat accepted (owner, 2026-08-22): a genuine opt-out is
+// indistinguishable from the baked default, so both are moved to on once; the
+// owner's call is that GPU rendering is on for everyone now.
+export function migrateGpuDefaultOn(settings: AppSettings): { settings: AppSettings; changed: boolean } {
+  if (settings.gpuDefaultOnMigrated) return { settings, changed: false }
+  const terminal = { ...settings.terminal }
+  if (terminal.gpuRendering === false) terminal.gpuRendering = true
+  return { settings: { ...settings, terminal, gpuDefaultOnMigrated: true }, changed: true }
+}
+
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: { ...DEFAULT_SETTINGS },
   isLoaded: false,
@@ -312,11 +494,19 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       statusLine: { ...DEFAULT_STATUS_LINE, ...(settings.statusLine || {}) },
       terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(settings.terminal || {}) },
       conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, ...(settings.conductorTools || {}) },
+      watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}) },
+      // keyboardShortcuts joined the deep-merge with #503: a persisted map
+      // predating a release lacks that release's new actions, and every
+      // consumer that substituted the whole object had its new chords dead
+      // (the Sidebar #124 renameSession patch was this same bug).
+      keyboardShortcuts: { ...DEFAULT_SHORTCUTS, ...(settings.keyboardShortcuts || {}) },
       typography: migrateTypography(settings),
     }
-    const { settings: migrated, changed } = migrateV2Font(merged)
-    if (changed) {
-      // Persist the one-time migration (including the guard flag) so it runs once.
+    const font = migrateV2Font(merged)
+    const gpu = migrateGpuDefaultOn(font.settings)
+    const migrated = gpu.settings
+    if (font.changed || gpu.changed) {
+      // Persist the one-time migrations (including their guard flags) so they run once.
       saveConfigNow('settings', migrated).catch(() => {})
     }
     set({ settings: migrated, isLoaded: true })

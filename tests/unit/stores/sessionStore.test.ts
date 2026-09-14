@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSessionStore, structuralSessionsEqual, Session } from '../../../src/renderer/stores/sessionStore'
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -180,6 +180,44 @@ describe('sessionStore', () => {
       const a = [makeSession({ id: 'a' })]
       expect(structuralSessionsEqual(a, a)).toBe(true)
     })
+
+    it('treats a profileId change as STRUCTURAL (the launch-gate choice must repaint the header pill)', () => {
+      // Found live on the WINDOWS_1 staging VM (2026-08-30): an account-less
+      // config's session gets profileId patched AFTER creation by the launch
+      // gate; with profileId excluded here the shell handed SessionHeader the
+      // stale record and the pill painted the PRIMARY profile — the wrong
+      // account — indefinitely. Mid-session account switch hits the same path.
+      const a = [makeSession({ id: 'a' })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], profileId: 'profile-real' }])).toBe(false)
+      const b = [makeSession({ id: 'b', profileId: 'profile-one' })]
+      expect(structuralSessionsEqual(b, [{ ...b[0], profileId: 'profile-two' }])).toBe(false)
+    })
+
+    it('treats an SSH account arriving as STRUCTURAL (the cold-connect top pill must repaint)', () => {
+      // Found live on the VM (2026-09-01): an SSH session has NO mapped profileId
+      // cold, so the top account/claude.ai/Claude Code pills resolve ONLY through
+      // accountEmail / sshRemoteAccount, which land on a single late tick. With
+      // them excluded here the shell's structural gate said "no change", App never
+      // re-rendered, and the header shimmered then went BLANK while the bottom bar
+      // (which self-subscribes) showed the account. Each identity field must flip
+      // the gate on the resolve tick.
+      const a = [makeSession({ id: 'a' })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], accountEmail: 'nicholas@live.co.uk' }])).toBe(false)
+      expect(structuralSessionsEqual(a, [{ ...a[0], sshRemoteAccount: 'nicholas@live.co.uk' }])).toBe(false)
+      expect(structuralSessionsEqual(a, [{ ...a[0], accountColour: 'orchid' }])).toBe(false)
+      // ...but a telemetry-only tick (unchanged identity) stays "no change".
+      const withAcct = [makeSession({ id: 'a', accountEmail: 'nicholas@live.co.uk' })]
+      expect(structuralSessionsEqual(withAcct, [{ ...withAcct[0], contextPercent: 42 }])).toBe(true)
+    })
+
+    it('treats an sshTmuxPersistent flip as STRUCTURAL (the header connection pill must repaint)', () => {
+      // Same masking class as the identity fields: a tmux-refusal downgrade
+      // (persistent -> plain) arrives on the late ssh:sessionInfo push, often
+      // with no other structural change, and the header must not keep promising
+      // SSH-Persistent.
+      const a = [makeSession({ id: 'a', sshTmuxPersistent: true })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], sshTmuxPersistent: false }])).toBe(false)
+    })
   })
 
   describe('getSession', () => {
@@ -231,6 +269,57 @@ describe('sessionStore', () => {
       useSessionStore.getState().restoreSessions([], null)
       expect(useSessionStore.getState().sessions).toHaveLength(0)
       expect(useSessionStore.getState().activeSessionId).toBeNull()
+    })
+  })
+
+  describe('rename (customName)', () => {
+    it('beginRename sets/clears the renaming session id', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a' }))
+      useSessionStore.getState().beginRename('a')
+      expect(useSessionStore.getState().renamingSessionId).toBe('a')
+      useSessionStore.getState().beginRename(null)
+      expect(useSessionStore.getState().renamingSessionId).toBeNull()
+    })
+
+    it('renameSession sets a trimmed customName and exits rename mode', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a', label: 'Config A' }))
+      useSessionStore.getState().beginRename('a')
+      useSessionStore.getState().renameSession('a', '  IM-8315 keychain fix  ')
+      const s = useSessionStore.getState().sessions[0]
+      expect(s.customName).toBe('IM-8315 keychain fix')
+      expect(s.label).toBe('Config A') // origin label is untouched
+      expect(useSessionStore.getState().renamingSessionId).toBeNull()
+    })
+
+    it('blank/whitespace name clears customName (reverts to label)', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a', customName: 'old name' }))
+      useSessionStore.getState().renameSession('a', '   ')
+      expect(useSessionStore.getState().sessions[0].customName).toBeUndefined()
+    })
+
+    it('renameSession persists the effective name to the logs DB (best-effort IPC)', () => {
+      const renameSessionIpc = vi.fn()
+      ;(globalThis as any).window = { electronAPI: { logs2: { renameSession: renameSessionIpc } } }
+      useSessionStore.getState().addSession(makeSession({ id: 'a', label: 'Config A' }))
+
+      useSessionStore.getState().renameSession('a', 'Boot perf')
+      // #536: customName (the user's own work name) rides alongside configLabel so
+      // the transcript sidecar carries the work name, never the generic config label.
+      expect(renameSessionIpc).toHaveBeenCalledWith({ sessionId: 'a', configLabel: 'Boot perf', customName: 'Boot perf' })
+
+      // Blank => effective label falls back to the config label.
+      useSessionStore.getState().renameSession('a', '   ')
+      // A blank rename sends an EMPTY customName — the real "cleared" signal that
+      // removes the sidecar — while configLabel still falls back to the label.
+      expect(renameSessionIpc).toHaveBeenLastCalledWith({ sessionId: 'a', configLabel: 'Config A', customName: '' })
+
+      delete (globalThis as any).window
+    })
+
+    it('renameSession does not throw when the preload bridge is absent', () => {
+      delete (globalThis as any).window
+      useSessionStore.getState().addSession(makeSession({ id: 'a' }))
+      expect(() => useSessionStore.getState().renameSession('a', 'x')).not.toThrow()
     })
   })
 })

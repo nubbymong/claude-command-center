@@ -19,7 +19,7 @@ export default function GitHubConfigTab() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg text-text">GitHub integration</h2>
         <label className="flex items-start gap-2 text-sm">
@@ -42,7 +42,7 @@ export default function GitHubConfigTab() {
       <PrivacySettings />
       <SyncSettings />
       <PermissionsSummary />
-      <div className="text-xs text-overlay0 pt-4 border-t border-surface0">
+      <div className="text-xs text-overlay0 pt-4 border-t settings-divider">
         <strong>No telemetry.</strong> This feature sends no usage data to Anthropic
         or third parties. All requests go to github.com using your configured auth.
       </div>

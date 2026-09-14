@@ -1,39 +1,57 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
-import { tmpdir, homedir } from 'os'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { homedir } from 'os'
+import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
+import { splashBuildQuery } from './splash-info'
 import { registerUsageHandlers } from './ipc/usage-handlers'
-import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
-import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
+import { registerAccountWebHandlers } from './ipc/account-web-handlers'
+import { sweepAbandonedProfiles } from './account-web/sign-in'
+import { killAllPty, gracefulExitAllPty, resolveClaudeForPty, isSessionWritable, writePty } from './pty-manager'
 import { spawnClaudeHeadless } from './claude-headless'
 import { parseClaudeVersion } from './sentinel/sentinel-version'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerLogs2Handlers } from './ipc/logs2-handlers'
+import { registerCanvasHandlers } from './ipc/canvas-handlers'
+import {
+  registerCccUxSchemePrivileges,
+  registerCccUxProtocolHandler,
+  installCanvasFrameNavigationGuard,
+  installCanvasPermissionGuard,
+} from './canvas/ccc-ux-protocol'
 
-import { startStatuslineWatcher, setTranscriptPathSink, healGlobalStatusline } from './statusline-watcher'
+import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
+import { recordLiveUsageForSession } from './usage/account-usage'
 import { registerProvider, getProvider } from './providers'
 import { ClaudeProvider } from './providers/claude'
 import { CodexProvider } from './providers/codex'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
+import { adoptRenamedRepoIfLive } from './github-update'
 import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
+// Direct from data-paths, not the handlers barrel: this runs at module scope
+// before app-ready, so it must not pull the IPC registration side of that module
+// in ahead of time.
+import { devSessionDataDir } from './data-paths'
 import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
+import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
+import { closeAllAccountPanes, closeAccountPanesForProfile } from './account-web/account-pane'
+import { onPartitionRevoked } from './account-web/partition-revocation'
+import { removeWebSession } from './account-web/session-store'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
-import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { initTokenomics, shutdownTokenomics } from './tokenomics/tokenomics-service'
@@ -44,180 +62,266 @@ import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/servi
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { registerExeHandlers, stopAllCapturedRuns } from './ipc/exe-handlers'
 import { registerRegistryHandlers } from './ipc/registry-handlers'
 import { initSentinel, reconcileOnUpdate, sentinelStartupCheck } from './sentinel/index'
 import { registerSentinelHandlers } from './ipc/sentinel-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
+import { registerWatchdogHandlers } from './ipc/watchdog-handlers'
+import { initWatchdogManager, getWatchdogManager } from './watchdog/watchdog-manager'
 import { startRulesEngine } from './channel-rules'
 import { startEffortTracker } from './effort-tracker'
+import { startCanvasMarkerQueue } from './canvas/canvas-marker-delivery'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
+import { readClipboardTextWithRetry } from './clipboard-text'
 import { readClipboardImageFilePath, type PasteableImage } from './clipboard-file'
 import { HooksGateway } from './hooks/hooks-gateway'
-import { setGateway, getGateway } from './hooks'
+import { setGateway, getGateway, isExactBindSourceActive } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
 import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
 import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
-import { backfillCompanionDirs, nodeFsCompanionDeps } from './logging/companion-dir'
+import { backfillCompanionDirsAsync, nodeFsCompanionDeps } from './logging/companion-dir'
 import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cleanup'
 import { isSentinelEnabled } from '../shared/sentinel-enabled'
-import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
+import { resolveHooksPort } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
-import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
+import { createSessionDurability } from './session-durability'
+import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
+import { getConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
-import { loadCredential, saveCredential, deleteCredential } from './credential-store'
+import { loadWindowState, saveWindowState, type WindowState } from './window-state'
+import { registerCredentialHandlers } from './ipc/credentials-handlers'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
 import { safeExternalHttpsHref } from '../shared/safe-url'
+import { CSP_POLICY } from '../shared/csp-policy'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
+import { createCloseCoordinator, onAllWindowsClosed } from './window-close-coordinator'
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
 
+// #397: the cross-exit session-state durability core. `session:save` routes every
+// renderer writer (autosave, account flush, GitHub flush, Save-&-Close) through
+// saveEnriched — enriching each Claude session's exact resume target from the live
+// transcript binder — so EVERY persisted file is resumable, not only the graceful
+// close (Group 1), and the old autosave-clobber race dissolves. flushOnExit persists
+// the cached state on any non-graceful exit (Group 2); noteCleared drops the cache
+// on an intentional clear so the flush never resurrects a discarded set (F1). The
+// binder is read lazily per call — it may init after this module loads.
+const sessionDurability = createSessionDurability({
+  enrichDeps: {
+    // #480: exact bind is the source of truth; the heuristic path is used only as
+    // the hooks-off fallback (gated by isExactBindSourceActive) so this main-side
+    // enrichment can never persist a cross-prone heuristic guess in the default
+    // (hooks-on) config — matching the resume-handlers IPC.
+    getExactResumeTarget: (id) => getTranscriptBinder()?.getExactResumeTarget(id) ?? null,
+    getLatestTranscriptPath: (id) => getTranscriptBinder()?.getLatestTranscriptPath(id) ?? null,
+    isExactBindSourceActive,
+    resolveResumeTargetFromTranscript,
+  },
+  save: saveSessionState,
+  log: logInfo,
+})
+
+// Multi-instance (dev alongside prod): a dev build must NOT share prod's data
+// dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root
+// BEFORE anything reads the data dir or forks a worker (workers inherit this
+// env). The ccc launcher may set it too — respect an existing value. No-op for
+// a packaged (prod) build, so production behaviour is completely unchanged.
+if (!app.isPackaged && !process.env.CCC_DEV_DATA_DIR) {
+  const base =
+    process.platform === 'darwin'
+      ? join(homedir(), 'Library', 'Application Support', 'Claude Conductor')
+      : process.platform === 'linux'
+        ? join(homedir(), '.claude-conductor', 'data')
+        : join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Claude Command Center')
+  process.env.CCC_DEV_DATA_DIR = join(base, 'dev')
+}
+
+// ...and point Electron's SESSION data at the dev root too (#261). `persist:`
+// partitions live under `sessionData`, which defaults to `userData`, so without
+// this a dev instance wrote the per-account claude.ai web sessions (#216) into the
+// very same %APPDATA%\claude-conductor\Partitions a PROD install uses — dev and
+// prod shared them, signing out in one revoked the other, and `ccc --clean` left a
+// live sessionKey on disk because the partition was never under the dev data dir.
+//
+// MUST be before app-ready and before any session exists, which is why it sits at
+// module scope next to the block above. Dev/E2E only: `devSessionDataDir` returns
+// null for a packaged build, so production keeps Electron's default and nobody
+// gets logged out by a path move.
+const devSessionDir = devSessionDataDir(process.env, app.isPackaged)
+if (devSessionDir) {
+  try {
+    mkdirSync(devSessionDir, { recursive: true })
+    app.setPath('sessionData', devSessionDir)
+    // Logged via logInfo, NOT console.log: debug-logger does not patch console or
+    // hook stdout, so a console line reaches the terminal and the `ccc` tee but
+    // never the debug log an operator actually reads — and it is absent entirely
+    // under a bare `npm run dev`. The failure mode here is invisible otherwise:
+    // partitions just appear in the shared location and nothing says they did.
+    logInfo(`[setup] Dev session data redirected to: ${devSessionDir}`)
+    warnAboutOrphanedSharedPartitions(devSessionDir)
+  } catch (err) {
+    // Not fatal: worst case partitions land in the default location, which is
+    // exactly the pre-#261 behaviour. Say so rather than failing to boot.
+    logError(`[setup] could not redirect dev sessionData to ${devSessionDir}: ${(err as Error)?.message ?? err}`)
+  }
+}
+
+/**
+ * Point out claude.ai partitions this dev instance left in the SHARED location
+ * before the redirect existed (#261).
+ *
+ * WARN, NEVER DELETE. Those directories hold live `sessionKey` cookies and after
+ * the redirect nothing references them: `ccc --clean` cannot reach them (wrong
+ * root) and `sweepAbandonedProfiles` only walks `<dataDir>/account-web`. So they
+ * would sit there forever, which is the very complaint the redirect is meant to
+ * fix. But automatic removal is NOT safe: `ccc --seed-accounts` copies prod's
+ * account profiles into dev, so a partition named for a dev profile id can be
+ * the PROD install's live session. Deleting it would sign the user out of their
+ * real account to tidy up a dev artifact. Naming the path and leaving the choice
+ * to a human is the correct trade here.
+ */
+function warnAboutOrphanedSharedPartitions(newLocation: string): void {
+  try {
+    const shared = join(app.getPath('userData'), 'Partitions')
+    if (shared === join(newLocation, 'Partitions') || !existsSync(shared)) return
+    const orphans = readdirSync(shared).filter((n) => n.startsWith('claude-web-'))
+    if (!orphans.length) return
+    logInfo(
+      `[setup] ${orphans.length} claude.ai web session partition(s) remain in the SHARED location `
+      + `and are no longer used by this dev instance: ${shared}. They hold live session cookies. `
+      + `Remove them by hand ONLY if you are sure they are not your production install's `
+      + `(see docs/dev-alongside-prod.md).`,
+    )
+  } catch { /* advisory only — never let a warning break boot */ }
+}
+
 // Migrate registry keys from old "Claude Conductor" → new "Claude Command Center"
 migrateRegistryKeys()
 
-// Lazy getter — can't call getConfigDir() at module load time
-function getWindowStateFile(): string {
-  return join(getConfigDir(), 'window-state.json')
-}
+// Agent Canvas serving scheme (ccc-ux://). Privilege registration is only
+// honoured BEFORE app ready, so it lives here at module scope; the actual
+// protocol handler is installed inside whenReady, before any window exists.
+registerCccUxSchemePrivileges()
 
-interface WindowState {
-  x?: number
-  y?: number
-  width: number
-  height: number
-  isMaximized: boolean
-}
-
-function loadWindowState(): WindowState {
-  try {
-    const file = getWindowStateFile()
-    if (existsSync(file)) {
-      return JSON.parse(readFileSync(file, 'utf-8'))
-    }
-  } catch {
-    // ignore
-  }
-  return { width: 3200, height: 1800, isMaximized: false }
-}
-
-function saveWindowState(win: BrowserWindow): void {
+/** Geometry lives in `window-state.ts` (#371) — it is a persister like the
+ *  others and needed the same read-failure latch, plus a unit test. */
+function saveWindowStateFor(win: BrowserWindow): void {
   const bounds = win.getBounds()
-  const state: WindowState = {
+  saveWindowState({
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
     isMaximized: win.isMaximized()
-  }
-  try {
-    ensureConfigDir()
-    writeFileSync(getWindowStateFile(), JSON.stringify(state))
-  } catch {
-    // ignore
-  }
+  })
 }
 
 let mainWindow: BrowserWindow | null = null
+// rc.14 review F2/F3: ONE decision for "may the app go away", shared by the
+// window's close event and the app's before-quit (window-close-coordinator.ts).
+// The teardown body is assigned where the app wiring lives (see before-quit);
+// the coordinator exists before any window so its IPC listeners can be
+// registered once per process (registerMainWindowIpc).
+let quitTeardown: () => void = () => {}
+const closeCoordinator = createCloseCoordinator({
+  hasWindow: () => !!mainWindow && !mainWindow.isDestroyed(),
+  askRenderer: () => { mainWindow?.webContents.send('window:closeRequested') },
+  closeWindow: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close() },
+  quit: () => { app.quit() },
+  teardown: () => { quitTeardown() },
+})
 let splashWindow: BrowserWindow | null = null
+// Unconditional backstop so the splash can never orphan. It is normally
+// closed by the main window's ready-to-show; if that never fires (renderer
+// crash, GPU wedge) or createWindow() throws, this timer force-closes it so
+// the user is never left with a frameless, alwaysOnTop, taskbar-less window
+// that also blocks app quit. Generous — well past the ~5s normal close.
+let splashBackstopTimer: ReturnType<typeof setTimeout> | null = null
+const SPLASH_MAX_MS = 15000
 let _hooksSupervisor: ServiceSupervisor | null = null
 function setHooksSupervisor(s: ServiceSupervisor): void { _hooksSupervisor = s }
 function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSupervisor }
 
-function getSplashImagePath(): { path: string; mime: string } | null {
-  // In dev: repo root. In production: resources/ directory inside app.
-  // Prefer PNG (new branded asset) then fall back to legacy WebP so
-  // older installs that still ship the .webp keep working.
-  const candidates: { name: string; mime: string }[] = [
-    { name: 'splash.png', mime: 'image/png' },
-    { name: 'splash.webp', mime: 'image/webp' },
-  ]
-  for (const c of candidates) {
-    const dev = join(app.getAppPath(), c.name)
-    if (existsSync(dev)) return { path: dev, mime: c.mime }
-    const prod = join(process.resourcesPath, c.name)
-    if (existsSync(prod)) return { path: prod, mime: c.mime }
-  }
-  return null
+// Minimum on-screen time before the splash may close: enough for the animation
+// (a 7 s authored timeline played at 2.0x in resources/splash/splash.js) to
+// reach the finished brand lockup (~3.3 s) so it is never cut off mid-form.
+const SPLASH_MIN_MS = 3600
+// After the main window is ready AND the lockup has formed, hold the finished
+// lockup this long before fading — so the brand mark is clearly seen on every
+// launch, even when the main window loads instantly.
+const SPLASH_POST_READY_MS = 1000
+// When the splash became visible (its ready-to-show), which is when its
+// animation clock actually starts — page load + module init put that a few
+// hundred ms after window creation. Initialised to "now" so the skip paths
+// (e2e, page missing) behave as if the splash showed instantly.
+let splashShownAt = Date.now()
+
+// Build-time defines (electron.vite.config.ts). Guarded with typeof so a
+// context without the defines (unit tests, a bare tsx run) degrades to
+// app.getVersion() + "dev" rather than a ReferenceError at boot.
+declare const __APP_VERSION__: string
+declare const __BUILD_SHA__: string
+declare const __BUILD_TIME__: string
+function getBuildIdentityInput(): { version: string; sha?: string; buildTime?: string } {
+  let version = ''
+  try { if (typeof __APP_VERSION__ === 'string' && __APP_VERSION__) version = __APP_VERSION__ } catch { /* undefined */ }
+  if (!version) version = app.getVersion()
+  let sha: string | undefined
+  try { if (typeof __BUILD_SHA__ === 'string') sha = __BUILD_SHA__ } catch { /* undefined */ }
+  let buildTime: string | undefined
+  try { if (typeof __BUILD_TIME__ === 'string') buildTime = __BUILD_TIME__ } catch { /* undefined */ }
+  return { version, sha, buildTime }
 }
 
 function createSplashWindow(): void {
-  const splash = getSplashImagePath()
-  if (!splash) {
-    logInfo('[splash] Splash image not found, skipping')
+  // Playwright-driven runs (e2e + the training-screenshot capture) assume the
+  // first window is the main window; keep the splash out of them. The probe
+  // that visually verifies the splash sets CCC_FORCE_SPLASH=1 to override.
+  if (process.env.CCC_E2E_DATA_DIR && process.env.CCC_FORCE_SPLASH !== '1') {
+    logInfo('[splash] Skipped for e2e run')
     return
   }
 
-  // Write the wrapper HTML (with the image inlined as base64) to a temp file
-  // and load it via loadFile. The previous approach passed the entire
-  // base64-encoded HTML as a `data:text/html` URL into loadURL — fine for
-  // the 89 KB legacy splash.webp, but the new 1.5 MB branded splash.png
-  // produces a >2 MB URL that exceeds Electron's practical loadURL size
-  // limit; loadURL silently never reaches ready-to-show and the window is
-  // created but never shown. Writing to disk + loadFile has no size limit,
-  // and keeping the img as `data:` (not `file://`) sidesteps Chromium's
-  // file://-to-file:// cross-origin block without having to disable
-  // webSecurity.
-  const imgData = readFileSync(splash.path).toString('base64')
-  const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><style>
-  * { margin: 0; padding: 0; }
-  body {
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    overflow: hidden;
-    opacity: 0;
-    animation: fadeIn 0.6s ease-out 0.1s forwards;
-  }
-  @keyframes fadeIn { to { opacity: 1; } }
-  img { width: 100%; height: 100%; object-fit: contain; }
-  .disclaimer {
-    position: fixed;
-    bottom: 10px;
-    left: 0;
-    right: 0;
-    text-align: center;
-    font: 500 10px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif;
-    letter-spacing: 0.2px;
-    color: rgba(205, 214, 244, 0.82);
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.7);
-    padding: 0 14px;
-    pointer-events: none;
-  }
-</style></head><body>
-  <img src="data:${splash.mime};base64,${imgData}" />
-  <div class="disclaimer">Independent community project. Not affiliated with or endorsed by Anthropic.</div>
-</body></html>`
-
-  const tmpHtml = join(tmpdir(), 'claude-command-center-splash.html')
-  try {
-    writeFileSync(tmpHtml, html, 'utf-8')
-  } catch (err) {
-    logInfo(`[splash] Failed to write splash HTML to ${tmpHtml}: ${err}`)
+  // The animated splash is self-contained under resources/splash/ (packaged
+  // inside the asar via the `files` glob). Resolve it relative to __dirname
+  // (out/main/ in every launch mode): app.getAppPath() is the js file's
+  // directory when Electron is handed out/main/index.js directly, which made
+  // an appPath-based lookup miss. All assets are local — three.js and the
+  // Montserrat subset are vendored — so it renders with no network. The page
+  // carries its own <meta> CSP (script-src 'self', no 'unsafe-inline'): the
+  // app-wide onHeadersReceived CSP does not reach a file:// document, so the
+  // splash must police itself, which is why its script lives in a separate
+  // module file rather than inline.
+  const splashHtml = join(__dirname, '..', '..', 'resources', 'splash', 'index.html')
+  if (!existsSync(splashHtml)) {
+    logInfo('[splash] Animated splash page not found, skipping')
     return
   }
 
   splashWindow = new BrowserWindow({
-    width: 420,
-    height: 420,
+    width: 720,
+    height: 430,
     frame: false,
-    transparent: true,
+    // Opaque + frameless so Windows 11 gives the window its native rounded
+    // corners (transparent windows lose them). The page paints #0b0e15.
+    transparent: false,
+    backgroundColor: '#0b0e15',
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
@@ -230,25 +334,45 @@ function createSplashWindow(): void {
     },
   })
 
-  splashWindow.loadFile(tmpHtml)
+  // If the splash page itself fails to load or its renderer dies, close it
+  // rather than show a blank always-on-top window.
+  splashWindow.webContents.on('did-fail-load', () => closeSplashWindow())
+  splashWindow.webContents.on('render-process-gone', () => closeSplashWindow())
+
+  // #384: the build identity ("v2.1.0-beta.17 · beta · build 3a1b2e2 ·
+  // 2026-08-22") rides the URL query — the page is static with a strict CSP
+  // (no inline script, no preload), so a query string read back by
+  // splash-info.js is the one channel that needs no new capability. Only
+  // main builds this URL; the page sets textContent, never markup.
+  splashWindow.loadFile(splashHtml, { query: splashBuildQuery(getBuildIdentityInput()) })
   splashWindow.once('ready-to-show', () => {
+    splashShownAt = Date.now()
     splashWindow?.show()
   })
+
+  splashBackstopTimer = setTimeout(() => closeSplashWindow(), SPLASH_MAX_MS)
 }
 
 function closeSplashWindow(): void {
+  if (splashBackstopTimer) { clearTimeout(splashBackstopTimer); splashBackstopTimer = null }
   if (!splashWindow || splashWindow.isDestroyed()) return
-  // Fade out by sending a message, then destroy after delay
-  splashWindow.webContents.executeJavaScript(`
-    document.body.style.transition = 'opacity 0.4s ease-in';
-    document.body.style.opacity = '0';
-  `).catch(() => {})
-  setTimeout(() => {
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.destroy()
+  // Fade the whole window out (revealing the main window behind it), then
+  // destroy. setOpacity on the window itself gives a clean cross-fade: the
+  // splash is opaque (#0b0e15, for Win11 rounded corners), so fading the page
+  // body would only reveal that dark rectangle, not the app.
+  const win = splashWindow
+  splashWindow = null // re-entrancy guard — a second close() is a no-op
+  let op = 1
+  const fade = setInterval(() => {
+    if (win.isDestroyed()) { clearInterval(fade); return }
+    op -= 0.09
+    if (op <= 0) {
+      clearInterval(fade)
+      if (!win.isDestroyed()) win.destroy()
+      return
     }
-    splashWindow = null
-  }, 500)
+    try { win.setOpacity(op) } catch { /* setOpacity unsupported → destroy next tick */ }
+  }, 28)
 }
 
 function clampToVisibleDisplay(state: WindowState): WindowState {
@@ -296,92 +420,24 @@ function clampToVisibleDisplay(state: WindowState): WindowState {
   }
 }
 
-function createWindow(): void {
-  const state = clampToVisibleDisplay(loadWindowState())
-
-  mainWindow = new BrowserWindow({
-    width: state.width,
-    height: state.height,
-    x: state.x,
-    y: state.y,
-    minWidth: 1280,
-    minHeight: 720,
-    // Windows: fully frameless with custom controls in the TitleBar.
-    // macOS: keep the native traffic lights (hiddenInset) — frame:false there
-    // removes them entirely and the custom right-docked controls read as a
-    // broken window to Mac users. The renderer hides its custom controls and
-    // left-pads the drag region on darwin (TitleBar.tsx).
-    ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const }
-      : { frame: false }),
-    backgroundColor: '#1E1E2E',
-    show: false,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  })
-
-  // Prevent navigation away from the app
-  mainWindow.webContents.on('will-navigate', (event) => {
-    event.preventDefault()
-  })
-
-  mainWindow.webContents.setWindowOpenHandler(() => {
-    return { action: 'deny' }
-  })
-
-  const splashShownAt = Date.now()
-
-  mainWindow.on('ready-to-show', () => {
-    if (process.env.E2E_HEADLESS === '1') {
-      mainWindow!.setPosition(-10000, -10000)
-      mainWindow!.showInactive()
-      closeSplashWindow()
-    } else {
-      // Ensure splash shows for at least 2 seconds
-      const elapsed = Date.now() - splashShownAt
-      const remaining = Math.max(0, 2000 - elapsed)
-      setTimeout(() => {
-        // Maximize BEFORE show to avoid flash of non-maximized window
-        if (state.isMaximized) mainWindow!.maximize()
-        mainWindow!.show()
-        closeSplashWindow()
-      }, remaining)
-    }
-  })
-
-  // Track if we're allowing close (after graceful shutdown)
-  let allowClose = false
-  let closeRequestedOnce = false
-
-  mainWindow.on('close', (e) => {
-    if (mainWindow) saveWindowState(mainWindow)
-
-    // If not yet allowed to close, prevent and notify renderer
-    if (!allowClose) {
-      // Second close attempt (e.g. from NSIS installer retry) — allow immediately
-      if (closeRequestedOnce) {
-        return
-      }
-      closeRequestedOnce = true
-      e.preventDefault()
-      mainWindow?.webContents.send('window:closeRequested')
-    }
-  })
-
+// rc.14 review F3 (aicc_planning#47): everything in here registers a
+// PROCESS-GLOBAL ipcMain listener. On macOS the app outlives its last window
+// and the dock click calls createWindow() again; a second ipcMain.handle() for
+// a channel THROWS (Electron rejects duplicate handlers), which left the
+// reopened window hidden and unloaded -- or crashed the app through the
+// rethrowing uncaught-exception handler. So this runs ONCE per process, not
+// once per window. Every handler reaches the window through the module-level
+// `mainWindow` (never a closure over one createWindow() call), and the
+// close-dialog state lives in `closeCoordinator` for the same reason.
+let windowIpcRegistered = false
+function registerMainWindowIpc(): void {
+  if (windowIpcRegistered) return
+  windowIpcRegistered = true
   // Renderer calls this after saving sessions and graceful exit
-  ipcMain.on('window:allowClose', () => {
-    allowClose = true
-    mainWindow?.close()
-  })
+  ipcMain.on('window:allowClose', () => closeCoordinator.onAllowClose())
 
   // Renderer calls this when user cancels the close dialog
-  ipcMain.on('window:cancelClose', () => {
-    closeRequestedOnce = false
-  })
+  ipcMain.on('window:cancelClose', () => closeCoordinator.onCancelClose())
 
   // Window control IPC
   ipcMain.on('window:minimize', () => mainWindow?.minimize())
@@ -397,6 +453,9 @@ function createWindow(): void {
   // then calls 'window:forceClose' to actually close
   ipcMain.on('window:close', () => mainWindow?.close())
   ipcMain.on('window:forceClose', () => {
+    // #397 Group 2: destroy() bypasses the 'close' event and the graceful save;
+    // persist the last-known session state before the window is torn down.
+    sessionDurability.flushOnExit('window:forceClose')
     if (mainWindow) {
       mainWindow.destroy()  // Force close without triggering close event
     }
@@ -423,6 +482,26 @@ function createWindow(): void {
     }
     return img.resize({ height: maxDim, quality: 'good' as const })
   }
+
+  // Clipboard TEXT read for the terminal paste keybinding (#145). Deliberately
+  // main-process: navigator.clipboard.readText() requires the document to be
+  // focused, which is exactly the condition that fails when an external tool
+  // (dictation, snippet expander) takes focus and synthesizes Ctrl+V. Retried
+  // for the same Windows delayed-render reason as the image path below.
+  ipcMain.handle(IPC.CLIPBOARD_READ_TEXT, async (): Promise<string> => {
+    return readClipboardTextWithRetry()
+  })
+
+  // Input diagnostics (#145). Opt-in via CCC_INPUT_DEBUG=1 so it costs nothing
+  // normally: the renderer asks once and only then attaches listeners. Lines land
+  // in the debug log (<dataDir>/debug/app.log) prefixed [input-diag].
+  // `on`, not `handle` — this is a fire-and-forget stream; a round trip per
+  // keystroke would itself perturb what we are trying to measure.
+  ipcMain.handle(IPC.DEBUG_INPUT_ENABLED, () => process.env.CCC_INPUT_DEBUG === '1')
+  ipcMain.on(IPC.DEBUG_LOG_INPUT, (_e, line: string) => {
+    if (process.env.CCC_INPUT_DEBUG !== '1') return
+    logInfo(`[input-diag] ${String(line).slice(0, 400)}`)
+  })
 
   // Save clipboard image to a unique file in the host screenshots dir and return its
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
@@ -455,22 +534,19 @@ function createWindow(): void {
     return readClipboardImageFilePath(screenshotsDir)
   })
 
-  // Encrypted credential storage using safeStorage — delegated to credential-store module
-  ipcMain.handle('credentials:save', async (_event, configId: string, password: string) => {
-    return saveCredential(configId, password)
-  })
+  // Encrypted credential storage using safeStorage. save/delete are keyed to the
+  // app's own id shape (credentials-handlers.ts): a renderer can address the
+  // SSH/sudo/argsecret/cmdsecret namespaces of a real config or command and
+  // nothing else, so it cannot overwrite or delete an arbitrary key (private
+  // advisory, 2026-08-22).
+  registerCredentialHandlers()
 
-  ipcMain.handle('credentials:load', async (_event, configId: string) => {
-    return loadCredential(configId)
-  })
-
-  ipcMain.handle('credentials:delete', async (_event, configId: string) => {
-    return deleteCredential(configId)
-  })
+  // No 'credentials:load' handler: a credential's value is injected into the
+  // shell environment at spawn (pty-handlers) and never handed to the renderer.
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {
-    return saveSessionState(state)
+    return sessionDurability.saveEnriched(state)
   })
 
   ipcMain.handle('session:load', async () => {
@@ -478,7 +554,12 @@ function createWindow(): void {
   })
 
   ipcMain.handle('session:clear', async () => {
-    return clearSessionState()
+    const ok = clearSessionState()
+    // #397 F1: a successful clear is the user intentionally discarding the saved set
+    // (Don't-open / Close-without-saving). Drop the cache so the exit-time flush
+    // cannot resurrect it on the next launch.
+    if (ok) sessionDurability.noteCleared()
+    return ok
   })
 
   ipcMain.handle('session:hasSaved', async () => {
@@ -549,11 +630,102 @@ function createWindow(): void {
   // CLAUDE.md + app-knowledge.md docs prime the session.
   ipcMain.handle('help:workspace', async () => {
     try {
-      return ensureHelpWorkspace(getResourcesDirectory())
+      return ensureHelpWorkspace(getResourcesDirectory(), { appVersion: app.getVersion() })
     } catch {
       return null
     }
   })
+}
+
+function createWindow(): void {
+  const state = clampToVisibleDisplay(loadWindowState())
+
+  mainWindow = new BrowserWindow({
+    width: state.width,
+    height: state.height,
+    x: state.x,
+    y: state.y,
+    minWidth: 1280,
+    minHeight: 720,
+    // Windows: fully frameless with custom controls in the TitleBar.
+    // macOS: keep the native traffic lights (hiddenInset) — frame:false there
+    // removes them entirely and the custom right-docked controls read as a
+    // broken window to Mac users. The renderer hides its custom controls and
+    // left-pads the drag region on darwin (TitleBar.tsx).
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const }
+      : { frame: false }),
+    backgroundColor: '#1E1E2E',
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+
+  // rc.14 review F3: a (re)created window starts with a fresh close decision --
+  // the previous window's Save left `allowClose` set in the shared coordinator.
+  closeCoordinator.onWindowCreated()
+
+  // Prevent navigation away from the app
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
+
+  // ...and the SUBFRAME half, which `will-navigate` does not cover: an Agent
+  // Canvas frame may never leave the canvas+version it was mounted for. See
+  // installCanvasFrameNavigationGuard for the two primitives that closes.
+  installCanvasFrameNavigationGuard(mainWindow.webContents)
+
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
+  })
+
+  mainWindow.on('ready-to-show', () => {
+    if (process.env.E2E_HEADLESS === '1') {
+      mainWindow!.setPosition(-10000, -10000)
+      mainWindow!.showInactive()
+      closeSplashWindow()
+    } else {
+      // Hold the splash until its lockup has formed AND for a beat after the
+      // window is ready, so the finished brand mark is clearly shown before the
+      // reveal (the main window stays hidden behind the splash during the hold).
+      const elapsed = Date.now() - splashShownAt
+      const wait = Math.max(0, SPLASH_MIN_MS - elapsed) + SPLASH_POST_READY_MS
+      setTimeout(() => {
+        // Maximize BEFORE show to avoid flash of non-maximized window
+        if (state.isMaximized) mainWindow!.maximize()
+        mainWindow!.show()
+        closeSplashWindow()
+      }, wait)
+    }
+  })
+
+
+  mainWindow.on('close', (e) => {
+    if (mainWindow) saveWindowStateFor(mainWindow)
+    // Ask-before-close lives in the coordinator, shared with before-quit so
+    // Cmd+Q on macOS gets the same dialog BEFORE any teardown (rc.14 review F2).
+    closeCoordinator.onWindowClose(() => e.preventDefault())
+  })
+
+  // #397 Group 2: a renderer crash / OOM kills the window before it can run its
+  // graceful save. Persist the last-known session state so the sessions survive.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
+    // A renderer that is gone can never answer window:closeRequested: a close
+    // or quit already held on it would otherwise hold forever, and a later one
+    // would hang the same way (adversarial pass on #598). A clean exit is the
+    // renderer going away on purpose (a reload, a navigation), not a death:
+    // the next renderer in this window can still be asked.
+    if (details?.reason !== 'clean-exit') closeCoordinator.onRendererGone()
+  })
+
+  // Process-global IPC (window controls, dialogs, clipboard, session state, CLI
+  // probes): registered once, see registerMainWindowIpc.
+  registerMainWindowIpc()
 
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('window:maximized-changed', true)
@@ -561,6 +733,15 @@ function createWindow(): void {
   mainWindow.on('unmaximize', () => {
     mainWindow?.webContents.send('window:maximized-changed', false)
   })
+
+  // DEV instance labeling: stamp the OS window/taskbar title so a dev window is
+  // unmistakable next to a running prod window. Guard page-title-updated so the
+  // renderer's <title> can't overwrite it. No-op in prod.
+  if (!app.isPackaged) {
+    const devTitle = 'AI Code Conductor — DEV'
+    mainWindow.on('page-title-updated', (e) => { e.preventDefault(); mainWindow?.setTitle(devTitle) })
+    mainWindow.setTitle(devTitle)
+  }
 
   // Load renderer
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -586,13 +767,41 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    // Refresh the help workspace at boot (#586), not only on Ask launch: the
+    // installed helper skill's body POINTS at help/app-knowledge.md, so the
+    // docs must match the running app version before any session invokes the
+    // skill -- which can happen without Ask Conductor ever being opened.
+    // Best-effort: a failure here leaves the Ask-launch refresh as the
+    // fallback, exactly as before.
+    try {
+      const rd = getResourcesDirectory()
+      if (rd) ensureHelpWorkspace(rd, { appVersion: app.getVersion() })
+    } catch { /* fail-closed handled at Ask launch */ }
+
+    // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
+    // (powerMonitor; macOS/Linux) and SIGTERM (task-manager terminate / OS teardown)
+    // can end the app without the window-close flow running. Persist sessions first.
+    powerMonitor.on('shutdown', () => sessionDurability.flushOnExit('powerMonitor shutdown'))
+    powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
+    // Only SIGTERM. SIGINT is intentionally LEFT to Node's default so a console
+    // Ctrl+C on a dev run still terminates in one press — a SIGINT handler here
+    // re-entered the vetoable graceful-close dialog and left the app alive
+    // (adversarial-review round-2). Flush, then exit HARD: app.quit() would be
+    // vetoed by that same dialog, so a signal must not route through it.
+    process.on('SIGTERM', () => {
+      sessionDurability.flushOnExit('SIGTERM')
+      app.exit(0)
+    })
+
     // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window
     // On macOS, include the app name menu (About, Hide, Quit) and Window menu (macOS convention)
     const menuTemplate: Electron.MenuItemConstructorOptions[] = []
 
     if (process.platform === 'darwin') {
       menuTemplate.push({
-        label: app.name,
+        // app.name is the npm package name ('claude-conductor', frozen for the
+        // userData path) — hardcode the display name instead.
+        label: 'AI Code Conductor',
         submenu: [
           { role: 'about' },
           { type: 'separator' },
@@ -629,6 +838,10 @@ if (!gotTheLock) {
         ]
       })
     }
+
+    // Expose dev/prod build mode to the renderer for DEV labeling (title + badge
+    // + accent). Registered early so the renderer can read it on first paint.
+    ipcMain.handle(IPC.APP_IS_DEV, () => !app.isPackaged)
 
     const menu = Menu.buildFromTemplate(menuTemplate)
     Menu.setApplicationMenu(menu)
@@ -667,36 +880,78 @@ if (!gotTheLock) {
       // own resume path also ensures its companion dir, so this is a bulk
       // visibility pass, not a per-resume requirement.
       .then(() => {
-        try {
+        // #120: DEFER + CHUNK the companion-dir backfill. It was synchronous and
+        // stat-stormed the whole projects store, freezing the event loop ~20-28s
+        // at boot (blocking first paint). It is a non-critical bulk visibility
+        // pass for the resume picker (each session ensures its own companion dir),
+        // so run it well after first paint, via the async/yielding variant so it
+        // never blocks the main thread.
+        setTimeout(() => {
           const projectsRoot = join(homedir(), '.claude', 'projects')
-          const res = backfillCompanionDirs(projectsRoot, nodeFsCompanionDeps)
-          if (res.created > 0) {
-            console.log(`[main] companion-dir backfill: created ${res.created} companion dir(s) (scanned ${res.scanned} transcripts across ${res.projectFolders} project folders)`)
-          }
-        } catch (err) {
-          console.warn('[main] companion-dir backfill failed:', err)
-        }
+          backfillCompanionDirsAsync(projectsRoot, nodeFsCompanionDeps)
+            .then((res) => {
+              if (res.created > 0) {
+                console.log(`[main] companion-dir backfill: created ${res.created} companion dir(s) (scanned ${res.scanned} transcripts across ${res.projectFolders} project folders)`)
+              }
+            })
+            .catch((err) => console.warn('[main] companion-dir backfill failed:', err))
+        }, 5000)
       })
 
-    // Content Security Policy
+    // Content Security Policy. This header path only reaches the renderer in
+    // dev (loadURL → http://localhost); the packaged renderer loads via
+    // file://, which a header cannot reach — that build is covered by the
+    // matching <meta> CSP in src/renderer/index.html. Both use CSP_POLICY so
+    // dev and prod enforce the identical policy.
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      // ccc-ux:// (Agent Canvas) responses carry their OWN per-mode CSP set by
+      // the protocol handler — replacing it with the renderer policy here would
+      // both weaken the canvas policy (localhost connect-src) and break its
+      // content (script-src 'wasm-unsafe-eval' only). Pass them through.
+      if (details.url.startsWith('ccc-ux://')) {
+        callback({ responseHeaders: details.responseHeaders })
+        return
+      }
       callback({
         responseHeaders: {
           ...details.responseHeaders,
-          'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:* http://localhost:*"
-          ]
+          'Content-Security-Policy': [CSP_POLICY]
         }
       })
     })
 
+    // Agent Canvas content serving — must be registered before any renderer
+    // exists so a restored session's canvas iframe can load immediately.
+    registerCccUxProtocolHandler()
+    // ...and canvas content gets no powerful features. Same session, so this is
+    // origin-scoped rather than blanket (the app's own clipboard writes go
+    // through the same handler) — see installCanvasPermissionGuard.
+    installCanvasPermissionGuard(session.defaultSession)
+
     createSplashWindow()
-    createWindow()
+    try {
+      createWindow()
+    } catch (err) {
+      // A failed main-window creation must not leave the splash pinned
+      // on-screen forever (the backstop would eventually catch it, but
+      // close now so a fatal boot doesn't hang behind an orphan splash).
+      logInfo(`[main] createWindow failed: ${err}`)
+      closeSplashWindow()
+      throw err
+    }
 
     const getWindow = () => mainWindow
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
-    registerDiscoveryHandlers()
+    registerAccountWebHandlers()
+    // #439: when a partition is wiped (sign-out / delete / cancelled sign-in),
+    // sign-in.ts emits a revocation through the decoupling seam; wire the owners
+    // here so it never has to import their heavy graphs. Both run synchronously.
+    onPartitionRevoked(removeWebSession)
+    onPartitionRevoked(closeAccountPanesForProfile)
+    // #216: a crash or forced quit can leave a sign-in browser profile behind, and
+    // each one holds a live claude.ai session. Sweep them at boot.
+    try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }
     registerResumeHandlers()
     // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
     // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives
@@ -719,6 +974,10 @@ if (!gotTheLock) {
     })
     registerDebugHandlers()
     registerUpdateHandlers()
+    // Pre-emptive repo-rename handling: if the app has been renamed on GitHub
+    // (claude-command-center -> ai-code-conductor) adopt + persist the new repo
+    // for updates; else stay on the current one. Non-blocking, fail-safe.
+    void adoptRenamedRepoIfLive()
     registerSetupHandlers()
     registerRegistryHandlers(getResourcesDirectory())
     // Sentinel (spec 2026-06-11): optional service; OFF = no init, dot hidden, zero impact.
@@ -732,7 +991,10 @@ if (!gotTheLock) {
         void sentinelStartupCheck()
       }
     }
-    registerConfigHandlers()
+    registerConfigHandlers({
+      // #266 MAJOR-2: unticking the watchdog must tear down RUNNING watchers.
+      onSettingsSaved: () => getWatchdogManager()?.applySettings(),
+    })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only
     // the verbose level, NOT the per-event hot-path TRACE logs and NOT the heavy
@@ -750,6 +1012,13 @@ if (!gotTheLock) {
     // profiles isolated only CLAUDE_CONFIG_DIR, which never isolated the account
     // identity). Idempotent + best-effort; never touches the real home.
     try { migrateProfilesToHomeLayout() } catch (e) { logInfo(`[profiles] home-layout migration skipped: ${e}`) }
+    // Self-heal the per-profile shared junctions (projects/memory/agents/skills/
+    // commands/plugins): recover an orphaned REAL projects dir into the shared
+    // store (#131), AND rebuild any BROKEN junction -- most importantly a
+    // self-referential one (target === link), an ELOOP that wedges memory/projects
+    // recall and resume. Idempotent + best-effort; only touches per-profile shared
+    // links + the shared store.
+    try { repairSharedProjectJunctions() } catch (e) { logInfo(`[profiles] shared-junction repair skipped: ${e}`) }
     // Capture the current global login into a protected "primary" profile so no
     // session runs on the bare global ~/.claude (idempotent; best-effort).
     try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }
@@ -765,16 +1034,17 @@ if (!gotTheLock) {
     // external `claude -p` on a dead refresh token). Freshest-wins + email-guarded.
     try { const r = syncPrimaryCredentialsWithGlobal(); if (r !== 'none') logInfo(`[profiles] primary<->global credential sync at launch: ${r}`) } catch (e) { logInfo(`[profiles] credential sync skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
+    registerDiagnosticsHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
     registerCodexHandlers()
     registerCodexReviewHandlers()
+    registerExeHandlers()
     registerChannelHandlers()
     startRulesEngine()
     registerCloudAgentHandlers(getWindow)
-    registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
     registerMemoryHandlers()
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
@@ -786,7 +1056,12 @@ if (!gotTheLock) {
       loadSessions: async () => loadSessionState()?.sessions ?? [],
       saveSessions: async (sessions) => {
         const existing = loadSessionState()
-        saveSessionState({
+        // Through the durability core, never saveSessionState directly: a
+        // direct write leaves the exit-flush cache stale, so the flush on
+        // quit would overwrite this very patch with the pre-patch state —
+        // reverting the GitHub binding (or a cleanup that removed one) on
+        // the next launch (independent review of #413, R3).
+        sessionDurability.saveEnriched({
           sessions,
           activeSessionId: existing?.activeSessionId ?? null,
           savedAt: Date.now(),
@@ -799,7 +1074,7 @@ if (!gotTheLock) {
     // UUID secrets. Renderer consumes events via the HOOKS_EVENT IPC channel.
     const hooksSettings = readConfig<{ hooksEnabled?: boolean; hooksPort?: number }>('settings')
     const hooksEnabled = hooksSettings?.hooksEnabled !== false
-    const hooksPort = hooksSettings?.hooksPort ?? DEFAULT_HOOKS_PORT
+    const hooksPort = hooksSettings?.hooksPort ?? resolveHooksPort(isPackagedApp())
     const emitToWindow = (channel: string, payload: unknown) => {
       const win = getWindow()
       if (win && !win.isDestroyed()) {
@@ -811,7 +1086,8 @@ if (!gotTheLock) {
     // push carries BOTH snapshots (else one source would wipe the other in the UI).
     const getSup = () => getHooksSupervisor()
     const getPtyDiag = () => getPtyIntegrityMonitor()?.diagnostics() ?? null
-    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag))
+    const getWatchdogDiag = () => getWatchdogManager()
+    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag, getWatchdogDiag))
     const ptyMonitor = new PtyIntegrityMonitor({ emit: pushDiagnostics })
     setPtyIntegrityMonitor(ptyMonitor)
     // Redirect ONLY SERVICE_HEALTH_UPDATE through the merge; every other channel
@@ -853,6 +1129,9 @@ if (!gotTheLock) {
     // the request/response handlers resolve the supervisor lazily per call and
     // reject cleanly when logging is disabled.
     registerLogs2Handlers(getWindow)
+    // Agent Canvas (2.2): renderer read surface + change push over the canvas
+    // store. Serving itself is the ccc-ux:// protocol registered above.
+    registerCanvasHandlers(getWindow)
     // Tokenomics rebuild: start the better-sqlite3 indexing worker supervisor
     // (forked; native dep lives ONLY in the worker — this stays main-clean) and
     // register the new read-surface handlers. The worker ingests from raw
@@ -861,6 +1140,20 @@ if (!gotTheLock) {
     try { initTokenomics({ emit: emitWithMerge }) } catch (err) { logError(`[tokenomics] init failed: ${(err as Error)?.message ?? err}`) }
     registerTokenomics2Handlers(getWindow)
     startEffortTracker()
+    // #580: the canvas marker queue watches the same hook stream for the agent's
+    // turn boundary, so a verdict filed mid-turn is held rather than swallowed.
+    // Both ends are injected here so the canvas IPC module needs no static
+    // import of pty-manager or the gateway (see canvas-marker-delivery.ts).
+    startCanvasMarkerQueue({
+      // The same submit shape every other programmatic line into the Claude TUI
+      // uses (the watchdog retry, the command buttons, the launch line).
+      write: (sessionId, line) => writePty(sessionId, line + '\r'),
+      subscribe: (cb) => {
+        const gw = getGateway()
+        if (!gw) return
+        gw.subscribe((e) => { if (e.sessionId) cb(e.sessionId, e.event) })
+      },
+    })
     startAttentionSource()
     startJankDetector()
     // Main-process event-loop jank monitor: feeds the "Jank m/c" main half on the
@@ -868,9 +1161,29 @@ if (!gotTheLock) {
     // every service). Stopped in before-quit.
     startLoopStallMonitor()
     registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
+    // Session Watchdog (#235): wired after the gateway singleton exists so its
+    // StopFailure subscription binds immediately. send() submits the retry the
+    // same way the command-button / launch paths do — writePty(text + '\r') —
+    // which is the proven way to submit into the Claude TUI. (The channel-bus
+    // paste envelope does NOT submit: formatTier1 ends at the bracketed-paste
+    // close with no trailing Enter, so it only drafts. A bracketed paste with a
+    // fused Enter is also swallowed by the Ink/React TUI.) The retry text is
+    // already sanitized in config.ts to a single control-char-free line, so the
+    // lone appended '\r' is the only submit and cannot be broken out of.
+    initWatchdogManager({
+      getWindow,
+      isSessionAlive: isSessionWritable,
+      send: (sessionId, text) => {
+        writePty(sessionId, `${text}\r`)
+      },
+      // Refresh the services view live when a watchdog state changes; routed
+      // through the same merge so the push carries every source (#235).
+      onHealthChange: () => pushDiagnostics(),
+    })
+    registerWatchdogHandlers()
     // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
     // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
-    registerServiceHealthHandlers(getSup, getPtyDiag)
+    registerServiceHealthHandlers(getSup, getPtyDiag, getWatchdogDiag)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
@@ -901,18 +1214,31 @@ if (!gotTheLock) {
     // settings rewrite the mcpServers URL to this instance's actual port
     // (see per-session-settings.ts).
     const mcpPort = resolveConductorMcpPort(isPackagedApp())
-    startConductorMcpServer(mcpPort).catch(err => {
+    startConductorMcpServer(mcpPort, getWindow).catch(err => {
       logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
     })
 
-    // P7.3: Browser-vision sub-tool auto-starts unconditionally at boot.
-    // The MCP server has always been unconditional; this drops the
-    // visionConfig.enabled gate that caused intermittent "Vision not
-    // connected" errors when sessions spawned before the user clicked
-    // Launch Chrome.
-    startBrowserAtBoot(getWindow).catch(err => {
-      logError(`[main] Vision auto-start failed: ${err?.message}`)
-    })
+    // P7.3: Browser-vision sub-tool auto-starts at boot (MCP server is always up).
+    //
+    // DEFERRED (boot resilience): launching headless Chrome is heavy and, on a
+    // busy machine, competing with the renderer's initial load could starve the
+    // main process and leave the window stuck/unshown. Wait until the renderer
+    // has finished loading (+ a short settle), so the UI paints first, then bring
+    // vision up. Fallback timer launches it anyway if the load signal never comes.
+    {
+      let visionStarted = false
+      const startVisionOnce = () => {
+        if (visionStarted) return
+        visionStarted = true
+        startBrowserAtBoot(getWindow).catch(err => {
+          logError(`[main] Vision auto-start failed: ${err?.message}`)
+        })
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.once('did-finish-load', () => setTimeout(startVisionOnce, 1500))
+      }
+      setTimeout(startVisionOnce, 8000)
+    }
 
     // Start update system
     // Dev mode: run the local update server + source watcher for live-reload workflow
@@ -933,6 +1259,9 @@ if (!gotTheLock) {
     // binder sink first so the continuous, exact transcript path carried by each
     // status JSON feeds discovery (lazy getter — no-op when logging is disabled).
     setTranscriptPathSink(routeTranscriptPath)
+    // Plan P2: harvest each live session's delivered usage so the account-usage
+    // page can reuse an OPEN account's figure rather than making a redundant call.
+    setStatuslineUsageSink(recordLiveUsageForSession)
     startStatuslineWatcher(getWindow)
 
     // Start polling Anthropic service status
@@ -951,14 +1280,23 @@ if (!gotTheLock) {
     logError('[boot] startup failed -- the app may be partially initialised:', err)
     try {
       dialog.showErrorBox(
-        'Claude Command Center failed to start cleanly',
+        'AI Code Conductor failed to start cleanly',
         `Startup hit an error and some features may not work. Please restart the app.\n\n${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
       )
     } catch { /* dialog unavailable (very early failure) */ }
   })
 
-  app.on('before-quit', () => {
+  // rc.14 review F2 (aicc_planning#46): on macOS, Cmd+Q emits before-quit
+  // BEFORE any window close, so this body used to run -- every PTY, MCP,
+  // logging, the watchdog -- and only then did the close dialog appear; Cancel
+  // restored nothing. The coordinator now holds the first before-quit while a
+  // window is up, asks the renderer, and re-issues the quit once the close is
+  // allowed; this body runs on THAT pass, exactly once.
+  quitTeardown = () => {
     logInfo('App quitting...')
+    // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
+    // transcript binder down — flushing after that would lose the resume targets.
+    sessionDurability.flushOnExit('before-quit')
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
@@ -967,6 +1305,10 @@ if (!gotTheLock) {
     try { shutdownLogging() } catch { /* never init / disabled */ }
     // Tear down the tokenomics indexing worker. No-op when never init.
     try { shutdownTokenomics() } catch { /* never init */ }
+try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
+    // Kill any GUI-subsystem tool still being captured (#379). Its stdio is
+    // piped to us, so leaving it running orphans a process nobody can see.
+    try { stopAllCapturedRuns() } catch { /* never started */ }
     stopServiceStatusPoller()
     stopLoopStallMonitor()
     stopUpdateWatcher()
@@ -981,6 +1323,7 @@ if (!gotTheLock) {
     killAllAgents()
     killAllPty()
     closeAllWebviews()
+    closeAllAccountPanes()
     // Pull from the singleton barrel — `hooksGateway` declared inside the
      // app.whenReady() callback above is out of scope here, which threw an
      // uncaught ReferenceError on every quit and crashed the app before it
@@ -989,14 +1332,14 @@ if (!gotTheLock) {
      // settings-<sid>.json before claude could read it).
     try { getGateway()?.stop().catch(() => { /* ignore shutdown error */ }) } catch { /* gateway never started */ }
     closeDebugLogger()
-  })
+  }
+  app.on('before-quit', (e) => closeCoordinator.onBeforeQuit(() => e.preventDefault()))
 
   app.on('window-all-closed', () => {
-    // On macOS, apps conventionally stay running when all windows are closed.
-    // The user must explicitly quit via Cmd+Q or the app menu.
-    if (process.platform !== 'darwin') {
-      app.quit()
-    }
+    // On macOS, apps conventionally stay running when all windows are closed
+    // (the user quits via Cmd+Q or the app menu) -- but not their PTYs: rc.15
+    // review R6, see onAllWindowsClosed.
+    onAllWindowsClosed({ platform: process.platform, quit: () => app.quit(), endStragglerPtys: killAllPty })
   })
 
   // On macOS, re-create the window when the dock icon is clicked and no windows exist

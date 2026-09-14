@@ -17,9 +17,27 @@ const distDir = resolve(process.cwd(), 'dist')
 
 // Native binaries that MUST be unpacked. better-sqlite3 is the new logging dep;
 // node-pty has shipped for ages but we assert it too so a regression is caught.
+//
+// Each module has TWO layouts that satisfy it, matching its own loader's search
+// order: an electron-rebuild output (`build/Release`, what CI produces) OR the
+// N-API prebuild the package itself ships (what a no-toolchain local build
+// packages — both loaders prefer/fall back across these at runtime). Either
+// present-and-holding-a-.node is a loadable package; neither is a broken one.
 const REQUIRED = [
-  ['better-sqlite3', join('better-sqlite3', 'build', 'Release', 'better_sqlite3.node')],
-  ['node-pty', join('node-pty', 'build', 'Release')], // dir; pty.node/conpty.node name varies by platform
+  [
+    'better-sqlite3',
+    [
+      join('better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
+      join('better-sqlite3', 'prebuilds', `${process.platform}-${process.arch}.node`),
+    ],
+  ],
+  [
+    'node-pty',
+    [
+      join('node-pty', 'build', 'Release'), // dir; pty.node/conpty.node name varies by platform
+      join('node-pty', 'prebuilds', `${process.platform}-${process.arch}`),
+    ],
+  ],
 ]
 
 /** Find every `app.asar.unpacked/node_modules` dir under dist/ (win + mac layouts). */
@@ -55,20 +73,26 @@ if (nmDirs.length === 0) {
   process.exit(1)
 }
 
+/** A candidate satisfies its module if it exists and (for a dir) holds a .node
+ *  somewhere below it — node-pty nests its per-arch prebuilds one level down. */
+function holdsNativeBinary(target) {
+  if (!existsSync(target)) return false
+  if (!statSync(target).isDirectory()) return true
+  let entries
+  try { entries = readdirSync(target, { withFileTypes: true }) } catch { return false }
+  return entries.some((e) => (e.isDirectory() ? holdsNativeBinary(join(target, e.name)) : e.name.endsWith('.node')))
+}
+
 let ok = true
 for (const nm of nmDirs) {
-  for (const [label, rel] of REQUIRED) {
-    const target = join(nm, rel)
-    const present = existsSync(target)
-    // For the node-pty dir entry, also require at least one .node inside it.
-    let detail = present ? 'OK' : 'MISSING'
-    if (present && statSync(target).isDirectory()) {
-      const hasNode = readdirSync(target).some((f) => f.endsWith('.node'))
-      if (!hasNode) { detail = 'MISSING (.node)'; ok = false }
-    } else if (!present) {
+  for (const [label, candidates] of REQUIRED) {
+    const satisfied = candidates.find((rel) => holdsNativeBinary(join(nm, rel)))
+    if (satisfied) {
+      console.log(`[verify-native-unpack] ${label}: OK  (${join(nm, satisfied)})`)
+    } else {
       ok = false
+      console.log(`[verify-native-unpack] ${label}: MISSING  (looked at: ${candidates.map((rel) => join(nm, rel)).join(' | ')})`)
     }
-    console.log(`[verify-native-unpack] ${label}: ${detail}  (${target})`)
   }
 }
 

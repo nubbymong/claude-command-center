@@ -20,7 +20,7 @@ export default function CodexReviewSubTool() {
       icon={codexIcon}
       statusLabel="Available"
       statusColor="green"
-      description='Opt in per Claude session via SessionDialog -> "Enable Codex code review". Calls aggregate into Tokenomics > Codex review row.'
+      description='Available to every local Claude Code session while Codex is enabled (Settings -> Codex). Calls aggregate into Tokenomics > Codex review row.'
       toolList={['codex_review']}
     />
   )

@@ -1,34 +1,75 @@
 import React, { useEffect, useRef, useState } from 'react'
 import '@xterm/xterm/css/xterm.css'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ILinkProvider } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { installWebglWithRecovery } from './terminal/terminalWebgl'
+import { decorateTerminalLinks, createLinkHoverControl, type LinkHoverControl } from './terminal/terminalLinks'
+import { installWebglWithRecovery, createAtlasResync, type WebglHandle } from './terminal/terminalWebgl'
+import { atlasCoordinator } from './terminal/atlasCoordinator'
+import {
+  createStaleGlyphRepainter,
+  shouldRepaintOnOutput,
+  shouldSoftRepaintOnOutput,
+  outputRepaintIntervalMs,
+  ACTIVATION_MAX_STALE_MS,
+  WHEEL_ACTIVE_MS,
+  type StaleGlyphRepainter,
+} from './terminal/staleGlyphRepaint'
 import { useSessionStore } from '../stores/sessionStore'
+import { useRestartSession } from '../hooks/useRestartSession'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
-import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
+import { forgetSessionBrowserProfile } from '../stores/sshCloseStore'
+import { hasSpawned, markSpawned, clearSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { isControlReportOnly, decideContextMenuAction } from '../utils/terminalInput'
+import { isControlReportOnly, resolveContextMenuIntent, blindPasteNeedsMenu, sanitizeClipboardForPaste, sanitizePasteIntoTerminal, isMouseTracking, isOrdinaryEditable } from '../utils/terminalInput'
+import TerminalContextMenu from './TerminalContextMenu'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
-import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
+import { installTerminalKeybindings } from './terminal/terminalKeybindings'
+import { registerRepainter, requestResync } from './terminal/repaintRegistry'
+import { createGeometryResync, type GeometryResync } from './terminal/geometryResync'
+import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
+import { usePasteHintStore } from '../stores/pasteHintStore'
+import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
 import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useEffortSubscription } from '../hooks/useEffortSubscription'
+import { useWatchdogSubscription } from '../hooks/useWatchdogSubscription'
 import { useAccountIdentitySubscription } from '../hooks/useAccountIdentitySubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
-import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
-import type { ProviderId, CodexOptions } from '../../shared/types'
+import { noteActivityGrace } from '../stores/activeStore'
+import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
+
+// Main-process clipboard read first (focus-independent, retried for Windows
+// delayed-render), renderer API as a fallback if IPC is unavailable. Shared by
+// the keybinding paste, the classic right-click paste, and the context menu — so
+// sanitizeClipboardForPaste here is the single chokepoint that strips paste-mode
+// breakout sequences and readline-submitting controls out of EVERY paste route
+// before the text can reach term.paste() and the PTY.
+async function readClipboardText(): Promise<string> {
+  let raw = ''
+  try {
+    raw = (await window.electronAPI.clipboard.readText()) || ''
+  } catch { /* fall through */ }
+  if (!raw) {
+    try {
+      raw = await navigator.clipboard.readText()
+    } catch {
+      raw = ''
+    }
+  }
+  return sanitizeClipboardForPaste(raw)
+}
 
 interface Props {
   sessionId: string
@@ -42,14 +83,21 @@ interface Props {
     username: string
     remotePath: string
     postCommand?: string
+    runtime?: import('../../shared/types').SshRuntime
   }
   isActive?: boolean
   legacyVersion?: {
     enabled: boolean
     version: string
   }
+  /** Legacy (#443): configs may still carry agent-template ids from the retired
+   *  Agent Library. Accepted and ignored — nothing resolves them any more. */
   agentIds?: string[]
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  /** Per-session permission mode -> claude `--permission-mode`. '' / 'default' = no flag. */
+  permissionMode?: string
+  /** Advanced: extra CLI args appended verbatim to the claude launch command. */
+  extraArgs?: string
   disableAutoMemory?: boolean
   /** P6: when true, the spawned Claude PTY is registered into the
    *  codex_review opt-in set in conductor-mcp-server. Mirrors
@@ -66,9 +114,12 @@ interface Props {
   provider?: ProviderId
   /** Codex sub-options (only meaningful when provider === 'codex'). */
   codexOptions?: CodexOptions
+  /** Terminal-only launcher options (only meaningful when shellOnly). The secret
+   *  VALUE is never carried here — main resolves it from the keychain at spawn. */
+  terminalOptions?: TerminalOptions
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, terminalOptions }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -76,12 +127,83 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const attentionAckedRef = useRef(false)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
   const isScrolledUpRef = useRef(false)
+  /** The live repainter, so effects outside the init effect can ask for a
+   *  repaint — see the tab-activation repaint below. */
+  const repainterRef = useRef<StaleGlyphRepainter | null>(null)
+  /** This terminal's atlas-resync callback, so the activation effect can ask the
+   *  coordinator whether it is behind. Null until the terminal is built. */
+  const atlasResyncRef = useRef<(() => void) | null>(null)
+  // The LIVE WebGL handle for this terminal, or null when it is drawing on the
+  // DOM renderer. A ref rather than a local in the mount effect because the
+  // addon is now attached and detached as the pane comes and goes, which is a
+  // different lifetime from the terminal's.
+  const webglHandleRef = useRef<WebglHandle | null>(null)
+  // Mirror of the isActive prop for `document`-level listeners installed by the
+  // init effect (which keys on session identity, not activation) — reading the
+  // captured prop there would go stale on tab switches. See the paste handler.
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
+  // Whether #145 input diagnostics are on, readable from the init effect's
+  // long-lived onData closure.
+  const inputDiagRef = useRef(false)
+  // #21: the http/https link under the cursor, owned by a LinkHoverControl
+  // (terminalLinks.ts) rather than xterm's own decorations: xterm clears and
+  // re-asks the hovered link on every viewport re-render, which strobed the
+  // hand cursor at render cadence in a busy Claude session (2026-09-02 fix).
+  // The control debounces the leave, and the context menu reads current().
+  const linkHoverRef = useRef<LinkHoverControl | null>(null)
+  // Explicit right-click menu (Copy/Paste). Opened by the contextmenu handler
+  // whenever a blind copy-or-paste decision would be unsafe; null = closed.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSelection: boolean; linkUri?: string } | null>(null)
+  // Close the menu the instant this tab is deactivated. Every TerminalView stays
+  // mounted (App renders inactive ones display:none), and the menu arms a
+  // document-level capture Escape listener — a menu left open in a hidden session
+  // would swallow the ACTIVE session's Escape (a missed Claude interrupt) and
+  // reappear as a ghost on tab-back. A keyboard tab-switch never fires the
+  // backdrop's mousedown-close, so it must be closed here.
+  useEffect(() => {
+    if (!isActive) setCtxMenu(null)
+  }, [isActive])
+
+  // Rebuild the glyph atlas when this terminal becomes the active tab.
+  //
+  // This is the best repaint moment in the app and it comes from the observation
+  // that a mouse wheel clears the corruption: switching to a session is exactly
+  // when someone is about to READ that viewport, and the pane is appearing
+  // anyway, so the rebuild is invisible here in a way it never is mid-stream.
+  // Inactive sessions render display:none, so a session left streaming in the
+  // background is the most likely one to have gone stale unseen.
+  //
+  // Deliberately NOT a synthetic wheel event: a real scroll moves the viewport
+  // and would yank the view of anyone who had scrolled up to read something.
+  // This fires the repaint the wheel would have caused, and nothing else.
+  //
+  // No `terminalReady` dependency: before the repainter exists there is nothing
+  // to rebuild and the atlas is new anyway, so the mount pass is a deliberate
+  // no-op. Every later activation is what this is for.
+  useEffect(() => {
+    if (!isActive) return
+    // Catch up with any atlas rebuild this terminal missed, BEFORE deciding to
+    // start another one. The frame-scheduled pass only reaches terminals that
+    // were registered and alive in that frame; this is the backstop for the
+    // ones it could not, and it is a no-op when already current (#311).
+    //
+    // Ordered first deliberately: strongIfStale may clear the shared atlas
+    // itself, and resyncing against the atlas we are about to replace would be
+    // one wasted repaint and a frame of the wrong pixels.
+    if (atlasResyncRef.current) atlasCoordinator.resyncIfBehind(atlasResyncRef.current)
+    repainterRef.current?.strongIfStale(ACTIVATION_MAX_STALE_MS)
+  }, [isActive])
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
+  // item 5 (resume cascade): the overlay's "no host" Retry re-spawns the whole
+  // session (a dead PTY can't be recovered by re-writing the claude command).
+  const { restart: sshRestart } = useRestartSession(session)
 
   // Extracted hooks
   useStatuslineSubscription(sessionId)
   useEffortSubscription(sessionId)
+  useWatchdogSubscription(sessionId)
   useAccountIdentitySubscription(sessionId)
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
@@ -92,10 +214,32 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // folder prompt's Enter goes to nothing. Subscribe to the flow state
   // here and pull focus into xterm the moment Claude is up. Skipped
   // when a modal is open so the walkthrough's focus trap wins.
+  // SSH tmux enhancement (items 8/9/10): persistence status + remote account,
+  // pushed by main. Merged into the session store so the sidebar icon + header
+  // pills reflect them for the session's whole life (this TerminalView stays
+  // mounted per session, hidden when inactive). Renderer-only fields, never
+  // persisted -- re-established by main's push on each spawn.
+  useEffect(() => {
+    if (!ssh) return
+    return window.electronAPI.ssh.onSessionInfo(sessionId, (msg) => {
+      const patch: { sshTmuxPersistent?: boolean; sshRemoteAccount?: string } = {}
+      if (typeof msg.tmuxPersistent === 'boolean') patch.sshTmuxPersistent = msg.tmuxPersistent
+      if (typeof msg.remoteAccount === 'string' && msg.remoteAccount) patch.sshRemoteAccount = msg.remoteAccount
+      if (Object.keys(patch).length > 0) updateSession(sessionId, patch)
+    })
+  }, [sessionId, ssh, updateSession])
+
   useEffect(() => {
     if (!ssh) return
     return window.electronAPI.ssh.onFlowState(sessionId, (msg) => {
       if (msg.state !== 'claude-running') return
+      // #242 tier 5: latch "this session has reached claude-running at
+      // least once" so a LATER respawn (Restart after a dropped
+      // connection) can pass SSHOptions.reconnect -- read back in doSpawn
+      // below. Set unconditionally on every claude-running emit (already
+      // idempotent: setting true to true is a no-op re-render at worst),
+      // not just the first, since no earlier code path clears it.
+      updateSession(sessionId, { sshReachedClaudeRunning: true })
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
       // requestAnimationFrame so React has time to unmount the overlay
       // and yield the focus stack before we grab it.
@@ -103,7 +247,53 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         try { terminalRef.current?.focus() } catch { /* ignore */ }
       })
     })
-  }, [sessionId, ssh])
+  }, [sessionId, ssh, updateSession])
+
+  // Restore terminal focus when the WINDOW regains focus (#145).
+  //
+  // Terminal focus was previously re-grabbed only on session activation, overlay
+  // unmount, and mouseup inside the terminal — never on window focus. An external
+  // tool that steals focus and then synthesizes *typed characters* (rather than a
+  // paste command) needs the xterm helper textarea focused, or the keystrokes land
+  // on <body> and vanish. The paste handler above is focus-independent by design;
+  // this covers the typing case.
+  //
+  // Only the active session, and never over a modal's focus trap.
+  useEffect(() => {
+    if (!isActive) return
+    const onWindowFocus = () => {
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      // Don't yank focus out of a real input the user is working in.
+      if (isOrdinaryEditable(document.activeElement as HTMLElement | null)) return
+      requestAnimationFrame(() => {
+        try { terminalRef.current?.focus() } catch { /* ignore */ }
+      })
+    }
+    window.addEventListener('focus', onWindowFocus)
+    // Explicit focus hand-off (owner bug report 2026-08-27): a command chip
+    // that just wrote into this session's pty asks the terminal to take the
+    // keyboard, so the user's follow-up Enter reaches the composer instead of
+    // re-pressing the still-focused button. Unlike onWindowFocus this skips
+    // the editable guard — the dispatch IS the explicit intent — but never
+    // fires over a modal's focus trap, and only for THIS session's terminal.
+    const onFocusRequest = (ev: Event) => {
+      const want = (ev as CustomEvent<{ sessionId?: string }>).detail?.sessionId
+      if (want !== sessionId) return
+      requestAnimationFrame(() => {
+        // Modal check at FOCUS time, not dispatch time (review 2026-08-27):
+        // a dialog that closes as the command runs (GuiExeDialog) has
+        // unmounted by this frame so the handoff proceeds, and one that
+        // MOUNTS on the run (CapturedRunModal) is present and keeps focus.
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+        try { terminalRef.current?.focus() } catch { /* ignore */ }
+      })
+    }
+    window.addEventListener('ccc:focus-terminal', onFocusRequest)
+    return () => {
+      window.removeEventListener('focus', onWindowFocus)
+      window.removeEventListener('ccc:focus-terminal', onFocusRequest)
+    }
+  }, [isActive, sessionId])
 
   // Repaint the terminal whenever the resolved theme changes.
   // Watching data-theme on <html> via MutationObserver covers BOTH:
@@ -119,6 +309,81 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // attaches on first paint instead of returning early when the ref
   // was still null. Without this gate, theme flips never repainted.
   const [terminalReady, setTerminalReady] = useState(false)
+
+  /**
+   * WebGL is attached only while this pane is ON SCREEN, and detached the moment
+   * it is not.
+   *
+   * Two separate limits make a hidden terminal's GPU context actively harmful,
+   * and neither is visible while you look at one terminal:
+   *
+   *  1. Chromium allows roughly SIXTEEN WebGL contexts per renderer and evicts
+   *     the oldest beyond that. Every session in this app keeps its TerminalView
+   *     mounted -- that is what makes switching tabs instant and what keeps
+   *     scrollback alive -- so a seventeenth session did not just fail to get a
+   *     context, it took one away from a terminal that was using it. Eviction
+   *     arrives as a context loss, i.e. as the storm the recovery code exists to
+   *     survive.
+   *  2. `@xterm/addon-webgl` keeps ONE glyph atlas per PROCESS. Every additional
+   *     live context is one more terminal that someone else's atlas rebuild can
+   *     blank. With a single live context there is no "someone else".
+   *
+   * A terminal that is not on screen renders nothing, so it is paying both of
+   * those for no benefit whatsoever.
+   *
+   * The detach costs a re-raster when you come back to the tab -- but that tab
+   * has to repaint on becoming visible anyway, so the work overlaps with a
+   * repaint that was already going to happen.
+   *
+   * The atlas coordinator registration lives here too, not in the mount effect:
+   * a terminal with no context has nothing to resync, and leaving it registered
+   * would have it doing model-clearing work on behalf of an atlas it is not
+   * drawing from.
+   */
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!terminalReady || !term) return
+    if (!isActive) return
+    if (!gpuRenderingEnabled(useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS)) return
+
+    const handle = installWebglWithRecovery(term, {
+      WebglAddonCtor: WebglAddon,
+      raf: requestAnimationFrame,
+      // The mount effect owns terminal teardown; this effect's own cleanup runs
+      // first on unmount, so by the time anything here could fire the handle is
+      // already detached.
+      isDisposed: () => terminalRef.current !== term,
+    })
+    webglHandleRef.current = handle
+    const resync = atlasResyncRef.current
+    const unregister = resync ? atlasCoordinator.register(resync, sessionId) : null
+
+    return () => {
+      unregister?.()
+      webglHandleRef.current = null
+      handle.dispose()
+    }
+  }, [isActive, terminalReady])
+
+
+  // Input diagnostics (#145), opt-in via CCC_INPUT_DEBUG=1. Active session only,
+  // so one dictation run yields one readable trace rather than N interleaved
+  // copies. Answers what an external tool ACTUALLY sends — see
+  // inputDiagnostics.ts for why measuring had to replace reasoning here.
+  useEffect(() => {
+    if (!isActive || !terminalReady) return
+    const container = xtermContainerRef.current
+    if (!container) return
+    let dispose: (() => void) | null = null
+    let cancelled = false
+    void window.electronAPI.inputDebug.enabled().then((on) => {
+      if (!on || cancelled) return
+      inputDiagRef.current = true
+      dispose = installInputDiagnostics(container, (line) => window.electronAPI.inputDebug.log(`[${sessionId}] ${line}`))
+    }).catch(() => { /* diagnostics are never load-bearing */ })
+    return () => { cancelled = true; inputDiagRef.current = false; dispose?.() }
+  }, [isActive, terminalReady, sessionId])
+
   useEffect(() => {
     if (!terminalReady) return
     const term = terminalRef.current
@@ -180,13 +445,22 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let resizeObserver: ResizeObserver | null = null
     let unsubData: (() => void) | null = null
     let unsubExit: (() => void) | null = null
-    let handleKeyDownCopy: ((e: KeyboardEvent) => void) | null = null
+    let disposeKeybindings: (() => void) | null = null
+    let geometryResync: GeometryResync | null = null
     let handleContextMenu: ((e: MouseEvent) => void) | null = null
+    let handlePaste: ((e: ClipboardEvent) => void) | null = null
     let disposed = false
     let parseTimer: ReturnType<typeof setTimeout> | null = null
     let pendingParseData = ''
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     let handleWheel: ((e: WheelEvent) => void) | null = null
+    // #273 stale-glyph repaint: force a full WebGL repaint (clearTextureAtlas +
+    // term.refresh) on the triggers that correlate with the ghosting — scroll and
+    // streaming output — throttled so a firehose costs at most a few repaints/sec.
+    let repainter: StaleGlyphRepainter | null = null
+    /** Undo the #379 fix-E registration; see registerRepainter below. */
+    let unregisterRepainter: (() => void) | null = null
+    let lastWheelAt = Number.NEGATIVE_INFINITY
 
     // PTY-integrity instrumentation (scoped to this session's mount; resets on
     // sessionId change because the effect re-runs).
@@ -266,10 +540,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         fontWeight: (ts.fontWeight || 450) as import('@xterm/xterm').FontWeight,
         fontWeightBold: 700,
         lineHeight: ts.lineHeight || 1.2,
-        cursorBlink: ts.cursorBlink ?? false,
+        cursorBlink: ts.cursorBlink ?? true,
         cursorStyle: ts.cursorStyle || 'bar',
-        cursorWidth: 1,
-        cursorInactiveStyle: 'none',
+        // 1px is a HiDPI hairline that reads as "no caret"; 2px is a visible bar.
+        cursorWidth: 2,
+        // Shell terminals show a hollow caret when unfocused so the input point
+        // stays visible after focus shifts to the sidebar/config/input bar.
+        // Claude/TUI sessions keep the caret fully hidden (they draw their own).
+        cursorInactiveStyle: shellOnly ? 'outline' : 'none',
         scrollback: 10000,
         allowTransparency: true,
         // Light mode only: enforce a minimum contrast ratio so Claude's dim,
@@ -283,7 +561,42 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       fitAddon = new FitAddon()
       term.loadAddon(fitAddon)
+      // #21: WebLinksAddon detects http/https URLs (wrapped-line + wide-char
+      // aware) but registers them with xterm-owned hover decorations, which
+      // xterm strobes at render cadence (it clears + re-asks the hovered link
+      // on every viewport re-render). The addon has no decorations option and
+      // its matcher is not exported, so wrap registerLinkProvider for the
+      // duration of loadAddon and pass each produced link set through
+      // decorateTerminalLinks: BOTH decorations off (underline: the #562
+      // selection flicker; pointerCursor: the 2026-09-02 hover flicker),
+      // activation routed to the OS browser (the addon's default window.open
+      // is denied), and hover/leave feeding the LinkHoverControl below, which
+      // owns the hand cursor + Copy-link URI. Restored immediately after.
+      // Hand cursor + hovered-URI state live OUTSIDE xterm (hover-flicker fix,
+      // 2026-09-02): xterm's leave/re-hover churn on every viewport re-render
+      // routes through this control, whose debounced leave keeps both stable.
+      const linkHover = createLinkHoverControl(() => term?.element ?? null)
+      linkHoverRef.current = linkHover
+      const originalRegister = term.registerLinkProvider.bind(term)
+      ;(term as unknown as { registerLinkProvider: (p: ILinkProvider) => { dispose(): void } }).registerLinkProvider = (
+        provider: ILinkProvider,
+      ) => {
+        const wrapped: ILinkProvider = {
+          provideLinks: (y, cb) =>
+            provider.provideLinks(y, (links) =>
+              cb(
+                decorateTerminalLinks(links, {
+                  open: (uri) => { void window.electronAPI.shell.openExternal(uri) },
+                  onHover: (uri) => linkHover.hover(uri),
+                  onLeave: () => linkHover.leave(),
+                }),
+              ),
+            ),
+        }
+        return originalRegister(wrapped)
+      }
       term.loadAddon(new WebLinksAddon())
+      ;(term as unknown as { registerLinkProvider: typeof originalRegister }).registerLinkProvider = originalRegister
 
       term.open(container)
 
@@ -298,11 +611,108 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // then we try ONE recreate in the next frame (GPU-blip recovery).
       // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
-      installWebglWithRecovery(term, {
-        WebglAddonCtor: WebglAddon,
-        raf: requestAnimationFrame,
-        isDisposed: () => disposed,
+      // The GPU renderer is OPT-IN: only a literal `true` enables it (see
+      // settingsStore.gpuRenderingEnabled). `@xterm/addon-webgl` keeps ONE glyph
+      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal empties the
+      // texture every OTHER terminal drawing from it. Only ONE terminal holds a
+      // context at a time now (see the attach effect above), so "every other" is
+      // currently nobody -- which is the point of doing it that way. The setting
+      // is read when a pane ATTACHES rather than once at mount, so switching it
+      // off takes effect on the next tab switch instead of needing a new session.
+      // Repaint this terminal's viewport from the (shared) glyph atlas.
+      const domRefresh = () => { try { term?.refresh(0, term.rows - 1) } catch { /* disposed */ } }
+      // Drop THIS terminal's render model without touching the shared texture.
+      //
+      // A same-value theme reassignment is the only public API that does it: the
+      // options setter fires xterm's `_handleColorChange`, which calls
+      // `_clearModel(true)` on this terminal's renderer alone. Nothing about the
+      // theme actually changes — the spread is what makes the setter fire.
+      //
+      // It has to be this and not `clearTextureAtlas()`, which would re-empty the
+      // SHARED texture and hand the corruption to the next terminal; N terminals
+      // clearing in response to each other never settles.
+      const clearOwnModel = () => {
+        try { if (term) term.options.theme = { ...term.options.theme } } catch { /* disposed */ }
+      }
+      // The coordinator's view of this terminal: drop the stale model, then
+      // repaint — and only while WebGL is actually live here. The SAME reference
+      // must go to both register() and notifyCleared() below; the coordinator
+      // identifies the terminal that cleared by callback identity.
+      const atlasResync = createAtlasResync(() => webglHandleRef.current, clearOwnModel, domRefresh)
+      atlasResyncRef.current = atlasResync
+      // WebGL is NOT attached here. Attaching lives in its own effect below,
+      // keyed on whether this pane is on screen: a hidden terminal holding a
+      // GPU context buys nothing and costs two things that both bite (the
+      // ~16-context-per-renderer ceiling, and one more terminal exposed to the
+      // process-wide glyph atlas). See the attach effect for the whole
+      // argument.
+      // #273 / #311: reproduces the window-resize repaint (clearTextureAtlas +
+      // refresh) against whichever addon is currently live. The glyph atlas is
+      // shared across every terminal, so a clear here empties it for all of them.
+      // The coordinator (#311) refreshes the others, which is necessary but does
+      // NOT make the clear safe — a victim keeps its old render model, so the
+      // refresh repaints it blank. Only relevant when the opt-in GPU renderer is
+      // on; inert on the DOM path (clearAtlas() returns false — nothing to clear).
+      repainter = createStaleGlyphRepainter({
+        // Rebuild the shared atlas; when it actually happened (WebGL live), tell
+        // the coordinator so every OTHER terminal repaints — otherwise they
+        // render against the atlas this clear just emptied (#311). Returns
+        // whether the atlas was cleared; false on the DOM fallback / unrecovered
+        // context loss, so the repainter skips its own refresh too.
+        clearAtlas: () => {
+          const cleared = webglHandleRef.current?.clearTextureAtlas() ?? false
+          if (cleared) atlasCoordinator.notifyCleared(atlasResync)
+          return cleared
+        },
+        atlasActive: () => webglHandleRef.current?.isActive() ?? false,
+        refresh: domRefresh,
+        now: Date.now,
+        setTimer: (cb, ms) => setTimeout(cb, ms),
+        clearTimer: (h) => clearTimeout(h),
       })
+      repainterRef.current = repainter
+
+      // #379 fix E: publish this terminal's repainter so the command bar can ask
+      // for a full repaint after a GUI-subsystem tool has written over the pane.
+      // That text never passes through the pty stream, so xterm cannot know its
+      // model is stale — only an unconditional repaint puts the two back in
+      // agreement.
+      //
+      // #503 adds resync: the shrink→restore geometry nudge (same shape as the
+      // post-resume one below) followed by the strong repaint, hand-pulled via
+      // Ctrl+Alt+R / the context menu for splice damage a repaint alone cannot
+      // fix — a console-direct writer (ssh's host-key prompt) can leave the
+      // TUI's live region desynced from the real rows, and only the TUI
+      // re-laying-out at reconfirmed geometry repairs that.
+      geometryResync = createGeometryResync({
+        getGeometry: () => ({ cols: term?.cols ?? 0, rows: term?.rows ?? 0 }),
+        resizePty: (c, r) => {
+          ptyResizeCount += 1
+          try { window.electronAPI.pty.resize(sessionId, c, r) } catch { /* main gone */ }
+        },
+        refresh: () => { try { term?.refresh(0, (term?.rows ?? 1) - 1) } catch { /* disposed */ } },
+        settleStrong: () => repainter?.settleStrong(),
+        isBusy: () => resumeNudgeShrunk,
+        onRestore: (c, r) => { lastSentCols = c; lastSentRows = r },
+      })
+      unregisterRepainter = registerRepainter(sessionId, {
+        settleStrong: (quietMs, intervalMs) => repainter?.settleStrong(quietMs, intervalMs),
+        resync: () => { geometryResync?.fire() },
+      })
+
+      // #119: cursor options passed to the Terminal constructor do NOT reliably
+      // initialize the WebGL renderer's cursor layer — the caret stays absent
+      // even while focused/typing (xterm.js #1194 "initial cursorBlink has no
+      // effect", #891 "cursor not visible initially"; the WebGL cursor is a
+      // separate 2D canvas that this gap leaves empty). Re-assigning the options
+      // at runtime after the addon loads forces the layer to build and draw.
+      // Shell sessions only — Claude/TUI sessions intentionally hide the caret.
+      if (shellOnly) {
+        term.options.cursorBlink = ts.cursorBlink ?? true
+        term.options.cursorStyle = ts.cursorStyle || 'bar'
+        term.options.cursorWidth = 2
+        term.options.cursorInactiveStyle = 'outline'
+      }
 
       // Belt-and-braces hide for xterm's caret in Claude sessions.
       // The .claude-session class + global CSS rule should already
@@ -370,24 +780,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           if (gate.isPending(sessionId)) return
           const cols = term.cols
           const rows = term.rows
-          const configLabel = session?.label || 'default'
+          // Prefer the custom work name so a restored/pre-named session's log
+          // carries the name from its first run (#119 rename → logs durability).
+          const configLabel = session?.customName?.trim() || session?.label || 'default'
           const useResumePicker = shouldUseResumePicker(sessionId)
-          // Resolve agent template IDs to config objects for --agents flag
-          let agentsConfig: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }> | undefined
-          if (agentIds && agentIds.length > 0) {
-            const allTemplates = [...useAgentLibraryStore.getState().templates, ...BUILTIN_TEMPLATES]
-            agentsConfig = agentIds
-              .map(id => allTemplates.find(t => t.id === id))
-              .filter((t): t is NonNullable<typeof t> => !!t)
-              .map(t => ({
-                name: t.name,
-                description: t.description,
-                prompt: t.prompt,
-                model: t.model !== 'inherit' ? t.model : undefined,
-                tools: t.tools.length > 0 ? t.tools : undefined,
-              }))
-            if (agentsConfig.length === 0) agentsConfig = undefined
-          }
           // markSpawned only fires at the real spawn, so an unanswered/aborted
           // account gate leaves the session unspawned and re-gates on remount.
           const doSpawn = (resolvedProfileId: string | undefined) => {
@@ -403,6 +799,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               !shellOnly && session?.resumeUuid && session?.resumeCwd
                 ? { uuid: session.resumeUuid, cwd: session.resumeCwd }
                 : undefined
+            // Ask Conductor's opening question. Read off the session record for
+            // the same reason `resume` is: it is one-shot launch state, not
+            // configuration. Consumed immediately below so a later in-session
+            // Restart (which re-runs this spawn) never re-submits it. Only ever
+            // set on a local, non-shell Claude session -- the SSH path does not
+            // set CCC_ASK_PROMPT and Codex ignores it.
+            const askPrompt = !shellOnly ? session?.askPrompt : undefined
+            if (askPrompt) updateSession(sessionId, { askPrompt: undefined })
             if (resume) {
               updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
               resumeNudgesLeft = 2
@@ -410,8 +814,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               resumeNudgesLeft = 3
               resumeNudgeGated = true
             }
+            // #242 tier 5: `reconnect` is computed here, not carried on the
+            // `ssh` prop itself -- it reflects THIS session's own history
+            // (sshReachedClaudeRunning, latched by the flow-state
+            // subscription above), not anything the caller configured.
+            // Merging it into a copy of `ssh` keeps that prop's shape a
+            // pure reflection of the session's SAVED config.
+            const sshWithReconnect = ssh ? { ...ssh, reconnect: !!session?.sshReachedClaudeRunning } : ssh
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt, isAsk: session?.kind === 'ask' })
               .catch((err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled
@@ -445,8 +856,27 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               .requestChoice(sessionId, session?.label || '', session?.profileId)
               .then((chosen) => {
                 if (chosen === GATE_CANCELLED) {
-                  // User aborted the launch: no PTY exists yet (the gate blocks
-                  // before doSpawn), so closing is just removing the tab.
+                  // Cancel means different things for a NEW tab vs a RESUME
+                  // (#446). A session RESTORED this run only reaches this gate
+                  // on the 'ask' resume path, and cancelling there must NOT
+                  // throw away a session the user chose to restore — continue
+                  // under its saved account instead. The signal is "was
+                  // restored" (gate store), not session.profileId, which
+                  // cannot tell a resume from a fresh tab (legacy
+                  // config.profileId can pin a new tab; a single-account resume
+                  // carries no pin). A brand-new tab is discarded as before
+                  // (its browser profile goes with it — a no-op for a pane that
+                  // never opened, #371).
+                  if (gate.wasRestored(sessionId)) {
+                    // Same !disposed handling as the success path: if the view
+                    // is gone, mark predetermined so the remount spawns the
+                    // saved account without re-prompting (never spawn a PTY for
+                    // a torn-down view).
+                    if (!disposed) doSpawn(session?.profileId)
+                    else gate.markPredetermined(sessionId)
+                    return
+                  }
+                  forgetSessionBrowserProfile(sessionId)
                   useSessionStore.getState().removeSession(sessionId)
                   return
                 }
@@ -485,6 +915,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // comes from PTY output; un-ack on real keystrokes. Provider sessions use
         // the hook-driven attention source (attention-source.ts) instead.
         if (shellOnly && !isControlReportOnly(data)) attentionAckedRef.current = false
+        // #145 diagnostics: record what actually leaves for the PTY. The write path
+        // is identical for shell and Claude sessions, so when the same dictation
+        // lands in PowerShell but not in Claude, this line is what proves whether
+        // the bytes handed to claude.exe were correct and complete. Control reports
+        // are skipped — they'd bury the real input.
+        if (inputDiagRef.current && !isControlReportOnly(data)) {
+          window.electronAPI.inputDebug.log(
+            `[${sessionId}] pty:write ${shellOnly ? 'shell' : 'claude'} ${describeBytes(data)}`,
+          )
+        }
+        // Focus-report chunks (RC8): the TUI answers \x1b[I / \x1b[O with a
+        // small redraw. Grace the working pill so a session click/switch does
+        // not flash it — the exact-match twin of the main process's sleep-moon
+        // grace in writePty.
+        if (data === '\x1b[I' || data === '\x1b[O') noteActivityGrace(sessionId)
         window.electronAPI.pty.write(sessionId, data)
       })
 
@@ -572,6 +1017,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       handleWheel = () => {
         if (!term) return
+        // #273: record the scroll and bust any stale glyphs now. Normal buffer
+        // only — the alternate screen (TUI apps) owns its own repaints.
+        lastWheelAt = Date.now()
+        if (term.buffer.active.type !== 'alternate') repainter?.schedule()
         // After the wheel event settles, check viewport position
         if (refreshTimer) clearTimeout(refreshTimer)
         refreshTimer = setTimeout(() => {
@@ -634,6 +1083,50 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         if (follow.scrollToBottom) term?.scrollToBottom()
         if (follow.scrolledUp !== isScrolledUpRef.current) updateScrollState(follow.scrolledUp)
 
+        // #273: streaming output is when stale WebGL glyphs accumulate — at the
+        // bottom with no scroll too (follow-up: a slicer's stderr ghosted and
+        // stayed ghosted). Every normal-buffer chunk repaints, paced 4/sec while
+        // scrolled up / wheel-active and 1/sec for steady at-bottom streaming,
+        // and one settle repaint clears the last chunk's ghost once the stream
+        // goes quiet. The repainter skips the refresh when WebGL isn't active.
+        //
+        // beta.14: only the scrolled-up / wheel-active case rebuilds the glyph
+        // ATLAS. At-bottom streaming gets a refresh-only repaint, because Claude
+        // Code renders in the normal buffer, so a rebuild-per-chunk ran for the
+        // entire life of every session — continuous flashing and frames drawn
+        // against a half-rebuilt atlas (the beta.13 regression).
+        if (term && repainter) {
+          const repaintState = {
+            alternateBuffer: term.buffer.active.type === 'alternate',
+            scrolledUp: isScrolledUpRef.current,
+            msSinceWheel: Date.now() - lastWheelAt,
+            wheelActiveMs: WHEEL_ACTIVE_MS,
+          }
+          const strong = shouldRepaintOnOutput(repaintState)
+          if (strong || shouldSoftRepaintOnOutput(repaintState)) {
+            const paceMs = outputRepaintIntervalMs(repaintState)
+            repainter.schedule(paceMs, strong)
+            // Settle at the SAME pace: a between-chunks settle on a steady
+            // at-bottom stream must not repaint faster than the stream (it would
+            // defeat the 1/sec bound); when output truly stops it still clears
+            // the final ghost within one interval.
+            repainter.settle(undefined, paceMs, strong)
+            // ...and one STRONG rebuild once output actually stops. The atlas
+            // goes stale on its own (#273: new glyph variety in the stream is
+            // enough), and only a rebuild fixes it — which is why a window
+            // resize clears it by hand. Doing it in the GAP means the user never
+            // has to: nothing is moving, so it is not competing with a stream of
+            // new frames, and the text they are about to read is corrected.
+            repainter.settleStrong()
+            // ...and a backstop, because settleStrong is DEBOUNCED: a stream
+            // that never leaves an 800ms gap pushes it out indefinitely, so the
+            // atlas stays stale for the whole length of a long build log or
+            // Claude Code response and the mouse wheel is the only way out.
+            // This only fires once the atlas has been stale that long anyway.
+            repainter.strongIfStale()
+          }
+        }
+
         // Post-resume settle nudge: every chunk re-arms the timer; it fires only
         // once a burst has gone quiet for 600ms, and only while shots remain.
         // Suppressed right after our own nudge so its repaint can't chain-fire
@@ -684,6 +1177,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       unsubExit = window.electronAPI.pty.onExit(sessionId, (exitCode) => {
         term?.writeln(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`)
+        // The session object outlives the process, and until now nothing in the
+        // renderer recorded that. A caller that finds the session and writes to
+        // it -- Ask Conductor did exactly this -- has its bytes buffered into a
+        // pendingWrites map that only a spawn drains, and a spawn CLEARS that
+        // buffer before it fills it. So the write is not delayed, it is lost.
+        // clearSpawned too, so a remount is allowed to respawn this id.
+        useSessionStore.getState().updateSession(sessionId, { ptyExited: true })
+        clearSpawned(sessionId)
       })
 
       // Handle resize
@@ -702,6 +1203,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               lastSentCols = cols
               lastSentRows = rows
               ptyResizeCount += 1
+              // ConPTY repaints the pane on resize — redraw output, not
+              // activity. Grace the pill so it doesn't flash (RC8); the main
+              // process arms the moon's grace in its own resize handler.
+              // (The resume-nudge and geometryResync resizes deliberately skip
+              // this: they fire in already-streaming flows where the pill is
+              // lit anyway, while the main-side grace still covers the moon.)
+              noteActivityGrace(sessionId)
               window.electronAPI.pty.resize(sessionId, cols, rows)
               reportIntegrity()
             }
@@ -713,53 +1221,114 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       })
       resizeObserver.observe(container)
 
-      // Ctrl+Shift+C to copy selected text
-      handleKeyDownCopy = (e: KeyboardEvent) => {
-        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-          e.preventDefault()
-          const sel = term?.getSelection()
-          if (sel) navigator.clipboard.writeText(sel)
-        }
-      }
-      document.addEventListener('keydown', handleKeyDownCopy)
+      // Clipboard keybindings (copy + paste). The wiring lives in
+      // terminalKeybindings.ts so the event-phase registration is unit-testable —
+      // the #145 bug was a bubble-phase listener that xterm beat to the keystroke,
+      // and no predicate test could see it (#154).
+      //
+      // `isActive` is passed as a THUNK, not a value: this effect keys on session
+      // identity, so a captured boolean would go stale on tab switches, and the
+      // listener is on `document`, shared by every mounted TerminalView.
+      disposeKeybindings = installTerminalKeybindings({
+        term: {
+          getSelection: () => term?.getSelection() ?? '',
+          paste: (text) => term?.paste(text),
+          clearSelection: () => term?.clearSelection(),
+        },
+        isActive: () => isActiveRef.current,
+        // Main-process clipboard read: focus-independent and retried for Windows
+        // delayed-render, with the renderer API as a fallback if IPC is unavailable.
+        readText: readClipboardText,
+        writeText: (text) => navigator.clipboard.writeText(text),
+        // Never fail silently — a silent no-op is what let #145 go unnoticed.
+        onNothingToPaste: () => {
+          usePasteHintStore.getState().show(sessionId, 'Nothing to paste — clipboard has no text')
+        },
+      })
 
-      // Right-click: context-aware copy or paste depending on mode.
+
+      // Right-click: copy the selection, paste, or open the explicit menu.
       //
-      // Classic mode (classicTerminalCopyPaste, the default): CC's mouse
-      // tracking is disabled so xterm owns selection. Right-click copies
-      // the current selection when text is selected, or pastes from the
-      // clipboard when nothing is selected. Route paste through xterm's
-      // paste() so bracketed-paste mode (\x1b[200~...\x1b[201~) is respected.
-      //
-      // Non-classic mode: CC's copy-on-select already copied text on
-      // mouse-up, so right-click always pastes (never re-copies).
+      // The decision lives in decideContextMenuAction. The load-bearing input
+      // is term.modes.mouseTrackingMode: while a program tracks the mouse,
+      // xterm disables its selection service, so "no selection" is guaranteed
+      // and MUST NOT be read as "paste, a copy already happened" — that
+      // reading fed the clipboard into the PTY (and, at a shell prompt,
+      // executed it). Blind paste survives only in its classic-mode home (no
+      // tracking, nothing selected, single-line or bracketed-paste target);
+      // everything ambiguous opens TerminalContextMenu, where Copy and Paste
+      // are explicit clicks. Paste routes through xterm's paste() so
+      // bracketed-paste mode (\x1b[200~...\x1b[201~) is respected.
       handleContextMenu = async (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
+        if (!term) return
         const classicMode = useSettingsStore.getState().settings.classicTerminalCopyPaste !== false
-        const action = decideContextMenuAction(!!term?.getSelection(), classicMode)
+        const { action, bracketedPaste } = resolveContextMenuIntent(term, classicMode)
+        // #21: right-clicking an http/https link with nothing selected opens the
+        // menu so "Copy link address" is available (instead of a blind paste).
+        // A live selection still copies the selection (action==='copy') and wins.
+        const linkUri = linkHoverRef.current?.current() ?? null
+        if (linkUri && action !== 'copy') {
+          setCtxMenu({ x: e.clientX, y: e.clientY, hasSelection: !!term.getSelection(), linkUri })
+          return
+        }
         if (action === 'copy') {
-          const sel = term?.getSelection()
+          const sel = term.getSelection()
           if (sel) {
             try {
               await navigator.clipboard.writeText(sel)
-              term?.clearSelection()
+              term.clearSelection()
             } catch {
               // clipboard write denied (insecure context / not focused)
             }
           }
           return
         }
-        // action === 'paste'
-        try {
-          const text = await navigator.clipboard.readText()
-          if (!text) return
-          term?.paste(text)
-        } catch {
-          // clipboard access denied (insecure context / not focused)
+        if (action === 'paste') {
+          const text = await readClipboardText()
+          if (!text) {
+            // Never fail silently — a silent no-op is what let #145 go unnoticed.
+            usePasteHintStore.getState().show(sessionId, 'Nothing to paste — clipboard has no text')
+            return
+          }
+          // Re-sample tracking AFTER the (retried, possibly slow) clipboard read:
+          // a program that started tracking the mouse during the await must open
+          // the menu, not receive a decision taken while it was still a prompt.
+          // Same tested seam as the first read (isMouseTracking) — never inline it.
+          const trackingNow = isMouseTracking(term)
+          if (trackingNow || blindPasteNeedsMenu(text, bracketedPaste)) {
+            // Ambiguous now, or multi-line into a non-bracketed prompt (which
+            // submits line-by-line) — require the explicit menu click.
+            setCtxMenu({ x: e.clientX, y: e.clientY, hasSelection: !!term.getSelection() })
+            return
+          }
+          term.paste(text)
+          return
         }
+        // action === 'menu'
+        setCtxMenu({ x: e.clientX, y: e.clientY, hasSelection: !!term.getSelection() })
       }
       container.addEventListener('contextmenu', handleContextMenu, true)
+
+      // SANITIZE EVERY NATIVE PASTE ROUTE — sanitizeClipboardForPaste is only a
+      // true chokepoint if nothing can paste around it. readClipboardText() covers
+      // the paths CCC owns (Ctrl+V, right-click), but xterm registers its OWN
+      // 'paste' listener on the helper textarea that reads the RAW clipboard and
+      // calls paste() with no strip, and that listener is still reachable two ways:
+      // the Edit menu's {role:'paste'} -> webContents.paste(), and Ctrl+V while a
+      // modal is open (installTerminalKeybindings bails before preventDefault when
+      // hasModalOpen, so the native paste fires). Either re-opens the bracketed-
+      // paste \x1b[201~ breakout the sanitiser exists to close. Intercept in the
+      // CAPTURE phase on the container — an ancestor of the textarea, so this runs
+      // BEFORE xterm's listener; stopPropagation keeps xterm from also pasting and
+      // preventDefault stops the browser's own insertion, so the ONLY paste that
+      // reaches this terminal is the sanitised one.
+      handlePaste = (e: ClipboardEvent) => {
+        if (!term) return
+        sanitizePasteIntoTerminal(e, term)
+      }
+      container.addEventListener('paste', handlePaste, true)
     }
 
     requestAnimationFrame(initTerminal)
@@ -779,9 +1348,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // geometry so a remount doesn't inherit a desynced terminal.
         try { window.electronAPI.pty.resize(sessionId, lastSentCols, lastSentRows) } catch { /* main gone */ }
       }
-      if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
+      disposeKeybindings?.()
+      linkHoverRef.current?.dispose()
+      linkHoverRef.current = null
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
+      if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
+      unregisterRepainter?.()
+      geometryResync?.dispose()
+      repainter?.dispose()
+      if (repainterRef.current === repainter) repainterRef.current = null
       resizeObserver?.disconnect()
       unsubData?.()
       unsubExit?.()
@@ -796,8 +1372,65 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const needsAttention = session?.needsAttention ?? false
   const needsLogin = session?.needsLogin ?? false
 
+  // Context-menu actions. Close first so the menu is gone before any async
+  // clipboard work; refocus the terminal so the user can keep typing.
+  const closeCtxMenu = () => {
+    setCtxMenu(null)
+    terminalRef.current?.focus()
+  }
+  const ctxMenuCopy = async () => {
+    const sel = terminalRef.current?.getSelection()
+    setCtxMenu(null)
+    if (sel) {
+      try {
+        await navigator.clipboard.writeText(sel)
+      } catch {
+        // clipboard write denied (insecure context / not focused)
+      }
+    }
+    // Re-read the ref AFTER the await: the session can be disposed mid-await,
+    // which nulls terminalRef — pasting/clearing into a captured-but-disposed
+    // Terminal would throw.
+    terminalRef.current?.clearSelection()
+    terminalRef.current?.focus()
+  }
+  const ctxMenuPaste = async () => {
+    setCtxMenu(null)
+    const text = await readClipboardText()
+    const term = terminalRef.current // re-read post-await; may be null if disposed
+    if (!text) {
+      usePasteHintStore.getState().show(sessionId, 'Nothing to paste — clipboard has no text')
+    } else {
+      term?.paste(text)
+    }
+    term?.focus()
+  }
+  // #21: copy the http/https link under the cursor to the clipboard. No scheme
+  // gate — copying a URL string is inert (opening it is https-gated in main).
+  const ctxMenuCopyLink = async (uri: string) => {
+    setCtxMenu(null)
+    try {
+      await navigator.clipboard.writeText(uri)
+    } catch {
+      // clipboard write denied (insecure context / not focused)
+    }
+    terminalRef.current?.focus()
+  }
+
   return (
-    <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
+    // data-terminal-session: lets the Ctrl+Alt+R capture handler resolve WHICH
+    // terminal the chord was pressed in by DOM ancestry (#503) — the partner
+    // pane and alt panes register under their own keys, and the active session
+    // id alone would nudge a hidden pty. data-terminal-active marks the one
+    // pane that is actually on screen (isActive is true for at most one
+    // TerminalView — main and partner exclude each other), the handler's
+    // fallback when focus sits outside any terminal.
+    <div
+      className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative"
+      style={{ minHeight: 0 }}
+      data-terminal-session={sessionId}
+      data-terminal-active={isActive ? '' : undefined}
+    >
       {needsLogin && (
         <div className="bg-blue/10 border-b border-blue/30 text-lavender text-xs px-3 py-1.5 shrink-0">
           Setting up a new account. Run claude, type /login, and choose the account. We&apos;ll detect it automatically.
@@ -825,9 +1458,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       {ssh && (
         <SshFlowOverlay
           sessionId={sessionId}
-          hasPostCommand={!!ssh.postCommand}
+          hasPostCommand={!!ssh.postCommand || ssh.runtime?.type === 'container'}
           shellOnly={!!shellOnly}
           enabled
+          onRetry={sshRestart}
         />
       )}
       {isScrolledUp && (
@@ -837,6 +1471,22 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             isScrolledUpRef.current = false
             setIsScrolledUp(false)
           }}
+        />
+      )}
+      {ctxMenu && (
+        <TerminalContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          hasSelection={ctxMenu.hasSelection}
+          linkUri={ctxMenu.linkUri}
+          onCopyLink={ctxMenuCopyLink}
+          onCopy={ctxMenuCopy}
+          onPaste={ctxMenuPaste}
+          onRepaint={() => {
+            requestResync(sessionId)
+            closeCtxMenu()
+          }}
+          onClose={closeCtxMenu}
         />
       )}
     </div>

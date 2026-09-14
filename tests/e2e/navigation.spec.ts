@@ -39,8 +39,8 @@ test.describe('Sidebar Navigation', () => {
       return
     }
 
-    // Nav row: Agent Hub, Insights, Tokenomics, Conductor MCP, Memory, Logs,
-    // Settings + Feature Guide = 8 buttons.
+    // Nav row: Cloud Agents, Insights, Tokenomics, Conductor MCP, Memory,
+    // Logs, Settings + Feature Guide = 8 buttons.
     const navArea = sidebar.locator('.px-2.pt-2')
     const buttons = navArea.locator('button')
     const count = await buttons.count()
@@ -67,21 +67,22 @@ test.describe('Sidebar Navigation', () => {
     }
   })
 
-  test('Agent Hub nav button is first', async () => {
+  test('Cloud Agents nav button is first', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
       return
     }
 
-    // First nav button is Agent Hub (formerly "Cloud Agents"). The button's
-    // title attribute mirrors the nav label.
+    // First nav button is Cloud Agents (the Agent Hub name left with #443).
+    // The custom tooltip replaced the native title attribute, so the durable
+    // handle is the accessible name.
     const firstButton = sidebar.locator('.px-2.pt-2 button').first()
-    const title = await firstButton.getAttribute('title')
-    expect(title).toContain('Agent Hub')
+    const label = await firstButton.getAttribute('aria-label')
+    expect(label).toContain('Cloud Agents')
   })
 
-  test('clicking Agent Hub shows the dashboard', async () => {
+  test('clicking Cloud Agents shows the dashboard', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
@@ -93,30 +94,39 @@ test.describe('Sidebar Navigation', () => {
     await page.waitForTimeout(500)
 
     // PageFrame renders its title as a <span>, not an <h1>, so assert the nav
-    // entry's active state — a robust "the Agent Hub view is showing" signal.
+    // entry's active state — a robust "the Cloud Agents view is showing" signal.
     await expect(firstButton).toHaveClass(/rail-active/)
   })
 
-  test('"Saved Configs" section exists in sidebar', async () => {
+  test('Sessions panel exposes the two-mode tabs, Running selected by default', async () => {
+    // The old "Saved Configs" fly-out header retired with the two-mode panel
+    // (design pass 2026-08-24): the contract is now the tab pair.
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
       return
     }
 
-    // Exact match: the empty-state "No saved configs…" also contains the
-    // substring, so a loose text= locator hits two elements.
-    const configsLabel = sidebar.getByText('Saved Configs', { exact: true })
-    await expect(configsLabel).toBeVisible()
+    const savedTab = sidebar.locator('[data-testid="panel-tab-saved"]')
+    const runningTab = sidebar.locator('[data-testid="panel-tab-running"]')
+    await expect(savedTab).toBeVisible()
+    await expect(runningTab).toBeVisible()
+    await expect(runningTab).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('"Active Sessions" section exists in sidebar', async () => {
+  test('Saved tab reveals the launcher (+ New); Running returns to sessions', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
       return
     }
 
+    await sidebar.locator('[data-testid="panel-tab-saved"]').click()
+    await expect(sidebar.locator('[data-testid="saved-tab"]')).toBeVisible()
+    await expect(sidebar.locator('[data-testid="new-button"]')).toBeVisible()
+
+    await sidebar.locator('[data-testid="panel-tab-running"]').click()
+    await expect(sidebar.locator('[data-testid="running-tab"]')).toBeVisible()
     const sessionsLabel = sidebar.getByText('Active Sessions', { exact: true })
     await expect(sessionsLabel).toBeVisible()
   })

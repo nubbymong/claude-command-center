@@ -32,6 +32,22 @@ describe('settingsStore', () => {
       expect(state.settings.terminalFontSize).toBe(13)
     })
 
+    it('a shortcut map predating a release picks up the new chords (#503)', () => {
+      // The shape that kept new chords dead: a persisted keyboardShortcuts
+      // object EXISTS but lacks keys added since it was saved, and a consumer
+      // substituting the whole object never sees the new defaults. hydrate
+      // owns the merge now; a user's own binding still wins, and a
+      // hand-cleared "" survives as cleared (falsy never matches a chord).
+      useSettingsStore.getState().hydrate({
+        keyboardShortcuts: { closeSession: 'Ctrl+Q', pasteImage: '' },
+      } as any)
+      const map = useSettingsStore.getState().settings.keyboardShortcuts!
+      expect(map.repaintTerminal).toBe('Ctrl+Alt+R')
+      expect(map.captureGlyphDiagnostic).toBe('Ctrl+Alt+G')
+      expect(map.closeSession).toBe('Ctrl+Q')
+      expect(map.pasteImage).toBe('')
+    })
+
     it('fully overrides when all keys provided', () => {
       useSettingsStore.getState().hydrate({
         defaultModel: 'haiku',

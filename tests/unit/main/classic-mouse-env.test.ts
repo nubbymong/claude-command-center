@@ -5,7 +5,12 @@
  * Contract:
  *   - classic on (true or undefined = default) → BOTH vars set to '1'.
  *   - classic off (false) → NEITHER var is set (by this function).
- *   - shell-only sessions → NEITHER var is set, regardless of classicTerminalCopyPaste.
+ *   - shell-only sessions (elevated included) follow the SAME rule as Claude
+ *     sessions. The old exemption ("shell-only → never set") pinned a live
+ *     defect: the vars only matter to a `claude` process, and shell-only
+ *     sessions are where users start one by hand (the re-auth flow's /login
+ *     prompt) — that claude kept mouse tracking, so right-click pasted (and at
+ *     a shell prompt executed) the clipboard instead of copying.
  *
  * We use vi.stubEnv to ensure the host environment's own CLAUDE_CODE_DISABLE_MOUSE
  * value (which may be set on the developer machine) does not interfere with the
@@ -54,21 +59,27 @@ describe('buildClaudeLocalSpawn — classic copy/paste env vars', () => {
     expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined()
   })
 
-  it('shell-only: NEITHER var is set (classic default)', () => {
+  it('shell-only: BOTH vars are set (classic default) — hand-run claude must not keep mouse tracking', () => {
     const { env } = buildClaudeLocalSpawn({ ...BASE, shellOnly: true })
-    expect(env.CLAUDE_CODE_DISABLE_MOUSE).toBeUndefined()
-    expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined()
+    expect(env.CLAUDE_CODE_DISABLE_MOUSE).toBe('1')
+    expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('1')
   })
 
-  it('shell-only: NEITHER var is set even when classicTerminalCopyPaste is true', () => {
+  it('shell-only: BOTH vars are set when classicTerminalCopyPaste is true', () => {
     const { env } = buildClaudeLocalSpawn({ ...BASE, shellOnly: true, classicTerminalCopyPaste: true })
+    expect(env.CLAUDE_CODE_DISABLE_MOUSE).toBe('1')
+    expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('1')
+  })
+
+  it('shell-only: classic off (false) still sets NEITHER var', () => {
+    const { env } = buildClaudeLocalSpawn({ ...BASE, shellOnly: true, classicTerminalCopyPaste: false })
     expect(env.CLAUDE_CODE_DISABLE_MOUSE).toBeUndefined()
     expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined()
   })
 
-  it('shell-only elevated: NEITHER var is set', () => {
+  it('shell-only elevated: BOTH vars are set', () => {
     const { env } = buildClaudeLocalSpawn({ ...BASE, shellOnly: true, elevated: true })
-    expect(env.CLAUDE_CODE_DISABLE_MOUSE).toBeUndefined()
-    expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined()
+    expect(env.CLAUDE_CODE_DISABLE_MOUSE).toBe('1')
+    expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('1')
   })
 })

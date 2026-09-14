@@ -18,6 +18,7 @@ import {
   isProfileInUseByLiveSession,
   _resetClaudeAccounts,
 } from '../../../src/main/claude-account-identity'
+import { acquireProfileConsumer, _resetProfileConsumersForTest } from '../../../src/main/profile-consumers'
 
 // Bug 2: sessions of an account share the account's PROFILE home, so the watcher
 // reads the profile home's .claude.json (not a per-session home). A /login rewrites
@@ -120,5 +121,27 @@ describe('isProfileInUseByLiveSession (R-006: refuse delete of an in-use profile
     startWatchingAccountIdentity('s3', undefined) // default/single-account session
     expect(isProfileInUseByLiveSession('')).toBe(false)
     expect(isProfileInUseByLiveSession(undefined as unknown as string)).toBe(false)
+  })
+
+  // #48: the registry is the third source the guard reads. A consumer with no
+  // session id -- the auth probe, a headless run, an Insights run, a cloud agent,
+  // a shell-only session -- makes the profile in-use for exactly its life.
+  it('is true while a registered consumer holds the profile (no session at all), false after release', () => {
+    _resetProfileConsumersForTest()
+    const release = acquireProfileConsumer('p7', { maxAgeMs: Infinity })
+    expect(isProfileInUseByLiveSession('p7')).toBe(true)
+    expect(isProfileInUseByLiveSession('p8')).toBe(false)
+    release()
+    expect(isProfileInUseByLiveSession('p7')).toBe(false)
+  })
+
+  it('a session and a consumer on one profile: in use until BOTH are gone', () => {
+    _resetProfileConsumersForTest()
+    startWatchingAccountIdentity('s9', 'p9')
+    const release = acquireProfileConsumer('p9', { maxAgeMs: Infinity })
+    stopWatchingAccountIdentity('s9')
+    expect(isProfileInUseByLiveSession('p9')).toBe(true) // the consumer still holds it
+    release()
+    expect(isProfileInUseByLiveSession('p9')).toBe(false)
   })
 })

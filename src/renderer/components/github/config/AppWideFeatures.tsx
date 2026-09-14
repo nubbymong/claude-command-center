@@ -36,7 +36,7 @@ export default function AppWideFeatures() {
           // Legacy fallback for the one-frame race before appWideToggles hydrates.
           const on = config.appWideToggles?.[key] ?? config.featureToggles[key]
           return (
-            <div key={key} className="bg-mantle p-3 rounded flex items-start gap-3">
+            <div key={key} className="settings-card p-3 flex items-start gap-3">
               <div className="flex-1">
                 <div className="text-text text-sm">{meta.label}</div>
                 <div className="text-xs text-subtext0">{meta.description}</div>

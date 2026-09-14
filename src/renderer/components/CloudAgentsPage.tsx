@@ -7,8 +7,6 @@ import type { CloudAgent, CloudAgentStatus } from '../types/electron'
 import { StatusDot, type SessionState } from './ui/StatusDot'
 import { MetricChip } from './ui/MetricChip'
 import NewAgentDialog from './NewAgentDialog'
-import AgentLibrary from './AgentLibrary'
-import TeamsPanel from './TeamsPanel'
 import PageFrame from './PageFrame'
 import { AgentHubExplainer, AgentHubExamples } from './agent-hub/AgentHubOnboarding'
 
@@ -162,10 +160,10 @@ function ContextMenu({ x, y, agent, onClose }: {
           disabled={item.disabled}
           className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors ${
             item.disabled
-              ? 'text-overlay0 cursor-not-allowed'
+              ? 'text-[var(--text-muted)] cursor-not-allowed'
               : item.danger
-              ? 'text-red hover:bg-red/10'
-              : 'text-text hover:bg-surface1'
+              ? 'text-[var(--status-danger)] hover:bg-[color-mix(in_srgb,var(--status-danger)_10%,transparent)]'
+              : 'text-[var(--text-primary)] hover:bg-[var(--surface-raised)]'
           }`}
         >
           <span className="w-4 text-center text-[11px]">{item.icon}</span>
@@ -522,42 +520,12 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
 }
 
 // --- Main Page ---
-
-type HubTab = 'tasks' | 'teams' | 'library'
-
-const HUB_TABS: { id: HubTab; label: string }[] = [
-  { id: 'tasks', label: 'Tasks' },
-  // Label-only rename to "Pipelines" (the id/config keys/IPC stay `team*`).
-  { id: 'teams', label: 'Pipelines' },
-  { id: 'library', label: 'Library' },
-]
-
-export function CloudRail({ hubTab, onChange }: { hubTab: HubTab; onChange: (id: HubTab) => void }) {
-  return (
-    <nav className="py-1.5">
-      {HUB_TABS.map(t => {
-        const active = hubTab === t.id
-        return (
-          <button
-            key={t.id}
-            onClick={() => onChange(t.id)}
-            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
-            style={{
-              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
-              color: active ? 'var(--accent)' : 'var(--text-secondary)',
-              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
-            }}
-          >
-            {t.label}
-          </button>
-        )
-      })}
-    </nav>
-  )
-}
+//
+// #443: the Agent Hub's Pipelines and Library tabs (and their left rail) are
+// deprecated in 2.1 — 2.2 replaces them with richer functionality. This page
+// is the cloud agents surface alone now.
 
 export default function CloudAgentsPage() {
-  const [hubTab, setHubTab] = useState<HubTab>('tasks')
   const allAgents = useCloudAgentStore(s => s.agents)
   const selectedAgentId = useCloudAgentStore(s => s.selectedAgentId)
   const selectAgent = useCloudAgentStore(s => s.selectAgent)
@@ -568,6 +536,10 @@ export default function CloudAgentsPage() {
   const accountFilter = useCloudAgentStore(s => s.accountFilter)
   const setAccountFilter = useCloudAgentStore(s => s.setAccountFilter)
   const clearCompleted = useCloudAgentStore(s => s.clearCompleted)
+  // #371 BLOCKER-1: a refused remove / clear used to be discarded, so the rows
+  // vanished and came back on restart. They now stay put — say why.
+  const mutationError = useCloudAgentStore(s => s.error)
+  const clearMutationError = useCloudAgentStore(s => s.clearError)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   // First-run example prefill for the New Agent dialog (ephemeral).
@@ -641,16 +613,14 @@ export default function CloudAgentsPage() {
     </svg>
   )
 
-  const cloudRail = <CloudRail hubTab={hubTab} onChange={setHubTab} />
-
-  const cloudContext = hubTab === 'tasks' && counts.running > 0 ? (
+  const cloudContext = counts.running > 0 ? (
     <span className="inline-flex items-center gap-1.5">
       <span className="w-1.5 h-1.5 rounded-full bg-blue animate-pulse" />
       {counts.running} running
     </span>
   ) : undefined
 
-  const cloudActions = hubTab === 'tasks' ? (
+  const cloudActions = (
     <>
       {counts.completed + counts.failed > 0 && (
         <button
@@ -668,27 +638,41 @@ export default function CloudAgentsPage() {
         New agent
       </button>
     </>
-  ) : undefined
+  )
 
   return (
     <>
       <PageFrame
         icon={cloudIcon}
         iconAccent="sapphire"
-        title="Agent Hub"
+        title="Cloud Agents"
         context={cloudContext}
         actions={cloudActions}
-        leftRail={cloudRail}
         scrollable={false}
       >
-      {hubTab === 'teams' ? (
-        <TeamsPanel />
-      ) : hubTab === 'library' ? (
-        <AgentLibrary />
-      ) : (
         <div className="flex flex-col flex-1 min-h-0">
         {!explainerDismissed && (
           <AgentHubExplainer onDismiss={() => { void updateSettings({ agentHubExplainerDismissed: true }) }} />
+        )}
+        {mutationError && (
+          <div
+            role="alert"
+            className="mx-4 mt-2 flex items-start gap-2 text-xs leading-snug rounded-lg px-2.5 py-1.5 shrink-0"
+            style={{
+              color: 'var(--status-danger)',
+              background: 'color-mix(in srgb, var(--status-danger) 12%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)',
+            }}
+          >
+            <span className="flex-1 min-w-0">{mutationError}</span>
+            <button
+              onClick={clearMutationError}
+              className="shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+              title="Dismiss"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>
+            </button>
+          </div>
         )}
         {counts.all === 0 ? (
           <AgentHubExamples
@@ -810,7 +794,6 @@ export default function CloudAgentsPage() {
           </>
         )}
         </div>
-      )}
       </PageFrame>
 
       {/* Context menu */}

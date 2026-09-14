@@ -46,15 +46,27 @@ describe('SessionRow card', () => {
   beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
   afterEach(() => { act(() => root.unmount()); container.remove() })
 
+  it('#454: renders the instance ordinal when given one, and omits it otherwise', () => {
+    render(root, { label: 'App Dev' }, { ordinal: 2 })
+    const o = container.querySelector('[data-testid="session-row-ordinal"]')
+    expect(o?.textContent).toBe('#2')
+    act(() => root.unmount()); root = createRoot(container)
+    render(root, { label: 'App Dev' }) // no ordinal prop
+    expect(container.querySelector('[data-testid="session-row-ordinal"]')).toBeNull()
+  })
+
   it('does NOT render a Claude provider badge for the default (claude) provider', () => {
     render(root, { provider: 'claude' })
     expect(container.querySelector('[title="Claude is working"]')).toBeNull()
     expect(container.querySelector('[title="Waiting for input"]')).toBeNull()
   })
 
-  it('renders a Codex glyph for codex provider (non-default)', () => {
+  it('renders a Codex glyph for codex provider', () => {
+    // The type badge is a TYPE mark now, not an attention indicator: its title
+    // is the plain type name and it no longer changes colour with state (the
+    // status pill owns attention). Canvas review 2026-08-19.
     render(root, { provider: 'codex' })
-    expect(container.querySelector('[title="Codex is working"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="type-badge-codex"]')).toBeTruthy()
   })
 
   it('applies the quiet dashed focus ring class when focused', () => {
@@ -153,5 +165,114 @@ describe('SessionRow card', () => {
     expect(line2.style.gridColumn).toBe('1 / 3')
     expect(line2.textContent).toContain('sonnet')
     expect(line2.textContent).toContain('claude')
+  })
+
+  it('context meter lives on its own full-width row, independent of model-name length', () => {
+    // Regression (owner report): the meter shared line 2 with the model meta as
+    // a flex-basis-0 item. A long model name ("Opus 5 (1M context)") consumed
+    // the row's natural width, so with no positive free space to grow into the
+    // bar rendered 0px wide — it only ever showed for short names. jsdom can't
+    // measure flex layout, so lock the structural fix instead: the meter sits in
+    // a dedicated full-span grid row containing NO text, so no model-name length
+    // can compete with it for width.
+    render(root, { modelName: 'Opus 5 (1M context)', contextPercent: 26 })
+    const meterRow = container.querySelector('[data-testid="context-meter-row"]') as HTMLElement
+    expect(meterRow).toBeTruthy()
+    expect(meterRow.style.gridColumn).toBe('1 / 3')
+    // Nothing textual shares the meter's row — the squeeze cannot recur.
+    expect((meterRow.textContent ?? '').trim()).toBe('')
+    const fill = meterRow.querySelector('.meter-fill') as HTMLElement
+    expect(fill).toBeTruthy()
+    expect(fill.style.width).toBe('26%')
+    // The long model name and the % still render on line 2; the meter is NOT
+    // inside that flex row any more.
+    const line2 = container.querySelector('[data-testid="card-line2"]') as HTMLElement
+    expect(line2.textContent).toContain('Opus 5 (1M context)')
+    expect(line2.textContent).toContain('26%')
+    expect(line2.contains(fill)).toBe(false)
+  })
+
+  it('meter row sits below the account line (row 4; row 3 accountless) and degrades gracefully with no usage data', () => {
+    render(root, { accountEmail: 'nicholas@example.com', accountColour: 'mauve', contextPercent: undefined })
+    const meterRow = container.querySelector('[data-testid="context-meter-row"]') as HTMLElement
+    expect(meterRow.className).toContain('row-start-4')
+    // Unknown usage: empty track (0% fill) + blank %, same as pre-change.
+    expect((meterRow.querySelector('.meter-fill') as HTMLElement).style.width).toBe('0%')
+    expect(container.querySelector('[data-testid="card-line2"]')!.textContent).not.toContain('%')
+    // Accountless card: the meter takes row 3 directly (no empty gap row).
+    render(root, { accountEmail: undefined, contextPercent: 40 })
+    expect((container.querySelector('[data-testid="context-meter-row"]') as HTMLElement).className).toContain('row-start-3')
+  })
+
+  it('shell-only sessions render no meter row at all', () => {
+    render(root, { shellOnly: true, contextPercent: 98 })
+    expect(container.querySelector('[data-testid="context-meter-row"]')).toBeNull()
+    expect(container.querySelector('.meter-fill')).toBeNull()
+  })
+
+  // Phase 3 (harmonise-remote): the card's account line resolves from
+  // accountEmail (live /status tick) with sshRemoteAccount (setup sentinel)
+  // as the SSH fallback, so remote cards carry the same account row as local.
+  it('SSH card shows the account line from sshRemoteAccount when no live tick yet', () => {
+    render(root, { sessionType: 'ssh', accountEmail: undefined, sshRemoteAccount: 'remote@x.com' })
+    const name = container.querySelector('[data-testid="account-name"]')
+    expect(name).not.toBeNull()
+    expect(name!.textContent).toBeTruthy()
+    expect((name as HTMLElement).title).toBe('remote@x.com')
+  })
+
+  it('SSH card prefers the live accountEmail over the setup-sentinel snapshot', () => {
+    render(root, { sessionType: 'ssh', accountEmail: 'live@x.com', sshRemoteAccount: 'stale@x.com' })
+    const name = container.querySelector('[data-testid="account-name"]')
+    expect((name as HTMLElement).title).toBe('live@x.com')
+  })
+
+  // Container transport badge (phase 6; supersedes the composing DockerBadge of
+  // harmonise-remote Phase 3). The container mark REPLACES the SSH chip — main
+  // never tmux-wraps a container session, so the old pairing showed two chips
+  // for one fact.
+  it('renders the container badge for a container SSH session, REPLACING the SSH badge', () => {
+    render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } })
+    const c = container.querySelector('[data-testid="ssh-container-badge"]')
+    expect(c).not.toBeNull()
+    expect((c as HTMLElement).title).toContain('Container session over SSH')
+    expect((c as HTMLElement).title).toContain('ccc-test')
+    // Replaces: neither SSH chip is rendered alongside it.
+    expect(container.querySelector('[data-testid="ssh-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
+  })
+
+  it('the container badge OUTRANKS a reported tmux wrap (container wins)', () => {
+    render(root, { sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: 'ccc-test' } })
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
+  })
+
+  it('a structured container runtime also wins (not just the legacy hint)', () => {
+    render(root, { sessionType: 'ssh', sshTmuxPersistent: true, sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'container', container: 'rocky-dev', engine: 'podman' } } })
+    const c = container.querySelector('[data-testid="ssh-container-badge"]')
+    expect(c).not.toBeNull()
+    expect((c as HTMLElement).title).toContain('rocky-dev')
+    // Never the engine's brand name anywhere the user can read it.
+    expect((c as HTMLElement).title.toLowerCase()).not.toContain('docker')
+    expect((c as HTMLElement).title.toLowerCase()).not.toContain('podman')
+  })
+
+  it('renders NO container badge when no container is configured', () => {
+    render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } })
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-badge"]')).not.toBeNull()
+    act(() => root.unmount()); root = createRoot(container)
+    render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', dockerContainer: '' } })
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
+    act(() => root.unmount()); root = createRoot(container)
+    // A runtime that explicitly runs on the HOST is not a container session.
+    render(root, { sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', runtime: { type: 'host' } } })
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
+    act(() => root.unmount()); root = createRoot(container)
+    // A local session never carries one — nor any transport chip.
+    render(root, { sessionType: 'local' })
+    expect(container.querySelector('[data-testid="ssh-container-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="ssh-badge"]')).toBeNull()
   })
 })

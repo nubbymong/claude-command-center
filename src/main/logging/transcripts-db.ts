@@ -122,6 +122,10 @@ export interface TranscriptsDb {
   /** Set accountEmail on the latest open run for sessionId; no-op if none. */
   setRunAccount(sessionId: string, accountEmail: string): void
 
+  /** Update configLabel (display name) on the latest open run for sessionId;
+   *  no-op if none. Drives the logs/history tab's session name after a rename. */
+  renameRun(sessionId: string, configLabel: string): void
+
   /**
    * Close EVERY dangling run (status='running') as crashed in one statement:
    * endedAt = max(message ts for that run) falling back to startedAt. Called by
@@ -264,6 +268,20 @@ export interface TranscriptsDb {
    */
   sessionConfig(sessionId: string): { configId: string | null } | null
 
+  /**
+   * #480: upsert the durable session -> conversation record. Called on every
+   * EXACT bind. Last write wins (a /clear rotation updates the row to the new
+   * uuid). `updatedAt` is supplied by the caller (main-process clock).
+   */
+  upsertSessionConversation(row: { sessionId: string; uuid: string; path: string; updatedAt: number }): void
+
+  /**
+   * #480: read the durable conversation for a sessionId, or null. Restart resume
+   * resolves {uuid, cwd} from this path when the in-memory exact bind is absent
+   * (e.g. after an app relaunch).
+   */
+  getSessionConversation(sessionId: string): { uuid: string; path: string; updatedAt: number } | null
+
   close(): void
 }
 
@@ -342,6 +360,20 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 INSERT OR IGNORE INTO meta(key, value) VALUES ('schemaVersion', '1');
+
+-- #480: durable session -> conversation map. One row per AICC sessionId,
+-- upserted on every EXACT (authenticated) transcript bind. This is the
+-- authoritative, crash-durable source restart resume reads back, independent of
+-- the runs/transcripts index (which cross-attributes conversations among cards
+-- that share one repo folder). Keyed by sessionId so each card resolves to the
+-- conversation the hook confirmed for IT, never a sibling's newest file.
+CREATE TABLE IF NOT EXISTS session_conversation (
+  sessionId  TEXT PRIMARY KEY,
+  uuid       TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  confidence TEXT NOT NULL DEFAULT 'exact',
+  updatedAt  INTEGER NOT NULL
+);
 `
 
 // ---------------------------------------------------------------------------
@@ -487,6 +519,11 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
   const stmtSetRunAccount: Statement = sqlite.prepare(`
     UPDATE runs SET accountEmail = @accountEmail
+    WHERE runId = ${latestOpenRunSubquery}
+  `)
+
+  const stmtRenameRun: Statement = sqlite.prepare(`
+    UPDATE runs SET configLabel = @configLabel
     WHERE runId = ${latestOpenRunSubquery}
   `)
 
@@ -775,6 +812,31 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   const stmtCountMessagesForRun: Statement = sqlite.prepare(
     `SELECT COUNT(*) AS c FROM messages WHERE runId = ?`,
   )
+  // #480: durable session -> conversation map.
+  const stmtUpsertSessionConversation: Statement = sqlite.prepare(`
+    INSERT INTO session_conversation(sessionId, uuid, path, confidence, updatedAt)
+    VALUES (@sessionId, @uuid, @path, 'exact', @updatedAt)
+    ON CONFLICT(sessionId) DO UPDATE SET
+      uuid = excluded.uuid, path = excluded.path,
+      confidence = excluded.confidence, updatedAt = excluded.updatedAt
+  `)
+  // #480 (adversarial round 1): a conversation uuid must map to at most ONE
+  // durable session, or two cards could both `--resume <uuid>` after an app
+  // restart (the in-memory ownership guard is empty at boot). A new owner for a
+  // uuid evicts every other session's durable row for it — last-writer-wins on
+  // uuid — so a legitimate handoff transfers ownership instead of accumulating.
+  const stmtEvictOtherOwnersOfUuid: Statement = sqlite.prepare(
+    `DELETE FROM session_conversation WHERE uuid = @uuid AND sessionId <> @sessionId`,
+  )
+  const runUpsertSessionConversation = sqlite.transaction(
+    (row: { sessionId: string; uuid: string; path: string; updatedAt: number }) => {
+      stmtEvictOtherOwnersOfUuid.run(row)
+      stmtUpsertSessionConversation.run(row)
+    },
+  )
+  const stmtGetSessionConversation: Statement = sqlite.prepare(
+    `SELECT uuid, path, updatedAt FROM session_conversation WHERE sessionId = ?`,
+  )
 
   // ---------------------------------------------------------------------------
   // TranscriptsDb implementation
@@ -812,6 +874,10 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
     setRunAccount(sessionId, accountEmail) {
       stmtSetRunAccount.run({ sessionId, accountEmail })
+    },
+
+    renameRun(sessionId, configLabel) {
+      stmtRenameRun.run({ sessionId, configLabel })
     },
 
     closeDanglingRuns() {
@@ -969,6 +1035,17 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
     sessionConfig(sessionId: string) {
       const row = stmtSessionConfig.get(sessionId) as { configId: string | null } | undefined
+      return row ?? null
+    },
+
+    upsertSessionConversation(row) {
+      runUpsertSessionConversation(row)
+    },
+
+    getSessionConversation(sessionId: string) {
+      const row = stmtGetSessionConversation.get(sessionId) as
+        | { uuid: string; path: string; updatedAt: number }
+        | undefined
       return row ?? null
     },
 

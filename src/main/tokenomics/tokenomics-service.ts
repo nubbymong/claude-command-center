@@ -5,8 +5,19 @@ import { forkTokenomicsWorker } from './fork-tokenomics-worker'
 import { getAllPricing, fetchModelPricing } from './tk-pricing'
 import { readConfig } from '../config-manager'
 import { onRegistryReload } from '../model-registry-service'
-import { getDataDirectory } from '../data-paths'
+import { getDataDirectory, getResourcesDirectory } from '../data-paths'
 import type { TkConfigDim } from './tk-types'
+
+/**
+ * Reserved attribution id for the Ask Conductor help session (#465). Its spend
+ * is real but it is not project work, so it must not pollute the "External /
+ * no config" bucket the cost views use for unrecognised spend. The help
+ * session's cwd is the staged `<resources>/help` workspace, so a synthetic
+ * config dim pointing there lets the ordinary cwd->config matcher file it
+ * under its own labeled row. Saved-config ids are crypto-random hex
+ * (shared/id.ts), so this literal can never collide with one.
+ */
+export const TK_HELP_CONFIG_ID = '__ask-help__'
 
 let _sup: TokenomicsSupervisor | null = null
 let _unsubReload: (() => void) | null = null
@@ -18,9 +29,18 @@ interface SavedConfigRecord { id: string; label: string; workingDirectory?: stri
 
 function loadConfigDims(): TkConfigDim[] {
   const configs = readConfig<SavedConfigRecord[]>('configs') ?? []
-  return configs
+  const dims = configs
     .filter((c): c is SavedConfigRecord & { workingDirectory: string } => !!c.workingDirectory)
     .map((c) => ({ configId: c.id, label: c.label, workingDirectory: c.workingDirectory }))
+  // Ask Conductor 'help' bucket (#465). The matcher is longest-prefix, so this
+  // synthetic dim only ever claims spend from inside `<resources>/help` itself;
+  // it cannot shadow a real config (and getResourcesDirectory never throws —
+  // it falls back under the data directory before the user picks one). Known
+  // edge, shared with every saved config: the worker's isJunkCwd runs first,
+  // so a resources dir under a junk-flagged segment (temp/, windows/) sends
+  // this spend to "External / no config" instead. Fails safe, never wrong.
+  dims.push({ configId: TK_HELP_CONFIG_ID, label: 'Ask Conductor', workingDirectory: join(getResourcesDirectory(), 'help') })
+  return dims
 }
 
 export function initTokenomics(opts: { emit: (channel: string, payload: unknown) => void }): void {

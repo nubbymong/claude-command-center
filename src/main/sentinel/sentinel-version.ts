@@ -56,7 +56,7 @@ export function minVersionFindings(ccVersion: string, manifest: ManifestEntry[])
       id: `minver:${e.id}`,
       kind: 'compat' as const,
       severity: e.severity,
-      title: `Claude Code ${ccVersion} is older than CCC requires for: ${e.area}`,
+      title: `Claude Code ${ccVersion} is older than AI Code Conductor requires for: ${e.area}`,
       evidence: `${e.contract} (needs CC >= ${e.minCcVersion})`,
       affectedFeature: e.affectedFeature,
       badgeText: `Needs Claude Code ${e.minCcVersion}+ — currently ${ccVersion}`,

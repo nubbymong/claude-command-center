@@ -1,24 +1,18 @@
 import * as os from 'os'
+import { commandSecretEnvName } from '../../../shared/command-secret'
 import { execSync } from 'child_process'
+import { askPromptEnvValue } from '../../terminal-launch-line'
 import { resolveVersionBinary } from '../../legacy-version-manager'
 import { logInfo } from '../../debug-logger'
 import type { LegacyVersion } from '../../../shared/types'
 import type { SpawnOptions } from '../types'
+import { colorFgBgValue } from '../host-color-scheme'
 
-/**
- * Resolves the host's effective light/dark scheme from the CCC theme setting.
- * 'light'/'dark' are explicit; 'system' (or absent, but absent defaults to the
- * app's dark default) follows the OS preference. Pure so it is table-testable;
- * the caller supplies the OS preference (Electron nativeTheme.shouldUseDarkColors).
- */
-export function resolveHostColorScheme(
-  themePref: string | undefined,
-  systemPrefersDark: boolean,
-): 'light' | 'dark' {
-  if (themePref === 'light') return 'light'
-  if (themePref === 'system') return systemPrefersDark ? 'dark' : 'light'
-  return 'dark'
-}
+// The host light/dark scheme and its COLORFGBG encoding live in
+// ../host-color-scheme (shared by the local Claude env, the Codex env and the
+// SSH remote launch line -- book item 34). Re-exported here because callers
+// and tests import them from the Claude provider.
+export { resolveHostColorScheme, colorFgBgValue, colorFgBgEnvToken } from '../host-color-scheme'
 
 export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } {
   if (legacyVersion?.enabled && legacyVersion.version) {
@@ -69,29 +63,60 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // behavior, so dark mode is unchanged; only theme detection runs at startup, so
   // this affects newly launched sessions, not ones already running.
   if (opts.hostColorScheme) {
-    env.COLORFGBG = opts.hostColorScheme === 'light' ? '0;15' : '15;0'
+    env.COLORFGBG = colorFgBgValue(opts.hostColorScheme)
+  }
+
+  // Ask Conductor's opening question. The launch line references this variable
+  // (askPromptRef) rather than carrying the text, so the shell never parses the
+  // user's words and they never reach the shell's on-disk history. Set only when
+  // non-empty: an empty variable would make `claude ""` start with a blank
+  // prompt argument rather than no argument at all.
+  //
+  // askPromptEnvValue is the injection boundary, and it belongs HERE rather than
+  // in the IPC schema: zod's parse result is discarded at the spawn seam, so a
+  // `.transform()` there would read as a sanitiser and do nothing. A value that
+  // cleans away to nothing leaves the variable unset — the launch line still
+  // carries the reference and expands it to no argument, which starts an
+  // ordinary session with no opening prompt.
+  if (opts.askPrompt) {
+    const askValue = askPromptEnvValue(opts.askPrompt, os.platform() === 'win32')
+    if (askValue) env.CCC_ASK_PROMPT = askValue
   }
 
   if (opts.disableAutoMemory) env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
-  const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
-  // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
-  // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's
-  // minimal PATH, and a non-login zsh never sources ~/.zprofile, so without
-  // this every session hits "command not found: claude" while the onboarding
-  // check (which already uses -l, see index.ts cli:check) passes.
-  const shellArgs = os.platform() === 'win32' ? [] : ['-l']
-
-  if (opts.shellOnly && opts.elevated) {
-    const cmd = os.platform() === 'win32' ? 'gsudo' : 'sudo'
-    return { cmd, args: [shell, ...shellArgs], env }
+  // Terminal-only secret argument. The secret goes in the ENV, and the launch
+  // line references the variable rather than the value, so the plaintext never
+  // reaches the shell's persistent history (PSReadLine writes every submitted
+  // line to disk) or the config file. Same-user processes can still read the
+  // env — that is the existing local-trust boundary, and it is strictly better
+  // than a secret sitting in ConsoleHost_history.txt forever.
+  if (opts.shellOnly && opts.terminalSecret) env.CCC_ARG_SECRET = opts.terminalSecret
+  // Command-button secrets, same contract, one variable per command: the
+  // button types `${env:CCC_CMD_SECRET_<id>}` and the shell expands it. Only a
+  // SHELL spawn gets them -- typed into Claude's TUI the reference is just
+  // text. The id was validated in main before it got here, and is checked
+  // again on the way into a variable name because this is the last line of
+  // defence before the environment.
+  if (opts.shellOnly && opts.commandSecrets) {
+    for (const [id, value] of Object.entries(opts.commandSecrets)) {
+      const name = commandSecretEnvName(id)
+      if (name && typeof value === 'string' && value) env[name] = value
+    }
   }
 
-  if (opts.shellOnly) {
-    return { cmd: shell, args: shellArgs, env }
-  }
+  // Protective CLAUDE_* env, stamped for EVERY local session kind — including
+  // shell-only and elevated shells, which used to be exempt. The vars are inert
+  // for the shell itself; they only matter if a `claude` starts inside the
+  // session. And a shell-only session is exactly where users DO start one by
+  // hand — the account re-auth flow drops them at a prompt to run `claude
+  // /login`. The old exemption meant that hand-run claude kept mouse tracking:
+  // xterm's selection service was disabled, so right-click (which assumes "no
+  // selection ⇒ paste") pasted the clipboard into the PTY — at a PowerShell
+  // prompt that EXECUTES whatever was on the clipboard — and the forwarded
+  // right-button report hit CC's login screen as a click.
 
-  // Claude session: disable CC's mouse mode + alternate screen when classic copy/paste is
+  // Disable CC's mouse mode + alternate screen when classic copy/paste is
   // on (default true). Disabling mouse lets xterm own the mouse → classic text selection
   // + right-click copy/paste work the standard terminal way. Disabling the alternate screen
   // forces CC to use the inline renderer so conversation output stays in the terminal's
@@ -119,6 +144,23 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // the feature so no keystroke can background a session. Set false to restore it.
   if (opts.disableBackgroundTasks !== false) {
     env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '1'
+  }
+
+  const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
+  // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
+  // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's
+  // minimal PATH, and a non-login zsh never sources ~/.zprofile, so without
+  // this every session hits "command not found: claude" while the onboarding
+  // check (which already uses -l, see index.ts cli:check) passes.
+  const shellArgs = os.platform() === 'win32' ? [] : ['-l']
+
+  if (opts.shellOnly && opts.elevated) {
+    const cmd = os.platform() === 'win32' ? 'gsudo' : 'sudo'
+    return { cmd, args: [shell, ...shellArgs], env }
+  }
+
+  if (opts.shellOnly) {
+    return { cmd: shell, args: shellArgs, env }
   }
 
   // Claude session: spawn shell only; pty-manager writes the cd+claude command into the shell post-spawn.

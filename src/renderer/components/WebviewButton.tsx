@@ -1,50 +1,54 @@
 import React from 'react'
 import { useWebviewStore } from '../stores/webviewStore'
+import { toggleAltPane } from '../stores/altPane'
+import { trackUsage } from '../stores/tipsStore'
+import { ReservedLabel } from './command-bar/chips'
 
 interface Props {
   sessionId: string
   /**
-   * True when the current session/config has at least one webview-enabled
-   * custom command. Drives whether the button renders at all — without it
-   * the toolbar shouldn't surface a webview affordance the user can't use.
-   * Defaults to false so legacy call-sites stay hidden.
+   * Kept for call-site compatibility; no longer gates rendering. The browser
+   * is a pane of its own (item 26) and the button is always there, like
+   * Canvas. It drives nothing now -- a watch being configured shows through
+   * `status`, not through whether the button exists.
+   * @deprecated
    */
   hasWebviewCommand?: boolean
 }
 
 /**
- * Tool button that surfaces the webview state.
+ * Tool button for the session's browser pane. Sibling of Snap / Canvas /
+ * Logs; always rendered.
  *
- * Visibility:
- *   - Hidden entirely when `hasWebviewCommand` is false (no command is
- *     configured to drive this affordance for this session/scope).
- *   - Otherwise always rendered; status drives disabled/active styling.
+ * The tint reports a page WATCH when one is live (a command that watches
+ * for a page to respond):
+ *   idle      — plain; nothing is being watched
+ *   pending   — blue border, faint pulsing dot (polling)
+ *   available — GREEN border + pulsing dot (the page answered)
+ *   failed    — RED border + dot (no answer within 30 s)
  *
- * Status communicated as a subtle border tint + small dot:
- *   idle      — greyed out, disabled, tooltip explains how to activate
- *   pending   — neutral border, faint dot
- *   available — GREEN border + dot, gentle opacity pulse on the dot
- *   failed    — RED border + dot
- *
- * Click toggles the webview pane (only when status !== 'idle').
+ * Click toggles the pane. With nothing loaded yet the pane opens on its start
+ * page (address bar, favourites, home) -- clicking is never a dead end.
  */
-export default function WebviewButton({ sessionId, hasWebviewCommand = false }: Props) {
+export default function WebviewButton({ sessionId }: Props) {
   const state = useWebviewStore((s) => s.bySessionId[sessionId])
-  const togglePane = useWebviewStore((s) => s.togglePane)
-
-  if (!hasWebviewCommand) return null
+  const navigate = useWebviewStore((s) => s.navigate)
+  const consumeAgentPush = useWebviewStore((s) => s.consumeAgentPush)
 
   const status = state?.status ?? 'idle'
   const isOpen = state?.isOpen ?? false
-  const isIdle = status === 'idle'
   const isPending = status === 'pending'
   const isAvailable = status === 'available'
   const isFailed = status === 'failed'
+  const watching = isPending || isAvailable || isFailed
+  // The agent left a page for the user (open_in_app_browser). A notification
+  // pill, separate from the watch dot; consumed when the button is clicked.
+  const unread = state?.unread ?? false
 
   // Catppuccin-leaning accent palette — green for ready, red for
   // unreachable. Border colour does the heavy lifting; the dot is a
-  // small punctuation that animates only for the success case (so a
-  // failure isn't constantly nagging once acknowledged).
+  // small punctuation that animates only while something is happening
+  // (so a failure isn't constantly nagging once acknowledged).
   let borderClass = 'border-surface1/80'
   let dotClass = 'bg-overlay0/50'
   let dotPulseClass = ''
@@ -62,48 +66,113 @@ export default function WebviewButton({ sessionId, hasWebviewCommand = false }: 
   }
 
   const titleParts = [
-    isIdle
-      ? 'Run a webview-enabled command, or wait for auto-detect when the server starts.'
-      : isOpen
-        ? 'Hide webview pane'
-        : 'Show webview pane',
-    state?.currentUrl ? `\nURL: ${state.currentUrl}` : '',
-    isPending ? '\nPolling for content…' : '',
-    isFailed ? '\nURL did not respond within 30 s' : '',
+    // isOpen decides first: while the pane is open the button CLOSES it, so it
+    // must not promise "click to view" — a click here goes back to the
+    // terminal and leaves the pushed page waiting. The pending URL still
+    // surfaces on the line below so the user knows a page is queued.
+    isOpen
+      ? 'Back to the terminal (closes the browser pane)'
+      : (unread ? 'A page is waiting for you — click to view it' : 'Open the browser pane'),
+    // Label the queued page: with the pane open the tooltip otherwise stacks
+    // two bare URLs (pending + current) with nothing saying which is which.
+    unread && state?.pendingAgentUrl ? `\nWaiting: ${state.pendingAgentUrl}` : '',
+    state?.currentUrl ? `\n${state.currentUrl}` : '',
+    isPending && state?.watchUrl ? `\nWatching ${state.watchUrl}…` : '',
+    isAvailable && state?.watchUrl ? `\n${state.watchUrl} is responding` : '',
+    isFailed && state?.watchUrl ? `\n${state.watchUrl} did not respond within 30 s` : '',
   ]
 
-  // Idle = visually present but unactionable. Cursor + opacity signal
-  // "this is here, but there's nothing to click yet."
-  const baseInteractive = isOpen
-    ? `bg-surface1 ${borderClass} text-text`
+  // Open = accent-tinted and labelled with the DESTINATION, matching the
+  // Partner toggle and the Agent Canvas button. The browser REPLACES the
+  // terminal, and a button that still read "Browser" left new users with no
+  // visible way back.
+  const classes = isOpen
+    ? 'bg-blue/20 border-blue/70 text-blue hover:bg-blue/30'
     : `bg-surface0/60 ${borderClass} hover:bg-surface1 text-overlay1 hover:text-text`
-  const idleClasses = 'bg-surface0/30 border-surface0 text-overlay0/60 cursor-not-allowed opacity-60'
 
   return (
     <button
-      onClick={() => { if (!isIdle) togglePane(sessionId) }}
-      disabled={isIdle}
-      className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 ${
-        isIdle ? idleClasses : baseInteractive
-      }`}
+      onClick={() => {
+        // Click precedence is deliberate. An unread agent push is answered
+        // ONLY from a CLOSED pane: a click on the shut Browser button
+        // unambiguously means "show me the page the agent left", so consume
+        // the pill, open the pane and point it at that page. This is the
+        // user's explicit action, so it is not a "yank" — the page never
+        // loaded on its own. Consume clears the pill; navigate opens the pane
+        // and points it at the page.
+        //
+        // When the pane is already OPEN this same button is the CLOSE
+        // affordance (it reads "Terminal"), and a click means "put the
+        // terminal back" — it must NOT navigate the open pane to the agent's
+        // URL. Consuming the pill on a close would overload the affordance
+        // into a surprise navigation and break the never-yank promise on the
+        // close gesture. So the pill is left raised for the next time the
+        // pane is opened; only an open-from-closed answers it.
+        if (unread && !isOpen) {
+          const url = consumeAgentPush(sessionId)
+          if (url) {
+            trackUsage('webview.opened')
+            navigate(sessionId, url) // opens the pane; the store evicts canvas/logs itself
+            return
+          }
+        }
+        // tips-library gates the freeze/annotate tip on `webview.opened`.
+        // Recorded on open only: closing the pane is not discovering it.
+        if (!isOpen) trackUsage('webview.opened')
+        // One session surface at a time: opening the browser closes the
+        // canvas/logs; clicking it while open returns to the terminal.
+        toggleAltPane(sessionId, 'browser')
+      }}
+      className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${classes}`}
       title={titleParts.join('').trim()}
+      data-testid="browser-toggle"
+      data-watch-status={status}
+      data-agent-unread={unread ? '1' : undefined}
     >
-      <svg
-        width="12" height="12" viewBox="0 0 16 16"
-        fill="none" stroke="currentColor" strokeWidth="1.4"
-        strokeLinecap="round" strokeLinejoin="round"
-      >
-        {/* Browser-window glyph: rounded rect + dot row + content area */}
-        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
-        <line x1="1.5" y1="6" x2="14.5" y2="6" />
-        <circle cx="3.5" cy="4.25" r="0.5" fill="currentColor" />
-        <circle cx="5.5" cy="4.25" r="0.5" fill="currentColor" />
-      </svg>
-      <span>Web</span>
-      <span
-        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${dotClass} ${dotPulseClass}`}
-        aria-hidden
-      />
+      {isOpen ? (
+        <svg
+          width="12" height="12" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round"
+        >
+          <path d="M19 12H5M11 18l-6-6 6-6" />
+        </svg>
+      ) : (
+        <svg
+          width="12" height="12" viewBox="0 0 16 16"
+          fill="none" stroke="currentColor" strokeWidth="1.4"
+          strokeLinecap="round" strokeLinejoin="round"
+        >
+          {/* Browser-window glyph: rounded rect + dot row + content area */}
+          <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+          <line x1="1.5" y1="6" x2="14.5" y2="6" />
+          <circle cx="3.5" cy="4.25" r="0.5" fill="currentColor" />
+          <circle cx="5.5" cy="4.25" r="0.5" fill="currentColor" />
+        </svg>
+      )}
+      <ReservedLabel current={isOpen ? 'Terminal' : 'Browser'} />
+      {/* The dot only appears while a watch has something to say. A plain
+          grey dot on an idle button was a status indicator for no status. */}
+      {watching && (
+        <span
+          className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${dotClass} ${dotPulseClass}`}
+          aria-hidden
+        />
+      )}
+      {/* Agent-push notification pill (open_in_app_browser): a mauve corner
+          badge, deliberately distinct from the green/red/blue WATCH dot, that
+          says the agent left a page to look at. Clicking the button consumes
+          it. Rendered only while unread, so an idle button stays clean. */}
+      {unread && (
+        <span
+          className="absolute -top-1 -right-1 inline-flex"
+          data-testid="browser-agent-pill"
+          aria-label="A page is waiting for you in the browser"
+        >
+          <span className="absolute inline-flex h-2.5 w-2.5 rounded-full bg-mauve/60 animate-ping" aria-hidden />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-mauve ring-2 ring-[var(--surface-chrome)]" aria-hidden />
+        </span>
+      )}
     </button>
   )
 }

@@ -16,9 +16,22 @@ const onNewMessagesSpy = vi.fn((cb: (e: { sessionId: string; configId: string | 
   return () => { newMessagesCb = null }
 })
 let supervisorPresent = true
+let exactPathForRename: string | null = null
+const renameRunSpy = vi.fn()
 vi.mock('../../../src/main/logging/logging-service', () => ({
-  getLogSupervisor: () => (supervisorPresent ? { query: querySpy, onNewMessages: onNewMessagesSpy } : null),
+  getLogSupervisor: () => (supervisorPresent ? { query: querySpy, onNewMessages: onNewMessagesSpy, renameRun: renameRunSpy } : null),
+  getTranscriptBinder: () => ({ getExactResumeTarget: (_sid: string) => exactPathForRename }),
 }))
+
+// Spy on the sidecar module so the rename handler's write/remember/forget calls
+// are observable (#536).
+const sidecar = vi.hoisted(() => ({
+  rememberSessionName: vi.fn(),
+  forgetSessionName: vi.fn(),
+  writeNameSidecar: vi.fn(),
+  nodeNameSidecarDeps: {},
+}))
+vi.mock('../../../src/main/logging/session-name-sidecar', () => sidecar)
 
 import { registerLogs2Handlers } from '../../../src/main/ipc/logs2-handlers'
 
@@ -34,6 +47,11 @@ describe('logs2 IPC handlers', () => {
     onNewMessagesSpy.mockClear()
     newMessagesCb = null
     supervisorPresent = true
+    exactPathForRename = null
+    renameRunSpy.mockReset()
+    sidecar.rememberSessionName.mockReset()
+    sidecar.forgetSessionName.mockReset()
+    sidecar.writeNameSidecar.mockReset()
     sent = []
     const win = {
       isDestroyed: () => false,
@@ -230,5 +248,39 @@ describe('logs2 IPC handlers', () => {
     supervisorPresent = false
     registerLogs2Handlers(getWindow)
     expect(onNewMessagesSpy).not.toHaveBeenCalled()
+  })
+
+  // -------------------------------------------------------------------------
+  // #536 — rename carries the name onto the transcript via the sidecar
+  // -------------------------------------------------------------------------
+
+  it('rename while BOUND writes the sidecar with customName and RETIRES the pending entry (no /clear bleed)', async () => {
+    exactPathForRename = 'C:\\p\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 's1', configLabel: 'Config A', customName: 'Auth Bug' })
+    expect(renameRunSpy).toHaveBeenCalledWith('s1', 'Config A')
+    expect(sidecar.writeNameSidecar).toHaveBeenCalledWith(exactPathForRename, 'Auth Bug', sidecar.nodeNameSidecarDeps)
+    // The critical regression guard: an already-bound rename must NOT leave a
+    // pending entry, or it bleeds onto the next conversation after a /clear.
+    expect(sidecar.forgetSessionName).toHaveBeenCalledWith('s1')
+    expect(sidecar.rememberSessionName).not.toHaveBeenCalled()
+  })
+
+  it('rename while NOT bound remembers the name (onExactBind writes it later), no direct write', async () => {
+    exactPathForRename = null
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 's2', configLabel: 'Config A', customName: 'Docs sweep' })
+    expect(sidecar.rememberSessionName).toHaveBeenCalledWith('s2', 'Docs sweep')
+    expect(sidecar.writeNameSidecar).not.toHaveBeenCalled()
+  })
+
+  it('a blank customName is the cleared signal (empty string, not the config label)', async () => {
+    exactPathForRename = 'C:\\p\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 's3', configLabel: 'Config A', customName: '' })
+    expect(sidecar.writeNameSidecar).toHaveBeenCalledWith(exactPathForRename, '', sidecar.nodeNameSidecarDeps)
+  })
+
+  it('back-compat: an omitted customName falls back to configLabel', async () => {
+    exactPathForRename = null
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 's4', configLabel: 'Config A' })
+    expect(sidecar.rememberSessionName).toHaveBeenCalledWith('s4', 'Config A')
   })
 })

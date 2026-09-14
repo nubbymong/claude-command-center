@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import type { ProviderId, CodexOptions } from '../../shared/types'
+import type { ProviderId, CodexOptions, TerminalOptions, SshRuntime } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
+import { sshAuthGiveUpMemory } from './sshAuthGiveUp'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
 export type SessionType = 'local' | 'ssh'
@@ -15,12 +16,33 @@ export interface SSHConfig {
   postCommand?: string
   hasSudoPassword?: boolean
   dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
+  runtime?: SshRuntime      // item e: structured container runtime
+  detachable?: boolean      // item 1: "Detachable" persistent tmux session (default ON; only false disables)
+  remoteOs?: 'auto' | 'unix' | 'windows'  // item 3: remote OS (windows = prototype Windows setup path)
 }
 
 export interface Session {
   id: string
   configId?: string
+  /** What this session IS, when that is not "a launched saved config".
+   *  'ask' = the Ask Conductor help session: a real interactive Claude session
+   *  in the staged help workspace, deliberately WITHOUT a saved config (it is
+   *  not something the user filed, so it must not appear in Saved Configs).
+   *  `configId === undefined` is NOT a marker for it -- the add-account login
+   *  shell, the re-auth shell and a resumed project folder are all config-less
+   *  too. Set once at creation; never changes. */
+  kind?: 'ask'
+  /** One-shot opening question for an Ask session. Rides `pty.spawn` into the
+   *  spawn ENVIRONMENT as CCC_ASK_PROMPT (never into the command text), is
+   *  cleared the moment the spawn is issued, and is NEVER persisted -- see the
+   *  allowlist in session-persistence.ts. */
+  askPrompt?: string
   label: string
+  /** User-assigned "work name" for this session, editable while it's open and
+   *  persisted by id across restarts (until the session is closed in CCC).
+   *  Display-only; renders in place of `label` when set. Empty/undefined =>
+   *  fall back to the config-derived `label`. */
+  customName?: string
   workingDirectory: string
   model: string
   color: string
@@ -32,11 +54,22 @@ export interface Session {
   createdAt: number
   sessionType: SessionType
   shellOnly?: boolean  // Don't run Claude, just open a shell
+  terminalOptions?: TerminalOptions  // Terminal-only command / args / secret / elevated
   partnerTerminalPath?: string  // Optional partner shell terminal path
   partnerElevated?: boolean     // Run partner terminal as admin (requires gsudo)
   sshConfig?: SSHConfig
   contextPercent?: number
   needsAttention?: boolean
+  /** Session Watchdog (#235) live state, pushed from main via IPC.WATCHDOG_STATE.
+   *  Absent = watchdog off / not running for this session (no indicator shown). */
+  watchdog?: {
+    status: string
+    waitUntil: number | null
+    gaveUp: boolean
+    /** #605: which auto-retry checks are live for this session right now.
+     *  Absent on states pushed by older main builds; treat as all-on. */
+    checks?: { rateLimit: boolean; overload: boolean; safeguard: boolean }
+  }
   costUsd?: number
   modelName?: string
   // Codex: reasoning effort label (e.g. "xhigh"). Always undefined for Claude sessions.
@@ -71,6 +104,11 @@ export interface Session {
     version: string
   }
   agentIds?: string[]                    // Agent template IDs for this session
+  /** Per-session permission mode -> claude `--permission-mode`. '' / 'default' /
+   *  undefined = no flag. Sourced from the config's claudeOptions at launch. */
+  permissionMode?: string
+  /** Advanced: extra CLI args appended verbatim to the claude launch command. */
+  extraArgs?: string
   effortLevel?: EffortLevel
   /** True once a LIVE effort tick (statusline effort.level or the hooks effort
    *  gateway) has arrived for THIS session. The sidebar card gates its EffortPill
@@ -102,9 +140,56 @@ export interface Session {
    *  in main and do NOT use these. */
   resumeUuid?: string
   resumeCwd?: string
+  /** True once this session's PTY has EXITED and nothing has respawned it.
+   *  Set by TerminalView's exit subscription; cleared by forceRemount.
+   *
+   *  It exists because a session object outlives its process: main deletes the
+   *  PTY and sends `pty:exit`, the renderer writes "[Process exited]" into the
+   *  terminal, and the session stays in the list looking exactly like a live
+   *  one. Anything that decides "there is already a session, write to it"
+   *  therefore has to consult liveness -- see findAskSession, where writing to
+   *  a dead PTY buffered the user's question into a pendingWrites map that only
+   *  a spawn drains, and a spawn clears it first.
+   *
+   *  Ephemeral, like effortLive/fastMode: NOT in session-persistence's field
+   *  allowlist, so a restored session starts unset (it has no PTY yet either
+   *  way, and the restore path spawns one). */
+  ptyExited?: boolean
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */
   needsLogin?: boolean
+  /** #242 tier 5: true once this SSH session's flow state has reached
+   *  `claude-running` at least once. Set by TerminalView's flow-state
+   *  subscription, read at the NEXT spawn to compute SSHOptions.reconnect
+   *  (drives `--continue` when no tmux persistence tier is in play).
+   *  Mirrors effortLive/fastMode's lifecycle: never persisted (see
+   *  session-persistence.ts's explicit field allowlist) -- a session
+   *  restored after a full app relaunch starts with this unset, so its
+   *  first post-relaunch spawn is correctly NOT treated as a reconnect.
+   *  Survives an in-app Restart (forceRemount merges the live store record
+   *  without clearing it), which is the actual respawn path this exists
+   *  for. */
+  sshReachedClaudeRunning?: boolean
+  /** SSH tmux enhancement (item 8/9): true once main confirms this SSH
+   *  session is running inside a tmux persistence wrapper (survives a dropped
+   *  connection). Drives the persistence indicator + the distinct
+   *  persistent-SSH icon. Renderer-only, never persisted -- re-established by
+   *  main's ssh:sessionInfo push on each spawn. undefined = not yet known;
+   *  false = SSH but non-persistent (bare launch). */
+  sshTmuxPersistent?: boolean
+  /** SSH Persistent (resume liveness): set true when, after an app-restart
+   *  auto-reattach, a liveness probe CONFIRMED the remote tmux this session was
+   *  reattaching to is gone — so the session came back as a fresh start, not the
+   *  one left running. Drives a small inline notice + "Start new". Ephemeral,
+   *  never persisted (not in session-persistence's allowlist); cleared on dismiss
+   *  / Start new. undefined = not gone (or not yet/ever probed). */
+  sshRemoteReattachGone?: boolean
+  /** SSH tmux enhancement (item 10): the Claude account the REMOTE session is
+   *  signed in as (oauthAccount.emailAddress from the remote ~/.claude.json),
+   *  read off the nonce'd setup sentinel. DESCRIPTOR ONLY -- never a
+   *  credential; already charset/length-capped host-side before it reaches
+   *  here. Renderer-only, not persisted. */
+  sshRemoteAccount?: string
   codexOptions?: CodexOptions
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead
@@ -116,6 +201,9 @@ interface SessionState {
   sessions: Session[]
   activeSessionId: string | null
   isRestoring: boolean  // True while restoring sessions from saved state
+  /** Id of the session whose name is currently being edited inline (tab).
+   *  Ephemeral UI state — never persisted. null when no rename is in flight. */
+  renamingSessionId: string | null
 
   addSession: (session: Session) => void
   removeSession: (id: string) => void
@@ -125,12 +213,18 @@ interface SessionState {
   hasWorkingSessions: () => boolean  // Check if any session is actively working
   setRestoring: (restoring: boolean) => void
   restoreSessions: (sessions: Session[], activeId: string | null) => void
+  /** Enter/leave inline-rename mode for a session (id) or clear it (null). */
+  beginRename: (id: string | null) => void
+  /** Commit a new custom name. Blank/whitespace clears it (reverts to `label`).
+   *  Always exits rename mode. */
+  renameSession: (id: string, name: string) => void
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   isRestoring: false,
+  renamingSessionId: null,
 
   addSession: (session) =>
     set((state) => ({
@@ -140,6 +234,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   removeSession: (id) =>
     set((state) => {
+      // A removed session's shimmer give-up memory must not outlive it (the id
+      // would leak, and a reused id would inherit a stale "stay blank").
+      sshAuthGiveUpMemory.clear(id)
       const sessions = state.sessions.filter((s) => s.id !== id)
       const activeSessionId =
         state.activeSessionId === id
@@ -185,7 +282,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       sessions,
       activeSessionId: activeId || sessions[0]?.id || null,
       isRestoring: false
-    })
+    }),
+
+  beginRename: (id) => set({ renamingSessionId: id }),
+
+  renameSession: (id, name) => {
+    const trimmed = name.trim()
+    // Blank => clear the override (undefined) so the tab reverts to `label`.
+    get().updateSession(id, { customName: trimmed || undefined })
+    set({ renamingSessionId: null })
+    // Persist the display name into the logs/history DB so the session's log
+    // keeps this name durably (survives close + restart). Best-effort: no-op
+    // when logging is disabled or the preload bridge is absent (e.g. tests).
+    const s = get().sessions.find((x) => x.id === id)
+    const effective = trimmed || s?.label || ''
+    try {
+      // configLabel = the effective display name for the logs DB (falls back to
+      // the config label). customName = the user's OWN work name only (empty when
+      // cleared) — #536 writes it to the transcript sidecar, so a blank rename
+      // clears the sidecar and a generic config label never becomes a "work name".
+      window.electronAPI?.logs2?.renameSession?.({ sessionId: id, configLabel: effective, customName: trimmed })
+    } catch { /* logging off / preload absent */ }
+  }
 }))
 
 /**
@@ -201,11 +319,42 @@ export const useSessionStore = create<SessionState>((set, get) => ({
  * telemetry-only ticks and stop the full-tree re-render cascade.
  */
 export const STRUCTURAL_SESSION_FIELDS = [
-  'id', 'createdAt', 'configId', 'label', 'workingDirectory', 'sessionType',
-  'shellOnly', 'sshConfig', 'partnerTerminalPath', 'partnerElevated',
-  'legacyVersion', 'agentIds', 'effortLevel', 'disableAutoMemory',
+  // `kind` is structural: the shell renders an Ask session differently (tab
+  // monogram, docked pill, banded header). `askPrompt` is deliberately NOT here
+  // -- it is cleared one tick after spawn, and listing it would force a whole
+  // -shell re-render for a field nothing structural reads.
+  'id', 'createdAt', 'configId', 'kind', 'label', 'customName', 'workingDirectory', 'sessionType',
+  'shellOnly', 'terminalOptions', 'sshConfig', 'partnerTerminalPath', 'partnerElevated',
+  'legacyVersion', 'agentIds', 'effortLevel', 'permissionMode', 'extraArgs', 'disableAutoMemory',
   'enableCodexReview', 'loggingEnabled', 'model', 'provider', 'codexOptions',
   'identityColorKey', 'color', 'githubIntegration',
+  // profileId IS structural: the header's account pill resolves through it, and
+  // it changes exactly at the low-frequency moments a re-render is wanted (the
+  // launch-gate choice patching an account-less session, a mid-session account
+  // switch). Its omission meant the shell handed SessionHeader a STALE record
+  // after a gate choice, so the pill fell back to painting the PRIMARY profile
+  // — the wrong account — until some other structural field changed (found on
+  // the WINDOWS_1 staging VM, 2026-08-30, where the primary is a fake profile).
+  'profileId',
+  // accountEmail / sshRemoteAccount / accountColour are the SSH analogue of the
+  // same bug (found live on the VM 2026-09-01): an SSH session carries NO mapped
+  // profileId cold, so the header's account/claude.ai/Claude Code pills resolve
+  // ONLY through session.accountEmail || session.sshRemoteAccount. Those land on
+  // a single late tick (the first /status the remote reports, or the setup
+  // sentinel) — omitting them here made the shell's structural-equality gate
+  // return "no change", so App never re-rendered, SessionHeader kept a STALE
+  // record, and the top pill shimmered then gave up BLANK while the bottom bar
+  // and sidebar (which self-subscribe) showed the account. Listing them re-renders
+  // the shell on exactly that one resolve tick (the VALUE is unchanged on every
+  // telemetry tick, so no per-tick cascade returns).
+  'accountEmail', 'sshRemoteAccount', 'accountColour',
+  // sshTmuxPersistent is the same masking class: the header's SshConnectionPill
+  // reads it to caption SSH-Persistent vs plain SSH, and it lands on the same
+  // late ssh:sessionInfo push as the account fields. Omitting it let a
+  // tmux-refusal downgrade (persistent → plain) arrive with no other structural
+  // change, so the header kept promising "SSH-Persistent" while the
+  // self-subscribing sidebar showed the truth.
+  'sshTmuxPersistent',
 ] as const
 
 /**

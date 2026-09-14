@@ -1,6 +1,9 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { CodexBadge, ShellBadge, SshBadge } from './Badges'
+import { FadeSlot, MoonBadge, SessionTypeBadge, TransportBadge, WatchdogBadge, WorkingBadge } from './Badges'
+import { containerNameOf, resolveTransportBadge } from './transportBadge'
+import { isAsleep, useSleepStore } from '../../stores/sleepStore'
+import { useActiveStore } from '../../stores/activeStore'
 import { type SessionState } from '../ui/StatusDot'
 import { EffortPill } from '../ui/EffortPill'
 import { FastBolt } from '../ui/FastBolt'
@@ -25,6 +28,10 @@ interface SessionRowProps {
   onContextMenu: (e: React.MouseEvent) => void
   isSelected?: boolean
   isFocused?: boolean
+  /** 1-based instance number among live sessions of the SAME config (#454),
+   *  present only when that config has 2+ instances. Rendered as a muted "#2"
+   *  after the name so otherwise-identical rows are tellable apart. */
+  ordinal?: number
 }
 
 // Map store SessionStatus -> UI SessionState (see ui/StatusDot). error wins over
@@ -47,26 +54,57 @@ function meterClass(pct: number): string {
   return 'meter-neutral'
 }
 
-export default function SessionRow({ session, isActive, needsAttention, isRenaming, renameValue, renameRef, onRenameChange, onRenameFinish, onRenameCancel, onClick, onContextMenu, isSelected, isFocused }: SessionRowProps) {
+export default function SessionRow({ session, isActive, needsAttention, isRenaming, renameValue, renameRef, onRenameChange, onRenameFinish, onRenameCancel, onClick, onContextMenu, isSelected, isFocused, ordinal }: SessionRowProps) {
   const theme = useResolvedTheme()
   const identity = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
   const st = toSessionState(session.status, needsAttention)
   const pct = session.contextPercent ?? 0
+
+  // Sleeping (canvas "Session sleep indicator"): Watchdog-only source, Claude
+  // sessions only for now (owner calls, 2026-08-27). Attention outranks the
+  // moon inside isAsleep; the graceTick subscription re-derives when a dismiss
+  // grace window expires without any other store change.
+  const isClaudeSession = !session.shellOnly && (session.provider ?? 'claude') === 'claude'
+  const silentSince = useSleepStore((s) => s.silentSince[session.id])
+  const dismissedAt = useSleepStore((s) => s.attentionDismissedAt[session.id])
+  useSleepStore((s) => s.graceTick)
+  // The raw store flag joins the prop: at the dismissal click the prop goes
+  // false before the passive effect stamps the grace, so the prop alone would
+  // flash the moon for one frame between those two moments.
+  const asleep =
+    isClaudeSession &&
+    isAsleep({ silentSince, dismissedAt, needsAttention: needsAttention || session.needsAttention === true, now: Date.now() })
+  // Active (owner call, 2026-08-27): a subtle green sweep on the context bar
+  // while this Claude session's PTY output is moving — the inverse of the moon.
+  // Precedence ATTENTION > ACTIVE > SLEEP > idle: attention and sleep both
+  // suppress it (sleep can't co-occur anyway — moving vs. 120s silent). Claude
+  // only, like the moon.
+  const outputMoving = useActiveStore((s) => s.activeIds.has(session.id))
+  const showActive =
+    isClaudeSession &&
+    outputMoving &&
+    !asleep &&
+    !(needsAttention || session.needsAttention === true)
   const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
   const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
 
   // Persistent account stamp -- resolved by LIVE email so a mid-session /login
   // that changes accountEmail immediately shows the right name/colour without
   // waiting for a respawn. Selector form (never destructure the whole store).
+  // Phase 3 (harmonise-remote): an SSH session's live email arrives on its
+  // /status ticks (accountEmail); the setup-sentinel snapshot
+  // (sshRemoteAccount) is the fallback until the first tick, so remote cards
+  // carry the same account line as local ones.
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
-  const accountName = session.accountEmail
-    ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
+  const accountEmail = session.accountEmail || session.sshRemoteAccount
+  const accountName = accountEmail
+    ? resolveAccountNameByEmail(accountEmail, profiles, accountAliases)
     : null
-  const accountDot = session.accountEmail
+  const accountDot = accountEmail
     ? resolveIdentityColor(
-        resolveAccountColourKey(session.accountEmail, accountColourOverrides, session.accountColour),
+        resolveAccountColourKey(accountEmail, accountColourOverrides, session.accountColour),
         theme,
       )
     : null
@@ -138,9 +176,16 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           alias, that new element will be the one to clip -- reorder
           deliberately or add min-w-0 + flex-shrink rules at that point. */}
       <span className="nm relative z-10 row-start-1 flex items-center gap-1.5">
-        <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }}>{session.label}</span>
-        {session.sessionType === 'ssh' && <SshBadge />}
-        {session.shellOnly ? <ShellBadge /> : (session.provider ?? 'claude') === 'codex' ? <CodexBadge needsAttention={needsAttention} /> : null}
+        <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600, opacity: asleep ? 0.7 : undefined }} title={session.customName?.trim() ? `${session.customName.trim()} · ${session.label}` : session.label}>{session.customName?.trim() || session.label}</span>
+        {ordinal !== undefined && (
+          <span
+            className="shrink-0 text-[11px] tabular-nums text-[var(--text-muted)]"
+            title={`Instance ${ordinal} of this config`}
+            data-testid="session-row-ordinal"
+          >
+            #{ordinal}
+          </span>
+        )}
       </span>
 
       {/* Line 1, col 3: status pill only. The account colour dot lives on line 3
@@ -148,6 +193,39 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           were redundant with that dot and the card's left identity rail. */}
       <span className="relative z-10 row-start-1 flex items-center gap-1.5 justify-self-end">
         <StatusPill state={st} />
+        {/* Session TYPE, in one place on every card (canvas review 2026-08-19).
+            Transport first (SSH, or SSH+tmux — the link icon), then the type
+            icon, then effort. A local Claude Code session used to be marked
+            by having NOTHING here while Codex and Shell had an icon after the
+            name and SSH had a text badge in the same spot: four treatments,
+            with the common case as the odd one out. The name column gets its
+            full width back. */}
+        {/* ONE transport chip (phase 6): a container session shows the container
+            mark INSTEAD of an SSH one — it is a third transport, not a sticker
+            on top of the second. A LIVE card uses the remote's REPORTED wrap
+            (sshTmuxPersistent), not the config's intent. */}
+        <TransportBadge
+          kind={resolveTransportBadge({
+            isSsh: session.sessionType === 'ssh',
+            ssh: session.sshConfig,
+            persistent: session.sshTmuxPersistent === true,
+          })}
+          container={containerNameOf(session.sshConfig)}
+        />
+        {/* Moon BESIDE the type badge (variant B): the type mark stays — the
+            moon is additional Watchdog state, not a replacement identity. The
+            working pill is its inverse and shares the slot (mutually exclusive:
+            asleep vs. moving). Both ride a FadeSlot (RC8) so they ease in/out
+            instead of popping — the slot keeps the exiting chip mounted for
+            its fade even after the backing store value clears. */}
+        <FadeSlot show={asleep && silentSince != null}>
+          {silentSince != null && <MoonBadge sinceMs={silentSince} />}
+        </FadeSlot>
+        <FadeSlot show={showActive}>
+          <WorkingBadge />
+        </FadeSlot>
+        <SessionTypeBadge kind={session.shellOnly ? 'shell' : (session.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
+        <WatchdogBadge watchdog={session.watchdog} />
         {/* Graceful-fail: show effort ONLY once a live tick (statusline / hooks)
             has confirmed it. A spawn-time or persisted guess (e.g. a default
             xhigh) is suppressed until effortLive flips, so the card never shows
@@ -159,30 +237,60 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         {session.fastMode === true && <FastBolt />}
       </span>
 
-      {/* Line 2: model meta + context meter + right-aligned %. One grid child
-          spanning the full 2-column grid (1 / 3) so it aligns under the name in
-          column 1. */}
-      <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '1 / 3' }} data-testid="card-line2">
-        <span className="meta truncate">{metaLine}</span>
-        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
-          <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
-        </div>
-        <span className="meta w-9 text-right tabular-nums shrink-0">
-          {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
-        </span>
+      {/* Line 2: model meta + right-aligned context %. One grid child spanning
+          the full 2-column grid (1 / 3) so it aligns under the name in column 1.
+          The meter is NOT here: it used to sit between the meta and the % as a
+          flex-basis-0 item, so a long model name ("Opus 5 (1M context)") filled
+          the row's natural width, left no positive free space to grow into, and
+          the bar rendered 0px wide — it only ever showed for short model names.
+          It now lives on its own full-width bottom row (below). */}
+      <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '1 / 3', opacity: asleep ? 0.7 : undefined }} data-testid="card-line2">
+        <span className="meta truncate flex-1 min-w-0" title={metaLine}>{metaLine}</span>
+        {/* Context % is Claude-session telemetry. Terminal-only (shell)
+            sessions don't have a reliable context signal — the statusline bridge
+            can leak a stale/foreign percentage onto them — so hide the % (and the
+            meter row below) for shell sessions until there's proper integration.
+            The model · mode meta stays. */}
+        {!session.shellOnly && (
+          <span className="meta w-9 text-right tabular-nums shrink-0">
+            {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
+          </span>
+        )}
       </div>
 
       {/* Line 3: account on its own row, under the model (spans 1 / 3 so it aligns
           under the name/meta and never clips the way the cramped line-2 chip did).
           Rendered only when accountEmail is set so accountless sessions stay 2 lines. */}
       {accountName && (
-        <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '1 / 3' }} data-testid="card-line3">
+        <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '1 / 3', opacity: asleep ? 0.7 : undefined }} data-testid="card-line3">
           {accountDot && (
-            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={session.accountEmail} />
+            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={accountEmail} />
           )}
-          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={session.accountEmail} data-testid="account-name">
+          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={accountEmail} data-testid="account-name">
             {accountName}
           </span>
+        </div>
+      )}
+
+      {/* Bottom rule: the context meter on its OWN full-span grid row, under the
+          account line when present (row 4; row 3 for accountless cards — set
+          explicitly so no empty 2px-gap row appears). Nothing shares the row, so
+          no model-name length can squeeze the bar out again. 3px tall + the 2px
+          row-gap ≈ 5px of extra card height. Same shell gate as the % above.
+          Unknown usage renders the empty track (0% fill), matching the old
+          empty-bar behaviour until the first statusline tick. */}
+      {!session.shellOnly && (
+        <div
+          className={`relative z-10 h-[3px] rounded-full overflow-hidden ${accountName ? 'row-start-4' : 'row-start-3'}`}
+          style={{ gridColumn: '1 / 3', background: 'var(--surface-sunken)' }}
+          data-testid="context-meter-row"
+        >
+          <div
+            className={`meter-fill ${meterClass(pct)}${showActive ? ' meter-active' : ''}`}
+            style={{ width: `${pct}%` }}
+            data-active={showActive || undefined}
+            data-testid="context-meter-fill"
+          />
         </div>
       )}
     </button>

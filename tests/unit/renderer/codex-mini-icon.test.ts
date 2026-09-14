@@ -53,16 +53,19 @@ describe('SessionRow provider mini-icon', () => {
     })
   }
 
-  it('Claude session renders no provider badge (quiet launcher)', () => {
+  it('Claude session renders the Claude type badge, and nothing Codex', () => {
+    // Was "no badge for the default provider" (the quiet-launcher design).
+    // Reversed 2026-08-19 on canvas review: marking the common case by ABSENCE
+    // is what made the type icons read as inconsistent — every type shows its
+    // own icon now, in one place. Still exactly one, and never the wrong one.
     mountWith('claude')
-    // Claude is the default provider -- no badge rendered (quiet launcher design)
-    expect(container.querySelector('[title^="Claude"]')).toBeNull()
-    expect(container.querySelector('[title^="Codex"]')).toBeNull()
+    expect(container.querySelector('[data-testid="type-badge-claude"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="type-badge-codex"]')).toBeNull()
   })
 
-  it('Codex session renders the Codex badge', () => {
+  it('Codex session renders the Codex badge, and nothing Claude', () => {
     mountWith('codex')
-    expect(container.querySelector('[title^="Codex"]')).not.toBeNull()
-    expect(container.querySelector('[title^="Claude"]')).toBeNull()
+    expect(container.querySelector('[data-testid="type-badge-codex"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="type-badge-claude"]')).toBeNull()
   })
 })

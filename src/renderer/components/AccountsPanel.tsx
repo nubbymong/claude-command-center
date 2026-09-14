@@ -10,8 +10,10 @@ import { middleTruncateEmail, canonicaliseEmail, resolveAccountColourKey } from 
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor, IDENTITY_COLOR_KEYS } from '../../shared/identity-colors'
 import type { IdentityColorKey } from '../../shared/identity-colors'
-import type { AccountProfile } from '../../shared/account-types'
+import { isAccountActive, type AccountProfile } from '../../shared/account-types'
+import ToggleSwitch from './github/config/ToggleSwitch'
 import { Section } from './SettingsPage'
+import { AccountWebSession } from './settings/AccountWebSession'
 
 // ---- props ------------------------------------------------------------------
 
@@ -115,6 +117,14 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  // Active/inactive: an inactive account stays listed here but cannot be chosen
+  // when switching a session's account. The primary account is always active.
+  const active = isAccountActive(profile)
+  const setActive = async (next: boolean) => {
+    await window.electronAPI.accountProfiles.setActive(profile.id, next)
+    await useAccountProfilesStore.getState().hydrate()
+  }
+
   const commitName = async (raw: string) => {
     const name = raw.trim()
     await window.electronAPI.accountProfiles.rename(profile.id, name)
@@ -123,7 +133,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
 
   const handleDelete = async () => {
     const confirmed = window.confirm(
-      'Remove this account from CCC? Your Claude login is not affected.'
+      'Remove this account from AI Code Conductor? Your Claude login is not affected.'
     )
     if (!confirmed) return
     setDeleteError(null)
@@ -170,7 +180,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <span
             className="text-sm font-mono truncate"
-            style={{ color: hasEmail ? 'var(--text-secondary)' : undefined }}
+            style={{ color: !active ? 'var(--color-overlay0)' : (hasEmail ? 'var(--text-secondary)' : undefined) }}
             title={hasEmail ? profile.accountEmail : undefined}
           >
             {hasEmail ? (
@@ -184,11 +194,29 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
               primary
             </span>
           )}
+          {!active && (
+            <span
+              className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1 shrink-0"
+              data-testid={`inactive-badge-${profile.id}`}
+            >
+              inactive
+            </span>
+          )}
         </div>
+        {!profile.isPrimary && (
+          <ToggleSwitch
+            state={active ? 'on' : 'off'}
+            onToggle={() => { void setActive(!active) }}
+            label={active ? 'Deactivate this account' : 'Activate this account'}
+            title={active
+              ? 'Active: selectable when switching a session’s account'
+              : 'Inactive: still shown in the switcher, but can’t be selected'}
+          />
+        )}
         {!profile.isPrimary && (
           <button
             onClick={handleDelete}
-            title="Remove this account from CCC"
+            title="Remove this account from AI Code Conductor"
             data-testid={`delete-profile-${profile.id}`}
             className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-red/50 shrink-0"
             aria-label="Remove account"
@@ -208,6 +236,13 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
             onPick={handlePickColour}
           />
         )}
+        {/* #216: both halves of this account's authentication. Shown per account
+            because the claude.ai web session is per account by construction —
+            one partition each — and because the code-session token and the web
+            session fail in ways that look nothing alike. */}
+        <div className="mt-2">
+          <AccountWebSession profileId={profile.id} accountName={profile.name} />
+        </div>
         {deleteError && (
           <p
             className="text-[11px] text-red mt-1.5"

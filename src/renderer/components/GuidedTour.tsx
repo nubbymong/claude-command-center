@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 
 // Anchored coach-mark tour over the LIVE app (not a modal wizard). Each step
 // spotlights a real element by a data-tour selector and floats a callout beside
@@ -16,25 +17,42 @@ const STEPS: TourStep[] = [
   {
     selector: null,
     title: 'This is your workbench',
-    body: 'Command Center runs your Claude (and Codex) sessions side by side. A quick look at where things live, then we’ll start your first session.',
+    body: 'AI Code Conductor runs your Claude (and Codex) sessions side by side. A quick look at where things live, then we’ll start your first session.',
   },
   {
     selector: '[data-tour="nav-rail"]',
     title: 'Everything has a home',
-    body: 'Agent Hub, Insights, Tokenomics, Memory, Logs and the built-in tools (Conductor MCP) all live on this rail. Each opens a full page.',
+    body: 'Cloud Agents, Insights, Tokenomics, Memory, Logs and the built-in tools (Conductor MCP) all live on this rail. Each opens a full page.',
   },
   {
+    // Anchored on the always-mounted Saved TAB, not the "+ New" button
+    // inside it: the panel defaults to the Running tab, so a selector into the
+    // Saved body would be unresolvable at tour time and available() would
+    // silently skip the step that explains the app's core concept.
     selector: '[data-tour="new-config"]',
     title: 'Saved configs live here',
-    body: 'A saved config is a reusable launcher: project folder, model, account. Create it once, then start a session from it whenever you want (Claude or Codex, local or over SSH).',
+    body: 'The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (Claude or Codex, running here or on another machine over SSH — plain, or persistent so a dropped link does not kill it).',
   },
   {
-    selector: '[aria-label="Settings"]',
+    // The Agent Canvas had no step at all, which made the app's second-largest
+    // surface invisible to a new user. Its button lives in a session's command
+    // bar, so on a first run (no session yet) the anchor is unmounted and
+    // available() skips this step -- the same graceful degradation every
+    // anchored step relies on. It earns its place the moment a session exists.
+    selector: '[data-tour="canvas-button"]',
+    title: 'Review what your agent builds',
+    body: 'Every session has a Canvas button beside Snap. Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide — approve that version, or send it back for another round. Testing mode goes further — click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up.',
+  },
+  {
+    // Anchored on data-tour, not aria-label: the nav button's label is dynamic
+    // (collapsed state, logs-disabled, running jobs), so an aria-label selector
+    // silently missed and the tour skipped this step with no visible error.
+    selector: '[data-tour="nav-settings"]',
     title: 'Change anything, anytime',
     body: 'Everything you just set up (accounts, GitHub, status line, tools, Codex) lives in Settings.',
   },
   {
-    selector: '[aria-label="Feature Guide"]',
+    selector: '[data-tour="help-button"]',
     title: 'Help lives here',
     body: 'The Feature Guide explains every feature in depth whenever you want it, and can hand your question to a Claude session that knows the app.',
   },
@@ -69,6 +87,9 @@ function useAnchorRect(selector: string | null): DOMRect | null {
 }
 
 export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig: () => void; onClose: () => void }) {
+  // The tour floats over the live app, session area included; the native
+  // browser / account panes would paint over its spotlight and callouts.
+  useOccludesNativePanes()
   const [i, setI] = useState(0)
   const step = STEPS[i]
   const rect = useAnchorRect(step.selector)
@@ -105,6 +126,13 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
     }
   }
 
+  // The counter must describe the tour that will actually run: next()/back()
+  // skip steps whose anchor isn't mounted, so STEPS.length over-promised (a
+  // collapsed sidebar made it "4 of 6" and then finish). Count what is
+  // reachable right now, always including the step on screen.
+  const reachable = STEPS.filter((s, n) => n === i || available(s))
+  const position = reachable.indexOf(step) + 1
+
   // Callout placement: beside the anchor when there is one, else centered.
   let cardStyle: React.CSSProperties
   if (rect) {
@@ -138,7 +166,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
             width: rect.width + PAD * 2,
             height: rect.height + PAD * 2,
             borderRadius: 12,
-            boxShadow: '0 0 0 9999px rgba(6,9,13,0.68), 0 0 0 2px var(--ob, #e8915c)',
+            boxShadow: '0 0 0 9999px rgba(6,9,13,0.68), 0 0 0 2px var(--ob, #2f9bff)',
             transition: 'top .18s, left .18s, width .18s, height .18s',
             pointerEvents: 'none',
           }}
@@ -159,8 +187,8 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted, #6a7480)' }}>
-            {i + 1} of {STEPS.length}
+          <span style={{ fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted, #8c949d)' }}>
+            {position} of {reachable.length}
           </span>
         </div>
         <div style={{ fontSize: 16, fontWeight: 650, marginBottom: 6 }}>{step.title}</div>
@@ -171,7 +199,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
           <button
             onClick={onClose}
             type="button"
-            style={{ background: 'none', border: 0, color: 'var(--text-muted, #6a7480)', fontSize: 12, cursor: 'pointer', padding: '8px 4px' }}
+            style={{ background: 'none', border: 0, color: 'var(--text-muted, #8c949d)', fontSize: 12, cursor: 'pointer', padding: '8px 4px' }}
           >
             Skip tour
           </button>
@@ -188,7 +216,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
             <button
               onClick={next}
               type="button"
-              style={{ border: 0, borderRadius: 9, padding: '8px 18px', fontSize: 13, fontWeight: 670, cursor: 'pointer', background: 'linear-gradient(135deg, var(--ob-bright, #f0a06a), var(--ob-deep, #c47b4a))', color: '#1a0d05' }}
+              style={{ border: 0, borderRadius: 9, padding: '8px 18px', fontSize: 13, fontWeight: 670, cursor: 'pointer', background: 'linear-gradient(135deg, var(--ob-bright, #5cb0ff), var(--ob-deep, #1b7fd9))', color: 'var(--ob-on, #04121f)' }}
             >
               {step.cta ?? 'Next →'}
             </button>

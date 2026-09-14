@@ -1,4 +1,9 @@
 import React, { useEffect, useState } from 'react'
+import { isSshPersistenceFailureReason, formatPersistenceUnavailableMessage } from '../../shared/ssh-tmux-persistence'
+import { parseDockerPostCommand, isContainerRuntime } from '../../shared/container-command'
+import { SSH_ENTRY } from '../../shared/ssh-entry'
+import { useSessionStore } from '../stores/sessionStore'
+import { DialogButton } from './ui/Dialog'
 
 interface Props {
   sessionId: string
@@ -7,6 +12,37 @@ interface Props {
   /** When true, skip the overlay entirely and let pty-manager run the
    * legacy auto state machine. Local sessions also skip via not-mounting. */
   enabled: boolean
+  /** item 5 (resume cascade): respawn the whole session. Used by the "no host"
+   *  connection-failure branch's Retry, which cannot recover by re-writing the
+   *  claude command (the PTY is dead) -- only a full re-spawn reconnects. */
+  onRetry?: () => void
+}
+
+/** Main's reason string for a failed container entry (pty-manager, rc.14 review
+ *  F1, aicc_planning#45). The overlay keys the Run again button on it. */
+export const CONTAINER_ENTRY_FAILED = SSH_ENTRY.FAILED
+/** Main's reason when a PROVEN container entry was lost again (rc.15 review
+ *  R1): the container shell exited (an `exit` in an rc file, the user leaving)
+ *  or the launch-time guard found a different shell attached (detach keys, a
+ *  stopped container). Same way forward as a failed entry: Run again. */
+export const CONTAINER_LEFT = SSH_ENTRY.LEFT
+/** Main's awaiting-claude info when the post-connect command finished but
+ *  nothing could prove which shell -- or which machine -- is attached now (a
+ *  `start -ai` attach, a free-text command with no recognised container
+ *  shape). Launching is the user's explicit, warned choice (rc.15 review R1).
+ *  All three are the SHARED constants main emits (src/shared/ssh-entry.ts). */
+export const ENTRY_UNVERIFIED = SSH_ENTRY.UNVERIFIED
+
+/** The failed-state copy for a reason main sent. Most reasons are shown as
+ *  they are; the container entry gets a sentence that says what to do. */
+export function failureText(info: string | undefined): string {
+  if (info === CONTAINER_ENTRY_FAILED) {
+    return 'The container could not be entered: no entry confirmation came back from inside it (the host shell is probably still attached). Start the container (or fix sudo or the engine), then run the post-connect command again. Skip stays on the host shell.'
+  }
+  if (info === CONTAINER_LEFT) {
+    return 'The container shell is gone: it exited (or never started — check the terminal for a shell-not-found line), or the connection to it was detached, so the host shell is attached now. Nothing was launched. Run the post-connect command again to re-enter. Skip stays on the host shell.'
+  }
+  return info ?? 'See app.log for details.'
 }
 
 type FlowState =
@@ -31,10 +67,32 @@ type FlowState =
  * Auto-hides once Claude is running, or on `skipped`. The terminal
  * remains fully interactive at all times — the overlay sits in a
  * top-right corner of the pane, not over the whole pane.
+ *
+ * NOT a modal: there is no backdrop and the terminal underneath stays live,
+ * so this keeps its own positioned card (and its z-30) rather than taking
+ * DialogOverlay/DialogPanel. Only the colours move onto the tokens, and the
+ * real buttons become DialogButtons (#360).
  */
-export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, enabled }: Props) {
+export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, enabled, onRetry }: Props) {
   const [state, setState] = useState<FlowState>('connecting')
   const [info, setInfo] = useState<string | undefined>(undefined)
+  // Copilot review, #298: only a session main has REPORTED as tmux-wrapped has
+  // something running on the far side to come back to.
+  const isPersistent = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.sshTmuxPersistent) === true
+  // Persistence-unavailable warning gate (owner UX, 2026-08-31): only warn when
+  // persistence was actually WANTED. Main forces it OFF for a standard session
+  // (detachable === false) or a container runtime (runtime.type === 'container'),
+  // so probe=none is the NORMAL, expected outcome there — not a failure. Mirror
+  // main's gate (pty-manager writeClaudeCmd: detachable !== false && !container)
+  // so the overlay never alarms a session that never tried to persist.
+  const sshConfig = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.sshConfig)
+  // effectiveRuntime mirrors pty-manager's SSH spawn EXACTLY (incl. the #572
+  // legacy-docker fallback): a free-text `postCommand: 'sudo docker exec …'`
+  // with no structured runtime is ALSO a container session for which main
+  // forces persistence off — so probe=none is normal there too and must not
+  // alarm. Checking only runtime?.type missed that class.
+  const effectiveRuntime = sshConfig?.runtime ?? parseDockerPostCommand(sshConfig?.postCommand ?? '') ?? undefined
+  const wantedPersistence = sshConfig?.detachable !== false && !isContainerRuntime(effectiveRuntime)
   const [busy, setBusy] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
 
@@ -49,7 +107,7 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
       if (msg.state !== 'running-postcommand' && msg.state !== 'running-setup' && msg.state !== 'running-claude') {
         setBusy(false)
       }
-      if (msg.state === 'failed') setErrorText(msg.info ?? 'See app.log for details.')
+      if (msg.state === 'failed') setErrorText(failureText(msg.info))
       else setErrorText(null)
     })
 
@@ -117,30 +175,45 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
     try { await window.electronAPI.ssh.skip(sessionId) } catch { /* noop */ }
   }
 
+  // item 1/2 honesty: a tmux stage/push IS an install on the host -- say so
+  // plainly rather than the cryptic "Injecting statusline (tmux-stage)".
+  const isTmuxInstall = state === 'running-setup' && (info === 'tmux-stage' || info === 'tmux-push' || (typeof info === 'string' && info.startsWith('staging tmux')))
   const headline =
     state === 'connecting' ? 'Connecting…' :
     isAwaitingPostCommand ? (hasPostCommand ? 'Run post-connect command?' : 'Launch Claude?') :
-    isAwaitingClaude ? (info === 'inner' ? 'Inner shell ready — launch Claude?' : 'Launch Claude?') :
+    isAwaitingClaude ? (info === SSH_ENTRY.INNER ? 'Inner shell ready — launch Claude?' : info === ENTRY_UNVERIFIED ? 'Couldn’t verify where that landed — launch anyway?' : 'Launch Claude?') :
     state === 'running-postcommand' ? 'Running post-connect command…' :
+    isTmuxInstall ? 'Installing a lightweight tmux…' :
+    state === 'running-setup' && info === SSH_ENTRY.VERIFYING ? 'Checking the container shell…' :
     state === 'running-setup' ? `Injecting statusline (${info || 'host'})…` :
-    state === 'running-claude' ? 'Launching Claude…' :
-    state === 'failed' ? 'Setup failed' :
+    // item 7: distinguish a reconnect-reattach from a first launch.
+    state === 'running-claude' ? (info === 'reattach' ? 'Reconnecting to your session…' : 'Launching Claude…') :
+    state === 'failed' ? (info === 'connection' ? 'Couldn’t reach the host' : 'Setup failed') :
     ''
 
+  const mutedStyle: React.CSSProperties = { color: 'var(--text-muted)' }
+
   return (
-    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-[460px] max-w-[80%] bg-mantle/95 border border-surface1 rounded-lg shadow-xl backdrop-blur-sm px-4 py-3 text-xs">
+    <div
+      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-[460px] max-w-[80%] rounded-lg shadow-xl backdrop-blur-sm px-4 py-3 text-xs"
+      style={{
+        background: 'color-mix(in srgb, var(--surface-raised) 95%, transparent)',
+        border: '1px solid var(--border-subtle)',
+        color: 'var(--text-primary)',
+      }}
+    >
       <div className="flex items-center gap-2 mb-1.5">
-        <span className="font-medium text-text">{headline}</span>
+        <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{headline}</span>
         {isRunning && (
-          <span className="inline-block w-2 h-2 rounded-full bg-blue animate-pulse" aria-hidden />
+          <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: 'var(--brand)' }} aria-hidden />
         )}
       </div>
       {state === 'connecting' && (
-        <div className="text-overlay0 text-[11px]">Waiting for SSH login.</div>
+        <div className="text-[11px]" style={mutedStyle}>Waiting for SSH login.</div>
       )}
       {isAwaitingPostCommand && (
         <div className="space-y-1.5">
-          <p className="text-overlay1 text-[11px] leading-snug">
+          <p className="text-[11px] leading-snug" style={mutedStyle}>
             {hasPostCommand
               ? 'Pre-commands you want to run by hand? Do them in the terminal first, then click below.'
               : (shellOnly
@@ -150,89 +223,172 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
           <div className="flex gap-1.5">
             {hasPostCommand ? (
               <>
-                <button
+                <DialogButton
+                  variant="primary"
                   onClick={runPostCommand}
                   disabled={busy}
-                  className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 disabled:opacity-50 font-medium"
                 >
                   Run post-connect command
-                </button>
+                </DialogButton>
                 {!shellOnly && (
-                  <button
+                  <DialogButton
+                    variant="secondary"
                     onClick={launchClaude}
                     disabled={busy}
-                    className="px-2.5 py-1 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text disabled:opacity-50"
                     title="Skip the post-connect command and launch Claude on the host"
                   >
                     Launch Claude on host
-                  </button>
+                  </DialogButton>
                 )}
               </>
             ) : (
-              <button
+              <DialogButton
+                variant="primary"
                 onClick={launchClaude}
                 disabled={busy}
-                className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 disabled:opacity-50 font-medium"
               >
                 Launch Claude
-              </button>
+              </DialogButton>
             )}
-            <button
+            <DialogButton
+              variant="ghost"
               onClick={skip}
-              className="px-2 py-1 text-xs rounded text-overlay0 hover:text-text hover:bg-surface0"
               title="Manage manually — no auto writes"
             >
               Skip
-            </button>
+            </DialogButton>
           </div>
         </div>
       )}
       {isAwaitingClaude && (
         <div className="space-y-1.5">
-          <p className="text-overlay1 text-[11px] leading-snug">
-            {info === 'inner'
-              ? 'You\'re inside the post-connect shell (e.g. docker container). Clicking will re-run setup here so Claude finds its settings, then launch Claude.'
-              : 'Inject statusline shim and launch Claude.'}
-          </p>
+          {info === ENTRY_UNVERIFIED ? (
+            // rc.15 review R1: explicit consent, with the warning. This state is
+            // never "inner" -- main keeps the entry unverified whatever is clicked.
+            // The copy is tailored: a container session (a `start -ai` attach)
+            // may have landed on the host or on a non-shell entrypoint; a host
+            // session with a free-text command is on the host it asked for
+            // unless that command hopped somewhere (quality review: warning a
+            // host session that it might run on the host describes the intended
+            // outcome as a hazard).
+            <p className="text-[11px] leading-snug" style={{ color: 'var(--status-warning)' }}>
+              {isContainerRuntime(effectiveRuntime)
+                ? 'The container was started and attached, but the app could not confirm a shell inside it is what is attached now. Launching runs setup and Claude in whatever is attached — possibly the SSH host itself, or a process that is not a shell. Skip to stay in the terminal and check first.'
+                : 'The post-connect command finished, but the app cannot tell whether it changed where you are (for example by entering a container or another machine). Launching runs setup and Claude in whatever shell is attached now. Skip to stay in the terminal and check first.'}
+            </p>
+          ) : (
+            <p className="text-[11px] leading-snug" style={mutedStyle}>
+              {info === SSH_ENTRY.INNER
+                ? 'You\'re inside the post-connect shell (e.g. docker container). Clicking will re-run setup here so Claude finds its settings, then launch Claude.'
+                : 'Inject statusline shim and launch Claude.'}
+            </p>
+          )}
           <div className="flex gap-1.5">
-            <button
+            <DialogButton
+              variant={info === ENTRY_UNVERIFIED ? 'secondary' : 'primary'}
               onClick={launchClaude}
               disabled={busy}
-              className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 disabled:opacity-50 font-medium"
+              testId={info === ENTRY_UNVERIFIED ? 'ssh-launch-anyway' : undefined}
             >
-              Launch Claude
-            </button>
-            <button
+              {info === ENTRY_UNVERIFIED ? 'Launch anyway' : 'Launch Claude'}
+            </DialogButton>
+            <DialogButton
+              variant="ghost"
               onClick={skip}
-              className="px-2 py-1 text-xs rounded text-overlay0 hover:text-text hover:bg-surface0"
               title="Manage manually — no auto writes"
             >
               Skip
-            </button>
+            </DialogButton>
           </div>
         </div>
       )}
+      {state === 'running-claude' && info === 'reattach' && (
+        <div className="text-[11px] leading-snug mb-1" style={mutedStyle}>
+          Your remote session was still alive — reattaching. If it had ended, we resume your
+          conversation automatically.
+        </div>
+      )}
+      {isTmuxInstall && (
+        <div className="text-[11px] leading-snug mb-1" style={mutedStyle}>
+          The host doesn’t have tmux, so we’re installing a small static copy under
+          <span className="font-mono"> ~/.claude/bin</span> to keep this session alive if the
+          connection drops. Nothing is installed system-wide.
+        </div>
+      )}
+      {/* #242 tier 5: every tmux-ladder tier that gave up already forwards its
+          reason onto this SAME 'running-claude' info field (tmux-stage-fail:*,
+          tmux-push-fail:*, or the probe=none default) -- this was previously
+          rendered nowhere, so the ladder degrading to a bare claude launch was
+          indistinguishable from it succeeding. Shown only for the narrow
+          'running-claude' window before the idle-fallback latches
+          claude-running and the whole overlay unmounts (see the hide check
+          above) -- brief, but the alternative was never showing it at all. */}
+      {state === 'running-claude' && wantedPersistence && isSshPersistenceFailureReason(info) && (
+        <div className="text-[11px] leading-snug mb-1" style={{ color: 'var(--status-warning)' }}>
+          {formatPersistenceUnavailableMessage(info!)}
+        </div>
+      )}
       {isRunning && (
-        <div className="text-overlay0 text-[11px]">
+        <div className="text-[11px]" style={mutedStyle}>
           Watching for completion sentinel. App.log has step-by-step trace.
         </div>
       )}
-      {state === 'failed' && (
+      {state === 'failed' && info === 'connection' && (
         <div className="space-y-1.5">
-          <p className="text-red text-[11px]">{errorText || 'Step did not complete.'}</p>
+          {/* Copilot review, #298: the reassurance is only TRUE when this
+              session is known to have reached a persistent (tmux-wrapped)
+              remote. On a first connect that never got that far, or one that
+              died before tmux started, there is nothing on the far side to pick
+              back up, and promising otherwise is worse than saying nothing. */}
+          <p className="text-[11px] leading-snug" style={{ color: 'var(--status-danger)' }}>
+            {isPersistent
+              ? 'Couldn’t reach the host — it may be offline or asleep. Nothing was lost: your remote session is still running there, and reconnecting will pick it back up.'
+              : 'Couldn’t reach the host — it may be offline or asleep. Check the address and that the machine is awake, then retry.'}
+          </p>
           <div className="flex gap-1.5">
-            <button
-              onClick={launchClaude}
-              className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 font-medium"
+            <DialogButton
+              variant="primary"
+              onClick={() => onRetry?.()}
+              disabled={!onRetry}
+              testId="ssh-retry-connection"
             >
-              Retry Launch
-            </button>
-            <button
+              Retry connection
+            </DialogButton>
+          </div>
+        </div>
+      )}
+      {state === 'failed' && info !== 'connection' && (
+        <div className="space-y-1.5">
+          <p className="text-[11px]" style={{ color: 'var(--status-danger)' }}>{errorText || 'Step did not complete.'}</p>
+          <div className="flex gap-1.5">
+            {info === CONTAINER_ENTRY_FAILED || info === CONTAINER_LEFT ? (
+              // rc.14 review F1 round 2: Retry Launch only re-emits this failure
+              // (main refuses the host ladder). The way forward is to run the
+              // post-command again once the container is fixed -- or, for a
+              // container shell that was lost after entry (rc.15 review R1),
+              // simply to re-enter it.
+              <DialogButton
+                variant="primary"
+                onClick={runPostCommand}
+                disabled={busy}
+                testId="ssh-run-post-command-again"
+              >
+                Run again
+              </DialogButton>
+            ) : (
+              <DialogButton
+                variant="primary"
+                onClick={launchClaude}
+              >
+                Retry Launch
+              </DialogButton>
+            )}
+            <DialogButton
+              variant="ghost"
               onClick={skip}
-              className="px-2 py-1 text-xs rounded text-overlay0 hover:text-text hover:bg-surface0"
             >
               Skip
-            </button>
+            </DialogButton>
           </div>
         </div>
       )}

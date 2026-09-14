@@ -17,7 +17,7 @@ export interface TokenomicsSupervisorOptions {
 }
 
 export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
-export interface TkIndexCompleteEvent { firstIndex: boolean; eventsTotal: number }
+export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }
 
 const BACKOFFS = [250, 1000, 4000, 4000, 4000]
 const DEFAULT_QUERY_TIMEOUT_MS = 15_000
@@ -39,6 +39,8 @@ export class TokenomicsSupervisor {
   private lastProgress: TkIndexProgress = { filesDone: 0, filesTotal: 0, eventsIngested: 0, phase: 'initial' }
   private firstIndexComplete = false
   private lastEventsTotal = 0
+  /** Files the last sweep could not read at all. Reported, never blocking. */
+  private lastFilesFailed = 0
   private lastIndexAt: number | null = null
   // Set when the worker reports an UNCORRELATED error (e.g. a failed DB open,
   // which leaves the worker alive but never `ready` — no exit, no restart). The
@@ -74,6 +76,11 @@ export class TokenomicsSupervisor {
       case 'ready': {
         this.listening = true
         this.backoffIdx = 0
+        // The DB's own record of a completed first index. Without this the
+        // page said "Indexing usage data" on EVERY launch until a fresh sweep
+        // completed - and stayed there for hours when the sweep wedged on the
+        // Codex tail, over a database that had been complete since July.
+        if (m.firstIndexComplete) { this.firstIndexComplete = true; this.lastEventsTotal = m.eventsTotal }
         const buf = this.buffer
         this.buffer = []
         for (const msg of buf) this.worker?.transport.post(msg)
@@ -85,10 +92,16 @@ export class TokenomicsSupervisor {
         return
       }
       case 'index-complete': {
-        this.firstIndexComplete = true   // any completed sweep means the DB has a first index
+        // A sweep FINISHING is not a first index. With a per-tick byte budget a
+        // multi-GB rollout needs tens of sweeps, so latching on the message
+        // itself put the dashboard up over a fraction of the user's spend and
+        // called it complete. `drained` is the worker saying every file it
+        // visited was actually read to the end.
+        if (m.drained) this.firstIndexComplete = true
         this.lastEventsTotal = m.eventsTotal
+        this.lastFilesFailed = m.filesFailed
         this.lastIndexAt = this.now()
-        for (const cb of this.completeSubs) { try { cb({ firstIndex: m.firstIndex, eventsTotal: m.eventsTotal }) } catch { /* ignore */ } }
+        for (const cb of this.completeSubs) { try { cb({ firstIndex: m.firstIndex, drained: m.drained, filesFailed: m.filesFailed, eventsTotal: m.eventsTotal }) } catch { /* ignore */ } }
         return
       }
       case 'health': { this.lastEventsTotal = m.eventsTotal; return }
@@ -161,6 +174,7 @@ export class TokenomicsSupervisor {
       filesDone: this.lastProgress.filesDone,
       filesTotal: this.lastProgress.filesTotal,
       eventsTotal: this.lastEventsTotal,
+      filesFailed: this.lastFilesFailed,
       lastIndexAt: this.lastIndexAt,
       error,
     }

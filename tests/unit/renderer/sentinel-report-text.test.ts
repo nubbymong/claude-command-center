@@ -96,7 +96,7 @@ describe('formatSentinelReportText', () => {
       finding({ id: 'b1', title: 'Hooks contract changed', surface: 3, evidence: 'ev one' }),
     ]
     const text = formatSentinelReportText(snap({ findings }))
-    expect(text).toContain('CCC Sentinel')
+    expect(text).toContain('Sentinel: Breaking Changes')
     expect(text).toContain('CC 2.1.177')
     expect(text).toContain(new Date(1700000000000).toISOString())
     expect(text).toContain('[BREAKING] Hooks contract changed (statusline hook)')
@@ -109,6 +109,6 @@ describe('formatSentinelReportText', () => {
 
   it('handles a null snapshot without throwing', () => {
     expect(() => formatSentinelReportText(null)).not.toThrow()
-    expect(formatSentinelReportText(null)).toContain('CCC Sentinel')
+    expect(formatSentinelReportText(null)).toContain('Sentinel: Breaking Changes')
   })
 })

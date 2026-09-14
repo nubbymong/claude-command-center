@@ -39,7 +39,7 @@
   {
     "id": "statusline-stdin-fields",
     "area": "statusline",
-    "contract": "Claude Code pipes a JSON object to the statusLine.command via stdin. CCC reads: model.display_name (or model.id fallback), model.id (raw), effort.level, context_window.used_percentage, context_window.remaining_percentage, context_window.context_window_size, context_window.current_usage.{input_tokens,cache_creation_input_tokens,cache_read_input_tokens,output_tokens}, cost.total_cost_usd, cost.total_duration_ms, cost.total_lines_added, cost.total_lines_removed, transcript_path.",
+    "contract": "Claude Code pipes a JSON object to the statusLine.command via stdin. The Conductor reads: model.display_name (or model.id fallback), model.id (raw), effort.level, context_window.used_percentage, context_window.remaining_percentage, context_window.context_window_size, context_window.current_usage.{input_tokens,cache_creation_input_tokens,cache_read_input_tokens,output_tokens}, cost.total_cost_usd, cost.total_duration_ms, cost.total_lines_added, cost.total_lines_removed, transcript_path.",
     "files": [
       "src/main/providers/claude/statusline.ts"
     ],
@@ -51,7 +51,7 @@
   {
     "id": "statusline-settings-command",
     "area": "statusline",
-    "contract": "CCC registers its statusline bridge by writing { statusLine: { type: 'command', command: '<node path>' } } into ~/.claude/settings.json (and per-session settings files). Claude Code must honour the statusLine.command stanza and pipe its JSON to the command's stdin.",
+    "contract": "The Conductor registers its statusline bridge by writing { statusLine: { type: 'command', command: '<node path>' } } into ~/.claude/settings.json (and per-session settings files). Claude Code must honour the statusLine.command stanza and pipe its JSON to the command's stdin.",
     "files": [
       "src/main/providers/claude/statusline.ts"
     ],
@@ -63,7 +63,7 @@
   {
     "id": "hooks-settings-schema",
     "area": "hooks",
-    "contract": "Hooks are registered under a 'hooks' key in settings.json as a matcher-wrapped map: { hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'http', url: 'http://localhost:<port>/hook/<sessionId>', headers: { 'X-CCC-Hook-Token': '<secret>' } }] }], ... } }. Each event maps to an array of matcher-wrapped entries; the inner hook entry uses type 'http' with a per-session URL and auth header. CCC uses per-session settings files seeded via --settings; mcpServers in --settings are ignored by Claude CLI (must use --mcp-config).",
+    "contract": "Hooks are registered under a 'hooks' key in settings.json as a matcher-wrapped map: { hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'http', url: 'http://localhost:<port>/hook/<sessionId>', headers: { 'X-CCC-Hook-Token': '<secret>' } }] }], ... } }. Each event maps to an array of matcher-wrapped entries; the inner hook entry uses type 'http' with a per-session URL and auth header. The Conductor uses per-session settings files seeded via --settings; mcpServers in --settings are ignored by Claude CLI (must use --mcp-config).",
     "files": [
       "src/main/hooks/session-hooks-writer.ts",
       "src/main/hooks/per-session-settings.ts"
@@ -90,7 +90,7 @@
   {
     "id": "account-identity",
     "area": "accounts",
-    "contract": "The active Claude account identity lives in ~/.claude.json at oauthAccount.emailAddress (string) and optionally oauthAccount.displayName, oauthAccount.accountUuid. This file follows USERPROFILE on Windows (not CLAUDE_CONFIG_DIR). Per-account isolation in CCC sets USERPROFILE to a profile-specific directory containing a private .claude.json.",
+    "contract": "The active Claude account identity lives in ~/.claude.json at oauthAccount.emailAddress (string) and optionally oauthAccount.displayName, oauthAccount.accountUuid. This file follows USERPROFILE on Windows (not CLAUDE_CONFIG_DIR). Per-account isolation in the Conductor sets USERPROFILE to a profile-specific directory containing a private .claude.json.",
     "files": [
       "src/main/account-identity.ts",
       "src/main/providers/claude/statusline.ts"
@@ -103,7 +103,7 @@
   {
     "id": "credentials-oauth",
     "area": "accounts",
-    "contract": "OAuth credentials live at ~/.claude/.credentials.json as { claudeAiOauth: { accessToken: string } }. CCC's statusline bridge reads this token to call api.anthropic.com/api/oauth/usage (with headers Authorization: Bearer <token>, anthropic-beta: oauth-2025-04-20) for rate-limit data (five_hour/seven_day/extra_usage blocks).",
+    "contract": "OAuth credentials live at ~/.claude/.credentials.json as { claudeAiOauth: { accessToken: string } }. The Conductor's statusline bridge reads this token to call api.anthropic.com/api/oauth/usage (with headers Authorization: Bearer <token>, anthropic-beta: oauth-2025-04-20) for rate-limit data (five_hour/seven_day/extra_usage blocks).",
     "files": [
       "src/main/providers/claude/statusline.ts"
     ],
@@ -115,7 +115,7 @@
   {
     "id": "cli-flags",
     "area": "sessions",
-    "contract": "CCC passes CLI flags to claude with --resume <uuid> FIRST (must come first for cwd-scoped resume to work); the remaining named flags (--agents, --effort, --model, --settings, --mcp-config) are order-independent. Flags are shell-escaped for the platform shell (PowerShell on Windows, sh on POSIX).",
+    "contract": "The Conductor passes CLI flags to claude with --resume <uuid> FIRST (must come first for cwd-scoped resume to work); the remaining named flags (--agents, --effort, --model, --settings, --mcp-config) are order-independent. Flags are shell-escaped for the platform shell (PowerShell on Windows, sh on POSIX).",
     "files": [
       "src/main/pty-manager.ts"
     ],
@@ -127,7 +127,7 @@
   {
     "id": "cli-print-mode",
     "area": "sessions",
-    "contract": "Headless (non-interactive) invocations use -p (or --print) combined with --output-format json to get structured JSON output from the CLI. CCC's Sentinel analysis runner and insights runner use this mode via spawnClaude / claude -p.",
+    "contract": "Headless (non-interactive) invocations use -p (or --print) combined with --output-format json to get structured JSON output from the CLI. The Conductor's Sentinel analysis runner and insights runner use this mode via spawnClaude / claude -p.",
     "files": [
       "src/main/insights-runner.ts"
     ],
@@ -139,7 +139,7 @@
   {
     "id": "session-env",
     "area": "sessions",
-    "contract": "CCC injects CLAUDE_MULTI_SESSION_ID=<sessionId> into every Claude process env. The statusline script reads this env var to write the correct per-session status file. Shell-only sessions also receive this variable.",
+    "contract": "The Conductor injects CLAUDE_MULTI_SESSION_ID=<sessionId> into every Claude process env. The statusline script reads this env var to write the correct per-session status file. Shell-only sessions also receive this variable.",
     "files": [
       "src/main/providers/claude/spawn.ts",
       "src/main/providers/claude/statusline.ts"
@@ -152,7 +152,7 @@
   {
     "id": "env-killswitches",
     "area": "sessions",
-    "contract": "CCC sets CLAUDE_CODE_DISABLE_MOUSE=1 and CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 by default (unless classicTerminalCopyPaste is disabled) to allow xterm.js to own mouse and scrollback, and CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 by default (unless clickableQuestions is enabled) so CC 2.1.195+ clickable question options stay keyboard-driven inside xterm. CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 is set when the disableAutoMemory session option is active.",
+    "contract": "The Conductor sets CLAUDE_CODE_DISABLE_MOUSE=1 and CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 by default (unless classicTerminalCopyPaste is disabled) to allow xterm.js to own mouse and scrollback, and CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 by default (unless clickableQuestions is enabled) so CC 2.1.195+ clickable question options stay keyboard-driven inside xterm. CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 is set when the disableAutoMemory session option is active.",
     "files": [
       "src/main/providers/claude/spawn.ts"
     ],
@@ -176,13 +176,13 @@
   {
     "id": "model-registry",
     "area": "sessions",
-    "contract": "Known Claude models and their pricing, colours, families, and dropdown labels are maintained in CCC's model-registry.json + optional user overlay. Unknown model IDs observed at runtime become Sentinel registry-proposal findings. Pricing falls back through: live LiteLLM → registry fallbackPricing (exact) → longest-prefix family match → flagged guess.",
+    "contract": "Known Claude models and their pricing, colours, families, and dropdown labels are maintained in the Conductor's model-registry.json + optional user overlay. Unknown model IDs observed at runtime become Sentinel registry-proposal findings. Pricing falls back through: live LiteLLM → registry fallbackPricing (exact) → longest-prefix family match → flagged guess.",
     "files": [
       "resources/model-registry.json",
       "src/main/model-registry-service.ts",
       "src/main/tokenomics/tk-pricing.ts"
     ],
-    "failureMode": "New model families not in the registry cause silent misprice (guessed family rates), grey/unknown colour, and raw model ID shown in UI until a Sentinel apply or CCC update",
+    "failureMode": "New model families not in the registry cause silent misprice (guessed family rates), grey/unknown colour, and raw model ID shown in UI until a Sentinel apply or the Conductor update",
     "severity": "warn",
     "configFixable": true,
     "affectedFeature": "tokenomics"
@@ -190,7 +190,7 @@
   {
     "id": "effort-levels",
     "area": "sessions",
-    "contract": "Effort levels known to CCC are maintained in the model-registry's effortLevels array (values: low, medium, high, xhigh, max, ultracode). The spawn path accepts any string effort to avoid breaking restored sessions with novel values. Unknown effort values become Sentinel observations.",
+    "contract": "Effort levels known to the Conductor are maintained in the model-registry's effortLevels array (values: low, medium, high, xhigh, max, ultracode). The spawn path accepts any string effort to avoid breaking restored sessions with novel values. Unknown effort values become Sentinel observations.",
     "files": [
       "resources/model-registry.json",
       "src/main/model-registry-service.ts"
@@ -203,12 +203,12 @@
   {
     "id": "cwd-scoped-resume",
     "area": "resume",
-    "contract": "`claude --resume <uuid>` is cwd-scoped: it only resolves a conversation from the launch cwd's mangled ~/.claude/projects/<mangled> folder. CCC therefore overrides the launch cwd to the conversation's original cwd (read from the first JSONL line with a non-empty 'cwd' field) when launching an exact-conversation resume.",
+    "contract": "`claude --resume <uuid>` is cwd-scoped: it only resolves a conversation from the launch cwd's mangled ~/.claude/projects/<mangled> folder. The Conductor therefore overrides the launch cwd to the conversation's original cwd (read from the first JSONL line with a non-empty 'cwd' field) when launching an exact-conversation resume.",
     "files": [
       "src/main/pty-manager.ts",
       "src/main/logging/transcript-discovery.ts"
     ],
-    "failureMode": "If CC changes --resume to be cwd-independent, CCC's cwd-override logic is harmless but unnecessary. If the cwd-scoped invariant changes in the opposite direction (stricter), resume may silently pick a wrong or stale conversation.",
+    "failureMode": "If CC changes --resume to be cwd-independent, the Conductor's cwd-override logic is harmless but unnecessary. If the cwd-scoped invariant changes in the opposite direction (stricter), resume may silently pick a wrong or stale conversation.",
     "severity": "warn",
     "configFixable": false,
     "affectedFeature": "resume"
@@ -216,7 +216,7 @@
   {
     "id": "version-output",
     "area": "sessions",
-    "contract": "`claude --version` outputs a string containing a parseable semver of the form MAJOR.MINOR.PATCH (optionally with pre-release suffix -[0-9A-Za-z.-]+). CCC extracts the version with /\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?/.",
+    "contract": "`claude --version` outputs a string containing a parseable semver of the form MAJOR.MINOR.PATCH (optionally with pre-release suffix -[0-9A-Za-z.-]+). The Conductor extracts the version with /\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?/.",
     "files": [
       "src/main/sentinel/sentinel-version.ts"
     ],
@@ -253,7 +253,7 @@
   {
     "id": "mcp-settings-exclusion",
     "area": "mcp",
-    "contract": "Claude CLI ignores the mcpServers key in --settings files; MCP server registration must go through --mcp-config. CCC writes a separate per-session MCP config file and appends --mcp-config <path> to the claude command for the Conductor MCP server registration.",
+    "contract": "Claude CLI ignores the mcpServers key in --settings files; MCP server registration must go through --mcp-config. The Conductor writes a separate per-session MCP config file and appends --mcp-config <path> to the claude command for the Conductor MCP server registration.",
     "files": [
       "src/main/pty-manager.ts"
     ],
@@ -290,11 +290,11 @@
   {
     "id": "statusline-transcript-path",
     "area": "logs",
-    "contract": "Claude Code includes a transcript_path string field in the statusline stdin JSON payload. CCC's statusline bridge forwards this as-is in the written status file; the watcher fan-out uses it as the continuous, exact discovery source for binding a session to its transcript.",
+    "contract": "Claude Code includes a transcript_path string field in the statusline stdin JSON payload. The Conductor's statusline bridge forwards this as-is in the written status file; the watcher fan-out uses it as the continuous, exact discovery source for binding a session to its transcript.",
     "files": [
       "src/main/providers/claude/statusline.ts"
     ],
-    "failureMode": "Removed or renamed transcript_path field forces CCC to fall back to heuristic mtime-based transcript binding, which can pick the wrong file in worktree or concurrent-session scenarios",
+    "failureMode": "Removed or renamed transcript_path field forces the Conductor to fall back to heuristic mtime-based transcript binding, which can pick the wrong file in worktree or concurrent-session scenarios",
     "severity": "warn",
     "configFixable": false,
     "affectedFeature": "logs"
@@ -302,7 +302,7 @@
   {
     "id": "claude-config-dir-projects-junction",
     "area": "logs",
-    "contract": "In CCC's per-profile account isolation, each profile's .claude/projects is a JUNCTION (Windows) or symlink (POSIX) pointing to os.homedir()/.claude/projects. Transcript discovery canonicalizes paths by rewriting everything before the last .claude/projects segment to os.homedir(), so junction paths never leak into stored transcript records.",
+    "contract": "In the Conductor's per-profile account isolation, each profile's .claude/projects is a JUNCTION (Windows) or symlink (POSIX) pointing to os.homedir()/.claude/projects. Transcript discovery canonicalizes paths by rewriting everything before the last .claude/projects segment to os.homedir(), so junction paths never leak into stored transcript records.",
     "files": [
       "src/main/logging/transcript-discovery.ts",
       "src/main/account-profiles.ts"

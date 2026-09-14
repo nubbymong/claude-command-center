@@ -2,21 +2,31 @@ import { ipcMain, app, dialog } from 'electron'
 import { spawn } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
-import * as os from 'os'
-import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp } from '../update-watcher'
-import { checkGitHubRelease, downloadGitHubRelease } from '../github-update'
+import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp, isStoreBuild } from '../update-watcher'
+import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount, InstallerIntegrityError, stillMatchesDigest, createInstallerDir } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
 // Cache the latest release info from GitHub so installAndRestart can use it without a re-check
 let cachedRelease: { version: string; tagName: string; installerName: string | null; installerUrl: string | null } | null = null
 
+/** Reentrancy latch for update:installAndRestart — see the handler. */
+let updateInProgress = false
+
 export function registerUpdateHandlers(): void {
   ipcMain.handle('update:check', async () => {
+    // Store builds are updated by the Store. Report "no update" so the UI never
+    // offers one — the download path could not run the installer from inside the
+    // package container, and a self-updating Store app fails certification.
+    if (isStoreBuild()) {
+      logInfo('[update] Store build — updates are handled by the Microsoft Store')
+      return false
+    }
+
     // In dev mode, check the local source watcher first (live-reload workflow).
     // In production, always go straight to GitHub.
     if (!isPackagedApp()) {
-      const localUpdate = checkForUpdatesOnDemand()
+      const localUpdate = await checkForUpdatesOnDemand()
       if (localUpdate) return true
     }
 
@@ -52,8 +62,8 @@ export function registerUpdateHandlers(): void {
   ipcMain.handle('update:selectSourcePath', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
-      title: 'Select Claude Command Center Source Directory',
-      message: 'Select the folder containing the Claude Command Center source code (with package.json)'
+      title: 'Select AI Code Conductor Source Directory',
+      message: 'Select the folder containing the AI Code Conductor source code (with package.json)'
     })
     if (result.canceled || result.filePaths.length === 0) return null
 
@@ -68,9 +78,39 @@ export function registerUpdateHandlers(): void {
   })
 
   ipcMain.handle('update:installAndRestart', async () => {
+    // Belt and braces with the update:check gate above: nothing should be able to
+    // reach here in a Store build, but a scripted invoke bypasses the UI, and
+    // running an NSIS installer from inside the package container would fail in a
+    // confusing way rather than a clear one.
+    if (isStoreBuild()) {
+      logInfo('[update] Refusing self-install — this copy is managed by the Microsoft Store')
+      throw new Error('This copy is installed from the Microsoft Store, which manages its own updates.')
+    }
+
+    // ipcMain.handle serialises nothing. Two concurrent runs each prune the
+    // staging root keeping only THEIR OWN directory, so each deletes the other's
+    // in-flight installer. The renderer latches on `isUpdating`, but that is one
+    // frame of protection and a scripted invoke has none.
+    if (updateInProgress) {
+      logInfo('[update] Ignoring a second install request — one is already running')
+      throw new Error('An update is already in progress.')
+    }
+    updateInProgress = true
+    try {
+      return await runInstallAndRestart()
+    } finally {
+      updateInProgress = false
+    }
+  })
+
+  async function runInstallAndRestart(): Promise<boolean> {
     logInfo('[update] Starting update...')
 
     let installerPath: string | null = null
+    // SHA-256 of the installer as verified at download time, kept so it can be
+    // re-checked immediately before exec (#111). Null for the dev-only local
+    // build path, which has no manifest to check against.
+    let verifiedSha256: string | null = null
 
     // 1. Re-check GitHub for the latest release (cached info may be stale)
     try {
@@ -86,45 +126,94 @@ export function registerUpdateHandlers(): void {
     // 2. Download from GitHub if we have release info
     if (cachedRelease?.installerName && cachedRelease?.tagName) {
       logInfo(`[update] Downloading from GitHub: ${cachedRelease.installerName}`)
-      installerPath = await downloadGitHubRelease(
-        cachedRelease.tagName,
-        cachedRelease.installerName,
-        cachedRelease.installerUrl
-      )
+      try {
+        const verified = await downloadGitHubRelease(
+          cachedRelease.tagName,
+          cachedRelease.installerName,
+          cachedRelease.installerUrl
+        )
+        if (verified) {
+          installerPath = verified.path
+          verifiedSha256 = verified.sha256
+        }
+      } catch (err) {
+        // An integrity failure is NOT "installer not found" (#111). Surfacing it
+        // as a network problem sends the user to re-click forever and blame
+        // their connection, and on a genuine tamper event gives them no signal
+        // at all.
+        //
+        // Adversarial review found the rethrow alone was inert: EVERY renderer
+        // path swallows the error (console.error or a bare state reset), and
+        // there is no toast component -- so the user saw the "Updating..."
+        // overlay vanish and nothing else. showErrorBox is the one channel that
+        // cannot be dropped on the way out.
+        logError(`[update] ${(err as Error).message}`)
+        try {
+          if (err instanceof InstallerIntegrityError) {
+            dialog.showErrorBox('Update blocked - integrity check failed', err.message)
+          } else {
+            // NOT an integrity failure: a staging failure (disk full, unwritable
+            // data directory, a redirected staging root) or a network error. It
+            // still has to reach the user, and this is the only channel that
+            // does -- the rethrow escapes before the launch try/catch below, and
+            // every renderer call site swallows it. Reporting a storage problem
+            // as a tamper event was wrong; reporting it as nothing at all is
+            // worse (#174 adversarial review, rounds 2 and 3).
+            dialog.showErrorBox('Update could not be downloaded', (err as Error).message)
+          }
+        } catch { /* never let the dialog itself break the flow */ }
+        throw err
+      }
     }
 
     // 3. Dev-only fallback: look for a locally-built installer in the source folder.
-    // Uses the same naming convention as electron-builder's `artifactName`:
-    //   Windows: ClaudeCommandCenter-Beta-${version}.exe
-    //   macOS:   ClaudeCommandCenter-Beta-${version}-mac.dmg
+    // Mirrors electron-builder's `artifactName` (package.json build.*):
+    //   Windows: AI-Code-Conductor-${version}.exe
+    //   macOS:   AI-Code-Conductor-${version}-mac.dmg
     // Checks both a `-latest` convenience file and the versioned file, in both
-    // repo root and `dist/`.
+    // repo root and `dist/`. The legacy brand names are still probed LAST so a
+    // dist/ left over from before the rename keeps working locally; they cost
+    // nothing but an existsSync and this path never runs in a packaged build.
     if (!installerPath && !isPackagedApp()) {
       const projectRoot = getProjectRootPath()
       if (projectRoot) {
         const isMac = process.platform === 'darwin'
         const ext = isMac ? '.dmg' : '.exe'
         const macSuffix = isMac ? '-mac' : ''
-        const candidates: string[] = [
-          path.join(projectRoot, `ClaudeCommandCenter-latest${macSuffix}${ext}`),
-          path.join(projectRoot, 'dist', `ClaudeCommandCenter-latest${macSuffix}${ext}`),
-        ]
+        const brands = ['AI-Code-Conductor', 'ClaudeCommandCenter']
+        const candidates: string[] = []
+        for (const brand of brands) {
+          candidates.push(
+            path.join(projectRoot, `${brand}-latest${macSuffix}${ext}`),
+            path.join(projectRoot, 'dist', `${brand}-latest${macSuffix}${ext}`),
+          )
+        }
         try {
           const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
-          candidates.push(
-            path.join(projectRoot, `ClaudeCommandCenter-Beta-${pkg.version}${macSuffix}${ext}`),
-            path.join(projectRoot, 'dist', `ClaudeCommandCenter-Beta-${pkg.version}${macSuffix}${ext}`),
-          )
+          for (const brand of brands) {
+            candidates.push(
+              path.join(projectRoot, `${brand}-${pkg.version}${macSuffix}${ext}`),
+              path.join(projectRoot, 'dist', `${brand}-${pkg.version}${macSuffix}${ext}`),
+            )
+          }
         } catch { /* fall through */ }
 
         const src = candidates.find((p) => fs.existsSync(p))
         if (src) {
-          const downloadsDir = path.join(os.homedir(), 'Downloads')
-          try { fs.mkdirSync(downloadsDir, { recursive: true }) } catch {}
-          const dest = path.join(downloadsDir, path.basename(src))
-          fs.copyFileSync(src, dest)
-          installerPath = dest
-          logInfo(`[update] Copied local installer to ${dest}`)
+          // Same private staging directory as a real download (#174), not
+          // ~/Downloads. This path is dev-only, but it ends in the same
+          // spawn-with-elevation, so it gets the same directory -- and the same
+          // guard, so a staging failure reads as "installer not found" below
+          // rather than an unhandled ENOENT the renderer silently swallows.
+          try {
+            const stageDir = createInstallerDir()
+            const dest = path.join(stageDir, path.basename(src))
+            fs.copyFileSync(src, dest)
+            installerPath = dest
+            logInfo(`[update] Copied local installer to ${dest}`)
+          } catch (err) {
+            logError('[update] Could not stage the local installer:', err)
+          }
         }
       }
     }
@@ -132,23 +221,121 @@ export function registerUpdateHandlers(): void {
     if (!installerPath || !fs.existsSync(installerPath)) {
       const msg = 'Installer not found. Check your internet connection or update channel.'
       logError('[update] ' + msg)
+      try { dialog.showErrorBox('Update could not be downloaded', msg) } catch { /* ignore */ }
       throw new Error(msg)
     }
 
     logInfo(`[update] Found installer: ${installerPath}`)
+
+    // Re-hash immediately before the point of no return. Verification happened
+    // at download time, but the file then sits on disk while we kill every PTY
+    // -- tens of ms to seconds. The installer runs with `allowElevation`, so a
+    // local process that wins that race gains admin on a UAC prompt the user is
+    // already expecting. Costs ~1s for 150 MB and shrinks the window to
+    // microseconds (#111). #174 did NOT make this redundant: the attacker in
+    // that model runs as the user, so it does not have to guess the staging
+    // directory -- it can watch the root and see it appear. This re-hash is the
+    // control of record for the race; #174 removed the drive-by variant.
+    if (verifiedSha256) {
+      if (!await stillMatchesDigest(installerPath, verifiedSha256)) {
+        const msg = `${path.basename(installerPath)} changed on disk after it was verified. `
+          + 'Aborting the update. Install manually from the GitHub release page.'
+        logError('[update] ' + msg)
+        try { dialog.showErrorBox('Update blocked - installer changed after verification', msg) } catch { /* ignore */ }
+        throw new InstallerIntegrityError(msg)
+      }
+    }
+
+    // Linux: prepare and VERIFY the AppImage is executable BEFORE we kill the
+    // user's terminals and exit. spawn() reports EACCES/ENOENT only via an async
+    // 'error' event, so a doomed launch (a noexec staging mount, a failed
+    // chmod on vfat/exfat, an unwritable $APPIMAGE dir) would otherwise kill
+    // every PTY, exit the app, and leave nothing running with no error shown.
+    // Fail here instead, with a dialog of its own: this block sits OUTSIDE the
+    // launch try/catch, so it has no catch to fall back on.
+    let linuxLaunchPath: string | null = null
+    if (process.platform === 'linux' && installerPath.endsWith('.AppImage')) {
+      // The file we verified is NOT the file we are about to spawn: this call
+      // copies the AppImage somewhere else. The verifier is passed IN so the copy
+      // is checked BEFORE it is moved onto the user's launcher path -- checking
+      // afterwards detects a swap but cannot undo it.
+      linuxLaunchPath = await prepareLinuxAppImageUpdate(
+        installerPath,
+        undefined,
+        verifiedSha256 ? (candidate) => stillMatchesDigest(candidate, verifiedSha256!) : undefined,
+      )
+      // Belt to that braces: whatever path came back, hash it before spawning.
+      // Covers the parked-copy and already-in-place branches, which the
+      // pre-commit check above does not reach.
+      if (verifiedSha256 && linuxLaunchPath !== installerPath) {
+        if (!await stillMatchesDigest(linuxLaunchPath, verifiedSha256)) {
+          const msg = `${path.basename(linuxLaunchPath)} does not match the verified installer after being copied into place. `
+            + 'Aborting the update. Install manually from the GitHub release page.'
+          logError('[update] ' + msg)
+          try { dialog.showErrorBox('Update blocked - installer changed after verification', msg) } catch { /* ignore */ }
+          throw new InstallerIntegrityError(msg)
+        }
+      }
+      // Permission bits (fast, catches a failed chmod on vfat/exfat)...
+      try {
+        fs.accessSync(linuxLaunchPath, fs.constants.X_OK)
+      } catch (err) {
+        // These two throws are OUTSIDE the launch try/catch below, so they reach
+        // no dialog on their own -- the same "reported to nobody" defect the
+        // download path had. Say it here.
+        const msg = `Updated AppImage is not executable (${linuxLaunchPath}) — aborting before restart: ${(err as Error).message}\n\n`
+          + `The verified installer is at:\n${installerPath}\n\nRun it manually, or install from the GitHub release page.`
+        logError('[update] ' + msg)
+        try { dialog.showErrorBox('Update could not be launched', msg) } catch { /* ignore */ }
+        throw new Error(msg)
+      }
+      // ...and the mount, which accessSync can't see: a noexec staging dir (the
+      // fallback launch location when $APPIMAGE is unset) would pass the bit
+      // check yet fail execve. This is why #174 stages under userData rather
+      // than /tmp, which is noexec on hardened systems far more often. The
+      // single-instance lock means we can't confirm the relaunch by spawning it
+      // first, so catch this here — before the PTYs are killed — not after.
+      if (isPathOnNoexecMount(linuxLaunchPath)) {
+        const msg = `Updated AppImage is on a noexec mount (${linuxLaunchPath}) — cannot relaunch. `
+          + 'Move the app to a filesystem that allows execution, or update manually.'
+        logError('[update] ' + msg)
+        try { dialog.showErrorBox('Update could not be launched', msg) } catch { /* ignore */ }
+        throw new Error(msg)
+      }
+    }
 
     try {
       logInfo('[update] Killing all PTYs...')
       killAllPty()
 
       logInfo('[update] Launching installer...')
+      // Every branch waits for the child to actually start. spawn reports
+      // EACCES/ENOENT only via an async 'error' event, and `app.exit(0)` below
+      // runs first -- and with no 'error' listener at all that event is an
+      // UNCAUGHT EXCEPTION in the main process, after every PTY is already dead.
+      const awaitLaunch = async (child: ReturnType<typeof spawn>): Promise<void> => {
+        await new Promise<void>((resolve, reject) => {
+          let done = false
+          const settle = (fn: () => void) => { if (!done) { done = true; child.unref(); fn() } }
+          child.once('spawn', () => settle(resolve))
+          child.once('error', (err) => settle(() => reject(err)))
+          setTimeout(() => settle(resolve), 3000)
+        })
+      }
+
       if (process.platform === 'darwin' && installerPath.endsWith('.dmg')) {
         // On macOS, open the DMG in Finder — user drags to Applications manually.
         // Auto-installing a DMG over a running app is not supported.
-        spawn('open', [installerPath], { detached: true, stdio: 'ignore' }).unref()
+        await awaitLaunch(spawn('open', [installerPath], { detached: true, stdio: 'ignore' }))
+      } else if (linuxLaunchPath) {
+        logInfo(`[update] Launching updated AppImage: ${linuxLaunchPath}`)
+        await awaitLaunch(spawn(linuxLaunchPath, [], { detached: true, stdio: 'ignore' }))
       } else {
-        const proc = spawn(installerPath, [], { detached: true, stdio: 'ignore' })
-        proc.unref()
+        // %LOCALAPPDATA% is a common target for "block executables outside
+        // Program Files" policies, and since #174 the user no longer has a file
+        // in ~/Downloads to fall back on — so a blocked launch has to be
+        // reported, not swallowed.
+        await awaitLaunch(spawn(installerPath, [], { detached: true, stdio: 'ignore' }))
       }
 
       markUpdateInstalled()
@@ -159,7 +346,19 @@ export function registerUpdateHandlers(): void {
       return true
     } catch (err) {
       logError('[update] Failed:', err)
+      // Every PTY is already dead by the time we get here, and the renderer
+      // swallows this rejection at all four call sites -- so showErrorBox is the
+      // only channel that reaches the user. Name the staged path: since #174 the
+      // installer is in a deliberately unpredictable directory, so without this
+      // there is nothing for them to run by hand (#174 adversarial review).
+      try {
+        dialog.showErrorBox(
+          'Update could not be launched',
+          `${(err as Error).message}\n\nThe verified installer is at:\n${installerPath}\n\n`
+          + 'Run it manually, or install from the GitHub release page.'
+        )
+      } catch { /* never let the dialog itself break the flow */ }
       throw err
     }
-  })
+  }
 }

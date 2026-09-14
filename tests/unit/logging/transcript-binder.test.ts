@@ -138,7 +138,9 @@ describe('transcript-binder — heuristic fallback', () => {
     binder.registerRun('s1', 'F:\\proj', 1_000)
     expect(binds).toHaveLength(0)
     timers.advance(20_000)
-    expect(heuristicBinder.bindOnce).toHaveBeenCalledWith('s1', 'F:\\proj', 1_000)
+    // #480: the binder now also passes the set of uuids owned by other live
+    // sessions so the scan can skip them (empty here — no other exact owner).
+    expect(heuristicBinder.bindOnce).toHaveBeenCalledWith('s1', 'F:\\proj', 1_000, expect.any(Set))
     expect(binds).toEqual([
       { sessionId: 's1', path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' },
     ])

@@ -6,9 +6,11 @@
  * hover, keeps wheel scroll). CCC defaults the feature OFF: the var must be
  * present unless the user explicitly enables clickableQuestions in Settings.
  *
- * Shell-only sessions receive no CLAUDE env vars (same contract as
- * CLAUDE_CODE_DISABLE_MOUSE). process.env is cleared per test because a dev
- * machine may run with the var set, bleeding through the spread.
+ * Shell-only sessions receive the SAME CLAUDE env vars as Claude sessions
+ * (same contract as CLAUDE_CODE_DISABLE_MOUSE): the vars are inert for the
+ * shell but govern any `claude` the user starts by hand there. process.env is
+ * cleared per test because a dev machine may run with the var set, bleeding
+ * through the spread.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { buildClaudeLocalSpawn } from '../../../../src/main/providers/claude/spawn'
@@ -49,9 +51,9 @@ describe('buildClaudeLocalSpawn — CLAUDE_CODE_DISABLE_MOUSE_CLICKS', () => {
     expect(env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS).toBeUndefined()
   })
 
-  it('does NOT set the var for shell-only sessions', () => {
+  it('sets the var for shell-only sessions too (default: clicks off for a hand-run claude)', () => {
     const { env } = buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true })
-    expect(env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS).toBeUndefined()
+    expect(env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS).toBe('1')
   })
 
   it('is independent of classicTerminalCopyPaste (both vars coexist)', () => {

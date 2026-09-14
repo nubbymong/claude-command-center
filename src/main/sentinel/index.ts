@@ -6,6 +6,8 @@ import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './se
 import { fetchChangelog, sliceChangelog } from './sentinel-changelog'
 import { runAnalysis } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
+import { modelCoverageFindings, modelCheckFailedFinding, EXPECTED_MODEL_SET } from './sentinel-models'
+import { fetchArticleModelIds } from './sentinel-model-article'
 import { getRegistry, getBaseline, applyOverlayEntry, removeOverlayEntry, loadOverlay, setOverlay } from '../model-registry-service'
 import { reconcileOverlay } from '../../shared/model-registry'
 import manifestJson from '../../../resources/sentinel-assumption-manifest.json'
@@ -51,23 +53,68 @@ async function headlessRunner(): Promise<typeof import('../claude-headless')> {
  * hangs at auth / carries stale rate-limit state (live repro: both analysis
  * attempts timed out at 180s on 2026-06-12).
  */
-async function analysisHome(): Promise<string | null> {
+async function analysisHome(): Promise<{ home: string | null; accountLabel: string | null }> {
   try {
     const { readConfig } = await import('../config-manager')
-    const { resolveHeadlessProfileHome } = await import('../account-profiles')
+    const { resolveHeadlessProfileHome, listProfiles } = await import('../account-profiles')
     const settings = readConfig<{ sentinelAccountProfileId?: string | null }>('settings')
-    return resolveHeadlessProfileHome(settings?.sentinelAccountProfileId).home
+    const chosen = settings?.sentinelAccountProfileId ?? null
+    const { home, profileId } = resolveHeadlessProfileHome(chosen)
+    // Name the account the analysis actually ran under, so a failure message can
+    // say WHICH account to change (#430). When the chosen account no longer
+    // resolves and we fell back to another, say so — otherwise the user sees a
+    // limit on an account they never picked and has no idea why.
+    let accountLabel: string | null = null
+    if (profileId) {
+      // `|| null`, not `?? null`: a not-yet-signed-in profile has accountEmail
+      // '' (account-profiles), and an empty string must fall back to the
+      // profileId — otherwise the fallback label reads "; auto-picked …" with
+      // no identifier, defeating the "which account to change" goal.
+      const email = listProfiles().find((p) => p.id === profileId)?.accountEmail || null
+      const fellBack = !!chosen && chosen !== profileId
+      accountLabel = fellBack
+        ? `${email ?? profileId}; auto-picked — your chosen analysis account is no longer available`
+        : email ?? profileId
+    }
+    return { home, accountLabel }
   } catch {
-    return null // fail-open: bare global is still better than no analysis
+    return { home: null, accountLabel: null } // fail-open: bare global is still better than no analysis
+  }
+}
+
+/**
+ * Model-registry coverage against the Claude Code model configuration (#385).
+ *
+ * The fetch fails soft to null (offline), which selects snapshot mode inside
+ * modelCoverageFindings — an unread article is a degraded check, not an error.
+ * A THROW is different: it means the guard did not run, so it raises a finding
+ * of its own rather than disappearing into a log line (review Q5).
+ */
+async function runModelCoverageCheck(): Promise<void> {
+  if (!state) return
+  try {
+    const liveIds = await fetchArticleModelIds()
+    for (const f of modelCoverageFindings(getRegistry(), EXPECTED_MODEL_SET, Date.now(), liveIds)) {
+      state.upsertFinding(f)
+    }
+  } catch (err) {
+    const msg = (err as Error).message
+    logInfo(`[sentinel] model coverage check failed: ${msg}`)
+    state.upsertFinding(modelCheckFailedFinding(msg))
   }
 }
 
 /** Trigger B startup check (spec §5). Non-blocking — call fire-and-forget from bootstrap. */
 export async function sentinelStartupCheck(): Promise<void> {
   if (!state) return
+  // Model-registry coverage (#385) runs FIRST and unconditionally: it does not
+  // need a working `claude` binary, so it must not sit behind the --version
+  // probe's fail-open return below. It reads the live article when the network
+  // allows and falls back to the shipped snapshot when it does not (review S1).
+  await runModelCoverageCheck()
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
-    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, await analysisHome())
+    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, (await analysisHome()).home)
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
     if (!version) { logInfo('[sentinel] claude --version unavailable; skipping (fail-open)'); return }
     for (const f of minVersionFindings(version, manifest)) state.upsertFinding(f)
@@ -97,11 +144,11 @@ async function analyzeVersionChange(last: string, version: string): Promise<void
     return
   }
   const { spawnClaudeHeadless } = await headlessRunner()
-  const home = await analysisHome()
+  const { home, accountLabel } = await analysisHome()
   const result = await runAnalysis({
     runner: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, ac.signal),
     changelog: sliceChangelog(md, last, version),
-    from: last, to: version,
+    from: last, to: version, accountLabel,
   })
   if (currentAnalysis === ac) currentAnalysis = null
   if (ac.signal.aborted) return                        // superseded / cancelled: drop the result
@@ -125,7 +172,7 @@ export async function sentinelRerun(): Promise<void> {
   if (!state) return
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
-    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, await analysisHome())
+    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, (await analysisHome()).home)
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
     if (!version) { state.setAnalyzing(false, 'claude --version unavailable'); return }
     const last = state.snapshot().lastSeenCcVersion ?? version

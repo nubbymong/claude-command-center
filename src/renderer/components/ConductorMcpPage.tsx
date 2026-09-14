@@ -3,6 +3,7 @@ import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import PageFrame from './PageFrame'
 import CompatBadge from './sentinel/CompatBadge'
 import VisionSubTool from './conductor-mcp/VisionSubTool'
+import AgentCanvasSubTool from './conductor-mcp/AgentCanvasSubTool'
 import CodexReviewSubTool from './conductor-mcp/CodexReviewSubTool'
 import HostTransferSubTool from './conductor-mcp/HostTransferSubTool'
 
@@ -65,8 +66,8 @@ export default function ConductorMcpPage() {
               className="rounded-xl p-4 text-sm text-subtext0 leading-relaxed"
               style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
             >
-              Local HTTP MCP server hosting all CCC-provided tools. It is registered per session:
-              each CCC-spawned session gets its own
+              Local HTTP MCP server hosting all of the app&apos;s built-in tools. It is registered per session:
+              each app-spawned session gets its own
               <code className="font-mono mx-1 text-xs">--mcp-config</code>
               pointing at the current port. Your global
               <code className="font-mono mx-1 text-xs">~/.claude.json</code>
@@ -75,6 +76,7 @@ export default function ConductorMcpPage() {
             </div>
 
             <VisionSubTool />
+            <AgentCanvasSubTool />
             <CodexReviewSubTool />
             <HostTransferSubTool />
           </>
@@ -97,11 +99,11 @@ export default function ConductorMcpPage() {
             </div>
             <div className="text-sm font-medium text-text mb-1">Conductor MCP server is not running</div>
             <div className="text-xs text-overlay1 mb-1 max-w-sm">
-              The local MCP listener never bound to a port, so Vision, Codex review, and host
-              transfer are unavailable to your sessions.
+              The local MCP listener never bound to a port, so Vision, Codex review, host
+              transfer and the Agent Canvas are unavailable to your sessions.
             </div>
             <div className="text-xs text-overlay0 max-w-sm">
-              It normally starts automatically at launch. Restart Claude Command Center to bring it
+              It normally starts automatically at launch. Restart AI Code Conductor to bring it
               back; if it keeps failing, another process may be holding its port.
             </div>
           </div>

@@ -1,0 +1,18 @@
+{
+  "//": "FROM-host definitions for scripts/fleet-matrix.mjs. Copy to fleet.local.json (gitignored) and fill in. `password` present => ssh/scp wrapped in a PTY with the prompt auto-answered. `hostOverrides` rewrites hosts.local.json slot IPs as seen FROM that box (e.g. LAN addresses for Hyper-V guests).",
+  "MAC_254": {
+    "ssh": "user@192.168.x.x",
+    "node": "/opt/homebrew/bin/node",
+    "repo": "~/claude-command-center",
+    "os": "mac",
+    "hostOverrides": { "windows": "192.168.x.x", "linuxRocky": "192.168.x.x" }
+  },
+  "ROCKY_LINUX": {
+    "ssh": "user@192.168.x.x",
+    "password": "…",
+    "node": "/usr/bin/node",
+    "repo": "~/ccc",
+    "os": "linux",
+    "hostOverrides": { "windows": "192.168.x.x", "linuxRocky": "192.168.x.x" }
+  }
+}

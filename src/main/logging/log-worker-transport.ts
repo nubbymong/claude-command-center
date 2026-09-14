@@ -37,12 +37,23 @@ export type ToTranscriptsWorker =
     }
   | { type: 'run-end'; sessionId: string; ts: number; status: string }
   | { type: 'run-account'; sessionId: string; accountEmail: string }
+  | { type: 'run-rename'; sessionId: string; configLabel: string }
   | {
       type: 'transcript-bind'
       sessionId: string
       path: string
       confidence: 'exact' | 'heuristic'
       sourceVersion?: string
+    }
+  | {
+      // #480: durable session->conversation mapping, written on every EXACT bind.
+      // Independent of the runs/transcripts index so restart resume has a single
+      // authoritative, crash-durable source keyed by AICC sessionId.
+      type: 'session-conversation-upsert'
+      sessionId: string
+      path: string
+      uuid: string
+      updatedAt: number
     }
   | { type: 'query'; id: number; kind: string; args: Record<string, unknown> }
   | { type: 'shutdown' }

@@ -1,28 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { changelog, ChangelogEntry } from '../changelog'
+import { useAppMetaStore } from '../stores/appMetaStore'
+import { entriesSince } from '../onboarding/upgrade-flow'
+import { WhatsNewEntries } from './WhatsNewEntries'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton } from './ui/Dialog'
 
 declare const __BUILD_TIME__: string
 
 interface Props {
   onClose: () => void
   showAllVersions?: boolean
-}
-
-const TYPE_COLORS = {
-  feature: 'text-green',
-  fix: 'text-red',
-  improvement: 'text-blue',
-}
-
-const TYPE_LABELS = {
-  feature: 'New',
-  fix: 'Fix',
-  improvement: 'Improved',
-}
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr)
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  /** The version the user was on before this launch, captured by the caller at
+   *  boot. Everything newer than it is shown. When omitted, read from app meta
+   *  at mount — correct only when nothing has stamped lastSeenVersion first. */
+  sinceVersion?: string
 }
 
 function formatBuildTime(iso: string): string {
@@ -35,37 +26,29 @@ function formatBuildTime(iso: string): string {
   }
 }
 
-function VersionSection({ entry }: { entry: ChangelogEntry }) {
-  return (
-    <div className="mb-6 last:mb-0">
-      <div className="flex items-center gap-3 mb-2">
-        <span className="text-lg font-bold text-text">v{entry.version}</span>
-        <span className="text-xs text-overlay0">{formatDate(entry.date)}</span>
-      </div>
-      {entry.highlights && (
-        <p className="text-sm text-subtext1 mb-3 italic">{entry.highlights}</p>
-      )}
-      <ul className="space-y-1.5">
-        {entry.changes.map((change, i) => (
-          <li key={i} className="flex items-start gap-2 text-sm">
-            <span className={`${TYPE_COLORS[change.type]} font-medium shrink-0 w-16`}>
-              {TYPE_LABELS[change.type]}
-            </span>
-            <span className="text-subtext0">{change.description}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
 // Must match the Tailwind `duration-200` transition on the backdrop + dialog.
 // Single source of truth so a future tweak to one keeps the other in sync.
 const CLOSE_ANIMATION_MS = 200
 
-export default function WhatsNewModal({ onClose, showAllVersions = false }: Props) {
+export default function WhatsNewModal({ onClose, showAllVersions = false, sinceVersion }: Props) {
   const latestVersion = changelog[0]
-  const versionsToShow = showAllVersions ? changelog : [latestVersion]
+  // Everything released since the user last looked — not just the newest entry.
+  // Someone coming from 2.0.0 to 2.1.0 skipped fourteen releases, and showing
+  // them one of those and calling it "what's new" is how the modal came to be
+  // ignored.
+  //
+  // Captured ONCE, in a lazy initial state, because closing the modal stamps
+  // lastSeenVersion to the current build: read it on any later render and the
+  // list collapses to nothing underneath the user mid-read. The caller passes
+  // the boot-time value where it can, for the same reason one step earlier.
+  const [versionsToShow] = useState<ChangelogEntry[]>(() => {
+    if (showAllVersions) return changelog
+    const from = sinceVersion ?? useAppMetaStore.getState().meta.lastSeenVersion
+    const since = entriesSince(changelog, from, latestVersion.version)
+    // A first install, or a stored version newer than this build, leaves the
+    // range empty — fall back to the newest entry so the modal is never blank.
+    return since.length > 0 ? since : [latestVersion]
+  })
   // Animation state: `entering` false on mount → true after one frame
   // fades the dialog in. `closing` flips true when the user dismisses,
   // giving the fade-out CLOSE_ANIMATION_MS before we call the parent's
@@ -101,78 +84,57 @@ export default function WhatsNewModal({ onClose, showAllVersions = false }: Prop
   }
 
   const visible = entering && !closing
-  const backdropClass = `fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`
-  const dialogClass = `bg-mantle rounded-lg shadow-2xl border border-surface0 w-full max-w-lg max-h-[80vh] flex flex-col transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`
 
   return (
-    <div className={backdropClass}>
-      <div className={dialogClass}>
-        {/* Header */}
-        <div className="p-4 border-b border-surface0">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-text">What's New</h2>
-            <button
-              onClick={dismiss}
-              className="text-overlay0 hover:text-text transition-colors text-xl leading-none"
-            >
-              &times;
-            </button>
-          </div>
-          <p className="text-xs text-overlay0 mt-1">
-            Build: {formatBuildTime(__BUILD_TIME__)}
-          </p>
-        </div>
+    <DialogOverlay className={`transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`}>
+      <DialogPanel
+        labelledBy="whats-new-title"
+        width="w-full"
+        style={{ maxWidth: '32rem', maxHeight: '80vh' }}
+        className={`transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`}
+      >
+        <DialogHeader
+          titleId="whats-new-title"
+          title="What's New"
+          subtitle={<span style={{ color: 'var(--text-muted)' }}>Build: {formatBuildTime(__BUILD_TIME__)}</span>}
+          onClose={dismiss}
+        />
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
-          {versionsToShow.map((entry) => (
-            <VersionSection key={entry.version} entry={entry} />
-          ))}
-        </div>
+        <DialogBody className="flex-1">
+          <WhatsNewEntries entries={versionsToShow} />
+        </DialogBody>
 
         {/* Footer */}
-        <div className="p-4 border-t border-surface0 flex justify-between items-center">
-          {!showAllVersions && changelog.length > 1 && (
-            <button
-              onClick={() => {/* Could expand to show all */}}
-              className="text-xs text-overlay0 hover:text-subtext0 transition-colors"
-            >
-              {changelog.length - 1} previous version{changelog.length > 2 ? 's' : ''}
-            </button>
-          )}
-          <div className="flex-1" />
-          <button
-            onClick={dismiss}
-            className="px-4 py-2 bg-blue text-base rounded font-medium hover:bg-blue/80 transition-colors"
-          >
+        <DialogFooter
+          left={
+            !showAllVersions && changelog.length > 1 ? (
+              <DialogButton
+                variant="ghost"
+                onClick={() => {/* Could expand to show all */}}
+                style={{ color: 'var(--text-muted)' }}
+              >
+                {changelog.length - 1} previous version{changelog.length > 2 ? 's' : ''}
+              </DialogButton>
+            ) : undefined
+          }
+        >
+          <DialogButton variant="primary" onClick={dismiss}>
             Got it
-          </button>
-        </div>
-      </div>
-    </div>
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }
 
-import { useAppMetaStore } from '../stores/appMetaStore'
-
-export function shouldShowWhatsNew(): boolean {
-  try {
-    const lastSeen = useAppMetaStore.getState().meta.lastSeenVersion
-    if (!lastSeen) return true // First launch
-    const currentVersion = changelog[0]?.version
-    return lastSeen !== currentVersion
-  } catch {
-    return false
-  }
-}
-
-export function markWhatsNewSeen(): void {
-  try {
-    const currentVersion = changelog[0]?.version
-    if (currentVersion) {
-      useAppMetaStore.getState().update({ lastSeenVersion: currentVersion })
-    }
-  } catch {
-    // Ignore storage errors
-  }
-}
+// `shouldShowWhatsNew` / `markWhatsNewSeen` used to live here, which made
+// `settle.ts` import a React component in order to stamp a version. They now
+// sit in `onboarding/whats-new-gate.ts`, keyed on the version the build
+// actually IS rather than on the newest changelog entry authored — see the
+// header there.
+//
+// This component is no longer a boot surface. The full-screen harness is the
+// single delivery for release notes (user call 2026-08-21); what is left here
+// is the on-demand reader reachable from Settings, where the user asked for it
+// and a scrollable list is the right shape.

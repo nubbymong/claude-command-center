@@ -1,4 +1,4 @@
-import { BrandMark } from './BrandMark'
+import { BrandMark } from '../components/BrandMark'
 
 const CHECK = String.fromCodePoint(0x2713)
 
@@ -12,7 +12,7 @@ export function FinishStep({ onTour, onSkip }: { onTour: () => void; onSkip: () 
       <div className="hero">
         <BrandMark className="mark" />
         <h1 className="word">You're all set</h1>
-        <div className="sub">Command Center</div>
+        <div className="sub">AI Code Conductor</div>
         <p className="lede">
           Everything you chose is saved and running. Next, a <b>quick tour of the app</b>, then we'll set up your
           first saved config and launch a session from it.
@@ -23,9 +23,12 @@ export function FinishStep({ onTour, onSkip }: { onTour: () => void; onSkip: () 
           <span>Every choice here can be changed in Settings whenever you like.</span>
         </div>
       </div>
-      <div className="foot">
-        <button className="skip" onClick={onSkip} type="button">Skip to the app</button>
+      {/* Both actions stack on the RIGHT, primary first, so the secondary sits
+          directly under the thing it is an alternative to. Stranding "Skip" at
+          the far left of the footer read as an unrelated control. */}
+      <div className="foot foot-finish">
         <button className="cta" onClick={onTour} type="button">Take the tour →</button>
+        <button className="skip" onClick={onSkip} type="button">Skip to the app</button>
       </div>
     </>
   )

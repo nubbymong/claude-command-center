@@ -10,8 +10,10 @@
  * Local steps (fast feedback before pushing):
  *   1. Pre-flight checks (gh auth, npm audit, git status)
  *   2. Channel selection (stable / beta / dev)
- *   3. Version bump
- *   4. Update changelog.ts version line
+ *   3. Version bump — gated by scripts/release-gate.mjs (#375/#385): the
+ *      milestone named after the new version must have no open issues (bar
+ *      `excluded`) and the model registry must match Anthropic's article
+ *   4. Update changelog.ts version + date of the newest entry, regenerate CHANGELOG.md
  *   5. Typecheck + unit tests + build smoke test
  *   6. Git commit + tag + push
  *
@@ -20,21 +22,32 @@
  *   8. Watch the workflow run to completion
  *   9. Verify the final release has both .exe and .dmg attached
  *
- * Branching model:
- *   - Work on the `beta` branch. Beta/dev releases cut from there.
- *   - When a beta is stable, use `npm run promote` to merge the beta→main PR
- *     with a merge commit, then cut a stable release at the SAME version
- *     (no bump — the code is identical).
- *   - Hotfixes can land directly on main and release as stable from there.
+ * Branching model (RC-branch model — see CONTRIBUTING.md → Branching Model):
+ *   - `beta`          : perpetual feature integration, NEVER frozen.
+ *                       Carries `X.Y.Z-beta.N`. Beta/dev releases cut here.
+ *   - `release/X.Y.Z` : stabilization for one release; fixes only, no features.
+ *                       Carries `X.Y.Z-rc.N`. RC releases cut here, on the beta
+ *                       channel (`-beta.N` and `-rc.N` both ride beta updates).
+ *   - `main`          : stable only. Carries the bare `X.Y.Z`. Reached by
+ *                       merging `release/X.Y.Z` → main via `npm run promote`.
+ *
+ * Version rules:
+ *   - The prerelease identifier comes from the BRANCH, not the channel:
+ *     beta → `-beta.N`, release/X.Y.Z → `-rc.N`, main → none.
+ *   - Default bump increments the prerelease counter ONLY; the base version is
+ *     never touched implicitly. Use --major/--minor/--patch to move the base
+ *     (beta only — a release branch's base is pinned by its name).
+ *   - Stable strips the prerelease: `2.0.0-rc.2` ships as `2.0.0`.
  *
  * Usage:
- *   npm run release                 (interactive channel prompt, patch bump)
- *   npm run release -- --beta       (force beta channel — must be on beta branch)
+ *   npm run release                 (interactive channel prompt; bumps -rc.N/-beta.N)
+ *   npm run release -- --beta       (force beta channel — on `beta` or `release/X.Y.Z`)
  *   npm run release -- --stable     (force stable channel — must be on main branch)
  *   npm run release -- --dev        (force dev channel — must be on beta branch)
- *   npm run release -- --minor      (minor version bump)
- *   npm run release -- --major      (major version bump)
- *   npm run release -- --no-bump    (reuse current version — used by promote flow)
+ *   npm run release -- --minor      (minor base bump, resets prerelease to .1)
+ *   npm run release -- --major      (major base bump, resets prerelease to .1)
+ *   npm run release -- --patch      (patch base bump, resets prerelease to .1)
+ *   npm run release -- --no-bump    (reuse current version verbatim — escape hatch)
  *   npm run release -- --skip-tests (skip local typecheck + vitest)
  *   npm run release -- --skip-build (skip local build smoke test)
  *   npm run release -- --skip-watch (don't wait for workflow to finish)
@@ -45,14 +58,23 @@
  *   - VirusTotal scanning is part of the GitHub Actions workflow, not local.
  *     The workflow scans BOTH the .exe and the .dmg.
  *   - Changelog generation is hand-authored. Edit src/renderer/changelog.ts to
- *     add a new entry BEFORE running this script. The script will update the
- *     version field of the first entry to match the bumped version.
- *   - The workflow is dispatched on the current branch (typically main).
+ *     add a new entry BEFORE running this script. The script then aligns the
+ *     FIRST (newest) entry with the release being cut: it rewrites both the
+ *     `version` field to the bumped version AND the `date` field to today's
+ *     LOCAL date, then regenerates CHANGELOG.md so the generated file cannot go
+ *     stale in the release commit (the `Changelog in sync` CI gate would
+ *     otherwise fail on the release itself).
+ *     So both fields in a pending entry are placeholders — write whatever is
+ *     reasonable and let the release correct them. Before #157 only `version`
+ *     was synced, so an entry authored days earlier shipped stale-dated.
+ *   - This script does NOT create or push a git tag. release.yml creates the tag
+ *     via `gh release create --target $GITHUB_SHA`, pinning it to the commit it
+ *     actually built. A pre-pushed tag would defeat that and can strand the
+ *     release on a stale commit (see src/main/github-update.ts).
  */
 
 const { execSync } = require('child_process')
 const fs = require('fs')
-const os = require('os')
 const path = require('path')
 const readline = require('readline')
 
@@ -65,27 +87,117 @@ const SKIP_WATCH = args.includes('--skip-watch')
 const SKIP_PUSH = args.includes('--skip-push')
 const SKIP_BRANCH_CHECK = args.includes('--skip-branch-check')
 const NO_BUMP = args.includes('--no-bump')
-const BUMP_MINOR = args.includes('--minor')
-const BUMP_MAJOR = args.includes('--major')
+const BUMP = args.includes('--major') ? 'major'
+  : args.includes('--minor') ? 'minor'
+  : args.includes('--patch') ? 'patch'
+  : null
 const FORCE_BETA = args.includes('--beta')
 const FORCE_STABLE = args.includes('--stable')
 const FORCE_DEV = args.includes('--dev')
 
+// ============================================================
+// PURE LOGIC (exported for unit tests — see tests/unit/scripts/release.test.ts)
+// ============================================================
+
 /**
- * Branching model:
- *   - `main`  : stable-only branch. Only stable releases are cut here.
- *   - `beta`  : default working branch. All features land here first.
- *               Beta and dev releases are cut from beta.
- *
- * Channel → required branch:
- *   stable → main  (release must be reviewed + promoted from beta)
- *   beta   → beta  (daily releases)
- *   dev    → beta  (experimental, released from the same branch as beta)
+ * Parse `X.Y.Z` or `X.Y.Z-<id>.<n>`. Returns null for anything else, including
+ * a bare `-beta` with no counter (the retired v1 TAG shape, never a version).
  */
-const CHANNEL_BRANCH = {
-  stable: 'main',
-  beta: 'beta',
-  dev: 'beta',
+function parseVersion(version) {
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+)\.(\d+))?$/.exec(String(version || '').trim())
+  if (!m) return null
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+    preId: m[4] || null,
+    preNum: m[5] === undefined ? null : Number(m[5]),
+  }
+}
+
+/** `release/2.0.0` or `release/v2.0.0` → `2.0.0`. Anything else → null. */
+function releaseBranchBase(branch) {
+  const m = /^release\/v?(\d+\.\d+\.\d+)$/.exec(String(branch || '').trim())
+  return m ? m[1] : null
+}
+
+/**
+ * The prerelease identifier is a property of the BRANCH, never the channel.
+ * That keeps `--dev` from minting a `-dev.N` version on beta and colliding with
+ * the `-beta.N` line: dev is a presentation choice made by release.yml, not a
+ * separate version series.
+ */
+function preIdForBranch(branch) {
+  if (branch === 'beta') return 'beta'
+  if (releaseBranchBase(branch)) return 'rc'
+  return null // main → stable, no prerelease
+}
+
+/**
+ * Channel → allowed branch. `beta` accepts BOTH `beta` and any `release/X.Y.Z`
+ * because -beta.N and -rc.N both ride the beta update channel.
+ */
+function branchAllowsChannel(branch, channel) {
+  if (channel === 'stable') return branch === 'main'
+  if (channel === 'dev') return branch === 'beta'
+  if (channel === 'beta') return branch === 'beta' || releaseBranchBase(branch) !== null
+  return false
+}
+
+/** Human-readable answer to "where should I be to cut this?" */
+function branchHintFor(channel) {
+  if (channel === 'stable') return 'main'
+  if (channel === 'dev') return 'beta'
+  return 'beta or release/X.Y.Z'
+}
+
+/**
+ * Next version for (current, branch, channel, bump).
+ *
+ * Default = increment the prerelease counter. The base version NEVER moves
+ * implicitly: the old script defaulted to a patch bump, which on `2.1.0-beta.0`
+ * produced `2.1.1-...` for a 2.1.0 that had not shipped yet.
+ */
+function nextVersion(currentVersion, { branch, channel, bump = null } = {}) {
+  const cur = parseVersion(currentVersion)
+  if (!cur) {
+    throw new Error(`Cannot parse version "${currentVersion}" (expected 2.0.0 or 2.0.0-rc.2)`)
+  }
+
+  // Stable ships the accepted candidate's base version unchanged — the code is
+  // identical to the RC, only the tag differs.
+  if (channel === 'stable') {
+    if (bump) throw new Error(`--${bump} is not valid for a stable release: stable ships the RC's base version unchanged`)
+    return `${cur.major}.${cur.minor}.${cur.patch}`
+  }
+
+  const base = releaseBranchBase(branch)
+  if (base) {
+    if (bump) {
+      throw new Error(`--${bump} is not valid on ${branch}: a release branch stabilizes exactly ${base}. Cut a new release branch instead.`)
+    }
+    // The branch NAME is the source of truth for the base version, not
+    // package.json — this is what stops a stray `2.1.0-rc.1` from being cut on
+    // release/2.0.0. A first rc cut from beta (2.0.0-beta.6) starts at rc.1.
+    const b = parseVersion(base)
+    const sameBase = cur.major === b.major && cur.minor === b.minor && cur.patch === b.patch
+    const n = sameBase && cur.preId === 'rc' ? cur.preNum + 1 : 1
+    return `${base}-rc.${n}`
+  }
+
+  const preId = preIdForBranch(branch)
+  if (!preId) {
+    throw new Error(`Branch "${branch}" is not a release line (expected beta or release/X.Y.Z)`)
+  }
+
+  let { major, minor, patch } = cur
+  if (bump === 'major') { major += 1; minor = 0; patch = 0 }
+  else if (bump === 'minor') { minor += 1; patch = 0 }
+  else if (bump === 'patch') { patch += 1 }
+
+  // Moving the base, or switching identifier, restarts the counter at .1.
+  const n = !bump && cur.preId === preId ? cur.preNum + 1 : 1
+  return `${major}.${minor}.${patch}-${preId}.${n}`
 }
 
 // ============================================================
@@ -150,7 +262,19 @@ function pickChannel() {
   })
 }
 
+/**
+ * MUST stay identical to release.yml → "Determine version". The workflow owns
+ * tag creation; this is only used to pre-clean a stale release and to verify
+ * assets afterwards. If the two disagree, the script cleans/verifies a tag that
+ * does not exist while the workflow publishes one nobody checked.
+ *
+ * A version carrying a prerelease suffix IS the tag (v2.0.0-rc.2) — appending a
+ * second channel suffix would give the v2.0.0-rc.2-beta nonsense the old code
+ * produced. The channel-suffixed form is the retired v1 scheme (v1.5.45-beta),
+ * kept only so a bare version still tags correctly.
+ */
 function tagFor(version, channel) {
+  if (String(version).includes('-')) return `v${version}`
   switch (channel) {
     case 'beta': return `v${version}-beta`
     case 'dev':  return `v${version}-dev`
@@ -158,13 +282,76 @@ function tagFor(version, channel) {
   }
 }
 
+/**
+ * Today's date as YYYY-MM-DD in LOCAL time.
+ *
+ * Deliberately not `toISOString().slice(0, 10)`: that is UTC, and for anyone west
+ * of Greenwich an evening release would stamp TOMORROW's date. In Denver
+ * (UTC-6/-7) any release after ~17:00 local would be off by a day — silently, and
+ * in a user-visible file.
+ *
+ * `now` is injectable so the behaviour is testable without faking the clock.
+ */
+function todayIso(now = new Date()) {
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * Align the FIRST (newest) changelog.ts entry with the release being cut.
+ *
+ * Entries are hand-authored BEFORE the release, so both fields drift: the version
+ * is whatever the author guessed the next bump would be, and the date is whatever
+ * day they wrote it. `beta` is never frozen, so a pending entry can sit for a week
+ * and then ship stale-dated (#157). Both are rewritten here.
+ *
+ * Pure: takes and returns source text, so the regex behaviour is unit-testable.
+ * The inline version of this logic was untested and had already corrupted an old
+ * entry once — see the prerelease-suffix note below.
+ *
+ * Both regexes REQUIRE quotes, which is what keeps them off the `ChangelogEntry`
+ * interface at the top of the file (`version: string`, `date: string` — unquoted).
+ * The version pattern must also carry the optional prerelease suffix: without it
+ * the match skipped past `2.0.0-rc.2` at the top and rewrote the first BARE
+ * version found (a historical `2.0.0` entry), corrupting an old entry while
+ * reporting success and leaving the real one stale.
+ *
+ * @returns {{ok: false, reason: string} | {ok: true, content: string, prevVersion: string, prevDate: string|null, versionChanged: boolean, dateChanged: boolean}}
+ */
+function syncChangelogEntry(source, version, date) {
+  const versionRegex = /version:\s*'(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+\.\d+)?)'/
+  const dateRegex = /date:\s*'(\d{4}-\d{2}-\d{2})'/
+
+  const vMatch = String(source).match(versionRegex)
+  if (!vMatch) return { ok: false, reason: 'no version entry found' }
+  const dMatch = String(source).match(dateRegex)
+
+  const versionChanged = vMatch[1] !== version
+  const dateChanged = !!dMatch && dMatch[1] !== date
+
+  let content = source
+  if (versionChanged) content = content.replace(versionRegex, `version: '${version}'`)
+  if (dateChanged) content = content.replace(dateRegex, `date: '${date}'`)
+
+  return {
+    ok: true,
+    content,
+    prevVersion: vMatch[1],
+    prevDate: dMatch ? dMatch[1] : null,
+    versionChanged,
+    dateChanged,
+  }
+}
+
 // ============================================================
 // MAIN
 // ============================================================
 
-;(async () => {
+async function main() {
 
-const TOTAL_STEPS = 10
+const TOTAL_STEPS = 9
 let exitCode = 0
 
 const channel = await pickChannel()
@@ -182,6 +369,10 @@ console.log('  │    new features were added this release      │')
 console.log('  │  □ Added trackUsage() calls for new features │')
 console.log('  │  □ Updated changelog.ts with release notes   │')
 console.log('  │  □ Tested new features visually in dev mode  │')
+console.log('  │  □ Re-read the Claude Code model config      │')
+console.log('  │    article; refresh resources/claude-code-   │')
+console.log('  │    model-configuration.json if it moved      │')
+console.log('  │    (#385) — the release gate below checks it │')
 console.log('  │                                              │')
 console.log('  └─────────────────────────────────────────────┘')
 console.log('')
@@ -235,17 +426,19 @@ ok(`Current branch: ${currentBranch}`)
 // Enforce branch ↔ channel correspondence to prevent shipping beta code as
 // stable (or vice versa). `--skip-branch-check` exists for emergencies but
 // should not be used in normal operation.
-const requiredBranch = CHANNEL_BRANCH[channel]
-if (!SKIP_BRANCH_CHECK && currentBranch !== requiredBranch) {
+const branchOk = branchAllowsChannel(currentBranch, channel)
+if (!SKIP_BRANCH_CHECK && !branchOk) {
   fail(
-    `Channel '${channel}' must be released from the '${requiredBranch}' branch, ` +
+    `Channel '${channel}' must be released from ${branchHintFor(channel)}, ` +
     `but current branch is '${currentBranch}'.\n      ` +
-    `Run: git checkout ${requiredBranch}\n      ` +
     `(or pass --skip-branch-check to bypass — not recommended)`
   )
 }
-if (SKIP_BRANCH_CHECK && currentBranch !== requiredBranch) {
-  warn(`Branch check skipped: releasing ${channel} from '${currentBranch}' instead of '${requiredBranch}'`)
+if (SKIP_BRANCH_CHECK && !branchOk) {
+  warn(`Branch check skipped: releasing ${channel} from '${currentBranch}' (expected ${branchHintFor(channel)})`)
+}
+if (releaseBranchBase(currentBranch)) {
+  ok(`Release branch stabilizing ${releaseBranchBase(currentBranch)} — cutting an rc`)
 }
 
 // Git status (uncommitted changes will be included in the release commit)
@@ -270,19 +463,37 @@ const oldVersion = pkg.version
 
 let version
 if (NO_BUMP) {
-  // Used by the promote flow: stable release reuses the beta's version so
-  // v1.2.166-beta → v1.2.166 (same code, different tag, no version drift).
+  // Escape hatch: reuse package.json verbatim. The promote flow no longer needs
+  // this — a stable release derives its version by stripping the RC suffix.
   version = oldVersion
 } else {
-  const parts = oldVersion.split('.').map(Number)
-  if (BUMP_MAJOR) {
-    parts[0] += 1; parts[1] = 0; parts[2] = 0
-  } else if (BUMP_MINOR) {
-    parts[1] += 1; parts[2] = 0
-  } else {
-    parts[2] = (parts[2] || 0) + 1
+  try {
+    version = nextVersion(oldVersion, { branch: currentBranch, channel, bump: BUMP })
+  } catch (err) {
+    fail(err.message)
   }
-  version = parts.join('.')
+}
+
+// --- Release gate (#375, #385) — BEFORE anything is written ---
+// Refuses the cut while the milestone titled `version` has open issues without
+// the `excluded` label, or while resources/model-registry.json lacks a model
+// Anthropic's Claude Code model configuration article lists. Runs here, before
+// package.json / changelog are touched, so a refused cut leaves the tree clean.
+// There is deliberately NO --skip flag: release.yml runs the same gate on every
+// dispatch, so a local bypass would only move the refusal to CI.
+console.log(`      Release gate for v${version}...`)
+try {
+  // `version` came from parseVersion/nextVersion (or package.json), so it is a
+  // plain semver string — safe to place on the command line.
+  runInherit(`node scripts/release-gate.mjs --version ${version}`)
+  ok(`Release gate passed for v${version}`)
+} catch {
+  fail(`RELEASE GATE REFUSED v${version} — see the FAIL lines above.\n      ` +
+    'Merge their fixes (label "in-beta"), close or move the open milestone issues (or have the owner label them "excluded"),\n      ' +
+    'and align resources/model-registry.json with the Claude Code model configuration article.')
+}
+
+if (!NO_BUMP) {
   pkg.version = version
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8')
 
@@ -307,24 +518,34 @@ const tag = tagFor(version, channel)
 console.log('')
 console.log(`      ${NO_BUMP ? `v${version} (reused)` : `v${oldVersion} → v${version}`}  (tag: ${tag}, channel: ${channel})`)
 
-// --- Step 3: Sync changelog version ---
-step(3, TOTAL_STEPS, 'Aligning changelog version with bumped version...')
+// --- Step 3: Sync changelog version + date ---
+step(3, TOTAL_STEPS, 'Aligning changelog version and date with this release...')
 
 const changelogPath = path.join(PROJECT_ROOT, 'src', 'renderer', 'changelog.ts')
 try {
-  let changelogContent = fs.readFileSync(changelogPath, 'utf-8')
-  // Match the FIRST `version: '...'` entry — that's the topmost (newest) entry
-  const versionRegex = /version:\s*'(\d+\.\d+\.\d+)'/
-  const match = changelogContent.match(versionRegex)
-  if (!match) {
-    warn('Could not locate first version entry in changelog.ts')
-  } else if (match[1] === version) {
-    ok(`Changelog already on v${version}`)
+  const changelogContent = fs.readFileSync(changelogPath, 'utf-8')
+  const releaseDate = todayIso()
+  const sync = syncChangelogEntry(changelogContent, version, releaseDate)
+  if (!sync.ok) {
+    warn(`Could not locate first version entry in changelog.ts (${sync.reason})`)
+  } else if (!sync.versionChanged && !sync.dateChanged) {
+    ok(`Changelog already on v${version} (${releaseDate})`)
   } else {
-    changelogContent = changelogContent.replace(versionRegex, `version: '${version}'`)
-    fs.writeFileSync(changelogPath, changelogContent, 'utf-8')
-    ok(`Changelog version: v${match[1]} → v${version}`)
-    warn('Hand-author the changelog body BEFORE the next release for accurate notes')
+    fs.writeFileSync(changelogPath, sync.content, 'utf-8')
+    if (sync.versionChanged) ok(`Changelog version: v${sync.prevVersion} → v${version}`)
+    if (sync.dateChanged) ok(`Changelog date: ${sync.prevDate} → ${releaseDate}`)
+    // Regenerate so CHANGELOG.md carries the corrected version/date. Without
+    // this the `Changelog in sync` CI gate fails on the release commit itself:
+    // the generated file still holds the pre-sync values.
+    try {
+      run('node scripts/gen-changelog.js')
+      ok('CHANGELOG.md regenerated')
+    } catch (err) {
+      warn(`CHANGELOG.md regeneration failed — run 'npm run changelog' before committing (${err.message})`)
+    }
+    if (sync.versionChanged) {
+      warn('Hand-author the changelog body BEFORE the next release for accurate notes')
+    }
   }
 } catch (err) {
   warn(`Changelog sync skipped: ${err.message}`)
@@ -373,87 +594,48 @@ try {
   run('git add -A')
   const staged = run('git diff --cached --stat 2>&1 || echo ""')
   if (staged.length > 0) {
-    run(`git commit -m "Release v${version}"`)
-    ok(`Committed: Release v${version}`)
+    run(`git commit -m "build(release): ${version}"`)
+    ok(`Committed: build(release): ${version}`)
   } else {
     ok('Nothing to commit')
   }
 
-  // Tag — clean up any pre-existing tag with the same name (rare edge case)
-  try {
-    run(`git tag ${tag}`)
-    ok(`Tagged: ${tag}`)
-  } catch {
-    warn(`Tag ${tag} may already exist locally — continuing`)
-  }
-
+  // No `git tag` here on purpose. release.yml creates the tag with
+  // `gh release create --target $GITHUB_SHA`, pinning it to the commit CI
+  // actually built. Pre-pushing a tag hands `gh release create` an existing ref
+  // and defeats --target, which is how betas ended up stranded on a stale
+  // created_at and invisible to the in-app updater.
   console.log('      Pushing to origin...')
-  run(`git push origin ${currentBranch} --tags 2>&1`, { timeout: 60000 })
-  ok(`Pushed ${currentBranch} + tags to origin`)
+  run(`git push origin ${currentBranch} 2>&1`, { timeout: 60000 })
+  ok(`Pushed ${currentBranch} to origin (tag ${tag} will be created by the workflow)`)
 } catch (err) {
   fail(`Git push failed: ${err.message}`)
 }
 
-// --- Step 6: Create or update beta→main PR (beta/dev releases only) ---
-if (channel === 'beta' || channel === 'dev') {
-  step(6, TOTAL_STEPS, 'Creating/updating beta → main PR...')
-  try {
-    // Check if there's already an open PR from beta → main
-    const existingPrJson = run(
-      'gh pr list --base main --head beta --state open --json number,title --limit 1'
-    )
-    const existingPrs = JSON.parse(existingPrJson)
+// The old Step 6 created/updated a rolling `beta → main` PR on every beta
+// release. Under the RC-branch model beta never promotes to main directly —
+// stabilization goes to release/X.Y.Z first — so that PR tracked a merge that
+// must not happen (it is what left #30 open and stale). The promotion PR is
+// now `release/X.Y.Z → main`, created by `npm run promote` at promote time.
 
-    const prTitle = `Beta v${version} → stable promotion candidate`
-    const prBody = [
-      '## What this is',
-      '',
-      'This PR tracks everything on the `beta` branch that is a candidate for the next stable release.',
-      '',
-      `**Current beta release**: [${tag}](https://github.com/nubbymong/claude-command-center/releases/tag/${tag})`,
-      '',
-      'Merging this PR promotes all these changes to the stable channel.',
-      '',
-      '## How to promote',
-      '',
-      'Run `npm run promote` from the `beta` branch. It will merge this PR and cut a stable release.',
-    ].join('\n')
-
-    // Write PR body to a unique temp file to avoid shell escaping issues
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-pr-body-'))
-    const tmpBody = path.join(tmpDir, 'body.md')
-
-    try {
-      fs.writeFileSync(tmpBody, prBody)
-
-      if (existingPrs.length > 0) {
-        // Update the existing PR title to reflect the new version
-        const prNumber = existingPrs[0].number
-        run(`gh pr edit ${prNumber} --title "${prTitle}" --body-file "${tmpBody}"`)
-        ok(`Updated PR #${prNumber}: ${prTitle}`)
-      } else {
-        // Create a new PR for this promotion cycle
-        const createResult = run(
-          `gh pr create --base main --head beta --title "${prTitle}" --body-file "${tmpBody}"`
-        )
-        ok(`Created PR: ${createResult}`)
-      }
-    } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch (_) {}
-    }
-  } catch (err) {
-    // PR creation is non-fatal — the release still ships without it
-    warn(`PR create/update failed: ${err.message}`)
-  }
-} else {
-  step(6, TOTAL_STEPS, 'Skipping PR (stable releases do not create beta→main PRs)')
-}
-
-// --- Step 7: Pre-clean any existing GitHub release for this tag ---
-step(7, TOTAL_STEPS, 'Checking for stale GitHub release...')
+// --- Step 6: Pre-clean any existing GitHub release for this tag ---
+step(6, TOTAL_STEPS, 'Checking for stale GitHub release...')
 try {
   const existing = run(`gh release view ${tag} --json tagName -q .tagName 2>&1 || echo ""`)
   if (existing.trim() === tag) {
+    // Re-run the gate IMMEDIATELY before the destructive delete. The gate ran at
+    // Step 2, but commit/tag/push happened since; a milestone issue opened in
+    // that window would let us delete the last good release for this tag and
+    // then have CI's own gate refuse to build a replacement, leaving no release
+    // at all (#375 review). Re-checking here closes that window to ~zero — and
+    // CI's gate job is still the authoritative backstop before any build.
+    console.log(`      Re-checking the release gate before deleting ${tag}...`)
+    try {
+      runInherit(`node scripts/release-gate.mjs --version ${version}`)
+    } catch {
+      fail(`RELEASE GATE REFUSED v${version} before the stale-release delete — the existing ${tag} release is left intact.\n      ` +
+        'Resolve the open milestone issues (merge + label "in-beta", close, or label "excluded") and re-run.')
+    }
     warn(`A release for ${tag} already exists — deleting so the workflow can recreate cleanly`)
     run(`gh release delete ${tag} --yes`)
     ok('Stale release deleted (tag preserved)')
@@ -464,8 +646,8 @@ try {
   warn(`Could not check/delete existing release: ${err.message}`)
 }
 
-// --- Step 8: Dispatch GitHub Actions workflow ---
-step(8, TOTAL_STEPS, 'Dispatching GitHub Actions release workflow...')
+// --- Step 7: Dispatch GitHub Actions workflow ---
+step(7, TOTAL_STEPS, 'Dispatching GitHub Actions release workflow...')
 
 try {
   run(`gh workflow run release.yml --ref ${currentBranch} -f channel=${channel} -f skip_vt=false`)
@@ -508,8 +690,8 @@ if (!runId) {
   ok(`Run URL: https://github.com/nubbymong/claude-command-center/actions/runs/${runId}`)
 }
 
-// --- Step 9: Watch the workflow to completion ---
-step(9, TOTAL_STEPS, 'Watching workflow run...')
+// --- Step 8: Watch the workflow to completion ---
+step(8, TOTAL_STEPS, 'Watching workflow run...')
 
 if (SKIP_WATCH || !runId) {
   warn(SKIP_WATCH ? 'Skipped (--skip-watch)' : 'No run ID — cannot watch')
@@ -525,8 +707,8 @@ if (SKIP_WATCH || !runId) {
   }
 }
 
-// --- Step 10: Verify final release has both platforms ---
-step(10, TOTAL_STEPS, 'Verifying release artifacts...')
+// --- Step 9: Verify final release has both platforms ---
+step(9, TOTAL_STEPS, 'Verifying release artifacts...')
 
 if (exitCode !== 0) {
   warn('Skipping verification because workflow did not complete cleanly')
@@ -539,7 +721,11 @@ if (exitCode !== 0) {
     const names = release.names || []
     const hasExe = names.some((n) => n.endsWith('.exe'))
     const hasDmg = names.some((n) => n.endsWith('.dmg'))
-    const hasChecksums = names.some((n) => n.toLowerCase().includes('checksum'))
+    const hasAppImage = names.some((n) => n.endsWith('.AppImage'))
+    // Exact name: the client hard-codes literal 'CHECKSUMS.txt' in both the
+    // derived URL and `gh release download --pattern`, so a checksums.txt or a
+    // CHECKSUMS.txt.sig would pass this gate and still fail every update.
+    const hasChecksums = names.includes('CHECKSUMS.txt')
 
     console.log(`      Release URL: ${release.url}`)
     console.log(`      Assets: ${names.join(', ')}`)
@@ -547,8 +733,10 @@ if (exitCode !== 0) {
     else { warn('Windows installer NOT found'); exitCode = 1 }
     if (hasDmg) ok('macOS installer (.dmg) attached')
     else { warn('macOS installer NOT found'); exitCode = 1 }
+    if (hasAppImage) ok('Linux AppImage attached')
+    else { warn('Linux AppImage NOT found'); exitCode = 1 }
     if (hasChecksums) ok('CHECKSUMS.txt attached')
-    else warn('CHECKSUMS.txt not found (workflow normally generates this)')
+    else fail('CHECKSUMS.txt not attached -- the in-app updater REFUSES to install\n        a release it cannot verify (#111), so publishing without it ships a\n        release nobody can auto-update to.')
   } catch (err) {
     warn(`Could not verify release: ${err.message}`)
     exitCode = 1
@@ -564,4 +752,22 @@ header(
 
 process.exit(exitCode)
 
-})()
+}
+
+// Pure-logic exports for unit testing. Guarded so `require()` from a test does
+// NOT dispatch a release.
+module.exports = {
+  parseVersion,
+  releaseBranchBase,
+  preIdForBranch,
+  branchAllowsChannel,
+  branchHintFor,
+  nextVersion,
+  tagFor,
+  todayIso,
+  syncChangelogEntry,
+}
+
+if (require.main === module) {
+  main()
+}

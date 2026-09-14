@@ -41,4 +41,17 @@ describe('withProfileHome', () => {
     const base = { PATH: '/x' }
     expect(withProfileHome(base, null)).toBe(base)
   })
+
+  // #117: macOS resolves the login keychain via $HOME. Redirecting HOME to the fake
+  // profile home (no ~/Library/Keychains) breaks keychain access ("A keychain cannot
+  // be found to store ..."). HOME must be redirected ONLY on Linux (Secret Service /
+  // D-Bus keychains are not HOME-path-based); never on macOS or Windows.
+  it('redirects HOME only on Linux, not macOS/Windows (#117)', () => {
+    const env = withProfileHome({ PATH: '/x' }, HOME)
+    if (process.platform === 'linux') {
+      expect(env.HOME).toBe(HOME)
+    } else {
+      expect(env.HOME).toBeUndefined()
+    }
+  })
 })

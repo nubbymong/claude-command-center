@@ -1,0 +1,230 @@
+// canvas IPC — registration, Zod rejection before the store is touched,
+// happy-path delegation, and the change-push forwarder (logs2 suite pattern).
+
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { IPC } from '../../../src/shared/ipc-channels'
+
+const handlers = new Map<string, (...a: unknown[]) => unknown>()
+const listeners = new Map<string, (...a: unknown[]) => unknown>()
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (ch: string, fn: (...a: unknown[]) => unknown) => handlers.set(ch, fn),
+    on: (ch: string, fn: (...a: unknown[]) => unknown) => listeners.set(ch, fn),
+  },
+  BrowserWindow: vi.fn(),
+}))
+
+const storeMock = vi.hoisted(() => ({
+  getCanvasStateForSession: vi.fn(),
+  renderVersion: vi.fn(),
+  setActiveVersion: vi.fn(),
+  setCanvasSessionInfoResolver: vi.fn(),
+  changeListeners: [] as Array<(e: unknown) => void>,
+}))
+
+vi.mock('../../../src/main/canvas/canvas-store', () => ({
+  getCanvasStateForSession: storeMock.getCanvasStateForSession,
+  renderVersion: storeMock.renderVersion,
+  setActiveVersion: storeMock.setActiveVersion,
+  // Continuity glue (2026-08-14): registration installs the session-info
+  // resolver that stamps canvas records with cwd + conversation.
+  setCanvasSessionInfoResolver: storeMock.setCanvasSessionInfoResolver,
+  onCanvasChanged: (cb: (e: unknown) => void) => {
+    storeMock.changeListeners.push(cb)
+    return () => {}
+  },
+}))
+
+// #580 markers are OWNER-ONLY against the canvas they name (adversarial review,
+// 2026-09-01). Ownership itself is exercised in canvas-marker-ipc-hardening and
+// canvas-readonly-boundary; here it is stubbed open so these cases keep testing
+// what they are about — registration, Zod rejection, and delegation.
+const linkMock = vi.hoisted(() => ({ allowed: vi.fn(() => ({ ok: true as const })) }))
+vi.mock('../../../src/main/canvas/canvas-session-link', async (importOriginal) => {
+  const real = (await importOriginal()) as Record<string, unknown>
+  return { ...real, canvasArtifactMutationAllowed: (...a: unknown[]) => linkMock.allowed(...(a as [])) }
+})
+
+const { registerCanvasHandlers } = await import('../../../src/main/ipc/canvas-handlers')
+const { requestCanvasSnapshot, _resetSnapshotBrokerForTest } = await import('../../../src/main/canvas/canvas-snapshot-broker')
+
+const SID = 'a1b2c3d4e5f6a7b8c9d0e1f2'
+const CID = 'c1c2c3c4c5c6c7c8c9c0d1d2'
+const invoke = (ch: string, args: unknown) => handlers.get(ch)!({} as never, args)
+
+let sent: Array<{ channel: string; payload: unknown }>
+let destroyed: boolean
+
+beforeEach(() => {
+  handlers.clear()
+  listeners.clear()
+  _resetSnapshotBrokerForTest()
+  storeMock.changeListeners.length = 0
+  vi.clearAllMocks()
+  sent = []
+  destroyed = false
+  const fakeWindow = {
+    isDestroyed: () => destroyed,
+    webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
+  }
+  registerCanvasHandlers(() => fakeWindow as never)
+})
+
+describe('registration', () => {
+  it('registers all three request channels', () => {
+    expect(handlers.has(IPC.CANVAS_GET_STATE)).toBe(true)
+    expect(handlers.has(IPC.CANVAS_RENDER)).toBe(true)
+    expect(handlers.has(IPC.CANVAS_SET_ACTIVE_VERSION)).toBe(true)
+  })
+
+  it('listens for snapshot replies from the renderer', () => {
+    expect(listeners.has(IPC.CANVAS_SNAPSHOT_RESULT)).toBe(true)
+  })
+
+  it('installs the canvas session-info resolver (continuity stamps)', () => {
+    // Without this, canvas records carry no cwd/conversation and a restarted
+    // session can never adopt its own canvas back.
+    expect(storeMock.setCanvasSessionInfoResolver).toHaveBeenCalledTimes(1)
+    expect(typeof storeMock.setCanvasSessionInfoResolver.mock.calls[0][0]).toBe('function')
+  })
+})
+
+describe('snapshot capture (main -> renderer request)', () => {
+  it('pushes the request to the window and resolves on the matching reply', async () => {
+    const pending = requestCanvasSnapshot({ sessionId: SID, canvasId: 'c1', versionId: 'v1', options: {} })
+    const pushed = sent.find((s) => s.channel === IPC.CANVAS_SNAPSHOT_REQUEST)
+    expect(pushed).toBeDefined()
+    const { requestId } = pushed!.payload as { requestId: string }
+    expect(requestId).toMatch(/^[0-9a-f]{24}$/)
+
+    listeners.get(IPC.CANVAS_SNAPSHOT_RESULT)!({} as never, {
+      requestId,
+      ok: true,
+      result: { viewport: { width: 800, height: 600, dpr: 1 }, root: { ref: 'e0', role: 'document', name: 'ok', box: {}, children: [] } },
+    })
+    await expect(pending).resolves.toMatchObject({ root: { name: 'ok' } })
+  })
+
+  it('reports no window rather than hanging when it is gone', async () => {
+    destroyed = true
+    await expect(
+      requestCanvasSnapshot({ sessionId: SID, canvasId: 'c1', versionId: 'v1', options: {} }),
+    ).rejects.toThrow(/window is not available/)
+  })
+})
+
+describe('validation — bad args REJECT before the store is ever called', () => {
+  it.each([
+    [IPC.CANVAS_GET_STATE, {}],
+    [IPC.CANVAS_GET_STATE, { sessionId: '../evil' }],
+    [IPC.CANVAS_GET_STATE, { sessionId: SID, extra: 1 }],
+    [IPC.CANVAS_RENDER, { sessionId: SID }],
+    [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'plan' } }],
+    [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: '' } }],
+    [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: 'x', sneak: true } }],
+    [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: 'x', title: 't'.repeat(201) } }],
+    [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: 'x', title: 42 } }],
+    [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'uat' } }],
+    [IPC.CANVAS_SET_ACTIVE_VERSION, { sessionId: SID, versionId: 'nope' }],
+    [IPC.CANVAS_SET_ACTIVE_VERSION, { sessionId: SID, versionId: 'v1x' }],
+    // C1 (adv FINDING F-2): the new verdict/reopen channels + the submit
+    // decision field are refused before the store is touched.
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approve' }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approved', versionId: 'v1\n' }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approved', note: 'x'.repeat(4001) }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approved', by: 'user' }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approved', evil: 1 }],
+    [IPC.CANVAS_VERSION_REOPEN, { sessionId: SID }],
+    [IPC.CANVAS_VERSION_REOPEN, { sessionId: SID, versionId: 'nope' }],
+    [IPC.CANVAS_REVIEW_SUBMIT, { sessionId: SID, reviewId: 'R1', sketches: [], decision: 'approved' }],
+  ])('%s rejects %j', async (channel, args) => {
+    await expect(invoke(channel as string, args)).rejects.toThrow()
+    expect(storeMock.getCanvasStateForSession).not.toHaveBeenCalled()
+    expect(storeMock.renderVersion).not.toHaveBeenCalled()
+    expect(storeMock.setActiveVersion).not.toHaveBeenCalled()
+  })
+})
+
+describe('happy paths delegate to the store', () => {
+  it('getState', async () => {
+    storeMock.getCanvasStateForSession.mockReturnValue(null)
+    expect(await invoke(IPC.CANVAS_GET_STATE, { sessionId: SID })).toBeNull()
+    expect(storeMock.getCanvasStateForSession).toHaveBeenCalledWith(SID)
+  })
+
+  it('render (design + uat shapes)', async () => {
+    storeMock.renderVersion.mockReturnValue({ canvasId: 'c', versionId: 'v1' })
+    await invoke(IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: '<p>x</p>' } })
+    expect(storeMock.renderVersion).toHaveBeenCalledWith(SID, { mode: 'design', html: '<p>x</p>' })
+    await invoke(IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'uat', distRoot: 'F:/x/dist', entry: 'index.html' } })
+    expect(storeMock.renderVersion).toHaveBeenCalledWith(SID, { mode: 'uat', distRoot: 'F:/x/dist', entry: 'index.html' })
+  })
+
+  it('render carries the SUBJECT through -- the store decides new-version vs new-canvas from it', async () => {
+    storeMock.renderVersion.mockReturnValue({ canvasId: 'c', versionId: 'v1' })
+    await invoke(IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: '<p>x</p>', title: 'Checkout flow' } })
+    expect(storeMock.renderVersion).toHaveBeenCalledWith(SID, { mode: 'design', html: '<p>x</p>', title: 'Checkout flow' })
+    await invoke(IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'uat', distRoot: 'F:/x/dist', title: 'Live site' } })
+    expect(storeMock.renderVersion).toHaveBeenCalledWith(SID, { mode: 'uat', distRoot: 'F:/x/dist', title: 'Live site' })
+  })
+
+  it('setActiveVersion', async () => {
+    storeMock.setActiveVersion.mockReturnValue({ activeVersionId: 'v1' })
+    await invoke(IPC.CANVAS_SET_ACTIVE_VERSION, { sessionId: SID, versionId: 'v1' })
+    expect(storeMock.setActiveVersion).toHaveBeenCalledWith(SID, 'v1')
+  })
+})
+
+describe('change push', () => {
+  it('forwards store change events to the window', () => {
+    const event = { sessionId: SID, canvasId: 'c', activeVersionId: 'v2' }
+    storeMock.changeListeners.forEach((cb) => cb(event))
+    expect(sent).toEqual([{ channel: IPC.CANVAS_CHANGED, payload: event }])
+  })
+
+  it('does not throw when the window is gone', () => {
+    destroyed = true
+    expect(() => storeMock.changeListeners.forEach((cb) => cb({ sessionId: SID }))).not.toThrow()
+    expect(sent).toEqual([])
+  })
+})
+
+// ── #580: the agent-marker channel ──────────────────────────────────────────
+//
+// The line that tells the agent a verdict was filed. It reaches a PTY, so its
+// shape is guarded before it gets anywhere near one: one line, bounded, and
+// never split into several submitted messages by a stray newline.
+describe('canvas:agentMarker', () => {
+  const marker = (args: unknown) => invoke(IPC.CANVAS_AGENT_MARKER, args)
+
+  it('is registered', () => {
+    expect(handlers.has(IPC.CANVAS_AGENT_MARKER)).toBe(true)
+  })
+
+  it('reports "unwired" rather than pretending, when boot never wired a queue', async () => {
+    // The queue is wired at boot from src/main/index.ts; nothing wires it here,
+    // so this also pins that the handler cannot throw without one.
+    await expect(marker({ sessionId: SID, canvasId: CID, line: 'Approved v3 · canvas_version_verdict recorded' }))
+      .resolves.toEqual({ delivery: 'unwired' })
+  })
+
+  it('collapses newlines — one marker can never become several submitted messages', async () => {
+    // A CR mid-string would submit the first half as its own message and leave
+    // the rest typed at the prompt.
+    const spy = vi.spyOn(await import('../../../src/main/canvas/canvas-marker-delivery'), 'deliverCanvasMarker')
+    await marker({ sessionId: SID, canvasId: CID, line: 'Review #3\r\nrm -rf something · canvas_review R3' })
+    expect(spy).toHaveBeenCalledWith(SID, 'Review #3 rm -rf something · canvas_review R3')
+    spy.mockRestore()
+  })
+
+  it('rejects an empty line, an over-long one, and unknown keys', async () => {
+    await expect(marker({ sessionId: SID, canvasId: CID, line: '' })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, canvasId: CID, line: '\r\n  \r\n' })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, canvasId: CID, line: 'x'.repeat(401) })).rejects.toThrow()
+    await expect(marker({ sessionId: SID, canvasId: CID, line: 'ok', extra: 1 })).rejects.toThrow()
+    await expect(marker({ sessionId: 'not-a-session-id!', canvasId: CID, line: 'ok' })).rejects.toThrow()
+    // The canvas is REQUIRED — the pre-2026-09-01 payload shape no longer parses.
+    await expect(marker({ sessionId: SID, line: 'ok' })).rejects.toThrow()
+  })
+})

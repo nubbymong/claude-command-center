@@ -2,11 +2,15 @@
  * Vitest setup — mocks for Electron and window.electronAPI
  */
 import { vi } from 'vitest'
+// Redirects the process temp dir to a disposable per-worker root and provides
+// real writable mock paths (instead of the drive-relative '/mock/...'). Imported
+// for its side effects too — must load before any test creates a temp fixture.
+import { MOCK_RESOURCES, MOCK_USERDATA } from '../helpers/test-tmp'
 
 // Mock electron module for main process tests
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(() => '/mock/userData'),
+    getPath: vi.fn(() => MOCK_USERDATA),
     getAppPath: vi.fn(() => process.cwd()),
     requestSingleInstanceLock: vi.fn(() => true),
     whenReady: vi.fn(() => Promise.resolve()),
@@ -28,9 +32,10 @@ vi.mock('electron', () => ({
     show: vi.fn(),
   })),
   dialog: { showOpenDialog: vi.fn() },
-  clipboard: { readImage: vi.fn() },
+  clipboard: { readImage: vi.fn(), readText: vi.fn() },
   safeStorage: { isEncryptionAvailable: vi.fn(() => false) },
   Menu: { buildFromTemplate: vi.fn(), setApplicationMenu: vi.fn() },
+  protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
 }))
 
 // Mock the debug-logger to prevent file I/O
@@ -51,7 +56,7 @@ vi.mock('../../src/main/debug-logger', () => ({
 
 // Mock setup-handlers to prevent registry access
 vi.mock('../../src/main/ipc/setup-handlers', () => ({
-  getResourcesDirectory: vi.fn(() => '/mock/resources'),
+  getResourcesDirectory: vi.fn(() => MOCK_RESOURCES),
   registerSetupHandlers: vi.fn(),
 }))
 
@@ -87,7 +92,8 @@ const mockElectronAPI = {
       output: '',
     })),
     cancel: vi.fn(() => Promise.resolve(true)),
-    remove: vi.fn(() => Promise.resolve(true)),
+    // #371: remove/clearCompleted report the real disk outcome now.
+    remove: vi.fn(() => Promise.resolve({ ok: true, removed: true })),
     retry: vi.fn((id: string) => Promise.resolve({
       id: 'ca-retry123',
       name: 'Retried',
@@ -100,7 +106,7 @@ const mockElectronAPI = {
     })),
     list: vi.fn(() => Promise.resolve([])),
     getOutput: vi.fn(() => Promise.resolve('')),
-    clearCompleted: vi.fn(() => Promise.resolve(0)),
+    clearCompleted: vi.fn(() => Promise.resolve({ ok: true, removed: 0 })),
     onStatusChanged: vi.fn(() => () => {}),
     onOutputChunk: vi.fn(() => () => {}),
   },
@@ -112,24 +118,6 @@ const mockElectronAPI = {
     getLatest: vi.fn(() => Promise.resolve(null)),
     isRunning: vi.fn(() => Promise.resolve(false)),
     onStatusChanged: vi.fn(() => () => {}),
-  },
-  team: {
-    list: vi.fn(() => Promise.resolve([])),
-    save: vi.fn((team: any) => Promise.resolve({ ...team, id: team.id || 'team-mock123', updatedAt: Date.now() })),
-    delete: vi.fn(() => Promise.resolve(true)),
-    run: vi.fn((teamId: string) => Promise.resolve({
-      id: 'tr-mock123',
-      teamId,
-      teamName: 'Mock Team',
-      status: 'running',
-      steps: [],
-      projectPath: '/mock',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })),
-    cancelRun: vi.fn(() => Promise.resolve(true)),
-    listRuns: vi.fn(() => Promise.resolve([])),
-    onRunStatusChanged: vi.fn(() => () => {}),
   },
   codex: {
     status: vi.fn(() => Promise.resolve({
@@ -143,6 +131,17 @@ const mockElectronAPI = {
     testConnection: vi.fn(() => Promise.resolve({ ok: true, message: 'connected' })),
   },
   dialog: { openFolder: vi.fn(() => Promise.resolve(null)) },
+  vision: {
+    start: vi.fn(() => Promise.resolve({ ok: true })),
+    stop: vi.fn(() => Promise.resolve({ ok: true })),
+    status: vi.fn(() => Promise.resolve({ running: false, connected: false, browser: '', mcpPort: 0 })),
+    launch: vi.fn(() => Promise.resolve({ ok: true })),
+    // #371: saveConfig takes the generation token getConfig handed out, and
+    // getConfig reports whether the read FAILED rather than answering a bare null.
+    saveConfig: vi.fn(() => Promise.resolve({ ok: true })),
+    getConfig: vi.fn(() => Promise.resolve({ config: null, generation: 1, readFailed: false })),
+    onStatusChanged: vi.fn(() => () => {}),
+  },
   memory: {
     scan: vi.fn(() => Promise.resolve({
       projects: [],
@@ -167,6 +166,35 @@ const mockElectronAPI = {
     sessionConfig: vi.fn(() => Promise.resolve(null)),
     onNewMessages: vi.fn(() => () => {}),
   },
+  canvas: {
+    getState: vi.fn(() => Promise.resolve(null)),
+    render: vi.fn(() => Promise.resolve({ canvasId: 'c0ffee', versionId: 'v1' })),
+    setActiveVersion: vi.fn(() => Promise.resolve(null)),
+    onChanged: vi.fn(() => () => {}),
+    onReviewChanged: vi.fn(() => () => {}),
+    // The library listing: the cross-canvas totals store reads it on mount.
+    listAll: vi.fn(() => Promise.resolve([])),
+  },
+  accountWeb: {
+    status: vi.fn(() => Promise.resolve({ ok: false, error: 'not stubbed' })),
+    webStatus: vi.fn(() => Promise.resolve({ ok: true, web: { status: 'none' } })),
+    signIn: vi.fn(() => Promise.resolve({ ok: true, state: { phase: 'idle' } })),
+    signInState: vi.fn(() => Promise.resolve({ ok: true, state: { phase: 'idle' } })),
+    cancel: vi.fn(() => Promise.resolve({ ok: true })),
+    signOut: vi.fn(() => Promise.resolve({ ok: true })),
+    openArtifacts: vi.fn(() => Promise.resolve({ ok: true })),
+    setAuthMethod: vi.fn(() => Promise.resolve({ ok: true })),
+    setAuthBrowser: vi.fn(() => Promise.resolve({ ok: true })),
+    setSignInMode: vi.fn(() => Promise.resolve({ ok: true })),
+    paneOpen: vi.fn(() => Promise.resolve({ ok: true })),
+    paneClose: vi.fn(() => Promise.resolve({ ok: true })),
+    paneBounds: vi.fn(() => Promise.resolve({ ok: true })),
+    paneVisible: vi.fn(() => Promise.resolve({ ok: true })),
+    paneReload: vi.fn(() => Promise.resolve({ ok: true })),
+    paneGetState: vi.fn(() => Promise.resolve({ ok: true, state: null })),
+    onPaneState: vi.fn(() => () => {}),
+    onPaneClosed: vi.fn(() => () => {}),
+  },
   webview: {
     check: vi.fn(() => Promise.resolve({ reachable: false })),
     open: vi.fn(() => Promise.resolve(true)),
@@ -178,8 +206,12 @@ const mockElectronAPI = {
     navBack: vi.fn(() => Promise.resolve()),
     navForward: vi.fn(() => Promise.resolve()),
     goHome: vi.fn(() => Promise.resolve()),
+    navigate: vi.fn(() => Promise.resolve(true)),
+    openExternal: vi.fn(() => Promise.resolve(true)),
     closeAll: vi.fn(() => Promise.resolve(true)),
     onEscapePressed: vi.fn(() => () => {}),
+    onNavigated: vi.fn(() => () => {}),
+    onAgentPush: vi.fn(() => () => {}),
   },
 }
 

@@ -6,8 +6,13 @@
  * Electron. No default export (project convention). No side effects.
  *
  * Behaviour contract:
- *   - When `resumeUuid` is ABSENT the produced string is BYTE-IDENTICAL to the
- *     pre-refactor inline construction (picker / picker-fallback / direct).
+ *   - When `resumeUuid` is ABSENT the produced string matches the pre-refactor
+ *     inline construction (picker / picker-fallback / direct) EXCEPT for the
+ *     binary and picker paths, which are now single-quoted rather than
+ *     double-quoted. That is a deliberate security change, not drift: inside
+ *     double quotes PowerShell expands `$(...)` and POSIX expands `$(...)` and
+ *     backticks, and these values are PATHS whose contents a directory name
+ *     decides. Byte-identity holds for every other part of the line.
  *   - When `resumeUuid` is PRESENT the resume-picker branch is BYPASSED and the
  *     command launches Claude directly with `--resume <uuid>` FIRST, before
  *     --settings / --mcp-config / --agents etc. (mirrors the ordering in
@@ -21,6 +26,7 @@
 import * as nodePath from 'node:path'
 import * as nodeOs from 'node:os'
 import { UUID_RE, mangleCwdToProjectDir } from './logging/transcript-discovery'
+import { askPromptRef } from './terminal-launch-line'
 
 export interface BuildClaudeLaunchCommandOptions {
   /** 'win32' produces a PowerShell command; anything else produces a POSIX sh command. */
@@ -43,15 +49,83 @@ export interface BuildClaudeLaunchCommandOptions {
    * existence; this builder trusts it. Absent => golden no-resume behaviour.
    */
   resumeUuid?: string
+  /**
+   * Ask Conductor: append Claude's opening prompt as a POSITIONAL argument,
+   * passed by REFERENCE to the CCC_ASK_PROMPT env var (see askPromptRef). This
+   * is a boolean, not the text: the question must never reach this builder as a
+   * string, because anything that arrives here is interpolated into a line the
+   * shell parses. Keeping the value out of the type makes that impossible to get
+   * wrong rather than merely documented.
+   *
+   * Positional, so it goes AFTER every flag — `claude [options] [prompt]`.
+   * Ignored on the resume path, which has a conversation to continue and no use
+   * for an opening prompt.
+   */
+  askPrompt?: boolean
 }
 
 /**
+ * Every character PowerShell accepts as a single-quote DELIMITER.
+ *
+ * PowerShell's tokenizer treats the ASCII apostrophe and four Unicode
+ * quotation marks interchangeably: U+2018 LEFT, U+2019 RIGHT, U+201A LOW-9 and
+ * U+201B HIGH-REVERSED-9. Escaping only U+0027 therefore leaves four ways to
+ * terminate a quoted string early — and all four are legal in NTFS directory
+ * names, so an ordinary folder name can carry one (a curly apostrophe is what
+ * word processors produce, and those names get pasted into paths).
+ *
+ * POSIX shells have no equivalent: only U+0027 delimits there, which is why
+ * the posix branch below is unchanged.
+ */
+const PS_SINGLE_QUOTE_CLASS = /[\u0027\u2018\u2019\u201A\u201B]/g
+
+/**
  * Escape a path for single-quoting in the target shell.
- *   - win32 (PowerShell): double the single quotes.
+ *   - win32 (PowerShell): double every single-quote delimiter (see above).
  *   - posix (sh): close-quote, backslash-escape, reopen-quote.
+ *
+ * Doubling is the correct escape for ALL of them: PowerShell reads a doubled
+ * delimiter inside a single-quoted string as one literal character, whichever
+ * of the five it is.
  */
 function escapeForCwdQuote(p: string, isWin32: boolean): string {
-  return isWin32 ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
+  return isWin32 ? p.replace(PS_SINGLE_QUOTE_CLASS, (c) => c + c) : p.replace(/'/g, "'\\''")
+}
+
+/**
+ * Single-quote an argument VALUE for the launch shell — returns the value
+ * wrapped in single quotes, escaped for the target shell.
+ *
+ * Required for `--model` (#144): 1M-context model ids contain brackets
+ * (`opus[1m]`), which zsh — the macOS default shell — parses as a glob
+ * character class. Unquoted it fails with `zsh: no matches found: opus[1m]` and
+ * aborts the ENTIRE launch line before claude/node ever runs, so no session
+ * starts. bash and PowerShell pass the unmatched glob through literally, which
+ * is why this only reproduces on zsh. Single quotes are literal in PowerShell
+ * and POSIX sh/zsh alike.
+ *
+ * Pass `isWin32: false` for a command that will run on a REMOTE POSIX shell
+ * (SSH sessions) regardless of the local platform.
+ */
+export function quoteArgForShell(value: string, isWin32: boolean): string {
+  return `'${escapeForCwdQuote(value, isWin32)}'`
+}
+
+/**
+ * Build the whole `--model <value>` flag, quoted, or '' when there is no model.
+ *
+ * Exists so the CALL SITES have nothing to get wrong. The #144 bug was not a
+ * broken quoting helper -- there wasn't one -- it was two emission sites that
+ * interpolated the raw value. A helper that returns only the escaped value
+ * still lets a site write `--model ${options.model}` and typecheck cleanly,
+ * which is exactly how the first regression guard for this bug turned out to be
+ * vacuous (reverting both sites left the suite green). Returning the entire
+ * flag removes that degree of freedom, and `checkedModelFlag` in
+ * tests/unit/spawn-model-flag-quoting.test.ts asserts no site bypasses it.
+ */
+export function modelFlag(model: string | undefined | null, isWin32: boolean): string {
+  if (!model) return ''
+  return `--model ${quoteArgForShell(model, isWin32)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +241,166 @@ export function resolveResumeLaunch(
 }
 
 // ---------------------------------------------------------------------------
+// recoverOrphanResumeLaunch — resume a conversation whose worktree cwd is gone (#535)
+// ---------------------------------------------------------------------------
+
+/**
+ * Injectable deps for {@link recoverOrphanResumeLaunch}. Production wraps node
+ * fs/os + path-utils; tests pass in-memory fakes so the relocation logic is
+ * unit-testable WITHOUT touching disk.
+ */
+export interface RecoverOrphanDeps {
+  existsSync: (p: string) => boolean
+  statSync: (p: string) => { isDirectory: () => boolean }
+  /** Recursively create a directory (mkdir -p). */
+  mkdirp: (dir: string) => void
+  /** Move a file (rename); may throw on cross-device, caller falls back to copy. */
+  renameFile: (src: string, dst: string) => void
+  /** Copy a file (cross-device fallback for renameFile). */
+  copyFile: (src: string, dst: string) => void
+  /** Best-effort unlink; must not throw fatally. */
+  removeFile: (p: string) => void
+  /** Current process id — makes the copy-fallback temp name unique. */
+  pid: () => number
+  /** Non-fatal diagnostic (e.g. a source that could not be removed post-copy). */
+  warn: (msg: string) => void
+  homedir: () => string
+  mangleCwdToProjectDir: (cwd: string) => string
+  /** Canonical `~/.claude/projects` root. */
+  projectsRoot: string
+  /** True when `cwd` IS or is an ANCESTOR of the user's home dir — never relocate there. */
+  isHomeOrAncestor: (cwd: string) => boolean
+  ensureCompanionDir: (projectDir: string, uuid: string) => void
+}
+
+/**
+ * Recover a resume whose ORIGINAL cwd (a git worktree) has been deleted (#535).
+ *
+ * {@link resolveResumeLaunch} deliberately returns null when the captured cwd
+ * is gone — it never retargets homedir. But a session that ran in a worktree
+ * created by session-guard / the loop system (ADR-012 / #522) has its transcript
+ * written under the worktree's mangled project folder, which SURVIVES the
+ * worktree deletion (the `~/.claude/projects/<mangle>/…` tree is a separate
+ * location from the git worktree on disk). The conversation is therefore intact
+ * but unreachable: `claude --resume <uuid>` looks in `<mangle(launchCwd)>/`, and
+ * no surviving cwd mangles to the dead worktree's folder.
+ *
+ * This recovers it by RELOCATING the orphaned `<uuid>.jsonl` into the surviving
+ * cwd's (the session's configured repo root) mangled folder, then resuming there.
+ *
+ * Applies ONLY to the genuine orphan case, and fails CLOSED to null (→ caller's
+ * fresh fallback) on anything else. ALL must hold:
+ *   - target present, uuid matches the canonical UUID format;
+ *   - the target's RAW cwd is MISSING (this is what makes it an orphan — if it
+ *     exists, resolveResumeLaunch's null was for another reason; do not relocate);
+ *   - `survivingCwd` exists, is a directory, and is NOT home or an ancestor of it
+ *     (never relocate a transcript into ~/.claude/projects/<mangle(home)>);
+ *   - the orphan transcript `projectsRoot/<mangle(targetCwd)>/<uuid>.jsonl` exists
+ *     and resolves INSIDE projectsRoot (containment — defense in depth);
+ *   - the destination path also resolves INSIDE projectsRoot.
+ *
+ * Collision rule (adversarial review #535): if a transcript ALREADY exists at
+ * the destination, that IS the conversation for this uuid in this project —
+ * resume it IN PLACE and NEVER overwrite it. The orphan source path is derived
+ * from `target.cwd` (transcript content, not a trusted value), so a size-compare
+ * "keep-larger" overwrite would let a planted duplicate clobber a live, possibly
+ * different conversation. Relocation only ever writes into an EMPTY dest slot.
+ *
+ * Returns `{ resumeUuid, claudeCwd }` (claudeCwd = the surviving cwd) or null.
+ */
+export function recoverOrphanResumeLaunch(
+  target: ResumeTarget | undefined,
+  survivingCwd: string,
+  deps: RecoverOrphanDeps,
+): { resumeUuid: string; claudeCwd: string } | null {
+  try {
+    if (!target || !target.uuid || !target.cwd) return null
+    if (!UUID_RE.test(target.uuid)) return null
+    if (!survivingCwd) return null
+
+    const home = deps.homedir()
+
+    // Expand a leading `~` in the target cwd the same way resolveResumeLaunch does.
+    let rawTargetCwd: string
+    if (target.cwd === '~') rawTargetCwd = home
+    else if (target.cwd.startsWith('~/') || target.cwd.startsWith('~\\')) rawTargetCwd = nodePath.join(home, target.cwd.slice(2))
+    else rawTargetCwd = nodePath.resolve(target.cwd)
+
+    // ORPHAN GATE: recovery applies ONLY when the original cwd is gone. If it
+    // still exists, resolveResumeLaunch failed for another reason (e.g. the
+    // transcript was pruned) and relocating would be wrong.
+    if (deps.existsSync(rawTargetCwd)) return null
+
+    // The surviving cwd must be a real directory and MUST NOT be home/an ancestor.
+    const survivingResolved = nodePath.resolve(survivingCwd)
+    if (!deps.existsSync(survivingResolved)) return null
+    if (!deps.statSync(survivingResolved).isDirectory()) return null
+    if (deps.isHomeOrAncestor(survivingResolved)) return null
+
+    const rootWithSep = deps.projectsRoot.endsWith(nodePath.sep) ? deps.projectsRoot : deps.projectsRoot + nodePath.sep
+    const contained = (p: string): boolean => p === deps.projectsRoot || p.startsWith(rootWithSep)
+
+    const orphanDir = nodePath.resolve(nodePath.join(deps.projectsRoot, deps.mangleCwdToProjectDir(target.cwd)))
+    const orphanTranscript = nodePath.join(orphanDir, `${target.uuid}.jsonl`)
+    if (!contained(orphanDir)) return null
+    if (!deps.existsSync(orphanTranscript)) return null
+
+    const destDir = nodePath.resolve(nodePath.join(deps.projectsRoot, deps.mangleCwdToProjectDir(survivingResolved)))
+    const destTranscript = nodePath.join(destDir, `${target.uuid}.jsonl`)
+    if (!contained(destDir)) return null
+
+    // Relocate ONLY into an empty destination slot. If the source already sits
+    // in the destination folder (the surviving cwd mangles to the same place), or
+    // a transcript for this uuid already exists there, resume in place and move
+    // nothing — never overwrite a live transcript (see the collision rule above).
+    if (destTranscript !== orphanTranscript && !deps.existsSync(destTranscript)) {
+      deps.mkdirp(destDir)
+      relocate(orphanTranscript, destTranscript, deps)
+    }
+
+    try { deps.ensureCompanionDir(destDir, target.uuid) } catch { /* best-effort */ }
+
+    return { resumeUuid: target.uuid, claudeCwd: survivingResolved }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Move src→dst. Caller guarantees dst does not yet exist.
+ *
+ * Prefer an atomic same-name rename. On cross-device (EXDEV) or a locked source,
+ * copy to a SAME-DIRECTORY temp sibling and rename THAT into place — so a partial
+ * copy never lands at the `<uuid>.jsonl` name the heuristic binder scans (adv
+ * review #535). The temp is a sibling of dst, so the final rename is same-device.
+ * On any copy failure the partial temp is removed before the error propagates
+ * (the outer catch in recoverOrphanResumeLaunch then fails the recovery closed).
+ * A source that cannot be unlinked after a successful copy is a non-fatal leak —
+ * warn, do not throw (resume already has a correct destination).
+ */
+function relocate(src: string, dst: string, deps: RecoverOrphanDeps): void {
+  try {
+    deps.renameFile(src, dst)
+    return
+  } catch {
+    // fall through to the copy fallback
+  }
+  const tmp = `${dst}.partial-${deps.pid()}`
+  try {
+    deps.copyFile(src, tmp)
+    deps.renameFile(tmp, dst)
+  } catch (e) {
+    try { deps.removeFile(tmp) } catch { /* best-effort cleanup */ }
+    throw e
+  }
+  try {
+    deps.removeFile(src)
+  } catch {
+    deps.warn(`[resume] orphan recovery: copied transcript to ${dst} but could not remove the source ${src} (left in place)`)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // buildResumeTranscriptPath — deterministic resume-bind path (Part A)
 // ---------------------------------------------------------------------------
 
@@ -198,16 +432,49 @@ export function buildResumeTranscriptPath(
 export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions): string {
   const { cwd, claudeBin, extraFlags, agentsFlag, useResumePicker, pickerScript, resumeUuid } = opts
   const isWin32 = opts.platform === 'win32'
+  // Positional opening prompt, by env reference — never the text itself.
+  // Trailing position: `claude [options] [prompt]`.
+  //
+  // `--` first, because the question is free text and a question that IS a flag
+  // is otherwise a flag. Without it, `--settings=C:\evil.json` typed as a
+  // question binds `--settings`: the trailing space askPromptEnvValue adds lands
+  // in the VALUE half of an `--opt=value` form, so it does not save us there.
+  // `claude` honours the separator (`claude --print -- "--nonexistent-flag …"`
+  // answers the prompt instead of erroring on an unknown option — verified
+  // against the installed CLI, not assumed of its parser).
+  const promptArg = opts.askPrompt ? ` -- ${askPromptRef(isWin32)}` : ''
   const escapedCwd = escapeForCwdQuote(cwd, isWin32)
+  // SINGLE-quoted, not double.
+  //
+  // `& "${claudeBin}"` looked safe because a binary path is not user text —
+  // but it IS a path, and it comes from the resources directory or a `where`
+  // lookup, so a directory name decides its contents. Inside DOUBLE quotes
+  // both shells expand: PowerShell evaluates `$(...)` and POSIX evaluates
+  // `$(...)` and backticks, at runtime, and both were verified executing.
+  // Single quotes are literal in PowerShell and POSIX alike, and `& 'name'` /
+  // `'name' args` still invoke a bare command name, a spaced path and an
+  // absolute path exactly as before.
+  const quotedBin = `'${escapeForCwdQuote(claudeBin, isWin32)}'`
+  // Same shape of value (it also lives under the resources directory), and it
+  // was being escaped by two hand-inlined copies of the helper — which is
+  // precisely how it would have kept the old behaviour after the helper was
+  // fixed. One helper, one call site each.
+  const quotedPicker = pickerScript ? `'${escapeForCwdQuote(pickerScript, isWin32)}'` : null
 
   // RESUME path: bypass the picker, launch claude directly with --resume first.
   // The --resume verb must precede every other flag (resume-picker.js:299), so
   // it is injected before agentsFlag/extraFlags here.
   if (resumeUuid) {
+    // Re-validated HERE, not trusted from the caller. The uuid is the one value
+    // on this line that is interpolated UNQUOTED, and every current caller does
+    // gate it with the same anchored regex — but "the caller checks" is a
+    // comment, not a boundary, and this function is exported. Anchored, so a
+    // uuid with a trailing `; …` is refused rather than launched.
+    if (!UUID_RE.test(resumeUuid)) throw new Error('buildClaudeLaunchCommand: resumeUuid is not a uuid')
     const resumeFlag = ` --resume ${resumeUuid}`
     return isWin32
-      ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${resumeFlag}${agentsFlag}${extraFlags}; exit`
-      : `cd '${escapedCwd}' && "${claudeBin}"${resumeFlag}${agentsFlag}${extraFlags}; exit`
+      ? `Set-Location '${escapedCwd}'; & ${quotedBin}${resumeFlag}${agentsFlag}${extraFlags}; exit`
+      : `cd '${escapedCwd}' && ${quotedBin}${resumeFlag}${agentsFlag}${extraFlags}; exit`
   }
 
   // No-resume behaviour. P1.1: the picker-script branch forwards agentsFlag too
@@ -215,20 +482,18 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
   // restored session). resume-picker.js forwards its own argv to
   // `claude --resume <id> ...`, so the flag survives the launch.
   if (useResumePicker) {
-    if (pickerScript && isWin32) {
-      const escapedScript = pickerScript.replace(/'/g, "''")
-      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${agentsFlag}${extraFlags}; exit`
-    } else if (pickerScript) {
-      return `cd '${escapedCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${agentsFlag}${extraFlags}; exit`
-    } else {
-      // Fallback: no picker script found, launch Claude directly.
+    if (quotedPicker) {
       return isWin32
-        ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${agentsFlag}${extraFlags}; exit`
-        : `cd '${escapedCwd}' && "${claudeBin}"${agentsFlag}${extraFlags}; exit`
+        ? `Set-Location '${escapedCwd}'; node ${quotedPicker}${agentsFlag}${extraFlags}; exit`
+        : `cd '${escapedCwd}' && node ${quotedPicker}${agentsFlag}${extraFlags}; exit`
     }
+    // Fallback: no picker script found, launch Claude directly.
+    return isWin32
+      ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}; exit`
+      : `cd '${escapedCwd}' && ${quotedBin}${agentsFlag}${extraFlags}; exit`
   }
 
   return isWin32
-    ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${agentsFlag}${extraFlags}; exit`
-    : `cd '${escapedCwd}' && "${claudeBin}"${agentsFlag}${extraFlags}; exit`
+    ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}${promptArg}; exit`
+    : `cd '${escapedCwd}' && ${quotedBin}${agentsFlag}${extraFlags}${promptArg}; exit`
 }

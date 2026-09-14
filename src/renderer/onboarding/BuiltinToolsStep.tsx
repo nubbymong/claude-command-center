@@ -5,6 +5,7 @@ const CHECK = String.fromCodePoint(0x2713)
 const GLOBE = String.fromCodePoint(0x1f310)
 const MAG = String.fromCodePoint(0x1f50d)
 const CAMERA = String.fromCodePoint(0x1f4f7)
+const FRAME = String.fromCodePoint(0x1f5bc)
 
 type ToolKey = keyof ConductorToolsSettings
 
@@ -34,6 +35,12 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: stri
     title: 'Bring in screenshots, even over SSH',
     desc: 'Pull screenshots and images from your machine straight into the conversation, even on a remote box over SSH.',
   },
+  {
+    k: 'canvas',
+    icon: FRAME,
+    title: 'Agent Canvas: read the rendered page',
+    desc: 'When a page is open in the Canvas pane, Claude can read what it actually looks like once laid out: element names, sizes, form state, and measured problems such as clipped text, targets too small to hit, and unreadable contrast. It can also render files from the project folders you open sessions in — nothing outside those folders. To check its own work it may lay a page out off-screen even when the Canvas pane is closed, but only ever from those same folders.',
+  },
 ]
 
 export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
@@ -58,7 +65,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
         <div className="p2-inner" style={{ width: 'min(760px, 95vw)' }}>
           <h2 className="h2">Want Claude to have a few extra tools?</h2>
           <p className="p2-sub">
-            Command Center can hand every session a set of ready-made tools: no setup, no servers to wire up. Choose
+            AI Code Conductor can hand every session a set of ready-made tools: no setup, no servers to wire up. Choose
             which ones Claude gets.
           </p>
 
@@ -96,9 +103,9 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
               <div className="tc-body">
                 <div className="tc-t">How it works</div>
                 <div className="tc-d">
-                  Command Center runs a small local helper (an MCP server) and registers it with each session it
+                  The Conductor runs a small local helper (an MCP server) and registers it with each session it
                   launches (Claude, Codex, local or SSH), so these tools appear automatically. It runs only while
-                  Command Center is open. Turn this off and new sessions launch without it.
+                  the Conductor is open. Turn this off and new sessions launch without it.
                 </div>
               </div>
             </div>
@@ -108,7 +115,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
                 <b>Nothing touches your global Claude config.</b>
                 <span>
                   The helper is registered per session, only for sessions launched here. Plain Claude and Codex
-                  outside Command Center never see it.
+                  outside the Conductor never see it.
                 </span>
               </div>
             </div>

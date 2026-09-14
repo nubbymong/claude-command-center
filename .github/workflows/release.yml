@@ -15,29 +15,89 @@ on:
         description: 'Skip VirusTotal scan'
         type: boolean
         default: false
+      dry_run:
+        description: 'Dry run: build + sign + verify Windows only — no tag, no release'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
+  # ── Release gate (#375, #385) ──
+  # Refuse the cut before a single installer is built: the GitHub milestone
+  # titled after package.json's version must have no open issue without the
+  # `excluded`, `in-beta`, or `in-release` label (an open in-beta/in-release
+  # issue is done for this release; a missing milestone fails closed), and
+  # resources/model-registry.json must cover every model in Anthropic's Claude
+  # Code model configuration article (scripts/fixtures/ holds the expected set).
+  # Every build job `needs` this one. Read-only: GITHUB_TOKEN with issues:read.
+  # No `npm ci` here on purpose — the script is dependency-free plain node, so
+  # the verdict arrives in seconds, not after a native toolchain install.
+  # A dry run is not a release, so it sees the verdict but is not blocked by it.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      # The milestone the gate checks is the one for the tag actually being cut,
+      # not the bare package.json version. Same tag logic as the build job's
+      # "Determine version" step, so on a rolling re-release (bare version +
+      # channel) the gate checks the channel-suffixed milestone rather than a
+      # different one — kept in lockstep with that step (#375 review).
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          CHANNEL="${{ inputs.channel }}"
+          if [[ "$VERSION" == *-* ]]; then
+            TAG="v${VERSION}"
+          else
+            case "$CHANNEL" in
+              beta) TAG="v${VERSION}-beta" ;;
+              dev)  TAG="v${VERSION}-dev"  ;;
+              *)    TAG="v${VERSION}"      ;;
+            esac
+          fi
+          echo "milestone=${TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Refuse to cut with open milestone issues or a stale model registry
+        continue-on-error: ${{ inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release-gate.mjs --version ${{ steps.version.outputs.milestone }}
+
   # ── Build Windows installer ──
   build-windows:
+    needs: gate
     # Pinned off windows-latest: the new vs2026 image breaks @electron/node-gyp
     # (no supported Visual Studio). Same pin as ci.yml — unpin together.
     runs-on: windows-2025
+    env:
+      # Presence-gate for Windows code signing (SSL.com eSigner CKA). One flag
+      # read by the signing, packaging and verification steps below.
+      HAS_SIGNING: ${{ secrets.ES_USERNAME != '' && secrets.ES_PASSWORD != '' && secrets.ES_TOTP_SECRET != '' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       installer: ${{ steps.version.outputs.installer }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -50,24 +110,15 @@ jobs:
       - name: Install Electron binary
         run: node node_modules/electron/install.js
 
-      # VS 2026-only runner images break @electron/node-gyp's VS discovery
-      # (VS18 absent from its version table). Install VS2022 Build Tools —
-      # also covers electron-builder's internal rebuild. See ci.yml.
-      - name: Install VS2022 Build Tools
-        shell: pwsh
-        run: choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre --includeRecommended --quiet --norestart"
-
-      - name: Rebuild native modules
-        shell: bash
-        run: |
-          node -e "
-          const { rebuild } = require('@electron/rebuild');
-          rebuild({
-            buildPath: process.cwd(),
-            electronVersion: require('./node_modules/electron/package.json').version,
-            onlyModules: ['node-pty', 'better-sqlite3']
-          }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
-          "
+      # No VS Build Tools / native rebuild on Windows. node-pty and better-sqlite3
+      # ship N-API prebuilt binaries (prebuilds/win32-x64) that load unchanged under
+      # Electron, so we package those as-is (the Package step below passes
+      # -c.npmRebuild=false, matching the local build). This deliberately drops a
+      # release-critical dependency on community.chocolatey.org: its per-IP rate
+      # limiting (behind Cloudflare, ~5/min for *.extension packages, 1-hour ban)
+      # intermittently blocks GitHub's SHARED runner IPs, so the VS Build Tools
+      # install would fail at random with "not valid XML" / unresolved dependency.
+      # macOS/Linux keep their from-source rebuild (they never touched Chocolatey).
 
       - name: Run tests
         run: npx vitest run
@@ -90,7 +141,7 @@ jobs:
               *)    TAG="v${VERSION}"      ;;
             esac
           fi
-          INSTALLER="ClaudeCommandCenter-${VERSION}.exe"
+          INSTALLER="AI-Code-Conductor-${VERSION}.exe"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
@@ -100,34 +151,188 @@ jobs:
       - name: Build
         run: npm run build
 
+      # ── Windows code signing: SSL.com eSigner CKA (cloud HSM) ──
+      # The signing key lives in SSL.com's cloud HSM and never exists as a file
+      # on the runner. CKA registers a Windows KSP so the key appears in the
+      # user certificate store; electron-builder's normal signtool path then
+      # signs DURING packaging. That placement is load-bearing: latest.yml's
+      # sha512, the .blockmap and CHECKSUMS.txt all hash the final signed
+      # binary — signing after packaging would silently break auto-update.
+      - name: Set up code signing (eSigner CKA)
+        id: esigner
+        if: env.HAS_SIGNING == 'true'
+        shell: pwsh
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Pinned release + SHA-256 of the installer, verified before running.
+          $url = 'https://github.com/SSLcom/eSignerCKA/releases/download/v1.1.2/SSL.COM.eSigner.CKA_1.1.2_build_202600624.exe'
+          $sha = '3F088403139505DDFB0ED3B56B72893F92C865F98B382753A1E1C695A5CECE35'
+          $setup = Join-Path $env:RUNNER_TEMP 'eSignerCKA-setup.exe'
+          Invoke-WebRequest -Uri $url -OutFile $setup
+          $actual = (Get-FileHash $setup -Algorithm SHA256).Hash
+          if ($actual -ne $sha) { throw "eSigner CKA download hash mismatch: got $actual" }
+          $dir = Join-Path $env:RUNNER_TEMP 'eSignerCKA'
+          Start-Process $setup -ArgumentList '/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES',"/DIR=$dir" -Wait
+          Get-ChildItem $dir -Filter '*.exe' | ForEach-Object { Write-Host "installed: $($_.Name)" }
+          # Register the eSigner KSP explicitly, matching SSL.com's canonical CKA
+          # workflow (install -> vc_redist -> RegisterKSP -> eSignerCSP.Config ->
+          # config/load). The silent installer only lays these files down; without
+          # running them the cert loads but 64-bit signtool reports "no private key"
+          # (After Private Key filter, 0 certs) and never reaches SSL.com. The x64
+          # eSignerKSP also needs the x64 VC++ runtime/SxS assemblies -- the CKA
+          # installer bundles only vc_redist.x86; the (now-removed) VS Build Tools
+          # install used to supply the x64 side incidentally, which is why signing
+          # regressed when that step went away.
+          $vcx64 = Join-Path $dir 'vc_redist.x64.exe'
+          if (-not (Test-Path $vcx64)) { Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $vcx64 }
+          Start-Process $vcx64 -ArgumentList '/install','/quiet','/norestart' -Wait
+          $registerKsp = Join-Path $dir 'RegisterKSP.exe'
+          if (Test-Path $registerKsp) { & $registerKsp 2>&1 | Out-Null; Write-Host "RegisterKSP exit: $LASTEXITCODE" }
+          $cspConfig = Join-Path $dir 'eSignerCSP.Config.exe'
+          if (Test-Path $cspConfig) { & $cspConfig 2>&1 | Out-Null; Write-Host "eSignerCSP.Config exit: $LASTEXITCODE" }
+          $tool = @('eSignerCKATool.exe', 'eSignerCKA.exe') |
+            ForEach-Object { Join-Path $dir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $tool) { throw "eSigner CKA CLI not found in $dir" }
+          & $tool config -mode product -user $env:ES_USERNAME -pass $env:ES_PASSWORD -totp $env:ES_TOTP_SECRET -key (Join-Path $dir 'master.key') -r
+          & $tool unload
+          & $tool load
+          $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
+            Where-Object { $_.Subject -like '*CN=Nicholas Moger*' } | Select-Object -First 1
+          if (-not $cert) { throw 'eSigner CKA loaded no matching code-signing certificate into the store' }
+          Write-Host "Certificate loaded: $($cert.Subject) [$($cert.Thumbprint)]"
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+
       - name: Package Windows installer
-        run: npx electron-builder --win --publish never
+        shell: pwsh
+        env:
+          SIGN_THUMBPRINT: ${{ steps.esigner.outputs.thumbprint }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $extra = @()
+          if ($env:HAS_SIGNING -eq 'true') {
+            if (-not $env:SIGN_THUMBPRINT) { throw 'Signing is enabled but no certificate thumbprint was captured' }
+            # Hash algorithm, timestamp server and publisherName come from
+            # build.win.signtoolOptions in package.json; only the thumbprint is
+            # injected here so unsigned local/dev builds stay possible.
+            $extra += "-c.win.signtoolOptions.certificateSha1=$env:SIGN_THUMBPRINT"
+          }
+          # --config.npmRebuild=false: package the shipped N-API prebuilds rather
+          # than recompiling (no VS Build Tools on the runner). Long form is
+          # required (short -c. treats the value as a config-file path); matches
+          # the local build.
+          npx electron-builder --win --publish never --config.npmRebuild=false @extra
+
+      # Fail loudly rather than ever ship unsigned again: a stable/beta release
+      # with signing secrets missing is an error, not a fallback.
+      # Template values (installer name, channel) are passed via env: rather than
+      # interpolated into the pwsh source, so a crafted package.json version can
+      # never break out of the string into runner code (GitHub run-step hardening).
+      - name: Verify Windows signature
+        shell: pwsh
+        env:
+          INSTALLER: ${{ steps.version.outputs.installer }}
+          CHANNEL: ${{ inputs.channel }}
+          SIGN_THUMBPRINT: ${{ steps.esigner.outputs.thumbprint }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = "dist/$env:INSTALLER"
+          $sig = Get-AuthenticodeSignature $exe
+          if ($env:HAS_SIGNING -eq 'true') {
+            if ($sig.Status -ne 'Valid') { throw "Signature on $exe is $($sig.Status): $($sig.StatusMessage)" }
+            # Pin the exact leaf we loaded, not a CN substring — a CN substring
+            # would also accept e.g. 'CN=Nicholas Moger Ltd' or a second SSL.com
+            # customer. The thumbprint was captured from the loaded cert.
+            if (-not $env:SIGN_THUMBPRINT) { throw 'Signing enabled but no certificate thumbprint was captured' }
+            if ($sig.SignerCertificate.Thumbprint -ne $env:SIGN_THUMBPRINT) { throw "Unexpected signer thumbprint $($sig.SignerCertificate.Thumbprint), expected $env:SIGN_THUMBPRINT" }
+            if ($sig.SignerCertificate.Subject -notlike '*CN=Nicholas Moger*') { throw "Unexpected signer: $($sig.SignerCertificate.Subject)" }
+            if (-not $sig.TimeStamperCertificate) { throw 'Signature carries no RFC3161 timestamp' }
+            Write-Host "Signed OK: $exe"
+            Write-Host "  signer:    $($sig.SignerCertificate.Subject)"
+            Write-Host "  timestamp: $($sig.TimeStamperCertificate.Subject)"
+          } elseif ($env:CHANNEL -ne 'dev') {
+            throw "Refusing to build an unsigned '$env:CHANNEL' release: signing secrets are not configured"
+          } else {
+            Write-Host 'dev build left unsigned (signing secrets not configured)'
+          }
+
+      # ── MSIX/AppX for the Microsoft Store (#225) ──
+      # A SEPARATE electron-builder invocation, deliberately: folding `appx` into
+      # build.win.target would put it inside the same run as nsis, where a Store
+      # packaging failure takes the whole Windows release down with it. Here the
+      # NSIS installer is already built, verified and about to be uploaded, so a
+      # failure below costs the Store package and nothing else.
+      #
+      # NOT SIGNED, and that is correct: build.appx.publisher is a Store identity
+      # (CN=<Partner Center GUID>), so electron-builder skips signing with
+      # "Windows Store only build" and Microsoft signs it on ingestion. Signing it
+      # with our own cert would make the publisher disagree with the manifest
+      # identity and the package would be rejected.
+      #
+      # Note the manifest version is the 4-part numeric form (2.1.0.0) — MSIX has
+      # no concept of a prerelease suffix, so `-beta.N` is dropped. Two betas on
+      # the same base version therefore produce the SAME package version; bump the
+      # base before submitting a second one to the Store.
+      - name: Package Microsoft Store MSIX
+        id: msix
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx electron-builder --win appx --publish never --config.npmRebuild=false
+          $pkg = Get-ChildItem dist -Filter *.appx | Select-Object -First 1
+          if (-not $pkg) { throw 'appx target produced no package' }
+          Write-Host "Store package: $($pkg.Name) ($([math]::Round($pkg.Length/1MB,1)) MB)"
+          "appx=$($pkg.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Note a failed Store package
+        if: ${{ steps.msix.outcome == 'failure' }}
+        shell: bash
+        run: echo "::warning::The Microsoft Store MSIX did not build. The Windows installer is unaffected and the release continues."
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           # exe + blockmap + latest.yml travel together: latest.yml carries the
           # exe's sha512, so replacing one without the others breaks the updater
           # (matters for rolling re-releases onto an existing tag).
+          #
+          # The .appx is deliberately absent from this list: `continue-on-error`
+          # above means it may not exist, so it cannot be part of this step's
+          # if-no-files-found: error contract. It ships in its own
+          # "Upload Store MSIX" artifact below, gated on that step succeeding.
           path: |
             dist/${{ steps.version.outputs.installer }}
             dist/${{ steps.version.outputs.installer }}.blockmap
             dist/latest.yml
           if-no-files-found: error
 
+      - name: Upload Store MSIX
+        if: ${{ steps.msix.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-msix
+          path: dist/*.appx
+          if-no-files-found: error
+
   # ── Build macOS app ──
   build-macos:
+    needs: gate
+    if: ${{ !inputs.dry_run }}
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -197,7 +402,7 @@ jobs:
           echo "name=$(basename ${DMG})" >> $GITHUB_OUTPUT
 
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-dmg
           path: |
@@ -206,28 +411,151 @@ jobs:
             dist/latest-mac.yml
           if-no-files-found: error
 
+  # ── Build Linux AppImage (experimental) ──
+  # Unsigned: Linux has no SmartScreen/Gatekeeper equivalent, and AppImage
+  # carries no signing convention. CHECKSUMS.txt lets users verify the download
+  # by hand — the in-app updater verifies every download against it (#111).
+  # Built on ubuntu-latest (glibc 2.39), so the AppImage runs on distros at that
+  # glibc or newer: Ubuntu 24.04+, Rocky 10+, Fedora 40+. Older lines (Rocky
+  # 8/9, Ubuntu 22.04) need a container build against an older glibc — out of
+  # scope for now.
+  #
+  # continue-on-error: this is an EXPERIMENTAL third platform, so a Linux build
+  # failure must never block the Windows/macOS release. The job still shows red
+  # in the run (visible to the maintainer), and release.js flags the missing
+  # AppImage asset — but the release proceeds with the platforms that built.
+  build-linux:
+    needs: gate
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install Python setuptools
+        run: pip install setuptools
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Rebuild native modules
+        run: |
+          node -e "
+          const { rebuild } = require('@electron/rebuild');
+          rebuild({
+            buildPath: process.cwd(),
+            electronVersion: require('./node_modules/electron/package.json').version,
+            onlyModules: ['node-pty', 'better-sqlite3']
+          }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
+          "
+
+      # The only place the vitest suite runs on Linux (CI's PR matrix is
+      # Win+macOS). Note this is the standard suite — the *.native.test.ts
+      # files (better-sqlite3 under Electron-as-Node) are excluded by
+      # vitest.config; the native rebuild above is what proves node-pty /
+      # better-sqlite3 link on linux-x64.
+      - name: Run tests
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build
+
+      - name: Package Linux AppImage
+        run: npx electron-builder --linux --publish never
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-appimage
+          path: |
+            dist/*.AppImage
+            dist/latest-linux.yml
+          if-no-files-found: error
+
   # ── Create GitHub Release ──
   release:
-    needs: [build-windows, build-macos]
+    # dry_run stops here by construction: no tag, no release, no client impact.
+    if: ${{ !inputs.dry_run }}
+    needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      # Derive the release body from src/renderer/changelog.ts (the single
+      # source of truth). Empty output = no changelog entry for this version;
+      # the create step then falls back to the checksums-only note.
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ needs.build-windows.outputs.version }}"
+          node scripts/gen-changelog.js --notes "$VERSION" > RELEASE_NOTES.md || true
+          if [ -s RELEASE_NOTES.md ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Release notes for v${VERSION}:"
+            cat RELEASE_NOTES.md
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No changelog.ts entry for v${VERSION} - using checksums-only note."
+          fi
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: windows-installer
           path: artifacts/
 
       - name: Download macOS artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: macos-dmg
+          path: artifacts/
+
+      # continue-on-error mirrors build-linux: if the experimental Linux build
+      # failed, its artifact won't exist — download it best-effort so the
+      # Windows/macOS release still publishes.
+      - name: Download Linux artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: linux-appimage
           path: artifacts/
 
       - name: List artifacts
         run: ls -la artifacts/
 
+      # One name, one set of assets.
+      #
+      # Releases used to publish every installer TWICE — once as
+      # ClaudeCommandCenter-* and once as AI-Code-Conductor-* — because the
+      # updater in shipped clients matched release assets by the literal legacy
+      # prefix, so dropping it would have stranded them on "no update
+      # available", unfixably. Since 2.1.0-beta.6 the updater accepts BOTH
+      # prefixes (INSTALLER_PREFIXES in src/main/github-update.ts), so every
+      # client that can reach this release already resolves the brand name.
+      # Only installs on beta.5 or older are left behind, and they can download
+      # from the release page by hand.
+      #
+      # electron-builder now emits the brand name directly (build.*.artifactName
+      # in package.json), so the .blockmap and latest*.yml — which reference the
+      # installer BY NAME — line up with the installer that actually ships. The
+      # duplicate copies never had matching blockmaps, which is exactly the kind
+      # of mismatch the manifest gate below exists to catch.
       - name: Generate checksums
         run: |
           cd artifacts
@@ -235,6 +563,7 @@ jobs:
           cat CHECKSUMS.txt
 
       - name: Create GitHub Release
+        id: publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -243,25 +572,45 @@ jobs:
           CHANNEL="${{ inputs.channel }}"
 
           TITLE="${TAG}"
+          # Display names. Asset filenames carry the same brand name — see the
+          # checksums step above for why the legacy duplicate is gone.
           case "$CHANNEL" in
             stable)
-              RELEASE_NAME="Claude Command Center"
+              RELEASE_NAME="AI Code Conductor"
               LABEL="**Stable Release**"
               ;;
             beta)
-              RELEASE_NAME="Claude Command Center Beta"
+              RELEASE_NAME="AI Code Conductor Beta"
               LABEL="**Beta Release** (pre-release)"
               ;;
             dev)
-              RELEASE_NAME="Claude Command Center Dev"
+              RELEASE_NAME="AI Code Conductor Dev"
               LABEL="**Dev Release** (experimental)"
               ;;
             *)
-              RELEASE_NAME="Claude Command Center ${CHANNEL}"
+              RELEASE_NAME="AI Code Conductor ${CHANNEL}"
               LABEL="**${CHANNEL} Release**"
               ;;
           esac
-          BODY="## ${RELEASE_NAME} v${VERSION}\n\n${LABEL}\n\nSHA-256 checksums are in CHECKSUMS.txt attached to this release."
+          # Assemble the release body: title + channel label + generated notes
+          # (or a checksums-only fallback), then the checksums pointer. Written
+          # to a file so multi-line markdown survives intact (--notes-file).
+          {
+            echo "## ${RELEASE_NAME} v${VERSION}"
+            echo ""
+            echo "${LABEL}"
+            echo ""
+            if [ "${{ steps.notes.outputs.found }}" = "true" ]; then
+              cat RELEASE_NOTES.md
+              echo ""
+            fi
+            echo "---"
+            echo "Upgrading from 2.1.0-beta.5 or earlier? Download the installer from this page — that build's updater looked for the old file name."
+            echo ""
+            echo "Claude and Claude Code are Anthropic trademarks."
+            echo ""
+            echo "SHA-256 checksums are in CHECKSUMS.txt attached to this release."
+          } > RELEASE_BODY.md
 
           # Tag stable as latest release; beta and dev are pre-releases
           PRERELEASE_FLAG=""
@@ -272,8 +621,30 @@ jobs:
           # Rolling re-release support (v2 beta policy): if the tag's release
           # already exists, REPLACE its assets instead of failing, and leave
           # the existing hand-written release notes untouched.
-          if gh release view "${TAG}" >/dev/null 2>&1; then
+          # Passing --draft below turns OFF gh's own duplicate-tag pre-check (it
+          # only runs for a non-draft create), so this probe is now the ONLY
+          # guard against creating a second release for a tag that already has
+          # one. It must therefore fail CLOSED: `--state` distinguishes a real
+          # "release not found" from an API error and exits non-zero on the
+          # latter. Inferring absence from an outage would create an orphan
+          # draft holding the new build while the live release keeps serving the
+          # old one — green job, nothing shipped.
+          # --retry-absent because here, and only here, "absent" AUTHORISES a
+          # write. gh maps just HTTP 404 to not-found, so one spurious or
+          # replica-lagged 404 would fork a second release for a tag that
+          # already has one.
+          STATE=$(node scripts/verify-release-manifest.js --state "${TAG}" --retry-absent) || {
+            echo "::error::Could not determine whether a release already exists for ${TAG}. Refusing to guess."
+            echo "fresh=unknown" >> "$GITHUB_OUTPUT"
+            exit 1
+          }
+          echo "Existing release state for ${TAG}: ${STATE}"
+
+          # A leftover DRAFT takes the re-release path too — that is how a run
+          # that drafted and then failed gets repaired and published.
+          if [ "$STATE" != "absent" ]; then
             echo "Release ${TAG} exists - replacing assets (rolling re-release)"
+            echo "fresh=false" >> "$GITHUB_OUTPUT"
             gh release upload "${TAG}" artifacts/* --clobber
           else
             # --target pins the tag to the commit we actually built ($GITHUB_SHA
@@ -282,14 +653,60 @@ jobs:
             # derives the release's created_at from that stale commit's date, and
             # the in-app updater (which fetches releases in created_at order) never
             # sees the new beta. See src/main/github-update.ts.
-            gh release create "${TAG}" $PRERELEASE_FLAG \
+            #
+            # --draft so no client can see the release until the manifest gate
+            # below passes. `checkGitHubRelease` skips drafts outright
+            # (github-update.ts), and `created_at` is the TARGET COMMIT's date,
+            # not the publish date, so deferring publication cannot strand the
+            # release the way a stale --target would.
+            #
+            # Note what --draft COSTS: `gh release create` normally drafts
+            # internally while uploading and DELETES the draft if an upload
+            # fails (`draftWhileUploading` in cli/cli). Passing --draft
+            # explicitly disables that cleanup, so a failed upload leaves a
+            # partial draft behind. The "Clean up a failed draft" step below
+            # replaces it.
+            echo "fresh=true" >> "$GITHUB_OUTPUT"
+            gh release create "${TAG}" $PRERELEASE_FLAG --draft \
               --target "$GITHUB_SHA" \
               --title "${TITLE}" \
-              --notes "$(echo -e "${BODY}")" \
+              --notes-file RELEASE_BODY.md \
               artifacts/*
           fi
 
+      # A create that failed part-way now leaves a partial draft behind (see the
+      # --draft note above), and a leftover draft is the entry point to the worst
+      # failure mode this job has: the next run finds it, takes the re-release
+      # path, and never publishes. Remove it so a re-run starts clean. No
+      # --cleanup-tag: a draft has no tag.
+      - name: Clean up a failed draft
+        if: ${{ failure() && steps.publish.outputs.fresh == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          # `fresh=true` is what this run INTENDED, not what exists. Never
+          # delete on intent alone: confirm the thing in front of us is actually
+          # a draft. Otherwise a run that thought the tag was free — and was
+          # wrong — deletes a live published release, assets and notes included.
+          STATE=$(node scripts/verify-release-manifest.js --state "$TAG") || STATE=unknown
+          if [ "$STATE" = "draft" ]; then
+            echo "::warning::Release creation failed — deleting the partial draft ${TAG}."
+            gh release delete "$TAG" --yes || echo "::warning::Could not delete the draft ${TAG}."
+          else
+            echo "::warning::${TAG} is '${STATE}', not a draft — refusing to delete it."
+          fi
+
+      # VT runs BEFORE the manifest gate on purpose: it scans the local
+      # artifacts/, not the release, so it is independent of the gate's verdict —
+      # and if the gate ran first, a manifest problem would silently take malware
+      # scanning down with it for that release.
+      #
+      # continue-on-error because VT is ADVISORY: it produces links, not a
+      # verdict. Without it, a VirusTotal outage fails the step, skips the
+      # publish, and strands a perfectly good verified release as a draft.
       - name: VirusTotal scan
+        continue-on-error: true
         if: ${{ !inputs.skip_vt }}
         env:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
@@ -303,8 +720,8 @@ jobs:
             --url "https://www.virustotal.com/api/v3/files/upload_url" \
             --header "x-apikey: ${VT_API_KEY}" | jq -r '.data')
 
-          # Scan each installer (EXE + DMG)
-          for FILE in artifacts/*.exe artifacts/*.dmg; do
+          # Scan each installer (EXE + DMG + AppImage)
+          for FILE in artifacts/*.exe artifacts/*.dmg artifacts/*.AppImage; do
             [ -f "$FILE" ] || continue
             echo "Uploading $(basename $FILE) to VirusTotal..."
             RESULT=$(curl -s --request POST \
@@ -318,3 +735,185 @@ jobs:
               echo "  Upload response: ${RESULT}"
             fi
           done
+
+      # ── Manifest gate (#173) ──
+      # Every installer ATTACHED to the release must be one the CLIENT can
+      # verify: a resolvable CHECKSUMS.txt line whose digest matches the bytes
+      # GitHub is serving. Since #111 the client REFUSES what it cannot verify,
+      # so a defective manifest is a dead-end update — offered, downloaded,
+      # blocked, on every attempt, silently until the next release.
+      #
+      # The script reads the assets back from the API rather than looking at
+      # artifacts/. That is the whole point: `gh release upload --clobber` above
+      # replaces same-named assets but never PRUNES, so a flaked build-linux on a
+      # rolling re-release leaves the OLD AppImage attached while the manifest
+      # regenerated from artifacts/ has no line for it. A local check cannot see
+      # an asset it never produced.
+      #
+      # Exit 1 = the release is broken. Exit 2 = GitHub was unreachable (or the
+      # digest half could not run), which is NOT a verdict on the release. That
+      # distinction has to survive into the workflow, because `steps.*.outcome`
+      # is only success/failure — so the code is captured as a step OUTPUT and
+      # the withdraw step keys on it. Without that, a network blip would tear a
+      # healthy live release out of client view.
+      #
+      # `!cancelled()` rather than the default `success()`: `--clobber` DELETES
+      # each asset before re-uploading it ("if the upload fails, the original
+      # assets will be lost" — gh's own docs), so a mid-upload failure is exactly
+      # the state this gate exists to report. Defaulting to success() would skip
+      # the gate precisely when it matters. It is still skipped when the publish
+      # step never ran, so an earlier build failure does not end the log with a
+      # gate complaining that a release it never created is missing.
+      - name: Verify the client can verify every attached installer
+        id: verify
+        if: ${{ !cancelled() && steps.publish.conclusion != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          code=0
+          node scripts/verify-release-manifest.js "$TAG" || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit $code
+
+      # Publication keys on whether the release is a draft RIGHT NOW, not on how
+      # this run created it. Keying on `fresh` is the trap: a run that drafts and
+      # then fails leaves a draft behind, the NEXT run finds it and takes the
+      # re-release path (fresh=false), and the publish step never fires — a green
+      # run with nothing published, repeating forever.
+      - name: Publish the verified release
+        id: publish_final
+        if: ${{ success() && steps.verify.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          # Fail CLOSED. `if [ "$(gh ...)" = "true" ]` swallows a failed command
+          # substitution under `bash -e` and falls into the else branch, which
+          # would log "already published" over a release that is still a draft —
+          # a green job and an invisible release, the worst outcome this job has.
+          STATE=$(node scripts/verify-release-manifest.js --state "$TAG") || {
+            echo "::error::Verified ${TAG} but could not read its draft state, so it may be unpublished."
+            exit 1
+          }
+          case "$STATE" in
+            draft)
+              gh release edit "$TAG" --draft=false
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "Published $TAG — assets verified."
+              ;;
+            published)
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "$TAG is already published — assets verified."
+              ;;
+            *)
+              echo "::error::${TAG} verified but its state is '${STATE}' — nothing to publish."
+              exit 1
+              ;;
+          esac
+
+      # The rolling re-release path cannot be gated before publication: the
+      # release is already live and `--clobber` mutates it in place. So on a
+      # BROKEN verdict — code 1 only, never code 2 — pull it out of client view
+      # rather than leave a known dead-end update on offer while someone reads
+      # the log. Best-effort: if GitHub refuses to re-draft a published release
+      # (immutable releases), the step still fails loudly and names the repair.
+      # `!= 'true'` rather than `== 'false'`: the probe can abort before it
+      # writes `fresh` at all, and a pre-existing broken live release still has
+      # to be withdrawable on that path. Only a confirmed fresh create — where
+      # nothing was ever live — is excluded. The body reads the real state and
+      # re-drafts only what is actually published.
+      - name: Withdraw an unverifiable re-release
+        if: ${{ failure() && steps.verify.outputs.code == '1' && steps.publish.outputs.fresh != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          # `fresh=false` no longer implies "was published" — it is also true of
+          # a leftover draft from a previous failed run. Read the real state so
+          # the log does not announce that a live release was withdrawn when
+          # nothing was ever live.
+          STATE=$(node scripts/verify-release-manifest.js --state "$TAG") || STATE=unknown
+          case "$STATE" in
+            published)
+              echo "::error::${TAG} failed manifest verification and is LIVE. Withdrawing it from client view."
+              if gh release edit "$TAG" --draft; then
+                echo "::warning::${TAG} is now a DRAFT. Repair the assets and re-run; the publish step re-publishes any draft that verifies."
+              else
+                echo "::error::Could not re-draft ${TAG}. Withdraw it by hand NOW: gh release edit \"$TAG\" --draft"
+              fi
+              ;;
+            draft)
+              echo "::warning::${TAG} failed manifest verification but is still a DRAFT — no client has seen it. Repair the assets and re-run."
+              ;;
+            *)
+              echo "::error::${TAG} failed manifest verification and its state is '${STATE}'. Check it by hand."
+              ;;
+          esac
+          exit 1
+
+      # Failsafe. A draft is invisible to every client, so "left as a draft" is
+      # a silent non-release — the one outcome that must never be reported
+      # green.
+      #
+      # Skipped when the publish step already confirmed publication: re-reading
+      # a second later would race GitHub's own consistency (release.js sleeps 3s
+      # before its equivalent read) and redden a release that is live.
+      # Skipped on a code-1 verdict too — the release is known-broken and the
+      # gate has already said so in detail.
+      # `!cancelled()` not `always()`: a cancelled run should not also collect a
+      # hard red from a failsafe.
+      - name: Fail if the release was left unpublished
+        if: ${{ !cancelled() && steps.publish.conclusion != 'skipped' && steps.verify.outputs.code != '1' && steps.publish_final.outputs.published != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          # Fail closed: `|| echo absent` here would map a rate limit onto the
+          # exit-0 branch, so the step that exists to catch a stranded draft
+          # would be silent exactly when GitHub is the reason it is stranded.
+          STATE=$(node scripts/verify-release-manifest.js --state "$TAG") || {
+            echo "::error::Could not determine whether ${TAG} was published. Check it by hand."
+            exit 1
+          }
+          case "$STATE" in
+            published) echo "$TAG is published." ;;
+            absent)    echo "::warning::No release exists for $TAG — nothing was published." ; exit 0 ;;
+            *)         echo "::error::$TAG exists but is STILL A DRAFT. No client can see it."
+                       echo "::error::Repair the assets and re-run, or publish by hand: gh release edit \"$TAG\" --draft=false"
+                       exit 1 ;;
+          esac
+
+  # ── Roll issues into the rc (in-beta → in-release) ──
+  # An rc cut moves its milestone's open `in-beta` issues one lifecycle step
+  # forward: `in-release` — the fix is in a cut release candidate, and closes
+  # on promotion to stable (CONTRIBUTING.md -> "Issue lifecycle"). Runs only
+  # after a successful `-rc.N` publish; on a rolling re-release of the same rc
+  # it is a no-op (already-rolled issues are skipped). Deliberately a separate
+  # LAST job: a relabel failure is a loud red X, but it blocks nothing — the
+  # release is already live when this runs. A job-level `if` with no status
+  # function still implies success(), so a failed publish never rolls labels.
+  # `!inputs.dry_run` is redundant today (`needs: release` already skips on a
+  # dry run) but is defence in depth: adding a status function to this `if`
+  # later would otherwise silently let a dry run relabel real issues.
+  roll-rc:
+    needs: [build-windows, release]
+    if: ${{ contains(needs.build-windows.outputs.tag, '-rc.') && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Relabel the milestone's in-beta issues in-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          TAG="${{ needs.build-windows.outputs.tag }}"
+          node scripts/roll-issues-into-release.mjs --version "${TAG#v}"

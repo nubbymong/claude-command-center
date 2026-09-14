@@ -34,6 +34,35 @@ export interface GlobalVisionConfig {
 
 // ── SSH ──
 
+/**
+ * Structured runtime (config-modal redesign, harmonise-remote item e/i): where
+ * claude actually RUNS after the connection is up. 'host' = directly on the
+ * connected machine (default). 'container' = the app composes the exec command
+ * itself (`[sudo] <engine> exec -it [-w dir] <name> bash` or `start -ai`) —
+ * replacing the free-text post-command for the docker case, so the container
+ * hop is data the app understands (badges, delivery reachability, End-path
+ * in-container kill) rather than an opaque string. Free-text postCommand is
+ * still honoured forever (prep under Advanced); when both are set the prep
+ * runs first, then the runtime exec.
+ */
+export interface SshRuntime {
+  type: 'host' | 'container'
+  /** Container engine. Default 'docker'; RHEL-family hosts ship podman. */
+  engine?: 'docker' | 'podman'
+  /** Container name (required when type==='container'). */
+  container?: string
+  /** 'exec' = exec into a RUNNING container (default); 'start' = start a stopped one attached. */
+  mode?: 'exec' | 'start'
+  /** Prefix the engine command with sudo (the sudo password field belongs to this). */
+  sudo?: boolean
+  /** Optional working directory INSIDE the container (engine -w flag). */
+  containerDir?: string
+  /** The shell the exec lands in. Default bash; 'sh' is recorded only when a
+   *  legacy free-text `... exec -it <name> sh` line was parsed, so a sh-only
+   *  container keeps the shell it was configured with (rc.15 review R1). */
+  shell?: 'bash' | 'sh'
+}
+
 export interface SshConfig {
   host: string
   port: number
@@ -43,6 +72,29 @@ export interface SshConfig {
   postCommand?: string
   hasSudoPassword?: boolean
   dockerContainer?: string
+  /** Structured runtime; when set with type 'container' the app composes the
+   *  container command itself. Legacy `dockerContainer` (badge-only hint) is
+   *  superseded by `runtime.container` but still read as a fallback. */
+  runtime?: SshRuntime
+  /**
+   * SSH tmux enhancement (item 3) — the remote OS. 'auto' (default) and 'unix'
+   * both use the POSIX setup path unchanged (no regression). 'windows' uses a
+   * PowerShell-delivered setup + a CONOUT$ statusline shim + a cmd.exe claude
+   * launch, with NO tmux (Windows has none) so the session falls back to a bare
+   * `claude` that resumes via --continue. PROTOTYPE, isolated behind this flag.
+   */
+  remoteOs?: 'auto' | 'unix' | 'windows'
+  /**
+   * SSH tmux enhancement (item 1) — "Detachable" (persistent remote session).
+   * DEFAULT ON: undefined/true means the tmux-persistence ladder (#242) is
+   * attempted so a dropped connection survives and reconnects reattach. Set
+   * to false to opt OUT entirely — no tmux detection, no provisioning, no
+   * silent install; the session is a bare `claude` that resumes via
+   * `--continue` on reconnect. Owner explicitly dislikes tmux being installed
+   * silently, so this makes persistence user-controlled. Only `false`
+   * disables (mirrors loggingEnabled's default-true shape).
+   */
+  detachable?: boolean
 }
 
 // ── Legacy Version ──
@@ -66,17 +118,44 @@ export interface AccountIdentity {
 export interface ClaudeOptions {
   model?: string
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  /** Per-config permission mode -> claude `--permission-mode <mode>`. Undefined /
+   *  'default' emits no flag (Claude's own default). Valid CLI modes: acceptEdits,
+   *  auto, plan, dontAsk, bypassPermissions, manual. Lets one saved config run
+   *  bypassPermissions while another runs dontAsk. */
+  permissionMode?: string
+  /** Advanced escape hatch: extra CLI args appended verbatim to the claude launch
+   *  command. Charset-guarded at the IPC seam (no shell metacharacters); CCC-managed
+   *  flags (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/
+   *  --resume) are rejected so the escape hatch can't clobber CCC's own wiring. */
+  extraArgs?: string
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
   agentIds?: string[]
-  /** v1.5 P6: when true, the Claude PTY is registered into the codex_review opt-in set
-   *  and the SessionDialog toggle is persisted. Tool description still appears to all
-   *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
+  /** RETIRED 2.1.0-beta.5 (was v1.5 P6): codex_review is authorised globally now —
+   *  every local Claude session registers, gated by the global Codex master switch.
+   *  The field remains only so stored configs round-trip; nothing reads it. */
   enableCodexReview?: boolean
   /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined / true = on).
    *  When false, CCC does not index this session's transcript for the Logs viewer.
    *  The conversation still lives in Claude's own files (~/.claude/projects). */
   loggingEnabled?: boolean
+}
+
+/** Terminal-only ("no AI") launcher options. Local sessions: the command runs
+ *  once when the terminal opens. Over SSH the equivalent is sshConfig.postCommand
+ *  ("After connecting, run"), so these are not used there. */
+export interface TerminalOptions {
+  /** Command run once when the terminal opens. Empty = a plain shell. */
+  command?: string
+  /** Arguments appended to `command`. The literal token `{secret}` is replaced at
+   *  launch with a reference to the secret argument (never the value itself —
+   *  see hasSecretArg). Stored in plain text, so secrets belong in the keychain. */
+  args?: string
+  /** True when a secret argument is stored in the OS keychain under
+   *  `<configId>_argsecret`. The value NEVER touches the config file. */
+  hasSecretArg?: boolean
+  /** Run the terminal elevated (gsudo on Windows, sudo elsewhere). */
+  elevated?: boolean
 }
 
 export interface CodexOptions {
@@ -91,7 +170,16 @@ export interface CodexOptions {
 export interface SavedSession {
   id: string
   configId?: string
+  /** Mirrors Session.kind so a restored Ask Conductor session comes back AS one
+   *  (docked pill, tab monogram, banded header) instead of a plain config-less
+   *  session. The opening question is NOT part of this record -- see the
+   *  allowlist in session-persistence.ts. */
+  kind?: 'ask'
   label: string
+  /** User-assigned "work name" (see Session.customName). Persisted by id so it
+   *  survives restart and returns when the saved session is reopened; dropped
+   *  when the session is closed in CCC. Display-only. */
+  customName?: string
   workingDirectory: string
   color: string
   /** V2 identity colour: stable palette key. Authoritative over `color` at render time. */
@@ -100,6 +188,10 @@ export interface SavedSession {
   legacyColor?: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean
+  /** Terminal-only launcher options (command / args / secret / elevated). */
+  terminalOptions?: TerminalOptions
+  /** RETIRED 2.1.0-beta.5: the partner terminal is permanent for every config type
+   *  (working directory locally, home over SSH). Fields remain for round-trip only. */
   partnerTerminalPath?: string
   partnerElevated?: boolean
   sshConfig?: SshConfig
@@ -134,10 +226,94 @@ export interface SavedSession {
   disableAutoMemory?: boolean
 }
 
+/**
+ * SSH Persistent — "Resume a Running Session" (Phase 1).
+ *
+ * A remote tmux session the user chose to LEAVE RUNNING (detach, reattach
+ * later) rather than end. Keyed by the CCC session id, so a later manual launch
+ * of the same config can reuse that id and land back on the exact tmux target
+ * (`ccc-<sessionId>`) the has-session→attach branch reattaches to.
+ *
+ * Persisted inside SessionState so it survives an app restart. DESCRIPTOR ONLY —
+ * `accountEmail` is the remote-reported oauth account (already charset/length
+ * capped host-side), never a credential.
+ */
+export interface DetachedRemote {
+  /** The CCC session id the detached remote was running under. Reused verbatim
+   *  on resume so the tmux target `ccc-<sessionId>` matches again. */
+  sessionId: string
+  /** The saved config this remote was launched from (`config.id`). Primary key
+   *  for the manual-launch match; host/user/remotePath is the fallback. */
+  configId?: string
+  host: string
+  username: string
+  remotePath: string
+  /** SSH port at detach time (#54). With host/user/path/runtime it is the
+   *  recorded DESTINATION every lookup verifies against the saved config before
+   *  offering a reattach: a config-id match whose destination has since been
+   *  edited away is an orphan of that edit, never a retarget. Absent on entries
+   *  written before this field existed; those are matched on host/user/path as
+   *  before (see shared/detached-destination.ts). */
+  port?: number
+  /** The runtime the session ran under at detach time (#54), recorded
+   *  normalised: `{ type: 'host' }` for a plain host session, else the container
+   *  runtime (a legacy docker post-command is recorded as the container it
+   *  names). Absent on pre-#54 entries. */
+  runtime?: SshRuntime
+  /** Multiplexer holding the session alive. Always 'tmux' today (psmux is the
+   *  Windows-only path and is NOT wired yet — the field is recorded for it). */
+  mux: 'tmux' | 'psmux'
+  /** Remote Claude account (oauthAccount.emailAddress), when known. Descriptor. */
+  accountEmail?: string
+  /** Display label at detach time (customName || config label). */
+  label: string
+  /** Epoch ms the remote was left running, for the "left running Xm ago" copy. */
+  detachedAt: number
+}
+
 export interface SessionState {
   sessions: SavedSession[]
   activeSessionId: string | null
   savedAt: number
+  /** SSH Persistent (Phase 1): remotes left running for a later reattach. Absent
+   *  on files written before this feature; round-trips untouched through the
+   *  main-side save/load (only `sessions` is migrated). */
+  detachedRemotes?: DetachedRemote[]
+}
+
+/**
+ * SSH Persistent — liveness result for a set of candidate detached remotes.
+ *
+ * Returned by the `ssh:checkDetachedLive` IPC after a main-side `tmux ls` over a
+ * separate ssh exec built from the SAVED config. `outcome`:
+ *   - 'verified'   — the host answered; `liveSessionIds` are the candidates whose
+ *                    `ccc-<sessionId>` tmux target is actually alive. Any queried
+ *                    id NOT in the list is confirmed DEAD.
+ *   - 'unverified' — the host could not be reached / auth failed / no completion
+ *                    sentinel came back. Distinct from "dead": the caller FAILS
+ *                    OPEN (still offers, marked "couldn't verify"), because a
+ *                    reattach self-heals if the remote really is gone.
+ */
+export interface DetachedRemoteLiveness {
+  outcome: 'verified' | 'unverified'
+  liveSessionIds: string[]
+}
+
+/**
+ * SSH Persistent — TIER 1 reachability result for one HOST (`ssh:pingHost`).
+ *
+ * `reachable` means the box answered an ICMP echo, or accepted a TCP connection
+ * on the SSH port when ICMP was filtered. It says NOTHING about any tmux session
+ * running on it — only DetachedRemoteLiveness can, and only a tier-2 SSH verify
+ * produces one. Consequently this result is used demote-only: consecutive
+ * failures mark a host's entries unreachable, a success never marks one live.
+ * `via` records which tier answered; `reason` is a short machine-readable why.
+ */
+export interface HostPingResult {
+  host: string
+  reachable: boolean
+  via: 'icmp' | 'tcp' | 'none'
+  reason?: string
 }
 
 // ── Statusline ──
@@ -199,21 +375,6 @@ export interface StatuslineData {
 
 // ── Agent Templates ──
 
-// Valid values are registry dropdown entries (e.g. 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku')
-// plus the special sentinel 'inherit' (use the parent session model). Widened to string so the
-// type does not hard-code the set of models — the registry is the authority.
-export type AgentModelOverride = string
-
-export interface AgentTemplate {
-  id: string
-  name: string           // "code-reviewer" (lowercase, hyphens)
-  description: string    // When Claude should delegate to this agent
-  prompt: string         // System prompt
-  model: AgentModelOverride
-  tools: string[]        // Allowed tools (empty = inherit all)
-  isBuiltIn?: boolean    // Pre-built template (read-only)
-}
-
 // ── Cloud Agents ──
 
 export type CloudAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -251,6 +412,49 @@ export interface InsightsRun {
   profileId?: string
   /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
   kpisUnavailable?: boolean
+  /**
+   * The failure in `error` was an authentication failure — this account's sign-in
+   * has expired and the fix is to log in again. Classified in main so the UI does
+   * not string-match CLI messages, and so Insights can offer the re-auth action
+   * instead of only reporting that something went wrong.
+   */
+  authFailed?: boolean
+  /**
+   * The profile's `refreshTokenExpiresAt` at the moment this run failed to
+   * authenticate. Retirement of the warning requires the CURRENT expiry to be
+   * strictly later than this — evidence only a real login produces, since copying
+   * a credentials file preserves the value. Without it the warning retired on the
+   * file's mtime, which credential reconciliation bumps with no login at all.
+   */
+  authFailedRefreshExpiry?: number
+  /**
+   * What kind of run this is. Absent means 'account' — every run written before
+   * cross-account existed is a single-account run, so the field is optional
+   * rather than defaulted, and readers MUST treat undefined as 'account'.
+   * An 'aggregate' run has no profileId and no report.html: its only artifact is
+   * a kpis.json holding CrossAccountInsights.
+   */
+  kind?: 'account' | 'aggregate'
+  /** Aggregate only: the per-account run ids that fed the roll-up. */
+  memberRunIds?: string[]
+  /** Aggregate only: one row per targeted account, so a partial roll-up is legible. */
+  members?: InsightsRunMember[]
+}
+
+/** One account's outcome inside a cross-account (aggregate) run. */
+export interface InsightsRunMember {
+  profileId?: string
+  accountEmail?: string
+  /** Display label captured at fan-out time (profile name, else email). */
+  label?: string
+  /** The per-account run this member produced. Absent until it starts. */
+  runId?: string
+  status: 'running' | 'complete' | 'failed'
+  error?: string
+  /** Completed without a kpis.json, so it is excluded from the roll-up. */
+  kpisUnavailable?: boolean
+  /** This account's sign-in has expired; the fix is to authenticate again. */
+  authFailed?: boolean
 }
 
 export interface InsightsCatalogue {
@@ -279,50 +483,104 @@ export interface InsightsData {
 /** Alias for backward compatibility */
 export type KpiData = InsightsData
 
-// ── Agent Teams ──
+// ── Cross-account insights (aggregate runs) ──
+// A cross-account roll-up keeps NUMBERS and PROSE strictly separate: every value
+// in `comparison` is computed from the member runs' own kpis.json, and only the
+// narrative fields (summary, highlights, crossAccount) come from the synthesis
+// model. That way a roll-up can never report a metric the accounts didn't
+// actually produce, and it still renders when the model pass fails.
 
-export type TeamStepMode = 'sequential' | 'parallel'
-
-export interface TeamStep {
-  id: string              // 'ts-' + random
-  templateId: string      // references AgentTemplate.id
-  label: string           // display name (defaults to template name)
-  mode: TeamStepMode
-  promptOverride?: string // optional: override the template's prompt
-}
-
-export interface TeamTemplate {
-  id: string              // 'team-' + timestamp + random
-  name: string
-  description: string
-  steps: TeamStep[]
-  projectPath: string
-  createdAt: number
-  updatedAt: number
-}
-
-export type TeamRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
-
-export interface TeamRunStep {
-  stepId: string          // matches TeamStep.id
-  agentId: string | null  // CloudAgent.id once dispatched
-  status: TeamRunStatus
+/** One metric lined up across accounts. Values are copied, never derived. */
+export interface CrossAccountComparisonRow {
+  /** Metric key as it appears in each account's kpis.kpis[category]. */
+  metricKey: string
+  /** KPI category the metric came from (Volume, Outcomes, Friction, …). */
+  category: string
   label: string
-  startedAt?: number
-  completedAt?: number
+  format?: 'number' | 'percent' | 'duration'
+  goodDirection?: 'up' | 'down' | 'neutral'
+  values: Array<{ key: string; profileId?: string; accountEmail?: string; value: number }>
+  /**
+   * Sum across accounts — only present for `format: 'number'` (counts add up),
+   * and only when the row is confirmed comparable and the accounts' reporting
+   * windows are of similar length. Percentages and durations need weights we
+   * don't have, so they get no total rather than a misleading average.
+   */
+  total?: number
+  /**
+   * Present when the accounts gave this same metricKey DIFFERENT wording — i.e.
+   * they may not be measuring the same thing. Holds every distinct label seen.
+   * A row carrying this is displayed by its raw key, uncoloured and untotalled:
+   * the values are shown, the equivalence is not asserted.
+   *
+   * This is not hypothetical. Real data: both accounts report
+   * `Outcomes.successRate`, one as "Fully Achieved Rate" (0.4231), the other as
+   * "Mostly or Fully Achieved Rate" (0.787) — whose own fully-achieved rate is
+   * 0.128, the worse of the two. Merging on key alone rendered the inverse of
+   * the truth, in colour, as measured fact.
+   */
+  labelVariants?: string[]
+  /** Present when accounts disagree on `format`; the row then carries none. */
+  formatVariants?: Array<'number' | 'percent' | 'duration'>
+  /**
+   * True when accounts disagreed on `goodDirection`. The row then carries none,
+   * so nothing is coloured — otherwise which account looks "good" would depend
+   * on member ORDER, which is non-determinism in rendered output.
+   */
+  directionConflict?: boolean
 }
 
-export interface TeamRun {
-  id: string              // 'tr-' + timestamp + random
-  teamId: string
-  teamName: string        // snapshot at run time
-  status: TeamRunStatus
-  steps: TeamRunStep[]
-  projectPath: string
-  createdAt: number
-  updatedAt: number
-  duration?: number
-  error?: string
+export interface CrossAccountAccountSummary {
+  /** Stable per-roll-up key (A1, A2, …). Used to match narrative back to accounts. */
+  key: string
+  runId: string
+  profileId?: string
+  accountEmail?: string
+  label: string
+  period?: { start?: string; end?: string; days?: number }
+  /**
+   * Calendar days from period.start to period.end inclusive, computed here.
+   * NOT period.days — the extraction model emits ACTIVE days there (measured:
+   * a 23-day span reported as `days: 10`), so period.days cannot be used to
+   * judge whether two accounts cover comparable windows.
+   */
+  spanDays?: number
+  /** Top 3 per ranked list (tools, languages, goals). Often the only place an
+   *  account-unique behaviour shows up at all, so it is carried, not dropped. */
+  topLists?: Record<string, Array<{ name: string; count: number }>>
+  /** Model-written bullets about this account. Absent in a deterministic roll-up. */
+  highlights?: string[]
+}
+
+/** Metrics only ONE account reported. No comparison row exists for these (there
+ *  is nothing to compare against), but "only A2 uses subagents at all" can be the
+ *  most useful sentence in the report, so they are kept and shown. */
+export interface CrossAccountUniqueMetric {
+  key: string
+  category: string
+  metricKey: string
+  label: string
+  value: number
+  format?: 'number' | 'percent' | 'duration'
+}
+
+export interface CrossAccountInsights extends InsightsData {
+  /** 'ai' = the synthesis pass wrote the prose; 'deterministic' = it failed, numbers only. */
+  synthesis: 'ai' | 'deterministic'
+  accounts: CrossAccountAccountSummary[]
+  comparison: CrossAccountComparisonRow[]
+  /** Single-account metrics, kept out of `comparison` but not thrown away. */
+  uniqueMetrics: CrossAccountUniqueMetric[]
+  /**
+   * False when the accounts' reporting windows differ materially in length, in
+   * which case no row carries a `total`: summing a 23-day count with a 35-day
+   * count produces a number that means nothing.
+   */
+  windowsComparable: boolean
+  crossAccount?: {
+    observations?: string[]
+    recommendations?: string[]
+  }
 }
 
 // ── Tokenomics ──
@@ -417,6 +675,10 @@ export interface TkIndexStatus {
   filesTotal: number
   eventsTotal: number
   lastIndexAt: number | null
+  /** Files the index could not open or read at all. They do not hold the index
+   *  back — one unreadable file used to leave it unfinished forever — so this is
+   *  how the user learns something is missing. */
+  filesFailed?: number
   /** Non-null when the worker reported a fatal/uncorrelated error (e.g. a failed
    *  DB open). The renderer surfaces this instead of an endless 'indexing' state. */
   error?: string | null
@@ -425,7 +687,10 @@ export interface TkIndexStatus {
 export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
 export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }
 export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
-export interface TkIndexCompleteEvent { firstIndex: boolean; eventsTotal: number }
+/** `drained`: every file that sweep visited was read to its end and none
+ *  failed. A sweep finishing is NOT that — a multi-GB rollout takes tens of
+ *  sweeps — so gate any "indexing finished" UI on `drained`. */
+export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }
 
 // ── Notes ──
 

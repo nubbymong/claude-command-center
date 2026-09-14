@@ -192,7 +192,10 @@ export async function listWindows(): Promise<Array<{ id: string; name: string; t
     })
 
     return sources
-      .filter(s => !s.thumbnail.isEmpty() && !s.name.includes('Claude Command Center'))
+      // Self-exclusion: must match the renderer <title> (src/renderer/index.html)
+      // and stay a substring of the dev title in src/main/index.ts — the three
+      // literals live in different processes and must move in lockstep.
+      .filter(s => !s.thumbnail.isEmpty() && !s.name.includes('AI Code Conductor'))
       .map(s => ({
         id: s.id,
         name: s.name,

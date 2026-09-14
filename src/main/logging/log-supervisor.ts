@@ -62,7 +62,9 @@ type BufferedMessage =
   | RunStartMessage
   | Extract<ToTranscriptsWorker, { type: 'run-end' }>
   | Extract<ToTranscriptsWorker, { type: 'run-account' }>
+  | Extract<ToTranscriptsWorker, { type: 'run-rename' }>
   | Extract<ToTranscriptsWorker, { type: 'transcript-bind' }>
+  | Extract<ToTranscriptsWorker, { type: 'session-conversation-upsert' }>
 
 interface QueuedItem {
   msg: BufferedMessage
@@ -268,10 +270,24 @@ export class LogSupervisor {
     this.enqueueOrSend({ type: 'run-account', sessionId, accountEmail })
   }
 
+  /** Update the display label on the latest open run (session rename), so the
+   *  logs/history tab shows the custom work name durably. */
+  renameRun(sessionId: string, configLabel: string): void {
+    this.enqueueOrSend({ type: 'run-rename', sessionId, configLabel })
+  }
+
   /** Bind a discovered transcript file to the session's current run; the worker
    *  starts tailing it immediately. */
   bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string): void {
     this.enqueueOrSend({ type: 'transcript-bind', sessionId, path, confidence, sourceVersion })
+  }
+
+  /** #480: durably record the EXACT conversation a session is on (keyed by AICC
+   *  sessionId). Fire-and-forget; buffered while the worker is down like every
+   *  other lifecycle message. This is the authoritative source restart resume
+   *  reads back via the `session-conversation` query. */
+  persistSessionConversation(sessionId: string, path: string, uuid: string): void {
+    this.enqueueOrSend({ type: 'session-conversation-upsert', sessionId, path, uuid, updatedAt: Date.now() })
   }
 
   /** Subscribe to the worker's new-messages fan-out. Returns an unsubscribe. */

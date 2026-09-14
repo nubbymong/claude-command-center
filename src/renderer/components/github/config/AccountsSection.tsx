@@ -16,7 +16,7 @@ export default function AccountsSection() {
       <h3 className="text-sm uppercase text-subtext0 mb-3">Accounts</h3>
       <div className="space-y-2">
         {profiles.length === 0 && (
-          <div className="text-sm text-overlay1 bg-mantle p-3 rounded">
+          <div className="text-sm text-overlay1 settings-card p-3">
             No auth profiles yet. Sign in with GitHub, adopt a `gh` CLI account, or paste a PAT.
           </div>
         )}

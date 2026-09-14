@@ -43,20 +43,26 @@ export const trainingSteps: TrainingStep[] = [
   {
     id: 'session-options',
     title: 'Session Configuration',
-    sinceVersion: '1.5.11',
+    // Re-versioned for the 2.1 dialog rebuild: currentTrainingVersion() is the
+    // MAX sinceVersion across steps, and getNewSteps() returns only steps newer
+    // than the version the user last saw. With every step pinned at <= 2.0.0,
+    // nobody already on 2.x was ever shown the rebuilt dialog.
+    sinceVersion: '2.1.0',
     section: 'getting-started',
     summary:
-      'Every workspace starts as a saved config -- label, colour, working directory, model, and any agents you want pre-loaded. New sessions default to Opus 4.8. Effort is a live setting you change in Claude with /effort (it shows in the statusline and on the session card), not a config field.',
+      'Every workspace starts as a saved config. First choose what it runs -- Claude Code, Codex, or Terminal only -- then how it connects: **Local**, **SSH**, or **SSH Persistent** (a remote session that survives a dropped link). The rest of the form unfolds from those two answers. A config carries its label, colour, working directory, starting model and starting effort, plus a permission mode and any extra CLI arguments.',
     highlights: [
-      'Model defaults to **Opus 4.8** (Anthropic`s newest, released 2026-05-28)',
-      'Effort is **live** -- set it in Claude with `/effort` (low, medium, high, xhigh, max, ultracode); the card shows the current level',
-      'Local or SSH -- one config form, full Claude support either way',
-      'Bundle agent templates from your Library into the session at spawn',
+      'Pick a **starting model** per config; the dropdown lists what is currently available, newest first',
+      '**Starting effort** is a config field (low, medium, high, xhigh, max, ultracode); change it live in Claude with `/effort`. The card shows the current level',
+      'Connection is three cards, not a checkbox: **Local**, **SSH**, **SSH Persistent** -- one config form, full Claude support on all three',
+      'An SSH config also has a **Runtime** section: run on the host, or **in a Docker container** the app execs into for you (engine, name, optional directory, sudo)',
+      '**Allow Multi Spawn** decides whether the config can run more than one session at a time. Off by default: its row then gets a copy count you can launch several at once from, and without it a running config declines a second launch and says so',
     ],
     howToTrigger: [
-      { label: 'Create', value: 'Saved Configs → +' },
+      { label: 'Create', value: 'Saved tab → + New → Config' },
       { label: 'Edit', value: 'Hover a config → pencil icon' },
-      { label: 'Pin', value: 'Saved Configs → 📌' },
+      { label: 'Pin', value: 'Right-click a config → Pin to Quick Start' },
+      { label: 'Launch several', value: 'Select (Saved toolbar or Quick Start header) → tick → Launch' },
     ],
     proTip:
       'Drag a folder onto the sidebar to create a working-directory config in one drop -- fastest way to bootstrap a new project session.',
@@ -64,7 +70,7 @@ export const trainingSteps: TrainingStep[] = [
       'Create **saved configs** with custom working directories and models',
       'Effort is **live** -- run `/effort` in Claude to change it; the level shows on the card and in the statusline',
       '**Bundle agent templates** from your Library into the spawned session',
-      'Connect to remote machines via **SSH** with full Claude support',
+      'Connect to remote machines via **SSH** with full Claude support -- same statusline, account and usage as a local session',
     ],
     screenshotFilename: 'step-session-options.jpg',
   },
@@ -77,7 +83,7 @@ export const trainingSteps: TrainingStep[] = [
       'Run more than one Claude account side by side. Your existing login is captured into a protected primary account on first run, and every session runs under a saved, isolated account, so signing in to one never disturbs another or your default login.',
     highlights: [
       'Pick the account at **launch time** -- the first time a session spawns this run, a small dialog asks which account to use (pre-set to the last one you used)',
-      'Add an account by running **`/login`** in a session: CCC detects the new login and offers to save it as a separate named account',
+      'Add an account by running **`/login`** in a session: The app detects the new login and offers to save it as a separate named account',
       '**Per-session isolation** -- each session gets its own private home, so two sessions on different accounts never cross over',
       'Your **primary** account (the one captured on first run) is protected and can never be deleted',
       'Memory, settings, and history stay **shared** across all accounts',
@@ -101,6 +107,57 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-security.jpg',
   },
   {
+    // Shipped in 2.0 as "Ask Command Center" and renamed to "Ask Conductor",
+    // but it never had a card of its own -- FinishStep promises the Feature
+    // Guide "explains every feature", and the help surface itself was the one
+    // missing from it (#372).
+    //
+    // 2.1.1, deliberately ABOVE the 2.1.0 cards, and the reason is the whole
+    // point of the entry. getNewSteps() keeps steps with sinceVersion >
+    // lastVersion, and TrainingWalkthrough stamps lastTrainingVersion =
+    // currentTrainingVersion() on close, so every beta user who has already run
+    // the 2.1 tour holds '2.1.0'. At 2.1.0 this card is filtered OUT for them
+    // and shouldShowTraining() returns false: the one cohort that already has
+    // the feature and does not know what it does would never be shown it --
+    // which is the discovery gap #372 was filed about. At 2.1.1 they are shown
+    // exactly this one card; the other 2.1.0 cards are not > 2.1.0, so nothing
+    // else is re-surfaced. Same move, same reason, as the session-options
+    // re-version above. Users arriving from 2.0.x get the card either way.
+    // The badge is unaffected -- FeatureGuidePage's shortVersion() renders both
+    // 2.1.0 and 2.1.1 as "since 2.1".
+    id: 'ask-conductor',
+    title: 'Ask Conductor',
+    sinceVersion: '2.1.1',
+    section: 'getting-started',
+    summary:
+      'Ask Conductor is the help session: a real Claude session that has already read this app\'s documentation, so you can ask how something works in plain English instead of hunting through Settings. It answers questions about the Conductor and about Claude Code itself, and tells you which of the two it is answering.',
+    highlights: [
+      'Ask in **plain English** -- "how do I run two accounts?" beats hunting through Settings',
+      'Covers **both** the Conductor and **Claude Code** itself, and says which one it is answering',
+      'Type your question into the Feature Guide first and the session opens with it **already asked**',
+      'Gets its **own tab** and behaves like any other session -- leave it open and come back to it',
+      'Use **Past discussions** in its header to reopen an earlier conversation',
+      'It reads the **documentation, not your data** -- it cannot see your code, and will say so',
+    ],
+    howToTrigger: [
+      { label: 'Sidebar', value: 'Ask Conductor pill at the bottom of the sidebar' },
+      { label: 'Feature Guide', value: '? button → Ask the Conductor box' },
+      { label: 'From a tip', value: 'Discuss on any tip' },
+    ],
+    proTip:
+      'It runs in its own documentation folder rather than your project, which is exactly why it cannot see your repository. For a question about your own code, ask in that project\'s session instead. It is not a saved config and never appears in your Saved Configs list.',
+    bullets: [
+      'A **Claude session primed with this app\'s docs** -- ask about the Conductor in plain English',
+      'Also answers **Claude Code** questions, and tells you which of the two it is answering',
+      'Open it from the **sidebar pill**, the **Feature Guide** Ask box, or **Discuss** on any tip',
+      'Reads the **documentation only** -- not your code',
+    ],
+    // No dedicated capture of the Ask pill or the help session exists yet; the
+    // shell shot shows the sidebar it launches from and the ? button that opens
+    // this guide. (Future capture: step-ask-conductor.jpg.)
+    screenshotFilename: 'v2-shell-hero.jpg',
+  },
+  {
     id: 'codex-provider',
     title: 'Codex Provider',
     sinceVersion: '1.5.0',
@@ -108,16 +165,16 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       "OpenAI's Codex CLI sits alongside Claude in the New Session dialog -- pick the provider per session. gpt-5 series models, runtime permissions presets, the resume picker, and tokenomics segmenting all wired in.",
     highlights: [
-      'Provider toggle in **New Session** -- Claude or Codex, chosen per spawn',
+      'Provider is chosen on the saved config -- Claude Code, Codex, or Terminal only (Codex is local-only; it cannot run over SSH)',
       'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2',
-      'Permissions presets in the session toolbar: read-only, standard, auto, unrestricted',
+      'Permission presets, model and reasoning effort are set on the Codex config (the session toolbar cluster is Claude-only)',
       'Resume picker mirrors the Claude flow -- recent rollouts surfaced before spawn',
       '**Tokenomics** segments Codex spend automatically alongside Claude, per-day and per-model',
     ],
     howToTrigger: [
-      { label: 'Spawn', value: 'New Session -> Provider -> Codex' },
+      { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex' },
       { label: 'Auth', value: 'Settings -> Codex -> Login' },
-      { label: 'Model swap', value: 'Session toolbar -> model dropdown' },
+      { label: 'Model', value: 'Edit the Codex config -> model' },
     ],
     proTip:
       'Login once via Settings -> Codex; subsequent Codex sessions reuse the same auth. Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
@@ -130,35 +187,6 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-codex.jpg',
   },
   {
-    id: 'agent-hub',
-    title: 'Agent Hub',
-    sinceVersion: '1.0.0',
-    section: 'integrations',
-    summary:
-      'Tasks dispatch headless Claude as background jobs, Pipelines chain them, and the Library is where you author agent templates (name, prompt, model, tool whitelist) that surface as tickable subagents in every Edit Config dialog.',
-    highlights: [
-      'Tasks tab -- fire-and-forget headless agent runs with live status + output streaming',
-      'Pipelines tab -- chain agents (a → b → c) with shared context and per-step prompts',
-      'Library tab -- author your own templates; built-ins (code-reviewer, test-runner...) are starting points to copy and edit',
-      'Tick a template in Edit Config → Agents and Claude can delegate to it via the Task tool inside the running session',
-      'Right-click a task for actions: cancel, retry, remove, copy output',
-    ],
-    howToTrigger: [
-      { label: 'Open', value: 'Click  ☁  in the sidebar nav' },
-      { label: 'Author', value: 'Library tab → + New Agent' },
-      { label: 'Bundle into session', value: 'Edit Config → Agents → tick template' },
-    ],
-    proTip:
-      'Library templates aren\'t just for headless Tasks -- anything you author there is also a subagent inside any Claude session that has it ticked in the config. Same definition, two delivery surfaces.',
-    bullets: [
-      '**Tasks** dispatch headless Claude jobs with live output streaming',
-      '**Library** is where you author agent templates that surface in Edit Config',
-      '**Pipelines** chain agents with shared context and per-step prompts',
-      'Built-ins (code-reviewer, test-runner...) are **starting points** -- copy and edit',
-    ],
-    screenshotFilename: 'step-agent-hub.jpg',
-  },
-  {
     id: 'vision',
     title: 'Conductor MCP',
     sinceVersion: '1.2.144',
@@ -166,25 +194,94 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Browser automation via a global MCP server -- every Claude session shares one Chrome instance. Take screenshots, navigate, click, type, and inspect pages without leaving the terminal. Works over SSH too via automatic reverse tunnels.',
     highlights: [
-      '17 browser-vision tools (one of three sub-tools on the Conductor MCP server) exposed to Claude',
+      '18 browser-vision tools (one of four sub-tools on the Conductor MCP server) exposed to Claude',
       'One global Chrome -- all sessions share state, so cookies + login persist',
       'Reverse tunnel auto-injected on SSH connect (-R <port>) -- remote sessions reach the local Conductor MCP server',
-      'Status pill in the sidebar shows running / connected state at a glance',
-      'Headless or visible browser -- toggled per-config in Settings',
+      'A dot on the Conductor MCP nav icon shows MCP server health: green = running, red = stopped',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  Conductor MCP  in the sidebar nav' },
-      { label: 'Start', value: 'Conductor MCP page → Start' },
-      { label: 'Launch browser', value: 'Conductor MCP page → Launch Chrome' },
+      { label: 'Open', value: 'Sidebar → Conductor MCP' },
+      { label: 'Browser', value: 'Vision card → Start browser' },
     ],
     proTip:
       'Ask Claude "open the dev server in the browser and click around to verify the layout" -- it\'ll drive vision tools to do exactly that and report back.',
     bullets: [
       '**Browser automation** via a global MCP server -- all sessions share one browser',
-      'Click the **eye icon** in the sidebar to configure and start vision',
+      'Click **Conductor MCP** in the sidebar nav to see the tool server and its browser',
       '17 vision tools available to Claude: **screenshot, navigate, click, type** and more',
       'Works over **SSH** too -- reverse tunnels connect remote sessions automatically',
     ],
+    screenshotFilename: 'step-vision.jpg',
+  },
+  {
+    id: 'agent-canvas',
+    title: 'Agent Canvas',
+    sinceVersion: '2.1.0',
+    section: 'integrations',
+    summary:
+      'A review surface for anything visual the agent makes. Ask for a mockup, a plan, or the app you are building; it renders a real page into the session pane. You mark up what is wrong -- notes pinned to elements, freehand sketch over the top -- and send the whole review back for the next version. Distinct from the Excalidraw Sketchpad, which is your own freehand pad.',
+    highlights: [
+      'The agent renders with **canvas_render** -- every call is a new version, nothing is overwritten',
+      '**canvas_snapshot** reads the laid-out page back: names, boxes, form state, and measured problems (clipped text, targets below the minimum size, weak contrast)',
+      'Annotate on the glass over the page -- pin a note to an element, box a region, or sketch freehand',
+      'Submit drops a one-line marker in the chat; the agent fetches your notes and sketches with **canvas_review**',
+      'Per session and local: design renders come from an HTML file the agent writes, and app builds are served only from folders you have opened sessions in',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Session toolbar → Canvas' },
+      { label: 'First render', value: 'Canvas landing → Put this in the terminal' },
+      { label: 'Send a review', value: 'Notes panel → Submit' },
+    ],
+    proTip:
+      'Ask for the round trip explicitly -- "render it and I will mark it up". Pointing at the pixel that is wrong costs you one sentence and saves the agent a guess.',
+    bullets: [
+      '**A real page**, laid out by the browser engine in the session pane',
+      '**Mark it up**: element notes, region boxes, freehand sketch',
+      'One **Submit** hands every note back through canvas_review',
+      '**Versioned** -- each render is kept, so you can compare what changed',
+    ],
+    // No dedicated capture yet; the Vision shot is the nearest surface (a real
+    // page under the agent's eye). Future capture: step-agent-canvas.jpg.
+    screenshotFilename: 'step-vision.jpg',
+  },
+  {
+    // The Canvas Explained page (2.1 canvas rework, M4): a full-page explainer
+    // of the review model, opened from the card on the canvas front page. It
+    // exists because the model has real depth users kept missing -- versions,
+    // what a note stores, evidence records -- and the front-page card is only
+    // discoverable once you are already on the canvas, so this guide card
+    // EMBEDS the page itself (View Canvas Explained) as a route that works
+    // with zero sessions open.
+    id: 'canvas-explained',
+    title: 'Canvas Explained',
+    sinceVersion: '2.1.0-rc.10',
+    section: 'integrations',
+    summary:
+      'A one-page explainer built into the Agent Canvas: how an artefact moves through versions, what a review stores (the element you anchored to, your drawings, pasted images, and your words, all kept on the version they were made against), and what a Testing note locks together as evidence.',
+    highlights: [
+      'The **artefact** model in one diagram -- versions increment, and each review with its objects is stored on its version',
+      'Sending a version back **never loses your notes** -- **Reject** a mockup, **Submit Revisions** on a plan; either way the agent reads them to build the next one, and History keeps the trail',
+      'The **Mockup, Plan, and Testing** loops drawn end to end, including the evidence record one saved Testing note stores',
+      'Plain terms where they apply: a note reads **resolved** once the agent has acted on it; a review reads **settled** once every note is closed',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Agent Canvas front page → Canvas Explained card' },
+      // Second route on purpose: the front-page card lives inside an open
+      // session's canvas pane; the guide one needs no session at all.
+      { label: 'Guide', value: 'Feature Guide → this card → View Canvas Explained' },
+      { label: 'Back', value: '‹ Home in the page header' },
+    ],
+    proTip:
+      'Skim it once before your first review. Knowing that every note is stored on its version -- and that sending a version back never loses them -- changes how freely you annotate.',
+    bullets: [
+      'One page that explains the **whole canvas review model**',
+      'Versions, reviews, and **what each note stores**, drawn as diagrams',
+      'Open it from the **Canvas Explained** card on the canvas front page, or right here via **View Canvas Explained**',
+    ],
+    // No dedicated capture yet; the Vision shot is the nearest canvas surface,
+    // the same stand-in the Agent Canvas card uses. (Future capture:
+    // step-canvas-explained.jpg.)
     screenshotFilename: 'step-vision.jpg',
   },
   {
@@ -193,10 +290,11 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.4.0',
     section: 'productivity',
     summary:
-      'Embed any URL right next to your terminal. Custom commands open dev servers, dashboards, or docs in-app -- and freezing the pane drops you straight into Excalidraw to annotate over what you are seeing.',
+      'A browser of your own, right next to your terminal. Every session has a Browser button: type an address, keep favourites, set a home page, or let a command open a dev server, dashboard or docs for you -- and freezing the pane drops you straight into Excalidraw to annotate over what you are seeing.',
     highlights: [
       'Pinned to the same session -- pane state survives tab switches',
-      'Custom commands declare URLs so the toolbar surfaces a Web button automatically',
+      'Address bar, back/forward, favourites, a home page per config, and open-in-your-real-browser',
+      'A command can "watch for a page" or simply "open a page" -- the one button that types nothing',
       'Status pulse: green when reachable, red when the URL fails to load',
       'Freeze + Excalidraw -- capture a frame and draw over it without leaving the session',
       'Esc closes the pane back to terminal-only view',
@@ -221,25 +319,32 @@ export const trainingSteps: TrainingStep[] = [
   },
   {
     id: 'excalidraw',
-    title: 'Excalidraw Scratchpad',
+    // "Sketchpad", not "Canvas": the Agent Canvas is a different feature that
+    // shares the toolbar button. The v8 canvas front page dropped its "Open
+    // the sketchpad instead" button, so the pad currently has NO front-page
+    // entry -- a session already showing it keeps it (the store value
+    // survives; see CanvasEmptyView). The trigger copy below states that
+    // plainly instead of pointing at the removed door; restoring a real route
+    // is an owner-flagged follow-up, and this copy changes with it.
+    title: 'Excalidraw Sketchpad',
     sinceVersion: '1.4.0',
     section: 'productivity',
     summary:
-      'A per-session whiteboard for diagramming, planning, or sketching ideas before you describe them to Claude. Drawings persist with the session and pair cleanly with Freeze for annotating screenshots.',
+      'A per-session whiteboard for diagramming, planning, or sketching ideas before you describe them to Claude. Drawings persist with the session and pair cleanly with Freeze for annotating screenshots. It is your own pad -- the Agent Canvas next door is where the agent renders pages for you to review.',
     highlights: [
-      'Per-session canvas -- switching sessions swaps the drawing in place',
+      'Per-session sketchpad -- switching sessions swaps the drawing in place',
       'Full Excalidraw toolset: shapes, arrows, text, freehand, libraries',
       'Drawings auto-save to the session config -- closing and reopening the app restores them',
-      'Freeze the webview pane to import a snapshot and draw straight over it',
+      'Freeze the browser pane to import a snapshot and draw straight over it',
       'Replaces the terminal in place -- no fullscreen modal eating the toolbar',
     ],
     howToTrigger: [
-      { label: 'Open', value: 'Session toolbar → Draw' },
-      { label: 'Switch back', value: 'Click Draw again, or pick a different session' },
-      { label: 'Clear canvas', value: 'Excalidraw header → Reset' },
+      { label: 'Open', value: 'No front-page entry right now -- the canvas front page is the agent’s review surface; a session already on the sketchpad keeps it' },
+      { label: 'Switch back', value: 'Agent Canvas (bottom-right), or Canvas again to close the pane' },
+      { label: 'New drawing', value: 'Left rail → + (rename with ✎, delete with ×)' },
     ],
     proTip:
-      'Sketch the architecture of what you want to build, then ask Claude to look at the drawing in Excalidraw -- it will fetch the canvas via the vision MCP and reason about it directly.',
+      'Sketch the architecture of what you want to build, hit Copy in the sketchpad toolbar, and paste the image straight into the prompt -- Claude reads the drawing directly. (Sketching ON an agent-rendered page is the Agent Canvas: those sketches travel back with canvas_review.)',
     bullets: [
       '**Per-session whiteboard** for diagrams, planning, or quick sketches',
       'Drawings **persist** with the session config across restarts',
@@ -256,24 +361,22 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Run Claude and a regular shell side-by-side in the same session. Useful when you want to watch logs, run quick git commands, or babysit a long-running build without spawning a second session.',
     highlights: [
-      'Configure a partner terminal path (cmd, pwsh, bash) per saved config',
-      'Both shells share the same working directory at spawn',
+      'Every session has a partner terminal — no setup, any config type',
+      'Opens in the working directory locally, at home over SSH',
       'Quick command buttons can target Claude or partner explicitly',
       'Resize the split bar to favour whichever pane is active',
-      'Optional elevated partner -- runs as admin via gsudo on Windows',
     ],
     howToTrigger: [
-      { label: 'Configure', value: 'Edit Config → Partner terminal path' },
+      { label: 'Toggle', value: 'Partner button in the command bar' },
       { label: 'Quick commands', value: 'Custom command → Target = Partner' },
       { label: 'Resize', value: 'Drag the vertical bar between panes' },
     ],
     proTip:
-      'Set partner = pwsh.exe on Windows or bash on macOS so you have a familiar shell ready for quick sanity checks while Claude does the heavy lifting in the other pane.',
+      'Keep a test watcher or dev server running in the partner pane for quick sanity checks while Claude does the heavy lifting in the other pane.',
     bullets: [
       '**Side-by-side** Claude + regular shell in the same session',
-      'Configure a **partner terminal** path in the session config',
+      'Always available — **no per-config setup**',
       '**Quick commands** can target either pane (Claude or Partner)',
-      'Optional **elevated partner** for admin tasks (Windows: gsudo)',
     ],
     screenshotFilename: 'step-combined.jpg',
   },
@@ -317,13 +420,12 @@ export const trainingSteps: TrainingStep[] = [
       '**KPI row** -- total spend, tokens, sessions, and daily burn at the top',
       '**Charts** for daily spend and a per-model breakdown',
       '**Sessions table** with cost, model, and config attribution per session',
-      '**Filters** -- slice by date, model, account, or project',
+      '**Filters** -- config, date range (7d / 30d / all), and a free-text search over model and project',
       'Pricing from BerriAI`s LiteLLM (cached 24h); a green nav badge shows when the index is fresh',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  $  in the sidebar nav' },
       { label: 'Filter', value: 'Header → date / model / account / project' },
-      { label: 'Reindex', value: 'Header → Reindex (rebuilds from transcripts)' },
     ],
     proTip:
       'Filter by account to see which login is burning the budget, or by model to compare Opus vs Sonnet vs Haiku spend across the same projects. Life-to-date may read lower than the old page -- the rebuild dedups and prices at current rates.',
@@ -347,11 +449,11 @@ export const trainingSteps: TrainingStep[] = [
       '**Activity chart** + **type donut** for the whole store',
       '**Ranked projects** with staleness dots, index warnings, and live-session chips',
       'Drilldown: sortable memory table + sessions rail (live sessions jump to the terminal; recent sessions deep-link into Logs)',
-      '**Reading drawer** to read a memory, write missing frontmatter, or delete it; full-text search across everything',
+      '**Reading drawer** to read a memory, write missing frontmatter, or delete it; search covers memory names, projects and descriptions',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click the Memory icon in the sidebar nav' },
-      { label: 'Search', value: 'Header → search input or  Ctrl+F' },
+      { label: 'Search', value: 'Header → search input' },
       { label: 'Read / delete', value: 'Click a memory → reading drawer' },
     ],
     proTip:
@@ -380,7 +482,7 @@ export const trainingSteps: TrainingStep[] = [
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  ✨  in the sidebar nav' },
-      { label: 'Generate', value: 'Insights page → Run Insights Now' },
+      { label: 'Generate', value: 'Insights header → New run' },
       { label: 'History', value: 'Switch between past reports from the header dropdown' },
     ],
     proTip:
@@ -399,7 +501,7 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.30',
     section: 'admin',
     summary:
-      "Logs is a chat-transcript viewer. CCC indexes Claude's own conversation transcripts (which live in ~/.claude/projects) and renders them back as a readable chat -- messages, tool calls, and thinking -- with a timeline rail for fast scrubbing and full-text search across everything.",
+      "Logs is a chat-transcript viewer. The Conductor indexes Claude's own conversation transcripts (which live in ~/.claude/projects) and renders them back as a readable chat -- messages, tool calls, and thinking -- with a timeline rail for fast scrubbing and full-text search across everything.",
     highlights: [
       'Browse conversations as a chat, grouped by config (filter by account)',
       'A timeline rail beside the transcript scrubs the whole conversation; click to jump',
@@ -410,7 +512,7 @@ export const trainingSteps: TrainingStep[] = [
     howToTrigger: [
       { label: 'Open', value: 'Click the Logs icon in the sidebar nav' },
       { label: 'Search', value: 'Header search box (full-text across all conversations)' },
-      { label: 'Per-session', value: 'Open the Conversation tab on a running session' },
+      { label: 'Per-session', value: 'Click Logs in the session command bar' },
     ],
     proTip:
       "Reading back a long session? Use the timeline rail to jump straight to a tool call or a clear divider -- and search jumps you to the exact turn without scrolling.",
@@ -439,7 +541,7 @@ export const trainingSteps: TrainingStep[] = [
     howToTrigger: [
       { label: 'Open', value: 'Click  ⚙  in the sidebar nav' },
       { label: 'Replay tour', value: 'About → Replay Training' },
-      { label: 'What\'s new', value: 'About → View What\'s New' },
+      { label: 'What\'s new', value: 'About → View full changelog' },
     ],
     proTip:
       'Settings is also where you pick Stable or Beta updates, rebind every shortcut, choose which statusline metrics show, and toggle local log indexing -- all without leaving the app.',
@@ -453,30 +555,30 @@ export const trainingSteps: TrainingStep[] = [
   },
   {
     id: 'sentinel',
-    title: 'CCC Sentinel',
+    title: 'Sentinel',
     sinceVersion: '1.5.37',
     section: 'admin',
     summary:
-      'An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect CCC. It surfaces findings in a labelled "Sentinel" chip and a panel, proposes registry fixes you apply yourself, and never changes anything automatically.',
+      'An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect the app. It surfaces findings in a labelled "Sentinel" chip and a panel, proposes registry fixes you apply yourself, and never changes anything automatically.',
     highlights: [
       'Runs on startup when Claude Code\'s version changes; **fail-open** so it never blocks the app',
-      'Checks the CC changelog against CCC\'s compatibility assumptions',
+      'Checks the CC changelog against the app\'s compatibility assumptions',
       'Proposes **model and effort registry** fixes you **Apply** (or Dismiss) -- never automatic',
       'A hot-reloadable registry means unknown or brand-new models still get a colour, label, and pricing',
-      'Opt-in -- turn it on or off in **Settings → CCC Sentinel**',
+      'Opt-in -- turn it on or off in **Settings → General → Sentinel**',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click the Sentinel chip in the title bar' },
-      { label: 'Enable', value: 'Settings → CCC Sentinel → Enable' },
+      { label: 'Enable', value: 'Settings → Sentinel → Enable' },
       { label: 'Apply a fix', value: 'Sentinel panel → Apply on a proposal' },
     ],
     proTip:
       'When a finding offers an Apply button it is a safe registry change you can take in one click; everything else is a compatibility report so you know what to watch after a Claude Code update.',
     bullets: [
-      'Opt-in watcher that flags when a **Claude Code update** might affect CCC',
+      'Opt-in watcher that flags when a **Claude Code update** might affect the app',
       'Findings show in a labelled **Sentinel chip** and a panel',
       'Proposes **registry fixes you apply yourself** -- nothing changes automatically',
-      'Toggle it in **Settings → CCC Sentinel**',
+      'Toggle it in **Settings → Sentinel**',
     ],
     // No dedicated Sentinel capture exists yet; the Settings shot shows where
     // it is enabled. (Future capture: step-sentinel.jpg / the Sentinel panel.)
@@ -488,17 +590,17 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.0.0',
     section: 'tips',
     summary:
-      'Power moves you\'ll start using on day two. The status bar in the bottom toolbar pulses contextual tips as you discover features, so most of these surface naturally as you work.',
+      'Power moves you\'ll start using on day two. A tip pill in the session header pulses contextual tips as you discover features, so most of these surface naturally as you work.',
     highlights: [
       'Ctrl+Tab / Ctrl+Shift+Tab -- cycle between sessions',
       'Ctrl+1–9 -- jump directly to session N',
       'Alt+V -- paste image-from-clipboard as a file path into Claude\'s prompt',
-      'Esc -- close webview pane / dismiss tour / cancel context menu',
+      'Esc -- close browser pane / dismiss tour / cancel context menu',
       'Status bar -- live tokens, cost, rate limits',
     ],
     howToTrigger: [
       { label: 'Rebind', value: 'Settings → Shortcuts' },
-      { label: 'Tip pulse', value: 'Bottom toolbar → 💡' },
+      { label: 'Tip pulse', value: 'Session header → 💡' },
     ],
     proTip:
       'Hover the bottom-toolbar lightbulb to see the catalogue of tips you haven\'t triggered yet -- useful for finding features you didn\'t know existed.',
@@ -530,12 +632,12 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Disable globally', value: 'Settings → General → Security → Disable Claude Code dynamic workflows' },
     ],
     proTip:
-      'Workflows can burn 1000-agent tokens fast. CCC\'s tokenomics still tracks the spend per session so you can see exactly what a run cost.',
+      'Workflows can burn 1000-agent tokens fast. The Conductor\'s tokenomics still tracks the spend per session so you can see exactly what a run cost.',
     bullets: [
       '**Background orchestration** -- subagents run in parallel while your session stays free',
       '**/effort ultracode** in Claude enables it automatically for every task',
       '**/deep-research** is the bundled example; **/workflows** lists active runs',
-      'CCC: **Disable Claude Code dynamic workflows** in Settings -> Security if you want it off',
+      'Conductor: **Disable Claude Code dynamic workflows** in Settings -> Security if you want it off',
     ],
     screenshotFilename: 'step-dynamic-workflows.jpg',
   },
@@ -545,13 +647,13 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.0.0',
     section: 'integrations',
     summary:
-      'A unified usage meter for your AI spend. A compact chip in the repo strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows side by side. It turns a warning colour the moment GitHub bills you past your included credits.',
+      'A unified usage meter for your AI spend. A compact chip on the session status strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows side by side. It turns a warning colour the moment GitHub bills you past your included credits.',
     highlights: [
       'A compact chip in the **repo strip** shows credits used (and your cap, when set) without opening anything',
       'When GitHub bills past your included credits the chip shifts to a **warning** and shows the billed amount (for example +$11.69)',
       'Click the chip for a **popover** with per-model GitHub rows, covered and billed totals, plus Claude and Codex 5h / 7d windows',
       'Read-only and best-effort -- it never changes anything, and it fails quietly when a token lacks billing scope',
-      'Set your **included-credit cap** in Settings, GitHub so the chip can show a used-of-cap ratio',
+      'Set your **included-credit cap** in Settings, Status Line so the chip can show a used-of-cap ratio',
     ],
     howToTrigger: [
       { label: 'Enable', value: 'Settings -> GitHub -> AI usage meter' },
@@ -588,7 +690,7 @@ export const trainingSteps: TrainingStep[] = [
     howToTrigger: [
       { label: 'Sign in', value: 'Settings → GitHub → OAuth or PAT' },
       { label: 'Adopt gh CLI', value: 'Settings → GitHub → "Use existing gh auth"' },
-      { label: 'Toggle', value: 'Per-session enable in Edit Config' },
+      { label: 'Toggle', value: 'GitHub button on the session → Configure GitHub for this session' },
     ],
     proTip:
       'OAuth is fastest if you already have GitHub in a browser -- one click. PAT is the move for headless / CI machines where there\'s no browser to do the redirect dance.',

@@ -26,11 +26,6 @@ vi.mock('../../../src/renderer/stores/configStore', () => ({
     }),
 }))
 
-vi.mock('../../../src/renderer/stores/agentLibraryStore', () => ({
-  useAgentLibraryStore: (sel: any) => sel({ templates: [] }),
-  BUILTIN_TEMPLATES: [],
-}))
-
 if (typeof window !== 'undefined') {
   ;(window as any).electronAPI = {
     debug: { isEnabled: vi.fn().mockResolvedValue(false) },
@@ -146,7 +141,9 @@ describe('SessionDialog indexing toggle', () => {
     act(() => {
       root.render(
         React.createElement(SessionDialog, {
-          initial: { provider: 'claude', label: 'test' },
+          // workingDirectory required since the validation slot landed — an
+          // empty directory blocks submit (the '.' fallback is gone).
+          initial: { provider: 'claude', label: 'test', workingDirectory: 'C:\\proj' },
           onConfirm,
           onCancel: vi.fn(),
         }),
@@ -177,7 +174,7 @@ describe('SessionDialog indexing toggle', () => {
     act(() => {
       root.render(
         React.createElement(SessionDialog, {
-          initial: { provider: 'claude', label: 'test' },
+          initial: { provider: 'claude', label: 'test', workingDirectory: 'C:\\proj' },
           onConfirm,
           onCancel: vi.fn(),
         }),
@@ -226,5 +223,47 @@ describe('SessionDialog indexing toggle', () => {
     })
     const cb = findCheckboxByLabel(container, 'Index conversation logs')
     expect(cb).toBeNull()
+  })
+})
+
+describe('SessionDialog edit-while-running note (relaunch revision 2026-08-24)', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(() => {
+    act(() => { root.unmount() })
+    container.remove()
+  })
+
+  const initial: any = { id: 'c1', label: 'App Dev', workingDirectory: '/x', color: '', sessionType: 'local', provider: 'claude' }
+
+  it('shows when the edited config has live sessions, naming BOTH restart hazards', () => {
+    act(() => {
+      root.render(React.createElement(SessionDialog, { onConfirm: () => {}, onCancel: () => {}, initial, liveSessionCount: 2 } as any))
+    })
+    const note = container.querySelector('[data-testid="edit-while-running-note"]')!
+    expect(note).toBeTruthy()
+    expect(note.textContent).toContain('2 sessions')
+    expect(note.textContent).toMatch(/from now on/)
+    expect(note.textContent).toMatch(/SSH session .* will be refused/)
+    // The silent half of the hazard must be named too (review follow-up B).
+    expect(note.textContent).toMatch(/without its secret argument/)
+  })
+
+  it('absent with no live sessions, and absent on the create dialog regardless', () => {
+    act(() => {
+      root.render(React.createElement(SessionDialog, { onConfirm: () => {}, onCancel: () => {}, initial, liveSessionCount: 0 } as any))
+    })
+    expect(container.querySelector('[data-testid="edit-while-running-note"]')).toBeNull()
+    act(() => {
+      root.render(React.createElement(SessionDialog, { onConfirm: () => {}, onCancel: () => {}, liveSessionCount: 3 } as any))
+    })
+    expect(container.querySelector('[data-testid="edit-while-running-note"]')).toBeNull()
   })
 })

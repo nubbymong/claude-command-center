@@ -34,11 +34,38 @@ export interface ServiceLogEntry {
   message: string
 }
 
+/** Per-session watchdog monitor state surfaced to the services view (#235). */
+export interface WatchdogSessionMonitor {
+  sessionId: string
+  status: string
+  gaveUp: boolean
+  waitUntil: number | null
+  /** True when no PTY output has arrived for the silence window. */
+  silent: boolean
+  /** ms since the last PTY chunk for this session. */
+  idleMs: number
+  /** True when the session's pane advertises active monitors in its mode
+   *  footer ("… · 2 monitors · …"). A monitor session is quiet between
+   *  triggers BY DESIGN, so the sleep indicator skips it (RC8). Computed only
+   *  for silent sessions — the only ones the moon consults. */
+  hasMonitors?: boolean
+}
+
+/** Snapshot of the whole watchdog subsystem for the services view (#235). */
+export interface WatchdogMonitorSnapshot {
+  activeSessions: number
+  waitingSessions: number
+  silentSessions: number
+  throttle: { stallsLastMin: number; tickMs: number }
+  sessions: WatchdogSessionMonitor[]
+}
+
 export interface DiagnosticsSnapshot {
   capturedAt: number
   services: ServiceHealth[]
   log: ServiceLogEntry[]
   pty?: PtyIntegritySnapshot
+  watchdog?: WatchdogMonitorSnapshot
 }
 
 export interface PtyIntegrityEvent {

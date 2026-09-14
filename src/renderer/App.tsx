@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
@@ -7,14 +7,18 @@ import TerminalView, { killSessionPty } from './components/TerminalView'
 import CommandBar from './components/CommandBar'
 import SessionStatusStrip from './components/SessionStatusStrip'
 import WebviewPane from './components/WebviewPane'
-import ExcalidrawPane from './components/ExcalidrawPane'
+import AgentCanvasPane from './components/AgentCanvasPane'
 import LogsPane from './components/LogsPane'
+import { PaneFade } from './components/PaneFade'
 import { useWebviewStore } from './stores/webviewStore'
+import { usePaneOcclusionStore } from './stores/paneOcclusionStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
+import { setupCanvasListener } from './stores/canvasStore'
+import { setupCanvasReviewListener } from './stores/canvasReviewStore'
+import { setupCanvasSnapshotHost } from './canvas/canvas-snapshot-host'
 import { useLogsStore } from './stores/useLogsStore'
 import BottomBar from './components/BottomBar'
 import UsageDashboard from './components/UsageDashboard'
-import ProjectBrowser from './components/ProjectBrowser'
 import SettingsPage, { SETTINGS_TAB_IDS, type SettingsTab } from './components/SettingsPage'
 import GlobalLogsView from './components/GlobalLogsView'
 import InsightsPage from './components/InsightsPage'
@@ -23,7 +27,7 @@ import TokenomicsPage from './components/TokenomicsPage'
 import ConductorMcpPage from './components/ConductorMcpPage'
 import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
-import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
+import { shouldShowWhatsNew } from './onboarding/whats-new-gate'
 import AccountLaunchGate from './components/AccountLaunchGate'
 import NewAccountPrompt from './components/NewAccountPrompt'
 import SentinelPanel from './components/sentinel/SentinelPanel'
@@ -31,21 +35,33 @@ import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
-import HelpPanel from './components/HelpPanel'
+import FeatureGuidePage from './components/FeatureGuidePage'
 import AccountUsagePanel from './components/AccountUsagePanel'
-import TipModal from './components/TipModal'
-import { useTipsStore, trackUsage } from './stores/tipsStore'
+import TipCard from './components/TipCard'
+import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
+import SshCloseDialog from './components/SshCloseDialog'
+import SshReattachGoneNotice from './components/SshReattachGoneNotice'
+import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
+import { probeGoneSessions } from './stores/livenessStore'
+import { pingAllDetachedHosts } from './stores/hostReachability'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, DIALOG_INPUT_CLASS, DIALOG_INPUT_STYLE } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
+import { configsToEnableMultiSpawn } from './utils/multiSpawn'
+import { MultiSpawnStartupPage } from './components/MultiSpawnStartupPage'
+import { decideMultiSpawnIntro, markMultiSpawnIntroSeen } from './onboarding/multi-spawn-intro-gate'
+import { useCommandBarStore } from './stores/commandBarStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
+import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
-import { deriveOnboarding, shouldReonboardForBeta } from './onboarding/gate'
+import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
+import { bootWhatsNewSurface, lastRunVersionOf } from './onboarding/upgrade-flow'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -57,13 +73,15 @@ import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { flushPendingConfigSaves } from './utils/config-saver'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
-import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
+import { gatherLocalStorageData, clearMigratedLocalStorage, hydrateStores, applyConfigColourMigration, retireAskConfig, readFailureLockReason } from './utils/configHydration'
 import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupInsightsListener } from './stores/insightsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
+import { setupSleepListeners } from './stores/sleepStore'
+import { setupActiveListeners } from './stores/activeStore'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
 import { pickBootGate } from './utils/bootGates'
@@ -73,10 +91,11 @@ import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
-import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
-import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
-import { useSessionAutosave } from './hooks/useSessionAutosave'
+import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose } from './session-persistence'
+import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
+import { useAccountGateStore } from './stores/accountGateStore'
+import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -91,19 +110,40 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [viewRaw, setViewRaw] = useState<ViewType>('sessions')
   const view = viewRaw
+  // The native panes (browser, claude.ai account) are painted by main above all
+  // HTML, so they have to be TOLD when a page tab is on top of the session
+  // area; this is the one publication of the active tab they read. A LAYOUT
+  // effect, so the store update is flushed before the browser paints the new
+  // tab -- a passive effect would let one frame show the pane over the page.
+  useLayoutEffect(() => { usePaneOcclusionStore.getState().setActiveView(view) }, [view])
+  // Pages (Tokenomics, Logs, Feature Guide, …) open as TABS in the main strip
+  // alongside sessions, in open order, and persist until closed. `view` is the
+  // active tab: 'sessions' means a session tab is active, any other value means
+  // that page tab is active. Opening a page adds it here if not already open.
+  const [openPageTabs, setOpenPageTabs] = useState<ViewType[]>([])
   const setView = (v: ViewType) => {
     setViewRaw(v)
-    // Track view usage for the tips system
-    const map: Record<string, string> = {
-      'memory': 'memory.memory-page',
-      'tokenomics': 'tokenomics.dashboard',
-      'vision': 'vision.toggle-vision',
-      'insights': 'advanced.insights',
-      'logs': 'advanced.log-viewer',
-      'cloud-agents': 'agents.cloud-agent-dispatch',
-    }
-    const featureId = map[v]
+    if (v !== 'sessions') setOpenPageTabs((prev) => (prev.includes(v) ? prev : [...prev, v]))
+    // Track view usage for the tips system. The map lives in the tips store
+    // beside the prune that has to know which ids are still live -- a copy here
+    // would drift, and a drifted id gets its usage row deleted on next launch.
+    const featureId = VIEW_FEATURE_IDS[v]
     if (featureId) trackUsage(featureId)
+  }
+  // Close a page tab. If it was the active tab, fall back to the last remaining
+  // page tab, else the sessions view.
+  const closePageTab = (v: ViewType) => {
+    setOpenPageTabs((prev) => prev.filter((x) => x !== v))
+    setViewRaw((cur) => {
+      if (cur !== v) return cur
+      const remaining = openPageTabs.filter((x) => x !== v)
+      return remaining.length ? remaining[remaining.length - 1] : 'sessions'
+    })
+  }
+  // Activate a session tab: switch the pane back to sessions and select it.
+  const activateSessionTab = (id: string) => {
+    useSessionStore.getState().setActiveSession(id)
+    setViewRaw('sessions')
   }
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
   const [configLoaded, setConfigLoaded] = useState(false)
@@ -114,7 +154,20 @@ export default function App() {
   const [isClosing, setIsClosing] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
   const [closeDialog, setCloseDialog] = useState<'close' | 'update' | null>(null)
-  const [showWhatsNew, setShowWhatsNew] = useState(false)
+  /** Run the harness purely to deliver release notes: the user has already
+   *  completed the flow, but has not seen the notes for the build now running.
+   *  Armed once in postConfigInit, cleared when the harness completes. */
+  const [whatsNewOnly, setWhatsNewOnly] = useState(false)
+  /** The Allow Multi Spawn startup page is due this launch. Decided ONCE in
+   *  postConfigInit from meta read before anything stamps — by the time the
+   *  release-notes harness has closed, a first install is indistinguishable
+   *  from an upgrade. Cleared by either of the page's buttons. */
+  const [multiSpawnIntroDue, setMultiSpawnIntroDue] = useState(false)
+  /** Config ids the grandfathering migration turned on THIS START — the rows
+   *  the startup page marks "auto · N copies found". Accumulated because the
+   *  page mounts after the migration has already written `true`, at which point
+   *  a stored `true` no longer says who set it. */
+  const [multiSpawnAutoEnabled, setMultiSpawnAutoEnabled] = useState<string[]>([])
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
@@ -164,16 +217,37 @@ export default function App() {
     return () => window.removeEventListener('app:openSettings', onOpenSettings)
   }, [])
 
+  // Settings → Accounts "Internal browser pane" sign-in (#439): bring the
+  // sessions view forward and open the target session's pane on its account
+  // surface. The dispatcher (AccountWebSession) has already validated that the
+  // session exists and belongs to this flow; a stale id is simply a no-op.
+  useEffect(() => {
+    const onOpenAccountPane = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { sessionId?: string; profileId?: string } | undefined
+      if (!detail?.sessionId || !detail?.profileId) return
+      const store = useSessionStore.getState()
+      if (!store.sessions.some((s) => s.id === detail.sessionId)) return
+      store.setActiveSession(detail.sessionId)
+      setView('sessions')
+      useWebviewStore.getState().openAccountPane(detail.sessionId, detail.profileId)
+    }
+    window.addEventListener('app:openAccountPane', onOpenAccountPane)
+    return () => window.removeEventListener('app:openAccountPane', onOpenAccountPane)
+  }, [])
+
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   // Live-app guided tour that follows the onboarding finish step (or the
   // Feature Guide button). Anchored coach-marks over the real UI, ending by
   // opening the first-config dialog.
   const [tourActive, setTourActive] = useState(false)
-  // One home for help (searchable guide + feature tour + Ask Claude); opened
-  // by the sidebar ? button.
-  const [showHelpPanel, setShowHelpPanel] = useState(false)
-  const [showTipModal, setShowTipModal] = useState(false)
+  // The Feature Guide is a page tab (ViewType 'help'), opened from the sidebar ?
+  // button — it opens in the main tab strip like any other page, no longer a
+  // portal modal that covered whatever page was open.
+  const [showTipCard, setShowTipCard] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
+  // Sessions whose partner terminal has been opened at least once — gates the
+  // lazy mount of the partner TerminalView (see togglePartner).
+  const [partnerEverActivated, setPartnerEverActivated] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
   // Saved sessions awaiting the user's Resume / Don't-open choice (startup gate —
@@ -213,6 +287,17 @@ export default function App() {
   const logsBySession = useLogsStore((s) => s.bySessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
+  // ADR-009 (Lens C, R7; round 3 Codex finding 4): the saved-state recovery is
+  // "unsettled" -- a zero-session close must LEAVE the saved file -- whenever the
+  // live set is transiently empty for a reason that is not the user's decision.
+  // Two windows: (a) initial startup, from mount until loadSavedStateAtStartup
+  // positively resolves (INCLUDING its failure path) -- a close before the load +
+  // registry hydration completes would otherwise clear both attached and
+  // detached recovery with an empty store; (b) from a Resume click until the
+  // restore actually lands (the click clears pendingRestore synchronously, but
+  // restoreSessions runs async and can throw). Initialised TRUE for (a); cleared
+  // once startup resolves without error; re-armed by onResume for (b).
+  const restoreUnsettledRef = useRef(true)
 
   // Push focus changes to main so the sync orchestrator can shift the
   // active session to the fast interval and the background ones to the
@@ -233,7 +318,7 @@ export default function App() {
   }, [sessions])
 
   // Global keyboard shortcuts
-  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
+  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView, view, openPageTabs, closePageTab)
   // Stamp data-theme on <html> from the persisted setting + listen for
   // OS prefers-color-scheme changes when in 'system' mode.
   useThemeController()
@@ -282,6 +367,18 @@ export default function App() {
     })
   }, [])
 
+  // The agent pushed a page to the USER's in-app browser (the
+  // open_in_app_browser MCP tool). Subscribed at the app root and never
+  // unmounted — like the Esc hook — so the notification pill is raised for ANY
+  // session, whether or not that session's tab/pane is currently mounted. The
+  // store records it as pending + unread; it deliberately does NOT navigate, so
+  // a page the user is actively viewing is never yanked out from under them.
+  useEffect(() => {
+    return window.electronAPI.webview.onAgentPush(({ sessionId, url }) => {
+      useWebviewStore.getState().pushAgentUrl(sessionId, url)
+    })
+  }, [])
+
   // Subscribe to main-process notification that a /login produced a previously
   // unseen account. The prompt lets the user name + save it as a profile.
   useEffect(() => {
@@ -296,6 +393,13 @@ export default function App() {
       else next.add(sessionId)
       return next
     })
+    // Record first activation so the partner PTY mounts LAZILY. The partner
+    // terminal is available for every session (2 Aug decision), but eagerly
+    // mounting its TerminalView spawned a second PTY per session at creation —
+    // 2N PTYs whether or not the pane was ever opened (adversarial review,
+    // #188). Mount on first toggle instead, and keep it mounted afterwards so
+    // toggling back and forth costs nothing.
+    setPartnerEverActivated(prev => prev.has(sessionId) ? prev : new Set(prev).add(sessionId))
   }
 
   // Load config and hydrate stores after setup is complete
@@ -313,24 +417,54 @@ export default function App() {
       console.log('[App] Loading config from CONFIG/...')
       const result = await window.electronAPI.config.loadAll()
 
+      // A read that failed WITHOUT rejecting: the CONFIG dir was unreachable
+      // (`readFailed`), or one or more files exist but could not be read or
+      // parsed (`failedKeys`). Either used to look like "absent" and let the
+      // migrations and the stores write defaults over files that were fine.
+      // Same latch as the catch below, BEFORE anything runs that writes; the
+      // notice offers "start fresh anyway". (ADR-009 pass, beta.16.)
+      const readFailure = readFailureLockReason(result)
+      if (readFailure) {
+        console.error('[App] Config read failed without rejecting:', readFailure)
+        useConfigWriteLockStore.getState().lock(readFailure)
+      }
+
+      // Both one-time config migrations run BEFORE the stores hydrate, so a
+      // retired record never renders even once.
+      const prepare = async (data: Record<string, unknown>) =>
+        retireAskConfig(await applyConfigColourMigration(data))
+
       if (result.needsMigration) {
         console.log('[App] CONFIG/ is empty, migrating from localStorage...')
         const lsData = gatherLocalStorageData()
         if (Object.keys(lsData).length > 0) {
-          await window.electronAPI.config.migrateFromLocalStorage(lsData)
+          const migrated = await window.electronAPI.config.migrateFromLocalStorage(lsData)
+          // One-way: once the snapshot is in CONFIG/ it must not be re-applied
+          // by a later launch that thinks CONFIG/ is empty.
+          if (migrated) clearMigratedLocalStorage()
           console.log('[App] Migration complete, reloading...')
           const reloaded = await window.electronAPI.config.loadAll()
-          hydrateStores(await applyConfigColourMigration(reloaded.data))
+          hydrateStores(await prepare(reloaded.data))
         } else {
-          hydrateStores(await applyConfigColourMigration(result.data))
+          hydrateStores(await prepare(result.data))
         }
       } else {
-        hydrateStores(await applyConfigColourMigration(result.data))
+        hydrateStores(await prepare(result.data))
       }
 
       setConfigLoaded(true)
     } catch (err) {
       console.error('[App] Failed to load config:', err)
+      // Hydrating from `{}` is how the window comes up at all, and it is also
+      // how the user's config used to be destroyed: the stores end up holding
+      // empty defaults, and the first ordinary action persists that over files
+      // that were never the problem. The READ failed; the data is still there.
+      // Latch writes off BEFORE hydrating -- hydrateStores itself writes -- and
+      // let the notice offer "start fresh anyway" to anyone who would rather
+      // have a working app than the config they cannot load.
+      useConfigWriteLockStore.getState().lock(
+        'the app could not read your configuration this launch',
+      )
       hydrateStores({})
       setConfigLoaded(true)
     }
@@ -354,6 +488,40 @@ export default function App() {
     return () => { cancelled = true }
   }, [configLoaded, logsWipeBytes])
 
+  // ── Allow Multi Spawn grandfathering (phase 4) ───────────────────────────
+  // Configs created before Allow Multi Spawn existed had no such limit, and
+  // some of them are legitimately running several copies right now. Turning the
+  // one-at-a-time rule on for them would suddenly refuse a launch they have
+  // always been allowed — so any config that DEMONSTRABLY runs more than one
+  // copy (live sessions + detached remotes that would reattach to it) gets the
+  // setting turned on, once, and persisted with the config.
+  //
+  // ENABLE-ONLY and idempotent, so it needs no one-shot flag: it runs on every
+  // start (and again whenever the session set or the registry moves, which is
+  // when the answer could change), and finds nothing to do the moment every
+  // multi-copy config is marked. `updateConfig` writes through to disk, so the
+  // re-render this triggers sees the flag already set and stops.
+  //
+  // It only ever touches a config whose setting is UNDEFINED (phase 4.1). A
+  // config the user explicitly turned OFF stores `false`, and running this on
+  // every start would otherwise revert that decision each launch for as long as
+  // two copies happened to be live.
+  const detachedRemoteEntries = useDetachedRemotesStore((s) => s.entries)
+  useEffect(() => {
+    if (!configLoaded) return
+    const ids = configsToEnableMultiSpawn(configs, sessions, detachedRemoteEntries)
+    if (ids.length === 0) return
+    const { updateConfig } = useConfigStore.getState()
+    for (const id of ids) updateConfig(id, { allowMultiSpawn: true })
+    // Remembered for the startup page (phase 5), which shows these rows a
+    // "auto · N copies found" chip. Appended only when something new appears —
+    // the write above flips the same configs to `true`, so the next pass
+    // returns nothing and this settles immediately.
+    setMultiSpawnAutoEnabled((prev) =>
+      ids.every((id) => prev.includes(id)) ? prev : [...new Set([...prev, ...ids])],
+    )
+  }, [configLoaded, configs, sessions, detachedRemoteEntries])
+
   // Post-config-load initialization
   useEffect(() => {
     if (!configLoaded || hasRestoredRef.current) return
@@ -362,14 +530,63 @@ export default function App() {
     async function postConfigInit() {
       const appMeta = useAppMetaStore.getState().meta
 
-      // Beta line: re-fire the first-run tour on every app version so testers see
-      // the latest flow. Clearing completedSteps + onboardingCompletedVersion
-      // flips deriveOnboarding back to due (the harness re-runs); its finish step
-      // re-stamps onboardingAppVersion so it won't re-fire until the next version.
-      // First install runs via deriveOnboarding already; stable retriggers only on
-      // an ONBOARDING_VERSION bump (a major feature).
-      if (shouldReonboardForBeta(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)) {
+      // Re-fire the first-run tour when the VERSION warrants it: an
+      // ONBOARDING_VERSION bump, or a crossed release line (2.0.x → 2.1.x) on
+      // any channel — see shouldReonboardForVersion; a beta bump alone no
+      // longer does (2026-08-21). Clearing completedSteps +
+      // onboardingCompletedVersion flips deriveOnboarding back to due (the
+      // harness re-runs); its finish step re-stamps onboardingAppVersion so it
+      // will not re-fire until the next one that qualifies. A first install
+      // runs through deriveOnboarding already.
+      const reonboard = shouldReonboardForVersion(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)
+      if (reonboard) {
         useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
+      }
+
+      // Release notes. ONE surface — the full-screen harness — for both the
+      // cohort that is walking the flow anyway and the far commoner one that
+      // has already finished it and only needs the notes. The second case used
+      // to fall to a wall-of-text modal, and did so on every build whose
+      // changelog head sat ahead of its own version (see whats-new-gate.ts).
+      //
+      // Read BEFORE the harness can stamp anything.
+      const alreadyRunning = reonboard || deriveOnboarding(useAppMetaStore.getState().meta, {}).due
+      const surface = bootWhatsNewSurface({
+        tourWillRun: alreadyRunning,
+        whatsNewDue: shouldShowWhatsNew(),
+      })
+      // Only arm the notes-only mode when the harness is not already coming up
+      // for its own reasons; there, whatsNewV2 is simply its first page.
+      if (surface === 'tour' && !alreadyRunning) setWhatsNewOnly(true)
+
+      // Allow Multi Spawn's post-install page (phase 5). Decided from the SAME
+      // pre-stamp `appMeta` snapshot the release-notes decision above used, and
+      // for the same reason: the harness stamps `lastSeenVersion` when it
+      // closes, so a first install read after that is indistinguishable from an
+      // upgrade. Its own marker (`multiSpawnIntroVersion`) is separate — the two
+      // surfaces are dismissed independently, one after the other.
+      //
+      // The gate only ARMS it; `pickBootGate` holds it behind the release notes
+      // and the resume prompt (bootGates: it is last in the chain).
+      const introDecision = decideMultiSpawnIntro({
+        lastSeenVersion: appMeta.lastSeenVersion,
+        lastRunVersion: lastRunVersionOf(appMeta),
+        multiSpawnIntroVersion: appMeta.multiSpawnIntroVersion,
+        currentVersion: __APP_VERSION__,
+        configCount: useConfigStore.getState().configs.length,
+        channel: useSettingsStore.getState().settings.updateChannel,
+      })
+      if (introDecision.markSeen) markMultiSpawnIntroSeen()
+      if (introDecision.show) setMultiSpawnIntroDue(true)
+
+      // Record that THIS build ran — AFTER the decision above has read the
+      // previous value, which is the whole point of it. It is the witness
+      // against a lastSeenVersion that no build of that version ever wrote
+      // (#369): a stamp newer than the last build that ran does not count as
+      // seen. Unconditional, unlike setupVersion below, which waits on config
+      // or the CLI and is only the fallback witness for metas older than this.
+      if (appMeta.lastRunVersion !== __APP_VERSION__) {
+        useAppMetaStore.getState().update({ lastRunVersion: __APP_VERSION__ })
       }
 
       if (appMeta.setupVersion !== __APP_VERSION__) {
@@ -391,10 +608,23 @@ export default function App() {
       // ResumeSessionsPrompt lets the user decline ("Don't open") instead of
       // being forced to resume every boot.
       try {
-        const savedState = await window.electronAPI.session.load() as SessionState | null
-        if (savedState && savedState.sessions.length > 0) setPendingRestore(savedState)
+        // rc.15 review R7 (aicc_planning#53): the left-running registry is
+        // hydrated for BOTH startup shapes, before the restore prompt is decided
+        // (rc.14 review F9 did it only for the no-cards shape).
+        const savedState = await loadSavedStateAtStartup({
+          load: () => window.electronAPI.session.load() as Promise<SessionState | null>,
+          pingHosts: () => { void pingAllDetachedHosts() },
+          reconcile: () => useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id)),
+        })
+        if (savedState) setPendingRestore(savedState)
+        // R7 (Codex finding 4): startup load + registry hydration completed. From
+        // here a zero-session close is a real decision (the prompt, if any, is up
+        // and covered by pendingRestore); the transient-empty window is over.
+        restoreUnsettledRef.current = false
       } catch (err) {
         console.error('[App] Failed to load saved sessions:', err)
+        // Leave restoreUnsettledRef TRUE: the load failed, so the on-disk recovery
+        // state is unknown and a zero-session close must not clear it.
       }
 
       // Start cloud agent IPC listener early so status updates are
@@ -404,6 +634,11 @@ export default function App() {
       setupConductorMcpListener()
       setupGitHubListener()
       setupChannelListeners()
+      setupSleepListeners()
+      setupActiveListeners()
+      setupCanvasListener()
+      setupCanvasReviewListener()
+      setupCanvasSnapshotHost()
       useGitHubStore.getState().loadConfig()
       useConductorMcpStore.getState().loadConfig()
       useConductorMcpStore.getState().fetchStatus()
@@ -427,8 +662,12 @@ export default function App() {
       // ALREADY-onboarded users. Machine-name / training-due state is no longer
       // armed here.
 
-      // Pick a tip for this session (one per app launch)
+      // Pick a tip for this session (one per app launch). Gated on the setting:
+      // hiding tips switches the FEATURE off, so with it off nothing is picked
+      // and nothing is stamped shown -- otherwise the library would quietly
+      // burn down behind a hidden row and the count be wrong on re-enable.
       setTimeout(() => {
+        if (!useSettingsStore.getState().settings.showTips) return
         useTipsStore.getState().pickNextTip()
       }, 2000)
     }
@@ -481,11 +720,11 @@ export default function App() {
     // could arm in the background mid-flow and then surface the instant
     // onboarding completes.
     if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
-    if (showWhatsNew || showTraining || showTrainingAll) return
+    if (whatsNewOnly || showTraining || showTrainingAll) return
     if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
-  }, [githubConfig, logsWipeBytes, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
+  }, [githubConfig, logsWipeBytes, whatsNewOnly, showTraining, showTrainingAll, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
   // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
@@ -510,15 +749,15 @@ export default function App() {
   }, [])
 
   // Restore saved sessions on startup
-  async function restoreSavedSessions(savedState: SessionState) {
+  async function restoreSavedSessions(savedState: SessionState): Promise<boolean> {
     try {
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
-      // Idempotent session colour migration (no guard). session.clear() below wipes
-      // the on-disk copy right after restore, and migrated keys only reach disk on a
-      // graceful close (buildSessionState). So this recomputes each launch until then
-      // -- harmless: it is a no-op once keyed, raw `color` is always preserved, and the
-      // notice guard below prevents re-notifying.
+      // Idempotent session colour migration (no guard). The restore SAVES the live
+      // set right after this (#397 -- the clear that used to sit there left a gap
+      // where a crash lost everything), so migrated keys reach disk immediately.
+      // Still safe to recompute each launch: it is a no-op once keyed, raw `color` is
+      // always preserved, and the notice guard below prevents re-notifying.
       const { records: migratedSaved, summary: sessionSummary } = migrateColorRecords(savedState.sessions || [])
       console.log('[colourMigration] sessions', sessionSummary)
 
@@ -529,7 +768,12 @@ export default function App() {
         return {
           id: saved.id,
           configId: saved.configId,
+          // Without this an Ask Conductor session comes back as an ordinary
+          // config-less session: plain tab dot, loose in the project list, no
+          // dock. Same silent-drop class as the loggingEnabled / detachable bugs.
+          kind: saved.kind,
           label: saved.label,
+          customName: saved.customName,
           workingDirectory: saved.workingDirectory,
           model: claude?.model ?? saved.model ?? '',
           color: saved.color,
@@ -537,6 +781,7 @@ export default function App() {
           legacyColor: saved.legacyColor,
           sessionType: saved.sessionType,
           shellOnly: saved.shellOnly,
+          terminalOptions: saved.terminalOptions,
           partnerTerminalPath: saved.partnerTerminalPath,
           partnerElevated: saved.partnerElevated,
           sshConfig: saved.sshConfig,
@@ -546,6 +791,10 @@ export default function App() {
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
           enableCodexReview: claude?.enableCodexReview,
           loggingEnabled: claude?.loggingEnabled,
+          // #397 Group 4: these were dropped on save+restore, so a restored session
+          // came back with the wrong permission mode / without its extra CLI args.
+          permissionMode: claude?.permissionMode,
+          extraArgs: claude?.extraArgs,
           machineName: saved.machineName,
           githubIntegration: saved.githubIntegration,
           status: 'idle' as const,
@@ -573,16 +822,75 @@ export default function App() {
         }
       }
 
-      // Relaunch must CONTINUE each session under the same account it was closed
-      // on (issue #76). The account is already determined (persisted profileId),
-      // so -- like in-session Restart/Recover/Switch -- mark the restored sessions
-      // predetermined BEFORE the store restore mounts their TerminalViews, so each
-      // spawn skips the pre-spawn AccountLaunchGate re-prompt and respawns under
-      // its saved account.
-      markRestoredSessionsPredetermined(restoredSessions.map((s) => s.id))
+      // Relaunch continues each session under the account it was closed on
+      // (issue #76): the account is already determined (persisted profileId),
+      // so — like in-session Restart/Recover/Switch — mark the restored sessions
+      // predetermined BEFORE the store restore mounts their TerminalViews, so
+      // each spawn skips the pre-spawn AccountLaunchGate and respawns under its
+      // saved account. #446: this is the DEFAULT ('auto-last'); under 'ask' the
+      // marking is skipped so the picker opens per restored session
+      // (pre-selecting that saved account). With <2 profiles the gate is inert
+      // regardless, so the branch only bites a genuine multi-account user.
+      // Mark them RESTORED regardless of mode (#446): "was restored" is a
+      // property of the session, and it is what lets a cancelled resume-gate
+      // keep the session rather than discard it. Only the predetermined mark
+      // (which SKIPS the gate) is mode-conditional.
+      const restoredIds = restoredSessions.map((s) => s.id)
+      useAccountGateStore.getState().markRestored(restoredIds)
+      if (shouldPredetermineRestoredAccount(useSettingsStore.getState().settings.resumeAccountMode)) {
+        markRestoredSessionsPredetermined(restoredIds)
+      }
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
-      await window.electronAPI.session.clear()
+      // SSH Persistent (Phase 1): rehydrate the left-running registry from the
+      // same persisted file BEFORE the save below (which folds it back in via
+      // buildSessionState). App-restart restore is otherwise UNCHANGED — the
+      // sessions that were open reattach by keeping their id; the registry only
+      // feeds the resume surface + the amber re-attachable counter, never the
+      // launch path (a config launch always starts new).
+      useDetachedRemotesStore.getState().hydrate(savedState.detachedRemotes)
+      // SSH Persistent (resume liveness, tier 1): ONE initial reachability pass
+      // over the distinct hosts we just rehydrated, so a box that is off at
+      // launch is already demoted before the user looks. A single pass, not an
+      // armed timer — the ~90s ping clock only runs while the Running tab is
+      // visible (Phase 3 arms it via armHostPings/disarmHostPings). Fire and
+      // forget: never blocks restore, never throws.
+      void pingAllDetachedHosts()
+      // Per-session "hide this tool" entries key on session ids, which persist
+      // across restarts; drop the ones whose session did not come back (ADR-018 M3).
+      useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
+      // #397 Group 4: previously session.clear() unlinked the file here and relied on
+      // the ~1s debounced autosave to rewrite it -- a crash in that window lost every
+      // session. Instead persist the restored (live) set immediately so the on-disk
+      // copy is always current, with no empty gap. main enriches on save, and the
+      // restored resumeUuid/resumeCwd are still on the records (TerminalView clears
+      // them only at spawn), so the exact-resume targets are preserved.
+      try {
+        await window.electronAPI.session.save(buildSessionState())
+      } catch {
+        /* best-effort: the debounced autosave rewrites on the next session-set change */
+      }
+
+      // SSH Persistent (resume liveness): app-restart auto-reattach is UNCHANGED
+      // (each persistent SSH session already re-spawned above and reattaches
+      // optimistically). Reconcile ASYNC — never blocking restore: probe each
+      // restored persistent SSH session's own tmux target, and for any the host
+      // CONFIRMS is gone, flag it so the pane shows the "remote session ended"
+      // notice with Start new (rather than silently handing back a blank session
+      // that looks like the one left running). Unverified hosts flag nothing.
+      void (async () => {
+        const persistentSsh = restoredSessions.filter(
+          (s) => s.sessionType === 'ssh' && !!s.sshConfig && s.sshConfig.detachable !== false && !!s.configId,
+        )
+        if (persistentSsh.length === 0) return
+        const gone = await probeGoneSessions(persistentSsh.map((s) => ({ id: s.id, configId: s.configId })))
+        const store = useSessionStore.getState()
+        for (const id of gone) {
+          // Only flag a session still present (the user may have closed it in the
+          // window between restore and the probe returning).
+          if (store.getSession(id)) store.updateSession(id, { sshRemoteReattachGone: true })
+        }
+      })()
 
       if (sessionSummary.changed > 0) {
         const s = useSettingsStore.getState()
@@ -592,8 +900,15 @@ export default function App() {
       }
 
       console.log('[App] Sessions restored')
+      // ADR-009 (Lens C, R7): the restore landed -- the saved file is now
+      // represented by the live set, so a later zero-session close may clear it.
+      restoreUnsettledRef.current = false
+      return true
     } catch (err) {
       console.error('[App] Failed to restore sessions:', err)
+      // The restore did NOT land: leave restoreUnsettledRef set so a close now
+      // keeps the saved file rather than clearing it under an empty live set.
+      return false
     }
   }
 
@@ -636,19 +951,33 @@ export default function App() {
     setCloseDialog(null)
     setIsClosing(true)
     if (isUpdate) setIsUpdating(true)
-    try {
-      await flushPendingConfigSaves()
-      await window.electronAPI.session.clear()
-      console.log('[App] Session state cleared')
-      if (isUpdate) {
-        await window.electronAPI.update.installAndRestart()
-      } else {
-        window.electronAPI.window.allowClose()
-      }
-    } catch (err) {
-      console.error('[App] Error during close:', err)
-      if (!isUpdate) window.electronAPI.window.allowClose()
-      setIsClosing(false)
+    // rc.15 review R6: the sessions are ENDED (gracefulExit) before the window is
+    // allowed to close -- on macOS the window going does not quit the app, and
+    // main-owned PTYs would otherwise keep running behind an empty Dock icon.
+    const ok = await discardAndClose({
+      isUpdate,
+      flush: flushPendingConfigSaves,
+      cancelAutosave: cancelSessionAutosave,
+      gracefulExit: () => window.electronAPI.session.gracefulExit(),
+      installAndRestart: () => window.electronAPI.update.installAndRestart(),
+      allowClose: () => window.electronAPI.window.allowClose(),
+    })
+    if (!ok) setIsClosing(false)
+  }
+
+  // Single entry point for "install the update now", shared by the bottom-bar
+  // Update pill and the Settings > Check for Updates button (#142). Never call
+  // update.installAndRestart() directly from a component: with sessions open the
+  // restart must go through the 'update' close dialog so session state is saved
+  // (and pending config writes flushed) first.
+  const handleUpdateRequested = () => {
+    const state = useSessionStore.getState()
+    if (state.sessions.length === 0) {
+      setIsClosing(true)
+      setIsUpdating(true)
+      window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
+    } else {
+      setCloseDialog('update')
     }
   }
 
@@ -658,10 +987,18 @@ export default function App() {
       if (isClosing) return
       const state = useSessionStore.getState()
       if (state.sessions.length === 0) {
-        // No dialog on the zero-session path, so drain pending debounced
-        // config saves here before letting the window die.
-        void flushPendingConfigSaves().finally(() => {
-          window.electronAPI.window.allowClose()
+        // No dialog on the zero-session path (#397 round-2, rc.14 review F9), and
+        // rc.15 review R7: while the restore prompt is still unanswered the saved
+        // file is left exactly as it is -- cards and remotes intact for the next
+        // boot -- instead of being cleared under an empty live registry.
+        void closeWithNoSessions({
+          // ADR-009 (Lens C, R7): a restore chosen but not yet landed (or that
+          // threw) also means "do not clear the saved file" -- the empty live
+          // set is transient, not the user's decision.
+          restorePromptPending: pendingRestore !== null || restoreUnsettledRef.current,
+          cancelAutosave: cancelSessionAutosave,
+          flush: flushPendingConfigSaves,
+          allowClose: () => window.electronAPI.window.allowClose(),
         })
         return
       }
@@ -670,22 +1007,25 @@ export default function App() {
 
     const unsub = window.electronAPI.window.onCloseRequested(handleCloseRequested)
     return () => unsub()
-  }, [isClosing])
+  }, [isClosing, pendingRestore])
 
-  // Render non-session views (shown on top of sessions)
-  const renderOverlayView = () => {
-    if (view === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
-    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} />
-    if (view === 'insights') return <InsightsPage />
-    if (view === 'cloud-agents') return <CloudAgentsPage />
-    if (view === 'tokenomics') return <TokenomicsPage />
-    if (view === 'vision') return <ConductorMcpPage />
-    if (view === 'memory') return <MemoryPage
+  // Render one page for a given view. Each open page tab renders its own
+  // instance, kept mounted (display-toggled) so it persists while another tab is
+  // active — the same way sessions stay alive.
+  const renderPage = (v: ViewType) => {
+    if (v === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
+    if (v === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} onUpdateRequested={handleUpdateRequested} />
+    if (v === 'insights') return <InsightsPage onNavigateToSessions={() => setView('sessions')} />
+    if (v === 'cloud-agents') return <CloudAgentsPage />
+    if (v === 'tokenomics') return <TokenomicsPage />
+    if (v === 'vision') return <ConductorMcpPage />
+    if (v === 'memory') return <MemoryPage
       onClose={() => setView('sessions')}
       onOpenSessionLogs={(sessionId) => { setPendingLogsSessionId(sessionId); setView('logs') }}
       onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
     />
-    if (view === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
+    if (v === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
+    if (v === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} />
     return null
   }
 
@@ -706,12 +1046,13 @@ export default function App() {
 
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
-        <TabBar />
-        <RepoBreadcrumb session={activeSession} />
-        <SessionHeader session={activeSession} onShowTip={() => setShowTipModal(true)} />
+        <SessionHeader session={activeSession} />
         {(() => {
           const gi = activeSession.githubIntegration
           const shouldShow =
+            // The Ask help session carries no GitHub surface at all (#465) —
+            // its cwd is the staged help workspace, not a project.
+            activeSession.kind !== 'ask' &&
             !gi?.enabled &&
             !gi?.repoUrl &&
             !gi?.dismissedAutoDetect &&
@@ -791,7 +1132,13 @@ export default function App() {
           <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
             {sessions.map((session) => {
               const isShowingPartner = partnerActive.has(session.id)
-              const hasPartner = !!session.partnerTerminalPath
+              // Partner terminal is permanent for every config type (2 Aug):
+              // no per-config opt-in. It opens in the working directory for
+              // local sessions and at home for SSH (the working directory
+              // there is a remote path this PC can't resolve). Mounted LAZILY on
+              // first activation so its PTY isn't spawned for every session up
+              // front (adversarial review, #188); once opened it stays mounted.
+              const hasPartner = partnerEverActivated.has(session.id)
               const partnerPtyId = session.id + '-partner'
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
               const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
@@ -808,8 +1155,13 @@ export default function App() {
                     minHeight: 0,
                   }}
                 >
-                  <div
-                    className="flex-1 flex flex-col"
+                  {/* W23: the way back from the canvas fades in, the same
+                      150ms the pane fades in with. PaneFade is the div this
+                      used to be — a wrapper, never a re-key: re-keying here
+                      would remount xterm and take the scrollback with it. */}
+                  <PaneFade
+                    covered={isShowingExcalidraw}
+                    className="relative flex-1 flex flex-col"
                     style={{
                       display: isShowingPartner || altPaneShowing ? 'none' : 'flex',
                       minHeight: 0,
@@ -821,11 +1173,15 @@ export default function App() {
                       configId={session.configId}
                       cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                       shellOnly={session.shellOnly}
+                      elevated={session.terminalOptions?.elevated}
+                      terminalOptions={session.terminalOptions}
                       ssh={session.sshConfig}
                       isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner && !altPaneShowing}
                       legacyVersion={session.legacyVersion}
                       agentIds={session.agentIds}
                       effortLevel={session.effortLevel}
+                      permissionMode={session.permissionMode}
+                      extraArgs={session.extraArgs}
                       disableAutoMemory={session.disableAutoMemory}
                       enableCodexReview={session.enableCodexReview}
                       loggingEnabled={session.loggingEnabled}
@@ -833,36 +1189,84 @@ export default function App() {
                       provider={session.provider}
                       codexOptions={session.codexOptions}
                     />
-                  </div>
+                    {/* SSH Persistent (resume liveness): the app-restart "remote
+                        session ended" notice. Self-subscribes by id and renders
+                        nothing until a probe confirms the reattach target is gone
+                        (the flag is not a structural field the shell re-renders
+                        on). The PaneFade is `relative`, so it parks top-right of
+                        the pane like the flow overlay. */}
+                    {session.sessionType === 'ssh' && <SshReattachGoneNotice sessionId={session.id} />}
+                  </PaneFade>
                   {hasPartner && (
-                    <div
+                    <PaneFade
+                      covered={isShowingExcalidraw}
                       className="flex-1 flex flex-col"
                       style={{
                         display: isShowingPartner && !altPaneShowing ? 'flex' : 'none',
                         minHeight: 0,
                       }}
                     >
+                      {/* Which terminal am I in? The Canvas and webview panes
+                          answer that by looking different; the partner pane is
+                          another terminal, so a user who switched could be
+                          typing into a plain shell believing it was Claude, with
+                          the only cue a label change on one button in the command
+                          bar. This strip states it and carries the way back. */}
+                      <div
+                        className="flex-none flex items-center gap-2 px-3 py-1 text-[11px] border-b"
+                        style={{
+                          background: 'color-mix(in srgb, var(--color-green) 12%, transparent)',
+                          borderColor: 'color-mix(in srgb, var(--color-green) 28%, transparent)',
+                          color: 'var(--color-subtext0)',
+                        }}
+                        data-ux-id="partner-identity-strip"
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--color-green)' }} aria-hidden>
+                          <polyline points="4 17 10 11 4 5" />
+                          <line x1="12" y1="19" x2="20" y2="19" />
+                        </svg>
+                        <span>Partner terminal &mdash; a plain shell, not Claude</span>
+                        <button
+                          onClick={() => togglePartner(session.id)}
+                          className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
+                          style={{ color: 'var(--color-text)' }}
+                          title="Back to the Claude terminal"
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M19 12H5M11 18l-6-6 6-6" />
+                          </svg>
+                          Back to Claude
+                        </button>
+                      </div>
                       <TerminalView
                         key={partnerPtyId + '-' + session.createdAt}
                         sessionId={partnerPtyId}
                         configId={session.configId}
-                        cwd={session.partnerTerminalPath}
+                        cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                         shellOnly={true}
-                        elevated={session.partnerElevated}
                         isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !altPaneShowing}
                       />
-                    </div>
+                    </PaneFade>
                   )}
-                  {/* Alt-pane priority: Logs > Webview > Excalidraw. Each
+                  {/* Alt-pane priority: Logs > Webview > Agent Canvas. Each
                       alternative pane replaces the underlying terminal panes.
                       Toggle buttons are independent so multiple flags can be
-                      true; render only the highest-priority one. */}
+                      true; render only the highest-priority one. (The canvas
+                      with no rendered content is the classic Excalidraw
+                      scratchpad — spec D2.) */}
                   {isShowingLogs ? (
                     <LogsPane sessionId={session.id} />
                   ) : isShowingWebview ? (
                     <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
                   ) : isShowingExcalidraw ? (
-                    <ExcalidrawPane sessionId={session.id} />
+                    <AgentCanvasPane
+                      sessionId={session.id}
+                      // Load-bearing, not cosmetic: the notes panel reports "the
+                      // user has seen this round addressed" only from the pane
+                      // that is actually on screen, and that report is what lets
+                      // the agent close a round at all.
+                      isActive={session.id === activeSessionId && view === 'sessions'}
+                    />
                   ) : null}
                 </div>
               )
@@ -871,8 +1275,17 @@ export default function App() {
           {/* BUG-7: the GitHub FAB (absolute top-2 right-2) is a later sibling
               than the session content, so it painted over the draw pane's Close
               button. The FAB is irrelevant while drawing — suppress the whole
-              panel when the active session is in draw mode. */}
-          {activeSession && !excalidrawBySession[activeSession.id]?.isOpen && (
+              panel when the active session is in draw mode. The browser pane
+              has the same Close button in the same corner (the desktop proof
+              for item 26 found the FAB intercepting its clicks), so it is
+              suppressed there too. */}
+          {/* #465: never for the Ask help session — this gate removes the FAB,
+              the rail AND the Ctrl+/ toggle (the listener lives inside the
+              panel), which is the whole GitHub surface. */}
+          {activeSession
+            && activeSession.kind !== 'ask'
+            && !excalidrawBySession[activeSession.id]?.isOpen
+            && !webviewBySession[activeSession.id]?.isOpen && (
             <GitHubPanel sessionId={activeSession.id} />
           )}
         </div>
@@ -880,9 +1293,10 @@ export default function App() {
             terminal/GitHub-panel row so they span the full content-column
             width and the GitHub panel ends above them. Rendered once for the
             ACTIVE session only -- switching tabs re-resolves these against
-            `activeSession`. The telemetry strip is hidden for shell-only
-            sessions (matches the old per-TerminalView gate). */}
-        {activeSession && !activeSession.shellOnly && (
+            `activeSession`. Shell-only sessions render a minimal variant of the
+            strip — just a Restart control, no telemetry (the strip handles that
+            internally). */}
+        {activeSession && (
           <SessionStatusStrip sessionId={activeSession.id} />
         )}
         {activeSession && (
@@ -891,11 +1305,15 @@ export default function App() {
             sessionId={activeSession.id}
             configId={activeSession.configId}
             sessionType={activeSession.sessionType === 'ssh' ? 'ssh' : 'local'}
-            partnerEnabled={!!activeSession.partnerTerminalPath}
+            // #465: the Ask help session has no partner shell — it is a help
+            // surface, not a workspace. Every other session keeps it.
+            partnerEnabled={activeSession.kind !== 'ask'}
             isPartnerActive={partnerActive.has(activeSession.id)}
             onTogglePartner={() => togglePartner(activeSession.id)}
-            partnerSessionId={activeSession.partnerTerminalPath ? activeSession.id + '-partner' : undefined}
+            partnerSessionId={activeSession.id + '-partner'}
             parentSessionId={activeSession.id}
+            mainPaneIsShell={!!activeSession.shellOnly}
+            configCount={configs.length}
           />
         )}
       </div>
@@ -930,18 +1348,6 @@ export default function App() {
     return <SetupDialog initialStep={2} onComplete={() => { useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }); setNeedsCliSetup(false) }} />
   }
 
-  const handleWhatsNewClose = () => {
-    markWhatsNewSeen()
-    setShowWhatsNew(false)
-    // Training is opened directly here because it's not managed by the
-    // onboarding effect. Onboarding is handled by the useEffect above,
-    // which re-runs when showWhatsNew flips to false and applies its own
-    // 120ms delay so the cross-fade stays smooth.
-    if (shouldShowTraining()) {
-      setTimeout(() => setShowTraining(true), 120)
-    }
-  }
-
   const handleTrainingClose = () => {
     setShowTraining(false)
     setShowTrainingAll(false)
@@ -958,17 +1364,22 @@ export default function App() {
   // (settleOnboardingFinish) flips due->false and unmounts the harness on the
   // next render. Settings view kept minimal — the codexSignIn when() only
   // narrows the applicable set, never the due decision.
-  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due
+  // `|| whatsNewOnly`: the harness is also the release-notes surface, so it is
+  // due when the notes are due even though no step is outstanding.
+  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due || whatsNewOnly
   const bootGate = pickBootGate({
     configLoaded,
     onboardingDue,
     logsWipeBytes,
-    showWhatsNew,
     showTraining,
     showTrainingAll,
+    tourActive,
+    showGuidedConfig,
     showGitHubOnboarding,
     showMachineNamePrompt,
     loggingConsentSeen: Boolean(loggingConsentSeen),
+    resumePending: pendingRestore !== null,
+    multiSpawnIntroDue,
     whatsNewDue: shouldShowWhatsNew(),
     trainingDue: shouldShowTraining() || isFirstInstall(),
     githubOnboardingDue: isGitHubOnboardingDue(),
@@ -982,14 +1393,19 @@ export default function App() {
         )}
         {bootGate === 'onboarding' && (
           <OnboardingHarness
+            whatsNewOnly={whatsNewOnly}
             onComplete={(startTour) => {
-              // settleOnboardingFinish already stamped completion (harness will
-              // unmount on this render). Launch the live-app tour if chosen.
+              // The settle already stamped this run (the harness unmounts on
+              // this render). Clear the notes-only arm explicitly: unlike the
+              // full flow, nothing it writes is read back by deriveOnboarding,
+              // so the gate would otherwise stay open on this state alone.
+              setWhatsNewOnly(false)
+              // Launch the live-app tour if chosen.
               if (startTour) setTourActive(true)
             }}
           />
         )}
-        {tourActive && bootGate === null && (
+        {bootGate === 'guidedTour' && (
           <GuidedTour
             onClose={() => setTourActive(false)}
             onCreateConfig={() => {
@@ -998,15 +1414,7 @@ export default function App() {
             }}
           />
         )}
-        {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
-        {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
-        {showHelpPanel && (
-          <HelpPanel
-            onClose={() => setShowHelpPanel(false)}
-            onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }}
-            onShowSessions={() => setView('sessions')}
-          />
-        )}
+        {showTipCard && bootGate === null && <TipCard onClose={() => setShowTipCard(false)} onNavigate={(v) => setView(v)} sidebarCollapsed={!sidebarOpen} />}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -1029,7 +1437,7 @@ export default function App() {
             underneath. State is kept, so they surface once the overlay closes. */}
         {/* darwin: multi-account is Windows-only (Keychain token can't be
             isolated per profile), so never offer to capture a second account. */}
-        {newAccountDetected && window.electronPlatform !== 'darwin' && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
+        {newAccountDetected && window.electronPlatform !== 'darwin' && bootGate === null && (
           <NewAccountPrompt
             email={newAccountDetected.email}
             onDismiss={() => setNewAccountDetected(null)}
@@ -1046,64 +1454,108 @@ export default function App() {
           <LoggingConsentPrompt />
         )}
 
-        {pendingRestore && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
+        {/* Now a proper gate (bootGates: 'resume', lowest priority) rather than
+            a surface that merely stepped around onboarding. It used to be
+            gated on `bootGate !== 'onboarding'` alone, so a launch that showed
+            release notes painted this prompt over them. */}
+        {bootGate === 'resume' && pendingRestore && (
           <ResumeSessionsPrompt
-            count={pendingRestore.sessions.length}
+            sessions={pendingRestore.sessions}
             onResume={() => {
               const saved = pendingRestore
+              // ADR-009 (Lens C, R7): mark the restore in flight BEFORE clearing
+              // the prompt, so a close before it lands keeps the saved file.
+              restoreUnsettledRef.current = true
               setPendingRestore(null)
               void restoreSavedSessions(saved)
             }}
             onDontOpen={() => {
+              const saved = pendingRestore
               setPendingRestore(null)
+              useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
               // conversations themselves stay resumable from inside Claude.
-              void window.electronAPI.session.clear()
+              // #397 round-2: cancel a pending autosave first so it can't rewrite
+              // the discarded set into the file after the clear.
+              cancelSessionAutosave()
+              // rc.14 review F9: declining the CARDS must not forget the remotes
+              // still running on their hosts -- hydrate the registry from the
+              // declined state and persist it on its own.
+              if (hydrateDetachedFromSavedState(saved) > 0) void pingAllDetachedHosts()
+              void persistDetachedOnlyOrClear()
+            }}
+            onRefresh={async () => {
+              // The list is a boot-time snapshot; re-read the saved set so a
+              // session restarted since launch shows up (#130). Keep the current
+              // list on a transient empty read rather than dismissing the prompt.
+              try {
+                const saved = await window.electronAPI.session.load() as SessionState | null
+                setPendingRestore((prev) => (saved && saved.sessions.length > 0 ? saved : prev))
+              } catch (err) {
+                console.error('[App] Resume refresh failed:', err)
+              }
             }}
           />
         )}
 
+        {/* Last in the boot chain (bootGates): the second page of one upgrade
+            story — release notes, then this — and its per-row copy counts read
+            the sessions the resume prompt has just brought back. */}
+        {bootGate === 'multiSpawnIntro' && (
+          <MultiSpawnStartupPage
+            autoEnabledIds={multiSpawnAutoEnabled}
+            onDone={() => setMultiSpawnIntroDue(false)}
+          />
+        )}
+
         {bootGate === 'machineName' && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-surface0 rounded-lg p-5 w-[360px] shadow-2xl border border-surface1">
-              <h3 className="text-sm font-semibold text-text mb-2">Name this machine</h3>
-              <p className="text-xs text-overlay1 mb-3">Give your local machine a name so sessions and memories can be identified by machine.</p>
-              <input
-                autoFocus
-                value={machineNameInput}
-                onChange={e => setMachineNameInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && machineNameInput.trim()) {
-                    useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
-                    setShowMachineNamePrompt(false)
-                  }
-                }}
-                placeholder="e.g. Desktop, Dev Workstation, Laptop"
-                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue mb-3"
+          <DialogOverlay dim={0.5}>
+            <DialogPanel width="w-[360px]" labelledBy="machine-name-title">
+              <DialogHeader
+                titleId="machine-name-title"
+                title="Name this machine"
+                subtitle="Give your local machine a name so sessions and memories can be identified by machine."
               />
-              <div className="flex justify-end gap-2">
-                <button
+              <DialogBody>
+                <input
+                  autoFocus
+                  value={machineNameInput}
+                  onChange={e => setMachineNameInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && machineNameInput.trim()) {
+                      useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
+                      setShowMachineNamePrompt(false)
+                    }
+                  }}
+                  placeholder="e.g. Desktop, Dev Workstation, Laptop"
+                  className={DIALOG_INPUT_CLASS}
+                  style={DIALOG_INPUT_STYLE}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogButton
+                  variant="ghost"
                   onClick={() => setShowMachineNamePrompt(false)}
-                  className="px-3 py-1.5 rounded text-xs text-subtext0 hover:text-text hover:bg-surface1 transition-colors"
                 >
                   Skip
-                </button>
-                <button
+                </DialogButton>
+                <DialogButton
+                  variant="primary"
                   onClick={() => {
                     if (machineNameInput.trim()) {
                       useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
                     }
                     setShowMachineNamePrompt(false)
                   }}
-                  className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
                 >
                   Save
-                </button>
-              </div>
-            </div>
-          </div>
+                </DialogButton>
+              </DialogFooter>
+            </DialogPanel>
+          </DialogOverlay>
         )}
 
+        <SshCloseDialog />
         {closeDialog && (
           <CloseDialog
             mode={closeDialog}
@@ -1115,28 +1567,45 @@ export default function App() {
         )}
 
         {isClosing && (
-          <div className="absolute inset-0 bg-base/90 z-50 flex items-center justify-center">
+          <DialogOverlay position="absolute" dim={0.9}>
             <div className="text-center">
-              <div className="text-2xl font-mono mb-4 text-blue animate-pulse">
+              <div className="text-2xl font-mono mb-4 animate-pulse" style={{ color: 'var(--brand)' }}>
                 {isUpdating ? 'Updating...' : 'Closing...'}
               </div>
-              <p className="text-overlay1 text-sm">
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 {isUpdating ? 'Installing update and restarting' : 'Please wait'}
               </p>
             </div>
-          </div>
+          </DialogOverlay>
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} onShowAccountUsage={() => setView('account-usage')} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} onShowTip={() => setShowTipCard((v) => !v)} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
+            {/* One tab strip for the whole main window: session tabs + any open
+                page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so
+                a page is a peer of a session, never a full-pane takeover. */}
+            <TabBar
+              activeView={view}
+              openPageTabs={openPageTabs}
+              onActivateSession={activateSessionTab}
+              onActivatePage={(v) => setView(v)}
+              onClosePage={closePageTab}
+            />
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {/* The live app is always what's behind — the first-config flow is
                   the REAL SessionDialog rendered as an overlay (below), so the
                   user sees the workbench while creating their first session.
                   (The old full-column GuidedConfigView is retired.) */}
               {renderSessions()}
-              {renderOverlayView()}
+              {/* Every open page tab is kept mounted and display-toggled, so
+                  switching to a session and back preserves its state — the same
+                  discipline the session list uses to keep PTYs alive. */}
+              {openPageTabs.map((v) => (
+                <div key={`page-pane:${v}`} className="flex-1 flex flex-col min-h-0" style={{ display: view === v ? 'flex' : 'none' }}>
+                  {renderPage(v)}
+                </div>
+              ))}
             </div>
           </main>
         </div>
@@ -1145,16 +1614,7 @@ export default function App() {
             status bar, distinct from the per-session statusline strip which
             lives above the command rows inside the terminal column. */}
         <div className="titlebar-no-drag shrink-0">
-          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={() => {
-            const state = useSessionStore.getState()
-            if (state.sessions.length === 0) {
-              setIsClosing(true)
-              setIsUpdating(true)
-              window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
-            } else {
-              setCloseDialog('update')
-            }
-          }} />
+          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={handleUpdateRequested} />
         </div>
         {bootGate === 'training' && (
           <TrainingWalkthrough
@@ -1168,15 +1628,16 @@ export default function App() {
             the live app — same create + launch path as the sidebar's New Session,
             so there is no behaviour drift and no dead controls (retires the old
             GuidedConfigView). */}
-        {showGuidedConfig && (
+        {bootGate === 'guidedConfig' && (
           <SessionDialog
             onCancel={() => setShowGuidedConfig(false)}
-            onConfirm={async (data, password, sudoPassword) => {
+            onConfirm={async (data, password, sudoPassword, argSecret) => {
               const { generateId } = await import('./utils/id')
               const config = { ...data, id: generateId() }
               useConfigStore.getState().addConfig(config)
               if (password) await window.electronAPI.credentials.save(config.id, password)
               if (sudoPassword) await window.electronAPI.credentials.save(config.id + '_sudo', sudoPassword)
+              if (argSecret) await window.electronAPI.credentials.save(config.id + '_argsecret', argSecret)
               useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
               trackUsage('sessions.create-config')
               setShowGuidedConfig(false)
@@ -1187,10 +1648,21 @@ export default function App() {
         )}
         {/* Pre-spawn account launch gate: asks which account a session runs
             under on its first spawn (multi-account only). App-root so it
-            overlays every view. */}
-        <AccountLaunchGate />
-        {/* Sentinel findings panel: global overlay, driven by sentinelStore. */}
-        <SentinelPanel />
+            overlays every view -- but NOT on top of a boot gate. Like
+            SentinelPanel it owns no turn in the sequence, so it is suppressed
+            while any gate is up; unlike SentinelPanel it holds spawns awaiting
+            a promise, and those simply keep waiting (no timeout on that path),
+            so the queue surfaces intact once the chain clears. Without this a
+            restore painted its per-session account pickers over the Multi Spawn
+            startup page, which by design comes AFTER resume. */}
+        <AccountLaunchGate suppressed={bootGate !== null} />
+        {/* Sentinel findings panel: global overlay, driven by sentinelStore.
+            Suppressed while ANY boot gate is up — it is not a gate itself (it
+            owns no turn in the sequence and can arrive at any time), but it
+            used to render unconditionally, which is how a first launch could
+            paint findings on top of the release notes. Its state is kept, so
+            it surfaces the moment the gates clear. */}
+        {bootGate === null && <SentinelPanel />}
       </div>
     </ErrorBoundary>
   )

@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react'
 import { ConfigGroup, ConfigSection } from '../../stores/configStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, DELETE_WHILE_RUNNING_REASON } from './sessionsPanelState'
 
 interface ConfigContextMenuProps {
   x: number
@@ -10,6 +11,10 @@ interface ConfigContextMenuProps {
   currentGroupId?: string
   currentSectionId?: string
   isPinned?: boolean
+  /** The config has live sessions. Delete locks (removing the template under
+   *  live sessions); Edit stays available — a template edit shapes future
+   *  launches, which is the point of relaunch (owner revision 2026-08-24). */
+  running?: boolean
   onMoveToGroup: (groupId: string | undefined) => void
   onCreateGroup: (name: string) => void
   onMoveToSection: (sectionId: string | undefined) => void
@@ -21,7 +26,7 @@ interface ConfigContextMenuProps {
   onClose: () => void
 }
 
-export default function ConfigContextMenu({ x, y, groups, sections, currentGroupId, currentSectionId, isPinned, onMoveToGroup, onCreateGroup, onMoveToSection, onCreateSection, onEdit, onDelete, onPin, onDuplicate, onClose }: ConfigContextMenuProps) {
+export default function ConfigContextMenu({ x, y, groups, sections, currentGroupId, currentSectionId, isPinned, running, onMoveToGroup, onCreateGroup, onMoveToSection, onCreateSection, onEdit, onDelete, onPin, onDuplicate, onClose }: ConfigContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [showNewGroupInput, setShowNewGroupInput] = useState(false)
   const [showNewSectionInput, setShowNewSectionInput] = useState(false)
@@ -47,28 +52,39 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 min-w-[180px]"
-      style={{ left: x, top: y }}
+      className="fixed z-50 rounded-lg shadow-xl py-1 min-w-[180px]"
+      style={{ left: x, top: y, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
       <button
         onClick={onEdit}
-        className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 hover:bg-[var(--surface-overlay)]"
+        style={{ color: 'var(--text-primary)' }}
+        title={running ? 'Edits apply to sessions launched from now on' : undefined}
+        data-testid="ctx-edit"
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
         Edit
       </button>
       <button
         onClick={onPin}
-        className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        style={{ color: 'var(--text-primary)' }}
+        data-testid="ctx-pin"
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
-          <path d="M7.5 1.5L10.5 4.5L8 7L9 10.5L6 7.5L2.5 11L5 7L1.5 4L5 5L7.5 1.5Z" strokeLinecap="round" strokeLinejoin="round"/>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--status-warning)' }}>
+          <path d="M13 2L3 14h7l-1 8 11-13h-8z" />
         </svg>
-        {isPinned ? 'Unpin' : 'Pin to Top'}
+        {pinMenuLabel(isPinned)}
       </button>
+      {running && !isPinned && (
+        <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+          {PIN_WHILE_RUNNING_HINT}
+        </div>
+      )}
       <button
         onClick={onDuplicate}
-        className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        style={{ color: 'var(--text-primary)' }}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
           <rect x="3" y="3" width="7" height="7" rx="1"/>
@@ -77,18 +93,24 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
         Duplicate
       </button>
       <button
-        onClick={onDelete}
-        className="w-full text-left px-3 py-1.5 text-xs text-red hover:bg-surface1 transition-colors flex items-center gap-2"
+        onClick={running ? undefined : onDelete}
+        disabled={running}
+        aria-disabled={running}
+        className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${running ? 'cursor-not-allowed opacity-45' : 'hover:bg-[var(--surface-overlay)]'}`}
+        style={{ color: 'var(--status-danger)' }}
+        title={running ? DELETE_WHILE_RUNNING_REASON : undefined}
+        data-testid="ctx-delete"
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
         Delete
       </button>
-      <div className="border-t border-surface1 my-1" />
-      <div className="px-3 py-1.5 text-[10px] text-overlay0 uppercase tracking-wider">Move to Group</div>
+      <div className="border-t my-1" style={{ borderColor: 'var(--border-subtle)' }} />
+      <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Move to Group</div>
       {currentGroupId && (
         <button
           onClick={() => onMoveToGroup(undefined)}
-          className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors"
+          className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+          style={{ color: 'var(--text-primary)' }}
         >
           Remove from group
         </button>
@@ -97,12 +119,13 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
         <button
           key={g.id}
           onClick={() => onMoveToGroup(g.id)}
-          className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors"
+          className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+          style={{ color: 'var(--text-primary)' }}
         >
           {g.name}
         </button>
       ))}
-      <div className="border-t border-surface1 mt-1 pt-1">
+      <div className="border-t mt-1 pt-1" style={{ borderColor: 'var(--border-subtle)' }}>
         {showNewGroupInput ? (
           <div className="px-2 py-1 flex gap-1">
             <input
@@ -114,11 +137,13 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
                 e.stopPropagation()
               }}
               placeholder="Group name"
-              className="flex-1 bg-base border border-surface1 rounded px-2 py-1 text-xs text-text placeholder:text-overlay0 outline-none focus:border-blue min-w-0"
+              className="flex-1 rounded border border-[var(--border-strong)] px-2 py-1 text-xs placeholder:text-[var(--text-muted)] outline-none focus:border-[var(--brand)] min-w-0"
+              style={{ background: 'var(--surface-base)', color: 'var(--text-primary)' }}
             />
             <button
               onClick={() => { if (newGroupName.trim()) onCreateGroup(newGroupName.trim()) }}
-              className="px-2 py-1 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 shrink-0"
+              className="px-2 py-1 rounded text-xs font-medium shrink-0 hover:opacity-90 transition-opacity"
+              style={{ background: 'var(--brand)', color: 'var(--text-on-brand)' }}
             >
               OK
             </button>
@@ -126,7 +151,8 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
         ) : (
           <button
             onClick={() => setShowNewGroupInput(true)}
-            className="w-full text-left px-3 py-1.5 text-xs text-blue hover:bg-surface1 transition-colors"
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+            style={{ color: 'var(--brand)' }}
           >
             + New Group...
           </button>
@@ -135,12 +161,13 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
       {/* Move to Section */}
       {!currentGroupId && (
         <>
-          <div className="border-t border-surface1 my-1" />
-          <div className="px-3 py-1.5 text-[10px] text-overlay0 uppercase tracking-wider">Move to Section</div>
+          <div className="border-t my-1" style={{ borderColor: 'var(--border-subtle)' }} />
+          <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Move to Section</div>
           {currentSectionId && (
             <button
               onClick={() => onMoveToSection(undefined)}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors"
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+              style={{ color: 'var(--text-primary)' }}
             >
               Remove from section
             </button>
@@ -149,12 +176,13 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
             <button
               key={s.id}
               onClick={() => onMoveToSection(s.id)}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors"
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+              style={{ color: 'var(--text-primary)' }}
             >
               {s.name}
             </button>
           ))}
-          <div className="border-t border-surface1 mt-1 pt-1">
+          <div className="border-t mt-1 pt-1" style={{ borderColor: 'var(--border-subtle)' }}>
             {showNewSectionInput ? (
               <div className="px-2 py-1 flex gap-1">
                 <input
@@ -166,11 +194,13 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
                     e.stopPropagation()
                   }}
                   placeholder="Section name"
-                  className="flex-1 bg-base border border-surface1 rounded px-2 py-1 text-xs text-text placeholder:text-overlay0 outline-none focus:border-blue min-w-0"
+                  className="flex-1 rounded border border-[var(--border-strong)] px-2 py-1 text-xs placeholder:text-[var(--text-muted)] outline-none focus:border-[var(--brand)] min-w-0"
+                  style={{ background: 'var(--surface-base)', color: 'var(--text-primary)' }}
                 />
                 <button
                   onClick={() => { if (newSectionName.trim()) onCreateSection(newSectionName.trim()) }}
-                  className="px-2 py-1 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 shrink-0"
+                  className="px-2 py-1 rounded text-xs font-medium shrink-0 hover:opacity-90 transition-opacity"
+                  style={{ background: 'var(--brand)', color: 'var(--text-on-brand)' }}
                 >
                   OK
                 </button>
@@ -178,7 +208,8 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
             ) : (
               <button
                 onClick={() => setShowNewSectionInput(true)}
-                className="w-full text-left px-3 py-1.5 text-xs text-blue hover:bg-surface1 transition-colors"
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+                style={{ color: 'var(--brand)' }}
               >
                 + New Section...
               </button>

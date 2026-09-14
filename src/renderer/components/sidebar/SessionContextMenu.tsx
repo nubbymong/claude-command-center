@@ -1,8 +1,12 @@
-import React, { useRef, useState } from 'react'
+import React, { useLayoutEffect, useRef, useState } from 'react'
 import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
-import type { AccountProfile } from '../../../shared/account-types'
+import { placeMenu, type MenuPlacement } from '../../utils/menuPlacement'
+import { isAccountActive, type AccountProfile } from '../../../shared/account-types'
 import { resolveAccountName, middleTruncateEmail } from '../../../shared/account-chip-color'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, WATCHDOG_CHECK_ITEMS, WATCHDOG_RUNTIME_HINT } from './sessionsPanelState'
+
+export type WatchdogCheckKey = 'rateLimit' | 'overload' | 'safeguard'
 
 interface SessionContextMenuProps {
   x: number
@@ -13,6 +17,11 @@ interface SessionContextMenuProps {
   onRemoveFromGroup: () => void
   onClose: () => void
   onDismiss: () => void
+  /** Pin/unpin the session's CONFIG to Quick Start (design pass 2026-08-24).
+   *  Absent for config-less sessions (Ask, adopted shells) — item hidden. The
+   *  hint notes the deferral: a running pin quick-starts after close. */
+  configPinned?: boolean
+  onPinConfig?: () => void
   /** Multi-account switch: gated by the caller. When false the item is hidden. */
   canSwitchAccount?: boolean
   /** All known account profiles, for the Switch Account sub-chooser. */
@@ -22,11 +31,33 @@ interface SessionContextMenuProps {
   /** Switch this session to the chosen account (undefined = default account).
    *  No-op upstream when it equals the current account. */
   onSwitchAccount?: (profileId: string | undefined) => void
+  /** #216: open claude.ai artifacts as THIS session's account. Hidden when undefined. */
+  onOpenArtifacts?: () => void
+  /** #216: acquire this account's claude.ai web session (opens the system browser). */
+  onAuthenticateWeb?: () => void
+  /** #216: sign the CODE session in — writes /login into this session's own terminal. */
+  onSignInCode?: () => void
+  /** True when this account already holds a claude.ai web session; drives the
+   *  artifacts item's enabled state and the wording of the authenticate item. */
+  hasWebSession?: boolean
+  /** True when this account's Claude Code CLI is already signed in; disables the
+   *  "Sign in to Claude Code" item so it isn't offered when it would be a no-op. */
+  codeSignedIn?: boolean
+  /** #605: the session's LIVE watchdog checks. Undefined when no watcher is
+   *  armed for this session (master switch off, or a session type that never
+   *  arms one) -- the whole block is hidden then, rather than offering toggles
+   *  that would do nothing. */
+  watchdogChecks?: Record<WatchdogCheckKey, boolean>
+  /** #605: flip one check for THIS running session. Runtime only. */
+  onToggleWatchdogCheck?: (key: WatchdogCheckKey) => void
 }
 
 export default function SessionContextMenu({
   x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
+  configPinned, onPinConfig,
   canSwitchAccount, profiles, accountAliases, onSwitchAccount,
+  onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn,
+  watchdogChecks, onToggleWatchdogCheck,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -34,23 +65,141 @@ export default function SessionContextMenu({
 
   const showSwitch = !!canSwitchAccount && !!profiles && profiles.length > 1 && !!onSwitchAccount
 
+  // Keep the menu inside the window. This one is the tallest in the app and
+  // still grows -- the #605 Watchdog block, and Switch Account expanding to one
+  // row per account -- so opened low in the sidebar its bottom items used to
+  // land off-screen with no way to reach them.
+  //
+  // useLayoutEffect, so the measure-and-reposition happens before paint rather
+  // than as a visible jump. Height is read from scrollHeight (full content, not
+  // the capped box) so a second pass cannot progressively shrink the menu, and
+  // the update is skipped when nothing moved, which is what stops the measure
+  // -> setState -> measure loop.
+  const [placement, setPlacement] = useState<MenuPlacement | null>(null)
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = menuRef.current
+      if (!el) return
+      const next = placeMenu({
+        x,
+        y,
+        width: el.offsetWidth,
+        height: el.scrollHeight,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      })
+      setPlacement((prev) =>
+        prev && prev.left === next.left && prev.top === next.top && prev.maxHeight === next.maxHeight
+          ? prev
+          : next,
+      )
+    }
+    measure()
+    // A resize (or a maximise) while the menu is open moves the edges under it.
+    window.addEventListener('resize', measure)
+    // ADR-009: a dep list cannot carry this. Only accountOpen is local state --
+    // every other thing that adds rows arrives as a PROP and can land after the
+    // first measure, watchdogChecks above all (main pushes it asynchronously, so
+    // a menu measured before the watcher reports then grows a header, three
+    // toggles and a hint). With a stale placement the extra rows fall off-screen
+    // WITH the scrollbar that would have rescued them -- this bug, re-entered
+    // through the back door. Observing the element covers every source of growth,
+    // including ones added later. Applying maxHeight changes the border box but
+    // not scrollHeight, and an unchanged placement returns the previous object,
+    // so the observer cannot drive a render loop.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    if (ro && menuRef.current) ro.observe(menuRef.current)
+    return () => {
+      window.removeEventListener('resize', measure)
+      ro?.disconnect()
+    }
+  }, [x, y, accountOpen])
+
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 min-w-[180px]"
-      style={{ left: x, top: y }}
+      className="fixed z-50 rounded-lg shadow-xl py-1 min-w-[180px]"
+      style={{
+        left: placement?.left ?? x,
+        top: placement?.top ?? y,
+        // Only once measured: an unset cap on the first pass is what lets
+        // scrollHeight report the menu's natural height.
+        maxHeight: placement?.maxHeight,
+        overflowY: 'auto',
+        background: 'var(--surface-raised)',
+        border: '1px solid var(--border-subtle)',
+      }}
     >
       <button
         onClick={onRename}
-        className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        style={{ color: 'var(--text-primary)' }}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
         Rename
       </button>
+      {onPinConfig && (
+        <>
+          <button
+            onClick={onPinConfig}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            data-testid="session-ctx-pin"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--status-warning)' }} aria-hidden>
+              <path d="M13 2L3 14h7l-1 8 11-13h-8z" />
+            </svg>
+            {pinMenuLabel(configPinned)}
+          </button>
+          {!configPinned && (
+            <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+              {PIN_WHILE_RUNNING_HINT}
+            </div>
+          )}
+        </>
+      )}
+      {watchdogChecks && onToggleWatchdogCheck && (
+        <div className="border-t mt-1 pt-1" style={{ borderColor: 'var(--border-subtle)' }} data-testid="session-ctx-watchdog">
+          <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+            Watchdog auto-retry
+          </div>
+          {WATCHDOG_CHECK_ITEMS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => onToggleWatchdogCheck(key)}
+              role="menuitemcheckbox"
+              aria-checked={watchdogChecks[key]}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
+              data-testid={`session-ctx-watchdog-${key}`}
+            >
+              <span
+                className="w-3 h-3 rounded-sm flex items-center justify-center shrink-0"
+                style={{
+                  border: '1px solid var(--border-subtle)',
+                  background: watchdogChecks[key] ? 'var(--status-success)' : 'transparent',
+                }}
+                aria-hidden
+              >
+                {watchdogChecks[key] && (
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="var(--surface-raised)" strokeWidth="1.6">
+                    <path d="M1 4l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </span>
+              {label}
+            </button>
+          ))}
+          <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+            {WATCHDOG_RUNTIME_HINT}
+          </div>
+        </div>
+      )}
       {hasGroup && (
         <button
           onClick={onRemoveFromGroup}
-          className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+          className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+          style={{ color: 'var(--text-primary)' }}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
             <path d="M4 6h4" strokeLinecap="round"/>
@@ -60,12 +209,65 @@ export default function SessionContextMenu({
         </button>
       )}
 
+      {/* #216: account actions, reachable from the session itself. If artifacts
+          will not open, the fix is the next item down rather than a trip to
+          Settings — which is the whole reason these live here. */}
+      {(onOpenArtifacts || onAuthenticateWeb || onSignInCode) && (
+        <>
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+          {onOpenArtifacts && (
+            <button
+              onClick={() => { onOpenArtifacts(); onDismiss() }}
+              disabled={!hasWebSession}
+              title={hasWebSession ? 'Open this account’s artifacts on claude.ai' : 'Authenticate claude.ai first'}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+                <rect x="1.5" y="2" width="9" height="8" rx="1.2"/>
+                <path d="M1.5 4.5h9" strokeLinecap="round"/>
+              </svg>
+              Open artifacts
+            </button>
+          )}
+          {onAuthenticateWeb && (
+            <button
+              onClick={() => { onAuthenticateWeb(); onDismiss() }}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+                <circle cx="6" cy="6" r="4.5"/>
+                <path d="M1.5 6h9M6 1.5c1.5 1.6 1.5 7.4 0 9M6 1.5c-1.5 1.6-1.5 7.4 0 9" strokeLinecap="round"/>
+              </svg>
+              {hasWebSession ? 'Re-authenticate claude.ai...' : 'Authenticate claude.ai...'}
+            </button>
+          )}
+          {onSignInCode && (
+            <button
+              onClick={() => { if (codeSignedIn) return; onSignInCode(); onDismiss() }}
+              disabled={codeSignedIn}
+              title={codeSignedIn ? 'Already signed in to Claude Code for this account' : 'Runs /login in this session’s terminal'}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+                <path d="M7 1.5h2.5a1 1 0 011 1v7a1 1 0 01-1 1H7" strokeLinecap="round"/>
+                <path d="M5 8.5L7.5 6 5 3.5M7.5 6H1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              {codeSignedIn ? 'Signed in to Claude Code' : 'Sign in to Claude Code'}
+            </button>
+          )}
+        </>
+      )}
+
       {showSwitch && (
         <>
-          <div className="my-1 border-t border-surface1" />
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
           <button
             onClick={() => setAccountOpen((o) => !o)}
-            className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
               <circle cx="6" cy="4" r="2.2"/>
@@ -78,30 +280,42 @@ export default function SessionContextMenu({
           </button>
           {accountOpen && (
             <div className="pl-2">
-              {profiles!.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => { onSwitchAccount?.(p.id); onDismiss() }}
-                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-surface1 transition-colors flex items-center gap-2"
-                  style={{ color: p.id === session.profileId ? 'var(--color-text)' : 'var(--color-subtext0)' }}
-                  title={p.accountEmail}
-                >
-                  <span className="w-3 shrink-0 text-green">{p.id === session.profileId ? String.fromCodePoint(0x2713) : ''}</span>
-                  <span className="flex flex-col min-w-0">
-                    <span className="truncate">{resolveAccountName(p.accountEmail, p.name, accountAliases)}</span>
-                    <span className="truncate text-overlay0" style={{ fontSize: 10, lineHeight: '13px' }}>{middleTruncateEmail(p.accountEmail)}</span>
-                  </span>
-                </button>
-              ))}
+              {profiles!.map((p) => {
+                const isCurrent = p.id === session.profileId
+                // Inactive accounts stay visible but can't be selected. The current
+                // account is always shown selectable (choosing it is a harmless no-op)
+                // even in the edge case where it was deactivated while in use.
+                const selectable = isAccountActive(p) || isCurrent
+                return (
+                  <button
+                    key={p.id}
+                    disabled={!selectable}
+                    onClick={() => { if (selectable) { onSwitchAccount?.(p.id); onDismiss() } }}
+                    className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${selectable ? 'hover:bg-[var(--surface-overlay)]' : 'cursor-default'}`}
+                    style={{ color: !selectable ? 'var(--text-muted)' : (isCurrent ? 'var(--text-primary)' : 'var(--text-secondary)') }}
+                    title={selectable ? p.accountEmail : `${p.accountEmail} (inactive)`}
+                  >
+                    <span className="w-3 shrink-0" style={{ color: 'var(--status-success)' }}>{isCurrent ? String.fromCodePoint(0x2713) : ''}</span>
+                    <span className="flex flex-col min-w-0">
+                      <span className="truncate">
+                        {resolveAccountName(p.accountEmail, p.name, accountAliases)}
+                        {!isAccountActive(p) && <span style={{ color: 'var(--text-muted)' }}> · inactive</span>}
+                      </span>
+                      <span className="truncate" style={{ fontSize: 10, lineHeight: '13px', color: 'var(--text-muted)' }}>{middleTruncateEmail(p.accountEmail)}</span>
+                    </span>
+                  </button>
+                )
+              })}
             </div>
           )}
         </>
       )}
 
-      <div className="my-1 border-t border-surface1" />
+      <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
       <button
         onClick={onClose}
-        className="w-full text-left px-3 py-1.5 text-xs text-red hover:bg-surface1 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        style={{ color: 'var(--status-danger)' }}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
         Close Session

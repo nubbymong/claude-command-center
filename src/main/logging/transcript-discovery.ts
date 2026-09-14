@@ -64,6 +64,50 @@ export { mangleCwdToProjectDir }
  * - Already-canonical paths pass through unchanged (normalized).
  * - Paths without a `.claude/projects` segment return `null`.
  */
+/**
+ * Longest `transcript_path` any source may hand to the binder, in BYTES.
+ *
+ * Purely a log/memory bound, NOT a stand-in for a platform limit: Linux
+ * PATH_MAX is 4096 bytes and macOS is 1024, so on POSIX the OS is already the
+ * tighter constraint, while Windows long paths allow far more. Bytes rather than
+ * UTF-16 code units because 4096 units of astral characters is 16 KiB of UTF-8 --
+ * a code-unit bound reads up to 4x tighter than it is.
+ */
+export const MAX_TRANSCRIPT_PATH_BYTES = 4096
+
+/**
+ * Shape-filter a transcript path arriving from an untrusted source.
+ *
+ * Lives HERE, next to the containment check, because there are two sources that
+ * feed the binder -- the hooks gateway's POST body and the SSH statusline
+ * sentinel -- and they disagreed about this field: the gateway filtered it, the
+ * sentinel only type-checked it. Two copies of a rule is how the two copies
+ * drift, and a third source added later would pick whichever it happened to
+ * import. One filter, at the same module as the containment it complements.
+ *
+ * Containment is deliberately NOT done here: that is
+ * {@link canonicalizeTranscriptPath}'s job, and duplicating it is the same
+ * mistake one level down.
+ *
+ * Rejects a non-string, an empty string, anything over the byte bound, and any
+ * C0/DEL control character. The NUL matters most: it truncates the path for a
+ * native consumer while the JS string keeps going -- two layers disagreeing
+ * about where a string ends. CR and LF matter because this value is interpolated
+ * into single-line log records, so either one forges a record (the log sink
+ * escapes them too; this is the belt to that braces).
+ *
+ * Returns the usable path, or null to drop the field. Dropping is safe -- the
+ * transcript is also discovered heuristically, so a rejected value costs a slower
+ * discovery, never a broken session.
+ */
+export function sanitiseTranscriptPath(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  if (v.length === 0) return null
+  if (Buffer.byteLength(v, 'utf8') > MAX_TRANSCRIPT_PATH_BYTES) return null
+  if (/[\u0000-\u001f\u007f]/.test(v)) return null
+  return v
+}
+
 export function canonicalizeTranscriptPath(p: string): string | null {
   if (!p) return null
 
@@ -103,7 +147,29 @@ export function canonicalizeTranscriptPath(p: string): string | null {
 
   // Reconstruct as canonical path under homedir, letting path.join handle
   // platform separator normalisation.
-  return path.join(homedir(), '.claude', 'projects', ...(rest ? [rest] : []))
+  const root = path.join(homedir(), '.claude', 'projects')
+  const candidate = path.join(root, ...(rest ? [rest] : []))
+
+  // CONTAINMENT. `path.join` NORMALISES `..` -- it does not reject it -- so a
+  // `rest` of `../../../../.ssh/id_rsa` walks straight out of the projects root
+  // and resolves to a real path elsewhere on the drive. `p` is not trustworthy:
+  // it arrives from a remote host's statusline payload and from hook payloads,
+  // so this function must treat it as hostile input rather than as a path we
+  // produced. Resolve both sides and require the result to stay under the root.
+  //
+  // The trailing separator on `root` matters: without it, a sibling directory
+  // whose name merely starts with the root's name (`...projects-evil`) would
+  // pass a bare `startsWith`.
+  const resolvedRoot = path.resolve(root)
+  const resolved = path.resolve(candidate)
+  if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) return null
+
+  // Deliberately NO `.jsonl` extension check. It looked free, but this function
+  // is documented and tested to return the bare projects root when the input
+  // ends exactly at the `.claude/projects` segment, and an extension filter
+  // breaks that. Containment above is the security control; narrowing what a
+  // contained path may point at belongs to the caller that opens it.
+  return resolved
 }
 
 // ---------------------------------------------------------------------------
@@ -132,9 +198,46 @@ export function canonicalizeTranscriptPath(p: string): string | null {
  *  uuid before it is interpolated into a spawn shell command (defense-in-depth). */
 export const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
+// #397 N2: the cwd this resolver needs is written into the transcript's FIRST
+// entries, so read only a bounded HEAD, not the whole file. Enrichment now runs on
+// the MAIN process on every debounced autosave; a full sync read of a multi-MB
+// transcript there stalls all IPC. A head read keeps it O(bounded).
+//
+// #397 round-2 (adversarial-review F1): the cap is 1 MB, not 128 KB, and the
+// trailing PARTIAL line is dropped when the file is larger than the cap. The
+// opening message of a Claude session is frequently the biggest (a pasted log /
+// diff), and it carries the cwd on that same line; a 128 KB slice cut that line
+// mid-way, JSON.parse failed, and the resume target was silently lost. 1 MB covers
+// a realistic first line, and dropping the truncated tail line means the resolver
+// only ever parses COMPLETE lines. Residual (fail-safe): a first line larger than
+// 1 MB still yields no cwd → null → the resume picker, exactly as before this file.
+const RESUME_HEAD_BYTES = 1_048_576
+function readTranscriptHead(p: string): string {
+  let fd: number | null = null
+  try {
+    fd = fs.openSync(p, 'r')
+    const size = fs.fstatSync(fd).size
+    const readLen = Math.min(RESUME_HEAD_BYTES, size)
+    const buf = Buffer.alloc(readLen)
+    const n = fs.readSync(fd, buf, 0, readLen, 0)
+    let text = buf.toString('utf-8', 0, n)
+    // If the file is larger than what we read, the last line is (almost certainly)
+    // truncated — drop it so a mid-line cut is never handed to JSON.parse.
+    if (readLen < size) {
+      const lastNl = text.lastIndexOf('\n')
+      text = lastNl === -1 ? '' : text.slice(0, lastNl + 1)
+    }
+    return text
+  } catch {
+    return ''
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd) } catch { /* ignore */ } }
+  }
+}
+
 export function resolveResumeTargetFromTranscript(
   transcriptPath: string,
-  readFile: (p: string, enc: 'utf-8') => string = (p, enc) => fs.readFileSync(p, enc),
+  readFile: (p: string, enc: 'utf-8') => string = (p, _enc) => readTranscriptHead(p),
 ): { uuid: string; cwd: string } | null {
   if (!transcriptPath) return null
 
@@ -201,8 +304,18 @@ interface HeuristicBinder {
    * BIND-ONCE: a given sessionId gets AT MOST one successful heuristic binding
    * ever (in-memory Map). Repeat calls for the same sessionId return the SAME
    * stored binding (or null if first call failed — failures may retry).
+   *
+   * `excludeUuids` (#480): conversation uuids already EXACT-bound to a DIFFERENT
+   * live session. The scan skips those `.jsonl` files so a fresh card in a shared
+   * repo folder cannot heuristically claim a sibling card's conversation — the
+   * root cause of cross-session resume. Omitted / empty = scan everything (legacy).
    */
-  bindOnce(sessionId: string, cwd: string, startedAtMs: number): DiscoveryBinding | null
+  bindOnce(
+    sessionId: string,
+    cwd: string,
+    startedAtMs: number,
+    excludeUuids?: ReadonlySet<string>,
+  ): DiscoveryBinding | null
 
   /**
    * Drops the permanent success-cache entry for a sessionId so the NEXT
@@ -242,10 +355,23 @@ export function makeHeuristicBinder(deps?: HeuristicBinderDeps): HeuristicBinder
   const successCache = new Map<string, DiscoveryBinding>()
 
   return {
-    bindOnce(sessionId: string, cwd: string, startedAtMs: number): DiscoveryBinding | null {
+    bindOnce(
+      sessionId: string,
+      cwd: string,
+      startedAtMs: number,
+      excludeUuids?: ReadonlySet<string>,
+    ): DiscoveryBinding | null {
       // Return existing successful binding immediately.
       const cached = successCache.get(sessionId)
       if (cached !== undefined) return cached
+
+      // #480: skip transcripts already owned (exact) by another live session so a
+      // fresh card in a shared repo folder never claims a sibling's conversation.
+      const isExcluded = (name: string): boolean => {
+        if (!excludeUuids || excludeUuids.size === 0) return false
+        const stem = name.endsWith('.jsonl') ? name.slice(0, -'.jsonl'.length) : name
+        return excludeUuids.has(stem)
+      }
 
       // Determine the project directory for this cwd.
       const mangled = mangleCwdToProjectDir(cwd)
@@ -269,6 +395,7 @@ export function makeHeuristicBinder(deps?: HeuristicBinderDeps): HeuristicBinder
       let bestMtime = -Infinity
 
       for (const name of jsonlFiles) {
+        if (isExcluded(name)) continue
         const full = path.join(projDir, name)
         let mtime: number
         try {

@@ -5,20 +5,20 @@ import type { BootGateState } from '../../../src/renderer/utils/bootGates'
 const base: BootGateState = {
   configLoaded: true,
   logsWipeBytes: 0,
-  showWhatsNew: false,
   showTraining: false,
   showTrainingAll: false,
   showGitHubOnboarding: false,
   showMachineNamePrompt: false,
   loggingConsentSeen: true,
+  resumePending: false,
   whatsNewDue: false,
   trainingDue: false,
   githubOnboardingDue: false,
 }
 
 describe('pickBootGate — onboarding', () => {
-  it('returns onboarding when onboardingDue, above whatsNew', () => {
-    expect(pickBootGate({ ...base, onboardingDue: true, showWhatsNew: true })).toBe('onboarding')
+  it('returns onboarding when onboardingDue, above training', () => {
+    expect(pickBootGate({ ...base, onboardingDue: true, showTraining: true })).toBe('onboarding')
   })
 
   it('logsWipe still outranks onboarding', () => {
@@ -30,11 +30,11 @@ describe('pickBootGate — onboarding', () => {
     expect(pickBootGate({ ...base, onboardingDue: true, logsWipeBytes: null })).toBe(null)
   })
 
-  it('onboardingDue false -> unchanged legacy behavior', () => {
-    expect(pickBootGate({ ...base, onboardingDue: false, showWhatsNew: true })).toBe('whatsNew')
+  it('onboardingDue false -> the next gate down takes its turn', () => {
+    expect(pickBootGate({ ...base, onboardingDue: false, showTraining: true })).toBe('training')
   })
 
   it('onboardingDue omitted (optional) -> falsy, unchanged', () => {
-    expect(pickBootGate({ ...base, showWhatsNew: true })).toBe('whatsNew')
+    expect(pickBootGate({ ...base, showTraining: true })).toBe('training')
   })
 })

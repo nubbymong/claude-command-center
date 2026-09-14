@@ -1,8 +1,8 @@
-# Copilot Instructions - Claude Command Center
+# Copilot Instructions - AI Code Conductor
 
 ## Project Overview
 
-Claude Command Center is a multi-session Claude Code terminal orchestrator built with Electron 33, React 18, TypeScript, and Tailwind CSS v4. It manages multiple Claude Code CLI sessions in parallel, with features like SSH remoting, vision/browser control, cloud agents, tokenomics tracking, and a memory visualizer.
+AI Code Conductor (formerly Claude Command Center) is a multi-session Claude Code terminal orchestrator built with Electron 43, React 19, TypeScript, and Tailwind CSS v4. It manages multiple Claude Code CLI sessions in parallel, with features like SSH remoting, vision/browser control, cloud agents, tokenomics tracking, and a memory visualizer.
 
 ## Tech Stack
 

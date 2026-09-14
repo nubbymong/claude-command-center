@@ -39,6 +39,17 @@ export function useRestartSession(
         // the bolt) until the new run's first statusline tick confirms them.
         effortLive: undefined,
         fastMode: undefined,
+        // The whole point of a remount is that a new PTY is about to exist.
+        // Leaving the previous run's exit flag set would make every liveness
+        // check (findAskSession's, the dock's dot) read the fresh session as
+        // dead.
+        ptyExited: undefined,
+        // A restart re-runs the spawn effect. Ask Conductor's opening question
+        // is one-shot: without this, restarting an Ask session would re-submit
+        // whatever the user first typed. TerminalView also consumes it at spawn;
+        // this is the second fence, because forceRemount merges the CAPTURED
+        // session on top of nothing when the store read races.
+        askPrompt: undefined,
         linesAdded: undefined,
         linesRemoved: undefined,
         inputTokens: undefined,
@@ -49,6 +60,16 @@ export function useRestartSession(
         rateLimitWeekly: undefined,
         rateLimitWeeklyResets: undefined,
         rateLimitExtra: undefined,
+        // Per-model usage buckets (statusline limits[], incl. the weekly Fable
+        // bucket) are live indicators too -- omitting them left the previous
+        // account's hit limit painted on the card after a mid-session switch
+        // (which routes through this same remount) until a later tick overwrote
+        // it. Clear them like the rateLimit* siblings.
+        usageBuckets: undefined,
+        // #266 MAJOR-4: the watchdog badge (waiting/gave-up) belongs to the
+        // PREVIOUS run's watcher, which the restart tears down; main pushes a
+        // fresh 'monitoring' state when the new run arms one.
+        watchdog: undefined,
       })
     },
     [session],

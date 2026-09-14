@@ -142,3 +142,63 @@ export function backfillCompanionDirs(projectsRoot: string, deps: CompanionDirDe
 
   return result
 }
+
+/**
+ * Async, chunked variant of {@link backfillCompanionDirs}. Identical result, but
+ * yields to the event loop periodically (every ~N stat ops and between folders)
+ * so the `statSync` storm over a large projects store NEVER freezes the main
+ * process — the sync version blocked first paint ~20-28s on machines with many
+ * transcripts + AV (see #120). Prefer this on the boot path.
+ */
+const YIELD_EVERY_STATS = 150
+
+export async function backfillCompanionDirsAsync(
+  projectsRoot: string,
+  deps: CompanionDirDeps,
+  yieldFn: () => Promise<void> = () => new Promise((r) => setImmediate(r)),
+): Promise<BackfillResult> {
+  const result: BackfillResult = { projectFolders: 0, scanned: 0, created: 0 }
+
+  let folders: string[]
+  try {
+    folders = deps.readdirSync(projectsRoot)
+  } catch {
+    return result
+  }
+
+  let sinceYield = 0
+  const maybeYield = async () => {
+    if (++sinceYield >= YIELD_EVERY_STATS) { sinceYield = 0; await yieldFn() }
+  }
+
+  for (const folder of folders) {
+    const projectDir = path.join(projectsRoot, folder)
+    let isDir = false
+    try { isDir = deps.statSync(projectDir).isDirectory() } catch { isDir = false }
+    await maybeYield()
+    if (!isDir) continue
+    result.projectFolders++
+
+    let entries: string[]
+    try { entries = deps.readdirSync(projectDir) } catch { continue }
+
+    const dirNames = new Set<string>()
+    for (const e of entries) {
+      try { if (deps.statSync(path.join(projectDir, e)).isDirectory()) dirNames.add(e) } catch { /* skip */ }
+      await maybeYield()
+    }
+
+    for (const e of entries) {
+      if (!e.endsWith('.jsonl')) continue
+      result.scanned++
+      const stem = e.slice(0, -'.jsonl'.length)
+      if (dirNames.has(stem)) continue
+      if (ensureCompanionDir(projectDir, stem, deps)) result.created++
+      await maybeYield()
+    }
+
+    await yieldFn() // always breathe between folders
+  }
+
+  return result
+}

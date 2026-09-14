@@ -6,6 +6,7 @@ import {
   _initRegistryForTest, getRegistry, applyOverlayEntry, reloadRegistry, removeOverlayEntry,
   onRegistryReload,
 } from '../../src/main/model-registry-service'
+import baselineJson from '../../resources/model-registry.json'
 
 let dir: string
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-reg-')); _initRegistryForTest(dir) })
@@ -28,7 +29,9 @@ describe('model-registry-service', () => {
     fs.mkdirSync(path.join(dir, 'sentinel'), { recursive: true })
     fs.writeFileSync(path.join(dir, 'sentinel', 'registry-overlay.json'), '{not json')
     reloadRegistry()
-    expect(getRegistry().models).toHaveLength(8)
+    // Compared against the shipped baseline rather than a literal, so adding a
+    // model to the registry never breaks this "corrupt overlay is ignored" test.
+    expect(getRegistry().models).toHaveLength(baselineJson.models.length)
   })
   it('removeOverlayEntry reverts an applied entry', () => {
     applyOverlayEntry({ id: 'x-1', patterns: ['x-1'], family: 'opus', label: 'X', provenance: { addedBy: 'user', date: '2026-06-11' } })
