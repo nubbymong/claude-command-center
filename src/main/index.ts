@@ -1,17 +1,17 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
-import { randomBytes } from 'crypto'
+import { existsSync, mkdirSync, readdirSync } from 'fs'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY_MS, splashShownAt } from './splash-window'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, resolveClaudeForPty, isSessionWritable, writePty } from './pty-manager'
-import { spawnClaudeHeadless } from './claude-headless'
-import { parseClaudeVersion } from './sentinel/sentinel-version'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
+import { registerCliHandlers } from './ipc/cli-handlers'
+import { registerClipboardHandlers } from './ipc/clipboard-handlers'
+import { buildAndSetAppMenu } from './app-menu'
 import { registerLogs2Handlers } from './ipc/logs2-handlers'
 import { registerCanvasHandlers } from './ipc/canvas-handlers'
 import {
@@ -74,16 +74,12 @@ import { startEffortTracker } from './effort-tracker'
 import { startCanvasMarkerQueue } from './canvas/canvas-marker-delivery'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
-import { readClipboardImageWithRetry } from './clipboard-image'
-import { readClipboardTextWithRetry } from './clipboard-text'
-import { readClipboardImageFilePath, type PasteableImage } from './clipboard-file'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway, isExactBindSourceActive } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
 import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
 import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
-import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { backfillCompanionDirsAsync, nodeFsCompanionDeps } from './logging/companion-dir'
 import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cleanup'
 import { isSentinelEnabled } from '../shared/sentinel-enabled'
@@ -288,67 +284,7 @@ function registerMainWindowIpc(): void {
     return result.filePaths[0]
   })
 
-  // Constrain to longest-edge max while preserving aspect ratio.
-  // Passing both width and height to nativeImage.resize() distorts non-square images.
-  const constrainToMaxDim = (img: Electron.NativeImage, maxDim: number) => {
-    const size = img.getSize()
-    if (size.width <= maxDim && size.height <= maxDim) return img
-    if (size.width >= size.height) {
-      return img.resize({ width: maxDim, quality: 'good' as const })
-    }
-    return img.resize({ height: maxDim, quality: 'good' as const })
-  }
-
-  // Clipboard TEXT read for the terminal paste keybinding (#145). Deliberately
-  // main-process: navigator.clipboard.readText() requires the document to be
-  // focused, which is exactly the condition that fails when an external tool
-  // (dictation, snippet expander) takes focus and synthesizes Ctrl+V. Retried
-  // for the same Windows delayed-render reason as the image path below.
-  ipcMain.handle(IPC.CLIPBOARD_READ_TEXT, async (): Promise<string> => {
-    return readClipboardTextWithRetry()
-  })
-
-  // Input diagnostics (#145). Opt-in via CCC_INPUT_DEBUG=1 so it costs nothing
-  // normally: the renderer asks once and only then attaches listeners. Lines land
-  // in the debug log (<dataDir>/debug/app.log) prefixed [input-diag].
-  // `on`, not `handle` — this is a fire-and-forget stream; a round trip per
-  // keystroke would itself perturb what we are trying to measure.
-  ipcMain.handle(IPC.DEBUG_INPUT_ENABLED, () => process.env.CCC_INPUT_DEBUG === '1')
-  ipcMain.on(IPC.DEBUG_LOG_INPUT, (_e, line: string) => {
-    if (process.env.CCC_INPUT_DEBUG !== '1') return
-    logInfo(`[input-diag] ${String(line).slice(0, 400)}`)
-  })
-
-  // Save clipboard image to a unique file in the host screenshots dir and return its
-  // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
-  // Returns { filename, path } so callers have both the bare name (for the MCP tool)
-  // and the absolute path (for local-only flows that bypass MCP).
-  ipcMain.handle('clipboard:saveImage', async (): Promise<PasteableImage> => {
-    const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
-    // Retry the read so the FIRST Alt+V after copying an image reliably detects
-    // it -- Windows' delayed-render clipboard can return empty on the first read
-    // after the window gains focus, which was the "no image detected" miss.
-    const img = await readClipboardImageWithRetry()
-    if (img) {
-      // [perf] resize + JPEG encode is the suspected clipboard-paste freeze; time it
-      // with the source dimensions, since cost scales with input size.
-      const __t0 = Date.now()
-      const resized = constrainToMaxDim(img, 1920)
-      const jpeg = resized.toJPEG(85)
-      const __dt = Date.now() - __t0
-      if (__dt > 150) {
-        const s = img.getSize()
-        logInfo(`[perf] clipboard-image resize+encode took ${__dt}ms (${s.width}x${s.height})`)
-      }
-      if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
-      const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
-      const filePath = join(screenshotsDir, filename)
-      writeFileSync(filePath, jpeg)
-      return { path: filePath }
-    }
-    // No bitmap on the clipboard — fall back to a copied image FILE (BUG-8).
-    return readClipboardImageFilePath(screenshotsDir)
-  })
+  registerClipboardHandlers()
 
   // Encrypted credential storage using safeStorage. save/delete are keyed to the
   // app's own id shape (credentials-handlers.ts): a renderer can address the
@@ -388,69 +324,7 @@ function registerMainWindowIpc(): void {
     return true
   })
 
-  // CLI availability check - tests that claude CLI exists
-  // Windows: tries native .exe then npm .cmd via 'where'
-  // macOS/Linux: uses 'which' to find 'claude' in PATH
-  ipcMain.handle('cli:check', async () => {
-    // Async execFile (not execSync): this runs every 30s for the app's lifetime
-    // from BottomBar, so a synchronous probe would stall PTY data delivery to
-    // every terminal in lockstep. Same boolean result shape as before.
-    const { execFile } = require('child_process')
-    const { promisify } = require('util')
-    const execFileAsync = promisify(execFile)
-    try {
-      if (process.platform === 'win32') {
-        // windowsHide + piped stderr suppresses the "INFO: Could not find
-        // files..." line `where` writes to stderr on a miss; execFile pipes
-        // by default so the noise never reaches the parent's terminal between
-        // the .exe and .cmd probes.
-        const opts = { encoding: 'utf-8' as const, timeout: 5000, windowsHide: true }
-        try {
-          await execFileAsync('where', ['claude.exe'], opts)
-          return true
-        } catch { /* try .cmd */ }
-        await execFileAsync('where', ['claude.cmd'], opts)
-        return true
-      } else {
-        // Use login shell to pick up Homebrew/nvm PATH entries
-        const shell = process.env.SHELL || '/bin/zsh'
-        await execFileAsync(shell, ['-l', '-c', 'which claude'], { encoding: 'utf-8', timeout: 5000 })
-        return true
-      }
-    } catch {
-      return false
-    }
-  })
-
-  // Onboarding "Find Claude": the resolved claude binary path (no command run).
-  ipcMain.handle('cli:path', async () => {
-    try {
-      return resolveClaudeForPty()?.cmd ?? null
-    } catch {
-      return null
-    }
-  })
-
-  // Onboarding "Find Claude": run `claude --version` on demand (user-approved).
-  ipcMain.handle('cli:version', async () => {
-    try {
-      const res = await spawnClaudeHeadless(['--version'], 10000)
-      return parseClaudeVersion(res.stdout) ?? parseClaudeVersion(res.stderr) ?? null
-    } catch {
-      return null
-    }
-  })
-
-  // "Ask Command Center": stage (refresh) the help workspace and return its
-  // path; the renderer launches a normal Claude session with this cwd so the
-  // CLAUDE.md + app-knowledge.md docs prime the session.
-  ipcMain.handle('help:workspace', async () => {
-    try {
-      return ensureHelpWorkspace(getResourcesDirectory(), { appVersion: app.getVersion() })
-    } catch {
-      return null
-    }
-  })
+  registerCliHandlers()
 }
 
 function createWindow(): void {
@@ -609,58 +483,11 @@ if (!gotTheLock) {
       app.exit(0)
     })
 
-    // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window
-    // On macOS, include the app name menu (About, Hide, Quit) and Window menu (macOS convention)
-    const menuTemplate: Electron.MenuItemConstructorOptions[] = []
-
-    if (process.platform === 'darwin') {
-      menuTemplate.push({
-        // app.name is the npm package name ('claude-conductor', frozen for the
-        // userData path) — hardcode the display name instead.
-        label: 'AI Code Conductor',
-        submenu: [
-          { role: 'about' },
-          { type: 'separator' },
-          { role: 'hide' },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
-          { type: 'separator' },
-          { role: 'quit' }
-        ]
-      })
-    }
-
-    menuTemplate.push({
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
-      ],
-    })
-
-    if (process.platform === 'darwin') {
-      menuTemplate.push({
-        label: 'Window',
-        submenu: [
-          { role: 'minimize' },
-          { role: 'zoom' },
-          { type: 'separator' },
-          { role: 'front' }
-        ]
-      })
-    }
-
     // Expose dev/prod build mode to the renderer for DEV labeling (title + badge
     // + accent). Registered early so the renderer can read it on first paint.
     ipcMain.handle(IPC.APP_IS_DEV, () => !app.isPackaged)
 
-    const menu = Menu.buildFromTemplate(menuTemplate)
-    Menu.setApplicationMenu(menu)
+    buildAndSetAppMenu()
 
     // Register built-in providers first — must happen before any code calls
     // getProvider('claude'), including deployStatuslineScript below.
@@ -769,25 +596,6 @@ if (!gotTheLock) {
     // each one holds a live claude.ai session. Sweep them at boot.
     try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }
     registerResumeHandlers()
-    // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
-    // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives
-    // a blocking confirm modal: it DETECTs at startup, and only on the user's
-    // confirm does CONFIRM actually delete. Detection-driven + idempotent (no
-    // marker file — once deleted nothing is detected). executeWipe NEVER touches
-    // ~/.claude / the safety backup / the logging settings (see logs-wipe.ts).
-    ipcMain.handle(IPC.LOGS2_WIPE_DETECT, async () => {
-      try {
-        return detectOldLogArtifacts()
-      } catch (err) {
-        logError(`[logs2] wipe detect failed: ${(err as Error)?.message ?? err}`)
-        return { present: false, totalBytes: 0, paths: [], settingsKeys: [] }
-      }
-    })
-    ipcMain.handle(IPC.LOGS2_WIPE_CONFIRM, async () => {
-      const res = executeWipe()
-      logInfo(`[logs2] wiped ${res.deletedPaths.length} old log artifact(s), freed ${res.freedBytes} bytes, cleared keys: ${res.clearedKeys.join(', ') || '(none)'}`)
-      return res
-    })
     registerDebugHandlers()
     registerUpdateHandlers()
     // Pre-emptive repo-rename handling: if the app has been renamed on GitHub

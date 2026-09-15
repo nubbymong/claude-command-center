@@ -23,6 +23,8 @@ import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { getLogSupervisor, getTranscriptBinder } from '../logging/logging-service'
 import { rememberSessionName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps } from '../logging/session-name-sidecar'
+import { detectOldLogArtifacts, executeWipe } from '../logging/logs-wipe'
+import { logInfo, logError } from '../debug-logger'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -180,5 +182,25 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
     if (win && !win.isDestroyed()) {
       try { win.webContents.send(IPC.LOGS2_NEW_MESSAGES, e) } catch { /* window gone */ }
     }
+  })
+
+  // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
+  // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives
+  // a blocking confirm modal: it DETECTs at startup, and only on the user's
+  // confirm does CONFIRM actually delete. Detection-driven + idempotent (no
+  // marker file — once deleted nothing is detected). executeWipe NEVER touches
+  // ~/.claude / the safety backup / the logging settings (see logs-wipe.ts).
+  ipcMain.handle(IPC.LOGS2_WIPE_DETECT, async () => {
+    try {
+      return detectOldLogArtifacts()
+    } catch (err) {
+      logError(`[logs2] wipe detect failed: ${(err as Error)?.message ?? err}`)
+      return { present: false, totalBytes: 0, paths: [], settingsKeys: [] }
+    }
+  })
+  ipcMain.handle(IPC.LOGS2_WIPE_CONFIRM, async () => {
+    const res = executeWipe()
+    logInfo(`[logs2] wiped ${res.deletedPaths.length} old log artifact(s), freed ${res.freedBytes} bytes, cleared keys: ${res.clearedKeys.join(', ') || '(none)'}`)
+    return res
   })
 }

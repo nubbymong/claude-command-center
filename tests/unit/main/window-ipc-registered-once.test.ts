@@ -44,10 +44,15 @@ describe('window IPC is registered once per process', () => {
     expect(guard).toBeGreaterThanOrEqual(0)
     expect(set).toBeGreaterThan(guard)
     expect(first).toBeGreaterThan(set)
-    // The registrations the dock-reopen crash was first seen on are in here.
-    for (const ch of ["'window:isMaximized'", "'window:allowClose'", "'window:cancelClose'", "'session:save'", "'cli:check'", "'help:workspace'"]) {
+    // The registrations the dock-reopen crash was first seen on are in here
+    // (inline or via delegated registerFoo calls that run inside this block).
+    for (const ch of ["'window:isMaximized'", "'window:allowClose'", "'window:cancelClose'", "'session:save'"]) {
       expect(body).toContain(`ipcMain.${ch === "'window:allowClose'" || ch === "'window:cancelClose'" ? 'on' : 'handle'}(${ch}`)
     }
+    // CLI + clipboard handlers are delegated to their own register functions
+    // called from within this once-guarded block.
+    expect(body).toContain('registerCliHandlers()')
+    expect(body).toContain('registerClipboardHandlers()')
   })
 
   it('the close-dialog state no longer lives in a createWindow() closure', () => {
