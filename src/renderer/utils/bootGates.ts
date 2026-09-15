@@ -24,14 +24,13 @@
  *                          tour, the sidebar FirstRunCard or the empty state.
  *   6. githubOnboarding  — opened by its own effect 120ms after the gates
  *                          above clear.
- *   7. machineName       — 800ms boot timer.
- *   8. loggingConsent    — one-time notice. Waits on the *due* predicates so it
+ *   7. loggingConsent    — one-time notice. Waits on the *due* predicates so it
  *                          doesn't flash for the few hundred ms before a higher
  *                          gate's timer fires and then get swapped out from
  *                          under the user.
- *   9. resume            — "restore your sessions?". Every boot, so it sits
+ *   8. resume            — "restore your sessions?". Every boot, so it sits
  *                          below the one-time surfaces above.
- *  10. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
+ *   9. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
  *                          and both halves of that are deliberate. It must come
  *                          after the release notes, because it is the second
  *                          page of one upgrade story — and the `*Due`
@@ -69,7 +68,6 @@ export type BootGate =
   | 'guidedTour'
   | 'guidedConfig'
   | 'githubOnboarding'
-  | 'machineName'
   | 'loggingConsent'
   | 'resume'
   | 'multiSpawnIntro'
@@ -88,7 +86,6 @@ export interface BootGateState {
   /** The first-config SessionDialog is up. Optional: absent === false. */
   showGuidedConfig?: boolean
   showGitHubOnboarding: boolean
-  showMachineNamePrompt: boolean
   loggingConsentSeen: boolean
   /** Saved sessions are waiting on a restore decision. Optional: absent === false. */
   resumePending?: boolean
@@ -115,7 +112,6 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   if (s.tourActive) return 'guidedTour'
   if (s.showGuidedConfig) return 'guidedConfig'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
-  if (s.showMachineNamePrompt) return 'machineName'
   if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null
   if (!s.loggingConsentSeen) return 'loggingConsent'
   if (s.resumePending) return 'resume'

@@ -1,8 +1,14 @@
-import { useSessionStore } from './stores/sessionStore'
+import { useSessionStore, type Session } from './stores/sessionStore'
 import { useAccountGateStore } from './stores/accountGateStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
+import { useCommandBarStore } from './stores/commandBarStore'
 import type { SessionState, SavedSession } from './types/electron'
+import { migrateColorRecords } from './utils/migrateIdentityColors'
+import { markSessionForResumePicker } from './utils/resumePicker'
+import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
+import { probeGoneSessions } from './stores/livenessStore'
+import { pingAllDetachedHosts } from './stores/hostReachability'
 
 // Serialize the current sessionStore into the shape the main process persists.
 // Previously lived inline in App.tsx but the GitHub per-session config save
@@ -325,6 +331,107 @@ export async function discardAndClose(deps: {
   } catch (err) {
     console.error('[App] Error during close:', err)
     if (!deps.isUpdate) deps.allowClose()
+    return false
+  }
+}
+
+export async function restoreSavedSessions(
+  savedState: SessionState,
+  restoreUnsettledRef: { current: boolean },
+): Promise<boolean> {
+  try {
+    console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
+
+    const { records: migratedSaved, summary: sessionSummary } = migrateColorRecords(savedState.sessions || [])
+    console.log('[colourMigration] sessions', sessionSummary)
+
+    const restoredSessions: Session[] = migratedSaved.map((saved: SavedSession) => {
+      const claude = saved.claudeOptions
+      return {
+        id: saved.id,
+        configId: saved.configId,
+        kind: saved.kind,
+        label: saved.label,
+        customName: saved.customName,
+        workingDirectory: saved.workingDirectory,
+        model: claude?.model ?? saved.model ?? '',
+        color: saved.color,
+        identityColorKey: saved.identityColorKey,
+        legacyColor: saved.legacyColor,
+        sessionType: saved.sessionType,
+        shellOnly: saved.shellOnly,
+        terminalOptions: saved.terminalOptions,
+        partnerTerminalPath: saved.partnerTerminalPath,
+        partnerElevated: saved.partnerElevated,
+        sshConfig: saved.sshConfig,
+        legacyVersion: claude?.legacyVersion ?? saved.legacyVersion,
+        agentIds: claude?.agentIds ?? saved.agentIds,
+        effortLevel: claude?.effortLevel ?? saved.effortLevel,
+        disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
+        enableCodexReview: claude?.enableCodexReview,
+        loggingEnabled: claude?.loggingEnabled,
+        permissionMode: claude?.permissionMode,
+        extraArgs: claude?.extraArgs,
+        machineName: saved.machineName,
+        githubIntegration: saved.githubIntegration,
+        status: 'idle' as const,
+        createdAt: Date.now(),
+        provider: saved.provider,
+        profileId: saved.profileId,
+        resumeUuid: saved.resumeUuid,
+        resumeCwd: saved.resumeCwd,
+        codexOptions: saved.codexOptions,
+      }
+    })
+
+    for (const session of restoredSessions) {
+      const hasExactResume = !!(session.resumeUuid && session.resumeCwd)
+      if (!session.shellOnly && session.sessionType === 'local' && !hasExactResume) {
+        markSessionForResumePicker(session.id)
+      }
+    }
+
+    const restoredIds = restoredSessions.map((s) => s.id)
+    useAccountGateStore.getState().markRestored(restoredIds)
+    if (shouldPredetermineRestoredAccount(useSettingsStore.getState().settings.resumeAccountMode)) {
+      markRestoredSessionsPredetermined(restoredIds)
+    }
+
+    useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
+    useDetachedRemotesStore.getState().hydrate(savedState.detachedRemotes)
+    void pingAllDetachedHosts()
+    useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
+
+    try {
+      await window.electronAPI.session.save(buildSessionState())
+    } catch {
+      /* best-effort */
+    }
+
+    void (async () => {
+      const persistentSsh = restoredSessions.filter(
+        (s) => s.sessionType === 'ssh' && !!s.sshConfig && s.sshConfig.detachable !== false && !!s.configId,
+      )
+      if (persistentSsh.length === 0) return
+      const gone = await probeGoneSessions(persistentSsh.map((s) => ({ id: s.id, configId: s.configId })))
+      const store = useSessionStore.getState()
+      for (const id of gone) {
+        if (store.getSession(id)) store.updateSession(id, { sshRemoteReattachGone: true })
+      }
+    })()
+
+    if (sessionSummary.changed > 0) {
+      const s = useSettingsStore.getState()
+      if (!s.settings.colourMigrationNoticeDismissed && !s.settings.colourMigrationNoticePending) {
+        s.updateSettings({ colourMigrationNoticePending: true })
+      }
+    }
+
+    console.log('[App] Sessions restored')
+    restoreUnsettledRef.current = false
+    return true
+  } catch (err) {
+    console.error('[App] Failed to restore sessions:', err)
     return false
   }
 }

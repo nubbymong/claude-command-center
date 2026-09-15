@@ -4,9 +4,7 @@
  * First-launch gates (LogsWipe, the onboarding harness, training tour, GitHub
  * onboarding, machine-name prompt, logging consent, resume) each have an
  * independent trigger, so without a shared priority they mount simultaneously
- * and stack (VM finding #1, 2026-06-13: consent dialog painted on top of the
- * What's New modal; and 2026-08-21: release notes, the resume prompt and the
- * Sentinel panel all at once).
+ * and stack.
  *
  * pickBootGate is the single priority chain: it returns the one gate allowed
  * to render right now, or null when none should.
@@ -27,7 +25,6 @@ function makeState(overrides: Partial<BootGateState> = {}): BootGateState {
     tourActive: false,
     showGuidedConfig: false,
     showGitHubOnboarding: false,
-    showMachineNamePrompt: false,
     loggingConsentSeen: true,
     resumePending: false,
     whatsNewDue: false,
@@ -83,11 +80,11 @@ describe('pickBootGate — the tour and the first-config dialog own turns (#609)
     // input that can produce an unknown value fails here.
     const known = new Set([
       'logsWipe', 'onboarding', 'training', 'guidedTour', 'guidedConfig',
-      'githubOnboarding', 'machineName', 'loggingConsent', 'resume', 'multiSpawnIntro',
+      'githubOnboarding', 'loggingConsent', 'resume', 'multiSpawnIntro',
     ])
     const flags = [
       'onboardingDue', 'showTraining', 'showTrainingAll', 'tourActive', 'showGuidedConfig',
-      'showGitHubOnboarding', 'showMachineNamePrompt', 'loggingConsentSeen', 'resumePending',
+      'showGitHubOnboarding', 'loggingConsentSeen', 'resumePending',
       'multiSpawnIntroDue', 'whatsNewDue', 'trainingDue', 'githubOnboardingDue',
     ] as const
     for (let mask = 0; mask < (1 << flags.length); mask++) {
@@ -114,7 +111,6 @@ describe('pickBootGate', () => {
       onboardingDue: true,
       showTraining: true,
       showGitHubOnboarding: true,
-      showMachineNamePrompt: true,
       loggingConsentSeen: false,
       resumePending: true,
     })
@@ -125,12 +121,11 @@ describe('pickBootGate', () => {
     expect(pickBootGate(makeState({ onboardingDue: true, loggingConsentSeen: false }))).toBe('onboarding')
   })
 
-  it('the harness outranks training, GitHub onboarding, machine name and resume', () => {
+  it('the harness outranks training, GitHub onboarding and resume', () => {
     const state = makeState({
       onboardingDue: true,
       showTraining: true,
       showGitHubOnboarding: true,
-      showMachineNamePrompt: true,
       resumePending: true,
     })
     expect(pickBootGate(state)).toBe('onboarding')
@@ -162,20 +157,16 @@ describe('pickBootGate', () => {
     expect(pickBootGate(makeState({ resumePending: true, loggingConsentSeen: false }))).toBe('loggingConsent')
   })
 
-  it('training outranks onboarding and machine name', () => {
-    expect(pickBootGate(makeState({ showTraining: true, showGitHubOnboarding: true, showMachineNamePrompt: true }))).toBe('training')
+  it('training outranks GitHub onboarding', () => {
+    expect(pickBootGate(makeState({ showTraining: true, showGitHubOnboarding: true }))).toBe('training')
   })
 
   it('help-mode tour (showTrainingAll) counts as the training gate', () => {
     expect(pickBootGate(makeState({ showTraining: true, showTrainingAll: true }))).toBe('training')
   })
 
-  it('GitHub onboarding outranks the machine-name prompt', () => {
-    expect(pickBootGate(makeState({ showGitHubOnboarding: true, showMachineNamePrompt: true }))).toBe('githubOnboarding')
-  })
-
-  it('machine-name prompt shows when nothing above it is pending', () => {
-    expect(pickBootGate(makeState({ showMachineNamePrompt: true, loggingConsentSeen: false }))).toBe('machineName')
+  it('GitHub onboarding shows when nothing above it is pending', () => {
+    expect(pickBootGate(makeState({ showGitHubOnboarding: true }))).toBe('githubOnboarding')
   })
 
   it('logging consent shows only when every other gate is resolved', () => {
