@@ -12,8 +12,7 @@ import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import { useAccountAuthStore } from '../stores/accountAuthStore'
 import SessionDialog from './SessionDialog'
-import { killSessionPty } from '../ptyTracker'
-import { requestCloseSession, forgetSessionBrowserProfile } from '../stores/sshCloseStore'
+import { requestCloseSession } from '../stores/sshCloseStore'
 import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
@@ -54,31 +53,8 @@ import { deriveOnboarding } from '../onboarding/gate'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
-
-// Inject keyframes for attention pulse animation (shared with TabBar)
-const ATTENTION_STYLES_ID = 'attention-pulse-styles'
-function injectAttentionStyles() {
-  if (document.getElementById(ATTENTION_STYLES_ID)) return
-  const style = document.createElement('style')
-  style.id = ATTENTION_STYLES_ID
-  style.textContent = `
-    @keyframes attention-pulse {
-      0%, 100% { opacity: 0; }
-      50% { opacity: 0.35; }
-    }
-    .attention-pulse-bg {
-      animation: attention-pulse 2s ease-in-out infinite;
-    }
-    @keyframes insights-pulse {
-      0%, 100% { opacity: 0.5; transform: scale(1); }
-      50% { opacity: 1; transform: scale(1.2); }
-    }
-    .insights-pulse-dot {
-      animation: insights-pulse 1.5s ease-in-out infinite;
-    }
-  `
-  document.head.appendChild(style)
-}
+import { injectAttentionStyles } from '../utils/injectAttentionStyles'
+import { closeSessionBatch } from '../utils/closeSessionBatch'
 
 interface Props {
   currentView: ViewType
@@ -98,7 +74,7 @@ interface Props {
 export default function Sidebar({ currentView, onViewChange, collapsed, onShowAccountUsage, onShowFirstRun, onShowTip, tourActive }: Props) {
   const launchConfig = useLaunchConfig()
   const sideType = useRegionTypography('sidebar')
-  const { sessions: allSessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
+  const { sessions: allSessions, activeSessionId, setActiveSession, updateSession } = useSessionStore()
   // Ask Conductor is docked at the BOTTOM of the sidebar, apart from your
   // project sessions — that separation is the whole point of the design. It is
   // split out here, once, rather than at each of the four bucketing expressions
@@ -723,7 +699,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     }
   }
   const handleBulkClose = () => {
-    selectedSessionIds.forEach(id => { killSessionPty(id); forgetSessionBrowserProfile(id); removeSession(id) })
+    closeSessionBatch(selectedSessionIds)
     setSelectedSessionIds(new Set())
   }
 
@@ -1471,11 +1447,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               collapsed={sessionSectionCollapsed[section.id]}
               onToggleCollapse={() => setSessionSectionCollapsed((prev) => ({ ...prev, [section.id]: !prev[section.id] }))}
               onCloseAll={() => {
-                const allSessions = [
+                closeSessionBatch([
                   ...sectionGroups.flatMap((g) => g.sessions),
                   ...looseSessions
-                ]
-                allSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) })
+                ].map((s) => s.id))
               }}
             />
             {!sessionSectionCollapsed[section.id] && (
@@ -1486,7 +1461,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                       name={group.name}
                       collapsed={sessionGroupCollapsed[group.id]}
                       onToggleCollapse={() => setSessionGroupCollapsed((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
-                      onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
+                      onCloseAll={() => { closeSessionBatch(groupSessions.map((s) => s.id)) }}
                     />
                     {!sessionGroupCollapsed[group.id] && (
                       <div className="space-y-0.5">
@@ -1503,7 +1478,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                     <UngroupedSessionsHeader
                       collapsed={ungroupedSessionsCollapsed[section.id]}
                       onToggleCollapse={() => toggleUngroupedSessionsCollapsed(section.id)}
-                      onCloseAll={() => { looseSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
+                      onCloseAll={() => { closeSessionBatch(looseSessions.map((s) => s.id)) }}
                     />
                     {!ungroupedSessionsCollapsed[section.id] && (
                       <div className="space-y-0.5">
@@ -1526,7 +1501,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               name={group.name}
               collapsed={sessionGroupCollapsed[group.id]}
               onToggleCollapse={() => setSessionGroupCollapsed((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
-              onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
+              onCloseAll={() => { closeSessionBatch(groupSessions.map((s) => s.id)) }}
             />
             {!sessionGroupCollapsed[group.id] && (
               <div className="space-y-0.5">
@@ -1547,7 +1522,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             <UngroupedSessionsHeader
               collapsed={ungroupedSessionsCollapsed['']}
               onToggleCollapse={() => toggleUngroupedSessionsCollapsed('')}
-              onCloseAll={() => { unsectionedUngroupedSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
+              onCloseAll={() => { closeSessionBatch(unsectionedUngroupedSessions.map((s) => s.id)) }}
             />
             {!ungroupedSessionsCollapsed[''] && (
               <div className="space-y-0.5">
