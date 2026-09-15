@@ -73,3 +73,55 @@ export function windowStateReadFailed(): boolean {
 export function _resetWindowStateLatchForTest(): void {
   windowStateLatch.reset()
 }
+
+export function clampToVisibleDisplay(state: WindowState): WindowState {
+  const { screen } = require('electron')
+  const displays = screen.getAllDisplays()
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea
+
+  const width = Math.min(state.width, primaryWorkArea.width)
+  const height = Math.min(state.height, primaryWorkArea.height)
+
+  if (state.x === undefined || state.y === undefined) {
+    return {
+      ...state,
+      width,
+      height,
+      x: primaryWorkArea.x + Math.round((primaryWorkArea.width - width) / 2),
+      y: primaryWorkArea.y + Math.round((primaryWorkArea.height - height) / 2),
+    }
+  }
+
+  const isVisible = displays.some((display: Electron.Display) => {
+    const wa = display.workArea
+    return (
+      state.x! >= wa.x - 100 &&
+      state.y! >= wa.y - 100 &&
+      state.x! < wa.x + wa.width - 50 &&
+      state.y! < wa.y + wa.height - 50
+    )
+  })
+
+  if (isVisible) {
+    return { ...state, width, height }
+  }
+
+  return {
+    ...state,
+    width,
+    height,
+    x: primaryWorkArea.x + Math.round((primaryWorkArea.width - width) / 2),
+    y: primaryWorkArea.y + Math.round((primaryWorkArea.height - height) / 2),
+  }
+}
+
+export function saveWindowStateFor(win: import('electron').BrowserWindow): void {
+  const bounds = win.getBounds()
+  saveWindowState({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    isMaximized: win.isMaximized()
+  })
+}
