@@ -1824,3 +1824,44 @@ export function captureDetectedAccount(profileId: string, name?: string): Accoun
     return null
   }
 }
+
+/**
+ * Per-process account isolation: run Claude under a per-account fake HOME so the
+ * account identity (~/.claude.json, which follows USERPROFILE on Windows / HOME
+ * on Unix) is private. CLAUDE_CONFIG_DIR alone does NOT isolate identity. Git/npm
+ * are pointed back at the real home so shared dev tooling is unaffected. Returns
+ * the env unchanged for the Default account (home == null).
+ */
+export function withProfileHome(env: Record<string, string>, home: string | null): Record<string, string> {
+  if (!home) return env
+  const realHome = os.homedir()
+  const next: Record<string, string> = {
+    ...env,
+    USERPROFILE: home,
+    // Belt-and-suspenders: keep git/npm reading the real shared config even if a
+    // hard-linked dotfile ever desyncs (the mirror also links these through).
+    GIT_CONFIG_GLOBAL: path.join(realHome, '.gitconfig'),
+    npm_config_userconfig: path.join(realHome, '.npmrc'),
+  }
+  // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
+  // Pointing HOME at the fake profile home — which mirrors only dot-entries, never
+  // ~/Library (see mirrorRealHome) — leaves the spawned `claude` with no keychain to
+  // resolve, surfacing the macOS "A keychain cannot be found to store ..." dialog (#117).
+  // Multi-account is disabled on macOS anyway (see AccountsPanel), so HOME-based identity
+  // isolation buys nothing there; leaving HOME at the real home restores keychain access
+  // and resolves the single global account correctly. Linux keychains (Secret Service /
+  // D-Bus) are not HOME-path-based, so keep the redirect there for multi-account isolation.
+  if (process.platform === 'linux') next.HOME = home
+  // Claude's native install lives at `$HOME/.local/bin`. With the home redirected,
+  // CC computes that as `<home>/.local/bin` (a junction to the real ~/.local) but
+  // PATH still carries the *real* home's `.local/bin`, so `/doctor` falsely warns
+  // "Native installation ... is not in your PATH". Add the redirected bin dir
+  // (deduped, under the env's existing path key) so the self-check passes. The
+  // real entry stays first, so which `claude` actually resolves is unchanged.
+  const localBin = path.join(home, '.local', 'bin')
+  const pathKey = Object.keys(next).find((k) => k.toLowerCase() === 'path') ?? 'PATH'
+  const curPath = next[pathKey] ?? ''
+  const already = curPath.split(path.delimiter).some((p) => p.toLowerCase() === localBin.toLowerCase())
+  if (!already) next[pathKey] = curPath ? `${curPath}${path.delimiter}${localBin}` : localBin
+  return next
+}
