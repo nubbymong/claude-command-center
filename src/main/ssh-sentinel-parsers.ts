@@ -13,7 +13,7 @@ import { sanitiseRemoteAccountEmail } from './statusline-watcher'
  * guarantee), so escaping defends against a future nonce source that isn't
  * charset-limited the same way.
  */
-export function escapeRegExp(str: string): string {
+function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
