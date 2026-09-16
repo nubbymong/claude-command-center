@@ -160,15 +160,16 @@ is enforced by the reconcile job below.
 Every **open** issue must carry exactly **one disposition**, so nothing falls
 through the cracks:
 
-- a release line — `release-<major.minor>` (scheduled to ship in that line), **or**
+- a release line — `release-<major.minor>` (scheduled to ship in that line), or once
+  that line's x.y.0 has shipped, a patch release `release-<major.minor.patch>`, **or**
 - `backlog` — real work, accepted, not yet scheduled, **or**
 - `triage` — undecided; a human must decide (the default on a brand-new issue), **or**
 - `wontfix` / `duplicate` / `excluded` — will not ship.
 
 And once an issue reaches a **committed state** — `in-beta`, `in-release`,
 `loop-claimed`, `loop-in-progress`, or `loop-done` — it must carry a
-`release-<major.minor>` label: work started or shipped means the target line is
-decided. `in-beta` and `in-release` specifically must carry the **active** line
+release label (`release-<major.minor>` or `release-<major.minor.patch>`): work
+started or shipped means the target line is decided. `in-beta` and `in-release` specifically must carry the **active** line
 (the invariant above); other committed states may target a future line.
 
 Enforcement is durable, not by hand — `.github/workflows/issue-disposition.yml`
@@ -176,8 +177,9 @@ Enforcement is durable, not by hand — `.github/workflows/issue-disposition.yml
 `scripts/reconcile-issue-dispositions.js`, which:
 
 - adds `triage` to any open issue with no disposition (never leaves limbo);
-- adds the active `release-<x.y>` (computed from `package.json`) to an
-  `in-beta`/`in-release` issue that has no release line;
+- adds the active release label to an `in-beta`/`in-release` issue that has no
+  release line, computed from `package.json`: an unshipped `x.y.0-…` gives
+  `release-<x.y>`, a shipped `x.y.z` gives the next patch `release-<x.y.(z+1)>`;
 - **flags for a human** — never guesses — a committed issue with no line, an
   `in-beta`/`in-release` issue on a deferred line, or any issue carrying more than
   one disposition.

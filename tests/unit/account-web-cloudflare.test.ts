@@ -82,17 +82,20 @@ describe('isCloudflareChallenge', () => {
       'https://evilchallenges.cloudflare.com/x',
       'https://claude.ai/foo/cdn-cgi/challenge-platform/x',
       'https://claude.ai/login?q=challenges.cloudflare.com',
+      'https://evil.example/cdn-cgi/challenge-platform/h/b/x',
+      'http://claude.ai/cdn-cgi/challenge-platform/x',
       'not a url',
     ]) {
       expect(isCloudflareChallenge({ type: 'page', url }), url).toBe(false)
     }
-    // ...while the two real shapes still match: Cloudflare's host, and the
-    // challenge served under the site's own origin. The path form is origin-
-    // agnostic on purpose (Cloudflare serves it under whichever site it fronts),
-    // and it only ever selects a notice, so a foreign origin matching is harmless.
+    // ...nor by the interstitial title on a foreign origin, or with no URL at all.
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://evil.example/', title: 'Just a moment...' })).toBe(false)
+    expect(isCloudflareChallenge({ type: 'page', title: 'Just a moment...' })).toBe(false)
+    // ...while the real shapes still match: the Turnstile iframe on Cloudflare's
+    // host, and the interstitial claude.ai itself serves (its path or its title).
     expect(isCloudflareChallenge({ type: 'iframe', url: 'https://challenges.cloudflare.com/turnstile/v0/x' })).toBe(true)
     expect(isCloudflareChallenge({ type: 'page', url: 'https://claude.ai/cdn-cgi/challenge-platform/h/b/jsd' })).toBe(true)
-    expect(isCloudflareChallenge({ type: 'page', url: 'https://evil.example/cdn-cgi/challenge-platform/h/b/x' })).toBe(true)
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://www.claude.ai/login', title: 'Just a moment...' })).toBe(true)
   })
 })
 

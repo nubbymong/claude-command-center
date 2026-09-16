@@ -480,19 +480,22 @@ async function targetIsClaudeAi(client: any): Promise<boolean> {
  * human" notice text while sign-in waits. It gates nothing -- isClaudeUrl is
  * the gate on every privileged step. Parsed as a URL rather than by substring
  * (CodeQL js/incomplete-url-substring-sanitization, 2.1.1): a challenge is
- * served from Cloudflare's own host, or under the site's own
- * /cdn-cgi/challenge-platform/ path, and a look-alike host or a query string
- * carrying those words is neither.
+ * either the Turnstile iframe on Cloudflare's own host, or the interstitial
+ * that claude.ai itself serves (its /cdn-cgi/challenge-platform/ path, or its
+ * "Just a moment..." title). A foreign origin carrying that path or that title
+ * is not a challenge in front of THIS sign-in, so it never earns the notice.
  */
 export function isCloudflareChallenge(t: CdpTarget): boolean {
-  const title = (t?.title ?? '').toLowerCase()
-  if (title === 'just a moment...') return true
+  const url = t?.url ?? ''
+  let u: URL
   try {
-    const u = new URL(t?.url ?? '')
-    return u.hostname.toLowerCase() === 'challenges.cloudflare.com' || u.pathname.startsWith('/cdn-cgi/challenge-platform/')
+    u = new URL(url)
   } catch {
     return false
   }
+  if (u.hostname.toLowerCase() === 'challenges.cloudflare.com') return true
+  if (!isClaudeUrl(url)) return false
+  return u.pathname.startsWith('/cdn-cgi/challenge-platform/') || (t?.title ?? '').toLowerCase() === 'just a moment...'
 }
 
 /**
