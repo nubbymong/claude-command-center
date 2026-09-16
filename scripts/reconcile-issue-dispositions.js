@@ -3,7 +3,9 @@
  * Reconcile issue dispositions — "nothing in limbo" governance (#437).
  *
  * Every OPEN issue must carry exactly one disposition:
- *   - a release line  `release-<major.minor>`  (scheduled to ship in that line), OR
+ *   - a release line  `release-<major.minor>`  (scheduled to ship in that line), or a
+ *     patch release on a line whose x.y.0 has shipped, `release-<major.minor.patch>`
+ *     (CONTRIBUTING.md "Release-line labels"), OR
  *   - `backlog`   (real work, accepted, not yet scheduled), OR
  *   - `triage`    (undecided; a human must decide — the default on a new issue), OR
  *   - `wontfix` / `duplicate` / `excluded`  (will not ship).
@@ -23,8 +25,10 @@
  *
  * Actions taken are DELIBERATELY minimal and safe:
  *   - add `triage` to an open issue with no disposition (never leave limbo);
- *   - add the active `release-<x.y>` to an `in-beta` issue with no release line
- *     (unambiguous — it is shipping on the active line);
+ *   - add the active release label to an `in-beta` issue with no release line
+ *     (unambiguous — it is shipping on the active line). The active label comes
+ *     from the checked-out package.json: an unshipped `x.y.0-…` means the line
+ *     label `release-x.y`; a shipped `x.y.z` means the NEXT patch, `release-x.y.(z+1)`;
  *   - everything else is FLAGGED for a human, never guessed. The script never
  *     removes a label, never closes anything, and never assigns a release line to
  *     a committed-but-not-in-beta issue (choosing the line is a human decision made
@@ -35,8 +39,16 @@ const { execFileSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 
-/** A release-line label: `release-<major>.<minor>` (no patch, no suffix). */
-const RELEASE_RE = /^release-\d+\.\d+$/
+/**
+ * A release disposition: the line `release-<major>.<minor>`, or a patch release on
+ * a shipped line `release-<major>.<minor>.<patch>` (no prerelease suffix ever).
+ */
+const RELEASE_RE = /^release-\d+\.\d+(\.\d+)?$/
+/** The LINE a release label belongs to: `release-2.1.1` -> `release-2.1`. */
+function lineOf(label) {
+  const m = String(label || '').toLowerCase().match(/^release-(\d+)\.(\d+)/)
+  return m ? `release-${m[1]}.${m[2]}` : null
+}
 /** Non-release dispositions. Exactly one disposition total is allowed. */
 const OTHER_DISPOSITIONS = ['backlog', 'triage', 'wontfix', 'duplicate', 'excluded']
 /** States that mean "work has started or shipped" → a release line is required. */
@@ -53,22 +65,40 @@ const ACTIVE_LINE_STATES = ['in-beta', 'in-release']
 
 // ── pure decision (unit-tested; no network) ────────────────────────
 
-/** `release-2.1` from a version like `2.1.0-beta.17`. Null if unparseable. */
+/**
+ * The label in-beta work ships under, from the checked-out package.json version:
+ *
+ *   2.1.0-rc.17  -> release-2.1     x.y.0 not yet shipped: the line label
+ *   2.1.1-rc.1   -> release-2.1.1   a patch in flight
+ *   2.1.0        -> release-2.1.1   x.y.0 HAS shipped: the next patch on the line
+ *   2.1.1        -> release-2.1.2
+ *
+ * The scheduled job checks out the default branch, whose version is always the
+ * last SHIPPED stable, so it sees the third and fourth shapes. Null if unparseable.
+ */
 function activeLineFromVersion(version) {
-  const m = String(version || '').match(/^(\d+)\.(\d+)/)
-  return m ? `release-${m[1]}.${m[2]}` : null
+  const v = String(version || '')
+  const m = v.match(/^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/)
+  if (!m) {
+    const mm = v.match(/^(\d+)\.(\d+)/)
+    return mm ? `release-${mm[1]}.${mm[2]}` : null
+  }
+  const line = `release-${m[1]}.${m[2]}`
+  const patch = Number(m[3])
+  if (m[4]) return patch > 0 ? `${line}.${patch}` : line
+  return `${line}.${patch + 1}`
 }
 
 /**
  * Guard a CLI-supplied `--active-line`. Null/undefined is fine (the value is then
  * computed from package.json). A non-empty value that is not a
- * `release-<major>.<minor>` label THROWS — a malformed operator value must never
- * reach `decide()` and get auto-added as a bogus label.
+ * `release-<major>.<minor>[.<patch>]` label THROWS — a malformed operator value
+ * must never reach `decide()` and get auto-added as a bogus label.
  */
 function validateActiveLine(line) {
   if (line == null) return line
   if (!RELEASE_RE.test(String(line).toLowerCase())) {
-    throw new Error(`--active-line must be release-<major>.<minor> (got: "${line}")`)
+    throw new Error(`--active-line must be release-<major>.<minor>[.<patch>] (got: "${line}")`)
   }
   return line
 }
@@ -112,8 +142,11 @@ function decide({ labels = [], activeLine = null }) {
       // (deferred) line is self-contradictory (CONTRIBUTING.md invariant:
       // in-beta/in-release and release-2.2 never coexist). Other committed states
       // (loop-*) may legitimately target a future line, so they are left alone.
-      if (pinnedToActive && active && releases[0] !== active) {
-        flags.push(`${pinnedVia.join('/')} but carries ${releases[0]}, not the active line ${active}; it ships on the current line — a deferred release line is contradictory`)
+      // Compared at LINE level: `release-2.1` and `release-2.1.1` are the same
+      // line (a patch label on an already-shipped line), only `release-2.2` is
+      // a different one.
+      if (pinnedToActive && active && lineOf(releases[0]) !== lineOf(active)) {
+        flags.push(`${pinnedVia.join('/')} but carries ${releases[0]}, not the active line ${lineOf(active)}; it ships on the current line — a deferred release line is contradictory`)
       }
       return { add, flags }
     }
@@ -243,6 +276,7 @@ function main() {
 
 module.exports = {
   RELEASE_RE,
+  lineOf,
   OTHER_DISPOSITIONS,
   COMMITTED_STATES,
   ACTIVE_LINE_STATES,

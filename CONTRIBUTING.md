@@ -142,7 +142,11 @@ line** an issue belongs to:
 - **`release-2.1.1`** — a patch release on a line whose x.y.0 has already shipped
   gets its own label (owner decision, 2026-09-16): once 2.1.0 is live, `release-2.1`
   reads as "ships in 2.1", so 2.1.1 PRs and issues carry `release-2.1.1` instead.
-  Same pattern for later patches (`release-2.1.2`, ...).
+  Same pattern for later patches (`release-2.1.2`, ...). The disposition job
+  (`scripts/reconcile-issue-dispositions.js`) understands both shapes: it treats
+  `release-2.1` and `release-2.1.1` as the same line, and derives the label it
+  auto-adds from the checked-out `package.json` -- an unshipped `x.y.0-…` gives
+  `release-x.y`, a shipped `x.y.z` gives the next patch, `release-x.y.(z+1)`.
 
 **Invariant: `in-beta`/`in-release` and `release-2.2` must never sit on the same
 issue.** Either lifecycle label means the fix is already merged to `beta` (which
