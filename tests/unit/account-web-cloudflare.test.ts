@@ -79,6 +79,8 @@ describe('isCloudflareChallenge', () => {
       'https://evil.example/challenges.cloudflare.com/',
       'https://challenges.cloudflare.com.evil.example/x',
       'https://challenges.cloudflare.com@evil.example/',
+      'https://evilchallenges.cloudflare.com/x',
+      'https://claude.ai/foo/cdn-cgi/challenge-platform/x',
       'https://claude.ai/login?q=challenges.cloudflare.com',
       'not a url',
     ]) {
