@@ -93,15 +93,18 @@ describe('window IPC is registered once per process', () => {
       expect(end, 'listener end').toBeGreaterThan(from)
       return src.slice(from, end)
     }
-    let seen = 0
     for (const ev of ['activate', 'second-instance']) {
+      let seen = 0
       for (const m of src.matchAll(new RegExp(`app\\.on\\('${ev}'`, 'g'))) {
         seen++
         expect(listenerBody(m.index!), `${ev} listener at ${m.index}`).not.toMatch(/\bregister[A-Z]\w*Handlers?\b|ipcMain\.(handle|on)\(/)
       }
+      expect(seen, `an app.on('${ev}') listener exists`).toBeGreaterThanOrEqual(1)
     }
-    expect(seen).toBeGreaterThanOrEqual(2)
+    // Backstops: each slice must still contain the listener's real work, so a
+    // string literal that mimics the closing shape cannot truncate it early.
     expect(listenerBody(src.indexOf("app.on('activate'"))).toContain('createWindow()')
+    expect(listenerBody(src.indexOf("app.on('second-instance'"))).toContain('mainWindow')
   })
 
   it('the close-dialog state no longer lives in a createWindow() closure', () => {

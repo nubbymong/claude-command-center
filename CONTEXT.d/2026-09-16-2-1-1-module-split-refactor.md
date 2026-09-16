@@ -89,6 +89,14 @@ each an independent Opus reviewer):
   the quality reviewer, left alone: `ssh-sentinel-parsers` joined the existing
   30-module main-process import component through `statusline-watcher`
   (function-scope use only), the class of cycle the tree already carries.
+- Final confirmation: PASS from both attackers and the quality reviewer, 0
+  majors. What remains is the ceiling of text-shape tests, recorded rather
+  than chased: a block-scoped shadow of `splashHtml` right before `loadFile`
+  would satisfy every splash assertion (closing it means importing the module
+  with `BrowserWindow` mocked; the splash renderer is sandboxed, isolated, has
+  no preload and its own CSP, so it was not spent), and a string literal that
+  mimics a listener's closing shape could truncate the re-entry slices (each
+  slice now has a content backstop).
 
 ### Live SSH statusline matrix (path-triggered gate, AGENTS.md)
 
