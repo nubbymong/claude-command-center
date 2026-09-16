@@ -1,4 +1,4 @@
-import { BrowserWindow, nativeTheme, app } from 'electron'
+import { BrowserWindow, nativeTheme } from 'electron'
 import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'

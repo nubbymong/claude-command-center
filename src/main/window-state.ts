@@ -79,9 +79,11 @@ export function clampToVisibleDisplay(state: WindowState): WindowState {
   const displays = screen.getAllDisplays()
   const primaryWorkArea = screen.getPrimaryDisplay().workArea
 
+  // Clamp size to primary display work area
   const width = Math.min(state.width, primaryWorkArea.width)
   const height = Math.min(state.height, primaryWorkArea.height)
 
+  // If no position saved, center on primary display
   if (state.x === undefined || state.y === undefined) {
     return {
       ...state,
@@ -92,6 +94,7 @@ export function clampToVisibleDisplay(state: WindowState): WindowState {
     }
   }
 
+  // Check if saved position is visible on any display
   const isVisible = displays.some((display: Electron.Display) => {
     const wa = display.workArea
     return (
@@ -106,6 +109,7 @@ export function clampToVisibleDisplay(state: WindowState): WindowState {
     return { ...state, width, height }
   }
 
+  // Off-screen: center on primary display
   return {
     ...state,
     width,

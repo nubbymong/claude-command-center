@@ -35,7 +35,10 @@ describe('window IPC is registered once per process', () => {
     // Delegated registrations (registerFooHandlers()) are process-global too --
     // the inline-ipcMain regex above cannot see them, and a second call from a
     // macOS dock-reopen throws exactly the same way (adversarial pass, 2.1.1).
-    expect(body).not.toMatch(/\bregister[A-Z]\w*Handlers?\(/)
+    // Any REFERENCE, not only a call: `setTimeout(registerCliHandlers, 0)` and
+    // `const reg = registerCliHandlers; reg()` survive a call-shaped regex
+    // (re-attack, 2.1.1).
+    expect(body).not.toMatch(/\bregister[A-Z]\w*Handlers?\b/)
     // ...but it does make sure the once-registration has run.
     expect(body).toContain('registerMainWindowIpc()')
   })
@@ -50,8 +53,13 @@ describe('window IPC is registered once per process', () => {
     expect(first).toBeGreaterThan(set)
     // Delegated register calls must ALSO sit after the once-flag is set, not
     // just be present somewhere in the body.
-    for (const fn of ['registerCliHandlers()', 'registerClipboardHandlers()']) {
-      expect(body.indexOf(fn), `${fn} must follow the once-flag`).toBeGreaterThan(set)
+    // EVERY delegated register call in the block, not a whitelist of two: a
+    // third one hoisted above the guard stayed green under the old list
+    // (re-attack, 2.1.1).
+    const delegated = [...body.matchAll(/\bregister[A-Z]\w*Handlers?\(\)/g)]
+    expect(delegated.length).toBeGreaterThanOrEqual(3)
+    for (const m of delegated) {
+      expect(m.index, `${m[0]} must follow the once-flag`).toBeGreaterThan(set)
     }
     // The registrations the dock-reopen crash was first seen on are in here
     // (inline or via delegated registerFoo calls that run inside this block).
@@ -62,6 +70,17 @@ describe('window IPC is registered once per process', () => {
     // called from within this once-guarded block.
     expect(body).toContain('registerCliHandlers()')
     expect(body).toContain('registerClipboardHandlers()')
+  })
+
+  it("app.on('activate') only re-creates the window: no registration on the dock-reopen path", () => {
+    // The macOS dock click is the very path the once-guard exists for; a
+    // register*() call placed here re-registers on every reopen, and until
+    // now no test looked at it (re-attack, 2.1.1).
+    const start = src.indexOf("app.on('activate'")
+    expect(start).toBeGreaterThanOrEqual(0)
+    const handler = src.slice(start, src.indexOf('\n  })', start))
+    expect(handler).not.toMatch(/\bregister[A-Z]\w*Handlers?\b|ipcMain\.(handle|on)\(/)
+    expect(handler).toContain('createWindow()')
   })
 
   it('the close-dialog state no longer lives in a createWindow() closure', () => {
@@ -102,5 +121,25 @@ describe('index.ts wiring pinned by shape', () => {
 
   it('the statusline usage sink feeds the open-account figure the usage page reuses (plan P2)', () => {
     expect(src).toContain('setStatuslineUsageSink(recordLiveUsageForSession)')
+  })
+
+  it('the logs-wipe registration keeps its slot right after registerResumeHandlers, ahead of initLogging (F2)', () => {
+    // Folding it into registerLogs2Handlers once moved it behind ~20 unguarded
+    // register*() calls; the fix restored the slot, and this pins it, because
+    // a comment is not a guard (re-attack, 2.1.1).
+    const at = (needle: string) => {
+      const i = src.indexOf(needle)
+      expect(i, `anchor: ${needle}`).toBeGreaterThanOrEqual(0)
+      return i
+    }
+    const resume = at('    registerResumeHandlers()')
+    const wipe = at('    registerLogsWipeHandlers()')
+    expect(wipe).toBeGreaterThan(resume)
+    expect(wipe).toBeLessThan(at('    registerDebugHandlers()'))
+    expect(wipe).toBeLessThan(at('    registerLogs2Handlers(getWindow)'))
+    expect(wipe).toBeLessThan(at('initLogging({'))
+    // ...and nothing that can throw may be inserted into the gap.
+    const gap = src.slice(resume, wipe).split('\n').slice(1)
+    expect(gap.every((l) => !l.trim() || l.trim().startsWith('//'))).toBe(true)
   })
 })

@@ -91,6 +91,15 @@ export function _downloadAndCacheTmuxArchiveForTest(arch: TmuxStageTarget): Prom
   return downloadAndCacheTmuxArchive(arch)
 }
 
+/**
+ * Download the v3.7b release asset for `arch` from the SAME pinned URL
+ * ssh-tmux-stage.ts's remote script would have curled, sha256-verify it
+ * against the SAME embedded digest, and cache it on success. Resolves
+ * `null` (never rejects) on ANY failure -- network error, non-2xx status,
+ * or a digest mismatch -- so the caller's fallback path (fall through to the
+ * unwrapped launch) is a single, uniform check regardless of WHY the bytes
+ * couldn't be obtained.
+ */
 function downloadAndCacheTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
   // #242 finding F6: same URL parts buildTmuxStageScript's remote curl/wget
   // fragment builds its `_url` from (ssh-tmux-stage.ts) -- see

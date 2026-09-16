@@ -72,5 +72,12 @@ describe('splash assets guard', () => {
     expect(src).toMatch(/webPreferences:\s*\{\s*contextIsolation:\s*true,\s*nodeIntegration:\s*false,\s*sandbox:\s*true,?\s*\}/)
     expect(src).toContain("join(__dirname, '..', '..', 'resources', 'splash', 'index.html')")
     expect(src).not.toMatch(/\.loadURL\(/)
+    // ONE window in this module: the triple match above is first-match, so a
+    // second BrowserWindow carrying weaker webPreferences would pass it
+    // (re-attack, 2.1.1)...
+    expect(src.match(/new BrowserWindow\(/g)).toHaveLength(1)
+    expect(src.match(/webPreferences:/g)).toHaveLength(1)
+    // ...and the bundled page must be what is LOADED, not merely mentioned.
+    expect(src).toMatch(/\.loadFile\(splashHtml, \{ query: splashBuildQuery\(/)
   })
 })

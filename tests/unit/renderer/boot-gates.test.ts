@@ -2,9 +2,12 @@
  * Boot-gate sequencing unit tests.
  *
  * First-launch gates (LogsWipe, the onboarding harness, training tour, GitHub
- * onboarding, machine-name prompt, logging consent, resume) each have an
- * independent trigger, so without a shared priority they mount simultaneously
- * and stack.
+ * onboarding, logging consent, resume) each have an independent trigger, so
+ * without a shared priority they mount simultaneously and stack (VM finding #1,
+ * 2026-06-13: consent dialog painted on top of the What's New modal; and
+ * 2026-08-21: release notes, the resume prompt and the Sentinel panel all at
+ * once). The machine-name prompt gate is gone (2.1.1): nothing ever set
+ * showMachineNamePrompt to true, so it was dead code.
  *
  * pickBootGate is the single priority chain: it returns the one gate allowed
  * to render right now, or null when none should.
@@ -166,7 +169,7 @@ describe('pickBootGate', () => {
   })
 
   it('GitHub onboarding shows when nothing above it is pending', () => {
-    expect(pickBootGate(makeState({ showGitHubOnboarding: true }))).toBe('githubOnboarding')
+    expect(pickBootGate(makeState({ showGitHubOnboarding: true, loggingConsentSeen: false }))).toBe('githubOnboarding')
   })
 
   it('logging consent shows only when every other gate is resolved', () => {
