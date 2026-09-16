@@ -46,7 +46,7 @@ by CI.
 3. **Rules every future extraction follows.** Each one is a finding this pass
    produced and fixed:
 
-   - A pure move carries its comments. The first cut dropped about 150 lines of
+   - A pure move carries its comments. The first cut dropped about 160 lines of
      rationale (the splash CSP reasoning, the clipboard retry, the tmux "resolves
      null, never rejects" contract, the #397 crash-window note in the restore
      path). Code that lost its "why" is the most expensive kind of simplification.
@@ -78,7 +78,7 @@ by CI.
 
 ## Consequences
 
-- `pty-manager.ts` 5,711 to 5,116, `main/index.ts` 1,353 to 980,
+- `pty-manager.ts` 5,711 to 5,115, `main/index.ts` 1,353 to 979,
   `preload/index.ts` 1,496 to 1,337, `App.tsx` 1,669 to 1,445, `Sidebar.tsx`
   1,733 to 1,708. Ten new modules, each small enough to review whole.
 - `splash-window.ts` is evaluated early in `main/index.ts`'s import list, so

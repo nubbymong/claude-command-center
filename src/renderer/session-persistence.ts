@@ -339,14 +339,14 @@ export async function discardAndClose(deps: {
   }
 }
 
-// Restore saved sessions on startup. Lifted out of App.tsx (2.1.1) as a pure
-// move: the one component-scope value it read, restoreUnsettledRef, is passed
-// as the ref OBJECT so the write at the end still lands on the live ref.
 export interface RestoreSavedSessionsDeps {
   probeGoneSessions: typeof probeGoneSessions
   pingAllDetachedHosts: typeof pingAllDetachedHosts
 }
 
+// Restore saved sessions on startup. Lifted out of App.tsx (2.1.1) as a pure
+// move: the one component-scope value it read, restoreUnsettledRef, is passed
+// as the ref OBJECT so the write at the end still lands on the live ref.
 export async function restoreSavedSessions(
   savedState: SessionState,
   restoreUnsettledRef: { current: boolean },

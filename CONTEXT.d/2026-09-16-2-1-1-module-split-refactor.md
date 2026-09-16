@@ -7,8 +7,8 @@ The decision and the rules it produced are ADR-021; this is the run log.
 
 | file | before | after |
 | --- | --- | --- |
-| `src/main/pty-manager.ts` | 5,711 | 5,116 |
-| `src/main/index.ts` | 1,353 | 980 |
+| `src/main/pty-manager.ts` | 5,711 | 5,115 |
+| `src/main/index.ts` | 1,353 | 979 |
 | `src/preload/index.ts` | 1,496 | 1,337 |
 | `src/renderer/App.tsx` | 1,669 | 1,445 |
 | `src/renderer/components/Sidebar.tsx` | 1,733 | 1,708 |
@@ -50,7 +50,7 @@ each an independent Opus reviewer):
   one now has a shape or unit test, and each new test was checked red against
   the mutant it exists to catch.
 - Spec compliance: COMPLIANT on both halves, 0 majors. Every extraction diffs
-  clean against its origin as code. The one systematic minor: about 150 lines
+  clean against its origin as code. The one systematic minor: about 160 lines
   of rationale comments had not travelled with the code (splash, clipboard,
   CLI probes, menu, display clamp, the tmux "never rejects" contract, the whole
   `restoreSavedSessions` history). Restored verbatim. Also: a dead `app` import
@@ -78,6 +78,17 @@ each an independent Opus reviewer):
   a runtime `require`, which the unit harness cannot substitute). App.tsx also
   dropped two dead re-exports (`ViewType`, the resume-picker pair): only
   `main.tsx` imports App, and it takes the default export.
+- Second re-attack round (the same two attackers, on the fixes): 0 blockers,
+  1 major, 6 minors, all test strength again. The activate test pinned only
+  the first `app.on('activate')` listener; it now walks every `activate` and
+  `second-instance` listener. The boot-slot test requires its two anchors to
+  be whole lines, the dual-spelling channel check is word-bounded, the splash
+  guard pins the `splashHtml` binding to the bundled path and counts `loadFile`
+  calls (on code lines, so a comment cannot red it), and the onChannel test
+  checks payload identity. Each has its red mutant. One structural note from
+  the quality reviewer, left alone: `ssh-sentinel-parsers` joined the existing
+  30-module main-process import component through `statusline-watcher`
+  (function-scope use only), the class of cycle the tree already carries.
 
 ### Live SSH statusline matrix (path-triggered gate, AGENTS.md)
 

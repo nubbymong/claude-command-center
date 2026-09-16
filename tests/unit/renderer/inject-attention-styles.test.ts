@@ -2,8 +2,10 @@
 // injectAttentionStyles (2.1.1) is the UNION of two copies that shared one
 // element id: Sidebar's had the insights-pulse rules, TabBar's did not, and
 // which one landed depended on mount order. Pin the union and the once-only.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { injectAttentionStyles } from '../../../src/renderer/utils/injectAttentionStyles'
+
+beforeEach(() => { document.getElementById('attention-pulse-styles')?.remove() })
 
 describe('injectAttentionStyles', () => {
   it('injects once under the shared id, with BOTH pulse rule sets', () => {

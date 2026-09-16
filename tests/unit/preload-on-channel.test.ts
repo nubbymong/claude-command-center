@@ -49,6 +49,10 @@ describe('preload onChannel (pinned through window.onMaximizedChanged)', () => {
     expect(cb).toHaveBeenCalledWith(true)
     // one argument -- the payload, never the IpcRendererEvent
     expect(cb.mock.calls[0]).toHaveLength(1)
+    // ...and the very object main sent, not a copy of it.
+    const obj = { marker: 1 }
+    deliver(CH, obj)
+    expect(cb.mock.calls[1][0]).toBe(obj)
   })
 
   it('the disposer removes exactly the listener it added, and a later delivery reaches nothing', () => {

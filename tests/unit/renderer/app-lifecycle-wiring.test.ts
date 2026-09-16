@@ -215,7 +215,8 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     const restoreUnsettledRef = { current: false }
     // 2.1.1 (ADR-021): App injects the two liveness helpers -- session-persistence
     // must not import the stores that import it back -- so the call site hands
-    // them over as deps, and this pins that they are the real ones.
+    // them over as deps. This pins the WIRING (both named bindings reach the
+    // call, unrenamed); that they are the stores' exports is App's import list.
     const probeGoneSessions = async () => []
     const pingAllDetachedHosts = () => {}
     const handler = run<() => void>(jsxHandler(APP, 'onResume'), {

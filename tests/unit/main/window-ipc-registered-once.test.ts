@@ -72,7 +72,7 @@ describe('window IPC is registered once per process', () => {
     ] as const) {
       // Either spelling: the literal as written today, or the IPC.* constant
       // ADR-021 asks new code to use -- a migration must not turn this red.
-      expect(body).toMatch(new RegExp(`ipcMain\\.${method}\\((?:'${literal}'|IPC\\.${constant})`))
+      expect(body).toMatch(new RegExp(`ipcMain\\.${method}\\((?:'${literal}'|IPC\\.${constant}\\b)`))
     }
     // CLI + clipboard handlers are delegated to their own register functions
     // called from within this once-guarded block.
@@ -80,15 +80,28 @@ describe('window IPC is registered once per process', () => {
     expect(body).toContain('registerClipboardHandlers()')
   })
 
-  it("app.on('activate') only re-creates the window: no registration on the dock-reopen path", () => {
-    // The macOS dock click is the very path the once-guard exists for; a
-    // register*() call placed here re-registers on every reopen, and until
-    // now no test looked at it (re-attack, 2.1.1).
-    const start = src.indexOf("app.on('activate'")
-    expect(start).toBeGreaterThanOrEqual(0)
-    const handler = src.slice(start, src.indexOf('\n  })', start))
-    expect(handler).not.toMatch(/\bregister[A-Z]\w*Handlers?\b|ipcMain\.(handle|on)\(/)
-    expect(handler).toContain('createWindow()')
+  it("app.on('activate') / app.on('second-instance') only re-create or refocus the window: no registration on a re-entry path", () => {
+    // The macOS dock click and the Windows second launch are the very paths
+    // the once-guard exists for; a register*() call in EITHER listener (and an
+    // event may have more than one listener) re-registers on every re-entry,
+    // and until now no test looked (re-attack rounds 1-2, 2.1.1).
+    const listenerBody = (from: number): string => {
+      const lineStart = src.lastIndexOf('\n', from) + 1
+      const indent = src.slice(lineStart, from)
+      expect(indent.trim(), 'listener starts its line').toBe('')
+      const end = src.indexOf(`\n${indent}})`, from)
+      expect(end, 'listener end').toBeGreaterThan(from)
+      return src.slice(from, end)
+    }
+    let seen = 0
+    for (const ev of ['activate', 'second-instance']) {
+      for (const m of src.matchAll(new RegExp(`app\\.on\\('${ev}'`, 'g'))) {
+        seen++
+        expect(listenerBody(m.index!), `${ev} listener at ${m.index}`).not.toMatch(/\bregister[A-Z]\w*Handlers?\b|ipcMain\.(handle|on)\(/)
+      }
+    }
+    expect(seen).toBeGreaterThanOrEqual(2)
+    expect(listenerBody(src.indexOf("app.on('activate'"))).toContain('createWindow()')
   })
 
   it('the close-dialog state no longer lives in a createWindow() closure', () => {
@@ -142,6 +155,11 @@ describe('index.ts wiring pinned by shape', () => {
     }
     const resume = at('    registerResumeHandlers()')
     const wipe = at('    registerLogsWipeHandlers()')
+    // Whole lines: a statement appended after either call on the same line
+    // would sit between them without being "in the gap" (re-attack round 2).
+    for (const i of [resume, wipe]) {
+      expect(src.slice(i, src.indexOf('\n', i)).trim()).toMatch(/^register(Resume|LogsWipe)Handlers\(\)$/)
+    }
     expect(wipe).toBeGreaterThan(resume)
     expect(wipe).toBeLessThan(at('    registerDebugHandlers()'))
     expect(wipe).toBeLessThan(at('    registerLogs2Handlers(getWindow)'))
