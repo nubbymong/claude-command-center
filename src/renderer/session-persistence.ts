@@ -7,8 +7,12 @@ import type { SessionState, SavedSession } from './types/electron'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
-import { probeGoneSessions } from './stores/livenessStore'
-import { pingAllDetachedHosts } from './stores/hostReachability'
+// Type-only: livenessStore imports persistSessionState from THIS module, so a
+// value import of either store here closes a renderer import cycle (benign
+// while nothing reads across it at module scope; a boot-time TDZ crash the day
+// something does). The caller injects both (code-quality review, 2.1.1).
+import type { probeGoneSessions } from './stores/livenessStore'
+import type { pingAllDetachedHosts } from './stores/hostReachability'
 
 // Serialize the current sessionStore into the shape the main process persists.
 // Previously lived inline in App.tsx but the GitHub per-session config save
@@ -338,9 +342,15 @@ export async function discardAndClose(deps: {
 // Restore saved sessions on startup. Lifted out of App.tsx (2.1.1) as a pure
 // move: the one component-scope value it read, restoreUnsettledRef, is passed
 // as the ref OBJECT so the write at the end still lands on the live ref.
+export interface RestoreSavedSessionsDeps {
+  probeGoneSessions: typeof probeGoneSessions
+  pingAllDetachedHosts: typeof pingAllDetachedHosts
+}
+
 export async function restoreSavedSessions(
   savedState: SessionState,
   restoreUnsettledRef: { current: boolean },
+  deps: RestoreSavedSessionsDeps,
 ): Promise<boolean> {
   try {
     console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
@@ -447,7 +457,7 @@ export async function restoreSavedSessions(
     // armed timer — the ~90s ping clock only runs while the Running tab is
     // visible (Phase 3 arms it via armHostPings/disarmHostPings). Fire and
     // forget: never blocks restore, never throws.
-    void pingAllDetachedHosts()
+    void deps.pingAllDetachedHosts()
     // Per-session "hide this tool" entries key on session ids, which persist
     // across restarts; drop the ones whose session did not come back (ADR-018 M3).
     useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
@@ -475,7 +485,7 @@ export async function restoreSavedSessions(
         (s) => s.sessionType === 'ssh' && !!s.sshConfig && s.sshConfig.detachable !== false && !!s.configId,
       )
       if (persistentSsh.length === 0) return
-      const gone = await probeGoneSessions(persistentSsh.map((s) => ({ id: s.id, configId: s.configId })))
+      const gone = await deps.probeGoneSessions(persistentSsh.map((s) => ({ id: s.id, configId: s.configId })))
       const store = useSessionStore.getState()
       for (const id of gone) {
         // Only flag a session still present (the user may have closed it in the

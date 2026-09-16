@@ -66,6 +66,10 @@ by CI.
      `tmuxArchiveResolver`) is read live at the use site. Snapshotting it into a
      const at import time is a regression, and the bundle was checked to keep
      the live binding.
+   - A moved function does not gain a value import from a module that imports
+     this one back. `restoreSavedSessions` needed two liveness helpers whose
+     store imports `persistSessionState` from `session-persistence.ts`; the
+     caller injects them, and the signature uses type-only imports for `typeof`.
 
 4. **Evidence required before merge.** An adversarial pass per boundary touched
    (ADR-009), a spec-compliance review that diffs every moved body against its

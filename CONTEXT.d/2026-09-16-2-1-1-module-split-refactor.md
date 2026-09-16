@@ -61,6 +61,23 @@ each an independent Opus reviewer):
   `insights-pulse` rules. Sidebar mounts first and both shared the element id,
   so the superset always won; the dedupe removes a latent order dependence
   rather than changing behaviour.
+- Code quality (a fresh Opus reviewer on the final tree): 0 blockers, 1 major,
+  10 minors. The major: the once-flag ordering check only matched zero-arg
+  `register*Handlers()` calls, so an arg-taking `registerFoo(getWindow)`
+  hoisted above the guard slipped through. Fixed; that mutant is now red.
+  Minors fixed: five orphaned import specifiers, the new
+  session-persistence -> livenessStore import cycle (broken by injecting the
+  two liveness helpers, type-only imports for the signature), CRLF
+  normalisation in the splash shape test, a stale test comment naming
+  pty-manager as the https importer, headers on the two renderer utils, stray
+  blank lines, and the shape test now accepts the `IPC.*` spelling for its
+  four pinned channels. Two unit tests added for `closeSessionBatch` and
+  `injectAttentionStyles`. Left as follow-ups: `constrainToMaxDim` in
+  `ipc/clipboard-handlers.ts` duplicates `screenshot-capture.ts` (pre-existing),
+  and `clampToVisibleDisplay` has no direct test (it reaches `screen` through
+  a runtime `require`, which the unit harness cannot substitute). App.tsx also
+  dropped two dead re-exports (`ViewType`, the resume-picker pair): only
+  `main.tsx` imports App, and it takes the default export.
 
 ### Live SSH statusline matrix (path-triggered gate, AGENTS.md)
 

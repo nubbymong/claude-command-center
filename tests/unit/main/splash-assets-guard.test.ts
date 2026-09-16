@@ -68,7 +68,7 @@ describe('splash assets guard', () => {
     // splash-window.ts cannot be imported here (it needs a live BrowserWindow),
     // so pin the shape: the isolation flags a mutation could flip with every
     // other test staying green (adversarial pass, 2.1.1).
-    const src = readFileSync(join(repoRoot, 'src', 'main', 'splash-window.ts'), 'utf-8')
+    const src = readFileSync(join(repoRoot, 'src', 'main', 'splash-window.ts'), 'utf-8').replace(/\r\n/g, '\n')
     expect(src).toMatch(/webPreferences:\s*\{\s*contextIsolation:\s*true,\s*nodeIntegration:\s*false,\s*sandbox:\s*true,?\s*\}/)
     expect(src).toContain("join(__dirname, '..', '..', 'resources', 'splash', 'index.html')")
     expect(src).not.toMatch(/\.loadURL\(/)

@@ -45,6 +45,7 @@ import SshCloseDialog from './components/SshCloseDialog'
 import SshReattachGoneNotice from './components/SshReattachGoneNotice'
 import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
 import { pingAllDetachedHosts } from './stores/hostReachability'
+import { probeGoneSessions } from './stores/livenessStore'
 import { DialogOverlay } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
@@ -88,9 +89,8 @@ import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
-import type { SessionState, SavedSession } from './types/electron'
-import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions } from './session-persistence'
-import { useAccountGateStore } from './stores/accountGateStore'
+import type { SessionState } from './types/electron'
+import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions } from './session-persistence'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 
 import type { ViewType } from './types/views'
@@ -1290,7 +1290,7 @@ export default function App() {
               // the prompt, so a close before it lands keeps the saved file.
               restoreUnsettledRef.current = true
               setPendingRestore(null)
-              void restoreSavedSessions(saved, restoreUnsettledRef)
+              void restoreSavedSessions(saved, restoreUnsettledRef, { probeGoneSessions, pingAllDetachedHosts })
             }}
             onDontOpen={() => {
               const saved = pendingRestore

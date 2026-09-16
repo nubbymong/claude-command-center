@@ -55,16 +55,24 @@ describe('window IPC is registered once per process', () => {
     // just be present somewhere in the body.
     // EVERY delegated register call in the block, not a whitelist of two: a
     // third one hoisted above the guard stayed green under the old list
-    // (re-attack, 2.1.1).
-    const delegated = [...body.matchAll(/\bregister[A-Z]\w*Handlers?\(\)/g)]
+    // (re-attack, 2.1.1). Any arity: registerFoo(getWindow) counts too
+    // (code-quality review, 2.1.1).
+    const delegated = [...body.matchAll(/\bregister[A-Z]\w*Handlers?\(/g)]
     expect(delegated.length).toBeGreaterThanOrEqual(3)
     for (const m of delegated) {
       expect(m.index, `${m[0]} must follow the once-flag`).toBeGreaterThan(set)
     }
     // The registrations the dock-reopen crash was first seen on are in here
     // (inline or via delegated registerFoo calls that run inside this block).
-    for (const ch of ["'window:isMaximized'", "'window:allowClose'", "'window:cancelClose'", "'session:save'"]) {
-      expect(body).toContain(`ipcMain.${ch === "'window:allowClose'" || ch === "'window:cancelClose'" ? 'on' : 'handle'}(${ch}`)
+    for (const [method, literal, constant] of [
+      ['handle', 'window:isMaximized', 'WINDOW_IS_MAXIMIZED'],
+      ['on', 'window:allowClose', 'WINDOW_ALLOW_CLOSE'],
+      ['on', 'window:cancelClose', 'WINDOW_CANCEL_CLOSE'],
+      ['handle', 'session:save', 'SESSION_SAVE'],
+    ] as const) {
+      // Either spelling: the literal as written today, or the IPC.* constant
+      // ADR-021 asks new code to use -- a migration must not turn this red.
+      expect(body).toMatch(new RegExp(`ipcMain\\.${method}\\((?:'${literal}'|IPC\\.${constant})`))
     }
     // CLI + clipboard handlers are delegated to their own register functions
     // called from within this once-guarded block.

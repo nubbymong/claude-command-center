@@ -1,3 +1,8 @@
+// Keyframes for the attention pulse (sidebar rows, tab dots) and the insights
+// pulse dot, injected once into <head>. Lifted out of Sidebar.tsx (2.1.1): it
+// had a twin in TabBar.tsx that lacked the insights-pulse rules, and both
+// shared this element id, so which CSS landed depended on Sidebar mounting
+// first (it always did). This is the union; both call sites use it now.
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
 
 export function injectAttentionStyles(): void {

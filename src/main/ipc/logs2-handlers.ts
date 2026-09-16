@@ -183,7 +183,6 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
       try { win.webContents.send(IPC.LOGS2_NEW_MESSAGES, e) } catch { /* window gone */ }
     }
   })
-
 }
 
 /**

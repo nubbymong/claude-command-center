@@ -70,7 +70,6 @@ import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidPro
 export { withProfileHome } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
-import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'

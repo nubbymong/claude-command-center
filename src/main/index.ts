@@ -95,7 +95,7 @@ import { resolveResumeTargetFromTranscript } from './logging/transcript-discover
 import { getConfigDir, snapshotConfig, readConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
-import { loadWindowState, saveWindowState, clampToVisibleDisplay, saveWindowStateFor, type WindowState } from './window-state'
+import { loadWindowState, clampToVisibleDisplay, saveWindowStateFor } from './window-state'
 import { registerCredentialHandlers } from './ipc/credentials-handlers'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
@@ -392,7 +392,6 @@ function createWindow(): void {
       }, wait)
     }
   })
-
 
   mainWindow.on('close', (e) => {
     if (mainWindow) saveWindowStateFor(mainWindow)
