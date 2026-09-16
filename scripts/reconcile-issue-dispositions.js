@@ -10,9 +10,11 @@
  *   - `triage`    (undecided; a human must decide — the default on a new issue), OR
  *   - `wontfix` / `duplicate` / `excluded`  (will not ship).
  *
- * And once an issue is in a COMMITTED state (`in-beta`, `loop-claimed`,
- * `loop-in-progress`, `loop-done`) it must carry a `release-<major.minor>` label —
- * work started or shipped means the target line is decided.
+ * And once an issue is in a COMMITTED state (`in-beta`, `in-release`, `loop-claimed`,
+ * `loop-in-progress`, `loop-done`) it must carry a release label — the line
+ * `release-<major.minor>`, or the patch `release-<major.minor.patch>` once that
+ * line's x.y.0 has shipped — because work started or shipped means the target
+ * is decided.
  *
  * This job is the DURABLE enforcer. It runs on a schedule (and workflow_dispatch),
  * NOT off an `on: labeled` event — a label applied with the Actions `GITHUB_TOKEN`

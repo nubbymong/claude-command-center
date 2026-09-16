@@ -61,11 +61,18 @@ describe('resources/splash/index.html carries the build line slot (#384)', () =>
     expect(html).toMatch(/#buildinfo\{[^}]*position:fixed/)
     expect(html).toMatch(/#buildinfo\{[^}]*pointer-events:none/)
   })
-  it('the CSP still forbids inline script (the line arrives via the URL, not an inline <script>)', () => {
+  it('the CSP still forbids inline script (the line arrives via the URL, not an inline <script>)', async () => {
     expect(html).not.toMatch(/script-src[^;"]*'unsafe-inline'/)
-    // Any INLINE executable <script>, in any casing or attribute form; src= tags
-    // and the inert text/x-logo-src data block are legitimate (CodeQL #15, 2.1.1).
-    expect(html).not.toMatch(/<script\b(?![^>]*\bsrc=)(?![^>]*\btype\s*=\s*"text\/x-)/i)
+    // Any INLINE executable <script>, judged on PARSED attributes: a raw-text
+    // lookahead could be fooled by an attribute VALUE containing `src=`. A script
+    // is inert only when it has a src attribute or a non-JavaScript type, such as
+    // the text/x-logo-src data block (CodeQL #15; Copilot round 4, 2.1.1).
+    const { JSDOM } = await import('jsdom')
+    const scripts = [...new JSDOM(html).window.document.querySelectorAll('script')]
+    const JS_TYPES = ['', 'module', 'text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript']
+    const inlineExecutable = scripts.filter((el) => !el.hasAttribute('src') && JS_TYPES.includes((el.getAttribute('type') ?? '').trim().toLowerCase()))
+    expect(inlineExecutable.map((el) => el.outerHTML.slice(0, 80))).toEqual([])
+    expect(scripts.length, 'the page still has its script tags').toBeGreaterThanOrEqual(2)
   })
 })
 
