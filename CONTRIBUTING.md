@@ -139,6 +139,10 @@ line** an issue belongs to:
   PR on this line; in particular, every `in-beta` issue should also carry
   `release-2.1`, so a "what ships in 2.1?" query stays accurate.
 - **`release-2.2`** — **apply it** to work explicitly **deferred** past 2.1.
+- **`release-2.1.1`** — a patch release on a line whose x.y.0 has already shipped
+  gets its own label (owner decision, 2026-09-16): once 2.1.0 is live, `release-2.1`
+  reads as "ships in 2.1", so 2.1.1 PRs and issues carry `release-2.1.1` instead.
+  Same pattern for later patches (`release-2.1.2`, ...).
 
 **Invariant: `in-beta`/`in-release` and `release-2.2` must never sit on the same
 issue.** Either lifecycle label means the fix is already merged to `beta` (which
