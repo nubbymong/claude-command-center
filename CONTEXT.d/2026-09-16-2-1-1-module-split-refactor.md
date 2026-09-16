@@ -101,12 +101,21 @@ each an independent Opus reviewer):
 ### Live SSH statusline matrix (path-triggered gate, AGENTS.md)
 
 Ran against the real hosts: 185 key PASS, Pi password PASS, Rocky password
-PASS, mac key PASS, T20 docker rootless PASS. T21 (docker rootful), T24 and
-T25 (zsh fixture) failed on `sudo` provisioning because the first run carried
-the wrong sudo credential for the Rocky host; the re-run is owed and was
-blocked on 2026-09-16 by the Rocky guest being down (owner's call to start
-it). T7 (Windows remote) is the known upstream `claude` gap, not a failure.
-Every extracted module is on the path of the four passing core lanes.
+PASS, mac key PASS, T20 docker rootless PASS. The three Rocky sudo lanes were
+re-run once the owner started the guest (it had moved to a new subnet again;
+after a reboot BOTH `ccc-test` containers, rootless and rootful, must be
+started by hand): T21 docker rootful PASS, T25 zsh login shell PASS, T24
+FAIL -- pre-existing, not this branch. T24 types the sudo secret instead of
+saving it, and End's in-container kill then falls back to `sudo -n` by design
+(ssh-shim.ts: succeeds under NOPASSWD, fails fast otherwise); this Rocky user
+has `(ALL) ALL` without NOPASSWD and sudo's timestamp is per-tty, so the
+root-owned claude survives End and the lane's no-orphan assertion fails. The
+End path is byte-identical to beta, and the rc.16 run log shows T24 never
+reached that assertion before (it failed earlier on rootless setup latency).
+Recorded for the owner: End could hold a typed sudo secret under the same
+custody rule as a saved one; that is a secret-handling change and needs its
+own adversarial pass. T7 (Windows remote) is the known upstream `claude` gap,
+not a failure. Every extracted module is on the path of the passing lanes.
 
 ### Next
 
