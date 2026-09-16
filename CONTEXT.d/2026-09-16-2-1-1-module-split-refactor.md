@@ -1,0 +1,127 @@
+## 2026-09-16 -- 2.1.1 prep: the largest files split into focused modules
+
+Branch `refactor/pty-manager-simplify` off `beta` (`bdec34ac`, `2.1.0-rc.17`).
+The decision and the rules it produced are ADR-021; this is the run log.
+
+### What moved
+
+| file | before | after |
+| --- | --- | --- |
+| `src/main/pty-manager.ts` | 5,711 | 5,115 |
+| `src/main/index.ts` | 1,353 | 979 |
+| `src/preload/index.ts` | 1,496 | 1,337 |
+| `src/renderer/App.tsx` | 1,669 | 1,445 |
+| `src/renderer/components/Sidebar.tsx` | 1,733 | 1,708 |
+
+Ten new modules: `ssh-sentinel-parsers`, `tmux-archive-cache`, `ssh-line-buffer`,
+`codex-spawn-identity`, `splash-window`, `app-menu`, `ipc/cli-handlers`,
+`ipc/clipboard-handlers` (main); `utils/closeSessionBatch`,
+`utils/injectAttentionStyles` (renderer). `withProfileHome` joined
+`account-profiles.ts`, the geometry helpers joined `window-state.ts`, the
+logs-wipe pair joined `ipc/logs2-handlers.ts`, `restoreSavedSessions` joined
+`session-persistence.ts`, and 48 hand-written preload subscriptions became one
+`onChannel` helper (51 `ipcRenderer.on` sites at beta, 3 kept as-is on purpose).
+The dead machine-name boot gate went: nothing ever set `showMachineNamePrompt`
+to true.
+
+Not touched, on purpose: the SSH state machine closure in `spawnPtyResolved`
+(the #242 boundary) and the Sidebar tab panels (a split would only move the
+complexity into a twenty-prop contract).
+
+### Review evidence
+
+Three adversarial passes (ADR-009) on the first cut: pty-manager (3 lenses,
+PASS), preload `onChannel` (2 lenses, PASS), the `index.ts` handler relocation
+plus the splash `webPreferences` (2 lenses, FINDINGS). The two majors there
+were both introduced by the relocation itself -- the logs-wipe pair had drifted
+from right after `registerResumeHandlers()` to after `initLogging`, and the
+once-per-process shape test could not see a delegated `register*Handlers()`
+call in `createWindow()`. Fixed in `4916ba79`, each fix mutation-verified.
+
+Re-attack on `4916ba79` (2 Opus attackers, Fable orchestrating), plus the
+double review (spec compliance on main, spec compliance on preload + renderer,
+each an independent Opus reviewer):
+
+- Adversarial: 0 blockers, 2 majors, 4 minors -- all test strength, none a
+  code regression. The restored logs-wipe slot was pinned by a comment only
+  (moving it back stayed green across 2,797 tests); `app.on('activate')` had no
+  test looking at it; the once-flag ordering check was a two-name whitelist; the
+  splash guard was first-match; no converted preload site had a test. Every
+  one now has a shape or unit test, and each new test was checked red against
+  the mutant it exists to catch.
+- Spec compliance: COMPLIANT on both halves, 0 majors. Every extraction diffs
+  clean against its origin as code. The one systematic minor: about 160 lines
+  of rationale comments had not travelled with the code (splash, clipboard,
+  CLI probes, menu, display clamp, the tmux "never rejects" contract, the whole
+  `restoreSavedSessions` history). Restored verbatim. Also: a dead `app` import
+  in `pty-manager.ts`, a stale gate list and a dropped provenance note in
+  `boot-gates.test.ts`, and commit messages whose counts were off by a few
+  lines (the table above is measured, not quoted).
+- Both `injectAttentionStyles` originals differed: TabBar's copy lacked the
+  `insights-pulse` rules. Sidebar mounts first and both shared the element id,
+  so the superset always won; the dedupe removes a latent order dependence
+  rather than changing behaviour.
+- Code quality (a fresh Opus reviewer on the final tree): 0 blockers, 1 major,
+  10 minors. The major: the once-flag ordering check only matched zero-arg
+  `register*Handlers()` calls, so an arg-taking `registerFoo(getWindow)`
+  hoisted above the guard slipped through. Fixed; that mutant is now red.
+  Minors fixed: five orphaned import specifiers, the new
+  session-persistence -> livenessStore import cycle (broken by injecting the
+  two liveness helpers, type-only imports for the signature), CRLF
+  normalisation in the splash shape test, a stale test comment naming
+  pty-manager as the https importer, headers on the two renderer utils, stray
+  blank lines, and the shape test now accepts the `IPC.*` spelling for its
+  four pinned channels. Two unit tests added for `closeSessionBatch` and
+  `injectAttentionStyles`. Left as follow-ups: `constrainToMaxDim` in
+  `ipc/clipboard-handlers.ts` duplicates `screenshot-capture.ts` (pre-existing),
+  and `clampToVisibleDisplay` has no direct test (it reaches `screen` through
+  a runtime `require`, which the unit harness cannot substitute). App.tsx also
+  dropped two dead re-exports (`ViewType`, the resume-picker pair): only
+  `main.tsx` imports App, and it takes the default export.
+- Second re-attack round (the same two attackers, on the fixes): 0 blockers,
+  1 major, 6 minors, all test strength again. The activate test pinned only
+  the first `app.on('activate')` listener; it now walks every `activate` and
+  `second-instance` listener. The boot-slot test requires its two anchors to
+  be whole lines, the dual-spelling channel check is word-bounded, the splash
+  guard pins the `splashHtml` binding to the bundled path and counts `loadFile`
+  calls (on code lines, so a comment cannot red it), and the onChannel test
+  checks payload identity. Each has its red mutant. One structural note from
+  the quality reviewer, left alone: `ssh-sentinel-parsers` joined the existing
+  30-module main-process import component through `statusline-watcher`
+  (function-scope use only), the class of cycle the tree already carries.
+- Final confirmation: PASS from both attackers and the quality reviewer, 0
+  majors. What remains is the ceiling of text-shape tests, recorded rather
+  than chased: a block-scoped shadow of `splashHtml` right before `loadFile`
+  would satisfy every splash assertion (closing it means importing the module
+  with `BrowserWindow` mocked; the splash renderer is sandboxed, isolated, has
+  no preload and its own CSP, so it was not spent), and a string literal that
+  mimics a listener's closing shape could truncate the re-entry slices (each
+  slice now has a content backstop).
+
+### Live SSH statusline matrix (path-triggered gate, AGENTS.md)
+
+Ran against the real hosts: 185 key PASS, Pi password PASS, Rocky password
+PASS, mac key PASS, T20 docker rootless PASS. The three Rocky sudo lanes were
+re-run once the owner started the guest (it had moved to a new subnet again;
+after a reboot BOTH `ccc-test` containers, rootless and rootful, must be
+started by hand): T21 docker rootful PASS, T25 zsh login shell PASS, T24
+FAIL -- pre-existing, not this branch. T24 types the sudo secret instead of
+saving it, and End's in-container kill then falls back to `sudo -n` by design
+(ssh-shim.ts: succeeds under NOPASSWD, fails fast otherwise); this Rocky user
+has `(ALL) ALL` without NOPASSWD and sudo's timestamp is per-tty, so the
+root-owned claude survives End and the lane's no-orphan assertion fails. The
+End path is byte-identical to beta, and the rc.16 run log shows T24 never
+reached that assertion before (it failed earlier on rootless setup latency).
+Recorded for the owner: End could hold a typed sudo secret under the same
+custody rule as a saved one; that is a secret-handling change and needs its
+own adversarial pass. T7 (Windows remote) is the known upstream `claude` gap,
+not a failure. Every extracted module is on the path of the passing lanes.
+
+### Next
+
+PR 2 (`build/2.1.1-prep`): merge `main`'s `2.1.0` version bump back to beta,
+vitest 4.1.11 (not 5: #613's 5.0.0 is a test-semantics migration), Electron
+43.7.1 (not 44: #594's CI shows the clipboard API break and the ABI gap, kept
+for 2.2), node-pty beta.15, zod, marked, `@types/better-sqlite3`, the nine
+CodeQL dismissals through an adversarial pass, the 2.1.1 changelog entry.
+Owner desktop-tests beta before any release is cut.

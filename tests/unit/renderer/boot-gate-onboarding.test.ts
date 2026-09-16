@@ -8,7 +8,6 @@ const base: BootGateState = {
   showTraining: false,
   showTrainingAll: false,
   showGitHubOnboarding: false,
-  showMachineNamePrompt: false,
   loggingConsentSeen: true,
   resumePending: false,
   whatsNewDue: false,

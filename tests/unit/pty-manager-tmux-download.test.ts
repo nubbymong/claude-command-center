@@ -46,7 +46,8 @@ vi.mock('electron', () => ({
   nativeTheme: { shouldUseDarkColors: false, on: () => {} },
   app: { getPath: () => h.userDataDir },
 }))
-// pty-manager does `import * as https from 'https'` (bare specifier, not
+// tmux-archive-cache.ts (the download moved there in 2.1.1) does
+// `import * as https from 'https'` (bare specifier, not
 // node:https) -- spread the real module so anything else in the import graph
 // keeps working, and override only `get`.
 vi.mock('https', async (importOriginal) => {

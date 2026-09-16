@@ -1,10 +1,19 @@
-import { BrowserWindow, nativeTheme, app } from 'electron'
+import { BrowserWindow, nativeTheme } from 'electron'
 import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
-import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ssh-tmux'
+import { buildTmuxLaunchCommand, buildSshClaudeFlags } from './ssh-tmux'
 import { buildTmuxListCommand, parseTmuxLivenessOutput, computeLiveSessionIds, TMUX_LIVENESS_END } from './ssh-liveness'
 import { stripAnsiForSentinel } from './ansi-strip'
+import { parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel } from './ssh-sentinel-parsers'
+import { resolveTmuxArchive } from './tmux-archive-cache'
+export { _setTmuxArchiveResolverForTest, _downloadAndCacheTmuxArchiveForTest } from './tmux-archive-cache'
+import { bufferSshLine, bufferSetupLine, clearSshLineBuffer, clearSetupLineBuffer, clearAllSshLineBuffers } from './ssh-line-buffer'
+export { _getSetupLineBufferLenForTest } from './ssh-line-buffer'
+import { captureCodexSpawnIdentity, clearCodexSpawnIdentity } from './codex-spawn-identity'
+export { captureCodexSpawnIdentity, clearCodexSpawnIdentity, getCodexSpawnIdentityMap } from './codex-spawn-identity'
+export type { TmuxDetectionClass } from './ssh-sentinel-parsers'
+export { parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel } from './ssh-sentinel-parsers'
 import { randomId } from '../shared/id'
 import {
   composeRuntimeCommand, composeContainerEntryCommand, parseDockerPostCommand, isContainerRuntime,
@@ -13,11 +22,9 @@ import {
 import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
 import type { SshRuntime, DetachedRemoteLiveness } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
-import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
+import { buildTmuxStageCommand, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
 import * as os from 'os'
-import * as https from 'https'
-import * as crypto from 'crypto'
 import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
@@ -40,7 +47,7 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
 import { buildTerminalLaunchLine } from './terminal-launch-line'
-import { dispatchSSHStatuslineUpdate, cleanupStatusFile, sanitiseRemoteAccountEmail } from './statusline-watcher'
+import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
 import { getGateway, isExactBindSourceActive } from './hooks'
@@ -59,11 +66,10 @@ import { designatedWorktreeDir } from './canvas/canvas-worktree'
 import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
-import { readCodexAccountEmail } from './account-identity'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome } from './account-profiles'
+export { withProfileHome } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
-import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
@@ -71,505 +77,6 @@ import { getWatchdogManager } from './watchdog/watchdog-manager'
 
 import * as path from 'path'
 import * as fs from 'fs'
-
-/**
- * P8.8: per-session Codex spawn-time identity. Captured at PTY spawn,
- * read by tokenomics applyIdentityAtFlush() so claim-time drift on
- * ~/.codex/auth.json doesn't misattribute tokens.
- */
-const codexSpawnIdentity = new Map<string, AccountIdentity>()
-
-export function captureCodexSpawnIdentity(sessionId: string): void {
-  const id = readCodexAccountEmail()
-  if (id) codexSpawnIdentity.set(sessionId, id)
-}
-
-export function clearCodexSpawnIdentity(sessionId: string): void {
-  codexSpawnIdentity.delete(sessionId)
-}
-
-export function getCodexSpawnIdentityMap(): Map<string, AccountIdentity> {
-  return codexSpawnIdentity
-}
-
-/**
- * Per-process account isolation: run Claude under a per-account fake HOME so the
- * account identity (~/.claude.json, which follows USERPROFILE on Windows / HOME
- * on Unix) is private. CLAUDE_CONFIG_DIR alone does NOT isolate identity. Git/npm
- * are pointed back at the real home so shared dev tooling is unaffected. Returns
- * the env unchanged for the Default account (home == null).
- */
-export function withProfileHome(env: Record<string, string>, home: string | null): Record<string, string> {
-  if (!home) return env
-  const realHome = os.homedir()
-  const next: Record<string, string> = {
-    ...env,
-    USERPROFILE: home,
-    // Belt-and-suspenders: keep git/npm reading the real shared config even if a
-    // hard-linked dotfile ever desyncs (the mirror also links these through).
-    GIT_CONFIG_GLOBAL: path.join(realHome, '.gitconfig'),
-    npm_config_userconfig: path.join(realHome, '.npmrc'),
-  }
-  // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
-  // Pointing HOME at the fake profile home — which mirrors only dot-entries, never
-  // ~/Library (see mirrorRealHome) — leaves the spawned `claude` with no keychain to
-  // resolve, surfacing the macOS "A keychain cannot be found to store ..." dialog (#117).
-  // Multi-account is disabled on macOS anyway (see AccountsPanel), so HOME-based identity
-  // isolation buys nothing there; leaving HOME at the real home restores keychain access
-  // and resolves the single global account correctly. Linux keychains (Secret Service /
-  // D-Bus) are not HOME-path-based, so keep the redirect there for multi-account isolation.
-  if (process.platform === 'linux') next.HOME = home
-  // Claude's native install lives at `$HOME/.local/bin`. With the home redirected,
-  // CC computes that as `<home>/.local/bin` (a junction to the real ~/.local) but
-  // PATH still carries the *real* home's `.local/bin`, so `/doctor` falsely warns
-  // "Native installation ... is not in your PATH". Add the redirected bin dir
-  // (deduped, under the env's existing path key) so the self-check passes. The
-  // real entry stays first, so which `claude` actually resolves is unchanged.
-  const localBin = path.join(home, '.local', 'bin')
-  const pathKey = Object.keys(next).find((k) => k.toLowerCase() === 'path') ?? 'PATH'
-  const curPath = next[pathKey] ?? ''
-  const already = curPath.split(path.delimiter).some((p) => p.toLowerCase() === localBin.toLowerCase())
-  if (!already) next[pathKey] = curPath ? `${curPath}${path.delimiter}${localBin}` : localBin
-  return next
-}
-
-function escapeShellArg(str: string): string {
-  return str.replace(/[\\"$`]/g, '\\$&')
-}
-
-/**
- * Escape a string for literal (non-special) use inside `new RegExp(...)`.
- * #242 finding F1 (b): the per-session nonce is interpolated into
- * parseTmuxSentinel/parseTmuxStageSentinel's dynamically-built regexes below
- * -- randomId() (src/shared/id.ts) only ever produces lowercase hex, which
- * has no regex meaning, but this call site takes a plain `string` (the test
- * seam `_getSshNonceForTest` and any future caller aren't bound to that
- * guarantee), so escaping defends against a future nonce source that isn't
- * charset-limited the same way.
- */
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/** The two usable tmux CLASSES `parseTmuxSentinel` can return -- see its doc
- *  comment and generateRemoteSetupScript (ssh-shim.ts) for what each means. */
-export type TmuxDetectionClass = 'path' | 'home'
-
-/**
- * Parse the `tmux=<path|home|none>` CLASS field off the `setup ok`
- * completion sentinel (#242 — the tmux detection result rides the SAME
- * sentinel the setup script already emits, rather than a second
- * round-trip), AND gate the sentinel's own nonce match in one place so
- * every caller (the outer completion latch AND the tmux-class read) shares
- * the identical match (#242 finding I1/I2 correction, below).
- *
- * #242 round-3 correction (finding I3): the field is a fixed three-way
- * CLASS, never a path. `generateRemoteSetupScript` (ssh-shim.ts) reports
- * `path` (tier 1 — tmux found via `command -v tmux` on the remote's PATH),
- * `home` (tier 2 — a pre-existing, executable `~/.claude/bin/tmux`, the
- * SAME fixed location tier 3/4 stage/push a binary to), or `none`. There is
- * no free-text capture left for `isSafeTmuxBin`/`isPinnedTmuxPath` to
- * validate — the fixed alternation IS the allowlist — so both of those
- * checks (and the wire-reported path they used to gate) are gone; see
- * ssh-tmux.ts's `ON_PATH_TMUX_BIN_EXPR`/`STAGED_TMUX_BIN_EXPR` for the two
- * host-authored literal tokens a caller picks between using ONLY the class
- * this function returns, never a value read off the wire.
- *
- * Returns THREE distinct outcomes, because "the field wasn't there" and
- * "the field explicitly said none" are not the same thing (adversarial
- * review, #242 MINOR — call sites used to do `parseTmuxSentinel(data) ??
- * detectedTmuxSource`, which cannot tell them apart and so lets a
- * `tmux=none` from a LATER stage, e.g. container setup, inherit an EARLIER
- * stage's detected class instead of clearing it):
- *   - `undefined` — the sentinel is not present in THIS data (regex miss),
- *     the nonce is missing/wrong, or the chunk ends before the class token's
- *     trailing line terminator. Callers must leave any detected-tmux state
- *     untouched.
- *     - #242 finding I1 fix: callers pass the ACCUMULATED per-session
- *       buffer (`bufferSetupLine`, below), not just the current chunk — a
- *       real SSH link routinely segments this single logical line across
- *       multiple PTY chunks (`setup ok <nonce> tmux=pa` | `th\r\n`), and the
- *       chunk-boundary discipline above (require the trailing terminator)
- *       correctly refuses a truncated read from the FIRST chunk alone; the
- *       bug was that nothing ever re-parsed the SECOND chunk once an
- *       earlier, unrelated latch had already fired off a bare substring
- *       check, so the tmux probe was lost silently on every segmented line
- *       (adversarial review / live-test repro, #242 finding I1).
- *     - #242 finding I2 fix: this is ALSO what a spoofed bare `setup ok`
- *       (no nonce, or the wrong one) now produces for BOTH purposes — the
- *       outer completion latch is gated on this SAME nonce-bearing match,
- *       not a separate bare-substring check, so a write-only attacker can
- *       no longer latch completion early (starving the genuine, later
- *       sentinel of ever being parsed and forcing an unwanted tier-3/4
- *       staging attempt on a host that already had tmux).
- *   - `null` — the field parsed and explicitly reported `none`. Callers
- *     must CLEAR any detected-tmux state.
- *   - `'path'` or `'home'` — a validated CLASS (see `TmuxDetectionClass`).
- *
- * `nonce` (#242 finding F1 (b)): this session's host-generated random token.
- * The sentinel must carry it, immediately after "setup ok", or the WHOLE
- * match fails (returns `undefined`, i.e. "not present in this chunk") —
- * this is what makes a spoofed sentinel (a co-tenant's `wall`/`write`, a
- * MOTD script, any other PTY writer that doesn't know this session's nonce)
- * indistinguishable from "no sentinel here" rather than a rejected-but-seen
- * value. SECOND layer only: an attacker who can also read the tty can copy
- * the nonce verbatim (this line's own echo is not suppressed) — but even
- * then there is no path left to substitute; the worst a copied nonce buys
- * is forcing CCC to pick between the two fixed literal tokens, never an
- * arbitrary one.
- */
-export function parseTmuxSentinel(data: string, nonce: string): TmuxDetectionClass | null | undefined {
-  // ConPTY can glue title-OSC/cursor-CSI escapes between the class token and
-  // its line terminator, making the lookahead unsatisfiable — strip complete
-  // sequences first (see ansi-strip.ts for the incident + class rationale).
-  const m = stripAnsiForSentinel(data).match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(path|home|none)(?: acct=[A-Za-z0-9+/=]*)?(?=[\\r\\n])`))
-  if (!m) return undefined
-  if (m[1] === 'none') return null
-  return m[1] as TmuxDetectionClass
-}
-
-/**
- * SSH tmux enhancement (item 10): parse the `acct=<base64email>` field the
- * setup-ok sentinel now carries AFTER the tmux class (generateRemoteSetupScript,
- * ssh-shim.ts). Same chunk-boundary + nonce discipline as parseTmuxSentinel:
- * requires the FULL nonce-bearing line (anchored on the line terminator via
- * the tmux-class lookahead), so a truncated or spoofed sentinel yields nothing.
- *
- * The wire token is base64 of the remote's oauthAccount.emailAddress. This is
- * a DESCRIPTOR the remote host controls, surfaced only as a label -- treated as
- * UNTRUSTED-FOR-DISPLAY: after base64-decode it is charset-filtered to the
- * characters a real email uses and length-capped, and anything else yields
- * `undefined` (no account shown) rather than passing an arbitrary string to the
- * renderer. It is never interpreted, never a credential, never an auth key.
- *
- * Returns the sanitized descriptor, or `undefined` when the field is absent,
- * empty, undecodable, or fails the display charset (never throws).
- */
-// ADR-009: the max + display charset now live in ONE place
-// (sanitiseRemoteAccountEmail, statusline-watcher.ts) and gate BOTH deliveries
-// of this field -- this setup sentinel and the /status ingest, which used to
-// copy it verbatim and, because the renderer prefers its value, silently won.
-export function parseSetupAccountSentinel(data: string, nonce: string): string | undefined {
-  // Same ConPTY-glue hazard as parseTmuxSentinel above (ansi-strip.ts).
-  const m = stripAnsiForSentinel(data).match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(?:path|home|none) acct=([A-Za-z0-9+/=]*)(?=[\\r\\n])`))
-  if (!m || !m[1]) return undefined
-  let decoded: string
-  try {
-    decoded = Buffer.from(m[1], 'base64').toString('utf-8')
-  } catch {
-    return undefined
-  }
-  // Display gate: an email address only, length-capped. Anything else (a hostile
-  // host trying to plant markup / control chars in the label) is dropped.
-  return sanitiseRemoteAccountEmail(decoded)
-}
-
-/**
- * Parse the tier-3 staging sentinel (#242) that `buildTmuxStageCommand`
- * (ssh-tmux-stage.ts) writes to the remote PTY: either
- * `ccc-tmux-stage ok path=<abs-path>` or `ccc-tmux-stage fail=<reason>`.
- *
- * Same chunk-boundary discipline as parseTmuxSentinel above: the captured
- * token must be immediately followed by a line terminator, so a chunk that
- * ends mid-path/mid-reason (before the trailing `\n` the shell's own `echo`
- * always appends) returns `undefined` rather than a truncated value — the
- * caller leaves staging pending and waits for the next chunk instead of
- * treating a half-arrived line as the real result.
- *
- * The `ok` path is raw remote output — re-applies the SAME charset
- * allowlist (`isSafeTmuxBin`) here, before the value is returned in the
- * parse result. #242 finding F1(a), ROUND-2 CORRECTION: this function used
- * to ALSO apply a path-pin (`isPinnedTmuxPath`, requiring the path end in
- * "/.claude/bin/tmux") as a security gate on this field -- removed, because
- * "ends with the right suffix" is satisfiable from an attacker-writable
- * directory (`/tmp/.claude/bin/tmux`, or the double-slash
- * `/tmp/x//.claude/bin/tmux`) and is NOT equivalent to "really is under
- * $HOME" (verified end to end, adversarial review round 5, WITH a valid
- * nonce). The fix is not a stronger check on this field -- it is to stop
- * needing this field for anything security-relevant at all:
- * `buildTmuxLaunchCommand` (ssh-tmux.ts) never reads the result's `path` for
- * a staged tier, embedding `STAGED_TMUX_BIN_EXPR` (a fixed, host-authored
- * `"$HOME"/.claude/bin/tmux` literal) instead. #242 round-3 MINOR correction:
- * the result's `path` is never assigned to any state at all — the only
- * consumer is the adjacent `logInfo` call at each call site, inline. The
- * charset check that remains here exists purely so a malformed/garbage
- * capture can't pollute logs with control characters, not as a security
- * boundary.
- *
- * `nonce` (#242 finding F1 (b)): required immediately after
- * TMUX_STAGE_SENTINEL_PREFIX, same contract as parseTmuxSentinel's own
- * `nonce` param above -- a sentinel missing it, or carrying the wrong one,
- * is indistinguishable from "not present in this chunk" (`undefined`), not
- * a rejected-but-seen value.
- *
- * `reason` (#242 M2, MINOR): capped to a bounded, charset-guarded value
- * before it flows into flow-state IPC and logs -- the failure sentinel's
- * fail=<reason> field is raw remote output like the path is, and previously
- * `\S+` let an unbounded/garbage value straight through. The script itself
- * only ever emits arch/download/digest/extract/terminfo (ssh-tmux-stage.ts,
- * ssh-tmux-push.ts), all short lowercase words, so a real reply always
- * passes; anything else degrades to 'invalid-reason' rather than being
- * echoed verbatim.
- *
- * #242 finding I5: both capture groups are now BOUNDED (`\S{1,4096}`), not
- * unbounded `\S+`. This value is informational-only (never reaches a launch
- * command), but it still gets written into the remote shell's own recovery
- * path (nothing here does that today, but nothing prevents a future editor
- * from assuming a capped value) and unconditionally into logs/flow-state
- * IPC -- a multi-kilobyte capture is resource/log noise regardless. 4096 is
- * ample headroom for any real path or reason word this script emits.
- */
-const MAX_FAIL_REASON_LEN = 32
-const SAFE_FAIL_REASON_RE = /^[A-Za-z0-9_-]+$/
-const MAX_TMUX_STAGE_CAPTURE_LEN = 4096
-
-function sanitizeFailReason(raw: string): string {
-  if (raw.length > MAX_FAIL_REASON_LEN) return 'invalid-reason'
-  return SAFE_FAIL_REASON_RE.test(raw) ? raw : 'invalid-reason'
-}
-
-export function parseTmuxStageSentinel(
-  data: string,
-  nonce: string,
-): { ok: true; path: string } | { ok: false; reason: string } | undefined {
-  // 2026-08-27 Pi incident: ConPTY glued escapes between `path=…/tmux` and
-  // the `\r\n`, `\S+` swallowed them, and isSafeTmuxBin declared a SUCCESSFUL
-  // remote stage `unsafe-path` — strip complete sequences before matching
-  // (see ansi-strip.ts). The charset gate below still guards real garbage.
-  const m = stripAnsiForSentinel(data).match(new RegExp(`${TMUX_STAGE_SENTINEL_PREFIX} ${escapeRegExp(nonce)} (ok path=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}})|fail=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}}))(?=[\\r\\n])`))
-  if (!m) return undefined
-  if (m[2]) return isSafeTmuxBin(m[2]) ? { ok: true, path: m[2] } : { ok: false, reason: 'unsafe-path' }
-  return { ok: false, reason: sanitizeFailReason(m[3] ?? 'unknown') }
-}
-
-// === #242 tier 4: host-side tmux archive cache ===
-//
-// Tier 4 pushes the SAME v3.7b release asset tier 3 would have curled, over
-// the SSH tunnel itself, for remotes with no outbound egress at all. The
-// host downloads each arch's archive AT MOST ONCE (per app install) into
-// `app.getPath('userData')/tmux-cache/`, sha256-verifying it against the
-// SAME `TMUX_STAGE_SHA256` constants ssh-tmux-stage.ts uses, and reuses the
-// cached file for every later session that needs that arch. `userData`
-// (not `getDataDirectory()`, the pattern github-update.ts uses for the
-// ~100-200MB installer) is fine here — this archive is a few hundred KB and
-// is not itself an executable staged for direct execution on THIS machine.
-
-function tmuxCacheDir(): string {
-  return path.join(app.getPath('userData'), 'tmux-cache')
-}
-
-function tmuxCachePath(arch: TmuxStageTarget): string {
-  return path.join(tmuxCacheDir(), `tmux-${arch}.tar.gz`)
-}
-
-function sha256Hex(buf: Buffer): string {
-  return crypto.createHash('sha256').update(buf).digest('hex')
-}
-
-/**
- * Read a previously-cached archive for `arch`, re-verifying its sha256
- * before trusting it. A cache file that fails verification (disk
- * corruption, a manual edit, a leftover from a since-changed pinned tag) is
- * deleted rather than returned, so the caller re-downloads instead of
- * repeatedly pushing a bad archive down every future session to this arch.
- */
-function readCachedTmuxArchive(arch: TmuxStageTarget): Buffer | null {
-  try {
-    const p = tmuxCachePath(arch)
-    if (!fs.existsSync(p)) return null
-    const buf = fs.readFileSync(p)
-    if (sha256Hex(buf) !== TMUX_STAGE_SHA256[arch]) {
-      try { fs.unlinkSync(p) } catch { /* best-effort */ }
-      return null
-    }
-    return buf
-  } catch {
-    return null
-  }
-}
-
-/**
- * Download the v3.7b release asset for `arch` from the SAME pinned URL
- * ssh-tmux-stage.ts's remote script would have curled, sha256-verify it
- * against the SAME embedded digest, and cache it on success. Resolves
- * `null` (never rejects) on ANY failure -- network error, non-2xx status,
- * or a digest mismatch -- so the caller's fallback path (fall through to the
- * unwrapped launch) is a single, uniform check regardless of WHY the bytes
- * couldn't be obtained.
- */
-/**
- * Per-request timeout for the tier-4 archive fetch -- applied to BOTH the
- * initial request and the redirect hop. Matches httpsDownload's shape
- * (github-update.ts:515, its 'timeout' handler ~:640) rather than inventing
- * a second one: a bare `https.get(url, cb)` with no `timeout` option and no
- * `req.on('timeout')` handler never gives up on a stalled connection on its
- * own (#242 finding F1). A few-hundred-KB release asset over a healthy link
- * completes in low single-digit seconds; 20s is generous without eating
- * meaningfully into DOWNLOAD_TIMEOUT_MS's 45s flow-level backstop
- * (pty-manager.ts's SSH branch, attemptTmuxPush).
- */
-const TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS = 20000
-
-/**
- * Hard ceiling on the accumulated response body -- mirrors httpsDownload's
- * `maxBytes` parameter (github-update.ts:515). The real v3.7b release asset
- * is a few hundred KB; capping at a few MB catches a hostile/misbehaving
- * host serving an unbounded body long before it becomes a meaningful memory
- * concern (#242 finding F5). Checked ON THE WIRE in the `data` handler, not
- * after landing -- same reasoning as httpsDownload's own comment on this.
- */
-const TMUX_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
-
-/**
- * Follow-up adversarial pass (coverage MAJOR): exported for tests.
- *
- * Every guard in this function was previously unreachable from the suite --
- * `attemptTmuxPush` goes through the `tmuxArchiveResolver` seam, which tests
- * stub ABOVE this level, so raising TMUX_ARCHIVE_MAX_BYTES to
- * Number.MAX_SAFE_INTEGER, or deleting the https-only redirect refusal
- * outright, left the entire targeted suite green. This is the function whose
- * unbounded body was a round-4 BLOCKER; its guards must be able to fail a test.
- * Exported (rather than reached through a new seam) so the tests drive the real
- * https path with a mocked `https.get`.
- */
-export function _downloadAndCacheTmuxArchiveForTest(arch: TmuxStageTarget): Promise<Buffer | null> {
-  return downloadAndCacheTmuxArchive(arch)
-}
-
-function downloadAndCacheTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
-  // #242 finding F6: same URL parts buildTmuxStageScript's remote curl/wget
-  // fragment builds its `_url` from (ssh-tmux-stage.ts) -- see
-  // ssh-tmux-push.test.ts's regression test tying the two together.
-  const url = tmuxStageAssetUrl(arch)
-  const collect = (res: import('http').IncomingMessage, resolve: (v: Buffer | null) => void, redirectsLeft: number, currentUrl: string): void => {
-    // GitHub release assets 302 to a signed S3 URL -- one redirect hop is
-    // the real-world shape; refuse to follow more than a couple to avoid an
-    // unbounded chain against a misbehaving/hostile host.
-    const loc = res.headers.location
-    if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && loc && redirectsLeft > 0) {
-      res.resume()
-      // #242 round-2 MAJOR fix: `https.get` THROWS SYNCHRONOUSLY (not via
-      // 'error') when its URL argument is not https or is relative/malformed
-      // -- verified in this worktree (`https.get('http://x')` ->
-      // ERR_INVALID_PROTOCOL; `https.get('/relative')` -> ERR_INVALID_URL).
-      // `loc` here is a `Location` header taken straight from the response,
-      // i.e. attacker/proxy-controlled -- a captive portal or misbehaving
-      // proxy answering with a 302 to an `http://` login page or a relative
-      // path would throw OUT of this response callback, past the try/catch
-      // that wraps only the FIRST request below, into
-      // process.on('uncaughtException') (debug-logger.ts) which re-throws
-      // anything that isn't EPIPE/EIO -> Electron main process death.
-      // Resolve `loc` against the CURRENT request's URL first (so a
-      // relative Location is handled the way browsers/curl handle it, not
-      // rejected outright) and refuse anything that resolves to a
-      // non-https scheme, THEN wrap the redirect `https.get` call itself in
-      // a try/catch -- the initial call already has one; this hop must not
-      // be the exception.
-      let nextUrl: URL
-      try {
-        nextUrl = new URL(loc, currentUrl)
-      } catch {
-        resolve(null)
-        return
-      }
-      if (nextUrl.protocol !== 'https:') {
-        resolve(null)
-        return
-      }
-      try {
-        // #242 finding F1: the redirect hop needs the SAME timeout handling
-        // as the initial request below -- httpsDownload's shape
-        // (github-update.ts:640) covers both hops, not just the first.
-        const redirectReq = https.get(nextUrl, { timeout: TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS }, (res2) => collect(res2, resolve, redirectsLeft - 1, nextUrl.toString()))
-        redirectReq.on('error', () => resolve(null))
-        redirectReq.on('timeout', () => { try { redirectReq.destroy(new Error('tmux tier-4 download timeout')) } catch {} })
-      } catch {
-        resolve(null)
-      }
-      return
-    }
-    if (!res.statusCode || res.statusCode >= 400) {
-      res.resume()
-      resolve(null)
-      return
-    }
-    const chunks: Buffer[] = []
-    // #242 finding F5: track accumulated length on the wire and bail past
-    // TMUX_ARCHIVE_MAX_BYTES -- destroy(), not resume(), so the socket
-    // actually stops instead of draining an unbounded body to /dev/null.
-    let received = 0
-    let overLimit = false
-    res.on('data', (c: Buffer) => {
-      if (overLimit) return
-      received += c.length
-      if (received > TMUX_ARCHIVE_MAX_BYTES) {
-        overLimit = true
-        logError(`[ssh] tmux tier-4 download for arch=${arch} exceeded the ${TMUX_ARCHIVE_MAX_BYTES}-byte cap -- discarding`)
-        res.destroy()
-        resolve(null)
-        return
-      }
-      chunks.push(c)
-    })
-    res.on('end', () => {
-      if (overLimit) return
-
-      const buf = Buffer.concat(chunks)
-      if (sha256Hex(buf) !== TMUX_STAGE_SHA256[arch]) {
-        logError(`[ssh] tmux tier-4 download for arch=${arch} failed sha256 verification -- discarding`)
-        resolve(null)
-        return
-      }
-      try {
-        fs.mkdirSync(tmuxCacheDir(), { recursive: true })
-        fs.writeFileSync(tmuxCachePath(arch), buf)
-      } catch (err) {
-        // Cache write failing doesn't invalidate the verified bytes already
-        // in hand -- this session's push still proceeds, just re-downloads
-        // next time.
-        logError(`[ssh] tmux tier-4 cache write failed for arch=${arch}: ${(err as Error)?.message ?? err}`)
-      }
-      resolve(buf)
-    })
-    res.on('error', () => resolve(null))
-  }
-  return new Promise((resolve) => {
-    try {
-      // #242 finding F1: httpsDownload's shape (github-update.ts:515/:640) --
-      // the `timeout` option alone does not abort anything; only this
-      // `req.on('timeout')` handler, destroying the request, actually does.
-      const req = https.get(url, { timeout: TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS }, (res) => collect(res, resolve, 2, url))
-      req.on('error', () => resolve(null))
-      req.on('timeout', () => { try { req.destroy(new Error('tmux tier-4 download timeout')) } catch {} })
-    } catch {
-      resolve(null)
-    }
-  })
-}
-
-/** Cache hit first; only reaches the network on a miss/failed verification. */
-async function getOrDownloadTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
-  const cached = readCachedTmuxArchive(arch)
-  if (cached) return cached
-  return downloadAndCacheTmuxArchive(arch)
-}
-
-// #242 round-3 MAJOR fix (test coverage): attemptTmuxPush calls this
-// indirection rather than getOrDownloadTmuxArchive directly, so tests can
-// stub the tier-4 archive source (cache hit or fresh download) without
-// touching the real filesystem/network -- mirrors the `_set*ForTest` seam
-// pattern already used elsewhere in this codebase (see
-// claude-account-identity.ts's `_setRootsForTest`). Reassigned ONLY by
-// `_setTmuxArchiveResolverForTest`; every production code path always goes
-// through the real `getOrDownloadTmuxArchive`.
-let tmuxArchiveResolver: (arch: TmuxStageTarget) => Promise<Buffer | null> = getOrDownloadTmuxArchive
-
-/** Test-only: override (or, passing `null`, restore) the tier-4 archive
- *  source `attemptTmuxPush` calls, so a test can drive a full push without
- *  hitting disk or the network. */
-export function _setTmuxArchiveResolverForTest(fn: ((arch: TmuxStageTarget) => Promise<Buffer | null>) | null): void {
-  tmuxArchiveResolver = fn ?? getOrDownloadTmuxArchive
-}
 
 /**
  * #242 finding F1 (b): per-session nonce, keyed by sessionId, set once at
@@ -616,44 +123,6 @@ export function _hasSshTargetForTest(sessionId: string): boolean {
 }
 
 /**
- * #242 finding I1: per-session buffer for the not-yet-terminated tail of
- * the `setup ok` completion sentinel line, mirroring `sshOscBuffers`/
- * `extractSshOscSentinels` above -- same per-session map shape, same
- * accumulate-then-clear discipline, same size cap. A real SSH link
- * routinely segments a single logical line across multiple PTY chunks
- * (`setup ok <nonce> tmux=pa` | `th\r\n`); `parseTmuxSentinel`'s
- * chunk-boundary discipline (require the captured token be immediately
- * followed by a line terminator) correctly refuses to match a truncated
- * read off the FIRST chunk alone, but nothing re-parsed the SECOND chunk
- * once the (pre-fix) bare-substring completion latch had already fired off
- * the first one -- the tmux probe was then lost silently for the rest of
- * the session on every segmented line, which is exactly the shape a real
- * SSH connection produces (live-test repro, #242 finding I1). Buffering the
- * accumulated text (not just the latest chunk) and re-testing the SAME
- * nonce-bearing regex against it on every chunk, until it actually
- * resolves, closes that gap.
- */
-const MAX_SETUP_LINE_BUFFER = 4096
-
-/**
- * ROUND-3 CORRECTION. The first cut of this buffer covered only the two
- * setup-ok latches, leaving the tier-3/4 stage sentinel and the tier-4 arch
- * probe parsing the raw chunk -- so I1 stayed live on exactly the tiers a
- * tmux-less remote depends on. Proven in review by driving the real flow: a
- * stage `ok path=` split across two chunks never resolves, the flow stalls to
- * the 20s STAGE_TIMEOUT and silently loses tmux; an arch probe split across
- * two chunks leaves detectedArch null, so tier 4 is unreachable on any
- * segmenting link.
- *
- * Each sentinel gets its OWN buffer rather than sharing one, because they can
- * interleave: the arch probe and the stage result are emitted by the same
- * remote fragment and may arrive in one chunk, in either order, or split.
- * Sharing a buffer would let one sentinel's resolve-and-clear discard the
- * other's partial line.
- */
-type SshLineBufferKind = 'setup' | 'stage' | 'arch' | 'runtime'
-
-/**
  * DEFINITIVE failure shapes for `<engine> exec -it <name> <shell>` (rc.14
  * review F1, aicc_planning#45): the engine refusing (stopped or missing
  * container, daemon down, socket permission denied, the OCI runtime unable to
@@ -679,71 +148,6 @@ export const CONTAINER_ENTRY_ERROR_RE = /Error response from daemon|No such cont
  * prompt never matches SHELL_PROMPT_RE reaches the idle path only).
  */
 export const CONTAINER_ENGINE_NOT_FOUND_RE = /(?:^|[\r\n])[^\r\n]{0,40}(?:docker|podman): (?:command )?not found\s*(?:\r|$)|(?:^|[\r\n])[^\r\n]{0,40}command not found: (?:docker|podman)\s*(?:\r|$)/im
-const sshLineBuffers = new Map<string, string>()
-const sshLineBufferKey = (sessionId: string, kind: SshLineBufferKind): string => `${sessionId}:${kind}`
-
-/**
- * Accumulate `chunk` onto session `sessionId`'s setup-line buffer and return
- * the FULL combined text callers should parse against instead of `chunk`
- * alone -- mirroring `extractSshOscSentinels` above, which parses the
- * complete combined text first and caps only what it RETAINS for next time.
- * ROUND-2 CORRECTION: an earlier version capped the RETURNED value at
- * `MAX_SETUP_LINE_BUFFER` too, not just what got stored -- so a genuine,
- * correctly-nonced sentinel followed by more than the cap's worth of trailing
- * bytes in the SAME chunk was silently dropped from the text actually
- * parsed, and the session never latched setupDone at all (regression proven
- * in review). The sentinel is not guaranteed to be near the end of the
- * combined text -- trailing output in the same chunk is exactly the failure
- * mode this correction closes -- so only the STORED copy (what the next
- * chunk will be appended to) is capped, keeping its tail. A remote that
- * never emits the line's terminating `\r`/`\n` (hostile, or simply chatty
- * pre-setup output) must not grow the stored buffer without bound for the
- * rest of the session.
- */
-function bufferSshLine(sessionId: string, kind: SshLineBufferKind, chunk: string): string {
-  const key = sshLineBufferKey(sessionId, kind)
-  const combined = (sshLineBuffers.get(key) ?? '') + chunk
-  sshLineBuffers.set(
-    key,
-    combined.length > MAX_SETUP_LINE_BUFFER ? combined.slice(combined.length - MAX_SETUP_LINE_BUFFER) : combined
-  )
-  return combined
-}
-
-/** Back-compat alias for the setup-ok latches, which read more clearly named. */
-function bufferSetupLine(sessionId: string, chunk: string): string {
-  return bufferSshLine(sessionId, 'setup', chunk)
-}
-
-/** Drop one of `sessionId`'s sentinel buffers once that sentinel has resolved --
- *  nothing left to accumulate for it for the rest of the session. */
-function clearSshLineBuffer(sessionId: string, kind: SshLineBufferKind): void {
-  sshLineBuffers.delete(sshLineBufferKey(sessionId, kind))
-}
-
-function clearSetupLineBuffer(sessionId: string): void {
-  clearSshLineBuffer(sessionId, 'setup')
-}
-
-/** Teardown: drop EVERY sentinel buffer for the session. Called from
- *  cleanupSessionResources -- a per-kind clear on resolve is not enough,
- *  because a session can die with a sentinel still unresolved. */
-function clearAllSshLineBuffers(sessionId: string): void {
-  for (const kind of ['setup', 'stage', 'arch', 'runtime'] as const) clearSshLineBuffer(sessionId, kind)
-}
-
-/** Test-only: read the current length of `sessionId`'s setup-line buffer
- *  (mirrors `_getSshNonceForTest`'s role) -- `undefined` once cleared/never
- *  populated. Lets tests assert the buffer is actually bounded and actually
- *  torn down, rather than just asserting on end-to-end launch behaviour that
- *  a leak/unbounded-growth mutation would leave unchanged. */
-export function _getSetupLineBufferLenForTest(
-  sessionId: string,
-  kind: SshLineBufferKind = 'setup',
-): number | undefined {
-  return sshLineBuffers.get(sshLineBufferKey(sessionId, kind))?.length
-}
-
 interface PtySession {
   ptyProcess: pty.IPty
   sessionId: string
@@ -3153,11 +2557,11 @@ function spawnPtyResolved(
         }, PUSH_TIMEOUT_MS)
       }
       // #242 round-3 MAJOR fix (test coverage): calls the injectable
-      // `tmuxArchiveResolver` seam rather than `getOrDownloadTmuxArchive`
+      // resolver seam (tmux-archive-cache.ts) rather than the real function
       // directly, so tests can drive a full push without touching disk or
       // the network (see `_setTmuxArchiveResolverForTest`). Identical in
       // production -- the seam defaults to the real function.
-      tmuxArchiveResolver(arch).then((buf) => {
+      resolveTmuxArchive(arch).then((buf) => {
         // #242 finding F1: clear the download-phase timeout BEFORE the
         // pushDone guard below runs -- a resolver that settles just as (or
         // just after) the timeout fires must not leave a stray timer
@@ -3294,8 +2698,8 @@ function spawnPtyResolved(
       }).catch((err) => {
         // #242 finding F4 (adversarial review round 4, MINOR; correction in
         // round 5, M4): the production resolver (getOrDownloadTmuxArchive) is
-        // fully try/catch'd and can never reject, but `tmuxArchiveResolver`
-        // is an injectable test seam (_setTmuxArchiveResolverForTest) -- a
+        // fully try/catch'd and can never reject, but `resolveTmuxArchive`
+        // wraps an injectable test seam (_setTmuxArchiveResolverForTest) -- a
         // rejecting resolver here would otherwise be an UNHANDLED REJECTION.
         // debug-logger.ts's `process.on('unhandledRejection')` handler only
         // LOGS it and returns -- it does NOT re-throw and cannot kill main;

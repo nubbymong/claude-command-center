@@ -9,24 +9,7 @@ import { PAGE_TAB_META } from '../page-tab-meta'
 import { BrandMark } from './BrandMark'
 import { useCanvasQueue } from '../lib/canvasQueue'
 import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
-
-// Inject keyframes for attention pulse animation
-const ATTENTION_STYLES_ID = 'attention-pulse-styles'
-function injectAttentionStyles() {
-  if (document.getElementById(ATTENTION_STYLES_ID)) return
-  const style = document.createElement('style')
-  style.id = ATTENTION_STYLES_ID
-  style.textContent = `
-    @keyframes attention-pulse {
-      0%, 100% { opacity: 0; }
-      50% { opacity: 0.35; }
-    }
-    .attention-pulse-bg {
-      animation: attention-pulse 2s ease-in-out infinite;
-    }
-  `
-  document.head.appendChild(style)
-}
+import { injectAttentionStyles } from '../utils/injectAttentionStyles'
 
 /** The session's display name: user-assigned work name, else the config label. */
 function displayNameOf(s: { customName?: string; label: string }): string {
