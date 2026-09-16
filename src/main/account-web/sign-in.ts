@@ -493,7 +493,8 @@ export function isCloudflareChallenge(t: CdpTarget): boolean {
   } catch {
     return false
   }
-  if (u.hostname.toLowerCase() === 'challenges.cloudflare.com') return true
+  // https on both branches: the Turnstile iframe is never served in the clear.
+  if (u.protocol === 'https:' && u.hostname.toLowerCase() === 'challenges.cloudflare.com') return true
   if (!isClaudeUrl(url)) return false
   return u.pathname.startsWith('/cdn-cgi/challenge-platform/') || (t?.title ?? '').toLowerCase() === 'just a moment...'
 }

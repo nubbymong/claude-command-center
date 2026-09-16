@@ -130,14 +130,16 @@ range such as `v2.0.0..main`; `dry_run` defaults to **true**. Locally:
 node scripts/close-in-beta-issues.js --range origin/main..origin/beta --dry-run
 ```
 
-### Release-line labels (`release-2.1` / `release-2.2`)
+### Release-line labels (`release-2.1` / `release-2.1.1` / `release-2.2`)
 
 Orthogonal to the `in-beta` lifecycle above, these two labels say **which release
 line** an issue belongs to:
 
-- **`release-2.1`** — targets the current 2.1 line. **Apply it** to any issue or
-  PR on this line; in particular, every `in-beta` issue should also carry
-  `release-2.1`, so a "what ships in 2.1?" query stays accurate.
+- **`release-2.1`** — the 2.1 line label, for work shipping in 2.1.0. **Apply it** to
+  any issue or PR on this line while 2.1.0 is unreleased; in particular, every
+  `in-beta` issue then also carries `release-2.1`, so a "what ships in 2.1?" query
+  stays accurate. After 2.1.0 ships, new work on the line takes the patch label
+  below instead — never both (two release labels are two dispositions).
 - **`release-2.2`** — **apply it** to work explicitly **deferred** past 2.1.
 - **`release-2.1.1`** — a patch release on a line whose x.y.0 has already shipped
   gets its own label (owner decision, 2026-09-16): once 2.1.0 is live, `release-2.1`

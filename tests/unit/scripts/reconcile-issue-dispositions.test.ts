@@ -33,9 +33,12 @@ describe('activeLineFromVersion', () => {
     expect(activeLineFromVersion('2.1.2-beta.3')).toBe('release-2.1.2')
     expect(activeLineFromVersion('2.2.0-beta.1')).toBe('release-2.2')
   })
-  it('returns null when unparseable', () => {
+  it('returns null when unparseable, including a version that is only a prefix of one (fail closed)', () => {
     expect(activeLineFromVersion('')).toBeNull()
     expect(activeLineFromVersion('nope')).toBeNull()
+    expect(activeLineFromVersion('2.1')).toBeNull()
+    expect(activeLineFromVersion('2.1oops')).toBeNull()
+    expect(activeLineFromVersion('2.1.0-rc.1 ')).toBeNull()
   })
 })
 

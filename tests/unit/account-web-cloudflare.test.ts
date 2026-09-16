@@ -84,6 +84,7 @@ describe('isCloudflareChallenge', () => {
       'https://claude.ai/login?q=challenges.cloudflare.com',
       'https://evil.example/cdn-cgi/challenge-platform/h/b/x',
       'http://claude.ai/cdn-cgi/challenge-platform/x',
+      'http://challenges.cloudflare.com/turnstile/v0/x',
       'not a url',
     ]) {
       expect(isCloudflareChallenge({ type: 'page', url }), url).toBe(false)
