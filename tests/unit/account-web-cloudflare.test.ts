@@ -71,6 +71,27 @@ describe('isCloudflareChallenge', () => {
     expect(isCloudflareChallenge({ type: 'page', url: 'https://claude.ai/' })).toBe(false)
     expect(isCloudflareChallenge({})).toBe(false)
   })
+
+  it('is not fooled by a look-alike address carrying the Cloudflare words (CodeQL #13, 2.1.1)', () => {
+    // Each of these satisfied the old substring check. The detector is a
+    // notice-only hint, so nothing was ever unlocked -- but it should not lie.
+    for (const url of [
+      'https://evil.example/challenges.cloudflare.com/',
+      'https://challenges.cloudflare.com.evil.example/x',
+      'https://challenges.cloudflare.com@evil.example/',
+      'https://claude.ai/login?q=challenges.cloudflare.com',
+      'not a url',
+    ]) {
+      expect(isCloudflareChallenge({ type: 'page', url }), url).toBe(false)
+    }
+    // ...while the two real shapes still match: Cloudflare's host, and the
+    // challenge served under the site's own origin. The path form is origin-
+    // agnostic on purpose (Cloudflare serves it under whichever site it fronts),
+    // and it only ever selects a notice, so a foreign origin matching is harmless.
+    expect(isCloudflareChallenge({ type: 'iframe', url: 'https://challenges.cloudflare.com/turnstile/v0/x' })).toBe(true)
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://claude.ai/cdn-cgi/challenge-platform/h/b/jsd' })).toBe(true)
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://evil.example/cdn-cgi/challenge-platform/h/b/x' })).toBe(true)
+  })
 })
 
 describe('runSignIn — no page script while the challenge is unsolved (#269)', () => {

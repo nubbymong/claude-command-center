@@ -46,12 +46,12 @@
     "chrome-remote-interface": "^0.34.0",
     "dompurify": "^3.4.13",
     "electron-screenshots": "^0.6.2",
-    "marked": "^18.0.5",
-    "node-pty": "1.2.0-beta.14",
+    "marked": "^18.0.11",
+    "node-pty": "1.2.0-beta.15",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "ws": "^8.21.3",
-    "zod": "^4.4.3",
+    "zod": "^4.5.4",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -60,13 +60,13 @@
     "@electron/rebuild": "^4.2.0",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/better-sqlite3": "^7.6.8",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@types/ws": "^8.18.1",
     "axe-core": "^4.13.0",
     "dom-accessibility-api": "^0.7.1",
-    "electron": "43.4.0",
+    "electron": "43.7.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "esbuild": "^0.28.2",
@@ -75,7 +75,7 @@
     "tailwindcss": "^4.3.1",
     "typescript": "^7.0.2",
     "vite": "^7.3.5",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "esbuild": "$esbuild",

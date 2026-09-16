@@ -473,15 +473,26 @@ async function targetIsClaudeAi(client: any): Promise<boolean> {
   }
 }
 
-/** Cloudflare's managed-challenge surfaces, by target URL/title. Pure. */
+/**
+ * Cloudflare's managed-challenge surfaces, by target URL/title. Pure.
+ *
+ * A UI hint only: its one caller picks the "Cloudflare is verifying you are
+ * human" notice text while sign-in waits. It gates nothing -- isClaudeUrl is
+ * the gate on every privileged step. Parsed as a URL rather than by substring
+ * (CodeQL js/incomplete-url-substring-sanitization, 2.1.1): a challenge is
+ * served from Cloudflare's own host, or under the site's own
+ * /cdn-cgi/challenge-platform/ path, and a look-alike host or a query string
+ * carrying those words is neither.
+ */
 export function isCloudflareChallenge(t: CdpTarget): boolean {
-  const url = (t?.url ?? '').toLowerCase()
   const title = (t?.title ?? '').toLowerCase()
-  return (
-    url.includes('challenges.cloudflare.com') ||
-    url.includes('/cdn-cgi/challenge-platform/') ||
-    title === 'just a moment...'
-  )
+  if (title === 'just a moment...') return true
+  try {
+    const u = new URL(t?.url ?? '')
+    return u.hostname.toLowerCase() === 'challenges.cloudflare.com' || u.pathname.startsWith('/cdn-cgi/challenge-platform/')
+  } catch {
+    return false
+  }
 }
 
 /**

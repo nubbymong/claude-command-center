@@ -21,6 +21,16 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.1',
+    date: '2026-09-16',
+    highlights: 'A maintenance release: the runtime and its dependencies refreshed, the open security-scanner findings resolved, and the largest source files split into focused modules with no change in behaviour.',
+    changes: [
+      { type: 'improvement', description: 'Electron moves to 43.7.1, with the terminal backend (node-pty), zod, marked and the transcript database typings refreshed. Two development-only dependencies with published advisories (vitest, js-yaml) and the MCP server library (hono) are on their patched versions.' },
+      { type: 'fix', description: 'The Cloudflare "verify you are human" detector during claude.ai sign-in now parses the page address instead of matching substrings, so a look-alike address cannot make the app show the waiting notice. It was only ever a notice; the sign-in gate itself was unaffected.' },
+      { type: 'improvement', description: 'Internal: the four largest source files were split into focused modules as pure moves, each verified against its origin and pinned by new regression tests. No change in behaviour.' },
+    ],
+  },
+  {
     version: '2.1.0',
     date: '2026-09-14',
     highlights: 'The first stable release under the app’s new name, AI Code Conductor -- and if you are coming from 2.0.0, everything below arrives at once. Remote work stops being second-class: an SSH session survives a dropped connection, reports its account and full usage exactly like a local one, and can run inside a Docker or Podman container. The Agent Canvas arrives as a full visual review surface, with plans, mockups and a Testing mode that saves evidence. claude.ai runs inside the app, signed in per account. The terminal’s glyph corruption is root-caused and fixed, with GPU rendering on by default. A Session Watchdog can wait out a rate limit and type the retry itself. And there is a Linux build.',

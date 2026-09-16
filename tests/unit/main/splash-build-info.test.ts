@@ -63,7 +63,9 @@ describe('resources/splash/index.html carries the build line slot (#384)', () =>
   })
   it('the CSP still forbids inline script (the line arrives via the URL, not an inline <script>)', () => {
     expect(html).not.toMatch(/script-src[^;"]*'unsafe-inline'/)
-    expect(html).not.toMatch(/<script>/)
+    // Any INLINE executable <script>, in any casing or attribute form; src= tags
+    // and the inert text/x-logo-src data block are legitimate (CodeQL #15, 2.1.1).
+    expect(html).not.toMatch(/<script\b(?![^>]*\bsrc=)(?![^>]*\btype\s*=\s*"text\/x-)/i)
   })
 })
 
