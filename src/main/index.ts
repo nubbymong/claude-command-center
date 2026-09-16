@@ -12,7 +12,7 @@ import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
 import { buildAndSetAppMenu } from './app-menu'
-import { registerLogs2Handlers } from './ipc/logs2-handlers'
+import { registerLogs2Handlers, registerLogsWipeHandlers } from './ipc/logs2-handlers'
 import { registerCanvasHandlers } from './ipc/canvas-handlers'
 import {
   registerCccUxSchemePrivileges,
@@ -596,6 +596,9 @@ if (!gotTheLock) {
     // each one holds a live claude.ai session. Sweep them at boot.
     try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }
     registerResumeHandlers()
+    // Ahead of initLogging + the register*() run below on purpose: nothing
+    // between here and there may throw and skip the first-run wipe prompt.
+    registerLogsWipeHandlers()
     registerDebugHandlers()
     registerUpdateHandlers()
     // Pre-emptive repo-rename handling: if the app has been renamed on GitHub

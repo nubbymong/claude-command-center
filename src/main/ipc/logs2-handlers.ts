@@ -184,12 +184,18 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
     }
   })
 
-  // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
-  // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives
-  // a blocking confirm modal: it DETECTs at startup, and only on the user's
-  // confirm does CONFIRM actually delete. Detection-driven + idempotent (no
-  // marker file — once deleted nothing is detected). executeWipe NEVER touches
-  // ~/.claude / the safety backup / the logging settings (see logs-wipe.ts).
+}
+
+/**
+ * Logs v2 first-run wipe. Deliberately NOT inside registerLogs2Handlers: that
+ * runs after initLogging, and the wipe prompt must be registered before any
+ * boot step ahead of it can throw and skip it.
+ */
+export function registerLogsWipeHandlers(): void {
+  // The renderer drives a blocking confirm modal: it DETECTs at startup, and
+  // only on the user's confirm does CONFIRM actually delete. Detection-driven +
+  // idempotent (no marker file — once deleted nothing is detected). executeWipe
+  // NEVER touches ~/.claude / the safety backup / the logging settings.
   ipcMain.handle(IPC.LOGS2_WIPE_DETECT, async () => {
     try {
       return detectOldLogArtifacts()

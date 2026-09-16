@@ -29,7 +29,7 @@ export function registerClipboardHandlers(): void {
     logInfo(`[input-diag] ${String(line).slice(0, 400)}`)
   })
 
-  ipcMain.handle('clipboard:saveImage', async (): Promise<PasteableImage> => {
+  ipcMain.handle(IPC.CLIPBOARD_SAVE_IMAGE, async (): Promise<PasteableImage> => {
     const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
     const img = await readClipboardImageWithRetry()
     if (img) {

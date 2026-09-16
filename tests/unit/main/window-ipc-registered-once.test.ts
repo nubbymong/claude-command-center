@@ -32,6 +32,10 @@ describe('window IPC is registered once per process', () => {
   it('createWindow() registers no ipcMain listener of its own', () => {
     const body = bodyOf('function createWindow(): void {')
     expect(body).not.toMatch(/ipcMain\.(handle|on)\(/)
+    // Delegated registrations (registerFooHandlers()) are process-global too --
+    // the inline-ipcMain regex above cannot see them, and a second call from a
+    // macOS dock-reopen throws exactly the same way (adversarial pass, 2.1.1).
+    expect(body).not.toMatch(/\bregister[A-Z]\w*Handlers?\(/)
     // ...but it does make sure the once-registration has run.
     expect(body).toContain('registerMainWindowIpc()')
   })
@@ -44,6 +48,11 @@ describe('window IPC is registered once per process', () => {
     expect(guard).toBeGreaterThanOrEqual(0)
     expect(set).toBeGreaterThan(guard)
     expect(first).toBeGreaterThan(set)
+    // Delegated register calls must ALSO sit after the once-flag is set, not
+    // just be present somewhere in the body.
+    for (const fn of ['registerCliHandlers()', 'registerClipboardHandlers()']) {
+      expect(body.indexOf(fn), `${fn} must follow the once-flag`).toBeGreaterThan(set)
+    }
     // The registrations the dock-reopen crash was first seen on are in here
     // (inline or via delegated registerFoo calls that run inside this block).
     for (const ch of ["'window:isMaximized'", "'window:allowClose'", "'window:cancelClose'", "'session:save'"]) {

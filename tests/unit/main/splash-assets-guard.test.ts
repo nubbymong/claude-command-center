@@ -63,4 +63,14 @@ describe('splash assets guard', () => {
     expect(html).not.toMatch(/script-src[^;"]*'unsafe-inline'/)
     expect(html).not.toMatch(/script-src[^;"]*'unsafe-eval'/)
   })
+
+  it('the splash BrowserWindow keeps its sandbox triple and loads only the bundled page', () => {
+    // splash-window.ts cannot be imported here (it needs a live BrowserWindow),
+    // so pin the shape: the isolation flags a mutation could flip with every
+    // other test staying green (adversarial pass, 2.1.1).
+    const src = readFileSync(join(repoRoot, 'src', 'main', 'splash-window.ts'), 'utf-8')
+    expect(src).toMatch(/webPreferences:\s*\{\s*contextIsolation:\s*true,\s*nodeIntegration:\s*false,\s*sandbox:\s*true,?\s*\}/)
+    expect(src).toContain("join(__dirname, '..', '..', 'resources', 'splash', 'index.html')")
+    expect(src).not.toMatch(/\.loadURL\(/)
+  })
 })

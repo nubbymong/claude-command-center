@@ -4,9 +4,10 @@ import { spawnClaudeHeadless } from '../claude-headless'
 import { parseClaudeVersion } from '../sentinel/sentinel-version'
 import { ensureHelpWorkspace } from '../help-workspace'
 import { getResourcesDirectory } from './setup-handlers'
+import { IPC } from '../../shared/ipc-channels'
 
 export function registerCliHandlers(): void {
-  ipcMain.handle('cli:check', async () => {
+  ipcMain.handle(IPC.CLI_CHECK, async () => {
     const { execFile } = require('child_process')
     const { promisify } = require('util')
     const execFileAsync = promisify(execFile)
@@ -29,7 +30,7 @@ export function registerCliHandlers(): void {
     }
   })
 
-  ipcMain.handle('cli:path', async () => {
+  ipcMain.handle(IPC.CLI_PATH, async () => {
     try {
       return resolveClaudeForPty()?.cmd ?? null
     } catch {
@@ -37,7 +38,7 @@ export function registerCliHandlers(): void {
     }
   })
 
-  ipcMain.handle('cli:version', async () => {
+  ipcMain.handle(IPC.CLI_VERSION, async () => {
     try {
       const res = await spawnClaudeHeadless(['--version'], 10000)
       return parseClaudeVersion(res.stdout) ?? parseClaudeVersion(res.stderr) ?? null
@@ -46,7 +47,7 @@ export function registerCliHandlers(): void {
     }
   })
 
-  ipcMain.handle('help:workspace', async () => {
+  ipcMain.handle(IPC.HELP_WORKSPACE, async () => {
     try {
       return ensureHelpWorkspace(getResourcesDirectory(), { appVersion: app.getVersion() })
     } catch {
