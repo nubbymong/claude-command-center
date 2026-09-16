@@ -213,13 +213,23 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     const order: string[] = []
     const saved = { sessions: [{ id: 'a' }], activeSessionId: 'a', savedAt: 1 }
     const restoreUnsettledRef = { current: false }
+    // 2.1.1 (ADR-021): App injects the two liveness helpers -- session-persistence
+    // must not import the stores that import it back -- so the call site hands
+    // them over as deps, and this pins that they are the real ones.
+    const probeGoneSessions = async () => []
+    const pingAllDetachedHosts = () => {}
     const handler = run<() => void>(jsxHandler(APP, 'onResume'), {
       pendingRestore: saved, setPendingRestore: (v: unknown) => { order.push(`setPendingRestore:${v}`) },
-      restoreSavedSessions: async (s: unknown) => { order.push(`restore:${s === saved}`) },
+      restoreSavedSessions: async (s: unknown, _ref: unknown, deps: { probeGoneSessions: unknown; pingAllDetachedHosts: unknown }) => {
+        order.push(`restore:${s === saved}`)
+        order.push(`deps:${deps.probeGoneSessions === probeGoneSessions && deps.pingAllDetachedHosts === pingAllDetachedHosts}`)
+      },
       restoreUnsettledRef,
+      probeGoneSessions,
+      pingAllDetachedHosts,
     })
     handler()
-    expect(order).toEqual(['setPendingRestore:null', 'restore:true'])
+    expect(order).toEqual(['setPendingRestore:null', 'restore:true', 'deps:true'])
     // ADR-009 R7: the restore is marked in flight BEFORE the prompt clears, so a
     // close before it lands keeps the saved file.
     expect(restoreUnsettledRef.current).toBe(true)
