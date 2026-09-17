@@ -97,9 +97,12 @@ function activeLineFromVersion(version) {
   const m = v.match(new RegExp(`^(${NUM})\\.(${NUM})\\.(${NUM})(?:-(beta|rc)\\.(\\d+))?$`))
   if (!m) return null
   const line = `release-${m[1]}.${m[2]}`
-  const patch = Number(m[3])
-  if (m[4]) return patch > 0 ? `${line}.${patch}` : line
-  return `${line}.${patch + 1}`
+  // BigInt: a Number past 2^53 rounds (`...993` + 1 -> `...992`) and past 1e21
+  // stringifies as `1e+21`; either way the label would be wrong (re-attack,
+  // 2.1.1). Absurd for a real version, cheap to get right.
+  const patch = BigInt(m[3])
+  if (m[4]) return patch > 0n ? `${line}.${patch}` : line
+  return `${line}.${patch + 1n}`
 }
 
 /**
@@ -119,11 +122,12 @@ function validateActiveLine(line) {
 /**
  * The active label main() will auto-add: the validated CLI override when one is
  * given, else the label derived from the package version (read only then, as
- * before). The DERIVED value is validated too -- it is the one that reaches
- * `gh issue edit --add-label` with no human in between, so a derivation bug must
- * throw here rather than mint a label (final adversarial pass, 2.1.1; reachable:
- * a patch number past 2^53 stringifies as `1e+21`). Null (unknown version) is
- * fine: decide() then flags instead of labelling.
+ * before). The DERIVED value is checked against RELEASE_RE too -- it is the one
+ * that reaches `gh issue edit --add-label` with no human in between, so a future
+ * derivation bug throws here rather than minting a label (final adversarial
+ * pass, 2.1.1). With the current grammar and BigInt arithmetic the deriver
+ * cannot produce a non-label, so this is a backstop, not a live path. Null
+ * (unknown version) is fine: decide() then flags instead of labelling.
  */
 function resolveActiveLine({ cliValue, readVersion }) {
   validateActiveLine(cliValue) // throws on a malformed manual override
@@ -264,7 +268,7 @@ function parseArgv(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--dry-run') out.dryRun = true
-    else if (a === '--issue') out.issue = Number(argv[++i])
+    else if (a === '--issue') { out.issueRaw = argv[++i]; out.issue = Number(out.issueRaw) }
     else if (a === '--repo') out.repo = argv[++i]
     else if (a === '--active-line') out.activeLine = argv[++i]
   }
@@ -294,8 +298,15 @@ function main(io = {}) {
 
   const args = parseArgv(argv)
   const dryRun = args.dryRun || env.DRY_RUN === '1'
-  const repo = args.repo || env.GITHUB_REPOSITORY || gh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
+  // Operator input is validated BEFORE anything is asked of gh (re-attack,
+  // 2.1.1: the repo fallback below is itself a gh call). A `--issue` that is
+  // not a positive integer must not silently widen a one-issue run into a full
+  // scan, which `args.issue ? ... : listOpenIssues` would do for `0` or NaN.
   const activeLine = resolveActiveLine({ cliValue: args.activeLine, readVersion: readPackageVersion })
+  if (args.issue !== undefined && !(Number.isInteger(args.issue) && args.issue > 0)) {
+    throw new Error(`--issue must be a positive integer (got: "${args.issueRaw}")`)
+  }
+  const repo = args.repo || env.GITHUB_REPOSITORY || gh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
 
   const issues = args.issue ? [fetchIssue(repo, args.issue, gh)].filter(Boolean) : listOpenIssues(repo, gh)
   log(`Repo: ${repo}   active line: ${activeLine || '(unknown)'}   issues: ${issues.length}${dryRun ? '   [DRY RUN]' : ''}`)

@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Internal: the four largest source files were split into focused modules as pure moves, each verified against its origin and pinned by new regression tests. No change in behaviour.
 
 ### Fixed
-- On Linux, the check for the Claude CLI no longer assumes zsh when no login shell is set in the environment. It falls back to bash, or to /bin/sh where bash is absent, so a machine without zsh is not told the CLI is missing when it is installed.
+- On Linux, the check for the Claude CLI and the session launch no longer assume a particular shell when no login shell is set in the environment. Both use the first of bash, zsh and /bin/sh that is installed, so a machine without zsh is not told the CLI is missing when it is installed, and a machine without bash can still launch a session.
 
 ## [2.1.0] - 2026-09-14
 

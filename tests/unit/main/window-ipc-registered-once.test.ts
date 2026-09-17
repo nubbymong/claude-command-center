@@ -186,8 +186,9 @@ describe('index.ts boot wiring -- mutants of the once-flag and the wipe slot', (
     expect(src.slice(decls[0].index!)).toMatch(/^let windowIpcRegistered(?::\s*boolean)? = false$/m)
     // M1: a reset in createWindow() (or anywhere else) re-arms the registrar on
     // the next dock-reopen. The ONLY writes are the declaration and the `= true`
-    // inside the registrar.
-    const writes = [...src.matchAll(/\bwindowIpcRegistered\s*=\s*(?:true|false)\b/g)].map((m) => m.index!)
+    // inside the registrar. (A `: boolean` annotation on the declaration is
+    // tolerated here as above -- re-attack, 2.1.1.)
+    const writes = [...src.matchAll(/\bwindowIpcRegistered\s*(?::\s*boolean)?\s*=\s*(?:true|false)\b/g)].map((m) => m.index!)
     expect(writes).toHaveLength(2)
     const header = 'function registerMainWindowIpc(): void {'
     const registrarStart = src.indexOf(header)
@@ -195,7 +196,12 @@ describe('index.ts boot wiring -- mutants of the once-flag and the wipe slot', (
     expect(registrarStart).toBeGreaterThanOrEqual(0)
     expect(writes[1]).toBeGreaterThan(registrarStart)
     expect(writes[1]).toBeLessThan(registrarEnd)
-    expect(bodyOf('function createWindow(): void {')).not.toContain('windowIpcRegistered')
+    // Code only: a comment in createWindow() that NAMES the flag is not a reset
+    // (re-attack, 2.1.1).
+    const createWindowCode = bodyOf('function createWindow(): void {')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')
+    expect(createWindowCode).not.toContain('windowIpcRegistered')
   })
 
   it('registerResumeHandlers()/registerLogsWipeHandlers() sit directly in the ready callback, not inside a try block', () => {

@@ -10,17 +10,17 @@ pathological input, the tmux pin/redirect/cap) verified identical to
 v2.1.0. What it did find was
 coverage and process, and this fragment records the fixes and the decisions.
 
-Two PRE-EXISTING findings (present in v2.1.0, not introduced by this line) were
-routed privately per SECURITY.md ("Embargo"). Nothing more about them belongs
-here until they are fixed and published.
+The PRE-EXISTING findings the passes surfaced (present in v2.1.0, not
+introduced by this line) were routed privately per SECURITY.md ("Embargo").
+Nothing more about them belongs here until they are fixed and published.
 
 ### Coverage gaps closed (all as tests, no behaviour change)
 
 - `restoreSavedSessions` (`src/renderer/session-persistence.ts`, lifted out of
   App.tsx by #615) had no test of its own: four mutants -- the unsettled ref
   never cleared, `markRestored` dropped, the persistent-SSH probe filter
-  flipped, the reachability ping dropped -- stayed green across 3,776 renderer
-  tests. `tests/unit/renderer/session-persistence-restore.test.ts` carries one
+  flipped, the reachability ping dropped -- stayed green across the whole
+  renderer suite. `tests/unit/renderer/session-persistence-restore.test.ts` carries one
   case per mutant plus the neighbouring wiring (resume-picker marking, the
   immediate save, command-bar reconcile, the colour-migration notice, the
   failure path). Each mutant was re-applied and is red.
@@ -48,15 +48,20 @@ here until they are fixed and published.
 ### One behaviour fix
 
 The three CLI probes (`cli:check`, the setup probe, the setup PTY) fell back to
-`/bin/zsh` on every non-Windows platform when `$SHELL` was unset. Right for
-macOS, wrong for Linux, where zsh is optional: ENOENT, reported as "CLI not
-found". `src/main/login-shell.ts` centralises the rule: `$SHELL`, else
-`/bin/zsh` on macOS, else `/bin/bash` where it exists (the shell the Codex and
-Claude spawn paths already fall back to, so probe and launch see the same
-PATH), else `/bin/sh`. Changelog line added to 2.1.1-beta.1; the beta.1
-installer already built (from the commit this branch starts at) carries
-neither the fix nor the line, and the release is re-dispatched from `beta`
-after this merges in any case (its publication never completed).
+`/bin/zsh` on every non-Windows platform when `$SHELL` was unset, and the local
+Claude session launch (`providers/claude/spawn.ts`) to `/bin/bash`. Right for
+macOS, wrong for Linux, where zsh is optional: the probe was an ENOENT reported
+as "CLI not found" on a box whose launch would have worked. The re-attack on
+the first fix (bash, else sh, probes only) found the mirror image: a no-bash
+box would then pass the probe and fail every launch. `src/main/login-shell.ts`
+now centralises ONE rule for probes and launch: `$SHELL`, else `/bin/zsh` on
+macOS, else the first of `/bin/bash`, `/bin/zsh`, `/bin/sh` that exists. What
+PATH that shell builds is the profile's business (a non-interactive `bash -l`
+reads ~/.profile, not ~/.bashrc). The Codex spawn path keeps its own fallback.
+Changelog line added to 2.1.1-beta.1; the beta.1 installer already built
+(from the commit this branch starts at) carries neither the fix nor the line,
+and the release is re-dispatched from `beta` after this merges in any case
+(its publication never completed).
 
 ### Decisions recorded, no change
 

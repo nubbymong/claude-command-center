@@ -11,7 +11,7 @@ const rec = require('../../../scripts/reconcile-issue-dispositions.js') as {
   resolveActiveLine: (input: { cliValue?: string | null; readVersion: () => string | null }) => string | null
   decide: (input: { labels?: string[]; activeLine?: string | null }) => { add: string[]; flags: string[] }
   parseIssuesJson: (jsonText: string) => Array<{ number: number; title: string; labels: string[] }>
-  parseArgv: (argv: string[]) => { dryRun: boolean; issue?: number; repo?: string; activeLine?: string }
+  parseArgv: (argv: string[]) => { dryRun: boolean; issue?: number; issueRaw?: string; repo?: string; activeLine?: string }
   main: (io: {
     argv?: string[]
     env?: Record<string, string | undefined>
@@ -201,7 +201,7 @@ describe('parseIssuesJson', () => {
 describe('parseArgv', () => {
   it('reads flags', () => {
     expect(parseArgv(['--dry-run', '--issue', '123', '--repo', 'o/n', '--active-line', 'release-2.1']))
-      .toEqual({ dryRun: true, issue: 123, repo: 'o/n', activeLine: 'release-2.1' })
+      .toEqual({ dryRun: true, issue: 123, issueRaw: '123', repo: 'o/n', activeLine: 'release-2.1' })
   })
 })
 
@@ -287,10 +287,12 @@ describe('resolveActiveLine -- the label main() auto-adds is validated whichever
     expect(resolveActiveLine({ readVersion: v('garbage') })).toBeNull()
     expect(resolveActiveLine({ readVersion: v('02.1.1') })).toBeNull()
   })
-  it('a derivation that is not a release label throws instead of being minted', () => {
-    // patch + 1 past 2^53 stringifies as 1e+21: the one way the grammar-tight
-    // deriver can still hand back a non-label
-    expect(() => resolveActiveLine({ readVersion: v('2.1.999999999999999999999') })).toThrow(/derived active line/)
+  it('a huge patch number is incremented exactly, never rounded or printed as 1e+21', () => {
+    // Number arithmetic rounded 2^53+1 down and printed >= 1e21 in exponent
+    // form; either would have minted a wrong label (re-attack, 2.1.1)
+    expect(resolveActiveLine({ readVersion: v('2.1.9007199254740993') })).toBe('release-2.1.9007199254740994')
+    expect(resolveActiveLine({ readVersion: v('2.1.999999999999999999999') })).toBe('release-2.1.1000000000000000000000')
+    expect(activeLineFromVersion('2.1.99999999999999999999-rc.1')).toBe('release-2.1.99999999999999999999')
   })
 })
 
@@ -413,9 +415,20 @@ describe('main() -- the whole run against a recording gh', () => {
     expect(out.flagged.find((f) => f.number === 2)?.flag).toMatch(/unknown/)
   })
 
-  it('a malformed --active-line throws before any issue is read or touched (with --repo given, before any gh call at all)', () => {
+  it('a malformed --active-line throws before any gh call at all, even the repo lookup', () => {
     const { gh, calls } = fakeGh(FIXTURE)
     expect(() => main(baseIo(gh, { argv: ['--repo', 'o/n', '--active-line', 'release-2'] }))).toThrow(/active-line/)
     expect(calls).toEqual([])
+    // without --repo the repo fallback is itself a gh call; it must not run first
+    expect(() => main(baseIo(gh, { argv: ['--active-line', 'release-2'] }))).toThrow(/active-line/)
+    expect(calls).toEqual([])
+  })
+
+  it('--issue that is not a positive integer throws instead of silently widening to a full scan', () => {
+    for (const bad of ['0', 'abc', '-3', '1.5', '']) {
+      const { gh, calls } = fakeGh(FIXTURE)
+      expect(() => main(baseIo(gh, { argv: ['--repo', 'o/n', '--issue', bad] })), bad).toThrow(/--issue must be a positive integer/)
+      expect(calls, bad).toEqual([])
+    }
   })
 })

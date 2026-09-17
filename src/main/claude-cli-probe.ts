@@ -91,7 +91,10 @@ async function runProbe(): Promise<ClaudeCliProbe> {
     return { installed: false, probe: 'where claude' }
   }
 
-  const shell = defaultLoginShell()
+  // os.platform(), not the helper's process.platform default: this file gates
+  // on os.platform() above, and the two must agree (they differ only under a
+  // test's os mock, which is exactly when it matters).
+  const shell = defaultLoginShell(process.env, os.platform())
   const viaLoginShell = await probeOnce(shell, ['-lc', 'command -v claude'])
   if (viaLoginShell) {
     logInfo(`[setup] Claude CLI found: ${viaLoginShell} (${shell} -lc "command -v claude")`)

@@ -1,18 +1,21 @@
 import { existsSync } from 'fs'
 
 /**
- * The login shell the CLI probes run through on macOS/Linux, so `which claude`
- * sees the PATH a user's shell profile builds (Homebrew, nvm, ~/.local/bin).
+ * The login shell the CLI probes AND the local Claude session launch run
+ * through on macOS/Linux, so `which claude` and the spawned session see the
+ * PATH a user's shell profile builds (Homebrew, nvm, ~/.local/bin).
  *
- * `$SHELL` when the environment carries it. Without it the fallback used to be
- * `/bin/zsh` everywhere, which is right for macOS (its default shell since
- * 10.15) and wrong for Linux, where zsh is an optional package: the probe then
- * failed with ENOENT and the app reported the CLI missing on a machine that had
- * it (final adversarial pass, 2.1.1). On Linux prefer bash, the common default
- * and the shell the Claude/Codex spawn paths already fall back to, so the probe
- * and the launch agree on what PATH looks like (a login bash reads ~/.profile,
- * which on Debian/Ubuntu sources ~/.bashrc, where nvm writes its PATH; dash
- * skips that block). `/bin/sh` is the last resort every install has.
+ * `$SHELL` when the environment carries it. Without it the probes used to fall
+ * back to `/bin/zsh` everywhere and the session launch to `/bin/bash`, so on a
+ * Linux box without zsh the probe failed with ENOENT ("Claude CLI not found")
+ * while the launch would have worked, and on one without bash the reverse
+ * (final adversarial pass, 2.1.1). One rule for all of them: on macOS zsh, the
+ * platform default since 10.15; elsewhere the first of bash, zsh, sh that
+ * exists -- bash because it is the common Linux default and what the launch
+ * always fell back to, zsh so a zsh-only box keeps working, `/bin/sh` because
+ * every install has it. The probe and the launch now agree on the shell; what
+ * PATH that shell builds is the user's profile's business (a non-interactive
+ * `bash -l` reads ~/.profile, not ~/.bashrc).
  */
 export function defaultLoginShell(
   env: NodeJS.ProcessEnv = process.env,
@@ -21,5 +24,8 @@ export function defaultLoginShell(
 ): string {
   if (env.SHELL) return env.SHELL
   if (platform === 'darwin') return '/bin/zsh'
-  return exists('/bin/bash') ? '/bin/bash' : '/bin/sh'
+  for (const candidate of ['/bin/bash', '/bin/zsh']) {
+    if (exists(candidate)) return candidate
+  }
+  return '/bin/sh'
 }
