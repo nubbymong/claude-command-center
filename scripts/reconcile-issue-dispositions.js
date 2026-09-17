@@ -43,9 +43,10 @@ const path = require('path')
 
 /**
  * A release disposition: the line `release-<major>.<minor>`, or a patch release on
- * a shipped line `release-<major>.<minor>.<patch>` (no prerelease suffix ever).
+ * a shipped line `release-<major>.<minor>.<patch>` with patch >= 1 (`release-2.1.0`
+ * is not a label: x.y.0 is what the line label means; no prerelease suffix ever).
  */
-const RELEASE_RE = /^release-\d+\.\d+(\.\d+)?$/
+const RELEASE_RE = /^release-\d+\.\d+(\.[1-9]\d*)?$/
 /** The LINE a release label belongs to: `release-2.1.1` -> `release-2.1`. */
 function lineOf(label) {
   const m = String(label || '').toLowerCase().match(/^release-(\d+)\.(\d+)/)

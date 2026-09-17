@@ -169,6 +169,8 @@ describe('validateActiveLine', () => {
     expect(() => validateActiveLine('rm -rf')).toThrow()
     expect(() => validateActiveLine('release-2.1; drop')).toThrow()
     expect(() => validateActiveLine('release-2.1.1.1')).toThrow()
+    expect(() => validateActiveLine('release-2.1.0')).toThrow() // x.y.0 is the line label, never a patch label
+    expect(() => validateActiveLine('release-2.1.01')).toThrow()
     expect(() => validateActiveLine('release-2.1.1-rc.1')).toThrow()
   })
 })
@@ -217,6 +219,10 @@ describe('decide — patch-release labels (release-x.y.z) on a shipped line', ()
   })
   it('a line label together with a patch label is two dispositions', () => {
     expect(d(['release-2.1', 'release-2.1.1'], PATCH).flags[0]).toMatch(/multiple dispositions/)
+  })
+  it('release-x.y.0 is not a disposition at all (the line label is what x.y.0 means)', () => {
+    expect(d(['release-2.1.0'], PATCH)).toEqual({ add: ['triage'], flags: [] })
+    expect(d(['in-beta', 'release-2.1.0'], PATCH)).toEqual({ add: ['release-2.1.1'], flags: [] })
   })
   it('lineOf strips the patch and nothing else', () => {
     expect(rec.lineOf('release-2.1.1')).toBe('release-2.1')
