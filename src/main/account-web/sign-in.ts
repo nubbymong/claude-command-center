@@ -473,15 +473,29 @@ async function targetIsClaudeAi(client: any): Promise<boolean> {
   }
 }
 
-/** Cloudflare's managed-challenge surfaces, by target URL/title. Pure. */
+/**
+ * Cloudflare's managed-challenge surfaces, by target URL/title. Pure.
+ *
+ * A UI hint only: its one caller picks the "Cloudflare is verifying you are
+ * human" notice text while sign-in waits. It gates nothing -- isClaudeUrl is
+ * the gate on every privileged step. Decided from the parsed URL: a challenge
+ * is either the Turnstile iframe on Cloudflare's own host, or the interstitial
+ * that claude.ai itself serves (its /cdn-cgi/challenge-platform/ path, or its
+ * "Just a moment..." title), and nothing else earns the notice.
+ */
 export function isCloudflareChallenge(t: CdpTarget): boolean {
-  const url = (t?.url ?? '').toLowerCase()
-  const title = (t?.title ?? '').toLowerCase()
-  return (
-    url.includes('challenges.cloudflare.com') ||
-    url.includes('/cdn-cgi/challenge-platform/') ||
-    title === 'just a moment...'
-  )
+  const url = t?.url ?? ''
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return false
+  }
+  // The Turnstile widget is an IFRAME on Cloudflare's own host, over https; a
+  // top-level page there is not the challenge in front of this sign-in.
+  if (t?.type === 'iframe' && u.protocol === 'https:' && u.hostname.toLowerCase() === 'challenges.cloudflare.com') return true
+  if (!isClaudeUrl(url)) return false
+  return u.pathname.startsWith('/cdn-cgi/challenge-platform/') || (t?.title ?? '').toLowerCase() === 'just a moment...'
 }
 
 /**

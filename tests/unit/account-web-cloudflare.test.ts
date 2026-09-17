@@ -71,6 +71,35 @@ describe('isCloudflareChallenge', () => {
     expect(isCloudflareChallenge({ type: 'page', url: 'https://claude.ai/' })).toBe(false)
     expect(isCloudflareChallenge({})).toBe(false)
   })
+
+  it('is not fooled by a look-alike address carrying the Cloudflare words (CodeQL #13, 2.1.1)', () => {
+    // Each of these satisfied the old substring check. The detector is a
+    // notice-only hint, so nothing was ever unlocked -- but it should not lie.
+    for (const url of [
+      'https://evil.example/challenges.cloudflare.com/',
+      'https://challenges.cloudflare.com.evil.example/x',
+      'https://challenges.cloudflare.com@evil.example/',
+      'https://evilchallenges.cloudflare.com/x',
+      'https://claude.ai/foo/cdn-cgi/challenge-platform/x',
+      'https://claude.ai/login?q=challenges.cloudflare.com',
+      'https://evil.example/cdn-cgi/challenge-platform/h/b/x',
+      'http://claude.ai/cdn-cgi/challenge-platform/x',
+      'http://challenges.cloudflare.com/turnstile/v0/x',
+      'not a url',
+    ]) {
+      expect(isCloudflareChallenge({ type: 'page', url }), url).toBe(false)
+    }
+    // ...nor by the interstitial title on a foreign origin, or with no URL at all.
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://evil.example/', title: 'Just a moment...' })).toBe(false)
+    // ...nor by a top-level PAGE on Cloudflare's host: the widget is an iframe.
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://challenges.cloudflare.com/turnstile/v0/x' })).toBe(false)
+    expect(isCloudflareChallenge({ type: 'page', title: 'Just a moment...' })).toBe(false)
+    // ...while the real shapes still match: the Turnstile iframe on Cloudflare's
+    // host, and the interstitial claude.ai itself serves (its path or its title).
+    expect(isCloudflareChallenge({ type: 'iframe', url: 'https://challenges.cloudflare.com/turnstile/v0/x' })).toBe(true)
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://claude.ai/cdn-cgi/challenge-platform/h/b/jsd' })).toBe(true)
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://www.claude.ai/login', title: 'Just a moment...' })).toBe(true)
+  })
 })
 
 describe('runSignIn — no page script while the challenge is unsolved (#269)', () => {

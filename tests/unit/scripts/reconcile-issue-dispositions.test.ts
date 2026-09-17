@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const rec = require('../../../scripts/reconcile-issue-dispositions.js') as {
   activeLineFromVersion: (v: string) => string | null
+  lineOf: (label: string) => string | null
   validateActiveLine: (line: string | null | undefined) => string | null | undefined
   decide: (input: { labels?: string[]; activeLine?: string | null }) => { add: string[]; flags: string[] }
   parseIssuesJson: (jsonText: string) => Array<{ number: number; title: string; labels: string[] }>
@@ -20,11 +21,30 @@ describe('activeLineFromVersion', () => {
     expect(activeLineFromVersion('2.1.0-beta.17')).toBe('release-2.1')
   })
   it('keeps a multi-digit minor', () => {
-    expect(activeLineFromVersion('2.10.3')).toBe('release-2.10')
+    expect(activeLineFromVersion('2.10.0-beta.1')).toBe('release-2.10')
   })
-  it('returns null when unparseable', () => {
+  it('a shipped stable means the NEXT patch on the line (the default branch is what the job checks out)', () => {
+    expect(activeLineFromVersion('2.1.0')).toBe('release-2.1.1')
+    expect(activeLineFromVersion('2.1.1')).toBe('release-2.1.2')
+    expect(activeLineFromVersion('2.10.3')).toBe('release-2.10.4')
+  })
+  it('a patch prerelease is that patch; an x.y.0 prerelease is the line', () => {
+    expect(activeLineFromVersion('2.1.1-rc.1')).toBe('release-2.1.1')
+    expect(activeLineFromVersion('2.1.2-beta.3')).toBe('release-2.1.2')
+    expect(activeLineFromVersion('2.2.0-beta.1')).toBe('release-2.2')
+  })
+  it('returns null when unparseable, including a version that is only a prefix of one (fail closed)', () => {
     expect(activeLineFromVersion('')).toBeNull()
     expect(activeLineFromVersion('nope')).toBeNull()
+    expect(activeLineFromVersion('2.1')).toBeNull()
+    expect(activeLineFromVersion('2.1oops')).toBeNull()
+    expect(activeLineFromVersion('2.1.0-rc.1 ')).toBeNull()
+    // malformed or foreign prerelease tags: not the repo grammar, so unknown
+    expect(activeLineFromVersion('2.1.0-rc..1')).toBeNull()
+    expect(activeLineFromVersion('2.1.0--')).toBeNull()
+    expect(activeLineFromVersion('2.1.0-rc.')).toBeNull()
+    expect(activeLineFromVersion('2.1.0-alpha.1')).toBeNull()
+    expect(activeLineFromVersion('2.1.0-beta.1.2')).toBeNull()
   })
 })
 
@@ -139,6 +159,7 @@ describe('validateActiveLine', () => {
   it('accepts a well-formed release line (any case) and null', () => {
     expect(validateActiveLine('release-2.1')).toBe('release-2.1')
     expect(validateActiveLine('Release-2.10')).toBe('Release-2.10')
+    expect(validateActiveLine('release-2.1.1')).toBe('release-2.1.1')
     expect(validateActiveLine(null)).toBeNull()
     expect(validateActiveLine(undefined)).toBeUndefined()
   })
@@ -147,6 +168,10 @@ describe('validateActiveLine', () => {
     expect(() => validateActiveLine('release-2')).toThrow()
     expect(() => validateActiveLine('rm -rf')).toThrow()
     expect(() => validateActiveLine('release-2.1; drop')).toThrow()
+    expect(() => validateActiveLine('release-2.1.1.1')).toThrow()
+    expect(() => validateActiveLine('release-2.1.0')).toThrow() // x.y.0 is the line label, never a patch label
+    expect(() => validateActiveLine('release-2.1.01')).toThrow()
+    expect(() => validateActiveLine('release-2.1.1-rc.1')).toThrow()
   })
 })
 
@@ -168,5 +193,40 @@ describe('parseArgv', () => {
   it('reads flags', () => {
     expect(parseArgv(['--dry-run', '--issue', '123', '--repo', 'o/n', '--active-line', 'release-2.1']))
       .toEqual({ dryRun: true, issue: 123, repo: 'o/n', activeLine: 'release-2.1' })
+  })
+})
+
+describe('decide — patch-release labels (release-x.y.z) on a shipped line', () => {
+  // Once 2.1.0 is live, patch work carries release-2.1.1 (CONTRIBUTING.md); the
+  // active label the job derives from a shipped 2.1.0 is exactly that.
+  const PATCH = 'release-2.1.1'
+  it('a patch label is a release disposition: no triage, nothing added', () => {
+    expect(d(['release-2.1.1'], PATCH)).toEqual({ add: [], flags: [] })
+    expect(d(['in-beta', 'release-2.1.1'], PATCH)).toEqual({ add: [], flags: [] })
+  })
+  it('auto-adds the PATCH label to an in-beta issue with no release line', () => {
+    expect(d(['in-beta'], PATCH)).toEqual({ add: ['release-2.1.1'], flags: [] })
+    expect(d(['in-release'], PATCH)).toEqual({ add: ['release-2.1.1'], flags: [] })
+  })
+  it('the line label and its patch label are the same line: no contradiction either way', () => {
+    expect(d(['in-beta', 'release-2.1'], PATCH)).toEqual({ add: [], flags: [] })
+    expect(d(['in-beta', 'release-2.1.1'], 'release-2.1')).toEqual({ add: [], flags: [] })
+  })
+  it('a different line is still contradictory for in-beta, patch or not', () => {
+    const r = d(['in-beta', 'release-2.2'], PATCH)
+    expect(r.add).toEqual([])
+    expect(r.flags[0]).toMatch(/release-2\.2.*not the active line release-2\.1/)
+  })
+  it('a line label together with a patch label is two dispositions', () => {
+    expect(d(['release-2.1', 'release-2.1.1'], PATCH).flags[0]).toMatch(/multiple dispositions/)
+  })
+  it('release-x.y.0 is not a disposition at all (the line label is what x.y.0 means)', () => {
+    expect(d(['release-2.1.0'], PATCH)).toEqual({ add: ['triage'], flags: [] })
+    expect(d(['in-beta', 'release-2.1.0'], PATCH)).toEqual({ add: ['release-2.1.1'], flags: [] })
+  })
+  it('lineOf strips the patch and nothing else', () => {
+    expect(rec.lineOf('release-2.1.1')).toBe('release-2.1')
+    expect(rec.lineOf('Release-2.10')).toBe('release-2.10')
+    expect(rec.lineOf('backlog')).toBeNull()
   })
 })

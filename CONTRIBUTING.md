@@ -130,15 +130,25 @@ range such as `v2.0.0..main`; `dry_run` defaults to **true**. Locally:
 node scripts/close-in-beta-issues.js --range origin/main..origin/beta --dry-run
 ```
 
-### Release-line labels (`release-2.1` / `release-2.2`)
+### Release-line labels (`release-2.1` / `release-2.1.1` / `release-2.2`)
 
-Orthogonal to the `in-beta` lifecycle above, these two labels say **which release
-line** an issue belongs to:
+Orthogonal to the `in-beta` lifecycle above, these release labels say **which
+release line, or which patch on a shipped line,** an issue belongs to:
 
-- **`release-2.1`** — targets the current 2.1 line. **Apply it** to any issue or
-  PR on this line; in particular, every `in-beta` issue should also carry
-  `release-2.1`, so a "what ships in 2.1?" query stays accurate.
+- **`release-2.1`** — the 2.1 line label, for work shipping in 2.1.0. **Apply it** to
+  any issue or PR on this line while 2.1.0 is unreleased; in particular, every
+  `in-beta` issue then also carries `release-2.1`, so a "what ships in 2.1?" query
+  stays accurate. After 2.1.0 ships, new work on the line takes the patch label
+  below instead — never both (two release labels are two dispositions).
 - **`release-2.2`** — **apply it** to work explicitly **deferred** past 2.1.
+- **`release-2.1.1`** — a patch release on a line whose x.y.0 has already shipped
+  gets its own label (owner decision, 2026-09-16): once 2.1.0 is live, `release-2.1`
+  reads as "ships in 2.1", so 2.1.1 PRs and issues carry `release-2.1.1` instead.
+  Same pattern for later patches (`release-2.1.2`, ...). The disposition job
+  (`scripts/reconcile-issue-dispositions.js`) understands both shapes: it treats
+  `release-2.1` and `release-2.1.1` as the same line, and derives the label it
+  auto-adds from `beta`'s `package.json` -- an unshipped `x.y.0-…` gives
+  `release-x.y`, a shipped `x.y.z` gives the next patch, `release-x.y.(z+1)`.
 
 **Invariant: `in-beta`/`in-release` and `release-2.2` must never sit on the same
 issue.** Either lifecycle label means the fix is already merged to `beta` (which
@@ -152,15 +162,16 @@ is enforced by the reconcile job below.
 Every **open** issue must carry exactly **one disposition**, so nothing falls
 through the cracks:
 
-- a release line — `release-<major.minor>` (scheduled to ship in that line), **or**
+- a release line — `release-<major.minor>` (scheduled to ship in that line), or once
+  that line's x.y.0 has shipped, a patch release `release-<major.minor.patch>`, **or**
 - `backlog` — real work, accepted, not yet scheduled, **or**
 - `triage` — undecided; a human must decide (the default on a brand-new issue), **or**
 - `wontfix` / `duplicate` / `excluded` — will not ship.
 
 And once an issue reaches a **committed state** — `in-beta`, `in-release`,
 `loop-claimed`, `loop-in-progress`, or `loop-done` — it must carry a
-`release-<major.minor>` label: work started or shipped means the target line is
-decided. `in-beta` and `in-release` specifically must carry the **active** line
+release label (`release-<major.minor>` or `release-<major.minor.patch>`): work
+started or shipped means the target line is decided. `in-beta` and `in-release` specifically must carry the **active** line
 (the invariant above); other committed states may target a future line.
 
 Enforcement is durable, not by hand — `.github/workflows/issue-disposition.yml`
@@ -168,8 +179,9 @@ Enforcement is durable, not by hand — `.github/workflows/issue-disposition.yml
 `scripts/reconcile-issue-dispositions.js`, which:
 
 - adds `triage` to any open issue with no disposition (never leaves limbo);
-- adds the active `release-<x.y>` (computed from `package.json`) to an
-  `in-beta`/`in-release` issue that has no release line;
+- adds the active release label to an `in-beta`/`in-release` issue that has no
+  release line, computed from `beta`'s `package.json`: an unshipped `x.y.0-…` gives
+  `release-<x.y>`, a shipped `x.y.z` gives the next patch `release-<x.y.(z+1)>`;
 - **flags for a human** — never guesses — a committed issue with no line, an
   `in-beta`/`in-release` issue on a deferred line, or any issue carrying more than
   one disposition.
