@@ -17,9 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Electron moves to 43.7.1, with the terminal backend (node-pty), zod, marked and the transcript database typings refreshed. Two development-only dependencies with published advisories (vitest, js-yaml) and the MCP server library (hono) are on their patched versions.
 - Internal: the four largest source files were split into focused modules as pure moves, each verified against its origin and pinned by new regression tests. No change in behaviour.
 
-### Fixed
-- A small hardening in the claude.ai sign-in flow; the sign-in gate itself was never affected.
-
 ## [2.1.0] - 2026-09-14
 
 > The first stable release under the app’s new name, AI Code Conductor -- and if you are coming from 2.0.0, everything below arrives at once. Remote work stops being second-class: an SSH session survives a dropped connection, reports its account and full usage exactly like a local one, and can run inside a Docker or Podman container. The Agent Canvas arrives as a full visual review surface, with plans, mockups and a Testing mode that saves evidence. claude.ai runs inside the app, signed in per account. The terminal’s glyph corruption is root-caused and fixed, with GPU rendering on by default. A Session Watchdog can wait out a rate limit and type the retry itself. And there is a Linux build.

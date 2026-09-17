@@ -23,15 +23,13 @@ Local note: `electron-rebuild` cannot build node-pty on the owner's desktop
 suite mocks the natives and CI builds the installers, as for every prior
 release.
 
-### CodeQL: nine open alerts, adversarial pass (two Opus attackers, Fable orchestrating)
+### Security scanning
 
-Zero exploitable. Seven dismissed on the repo (false positives and test oracles;
-each dismissal comment cites the repro that failed) and two addressed in code: a
-hardening in `src/main/account-web/sign-in.ts` and a stronger test oracle in
-`tests/unit/main/splash-build-info.test.ts`. Per SECURITY.md ("Embargo") the
-written assessment is published with the release record, not before, even
-though the pass rated the pre-change code non-exploitable; the regression tests
-carry the cases, as the policy allows.
+The open CodeQL alerts went through an adversarial pass (two Opus attackers,
+Fable orchestrating): zero exploitable. The dismissals are on the repo, each
+comment citing the repro that failed. What remains is handled in this release
+and, per SECURITY.md ("Embargo"), is described only in the record written after
+2.1.1 ships; the regression tests carry the cases, as the policy allows.
 
 The Dependabot alerts (#174-#177, #187, #189) close on their own once the
 lockfile reaches `main`; the Dependabot PRs #592-#596 and #613 are closed in

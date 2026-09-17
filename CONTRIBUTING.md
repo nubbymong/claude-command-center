@@ -132,8 +132,8 @@ node scripts/close-in-beta-issues.js --range origin/main..origin/beta --dry-run
 
 ### Release-line labels (`release-2.1` / `release-2.1.1` / `release-2.2`)
 
-Orthogonal to the `in-beta` lifecycle above, these two labels say **which release
-line** an issue belongs to:
+Orthogonal to the `in-beta` lifecycle above, these release labels say **which
+release line, or which patch on a shipped line,** an issue belongs to:
 
 - **`release-2.1`** — the 2.1 line label, for work shipping in 2.1.0. **Apply it** to
   any issue or PR on this line while 2.1.0 is unreleased; in particular, every
