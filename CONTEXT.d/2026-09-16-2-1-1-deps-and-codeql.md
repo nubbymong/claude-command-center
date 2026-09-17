@@ -25,34 +25,13 @@ release.
 
 ### CodeQL: nine open alerts, adversarial pass (two Opus attackers, Fable orchestrating)
 
-Zero exploitable. Two fixed in code rather than dismissed:
-
-- #13 `src/main/account-web/sign-in.ts` `isCloudflareChallenge`: hardened (the
-  notice-only detector now decides from the parsed page address, https-only;
-  `isClaudeUrl` was and is the gate on every privileged step). The assessment
-  and the pinned cases are in `tests/unit/account-web-cloudflare.test.ts`; the
-  written analysis is deferred to the post-release record per SECURITY.md
-  ("Embargo"), even though the pass rated it non-exploitable.
-- #15 `tests/unit/main/splash-build-info.test.ts`: the inline-script oracle
-  `/<script>/` missed `<SCRIPT>`, `type="module"` and `defer`; CodeQL's textbook
-  `/<script\b/i` would also reject the page's legitimate `src=` tags and its
-  inert `text/x-logo-src` block, so the oracle excludes those two forms
-  explicitly. Harmless either way: the CSP assertions beside it are the guard.
-
-Dismissed on the repo, each comment citing the repro that failed:
-
-- #18 / #19 splash `innerHTML` from SVG path data: the data is captured from
-  the bundled inert `logoSrc` block by `/<path d="([^"]+)"/`, so it can never
-  contain a quote and cannot close the attribute (an `onload` payload truncated
-  at the first quote); raw markup injected past the regex executed nothing in
-  Chromium under the page's CSP (`script-src 'self'`, no unsafe-inline); the
-  window is sandboxed, isolated, preload-free, `connect-src 'none'`.
-- #11 / #12 clear-text logging in two manual dev scripts: the logged values are
-  presence literals, ids, paths and case labels; the credential value is
-  discarded at a ternary and the host password field is never read. Neither
-  script runs in CI.
-- #14 / #17 test oracle and fixture construction, not sanitizers.
-- #16 a test helper fed only two literal filenames with no other metacharacter.
+Zero exploitable. Seven dismissed on the repo (false positives and test oracles;
+each dismissal comment cites the repro that failed) and two addressed in code: a
+hardening in `src/main/account-web/sign-in.ts` and a stronger test oracle in
+`tests/unit/main/splash-build-info.test.ts`. Per SECURITY.md ("Embargo") the
+written assessment is published with the release record, not before, even
+though the pass rated the pre-change code non-exploitable; the regression tests
+carry the cases, as the policy allows.
 
 The Dependabot alerts (#174-#177, #187, #189) close on their own once the
 lockfile reaches `main`; the Dependabot PRs #592-#596 and #613 are closed in

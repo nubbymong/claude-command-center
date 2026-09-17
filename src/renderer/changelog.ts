@@ -23,10 +23,10 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '2.1.1',
     date: '2026-09-16',
-    highlights: 'A maintenance release: the runtime and its dependencies refreshed, the open security-scanner findings resolved, and the largest source files split into focused modules with no change in behaviour.',
+    highlights: 'A maintenance release: the runtime and its dependencies refreshed, and the largest source files split into focused modules with no change in behaviour.',
     changes: [
       { type: 'improvement', description: 'Electron moves to 43.7.1, with the terminal backend (node-pty), zod, marked and the transcript database typings refreshed. Two development-only dependencies with published advisories (vitest, js-yaml) and the MCP server library (hono) are on their patched versions.' },
-      { type: 'fix', description: 'Hardening in the claude.ai sign-in flow: the Cloudflare "verify you are human" notice is now decided from the parsed page address. Cosmetic only; the sign-in gate itself was never affected.' },
+      { type: 'fix', description: 'A small hardening in the claude.ai sign-in flow; the sign-in gate itself was never affected.' },
       { type: 'improvement', description: 'Internal: the four largest source files were split into focused modules as pure moves, each verified against its origin and pinned by new regression tests. No change in behaviour.' },
     ],
   },
