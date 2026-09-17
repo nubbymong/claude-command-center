@@ -8,7 +8,7 @@ const rec = require('../../../scripts/reconcile-issue-dispositions.js') as {
   activeLineFromVersion: (v: string) => string | null
   lineOf: (label: string) => string | null
   validateActiveLine: (line: string | null | undefined) => string | null | undefined
-  resolveActiveLine: (input: { cliValue?: string | null; version: string | null }) => string | null
+  resolveActiveLine: (input: { cliValue?: string | null; readVersion: () => string | null }) => string | null
   decide: (input: { labels?: string[]; activeLine?: string | null }) => { add: string[]; flags: string[] }
   parseIssuesJson: (jsonText: string) => Array<{ number: number; title: string; labels: string[] }>
   parseArgv: (argv: string[]) => { dryRun: boolean; issue?: number; repo?: string; activeLine?: string }
@@ -18,7 +18,7 @@ const rec = require('../../../scripts/reconcile-issue-dispositions.js') as {
     gh?: (args: string[]) => string
     readPackageVersion?: () => string | null
     log?: (line: string) => void
-  }) => { repo: string; activeLine: string | null; dryRun: boolean; scanned: number; added: Array<{ number: number; label: string }>; flagged: Array<{ number: number; flag: string }> }
+  }) => { repo: string; activeLine: string | null; dryRun: boolean; scanned: number; added: Array<{ number: number; label: string; title: string }>; flagged: Array<{ number: number; flag: string; title: string }> }
 }
 
 const { activeLineFromVersion, validateActiveLine, resolveActiveLine, decide, parseIssuesJson, parseArgv, main } = rec
@@ -273,17 +273,24 @@ describe('numbers are canonical: no leading zero anywhere (final adversarial pas
 })
 
 describe('resolveActiveLine -- the label main() auto-adds is validated whichever way it was produced', () => {
-  it('a CLI override wins and must be well-formed', () => {
-    expect(resolveActiveLine({ cliValue: 'release-2.2', version: '2.1.1-beta.1' })).toBe('release-2.2')
-    expect(() => resolveActiveLine({ cliValue: 'release-02.2', version: '2.1.1-beta.1' })).toThrow(/active-line/)
+  const v = (version: string | null) => () => version
+  it('a CLI override wins, must be well-formed, and the version is then never read', () => {
+    const unread = () => { throw new Error('package.json must not be read under --active-line') }
+    expect(resolveActiveLine({ cliValue: 'release-2.2', readVersion: unread })).toBe('release-2.2')
+    expect(() => resolveActiveLine({ cliValue: 'release-02.2', readVersion: unread })).toThrow(/active-line/)
   })
   it('otherwise derives from the version, and an unknown version is null (flag, never label)', () => {
-    expect(resolveActiveLine({ version: '2.1.1-beta.1' })).toBe('release-2.1.1')
-    expect(resolveActiveLine({ version: '2.1.0' })).toBe('release-2.1.1')
-    expect(resolveActiveLine({ version: '2.2.0-beta.1' })).toBe('release-2.2')
-    expect(resolveActiveLine({ version: null })).toBeNull()
-    expect(resolveActiveLine({ version: 'garbage' })).toBeNull()
-    expect(resolveActiveLine({ version: '02.1.1' })).toBeNull()
+    expect(resolveActiveLine({ readVersion: v('2.1.1-beta.1') })).toBe('release-2.1.1')
+    expect(resolveActiveLine({ readVersion: v('2.1.0') })).toBe('release-2.1.1')
+    expect(resolveActiveLine({ readVersion: v('2.2.0-beta.1') })).toBe('release-2.2')
+    expect(resolveActiveLine({ readVersion: v(null) })).toBeNull()
+    expect(resolveActiveLine({ readVersion: v('garbage') })).toBeNull()
+    expect(resolveActiveLine({ readVersion: v('02.1.1') })).toBeNull()
+  })
+  it('a derivation that is not a release label throws instead of being minted', () => {
+    // patch + 1 past 2^53 stringifies as 1e+21: the one way the grammar-tight
+    // deriver can still hand back a non-label
+    expect(() => resolveActiveLine({ readVersion: v('2.1.999999999999999999999') })).toThrow(/derived active line/)
   })
 })
 
@@ -406,7 +413,7 @@ describe('main() -- the whole run against a recording gh', () => {
     expect(out.flagged.find((f) => f.number === 2)?.flag).toMatch(/unknown/)
   })
 
-  it('a malformed --active-line throws before any gh call is made', () => {
+  it('a malformed --active-line throws before any issue is read or touched (with --repo given, before any gh call at all)', () => {
     const { gh, calls } = fakeGh(FIXTURE)
     expect(() => main(baseIo(gh, { argv: ['--repo', 'o/n', '--active-line', 'release-2'] }))).toThrow(/active-line/)
     expect(calls).toEqual([])

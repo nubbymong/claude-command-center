@@ -177,16 +177,22 @@ describe('index.ts wiring pinned by shape', () => {
 // under the tests above. Each case here is one of them.
 describe('index.ts boot wiring -- mutants of the once-flag and the wipe slot', () => {
   it('the once-flag is declared exactly once, at module scope, and written only inside registerMainWindowIpc()', () => {
-    // M7: re-declaring it inside the registrar makes every call see `false`.
-    expect(src.match(/^let windowIpcRegistered = false$/gm)).toHaveLength(1)
+    // M7: re-declaring it inside the registrar (with or without an initialiser)
+    // makes every call see a fresh `false`/undefined. ONE declaration, at
+    // column 0.
+    const decls = [...src.matchAll(/\b(?:let|const|var)\s+windowIpcRegistered\b/g)]
+    expect(decls).toHaveLength(1)
+    expect(src.slice(src.lastIndexOf('\n', decls[0].index!) + 1, decls[0].index!)).toBe('')
+    expect(src.slice(decls[0].index!)).toMatch(/^let windowIpcRegistered(?::\s*boolean)? = false$/m)
     // M1: a reset in createWindow() (or anywhere else) re-arms the registrar on
     // the next dock-reopen. The ONLY writes are the declaration and the `= true`
     // inside the registrar.
     const writes = [...src.matchAll(/\bwindowIpcRegistered\s*=\s*(?:true|false)\b/g)].map((m) => m.index!)
     expect(writes).toHaveLength(2)
-    const registrar = lineOf('function registerMainWindowIpc(): void {')
-    const registrarStart = lines.slice(0, registrar).join('\n').length
-    const registrarEnd = registrarStart + bodyOf('function registerMainWindowIpc(): void {').length + 'function registerMainWindowIpc(): void {\n'.length
+    const header = 'function registerMainWindowIpc(): void {'
+    const registrarStart = src.indexOf(header)
+    const registrarEnd = src.indexOf('\n}', registrarStart)
+    expect(registrarStart).toBeGreaterThanOrEqual(0)
     expect(writes[1]).toBeGreaterThan(registrarStart)
     expect(writes[1]).toBeLessThan(registrarEnd)
     expect(bodyOf('function createWindow(): void {')).not.toContain('windowIpcRegistered')

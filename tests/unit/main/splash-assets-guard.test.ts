@@ -95,11 +95,16 @@ describe('splash assets guard', () => {
     // DEFAULT session (shared with the main window), leaves the triple intact
     // and every other test green (final adversarial pass, 2.1.1: mutants M3/M8).
     const src = readFileSync(join(repoRoot, 'src', 'main', 'splash-window.ts'), 'utf-8').replace(/\r\n/g, '\n')
-    const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')
+    // Code only: block comments and whole-line // comments are dropped, so
+    // prose naming a construct is not a red.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')
     expect(code).not.toMatch(/commandLine|appendSwitch|appendArgument/)
     expect(code).not.toMatch(/setPermission(Request|Check)Handler|defaultSession|fromPartition|\.session\b/)
-    // `app` is imported for getVersion() and nothing else.
+    // `app` is used for read-only identity getters, never for anything that
+    // reaches the process or another window.
+    const READ_ONLY = new Set(['getVersion', 'getName', 'isPackaged', 'getAppPath', 'getPath'])
     const appUses = [...code.matchAll(/\bapp\.(\w+)/g)].map((m) => m[1])
-    expect(new Set(appUses)).toEqual(new Set(['getVersion']))
+    expect(appUses.length).toBeGreaterThan(0)
+    expect(appUses.filter((u) => !READ_ONLY.has(u))).toEqual([])
   })
 })

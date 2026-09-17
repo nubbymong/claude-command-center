@@ -190,18 +190,25 @@ describe('runSignIn -- one case per gate', () => {
     expect(call.expression).not.toMatch(/https?:\/\/[^']*\/api\/bootstrap/)
   })
 
-  it('G7 the Cloudflare notice is a hint, not a gate: a spoofed challenge page is never connected', async () => {
+  it('G7 the Cloudflare notice is a hint, not a gate: a spoofed challenge page is never connected and earns no notice', async () => {
     const connected: any[] = []
+    const seen: Array<{ phase: string; notice?: string }> = []
     const evaluate = vi.fn(async () => ({ result: { value: 'x@y.z' } }))
     const spoof = { type: 'page', url: 'https://evil.example/cdn-cgi/challenge-platform/x', title: 'Just a moment...', id: 'sp', webSocketDebuggerUrl: 'ws://sp' }
     const spoof2 = { type: 'page', url: 'https://challenges.cloudflare.com/turnstile/v0/x', id: 'sp2', webSocketDebuggerUrl: 'ws://sp2' }
-    _setCdpForTest(makeCdp({ targets: [LOGIN, spoof, spoof2], infoUrl: () => 'https://claude.ai/login', cookies: () => [], evaluate, onConnect: (a) => connected.push(a.target) }))
-    const run = runSignIn({ ...RUN, timeoutMs: 150 })
-    await new Promise((r) => setTimeout(r, 60))
-    const mid = getSignInState()
-    await run
-    expect(mid.phase).toBe('awaiting-user')
-    expect(mid.notice).toBeUndefined()
+    _setCdpForTest(makeCdp({
+      targets: [LOGIN, spoof, spoof2], infoUrl: () => 'https://claude.ai/login', cookies: () => [], evaluate,
+      onConnect: (a) => connected.push(a.target),
+      // Sample the published state from inside the poll loop (each cookie read
+      // follows the previous poll's state write) rather than from a wall-clock
+      // sleep, which a loaded runner turns into a race.
+      onCookies: () => { const s = getSignInState(); seen.push({ phase: s.phase, notice: s.notice }) },
+    }))
+    const s = await runSignIn({ ...RUN, timeoutMs: 150 })
+    expect(s.phase).toBe('failed') // timed out waiting for the human
+    const waiting = seen.filter((x) => x.phase === 'awaiting-user')
+    expect(waiting.length).toBeGreaterThan(0)
+    expect(waiting.every((x) => x.notice === undefined)).toBe(true)
     expect(connected.length).toBeGreaterThan(0)
     expect(connected.every((t) => t === 'ws://t1')).toBe(true)
     expect(evaluate).not.toHaveBeenCalled()

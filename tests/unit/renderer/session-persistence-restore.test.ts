@@ -136,6 +136,8 @@ describe('restoreSavedSessions -- the restore lands', () => {
   })
 
   it('marks the resume picker only for a local, non-shell session with no exact-conversation target', async () => {
+    // The picker set is module-level and never cleared, so every id read here
+    // is unique to this case (other cases restore 'a'/'b' and leave them in it).
     await restoreSavedSessions(
       state([
         saved({ id: 'pick-local' }),
@@ -209,15 +211,26 @@ describe('restoreSavedSessions -- the persistent-SSH liveness probe', () => {
     expect(d.probeGoneSessions).not.toHaveBeenCalled()
   })
 
-  it('flags a session the host confirms gone, and ignores one the user already closed', async () => {
+  it('flags a session the host confirms gone, and ignores one the user closed while the probe was out', async () => {
     const d = deps()
-    d.probeGoneSessions.mockResolvedValueOnce(['ssh-gone', 'ssh-closed'])
+    // A deferred answer: the probe is still out when the user closes a tab
+    // (an immediately-resolved mock would flag both before the close happens
+    // and never exercise the guard -- code-quality review, 2.1.1).
+    let answer!: (ids: string[]) => void
+    d.probeGoneSessions.mockImplementationOnce(() => new Promise<string[]>((r) => { answer = r }))
     await restoreSavedSessions(state([ssh('ssh-gone', {}), ssh('ssh-closed', {}), ssh('ssh-live', {})]), ref(), d)
+    await vi.waitFor(() => expect(d.probeGoneSessions).toHaveBeenCalledTimes(1))
     // closed between restore and the probe returning
     useSessionStore.setState({ sessions: useSessionStore.getState().sessions.filter((s) => s.id !== 'ssh-closed') })
+    const updates: string[] = []
+    const realUpdate = useSessionStore.getState().updateSession
+    useSessionStore.setState({ updateSession: (id, u) => { updates.push(id); realUpdate(id, u) } })
+    answer(['ssh-gone', 'ssh-closed'])
     await vi.waitFor(() => expect(useSessionStore.getState().getSession('ssh-gone')?.sshRemoteReattachGone).toBe(true))
+    expect(updates).toEqual(['ssh-gone'])
     expect(useSessionStore.getState().getSession('ssh-live')?.sshRemoteReattachGone).toBeUndefined()
     expect(useSessionStore.getState().getSession('ssh-closed')).toBeUndefined()
+    useSessionStore.setState({ updateSession: realUpdate })
   })
 })
 

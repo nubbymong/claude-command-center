@@ -118,15 +118,17 @@ function validateActiveLine(line) {
 
 /**
  * The active label main() will auto-add: the validated CLI override when one is
- * given, else the label derived from the package version. The DERIVED value is
- * validated too -- it is the one that reaches `gh issue edit --add-label` with no
- * human in between, so a derivation bug must throw here rather than mint a label
- * (final adversarial pass, 2.1.1). Null (unknown version) is fine: decide() then
- * flags instead of labelling.
+ * given, else the label derived from the package version (read only then, as
+ * before). The DERIVED value is validated too -- it is the one that reaches
+ * `gh issue edit --add-label` with no human in between, so a derivation bug must
+ * throw here rather than mint a label (final adversarial pass, 2.1.1; reachable:
+ * a patch number past 2^53 stringifies as `1e+21`). Null (unknown version) is
+ * fine: decide() then flags instead of labelling.
  */
-function resolveActiveLine({ cliValue, version }) {
+function resolveActiveLine({ cliValue, readVersion }) {
   validateActiveLine(cliValue) // throws on a malformed manual override
   if (cliValue) return cliValue
+  const version = readVersion()
   const derived = activeLineFromVersion(version)
   if (derived != null && !RELEASE_RE.test(derived)) {
     throw new Error(`derived active line is not a release label (got: "${derived}" from version "${version}")`)
@@ -270,7 +272,7 @@ function parseArgv(argv) {
 }
 
 /** Append a markdown block to the Actions job summary when running in CI. */
-function writeSummary(md, env) {
+function writeSummary(md, env = process.env) {
   const file = env.GITHUB_STEP_SUMMARY
   if (file) {
     try { fs.appendFileSync(file, md + '\n') } catch { /* summary is best-effort */ }
@@ -293,7 +295,7 @@ function main(io = {}) {
   const args = parseArgv(argv)
   const dryRun = args.dryRun || env.DRY_RUN === '1'
   const repo = args.repo || env.GITHUB_REPOSITORY || gh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
-  const activeLine = resolveActiveLine({ cliValue: args.activeLine, version: readPackageVersion() })
+  const activeLine = resolveActiveLine({ cliValue: args.activeLine, readVersion: readPackageVersion })
 
   const issues = args.issue ? [fetchIssue(repo, args.issue, gh)].filter(Boolean) : listOpenIssues(repo, gh)
   log(`Repo: ${repo}   active line: ${activeLine || '(unknown)'}   issues: ${issues.length}${dryRun ? '   [DRY RUN]' : ''}`)
