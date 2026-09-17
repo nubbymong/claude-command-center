@@ -21,7 +21,7 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
-    version: '2.1.1',
+    version: '2.1.1-beta.1',
     date: '2026-09-16',
     highlights: 'A maintenance release: the runtime and its dependencies refreshed, and the largest source files split into focused modules with no change in behaviour.',
     changes: [

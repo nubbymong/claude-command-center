@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
-## [2.1.1] - 2026-09-16
+## [2.1.1-beta.1] - 2026-09-16
 
 > A maintenance release: the runtime and its dependencies refreshed, and the largest source files split into focused modules with no change in behaviour.
 
@@ -1594,7 +1594,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
-[2.1.1]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.1
+[2.1.1-beta.1]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.1-beta.1
 [2.1.0]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0
 [2.1.0-rc.17]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.17
 [2.1.0-rc.16]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.16

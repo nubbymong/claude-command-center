@@ -91,6 +91,8 @@ describe('isCloudflareChallenge', () => {
     }
     // ...nor by the interstitial title on a foreign origin, or with no URL at all.
     expect(isCloudflareChallenge({ type: 'page', url: 'https://evil.example/', title: 'Just a moment...' })).toBe(false)
+    // ...nor by a top-level PAGE on Cloudflare's host: the widget is an iframe.
+    expect(isCloudflareChallenge({ type: 'page', url: 'https://challenges.cloudflare.com/turnstile/v0/x' })).toBe(false)
     expect(isCloudflareChallenge({ type: 'page', title: 'Just a moment...' })).toBe(false)
     // ...while the real shapes still match: the Turnstile iframe on Cloudflare's
     // host, and the interstitial claude.ai itself serves (its path or its title).
