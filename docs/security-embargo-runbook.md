@@ -156,6 +156,20 @@ fragments, ADRs, or the changelog.
 notebook and is a tracked file. A fragment for embargoed work may record *that* a finding
 exists and was routed privately — never the component, the mechanism, or the repro.
 
+**The squash-merge body is the second one.** GitHub pre-fills a squash commit's body with
+every commit subject on the branch. A PR whose intermediate commits name the mechanism
+publishes it at the moment of merge — after the PR body, the fragment and the changelog
+have all been scrubbed, and it cannot be amended afterwards (the merge commit is public
+and non-fast-forward). This happened on #616 (2.1.1). For any PR that carried embargoed
+material at any point in its history, hand-write the body:
+
+```sh
+gh pr merge <n> --squash --subject "fix(scope): what it does (#<n>)" --body "<the scrubbed text>"
+```
+
+Never take the default body on such a PR, and check `git log --format=%s beta..<branch>`
+before merging to see what the default would have said.
+
 Two practical habits:
 
 - Keep advisory drafts, patches, and scratch notes **outside the repository**. A

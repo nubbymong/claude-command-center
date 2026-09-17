@@ -9,6 +9,7 @@ import { spawnClaudeHeadless } from '../claude-headless'
 import { parseClaudeVersion } from '../sentinel/sentinel-version'
 import { ensureHelpWorkspace } from '../help-workspace'
 import { getResourcesDirectory } from './setup-handlers'
+import { defaultLoginShell } from '../login-shell'
 import { IPC } from '../../shared/ipc-channels'
 
 export function registerCliHandlers(): void {
@@ -36,7 +37,7 @@ export function registerCliHandlers(): void {
         return true
       } else {
         // Use login shell to pick up Homebrew/nvm PATH entries
-        const shell = process.env.SHELL || '/bin/zsh'
+        const shell = defaultLoginShell()
         await execFileAsync(shell, ['-l', '-c', 'which claude'], { encoding: 'utf-8', timeout: 5000 })
         return true
       }

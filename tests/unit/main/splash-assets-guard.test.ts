@@ -88,4 +88,18 @@ describe('splash assets guard', () => {
     expect(src).toMatch(/const splashHtml = join\(\s*__dirname,\s*'\.\.',\s*'\.\.',\s*'resources',\s*'splash',\s*'index\.html'\s*\)/)
     expect(code.match(/\.loadFile\(/g)).toHaveLength(1)
   })
+
+  it('the splash module touches no process-wide state: no Chromium switch, no session, no permission handler', () => {
+    // The sandbox triple above is per-window. A module that appends
+    // `--no-sandbox` at import time, or installs a permissive handler on the
+    // DEFAULT session (shared with the main window), leaves the triple intact
+    // and every other test green (final adversarial pass, 2.1.1: mutants M3/M8).
+    const src = readFileSync(join(repoRoot, 'src', 'main', 'splash-window.ts'), 'utf-8').replace(/\r\n/g, '\n')
+    const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')
+    expect(code).not.toMatch(/commandLine|appendSwitch|appendArgument/)
+    expect(code).not.toMatch(/setPermission(Request|Check)Handler|defaultSession|fromPartition|\.session\b/)
+    // `app` is imported for getVersion() and nothing else.
+    const appUses = [...code.matchAll(/\bapp\.(\w+)/g)].map((m) => m[1])
+    expect(new Set(appUses)).toEqual(new Set(['getVersion']))
+  })
 })

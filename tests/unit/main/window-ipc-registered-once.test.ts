@@ -172,3 +172,37 @@ describe('index.ts wiring pinned by shape', () => {
     expect(gap.every((l) => !l.trim() || l.trim().startsWith('//'))).toBe(true)
   })
 })
+
+// Final adversarial pass on 2.1.1: four mutants of the boot wiring stayed green
+// under the tests above. Each case here is one of them.
+describe('index.ts boot wiring -- mutants of the once-flag and the wipe slot', () => {
+  it('the once-flag is declared exactly once, at module scope, and written only inside registerMainWindowIpc()', () => {
+    // M7: re-declaring it inside the registrar makes every call see `false`.
+    expect(src.match(/^let windowIpcRegistered = false$/gm)).toHaveLength(1)
+    // M1: a reset in createWindow() (or anywhere else) re-arms the registrar on
+    // the next dock-reopen. The ONLY writes are the declaration and the `= true`
+    // inside the registrar.
+    const writes = [...src.matchAll(/\bwindowIpcRegistered\s*=\s*(?:true|false)\b/g)].map((m) => m.index!)
+    expect(writes).toHaveLength(2)
+    const registrar = lineOf('function registerMainWindowIpc(): void {')
+    const registrarStart = lines.slice(0, registrar).join('\n').length
+    const registrarEnd = registrarStart + bodyOf('function registerMainWindowIpc(): void {').length + 'function registerMainWindowIpc(): void {\n'.length
+    expect(writes[1]).toBeGreaterThan(registrarStart)
+    expect(writes[1]).toBeLessThan(registrarEnd)
+    expect(bodyOf('function createWindow(): void {')).not.toContain('windowIpcRegistered')
+  })
+
+  it('registerResumeHandlers()/registerLogsWipeHandlers() sit directly in the ready callback, not inside a try block', () => {
+    // M2: one shared try/catch around the pair would swallow a throw in the
+    // resume registration and silently skip the first-run wipe prompt AND the
+    // boot-failure dialog. The pair is at the callback's own indentation (four
+    // spaces, a whole line each), and the line before the first is not a try
+    // opener.
+    for (const call of ['registerResumeHandlers()', 'registerLogsWipeHandlers()']) {
+      expect(src, call).toMatch(new RegExp(`\\n    ${call.replace(/[()]/g, '\\$&')}\\n`))
+    }
+    const resume = src.indexOf('\n    registerResumeHandlers()\n')
+    const prevLine = src.slice(src.lastIndexOf('\n', resume - 1) + 1, resume)
+    expect(prevLine).not.toMatch(/\btry\b\s*\{?\s*$/)
+  })
+})

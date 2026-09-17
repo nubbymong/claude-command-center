@@ -7,6 +7,7 @@ import { logInfo } from '../debug-logger'
 import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
 import { probeClaudeCli } from '../claude-cli-probe'
+import { defaultLoginShell } from '../login-shell'
 import {
   getDataDirectory,
   getResourcesDirectory,
@@ -155,7 +156,7 @@ export function registerSetupHandlers(): void {
       })
     } else {
       // macOS/Linux: spawn interactive login shell so PATH includes Homebrew etc.
-      const shell = process.env.SHELL || '/bin/zsh'
+      const shell = defaultLoginShell()
       cliSetupPty = pty.spawn(shell, ['-l'], {
         name: 'xterm-256color',
         cols: cols || 100,

@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import * as os from 'os'
 import { logInfo } from './debug-logger'
+import { defaultLoginShell } from './login-shell'
 
 /**
  * Is the `claude` CLI actually INSTALLED on this machine?
@@ -90,7 +91,7 @@ async function runProbe(): Promise<ClaudeCliProbe> {
     return { installed: false, probe: 'where claude' }
   }
 
-  const shell = process.env.SHELL || '/bin/zsh'
+  const shell = defaultLoginShell()
   const viaLoginShell = await probeOnce(shell, ['-lc', 'command -v claude'])
   if (viaLoginShell) {
     logInfo(`[setup] Claude CLI found: ${viaLoginShell} (${shell} -lc "command -v claude")`)
