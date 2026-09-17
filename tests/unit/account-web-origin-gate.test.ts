@@ -201,14 +201,18 @@ describe('runSignIn -- one case per gate', () => {
       onConnect: (a) => connected.push(a.target),
       // Sample the published state from inside the poll loop (each cookie read
       // follows the previous poll's state write) rather than from a wall-clock
-      // sleep, which a loaded runner turns into a race.
-      onCookies: () => { const s = getSignInState(); seen.push({ phase: s.phase, notice: s.notice }) },
+      // sleep, and end the run from there too, so no deadline is involved: two
+      // polls, then cancel.
+      onCookies: () => {
+        const s = getSignInState()
+        seen.push({ phase: s.phase, notice: s.notice })
+        if (seen.length === 2) cancelSignIn()
+      },
     }))
-    const s = await runSignIn({ ...RUN, timeoutMs: 150 })
-    expect(s.phase).toBe('failed') // timed out waiting for the human
-    const waiting = seen.filter((x) => x.phase === 'awaiting-user')
-    expect(waiting.length).toBeGreaterThan(0)
-    expect(waiting.every((x) => x.notice === undefined)).toBe(true)
+    const s = await runSignIn({ ...RUN, timeoutMs: 10_000 })
+    expect(s.phase).toBe('failed') // cancelled, never signed in
+    expect(seen).toHaveLength(2)
+    expect(seen.every((x) => x.phase === 'awaiting-user' && x.notice === undefined)).toBe(true)
     expect(connected.length).toBeGreaterThan(0)
     expect(connected.every((t) => t === 'ws://t1')).toBe(true)
     expect(evaluate).not.toHaveBeenCalled()

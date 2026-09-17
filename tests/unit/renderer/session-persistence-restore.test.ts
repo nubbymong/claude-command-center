@@ -59,6 +59,7 @@ const deps = () => ({
 })
 const ref = () => ({ current: true })
 const originalRestore = useSessionStore.getState().restoreSessions
+const originalUpdate = useSessionStore.getState().updateSession
 const updateSettings = vi.fn(async () => undefined)
 const reconcile = vi.fn()
 
@@ -67,7 +68,9 @@ beforeEach(() => {
   save.mockResolvedValue(true)
   updateSettings.mockClear()
   reconcile.mockClear()
-  useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: true, restoreSessions: originalRestore })
+  // Both store methods a case may replace are reset here, so a failed
+  // assertion mid-case cannot leave a wrapper behind for the next one.
+  useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: true, restoreSessions: originalRestore, updateSession: originalUpdate })
   useAccountGateStore.setState({ queue: [], predetermined: [], restored: [] })
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, updateSettings })
   useDetachedRemotesStore.setState({ entries: [] })
@@ -223,14 +226,12 @@ describe('restoreSavedSessions -- the persistent-SSH liveness probe', () => {
     // closed between restore and the probe returning
     useSessionStore.setState({ sessions: useSessionStore.getState().sessions.filter((s) => s.id !== 'ssh-closed') })
     const updates: string[] = []
-    const realUpdate = useSessionStore.getState().updateSession
-    useSessionStore.setState({ updateSession: (id, u) => { updates.push(id); realUpdate(id, u) } })
+    useSessionStore.setState({ updateSession: (id, u) => { updates.push(id); originalUpdate(id, u) } })
     answer(['ssh-gone', 'ssh-closed'])
     await vi.waitFor(() => expect(useSessionStore.getState().getSession('ssh-gone')?.sshRemoteReattachGone).toBe(true))
     expect(updates).toEqual(['ssh-gone'])
     expect(useSessionStore.getState().getSession('ssh-live')?.sshRemoteReattachGone).toBeUndefined()
     expect(useSessionStore.getState().getSession('ssh-closed')).toBeUndefined()
-    useSessionStore.setState({ updateSession: realUpdate })
   })
 })
 

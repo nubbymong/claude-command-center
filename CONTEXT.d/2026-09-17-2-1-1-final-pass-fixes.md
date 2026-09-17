@@ -6,7 +6,8 @@ adversarial pass, five attacker lenses over the assembled release rather than
 over each PR. Verdict: no blockers and no exploitable regression -- every
 shipped-code surface (every IPC channel constant and every preload bridge
 function, argv construction, path handling, the SSH sentinel parsers under
-pathological input, the tmux pin/redirect/cap) verified identical to v2.1.0. What it did find was
+pathological input, the tmux pin/redirect/cap) verified identical to
+v2.1.0. What it did find was
 coverage and process, and this fragment records the fixes and the decisions.
 
 Two PRE-EXISTING findings (present in v2.1.0, not introduced by this line) were
@@ -53,9 +54,9 @@ found". `src/main/login-shell.ts` centralises the rule: `$SHELL`, else
 `/bin/zsh` on macOS, else `/bin/bash` where it exists (the shell the Codex and
 Claude spawn paths already fall back to, so probe and launch see the same
 PATH), else `/bin/sh`. Changelog line added to 2.1.1-beta.1; the beta.1
-installer already built carries the code and not the line, and the release is
-re-dispatched from `beta` after this merges in any case (its publication never
-completed).
+installer already built (from the commit this branch starts at) carries
+neither the fix nor the line, and the release is re-dispatched from `beta`
+after this merges in any case (its publication never completed).
 
 ### Decisions recorded, no change
 
