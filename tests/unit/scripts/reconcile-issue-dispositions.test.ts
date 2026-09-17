@@ -39,6 +39,12 @@ describe('activeLineFromVersion', () => {
     expect(activeLineFromVersion('2.1')).toBeNull()
     expect(activeLineFromVersion('2.1oops')).toBeNull()
     expect(activeLineFromVersion('2.1.0-rc.1 ')).toBeNull()
+    // malformed or foreign prerelease tags: not the repo grammar, so unknown
+    expect(activeLineFromVersion('2.1.0-rc..1')).toBeNull()
+    expect(activeLineFromVersion('2.1.0--')).toBeNull()
+    expect(activeLineFromVersion('2.1.0-rc.')).toBeNull()
+    expect(activeLineFromVersion('2.1.0-alpha.1')).toBeNull()
+    expect(activeLineFromVersion('2.1.0-beta.1.2')).toBeNull()
   })
 })
 

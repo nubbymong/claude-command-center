@@ -69,8 +69,20 @@ describe('resources/splash/index.html carries the build line slot (#384)', () =>
     // the text/x-logo-src data block (CodeQL #15; Copilot round 4, 2.1.1).
     const { JSDOM } = await import('jsdom')
     const scripts = [...new JSDOM(html).window.document.querySelectorAll('script')]
-    const JS_TYPES = ['', 'module', 'text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript']
-    const inlineExecutable = scripts.filter((el) => !el.hasAttribute('src') && JS_TYPES.includes((el.getAttribute('type') ?? '').trim().toLowerCase()))
+    // The HTML spec's JavaScript MIME essence list; parameters ("; charset=utf-8")
+    // are stripped before comparing, as a browser does. An absent/empty type and
+    // `module` are executable too.
+    const JS_MIME_ESSENCE = new Set([
+      'application/ecmascript', 'application/javascript', 'application/x-ecmascript', 'application/x-javascript',
+      'text/ecmascript', 'text/javascript', 'text/javascript1.0', 'text/javascript1.1', 'text/javascript1.2',
+      'text/javascript1.3', 'text/javascript1.4', 'text/javascript1.5', 'text/jscript', 'text/livescript',
+      'text/x-ecmascript', 'text/x-javascript',
+    ])
+    const isExecutableType = (type: string | null): boolean => {
+      const essence = (type ?? '').split(';')[0].trim().toLowerCase()
+      return essence === '' || essence === 'module' || JS_MIME_ESSENCE.has(essence)
+    }
+    const inlineExecutable = scripts.filter((el) => !el.hasAttribute('src') && isExecutableType(el.getAttribute('type')))
     expect(inlineExecutable.map((el) => el.outerHTML.slice(0, 80))).toEqual([])
     expect(scripts.length, 'the page still has its script tags').toBeGreaterThanOrEqual(2)
   })

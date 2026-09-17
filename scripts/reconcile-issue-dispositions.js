@@ -76,13 +76,15 @@ const ACTIVE_LINE_STATES = ['in-beta', 'in-release']
  *   2.1.1        -> release-2.1.2
  *
  * The scheduled job checks out the default branch, whose version is always the
- * last SHIPPED stable, so it sees the third and fourth shapes. Anything that is
- * not a full `major.minor.patch[-prerelease]` is UNKNOWN (null): the caller then
- * flags the issue for a human instead of auto-labelling from a malformed version.
+ * last SHIPPED stable, so it sees the third and fourth shapes. The grammar is
+ * exactly what scripts/release.js produces -- `X.Y.Z`, `X.Y.Z-beta.N`, `X.Y.Z-rc.N`
+ * -- and anything else (a bare `2.1`, `2.1.0-rc..1`, `2.1.0--`, an unknown
+ * prerelease tag) is UNKNOWN (null): the caller then flags the issue for a human
+ * instead of auto-labelling from a malformed version.
  */
 function activeLineFromVersion(version) {
   const v = String(version || '')
-  const m = v.match(/^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/)
+  const m = v.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/)
   if (!m) return null
   const line = `release-${m[1]}.${m[2]}`
   const patch = Number(m[3])
