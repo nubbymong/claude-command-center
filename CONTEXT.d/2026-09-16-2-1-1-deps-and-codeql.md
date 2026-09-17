@@ -27,12 +27,12 @@ release.
 
 Zero exploitable. Two fixed in code rather than dismissed:
 
-- #13 `src/main/account-web/sign-in.ts` `isCloudflareChallenge`: the substring
-  check was spoofable by a look-alike host or a query string, but it is a
-  notice-only hint (its one caller picks the "Cloudflare is verifying you are
-  human" text); `isClaudeUrl` gates every privileged step, verified by tracing
-  each one. It now parses the URL: Cloudflare's own host, or the site's own
-  `/cdn-cgi/challenge-platform/` path. Spoof cases pinned by test.
+- #13 `src/main/account-web/sign-in.ts` `isCloudflareChallenge`: hardened (the
+  notice-only detector now decides from the parsed page address, https-only;
+  `isClaudeUrl` was and is the gate on every privileged step). The assessment
+  and the pinned cases are in `tests/unit/account-web-cloudflare.test.ts`; the
+  written analysis is deferred to the post-release record per SECURITY.md
+  ("Embargo"), even though the pass rated it non-exploitable.
 - #15 `tests/unit/main/splash-build-info.test.ts`: the inline-script oracle
   `/<script>/` missed `<SCRIPT>`, `type="module"` and `defer`; CodeQL's textbook
   `/<script\b/i` would also reject the page's legitimate `src=` tags and its

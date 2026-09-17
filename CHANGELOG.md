@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Internal: the four largest source files were split into focused modules as pure moves, each verified against its origin and pinned by new regression tests. No change in behaviour.
 
 ### Fixed
-- The Cloudflare "verify you are human" detector during claude.ai sign-in now parses the page address instead of matching substrings, so a look-alike address cannot make the app show the waiting notice. It was only ever a notice; the sign-in gate itself was unaffected.
+- Hardening in the claude.ai sign-in flow: the Cloudflare "verify you are human" notice is now decided from the parsed page address. Cosmetic only; the sign-in gate itself was never affected.
 
 ## [2.1.0] - 2026-09-14
 
