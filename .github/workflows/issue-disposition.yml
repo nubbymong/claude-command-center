@@ -48,7 +48,14 @@ jobs:
     name: Reconcile issue dispositions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7 # shallow is fine: only package.json is read
+      # Check out BETA, not the default branch: the integration branch carries the
+      # current version (2.1.1-beta.1 while 2.1.1 is in flight, 2.2.0-beta.1 once
+      # the line moves on) and the current reconciler; main lags until promotion
+      # and would derive the wrong active label for a whole release cycle. Shallow
+      # is fine: only package.json and the script are read.
+      - uses: actions/checkout@v7
+        with:
+          ref: beta
 
       - uses: actions/setup-node@v7
         with:

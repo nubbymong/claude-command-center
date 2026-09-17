@@ -147,7 +147,7 @@ release line, or which patch on a shipped line,** an issue belongs to:
   Same pattern for later patches (`release-2.1.2`, ...). The disposition job
   (`scripts/reconcile-issue-dispositions.js`) understands both shapes: it treats
   `release-2.1` and `release-2.1.1` as the same line, and derives the label it
-  auto-adds from the checked-out `package.json` -- an unshipped `x.y.0-…` gives
+  auto-adds from `beta`'s `package.json` -- an unshipped `x.y.0-…` gives
   `release-x.y`, a shipped `x.y.z` gives the next patch, `release-x.y.(z+1)`.
 
 **Invariant: `in-beta`/`in-release` and `release-2.2` must never sit on the same
@@ -180,7 +180,7 @@ Enforcement is durable, not by hand — `.github/workflows/issue-disposition.yml
 
 - adds `triage` to any open issue with no disposition (never leaves limbo);
 - adds the active release label to an `in-beta`/`in-release` issue that has no
-  release line, computed from `package.json`: an unshipped `x.y.0-…` gives
+  release line, computed from `beta`'s `package.json`: an unshipped `x.y.0-…` gives
   `release-<x.y>`, a shipped `x.y.z` gives the next patch `release-<x.y.(z+1)>`;
 - **flags for a human** — never guesses — a committed issue with no line, an
   `in-beta`/`in-release` issue on a deferred line, or any issue carrying more than

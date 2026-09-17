@@ -76,8 +76,10 @@ const ACTIVE_LINE_STATES = ['in-beta', 'in-release']
  *   2.1.0        -> release-2.1.1   x.y.0 HAS shipped: the next patch on the line
  *   2.1.1        -> release-2.1.2
  *
- * The scheduled job checks out the default branch, whose version is always the
- * last SHIPPED stable, so it sees the third and fourth shapes. The grammar is
+ * The scheduled job checks out `beta` (issue-disposition.yml), so it sees the
+ * shape the integration branch carries: the line label before x.y.0 ships, the
+ * patch label after, and the next-patch shape only in the brief window between
+ * a promotion's merge-back and the following bump. The grammar is
  * exactly what scripts/release.js produces -- `X.Y.Z`, `X.Y.Z-beta.N`, `X.Y.Z-rc.N`
  * -- and anything else (a bare `2.1`, `2.1.0-rc..1`, `2.1.0--`, an unknown
  * prerelease tag) is UNKNOWN (null): the caller then flags the issue for a human

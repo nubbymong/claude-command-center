@@ -34,3 +34,14 @@ and, per SECURITY.md ("Embargo"), is described only in the record written after
 The Dependabot alerts (#174-#177, #187, #189) close on their own once the
 lockfile reaches `main`; the Dependabot PRs #592-#596 and #613 are closed in
 favour of this branch.
+
+### Patch-release labels and their enforcement
+
+`release-2.1.1` is the first patch label (owner decision, 2026-09-16); the
+rule, the reconciler's support for it and the LoopReady scope are in this
+branch. The scheduled reconcile runs from the DEFAULT branch's workflow file, so
+the new rules take effect at the 2.1.1 promotion; until then the hourly job on
+`main` runs the old rules against 2.1.0 (it would add `release-2.1` to an
+`in-beta` issue with no line). Inert today: zero open issues. From promotion on,
+the job checks out `beta` for both the script and the version, so a future
+minor line (`2.2.0-beta.1`) derives `release-2.2` correctly.
