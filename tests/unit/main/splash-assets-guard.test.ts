@@ -88,4 +88,23 @@ describe('splash assets guard', () => {
     expect(src).toMatch(/const splashHtml = join\(\s*__dirname,\s*'\.\.',\s*'\.\.',\s*'resources',\s*'splash',\s*'index\.html'\s*\)/)
     expect(code.match(/\.loadFile\(/g)).toHaveLength(1)
   })
+
+  it('the splash module touches no process-wide state: no Chromium switch, no session, no permission handler', () => {
+    // The sandbox triple above is per-window. A module that appends
+    // `--no-sandbox` at import time, or installs a permissive handler on the
+    // DEFAULT session (shared with the main window), leaves the triple intact
+    // and every other test green (final adversarial pass, 2.1.1: mutants M3/M8).
+    const src = readFileSync(join(repoRoot, 'src', 'main', 'splash-window.ts'), 'utf-8').replace(/\r\n/g, '\n')
+    // Code only: block comments and whole-line // comments are dropped, so
+    // prose naming a construct is not a red.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')
+    expect(code).not.toMatch(/commandLine|appendSwitch|appendArgument/)
+    expect(code).not.toMatch(/setPermission(Request|Check)Handler|defaultSession|fromPartition|\.session\b/)
+    // `app` is used for read-only identity getters, never for anything that
+    // reaches the process or another window.
+    const READ_ONLY = new Set(['getVersion', 'getName', 'isPackaged', 'getAppPath', 'getPath'])
+    const appUses = [...code.matchAll(/\bapp\.(\w+)/g)].map((m) => m[1])
+    expect(appUses.length).toBeGreaterThan(0)
+    expect(appUses.filter((u) => !READ_ONLY.has(u))).toEqual([])
+  })
 })

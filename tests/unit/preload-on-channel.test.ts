@@ -4,7 +4,7 @@
 // exposed method: it forwards ONLY the payload (never the IpcRendererEvent),
 // and the disposer removes exactly the listener it added, nothing else.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { IPC } from '../../src/shared/ipc-channels'
+import { IPC, ptyDataChannel, ptyExitChannel } from '../../src/shared/ipc-channels'
 
 const el = vi.hoisted(() => {
   const exposed: Record<string, any> = {}
@@ -26,7 +26,13 @@ vi.mock('electron', () => ({
 }))
 
 await import('../../src/preload/index')
-const api = el.exposed.electronAPI as { window: { onMaximizedChanged: (cb: (maximized: boolean) => void) => () => void } }
+const api = el.exposed.electronAPI as {
+  window: { onMaximizedChanged: (cb: (maximized: boolean) => void) => () => void }
+  pty: {
+    onData: (sessionId: string, cb: (data: string) => void) => () => void
+    onExit: (sessionId: string, cb: (exitCode: number) => void) => () => void
+  }
+}
 const CH = IPC.WINDOW_MAXIMIZED_CHANGED
 
 /** Fire `payload` at every listener of `channel`, as main's send would (event first). */
@@ -82,5 +88,49 @@ describe('preload onChannel (pinned through window.onMaximizedChanged)', () => {
     expect(a).toHaveBeenCalledTimes(1)
     expect(b).toHaveBeenCalledTimes(2)
     expect(b).toHaveBeenLastCalledWith(true)
+  })
+})
+
+// Final adversarial pass on 2.1.1: the static-channel case above let three
+// mutants through -- a per-session (dynamic) channel subscribed on the wrong
+// channel, a disposer that unsubscribed a different channel than it subscribed,
+// and a third top-level bridge key. One case each.
+describe('preload bridge -- dynamic channels and the exposed surface', () => {
+  it('exposes exactly two top-level keys: electronAPI and electronPlatform', () => {
+    // A third key (say, the preload `process` object) would be a new renderer
+    // capability with no type, no test and no review.
+    expect(Object.keys(el.exposed).sort()).toEqual(['electronAPI', 'electronPlatform'])
+    expect(typeof el.exposed.electronPlatform).toBe('string')
+  })
+
+  it('pty.onData subscribes the per-session DATA channel and its disposer unsubscribes that same channel', () => {
+    const cb = vi.fn()
+    const off = api.pty.onData('sess-7', cb)
+    const data = ptyDataChannel('sess-7')
+    expect(el.ipcRenderer.on).toHaveBeenCalledTimes(1)
+    expect(el.ipcRenderer.on).toHaveBeenCalledWith(data, expect.any(Function))
+    deliver(data, 'chunk')
+    expect(cb).toHaveBeenCalledWith('chunk')
+    // another session's data, and this session's exit, reach nothing here
+    deliver(ptyDataChannel('sess-8'), 'other')
+    deliver(ptyExitChannel('sess-7'), 0)
+    expect(cb).toHaveBeenCalledTimes(1)
+    const [, registered] = el.ipcRenderer.on.mock.calls[0]
+    off()
+    expect(el.ipcRenderer.removeListener).toHaveBeenCalledTimes(1)
+    expect(el.ipcRenderer.removeListener).toHaveBeenCalledWith(data, registered)
+    expect(el.listeners.get(data)).toEqual([])
+    deliver(data, 'late')
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it('pty.onExit subscribes the per-session EXIT channel, not the data channel', () => {
+    const cb = vi.fn()
+    api.pty.onExit('sess-9', cb)
+    expect(el.ipcRenderer.on).toHaveBeenCalledWith(ptyExitChannel('sess-9'), expect.any(Function))
+    deliver(ptyDataChannel('sess-9'), 'chunk')
+    expect(cb).not.toHaveBeenCalled()
+    deliver(ptyExitChannel('sess-9'), 3)
+    expect(cb).toHaveBeenCalledWith(3)
   })
 })

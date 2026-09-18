@@ -35,6 +35,11 @@ gh issue list --repo nubbymong/claude-command-center --state open --limit 200 \
 Filter to the scope in code, exclude anything already carrying `loop-in-progress`
 or `loop-done` (another worker owns it), and list the numbers you will review.
 
+Since #551 the public tracker holds only public error reports (user-filed bugs);
+internal tickets live in the private `aicc_planning` workspace (AGENTS.md, "Where
+tickets live") and are outside this loop's scope. An empty public scope is the
+normal case, not a failure — say so and stop.
+
 ## EXECUTE. Do not ask which tickets — the scope rule decides.
 
 Running the fan-out is not a decision to put back to the caller. Resolve the scope,

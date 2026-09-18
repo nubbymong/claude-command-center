@@ -27,6 +27,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'improvement', description: 'Electron moves to 43.7.1, with the terminal backend (node-pty), zod, marked and the transcript database typings refreshed. Two development-only dependencies with published advisories (vitest, js-yaml) and the MCP server library (hono) are on their patched versions.' },
       { type: 'improvement', description: 'Internal: the four largest source files were split into focused modules as pure moves, each verified against its origin and pinned by new regression tests. No change in behaviour.' },
+      { type: 'fix', description: 'When no login shell is set in the environment, the check for the Claude CLI and the session launch now agree on the shell instead of assuming zsh for one and bash for the other: zsh on macOS, the platform default, and elsewhere the first of bash, zsh and /bin/sh that is installed. A Linux machine without zsh is no longer told the CLI is missing when it is installed, and one without bash can still launch a session.' },
     ],
   },
   {

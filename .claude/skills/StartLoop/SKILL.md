@@ -21,7 +21,9 @@ do not go find work of your own; StartLoop executes a vetted queue, it does not
 triage. Read each ticket's readiness record from its GitHub issue — the fenced
 ` ```loop-record ` comment LoopReady posted — for the recorded approach and the
 `securitySensitive` flag. If a `loop-ready` ticket has no `loop-record` comment,
-treat it as not-ready and skip (LoopReady must run first).
+treat it as not-ready and skip (LoopReady must run first). The queue is the PUBLIC
+tracker, which since #551 holds only public error reports; internal tickets live
+in the private `aicc_planning` workspace and are not run by this loop.
 
 ## EXECUTE. This is a "don't ask" run.
 

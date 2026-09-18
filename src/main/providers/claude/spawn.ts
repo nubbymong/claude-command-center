@@ -4,6 +4,7 @@ import { execSync } from 'child_process'
 import { askPromptEnvValue } from '../../terminal-launch-line'
 import { resolveVersionBinary } from '../../legacy-version-manager'
 import { logInfo } from '../../debug-logger'
+import { defaultLoginShell } from '../../login-shell'
 import type { LegacyVersion } from '../../../shared/types'
 import type { SpawnOptions } from '../types'
 import { colorFgBgValue } from '../host-color-scheme'
@@ -146,7 +147,11 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
     env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '1'
   }
 
-  const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
+  // POSIX: the same shell the CLI probes use (login-shell.ts), so a box the
+  // probe passes is a box the launch can spawn on. This used to hard-code
+  // /bin/bash while the probes hard-coded /bin/zsh (final adversarial pass,
+  // 2.1.1).
+  const shell = os.platform() === 'win32' ? 'powershell.exe' : defaultLoginShell(process.env, os.platform())
   // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
   // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's
   // minimal PATH, and a non-login zsh never sources ~/.zprofile, so without

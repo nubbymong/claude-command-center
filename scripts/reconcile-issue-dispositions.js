@@ -45,11 +45,16 @@ const path = require('path')
  * A release disposition: the line `release-<major>.<minor>`, or a patch release on
  * a shipped line `release-<major>.<minor>.<patch>` with patch >= 1 (`release-2.1.0`
  * is not a label: x.y.0 is what the line label means; no prerelease suffix ever).
+ *
+ * Every number is canonical -- no leading zero. `release-02.1` is not the 2.1 line
+ * spelled differently, it is a second label that lineOf() would otherwise fold
+ * into the real one (final adversarial pass, 2.1.1).
  */
-const RELEASE_RE = /^release-\d+\.\d+(\.[1-9]\d*)?$/
+const NUM = '(?:0|[1-9]\\d*)'
+const RELEASE_RE = new RegExp(`^release-${NUM}\\.${NUM}(\\.[1-9]\\d*)?$`)
 /** The LINE a release label belongs to: `release-2.1.1` -> `release-2.1`. */
 function lineOf(label) {
-  const m = String(label || '').toLowerCase().match(/^release-(\d+)\.(\d+)/)
+  const m = String(label || '').toLowerCase().match(new RegExp(`^release-(${NUM})\\.(${NUM})(?:\\.|$)`))
   return m ? `release-${m[1]}.${m[2]}` : null
 }
 /** Non-release dispositions. Exactly one disposition total is allowed. */
@@ -87,12 +92,17 @@ const ACTIVE_LINE_STATES = ['in-beta', 'in-release']
  */
 function activeLineFromVersion(version) {
   const v = String(version || '')
-  const m = v.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/)
+  // Canonical numbers only (no leading zero): `02.1.1` would otherwise derive
+  // `release-02.1`, a label nothing else in the repo recognises.
+  const m = v.match(new RegExp(`^(${NUM})\\.(${NUM})\\.(${NUM})(?:-(beta|rc)\\.(\\d+))?$`))
   if (!m) return null
   const line = `release-${m[1]}.${m[2]}`
-  const patch = Number(m[3])
-  if (m[4]) return patch > 0 ? `${line}.${patch}` : line
-  return `${line}.${patch + 1}`
+  // BigInt: a Number past 2^53 rounds (`...993` + 1 -> `...992`) and past 1e21
+  // stringifies as `1e+21`; either way the label would be wrong (re-attack,
+  // 2.1.1). Absurd for a real version, cheap to get right.
+  const patch = BigInt(m[3])
+  if (m[4]) return patch > 0n ? `${line}.${patch}` : line
+  return `${line}.${patch + 1n}`
 }
 
 /**
@@ -107,6 +117,27 @@ function validateActiveLine(line) {
     throw new Error(`--active-line must be release-<major>.<minor>[.<patch>] (got: "${line}")`)
   }
   return line
+}
+
+/**
+ * The active label main() will auto-add: the validated CLI override when one is
+ * given, else the label derived from the package version (read only then, as
+ * before). The DERIVED value is checked against RELEASE_RE too -- it is the one
+ * that reaches `gh issue edit --add-label` with no human in between, so a future
+ * derivation bug throws here rather than minting a label (final adversarial
+ * pass, 2.1.1). With the current grammar and BigInt arithmetic the deriver
+ * cannot produce a non-label, so this is a backstop, not a live path. Null
+ * (unknown version) is fine: decide() then flags instead of labelling.
+ */
+function resolveActiveLine({ cliValue, readVersion }) {
+  validateActiveLine(cliValue) // throws on a malformed manual override
+  if (cliValue) return cliValue
+  const version = readVersion()
+  const derived = activeLineFromVersion(version)
+  if (derived != null && !RELEASE_RE.test(derived)) {
+    throw new Error(`derived active line is not a release label (got: "${derived}" from version "${version}")`)
+  }
+  return derived
 }
 
 /**
@@ -179,11 +210,16 @@ function decide({ labels = [], activeLine = null }) {
 
 // ── i/o ────────────────────────────────────────────────────────────
 
-function gh(args) {
+/**
+ * The ONE place `gh` is spawned: argv array, no shell. main() takes this as an
+ * injectable so a test can record every argv the run would issue and assert the
+ * whole set -- "never removes, never closes" is a claim about this layer.
+ */
+function ghExec(args) {
   return execFileSync('gh', args, { encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 }).trim()
 }
 
-function readPackageVersion() {
+function readPackageVersionFromRepo() {
   try {
     const pkg = path.join(path.resolve(__dirname, '..'), 'package.json')
     return JSON.parse(fs.readFileSync(pkg, 'utf-8')).version || null
@@ -212,12 +248,12 @@ function parseIssuesJson(jsonText) {
  * issue title containing `] [` can never corrupt the parse (the previous
  * `raw.replace(/\]\s*\[/g, ',')` reassembly could).
  */
-function listOpenIssues(repo) {
+function listOpenIssues(repo, gh) {
   const raw = gh(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '2000', '--json', 'number,title,labels'])
   return parseIssuesJson(raw)
 }
 
-function fetchIssue(repo, number) {
+function fetchIssue(repo, number, gh) {
   const it = JSON.parse(gh(['api', `repos/${repo}/issues/${number}`]))
   if (it.pull_request) return null
   return {
@@ -232,7 +268,7 @@ function parseArgv(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--dry-run') out.dryRun = true
-    else if (a === '--issue') out.issue = Number(argv[++i])
+    else if (a === '--issue') { out.issueRaw = argv[++i]; out.issue = Number(out.issueRaw) }
     else if (a === '--repo') out.repo = argv[++i]
     else if (a === '--active-line') out.activeLine = argv[++i]
   }
@@ -240,22 +276,40 @@ function parseArgv(argv) {
 }
 
 /** Append a markdown block to the Actions job summary when running in CI. */
-function writeSummary(md) {
-  const file = process.env.GITHUB_STEP_SUMMARY
+function writeSummary(md, env = process.env) {
+  const file = env.GITHUB_STEP_SUMMARY
   if (file) {
     try { fs.appendFileSync(file, md + '\n') } catch { /* summary is best-effort */ }
   }
 }
 
-function main() {
-  const args = parseArgv(process.argv.slice(2))
-  const dryRun = args.dryRun || process.env.DRY_RUN === '1'
-  const repo = args.repo || process.env.GITHUB_REPOSITORY || gh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
-  validateActiveLine(args.activeLine) // throws on a malformed manual override
-  const activeLine = args.activeLine || activeLineFromVersion(readPackageVersion())
+/**
+ * The run. Every side effect goes through `io` so the whole thing is testable
+ * end-to-end against a fake `gh` that records argv (tests/unit/scripts): the
+ * defaults are the real process, the real `gh`, the checked-out package.json.
+ * Returns what it did, for the same reason.
+ */
+function main(io = {}) {
+  const argv = io.argv || process.argv.slice(2)
+  const env = io.env || process.env
+  const gh = io.gh || ghExec
+  const readPackageVersion = io.readPackageVersion || readPackageVersionFromRepo
+  const log = io.log || console.log
 
-  const issues = args.issue ? [fetchIssue(repo, args.issue)].filter(Boolean) : listOpenIssues(repo)
-  console.log(`Repo: ${repo}   active line: ${activeLine || '(unknown)'}   issues: ${issues.length}${dryRun ? '   [DRY RUN]' : ''}`)
+  const args = parseArgv(argv)
+  const dryRun = args.dryRun || env.DRY_RUN === '1'
+  // Operator input is validated BEFORE anything is asked of gh (re-attack,
+  // 2.1.1: the repo fallback below is itself a gh call). A `--issue` that is
+  // not a positive integer must not silently widen a one-issue run into a full
+  // scan, which `args.issue ? ... : listOpenIssues` would do for `0` or NaN.
+  const activeLine = resolveActiveLine({ cliValue: args.activeLine, readVersion: readPackageVersion })
+  if (args.issue !== undefined && !(Number.isInteger(args.issue) && args.issue > 0)) {
+    throw new Error(`--issue must be a positive integer (got: "${args.issueRaw}")`)
+  }
+  const repo = args.repo || env.GITHUB_REPOSITORY || gh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
+
+  const issues = args.issue ? [fetchIssue(repo, args.issue, gh)].filter(Boolean) : listOpenIssues(repo, gh)
+  log(`Repo: ${repo}   active line: ${activeLine || '(unknown)'}   issues: ${issues.length}${dryRun ? '   [DRY RUN]' : ''}`)
 
   const added = []
   const flagged = []
@@ -274,10 +328,11 @@ function main() {
   lines.push('', `### Flagged for a human (${flagged.length})`)
   for (const f of flagged) lines.push(`- #${f.number} — ${f.flag}`)
   const report = lines.join('\n')
-  console.log('\n' + report)
-  writeSummary(report)
+  log('\n' + report)
+  writeSummary(report, env)
 
-  if (dryRun) console.log('\nDry run — nothing changed.')
+  if (dryRun) log('\nDry run — nothing changed.')
+  return { repo, activeLine, dryRun, scanned: issues.length, added, flagged }
 }
 
 module.exports = {
@@ -288,9 +343,11 @@ module.exports = {
   ACTIVE_LINE_STATES,
   activeLineFromVersion,
   validateActiveLine,
+  resolveActiveLine,
   decide,
   parseIssuesJson,
   parseArgv,
+  main,
 }
 
 if (require.main === module) {
