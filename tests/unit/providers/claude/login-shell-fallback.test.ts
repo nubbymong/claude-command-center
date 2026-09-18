@@ -13,7 +13,11 @@ vi.mock('os', async (importOriginal) => {
 })
 vi.mock('fs', async (importOriginal) => {
   const real = await importOriginal<typeof import('fs')>()
-  return { ...real, existsSync: (p: string) => host.present.has(String(p)) || real.existsSync(p) }
+  // The stub OWNS every /bin/* answer. An OR with the real filesystem would
+  // let a macOS or Linux runner's real /bin/bash answer the question under
+  // test (green on Windows, red in CI -- adversarial re-attack, 2.1.1);
+  // everything else (legacy-version-manager and friends) keeps the real fs.
+  return { ...real, existsSync: (p: string) => (String(p).startsWith('/bin/') ? host.present.has(String(p)) : real.existsSync(p)) }
 })
 
 const { buildClaudeLocalSpawn } = await import('../../../../src/main/providers/claude/spawn')

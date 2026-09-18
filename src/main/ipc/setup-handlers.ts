@@ -156,7 +156,8 @@ export function registerSetupHandlers(): void {
       })
     } else {
       // macOS/Linux: spawn interactive login shell so PATH includes Homebrew etc.
-      const shell = defaultLoginShell()
+      // The platform is passed explicitly and is the same source as the gate above.
+      const shell = defaultLoginShell(process.env, process.platform)
       cliSetupPty = pty.spawn(shell, ['-l'], {
         name: 'xterm-256color',
         cols: cols || 100,

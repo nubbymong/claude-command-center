@@ -36,8 +36,9 @@ export function registerCliHandlers(): void {
         await execFileAsync('where', ['claude.cmd'], opts)
         return true
       } else {
-        // Use login shell to pick up Homebrew/nvm PATH entries
-        const shell = defaultLoginShell()
+        // Use login shell to pick up Homebrew/nvm PATH entries. The platform
+        // is passed explicitly and is the same source as the gate above.
+        const shell = defaultLoginShell(process.env, process.platform)
         await execFileAsync(shell, ['-l', '-c', 'which claude'], { encoding: 'utf-8', timeout: 5000 })
         return true
       }

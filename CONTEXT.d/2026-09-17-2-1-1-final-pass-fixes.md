@@ -55,9 +55,11 @@ as "CLI not found" on a box whose launch would have worked. The re-attack on
 the first fix (bash, else sh, probes only) found the mirror image: a no-bash
 box would then pass the probe and fail every launch. `src/main/login-shell.ts`
 now centralises ONE rule for probes and launch: `$SHELL`, else `/bin/zsh` on
-macOS, else the first of `/bin/bash`, `/bin/zsh`, `/bin/sh` that exists. What
-PATH that shell builds is the profile's business (a non-interactive `bash -l`
-reads ~/.profile, not ~/.bashrc). The Codex spawn path keeps its own fallback.
+macOS, else the first of `/bin/bash`, `/bin/zsh`, `/bin/sh` that exists. On
+macOS this moves the no-`$SHELL` launch from bash to zsh, the platform
+default (the probes already used zsh there). What PATH that shell builds is
+the profile's business (a non-interactive `bash -l` reads ~/.profile, not
+~/.bashrc). The Codex spawn path keeps its own fallback.
 Changelog line added to 2.1.1-beta.1; the beta.1 installer already built
 (from the commit this branch starts at) carries neither the fix nor the line,
 and the release is re-dispatched from `beta` after this merges in any case
