@@ -1,0 +1,6311 @@
+{
+ "schema": "wp1-baseline-test-inventory/1",
+ "head": "6bafcc33c9b9465713376bf6ad9b8b672ae1b890",
+ "tree": "4faa5cf7f595f274fd148fff73a48cfb21319cee",
+ "command": "npx vitest run --reporter=default --reporter=json",
+ "reportSha256": "fbb9e63b59b0bf6ce213c836a0a058cec0c9adb34dc7d2347753c401bf481a08",
+ "fileCount": 899,
+ "totals": {
+  "tests": 11166,
+  "passed": 11144,
+  "failed": 0,
+  "skipped": 20,
+  "todo": 2
+ },
+ "note": "One record per test file on the exact base: test count, pass/skip/todo split and a SHA-256 of the sorted full test names. scripts/wp1/compare-baseline.mjs diffs a candidate report against this; any removed or changed file must carry a recorded mapping (Codex ledger or claudeTestChanges).",
+ "files": {
+  "tests/integration/codex-cli-compat.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2b3e480450717a4dcac776c48cf8c15fee38cdb258898a922d35a3737fb84589"
+  },
+  "tests/integration/hooks/real-claude.test.ts": {
+   "tests": 1,
+   "passed": 0,
+   "skipped": 1,
+   "todo": 0,
+   "namesSha256": "b046aea4091ead232589739b868f312af1f1790eabb4633ff550a9bf82f47eaf"
+  },
+  "tests/integration/hooks/synthetic.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f53b6d8956eb08348d9e536cc33bc405d54d908002f14bad011da92792934fd0"
+  },
+  "tests/unit/account-auth-info.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ecae094e15134db252b2eab538af5a022fb0d5c4dd483594557fc8657106c9c2"
+  },
+  "tests/unit/account-auth-window.test.ts": {
+   "tests": 20,
+   "passed": 20,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "aa694d98a3dd6555ec4436bbc8aa56137f6b45db938307b3f876e9562a1d250a"
+  },
+  "tests/unit/account-email-read.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e1de6552289d5ad0c618d9e87603aa8a8a6574ad8ba14e8729d30e2a6d9b992d"
+  },
+  "tests/unit/account-home-mirror.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "21d11dfd149bb699017d42b7f05ef1d215bb473ac23551807145917882cd970d"
+  },
+  "tests/unit/account-name-resolver.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "82c244bef3db02e4c77115e8e86d39d67be0a3d50922f069c9222bd33b34fba0"
+  },
+  "tests/unit/account-profiles-canonical.test.ts": {
+   "tests": 2,
+   "passed": 1,
+   "skipped": 1,
+   "todo": 0,
+   "namesSha256": "9e7e8fbd4057093c66bb461840376f559d50887588eb917d287775929915ab65"
+  },
+  "tests/unit/account-profiles-capture.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "37f02ea2d047d00909ffa46ae2a9cb2fbf9dcfaf0c80c23224c8d7053c1967ec"
+  },
+  "tests/unit/account-profiles-claudemd.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9d9c66d71a3a0207289215e1b2e230a66ee8345a907df59e33360cb3b59b9ab6"
+  },
+  "tests/unit/account-profiles-credential-sharing.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "39667125c482de27611072f58c48b9e68986a523b0f19f8fd1c458595aa07335"
+  },
+  "tests/unit/account-profiles-global-credential-sync.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b693c7063e534d871fbfd5a4af19b58eee88aee40d6eb3bdbcc969bb018490d5"
+  },
+  "tests/unit/account-profiles-headless-home.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "42fa3a9abf11b73f68418a04b6c2ae85f28430b3e5bfd116d1639886c8be486e"
+  },
+  "tests/unit/account-profiles-heal-names.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "805debbdbbd799914d09fb1f8dd6b8c1232def88da360725da17391e0ef04fdd"
+  },
+  "tests/unit/account-profiles-identity.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3d322ef1f3c6fc773cfaab9d1e722f4063b810d7b1b914328c39766134229d77"
+  },
+  "tests/unit/account-profiles-migrate-canonical.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "52b4e65693b27ec5d0ead27a43a768f67295413566740ee0f7faf847bc8d2463"
+  },
+  "tests/unit/account-profiles-orphan-repair.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cb9beef4e74b2b0882e516df94e0c103cf8cef5b574a1f326bc40f3dd1aacfd0"
+  },
+  "tests/unit/account-profiles-primary.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "87a52ed453812a774a09d63dc4d8c19bb1519222b9ac4afc94445c5961157012"
+  },
+  "tests/unit/account-profiles-self-junction.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7041bf606aa345c847b1606eac590509f61cf6346a73d7d2fa47f94f6c77e96c"
+  },
+  "tests/unit/account-profiles.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8b63f0a24ee7c5f43d9bbe385063d00ed837f21c056e4c2e2dc862fcea6d6963"
+  },
+  "tests/unit/account-usage-consumer-guard.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d0603dd926ae10735b611f09294623067423fb3fdcc0c979bafc3e0b0a1927a9"
+  },
+  "tests/unit/account-usage-inactive.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "773f0edf2bc029b6a13f846431b9f68800d4d9fb7b174cef7cfcfceea06ffb6b"
+  },
+  "tests/unit/account-usage-live-open.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9a31307a04f0f7ea97f41ca7c7fa2d9f355f392fc45d2b551dcba8f9f380a96d"
+  },
+  "tests/unit/account-usage-norefresh.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7541f773b92862d0d3601c9640c5c3188ed43547a7008063db263e31de465516"
+  },
+  "tests/unit/account-usage-outcome.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9ce6df08ee2a846b5087d4479d50a884f7f2aa51821cb4854cade6acdb04d88d"
+  },
+  "tests/unit/account-usage-refresh-inflight.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fc1a9556474c9ad6f3577b6072ba7fef3829813531519ff0f1514682fa50bc20"
+  },
+  "tests/unit/account-usage-retry.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "419676308a2d7c1390ccd2a8209773fc57a2baad69c7395d10afd6fc359de6e2"
+  },
+  "tests/unit/account-web-adversarial-regressions.test.ts": {
+   "tests": 22,
+   "passed": 22,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2cd3f867b5db0233ea01b005aeae707a2125feb3c0aff5e844fa4afa06155d63"
+  },
+  "tests/unit/account-web-artifacts-and-ipc.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6f02296c29c8fb70f2c67c7b9873ddec74e870c03595335a5926a527ebf388c1"
+  },
+  "tests/unit/account-web-auth-browser.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "49a86ca2a2b7a3f1faf5b741e9844f4f48d9802dacd7d99c298858d52ff47be5"
+  },
+  "tests/unit/account-web-browser-fallback.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "aea3789e3d23bc0e01a6a56f5baac770829b941d65c68b049b0f9cd0ed5c420c"
+  },
+  "tests/unit/account-web-cloudflare.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "106d5f2a8f940f3429040893d1e61fd99debf2da2adda5f7aab30cd1961adca3"
+  },
+  "tests/unit/account-web-detect-browsers.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b7d179d9b400cf95467cda925c25c056a467490ad3a149c108a968c3d156c38d"
+  },
+  "tests/unit/account-web-in-app-sign-in.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cf5fdcd7047e84f7a900bfbdc3ff32a0e063050d46688e3c6470d96633361d5f"
+  },
+  "tests/unit/account-web-origin-gate.test.ts": {
+   "tests": 46,
+   "passed": 46,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3fe01ef45eeab34c783ec76b7b6464f9fab27eaeca18b34d8ab2d3dae47be425"
+  },
+  "tests/unit/account-web-pane-view.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d5540ed885aefe5858f10240662ce88638732c8ff7f67036cb3d487fad9fb6ec"
+  },
+  "tests/unit/account-web-pane.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ad1c37ed8fb6c48431eed02d53954e7b4ce258d7050a18d021ee06692744c29c"
+  },
+  "tests/unit/account-web-profile-removal.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "78bde33ba5427ab34174f2502b050db1d946b1ae0da2a1fd1e85a775f03f2a59"
+  },
+  "tests/unit/account-web-session.test.ts": {
+   "tests": 26,
+   "passed": 26,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8dff3da4bc84d0af0fa137c35a9cebbba814efd7869fb2df20c263703ba05e90"
+  },
+  "tests/unit/account-web-sign-in.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1ccd9438daf4ea2a9b9c8184429c80ad9a7d85a458db6e2e1b24a95afbc2ccc0"
+  },
+  "tests/unit/account-web-status-split.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "380fa0b4b2b8217d1efe893223137733fe331b6ece76371494f91e0238b1d6f0"
+  },
+  "tests/unit/account-web-store-and-cli.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d49d26147c036561365337bb3c30dbf66349b51abaf14a760db418839984f7d2"
+  },
+  "tests/unit/account-web-target-pick.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b5680b868863eecb26a10f29093ebda41544998f5ac6193fdff270e00f837616"
+  },
+  "tests/unit/ansi-strip.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "048f020ce63b01f275f9f83b80a0f9634ed4c500fbf38e7ffcb72c042d45b331"
+  },
+  "tests/unit/atomic-write-platform.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fceee604a6029d04f17d40f796357e958c87fcdb581e891c98e8a7a9c28930d7"
+  },
+  "tests/unit/atomic-write-retry-wiring.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "71727c105704adddb684758fd60b83ed5f064879a956ca82a34e711987a2ca4e"
+  },
+  "tests/unit/atomic-write-secure.test.ts": {
+   "tests": 9,
+   "passed": 7,
+   "skipped": 2,
+   "todo": 0,
+   "namesSha256": "379a9e1baff2abac9748cf34f5c4a6526259d27ecd498c6a8e257087a501d898"
+  },
+  "tests/unit/atomic-write-stage-tag.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3be5f9317e094136c01ce9057e766d84adc0a59b7fff27213a20c683653827e8"
+  },
+  "tests/unit/atomic-write-sweep-symlink.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a891d7068819d06b7462b29cab339829df4cceef3d512a7fbacbcff4852a31aa"
+  },
+  "tests/unit/background-context.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c770084aaba193328cc0ed4b94d27223b2f3e3ae9ba6bb74dba89b144e3ab253"
+  },
+  "tests/unit/ccc-launcher.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0a7e0f5bcccea406f83c2da7bcf4402011ab440d0f89ae92c1b36fba6a0d6710"
+  },
+  "tests/unit/channel-attachments.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "886fc69d5ac3a5f840ea473f795ba8402fcf0d16818b68ae417841a4976992e8"
+  },
+  "tests/unit/channel-bus.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "27516d6b855787c2edd7410585d1ad7b7734c9fd768709374e748f8983819237"
+  },
+  "tests/unit/channel-envelope.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "43f79300c24101b59b9578dcc08947df0ff50fd4f366e8ed2c2fbf1a46f9b4fa"
+  },
+  "tests/unit/channel-feature-state.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "eef5433f6c8393befb3d63f4ac690425baefb3c56840ba329169957aee4e154a"
+  },
+  "tests/unit/channel-handlers.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8b18aaf708a2519c9c0da2d324aa60e0b8bd574778d78ca6e8ecc30bdb8f6ee8"
+  },
+  "tests/unit/channel-ledger.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7c35e407fb05b908aca184c8b74d6b66a7c8aad67de9b951211eaeac01b682b0"
+  },
+  "tests/unit/channel-rules-core.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "44aa9704a902accf16121b5dc4f7561d33438023cbf624b34406082e3f5ac825"
+  },
+  "tests/unit/channel-rules-store.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "88be405950df22abeb004e39bb3f6f38aec9116f7d162ea92d15e9f9debda378"
+  },
+  "tests/unit/channel-rules-wiring.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b6891a19b12fae747799da7c8df073d95f6bb8c4f504e1854ab330b256bd6cc1"
+  },
+  "tests/unit/channel-storage.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c956b3ed83c1a92a15986efa46149be1763738eac54b42443ea6d2bfd4db98ee"
+  },
+  "tests/unit/channel-types.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1c978f7e87ff506e4f7c82bc4e9226d733736326653e445a03b0fdb4e36eeaf7"
+  },
+  "tests/unit/claude-account-identity-classify.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b6c1aeb3dab55e1ad0ba824d7ff22111447b3887634c1cac61d161e97dfb0ccd"
+  },
+  "tests/unit/claude-account-identity-detect.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d39ae1db09d5eb29de701bacfa2967fc18cc9c8ccc4ddd906a7e26d340788165"
+  },
+  "tests/unit/claude-account-identity.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8993caeef4b1c03fee52bbfcb5c58835c3ad4dab2d2f92b0634c57e263a0db9b"
+  },
+  "tests/unit/claude-auth-errors.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f5671db0c28ad2a0068bd0bfafa752cec0a880cefc5122100b964d70a5254ce1"
+  },
+  "tests/unit/claude-backup-copy-flags.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "366fe4ea26629881c62d81fd6aa8fe645beb27f820721e12b9d9d7241002c419"
+  },
+  "tests/unit/claude-backup.test.ts": {
+   "tests": 13,
+   "passed": 12,
+   "skipped": 1,
+   "todo": 0,
+   "namesSha256": "e11498cc49945c08fef49dd2450e187456c8084df45ea48e45d2b757e67e81ad"
+  },
+  "tests/unit/claude-cli-auth-read.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "963729dce5fe7c95124387c9a5dbecb246d7b2141d7e427b050cf5732c6cee5e"
+  },
+  "tests/unit/claude-cli-options-registry.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ed72ddcc535c4ca3c50b217da28cd752ffc2ed0e712654b2878ed0eb88f4d971"
+  },
+  "tests/unit/claude-headless-argv-guard.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bf2b0145da2cd07b0116b85223fd1522d04124ca02758459e8c2dacd7d181625"
+  },
+  "tests/unit/claude-headless-profile-consumer.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "240b062da4d371d008857f44f92c4e69e2f6b45392f43d7ec3992beb01d48ac5"
+  },
+  "tests/unit/claude-headless-timeout-kill.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cd58ff9176071ba5db8ff03300c76076c57980e9497774034e3fb04cb3267ca5"
+  },
+  "tests/unit/cloud-agent-cancel-during-refresh.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f6da4e1c4c865216c13bf7844ba609f54198c5ec265177c89e863b110c1139ee"
+  },
+  "tests/unit/cloud-agent-manager.test.ts": {
+   "tests": 35,
+   "passed": 35,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f18c6cc366c9f8cb84c45ea1a17b406007faf8c3830c258a1b1d3e23114270b1"
+  },
+  "tests/unit/cloud-agent-profile-consumer.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "008d2c20c395c5c97ef96a1bc4c6aca2559401d61f327b2a7f4dbf76c29af868"
+  },
+  "tests/unit/conductor-secret-rotation.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2bf8c2d0c94d6ce7fa0670d5aea5e4f74297835c47bc9cdf03cf3296f9b73d83"
+  },
+  "tests/unit/conductor-sse-keepalive.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2bb4ff5d65d3de9287c50ab92d8cd918e32fefafcdc8f1a63a36698cef0040d2"
+  },
+  "tests/unit/config-manager-atomic.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "dfc4c8c3be25f3ce250f513d0400d3188666b7b06bc6efbc8d2352a8accfc013"
+  },
+  "tests/unit/config-manager-fail-closed.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1e0d6fd4d85dd9b50f1a50f18c6a8a258d9fd12c7bc724b3b251c07468286ebe"
+  },
+  "tests/unit/config-manager-migration.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0bc80ecbb2cdae2cf6c50474cf831292b1368a50293af0c0bd1ff7440c5100aa"
+  },
+  "tests/unit/config-manager-unlistable-dir.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ed2f94f389e6831efad246469e46769c4962f974f3be4ba33ecd724297c85ab8"
+  },
+  "tests/unit/config-manager.test.ts": {
+   "tests": 22,
+   "passed": 22,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ab647d3390497052b0153feca15e71ae32ec7c91000ad8e534288bfcb7cb0ff8"
+  },
+  "tests/unit/config-renderer-boundary.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a7ff91a651f911adddde89b6b06cf435d110286bdc21f48060e2c7edf7ce39f1"
+  },
+  "tests/unit/config-save-ssh-credential-invalidation.test.ts": {
+   "tests": 27,
+   "passed": 27,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b2cd8c892406242a5bc1413861af1cfcc713c09ff8c843ccf8c2da29a60cfd37"
+  },
+  "tests/unit/config-secret-permissions.test.ts": {
+   "tests": 7,
+   "passed": 4,
+   "skipped": 3,
+   "todo": 0,
+   "namesSha256": "cec8bb5739f7e4e27add645e65c01d42034be294b64d382ed754b15df2db06c9"
+  },
+  "tests/unit/console-bleed-verification.test.ts": {
+   "tests": 18,
+   "passed": 17,
+   "skipped": 1,
+   "todo": 0,
+   "namesSha256": "4cb60d0632bb53f1e097828de6b577eaf805c7d1b29cffd54e2db1cfb099ce37"
+  },
+  "tests/unit/container-command.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "60b61fdc29ae08efa9922b2d7cf4052be6af1668100784ef9cde50b5d262b3f8"
+  },
+  "tests/unit/credential-dir-hardening.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "45ce480656d03d8ad9c69993ac557be91f1355f24132841898bba630c6be6f56"
+  },
+  "tests/unit/credential-file-mode-hardening.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1cad88afd48987e1120318669d321b5d7726da5d8fa3b082a24be9fc66221a19"
+  },
+  "tests/unit/credential-writer-fail-closed.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2b92dcbe7e00929afa7246f1662d651e04a3c07c4f86a20852b647af64eebb4b"
+  },
+  "tests/unit/dev-session-data-dir.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c21575b170bb0c797febaed0992526c1a9dffcf81bbc76cd826c13c2cdeb8cd6"
+  },
+  "tests/unit/effort-tracker.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e62ad283db573f4a8738be1779cf66090f70f0fd246394724ad8599026214ccd"
+  },
+  "tests/unit/end-remote-fallback-exec.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2a6682bfa42dbabbb96a53a1ffeeb871be6e4fd3233d3b11e7e7e2f6d5c1a7e2"
+  },
+  "tests/unit/file-advisory-payload.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "835dc3f69e31f98adcd45fd6a1c617bb34014c9b4c968c5d3a5b1ca45cd86bf9"
+  },
+  "tests/unit/first-run-accounts.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7222a3b1a818f1fce64cc8a4d0cb7da804d6146df7c1c779bbecca54d1037a08"
+  },
+  "tests/unit/geometry-resync.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "db58deb11378564f1315a78d84ea2f1ce427e94eaea41dc5137e9808295bc469"
+  },
+  "tests/unit/github-config-migrate.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fc817d8c7f175c2eeb00e0436d027f0590e735a04acb6562b43d02d391fa14fe"
+  },
+  "tests/unit/github-feature-actions.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2a538266fc07803e82932e9b8e0b8d3b7ada07d1dcec0267d6d1c38feb17c4ca"
+  },
+  "tests/unit/github-features.test.ts": {
+   "tests": 26,
+   "passed": 26,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9232970f22869617da61f2b1e23f8fb4c2cdb16cb8f7e74ecc1c208a2d49481e"
+  },
+  "tests/unit/github-plan-capability.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "24febc051a8f021281f8e2e48d05d2c880e8439827223f373313b7d6cd271d10"
+  },
+  "tests/unit/github-update.test.ts": {
+   "tests": 64,
+   "passed": 64,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "930f58083b6b12cf090bfe916d77efb505e517251971344adedb54b6c5a92924"
+  },
+  "tests/unit/github/async-mutex.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8981a7599b2a182e8068e1be7e9d7d25e9e009d8e2993e51614325b034e04265"
+  },
+  "tests/unit/github/auth-profile-store.test.ts": {
+   "tests": 22,
+   "passed": 22,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "93e09f4b72b0ed648f068192a82abc992f4ad473f3785c9705f6fede7ec9844a"
+  },
+  "tests/unit/github/cache-store.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "969b122453d14033684285e155a237cc44c14b0f65dfdebae1ec0e44b51ea648"
+  },
+  "tests/unit/github/capability-mapper.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7d4411a5e35ddefb213d26da72de12e0a065153c139e39dbcaf31576164c1f4c"
+  },
+  "tests/unit/github/copilot-cycle.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "270f761aa936d8f9a02450df40d13de4808bf6565cb89b472a9c5a2854f5fc22"
+  },
+  "tests/unit/github/copilot-usage.test.ts": {
+   "tests": 35,
+   "passed": 35,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d4347439376144900e143dfebbc647d3e0323f60a8682aa4fccf59e680b801c0"
+  },
+  "tests/unit/github/etag-cache.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c775803cda77ec6ab8149e6c34a669553e6bce8d0ea8ae48c3efcdd3d15a9117"
+  },
+  "tests/unit/github/gh-cli-delegate.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2d515fe54e9163b6a3935ab20759c87b21d3237b45c339fccbbddadf4c0f653f"
+  },
+  "tests/unit/github/github-config-store.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d9f868fbc305c0a6c8812334041f0516aa9caee5c8eab673bb9712171c612bf4"
+  },
+  "tests/unit/github/github-fetch.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cbd3b9d4efe4cb3edf35da62e5226aa815d7d8698d44e7ce7e35fca1e5ef9591"
+  },
+  "tests/unit/github/githubStore.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "278b46e8b9a376252c087a185897d8961cd2cf63e893ce4af0fee5e2a309aefe"
+  },
+  "tests/unit/github/local-git-reader.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e77fcc5b74a382c2dad8da1b82720207e075bc2ca25526e98f4a8660686d39bf"
+  },
+  "tests/unit/github/markdown-sanitizer.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6f002cd717a25117d0772f53c0b11c57403c2c93773698dcf3563911dff42904"
+  },
+  "tests/unit/github/oauth-device-flow.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5e775e938b57d152715dd75213bd591e9e45c3f92d8d0518e2ce414f158e575d"
+  },
+  "tests/unit/github/parseRepoUrlClient.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "474b8f4c30a91c5f1757871812a43cf67b3f61409fd88ce9d19e8391c610f660"
+  },
+  "tests/unit/github/pat-verifier.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "68a70474900206d7c17c4f4132a3eb9fd2d08457132b27ee7542c602bf5090d5"
+  },
+  "tests/unit/github/pr-body-scanner.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1495be03fdca3e9a623ac638e7f8462718cbe06d2461515eb13eb9edc9ef9579"
+  },
+  "tests/unit/github/rate-limit-shield.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b0117b55a410ca99e138bc31393c4a193e53b00a2e08b67a4af54e8d30e152c6"
+  },
+  "tests/unit/github/relativeTime.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f8adf414dc2d386f39fc72d6ade3fbf55635205e3237933dd3ce6b0cfd166406"
+  },
+  "tests/unit/github/repo-detector.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b29d0588e26efc4d5f116c3b9d1ade333aee85c8782eaddd494b89caee0a6982"
+  },
+  "tests/unit/github/repo-url-parser.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b1b02e169effa04e2724851b22f41fd65e53a16245ed45804b5dbdb911b82d47"
+  },
+  "tests/unit/github/session-context-service.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c6825535df24bd21d22e14778a82a15b125e7cb5e8008fbca0ec246300f76040"
+  },
+  "tests/unit/github/slug-validator.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "52c480109b5236bbbee7fd82e36014fa31e74613440d841d3dc9857e3f2e908d"
+  },
+  "tests/unit/github/ssh-repo-detector.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "36373e82f58262497769d370746cbb09014b671a54e412b9ad51d0e0a54454cb"
+  },
+  "tests/unit/github/sync-orchestrator.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e765b5155e244bcd89390ceab73cc4cf5e16fcd9598f489321397d2ddee5e4e2"
+  },
+  "tests/unit/github/token-redactor.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bcbfb769485677fd1bd760ecca24b9780bc6261a6309605ce9b9f821b867e8cb"
+  },
+  "tests/unit/github/tool-call-inspector.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c59a30223fba83ab9358d25e42f13050a8c5b9023073693f72ac2d7ea831a095"
+  },
+  "tests/unit/github/transcript-loader.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "df2a6451d6175798e9e189d1e25a3160a680e87f578574861ad28268e3351e5a"
+  },
+  "tests/unit/github/transcript-scanner.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "82bbf74accf67b152d3eb7fb20e3e251497a181240085adbd856d026cc5cfc6e"
+  },
+  "tests/unit/gui-exe-probe.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "38120a5a142302a15844d5159cfd19a547ccf88e9e5ef4efe65b71eadb6aaf41"
+  },
+  "tests/unit/gui-exe-runner.test.ts": {
+   "tests": 31,
+   "passed": 31,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3b89724663972ee76b37f6b0a2a8be015333647c84b6f2872bc9d02f9166ae2b"
+  },
+  "tests/unit/gui-exe-shared.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b9abdbfa0474808d8893241067e53fe2c462acb2ffae699f68e9b289f435c2fc"
+  },
+  "tests/unit/harden-dir-acl-windows.test.ts": {
+   "tests": 34,
+   "passed": 33,
+   "skipped": 1,
+   "todo": 0,
+   "namesSha256": "db9d39eef89f25d1d24f362eaeaea30f112b5b48ec9b239de275c587f37a0e16"
+  },
+  "tests/unit/hook-types-channels.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2dac45a1794d3e243c4552dc09ae45ab86f33d517332bb59293f3c6d4c680f12"
+  },
+  "tests/unit/hooks-gateway-subscribe.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "34abc8f0b16619b75f699a69a893108d785b0a92e699d4e63a306509ad82098f"
+  },
+  "tests/unit/hooks/boot-cleanup.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "90df16df961adc5d238fb0401715e2bfedb352667ab6c06d13146f17ac2c71bc"
+  },
+  "tests/unit/hooks/bound-feed-payload.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "46fea20e9bf9b59adf2a7e5134cb97abb275292bfc80d2809e819179fc67e8c4"
+  },
+  "tests/unit/hooks/hook-payload-redactor.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3ebc554923fbf616e689662a0a61819b11291b09fd0d2e2ffad94a57c2f408b7"
+  },
+  "tests/unit/hooks/hooks-gateway-seams.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ed53bc9892e1c6d48242307c91bdbaaf2343350c67645a68f591a48aabd0804f"
+  },
+  "tests/unit/hooks/hooks-gateway-transcript-path.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2381053d3429d59f123aa91ebd9b5dbd60ebd7bb6e2da330e8130ddaa3daedab"
+  },
+  "tests/unit/hooks/hooks-gateway-wire.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1e5afa6011efa3e73ffa911e45e71f69827f85593550894858f3ab33a0835bb6"
+  },
+  "tests/unit/hooks/hooks-gateway.test.ts": {
+   "tests": 20,
+   "passed": 20,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1398b4791c3426dd266ecfbb8bdd2a49a5a0cc4938968f85c0a516dafb676cfd"
+  },
+  "tests/unit/hooks/session-hooks-writer.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a551d8245f8dc49c1ebff81912f02fff61899af0526fbcfc33d48145e8378e9c"
+  },
+  "tests/unit/host-ping.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "19b284511635d7a885512dd8dce298f670d4a607bf0076bc563024ba5ba982af"
+  },
+  "tests/unit/insights-account-paths.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "032af7eb991c382551d2c0719689df9f18144f3dad147b6a52b9b0d02a2c0df9"
+  },
+  "tests/unit/insights-auth-failure-gate.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4fcf2d4e44a3cd895a017e4842e8581be23498eafacf1ce927f27d56377d552e"
+  },
+  "tests/unit/insights-catalogue-write.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "884130120a52070cc9528e69844dfdc2fe6ab984450d2e7bdbd2df354a3220c6"
+  },
+  "tests/unit/insights-cross-account-alignment.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "634c311996c9a19dbb59c16c7c48dee2000434372a249e91e5a6f334804f5241"
+  },
+  "tests/unit/insights-cross-account-assemble.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b731b3a9d7457cc3bee26e97c13e0a93e74a5f0246379d983ce76ed1c8abeb44"
+  },
+  "tests/unit/insights-cross-account-parse.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e908301039c7277a7beb9123dabd088bba7974c60caba9448a6421c91d9af827"
+  },
+  "tests/unit/insights-cross-account-pure.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "00e100a28a102054fca4a3996c4ebe42dfd852d150ee2d82ea768ed8dacac0ca"
+  },
+  "tests/unit/insights-cross-account-run.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9ca5dce96503f0de812ebf9517d222b3a9cd756d2ebc6a92da4b6bb93fa8f42d"
+  },
+  "tests/unit/insights-kpi-args.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8242211b0e30bd219a2fc6d7ca560c5992f6e35e98200b55f96b1e88a60677f5"
+  },
+  "tests/unit/insights-kpi-parse.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4b7bedb96e036663adcff522e9ca200c17ff1131d475d09739f8f3191535209b"
+  },
+  "tests/unit/insights-kpi-recovery.test.ts": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7bbe91d42c6a952be525d44dccf0e3f28c0a7013e2f1d0594937b67307973b0c"
+  },
+  "tests/unit/insights-lock-release.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "11a4e4f289c17121b81c277321b490c9316345e16f7c2cd88a0a30fcbdf4e8ea"
+  },
+  "tests/unit/insights-lock.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "443c1bbd438d5d6e5a0cefd6cc9013b5059ef66f7af347a1897063f0e6ada6cc"
+  },
+  "tests/unit/insights-previous-account.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b8911d7bdfa424eb6df05d12d6653616f5bcbe3f6abad5f6e751c0dd42ea7563"
+  },
+  "tests/unit/insights-profile-consumer.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5284809296f186a701d963c2aa598b476ddea4dcb262ae2e1706f09cde9b12b9"
+  },
+  "tests/unit/insights-run-id-guard.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3a8d1ce45fa0d2bfb23e9e35f20648e7734fbb52efebade062b6aa50fb9994aa"
+  },
+  "tests/unit/insights-store-reconcile.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1cdbef39d12455d8d5b243e09326225880cfbda8f87af302745ebcfc07db0a9b"
+  },
+  "tests/unit/insights-timeout-message.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0767c5ede7972b58fff1abe7f707eb98b79a9f23e5cf975c0d818fd75f7be988"
+  },
+  "tests/unit/insights-usage-log.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "58655414deb4798330deea11b80115e68197f1c3cc065d8cf93c01429a5b0c49"
+  },
+  "tests/unit/internal-emit-sites.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "37c935e32d8f964c26dd78f117ed138c775d6e99d7bc65dc364c981abbf472ab"
+  },
+  "tests/unit/internal-events.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7bb450cc8d61565fb741191515826c1bd15e50b5e187ed76759d99290d9e1831"
+  },
+  "tests/unit/ipc-channels-canvas.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8810989da2acbce627e9bc2fa99d034c9c6c5750a84733e47840bea04b72f704"
+  },
+  "tests/unit/ipc-channels-channels.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "43fe25d7e1074624916d20cf0704b5e4679c3792072f236d4db6cb05bdeac67b"
+  },
+  "tests/unit/is-session-writable.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f48439ee538fd004f55d4225e72bacb661d6189471e3e4d0fb6f6ef25968e398"
+  },
+  "tests/unit/kpi-format.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d8d438f5e1a54194608d1104be9be10b3f459250547196d77c481eb2c5319619"
+  },
+  "tests/unit/legacy-version-security.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d193d83dc178e65668808155951f46289c270cb44b4fa646220b7f009b2e35a3"
+  },
+  "tests/unit/listener-idempotency.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e1891f1c5dde60647798b5c630a42dcda501312d87f6885433f41692dc36c8b4"
+  },
+  "tests/unit/logging/log-supervisor.test.ts": {
+   "tests": 29,
+   "passed": 29,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2a7a561dcb1fd83c2092689b020fb0335557840b5fb0d89756b4b5628ecb8451"
+  },
+  "tests/unit/logging/log-worker-transport.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5603474eea4931cb2c9386a90ce305be3f565112838aff30f1359fcb91cb1561"
+  },
+  "tests/unit/logging/logs-wipe.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b4206d2cd06e747471350c116916bfd01a6a115481fee541c90bd9a7ad1cf24d"
+  },
+  "tests/unit/logging/should-register-run.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4be25cfba2e4d9f6961c6a8b5d4be9b5e59f02d729187bb666a2f3f0f2a5b1ac"
+  },
+  "tests/unit/logging/transcript-binder-ownership.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9f5d69cc626578c3f6454cfd7f195862e3164b7744f72b494d800e333c2ae7c5"
+  },
+  "tests/unit/logging/transcript-binder.test.ts": {
+   "tests": 29,
+   "passed": 29,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a90ed4332984b43278ed27985e3f1b3db6278435303cda6110540e851157bcc3"
+  },
+  "tests/unit/logging/transcript-discovery-containment.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "22acf0358a0295184e984de8400d5824f64e67dd7ff78be51b4425bb9c1a2d03"
+  },
+  "tests/unit/logging/transcript-discovery.test.ts": {
+   "tests": 41,
+   "passed": 41,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4142fca987d8473c3ef2af87626fe31951cc4271670566c63bafaca6d3f1f250"
+  },
+  "tests/unit/logging/transcript-normalizer.test.ts": {
+   "tests": 86,
+   "passed": 86,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2e6e0ab18c9c8a7274dd3ce5a0bac37fb602e7a44a4eb873d62693dc1270919b"
+  },
+  "tests/unit/loop-tree.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cc86cf5a2ee4da9e90a808e75fd681ef6e9513a98d78622b4c51576e10cb7265"
+  },
+  "tests/unit/main-spawn-console-audit.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3d12eeff265447f6b9a5aa01e613ebf1bc5637acfc5cc1188b5a6ae67953db08"
+  },
+  "tests/unit/main/account-color.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c5cc4fe87f3cd8618399a899f471cc5de8894f3a79ce678f6513092d36ecb6a0"
+  },
+  "tests/unit/main/account-identity.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f15a6ca7b408e12a8a6e87678969c918d825963561b13b1c998cf6f08d95b5ab"
+  },
+  "tests/unit/main/account-profiles-credential-stamp.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "70c857d81f1140a3ffd8a0d48680f9694b57392cc0151f3d340dd2abfd9d960e"
+  },
+  "tests/unit/main/account-profiles-set-active.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4d06c24809b90e8d294300951d6003567caafd49aac93e64e67f78411c414df6"
+  },
+  "tests/unit/main/account-usage-stream-handler.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "96e2f17b4607ec33a7c51fbc2a9b144df3fb6e8cef32c5e958a4c2ec5a49ee22"
+  },
+  "tests/unit/main/ask-conductor-prompt.test.ts": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fd0fc25af7c63e5cd3df03e834985ecb86ed0335ca9740e688d829aabb455529"
+  },
+  "tests/unit/main/attention-source.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "927c08d9e1e05e8a001b2616d009e34f6fbfd0e8cd85dae972fb9c5789a8995d"
+  },
+  "tests/unit/main/brand-identity-guard.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1b67fc1cb822ef454704a33c0cfe988c066162ac7e5c1f608a07ecc961369f46"
+  },
+  "tests/unit/main/browser-spawn-no-shell.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "002edf5a29c29ad406b2b6a631f8b83afbacd451db3d4c3bc3910cad58cc4734"
+  },
+  "tests/unit/main/canvas-adoption.test.ts": {
+   "tests": 27,
+   "passed": 27,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d873e5f5ce48b515afe48205d203b559ead652833ff257e123cf00f54519a34d"
+  },
+  "tests/unit/main/canvas-agent-awareness.test.ts": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "143afdd20cdcfc8318e083070e85ad334699694823772c876552e3ba0ee6853e"
+  },
+  "tests/unit/main/canvas-analysis-format.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "288334b736e7bf158ede2d579dadbdeedb9cae9b3dfbafc3101e4bddeed96f7d"
+  },
+  "tests/unit/main/canvas-artifact-lifecycle.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "326de8f64fa7e4a90426cd4ca04e3676e306793f86f71e0a6f0f8db066144fc8"
+  },
+  "tests/unit/main/canvas-audit-stamps.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "24114fbfb8147b9264d4d03f19698c1e400ffc92fdc5298cf2fbfd4eb4e2fc2c"
+  },
+  "tests/unit/main/canvas-binding-survives-account-switch.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1d8b2f910fd978365eca826b53d4f13bfe8dd4dd79837f478264cff667d69b87"
+  },
+  "tests/unit/main/canvas-bridge-color.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4508669b29dd5abe8d0f6540c5d42966bac460114f1c98b5c7f9d391869ac52c"
+  },
+  "tests/unit/main/canvas-c1-state-machine.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8706a30ea0e65085624bc0dd7bbf8c5f0e4ed99ddbd8b9b79860553b4d798adf"
+  },
+  "tests/unit/main/canvas-chat-pick.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b41483a26ea740ca852456eff9f36165d4e46810bcdef14c0c9d0ba40f00ec17"
+  },
+  "tests/unit/main/canvas-closeout-store.test.ts": {
+   "tests": 65,
+   "passed": 65,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d5a3e96de35b59d34329452f96e728c4bf510441765af534879a28bdf1ea0a0c"
+  },
+  "tests/unit/main/canvas-completion.test.ts": {
+   "tests": 34,
+   "passed": 34,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "800ab26943febc24d342635978681a31ea2607de645d39c8e1a72e8138b92fc9"
+  },
+  "tests/unit/main/canvas-composer-draft-ipc.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fcacafd8133440b547682205fa1eee51902c45bd5935b2ac8d8c58fc9e68c3b3"
+  },
+  "tests/unit/main/canvas-content-egress.test.ts": {
+   "tests": 222,
+   "passed": 222,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "77dc03df11246a27f9309138306f912784352e0d95a02d60820777317ca6ebd7"
+  },
+  "tests/unit/main/canvas-distroot-confinement.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0f06a6df9e5bfeba0133322dbad3284dc88483171c03a740b7e1cc8d4e14fce2"
+  },
+  "tests/unit/main/canvas-draft-ready.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c671b42f3892a742b27a2d19fa180eb6eb942a7165b0a68a7240193d3b2f9679"
+  },
+  "tests/unit/main/canvas-evidence-ipc.test.ts": {
+   "tests": 29,
+   "passed": 29,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "eaea1ea7745a736118ba5ebb41263a944bee1ef53db66aae7d300265ae5eafca"
+  },
+  "tests/unit/main/canvas-evidence-mcp.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "95c352f9ee2e8cffaecfe3604445f5ef8b1e3bfa6221a430e850d79551386115"
+  },
+  "tests/unit/main/canvas-evidence-store.test.ts": {
+   "tests": 36,
+   "passed": 36,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "71f5a8e6fcf54b2f0077c7cc91058d3316b9258a3880fdd313f4eeca2fa4ee71"
+  },
+  "tests/unit/main/canvas-ipc-handlers.test.ts": {
+   "tests": 36,
+   "passed": 36,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ea47693e76cb0a1923c0321930524d32f813cdd43c267f440a89f0cbb9dfb5d9"
+  },
+  "tests/unit/main/canvas-library-banding.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "59e0a7844929eee4a4b6c645f3e1d8627d58c29f6294b0016e2d7686cd1c47af"
+  },
+  "tests/unit/main/canvas-library-open-own.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bfeaf4667015d5d686f3a3036b4eb82c7a0a19071a9c29b2db9cf884d47b28c6"
+  },
+  "tests/unit/main/canvas-library-rows.test.ts": {
+   "tests": 36,
+   "passed": 36,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8c39751c6f6f873648c01dafd073846b2ac184b54b90e4231014d5ef97eea5f5"
+  },
+  "tests/unit/main/canvas-library.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3b53d5867c0a8ddfa475f83f076e362e31288db45684adf5d41c2a7c17d2abac"
+  },
+  "tests/unit/main/canvas-marker-ipc-hardening.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "856b30e67d49546f961aeaadcd35e5bbbcf58fa69596655997e2bf30fa7ecf4e"
+  },
+  "tests/unit/main/canvas-marker-queue.test.ts": {
+   "tests": 26,
+   "passed": 26,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "12252648a9b292a688617c24db44b505dc8e72a3702e36e201094faa7ceda8fc"
+  },
+  "tests/unit/main/canvas-marker-session-teardown.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6590c9cddae5356245ad661d3199c5eb2dfce4d12b2974a1c5f9a161f5c0b2c2"
+  },
+  "tests/unit/main/canvas-mcp-tool.test.ts": {
+   "tests": 73,
+   "passed": 73,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9952cfb687c6641e42b5c0d67e511a1fd85020b534e22ca22a42838b1bb3a69d"
+  },
+  "tests/unit/main/canvas-note-images.test.ts": {
+   "tests": 28,
+   "passed": 28,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f40f36ccc7a925cace6054824c83edba36faa882af928cd08ab6bf69905f011e"
+  },
+  "tests/unit/main/canvas-note-variants.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5e189e6502b158a15761319d604b5ba0d21520a2f0afbdf5cf61fead58d74ca7"
+  },
+  "tests/unit/main/canvas-pick-mcp-tool.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3c1c0871987ce92b7324261710716b710afccbc8e14b7e9b75a958d983f5a129"
+  },
+  "tests/unit/main/canvas-plan-mode.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b39f03fb293f6fa628ca27380569dfe9cbf2e084c40de74e77f80fd104d3436c"
+  },
+  "tests/unit/main/canvas-plugin-link-safety.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "811b6335c8583c13f275efa48557407e2403d1658a7a20f67aae9d27405984ab"
+  },
+  "tests/unit/main/canvas-plugin.test.ts": {
+   "tests": 22,
+   "passed": 21,
+   "skipped": 1,
+   "todo": 0,
+   "namesSha256": "5ddd4ec579f26f725ceb5f63c226fdf154eac1532740f8d44655d4fe8e89b11b"
+  },
+  "tests/unit/main/canvas-readonly-boundary.test.ts": {
+   "tests": 38,
+   "passed": 38,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "22409ea7ce7073e02ddd88668e5cf4fe3f8d508b1fccdc04977232aa828b6bbc"
+  },
+  "tests/unit/main/canvas-record-provenance.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5334ddbc8bb9d868b935586805441a8acf3217f9ae1a09a255fc1951ca35c3a0"
+  },
+  "tests/unit/main/canvas-resources-root-floor.test.ts": {
+   "tests": 20,
+   "passed": 20,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "35907e4b9c21c631c51a984805e075fc6841c9d44755904c7035d02f00dd91f1"
+  },
+  "tests/unit/main/canvas-resume-debt-r10.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0b758174827c4442e85aa7e4ed5caa680a34c2e09ee333dbe762a0d46c2abd47"
+  },
+  "tests/unit/main/canvas-review-after-completion.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "408e332f9c24099a130fe316286bad1a92cb1d4c470124d76b2284eab3a2d6d6"
+  },
+  "tests/unit/main/canvas-review-counts-readonly.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d956ed32dd1569617af668036c6282823629e15753f8d460c9b3767c2c3c7cd7"
+  },
+  "tests/unit/main/canvas-review-mcp-tool.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7542c68f219683dc4b9b96f52d201aad16eb2943de086b92268b64253f7bdd95"
+  },
+  "tests/unit/main/canvas-review-store.test.ts": {
+   "tests": 33,
+   "passed": 33,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "40778dad8a1e57f3feadd960cd7e61e9211b65c2b5da7f47ebbdabd8af649b3a"
+  },
+  "tests/unit/main/canvas-root-provenance.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cc213505352b6912b7822d1f876389371c5b08fac2b7cddafa1a9d99af52e71d"
+  },
+  "tests/unit/main/canvas-root-scoping.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "12c56cc3b778935355795c064410165a0a090aec3f964950ec9334bb9ba51e9e"
+  },
+  "tests/unit/main/canvas-served-file-guards.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "714691aaf344bf0891053b518ffed50b1c5d367c4e22a9403346dc7654bb8539"
+  },
+  "tests/unit/main/canvas-session-link.test.ts": {
+   "tests": 52,
+   "passed": 52,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0b6a588de20228bfa991cfa357f1cc2659ba7208d193823290755778e89c1b69"
+  },
+  "tests/unit/main/canvas-settled-machine.test.ts": {
+   "tests": 47,
+   "passed": 47,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1b36c13f76472dbc05d76c81d2601b5caf3d721108e39744bd950b6324bbd570"
+  },
+  "tests/unit/main/canvas-show-intent.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5df38bee8bda1224791b26f020bf0981f14352186fbbf92d4b2498577d1cece3"
+  },
+  "tests/unit/main/canvas-snapshot-broker.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f49319f6492c7fb8ccdb81c54daa6412341e6303f88a67c2c5c59d4a4db37814"
+  },
+  "tests/unit/main/canvas-store-fail-closed.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "79ffbf9ee902c8e213392d0491cbd6af3daf5fe3ba669fbb670f7b78cd934f6a"
+  },
+  "tests/unit/main/canvas-subject.test.ts": {
+   "tests": 24,
+   "passed": 24,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2c8375897e6a88400468df3408cfd954829cfbff74f46e69176330ee53b486a5"
+  },
+  "tests/unit/main/canvas-verdict-mcp-tool.test.ts": {
+   "tests": 30,
+   "passed": 30,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b358c03d19bd8827bd79a16ca7410883f14ae4e6604fb20fb8763dd04763b4f5"
+  },
+  "tests/unit/main/canvas-worktree-root.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "70b60076f4571ee2ef04c0fa89654520d3efc33aef5ad250b28efa892470b55d"
+  },
+  "tests/unit/main/canvas-worktree-spawn.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6cdd18c9fa79465b927e62e7bec0cd40ad220bfa36ec0745892d1dc700fb23cc"
+  },
+  "tests/unit/main/ccc-ux-protocol.test.ts": {
+   "tests": 35,
+   "passed": 35,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "31fde03f8379f733047a030cb61704ca5bf7e3e70aa1aec1e5905ebeaf90cab9"
+  },
+  "tests/unit/main/check-detached-live-destination.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "afcf67ff9d082802a3d59339d4272c0a5afe9296dc43ec9b2e56c9bf1d04e33a"
+  },
+  "tests/unit/main/classic-mouse-env.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7e11ade015c72e85ee8ea1b1d6526f93439a515256d16e645dd447a7cb398e51"
+  },
+  "tests/unit/main/claude-account-credential-rotation-backup.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8a3d715a8eb46026823f31f24e079e33b15b0ce1cd4f63926e52f30afdb9535c"
+  },
+  "tests/unit/main/claude-account-identity-async-poll.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "22cce6e9fa8094ce10bd4aca211eac6336bdd979eea5f06c7da66f090a66779e"
+  },
+  "tests/unit/main/claude-account-identity-only-restore-r4.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c56858dc52dba5d9eb79025b15edf70237fe937de627f01e2a196e956a9d6625"
+  },
+  "tests/unit/main/claude-account-rotation-r2.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "89312670987026a8af764ee3e639724f3c2f25a53c65cfd4415d2330bfe0931f"
+  },
+  "tests/unit/main/claude-account-rotation-restore-e2e.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "06262f1845fb0b5a6c05c3eb77ab6c693172be1b84d348b272f65e2d57a3511c"
+  },
+  "tests/unit/main/claude-account-watch.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d07b061c504ccd8452b86f45052aff22f89a6abcd235aa71a456c832e3725489"
+  },
+  "tests/unit/main/claude-cli-probe.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1109a1dae46c3935b1f37ceb784f1aed3abb4579973dcdb9630827c39a17cff2"
+  },
+  "tests/unit/main/clipboard-file.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5da02dce7dacdfe3882e95283d86cf763f90e67205eca1eea197ce40bc1cb832"
+  },
+  "tests/unit/main/clipboard-image.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "172a90d4705c9d06c23521aac54557b8d35020600b1108bd0f23bbd0800fbd30"
+  },
+  "tests/unit/main/clipboard-text.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8115b1dfe4126285a37542a87ac6ecbd972ab14b7ad1bedd4c5e75398f9f5962"
+  },
+  "tests/unit/main/codex-review-mcp-tool.test.ts": {
+   "tests": 27,
+   "passed": 27,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8270848816fc7f461ed6f8c32df78c464a590538303d2d731d149f46f729398b"
+  },
+  "tests/unit/main/codex-review-usage.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3b936477f5f94f2acb55b59f360565ea7eff3f9a549c780feb3e8b8b83d85b51"
+  },
+  "tests/unit/main/codex-spawn-identity.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "22a99601ee846dd9aef2c58fa5953dba6fcaae16432c7419caff2d0f70f2df91"
+  },
+  "tests/unit/main/command-secret-env.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4c7f6e7a7181bc684a6324205d1ed3d4b82c42fda30e56fa1b79cdb6e97a5512"
+  },
+  "tests/unit/main/command-secrets-collect.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a68be35a219322880247c8938e83d18865a7f17ae40632064afa4e2e9af27c14"
+  },
+  "tests/unit/main/companion-dir.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c0a32464c5c4c1acc0a2a57c7d53fe0a064362fd9535e444d7c33eff5dfc8db0"
+  },
+  "tests/unit/main/conductor-mcp-agent-browser.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5efd46d7b83f567a3d2949f07baacb7bf1c9596c15a887618f39d69dabde8530"
+  },
+  "tests/unit/main/conductor-mcp-auth-redos.test.ts": {
+   "tests": 31,
+   "passed": 31,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f31ada2f8e3980e58031a37d1abab633df13de2f46eeb0ab335516bf636c35a9"
+  },
+  "tests/unit/main/conductor-mcp-auth.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bc7dc7bf7811993ab3ffdedd3b9ad552d0752075d1db8071a0c7fa79806c7c1d"
+  },
+  "tests/unit/main/conductor-mcp-binding.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d1b545c25806c29b881a8c3853c6ed83345f84cfb545a88dccaf253e94e0d234"
+  },
+  "tests/unit/main/conductor-mcp-heal.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c9c3b8a38c3d525befa83ecf27c02ef7d6232b8520d6a6b0dfdb0a8a3ae8cf73"
+  },
+  "tests/unit/main/conductor-mcp-server-404.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1f541ed18efc26a35b73c4ad6f70d1ba11dec65522c4589abd1ecf390aa0fc6c"
+  },
+  "tests/unit/main/conductor-mcp-server-boot.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "01f1fbac7619e0324762c4245236a476d2a8701804a49e31284c6c08c76709c2"
+  },
+  "tests/unit/main/conductor-mcp-server-source-filter.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "689d8953f0bdd9c4742298cfe03479b7ae8b02fb2ad7c8fa42d1eab286a24278"
+  },
+  "tests/unit/main/conductor-mcp-session-binding.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "de29f439007a68cec0cef02b4c4b34f52feea4e8720bd4c77585d6211d60d240"
+  },
+  "tests/unit/main/conductor-mcp-sse-timeout.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "eae1e58a241b17c3fa2e6b1edb019ccdb657e2767f8d3f1ed4c3923fa9d27084"
+  },
+  "tests/unit/main/config-manager-read-failures.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "eccb87eddb9127ca83d3761fb030c30a48e526073aae7e467eb11bd8c4e35672"
+  },
+  "tests/unit/main/container-entry-shell-compat.test.ts": {
+   "tests": 16,
+   "passed": 12,
+   "skipped": 4,
+   "todo": 0,
+   "namesSha256": "80679a201fee36e4b090a7e6bbce9e4bafd592ac06ef849e206854dec08d377e"
+  },
+  "tests/unit/main/credential-store-fail-closed.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "17178f301195ac0b74e0112421c652a3e554ad6b5728ad0a27d7f50d176f5d23"
+  },
+  "tests/unit/main/credentials-handlers.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d555c7789541f32d72a5089a6f1f66fb0751928302b9490a726f7bf94e79b4f0"
+  },
+  "tests/unit/main/data-paths-dev.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bd61be393f3e1c9024865e883e1538860cf636493f476d058847ae2f4776f42f"
+  },
+  "tests/unit/main/data-paths.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1a8bd6fdbfcac2073a84ac2e538c9d234d2b4a387f8939a49e9d7c31162b813f"
+  },
+  "tests/unit/main/debug-logger-epipe-loop.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "46cc043b91cd92dcc0feada127705b7815de7bedc6cd439b629c1f6aae97cb90"
+  },
+  "tests/unit/main/debug-logger-levels.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d685097a33e599912825fcb17a9375b94fba5c48359acc50f15f29d5b61b8684"
+  },
+  "tests/unit/main/debug-logger-statusline-redact.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0716f2927fe24a8d0122e0897f661fd86b22c678ce518bccf46c45a395d56877"
+  },
+  "tests/unit/main/diagnostics-handlers.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7cf867f0bc2c394afcfd1dd44e79b790337a21028b591db71306a6f577db66e0"
+  },
+  "tests/unit/main/end-remote-detached-fallback.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7565ae2730dbac3ac31aeb93e07484276b4a30049a1c5f7089eb895c009363ca"
+  },
+  "tests/unit/main/enrich-cross-attack-480.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d6d5b80011c315fc25c550fb794d752b132537bda37fc59a0d372850b9536282"
+  },
+  "tests/unit/main/exact-bind-gate.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "19f00a729d98505b0fbf533bcfb500a3528fb6c2cf12ede3606daba3c2db96a2"
+  },
+  "tests/unit/main/extra-args-guard.test.ts": {
+   "tests": 34,
+   "passed": 34,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b9fc7df34867e80307ed9a8160a3ba6054cee8fe2455caba4839c2085fe7ac09"
+  },
+  "tests/unit/main/github-oauth-scope.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "92f4d4bc7b91b6f747714d454912fcb8a6b1ec8e756ff63e89f52d5ff5179926"
+  },
+  "tests/unit/main/github-reauth-profile.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "01b887e39aa44e5a0bb99cbf69279cbabb706768974b1c8067631e3ed73e6b5a"
+  },
+  "tests/unit/main/github-update-integrity.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c1b620a898b0cb7c4bf35a9a691fe89f83df2d270b81847116830eca1bfabf6a"
+  },
+  "tests/unit/main/github-update-redos.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "56ec665d2e2dc322131436bfd854f62169571ab8fd0b14c75265896e95b6ff90"
+  },
+  "tests/unit/main/github-update-repo-rename.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bf47c4dbe883037227373701dd650b57365e311c0d900b6c0440e0a2e04e1599"
+  },
+  "tests/unit/main/github-update-staging-dir.test.ts": {
+   "tests": 33,
+   "passed": 33,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f2e65e826ec88bff8354cd307c6de15db7964f315b0fe9356c127cc268cd6daf"
+  },
+  "tests/unit/main/help-workspace-skill.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a497e81c3cfc2b8c4641b6c8a5a0744cde9b34d4105491712c50f34d002adecd"
+  },
+  "tests/unit/main/hooks-port.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "dabec4f0419e91a1c8c6729bab0927cdca48a0ca8425b6d9e8abf99315627a74"
+  },
+  "tests/unit/main/installer-nsis-behaviour.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c1c79efce107bc4f79bece29c84030cad89b9d8d13780584472127179c637894"
+  },
+  "tests/unit/main/jank-detector.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "530ca22e713426dbd60cea1ce557131d590bc2dcfc4c130c2b64e8cb37916240"
+  },
+  "tests/unit/main/log-record-integrity.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "edff89a46afb453f35eeaa1d06dbabe1e298dd89d7d092556738d70bb7ae37cf"
+  },
+  "tests/unit/main/login-shell.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d6a830df92a256ede1c50c5a9e56a95fb7f01138e1b1f031d3a12267e144f1c4"
+  },
+  "tests/unit/main/logs2-ipc-handlers.test.ts": {
+   "tests": 31,
+   "passed": 31,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "db569d6f7af90752542bb0b5d9c665b069a228b68684612bec56f03a0d7d8bbc"
+  },
+  "tests/unit/main/paste-queue-cancel.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b6d32b57f707cc84eb870ceac86db0f33e594c4ced475b2f4fca59a506f4b29c"
+  },
+  "tests/unit/main/path-utils-home.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "55dbe9ebe59f1370924b4913a9d3884cdcdbf3bdf4e88b4ec615afb3b27dc25b"
+  },
+  "tests/unit/main/path-utils.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "10e2c95deff5f9dcc058c8398d5df77775e16a65490c00cf0c0c01e88e590163"
+  },
+  "tests/unit/main/per-session-mcp-secret-mode.test.ts": {
+   "tests": 4,
+   "passed": 2,
+   "skipped": 2,
+   "todo": 0,
+   "namesSha256": "da18a60a757a20c9868fe3421f22d4818e0b5a0a61ed66f17bafffb3626322ac"
+  },
+  "tests/unit/main/per-session-settings-canvas-allow.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "588472c3f8fa8c74c456649c892b876e70969cfa30ee4856c54111535a151504"
+  },
+  "tests/unit/main/per-session-settings-mcp-rewrite.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "de27bb9785e28ed7306e68391bc5012d194a123eecb0b2a5dc6d67a64ed1ff9e"
+  },
+  "tests/unit/main/per-session-settings-statusline.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f1382d393fb4ae1702cf478d17980cab34c59694c75db9e4e974e0fb8f724689"
+  },
+  "tests/unit/main/persist-latch.test.ts": {
+   "tests": 37,
+   "passed": 37,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c1df6c33c4b9fa7ac51dd98abb346405b83ac34756a07497e8c314f20718e12b"
+  },
+  "tests/unit/main/profile-id.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f7061315db8a5889fee6fe4ea23d2e99f0ea7c6ad0c68a8a1e81609d17a39448"
+  },
+  "tests/unit/main/pty-handlers-codex-review.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "904100853e768292fb1bd6021fd841099e37d42f2e3001277d05adcddf26f824"
+  },
+  "tests/unit/main/pty-handlers-command-secrets.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "db44aa9c634094ecfe40f9a1260230ebbfbc5a97b58b31d03db5b84b7d5d6549"
+  },
+  "tests/unit/main/pty-handlers-credential-binding.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a01b79aa97ac0077e63510d73231f9523141c65a4e628ecd6b331ea0696d4a57"
+  },
+  "tests/unit/main/pty-handlers-effort.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e12ab5bc956d4de60c27c81b81fc7d6c753d363d7d2e23b05b3dd0f1fd1e956e"
+  },
+  "tests/unit/main/pty-handlers-sessionid.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "66b7e8203f7294941a3578378b932cad18401f3bb747cdec4af2cf08d1173445"
+  },
+  "tests/unit/main/pty-session-liveness.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5d1721e78a906fa23fc26328f42a1637af17b100579b2ea49eef253c9d9eaca8"
+  },
+  "tests/unit/main/pty-shell-quote-callsites.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cde31c1b7349fe33649580b8b6298cf1e8b95ad272dea750cda6cadad0c0b04b"
+  },
+  "tests/unit/main/pty-spawn-waits-for-refresh.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6b7e23ef318bba7a4dff3bd424fc27e580bcacaaec575a85c4540b7a5ec90335"
+  },
+  "tests/unit/main/resume-ipc-handlers.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cc64242fdda6ef1b5e9382d4c0d62c0a4f3fb61ef21bba211c4c85dfe669c75d"
+  },
+  "tests/unit/main/resume-target-head-read.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e07eac1c57897076c3616c2717fe2df8b4bdc7a55902463e7e2dcf7f5a65be6f"
+  },
+  "tests/unit/main/safe-file-read.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "dd21cc1c566377012863766bfaad25bd7ba6399312880a70f8e7f12efe00aa40"
+  },
+  "tests/unit/main/sanitize-restored-spawn-options.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f246cca0f8443d902e91704506b57010ed0b756881433961fc77be493477812f"
+  },
+  "tests/unit/main/secret-ref-shell-parse.test.ts": {
+   "tests": 29,
+   "passed": 29,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9c418abbc7544018513deeeb1388c801f1eed1a195454fa5940e1f45230f9b0b"
+  },
+  "tests/unit/main/session-durability.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6f6d0c52804924a2817f8ccf8c0558679c6c714322a9ce4e16c0bda4e698073b"
+  },
+  "tests/unit/main/session-hooks-writer-secret-mode.test.ts": {
+   "tests": 2,
+   "passed": 1,
+   "skipped": 1,
+   "todo": 0,
+   "namesSha256": "d69e0a6dd28113b13a353a00a27b4d6f09d5d72fe01d07319c46051308833e9f"
+  },
+  "tests/unit/main/session-name-sidecar.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d4546f974960e7bcaed2d15ee8a6a3251566ba94d50256ed1b9990a5d610395b"
+  },
+  "tests/unit/main/session-resume-enrich.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6673e23817f2635247469b71f00a3813b6bc207bf59a1bc0e4d08854b63493c5"
+  },
+  "tests/unit/main/session-state-registry.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7d585d370522a71f25614def337cd76b54ef74fd7fcb405606bed643c6bd6826"
+  },
+  "tests/unit/main/spawn-credential-binding.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c197bb7523e21a5f80159e2a957a1a5748e3d259bc39bcc515033034cc423ea7"
+  },
+  "tests/unit/main/spawn-resume-command.test.ts": {
+   "tests": 45,
+   "passed": 45,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "be9a1df7e7f4840744e1cfbd3e4a8360aa054f9ff799fd203363bf277de6b4db"
+  },
+  "tests/unit/main/spawn-shell-quote-injection.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4ae0d5be04b701e4a8b84b9a62a05427636dbe915a060a3b98da8bfa9fc5cd56"
+  },
+  "tests/unit/main/splash-assets-guard.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cfa60d400758baa96a87bc3c1445a2f0a8d498c6a009f5d386933111bb8b697e"
+  },
+  "tests/unit/main/splash-build-info.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "89517b1b4e63e8d3cb5055b2db7409a09121dcdfa0339b642d72d4ce71ab91c2"
+  },
+  "tests/unit/main/ssh-argv-boundary-schema.test.ts": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fd129c99bcabdbdd7b52ade9d4196c84dbce40e9798d53001113bec526e3e249"
+  },
+  "tests/unit/main/ssh-end-remote-password.test.ts": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "70c8c18e06c3e27ef650c5ba9d25d0ba6abdff33065ebbd47f9adcdd2adb2c3c"
+  },
+  "tests/unit/main/ssh-liveness-r8.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a9032d12f34ea73db2dea2cb263276548051177ba8f6eba15a71fd180b981b13"
+  },
+  "tests/unit/main/ssh-liveness-tmux-candidates.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3e87c107ed71549ea18c4a07a52d580bb6479a4a520f5e80a7e4bc963b8eb2ae"
+  },
+  "tests/unit/main/ssh-liveness.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "896579be2796f5574fbc9af3c20d9945edaea557c6dbd1bc463bb206d95b2e8d"
+  },
+  "tests/unit/main/ssh-ping-host-scope.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3ac51eeee8a1306917347b4c8636837b2f882a06caae6d3427e57c6935f34711"
+  },
+  "tests/unit/main/statusline-colour-forwarding.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "648c130e856eef2f6c8c4908b3bc9d90a6aa21fc0aaa9c77c63056f1a8216a04"
+  },
+  "tests/unit/main/statusline-watcher-cleanup.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "55e3e0299f02b92a059e68a9ff9ce5e7bfb577d0f79629c75d2edfbff2bf56c6"
+  },
+  "tests/unit/main/store-package-guard.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7f6ad88c7bb03672dc87839e263f4d565821a876ca069e92d350d8e3dd4d1aae"
+  },
+  "tests/unit/main/terminal-secret-env.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f6d55b0aab35b80f3d5d7daba37ae70c2f217d98c646c87d4b61ed6a0fd149c9"
+  },
+  "tests/unit/main/update-handlers.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7063a7bb48a04e084e7bf4d22bf3c839ea0cd5c59903c487ca44fc6d5172ad00"
+  },
+  "tests/unit/main/vision-config-persist.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "25f41705e873d24b9f84acbc45ff08ea17f8747dd0f0df14873e0901764fea04"
+  },
+  "tests/unit/main/vision-manager-mcp-port-preservation.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0daafe90b0df66f9d1b9cc8902831bd636ed5cfe894992192eb96d87601deb26"
+  },
+  "tests/unit/main/watchdog-set-checks-ipc.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "89aff67c57c68ce68301e0d9b2ab4d2e7402f83344c4e0fde60c67987e11d6d4"
+  },
+  "tests/unit/main/watchdog/config.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "630a41c567675099ed53b559f32d157b58eaabbd0ae4b19ef33de3059b8a02a6"
+  },
+  "tests/unit/main/watchdog/patterns.test.ts": {
+   "tests": 107,
+   "passed": 107,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "238ed4eb66347000d02246b4abfedfab7692eff087b9986c4bfb9e9d3f6952b6"
+  },
+  "tests/unit/main/watchdog/session-checks.test.ts": {
+   "tests": 37,
+   "passed": 37,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "17fb51e90befd121073b917a0e6b2df7f5a9bb0921475c1a9d16eae1a39c52e7"
+  },
+  "tests/unit/main/watchdog/session-watchdog.test.ts": {
+   "tests": 39,
+   "passed": 39,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f3d860c23ec6aa24f43ff77dc6acde9d070dddab5354c5756d3deb7eee5b322c"
+  },
+  "tests/unit/main/watchdog/time-parser.test.ts": {
+   "tests": 39,
+   "passed": 39,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7520a219b907a66345f432d94d688fb54de642ab4c7783a93e541270eb7b355f"
+  },
+  "tests/unit/main/watchdog/watchdog-e2e-detection.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "22917a581c15023d3966e79defc0d0fa76b30c304b340066138c68356885a938"
+  },
+  "tests/unit/main/watchdog/watchdog-manager.test.ts": {
+   "tests": 34,
+   "passed": 34,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "74ef404320f928f23a5b0fc24d1c10fa900254fa4706c4be56bd62ce59c22491"
+  },
+  "tests/unit/main/watchdog/watchdog-throttle-silence.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c4c6158ac3d800a5a87088bafdbb911bd25aaf7fe21accb66c701d042734e698"
+  },
+  "tests/unit/main/webview-agent-push.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "68a4414fe156cb6172fe6f4bca42897f57eccee10f73e2f8fa4517403a095190"
+  },
+  "tests/unit/main/webview-handlers.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3a82823f95ca6529aae601b71e094087ca62a471056847c2d9a39a06367893d4"
+  },
+  "tests/unit/main/webview-manager-guards.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f1f0b702ffe6568326b1d6123336902abd119720d2d530796637dd0e3351dd91"
+  },
+  "tests/unit/main/webview-profile-cleanup.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5fe1a77d698b63868f76ede0491daa4a597682383a794ef4e11e3618cce9984d"
+  },
+  "tests/unit/main/window-all-closed-r6.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bb095cd0d4162f71e896978d5be6a0130d153479072dd6736f016d5598aaf503"
+  },
+  "tests/unit/main/window-close-coordinator.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fd60575777402b1dd95fbcc66c89da4a04f7e91f90f738e0684a34072d6fd782"
+  },
+  "tests/unit/main/window-ipc-registered-once.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bc46c92d3f4948f602faa17c48b26908e7505919a3e834e9cdaefb4690fc5b0d"
+  },
+  "tests/unit/memory-path-symlink.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "dbd746658ed8f0510e42a306bbf8f995c263eabb828073acd3d8c3d49ac43f30"
+  },
+  "tests/unit/memory-recent-sessions-ipc.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "23450b6640a4b910e461f294b5e3cc13b6f056d0884dc9f86958b0f0698337f7"
+  },
+  "tests/unit/memory-scanner.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3ce388437f8ea421bc5811ac12603b974fb3a58ecc48566cc3ed8c49126ef4dc"
+  },
+  "tests/unit/migrateTypography.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "97738430219367b714da7f3896c6dbc7c98fa1831f8f9fd80008e27467bd79e5"
+  },
+  "tests/unit/model-colors-refactor.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8b23559bebef6f6f4c4372f1faaa3cf0be7f92fb42e080f5438c709eb5e4bb9b"
+  },
+  "tests/unit/model-coverage-parity.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f140f889dadcec5f493d39cdecb6f4e6121037b1856f9362b2f06865667b12e8"
+  },
+  "tests/unit/model-picker-rows.test.ts": {
+   "tests": 44,
+   "passed": 44,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "64d9167be15d9b07328a6e77e9a2c0c78f8f2efbe49044b98d10e92c1d340994"
+  },
+  "tests/unit/model-registry-merge.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a9fd734ca4a6a888ae5d6a9aeecf0cf9ea65b38d9cf17b41df5eee2d8671c546"
+  },
+  "tests/unit/model-registry-resolve.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "612d79f3e5cdaecf4f14622ebc34249d3bd6b3343786b336f39e8da18e1bc7f9"
+  },
+  "tests/unit/model-registry-service.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8fd7ebfb62bffe91753d7d5e531642924c87c90f3e5cf627b07f407dfa0991a0"
+  },
+  "tests/unit/pane-slot.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "facf190d3bcf6397872ce32db692c175cdf4454ada0e09230d552e6d99533fdc"
+  },
+  "tests/unit/partition-revocation.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7d64a23c06691fc90c881d8af881d327e7545e57a4dcbb06adfa571a21ede1dd"
+  },
+  "tests/unit/paste-pty.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ca1a9e7e49246c2a656c36a5497913965f02c979ecf2c0bb9d0233b1f8fccf17"
+  },
+  "tests/unit/pe-subsystem.test.ts": {
+   "tests": 25,
+   "passed": 25,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "60ccec9fdaba0e5d033b40c6d23c5751ca2a806b8f178ffc53e2a51793e3013d"
+  },
+  "tests/unit/permission-responders.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4deb92b44ee315ee241215cba962c691fc5587addaec85992b3606e922fc7971"
+  },
+  "tests/unit/pr600-r1-lifetime.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6244ce46e971cc535053e6eee23b6b6246c560261316c38f2be8af778cc3a162"
+  },
+  "tests/unit/pr600-r10-force-ui.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3c0c979098b95bd00e120003246b2ff04d4137b0764102c807f952521131676d"
+  },
+  "tests/unit/pr600-r3-fresh-wait.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "605f9d2929df52f6b6e5a851ecf291d4f7e1dbcfd2d47d7bdb4976e13c103388"
+  },
+  "tests/unit/preload-on-channel.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "37728b54dae8376a4a76db4e9d38896c03769526da9ed0e428b227dad0f5a074"
+  },
+  "tests/unit/preload-usage-stream-channel.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fd5f0da9697a3c453d4f69f07b09fc7256d86e73863978f650659b16a8e0fa69"
+  },
+  "tests/unit/profile-consumers.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "14373964405ae38a2763593b5a36523c2117ad57f1ff4e2ad295ff10502aae9c"
+  },
+  "tests/unit/profile-home-guard-invariant.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f5d097dc582c81835e931ce4542e94fb29067e63eac283b9e01b5e28d1d2dc8a"
+  },
+  "tests/unit/profile-id-path-guard.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9c5278bcdb8493e488f0fcb1952ddb776761c7da5f985c04a0af107593003e82"
+  },
+  "tests/unit/project-key.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3b45abe54da15f2c66a7a516072355c307e8cf279938add5bb078cc630de7884"
+  },
+  "tests/unit/providers/claude/classic-mouse-env.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4af71c763d5965a25643914d4e9f281098df70d800551fc06999f3fb883486c7"
+  },
+  "tests/unit/providers/claude/clickable-questions-env.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9554bd8548d8fac9748385056c990955e561aa3a93f11ae9b64c197c28fd2db6"
+  },
+  "tests/unit/providers/claude/colorfgbg-env.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "366bd3161108664875cecc4c185482a060ad83664ec5e93543684c822c61fcc4"
+  },
+  "tests/unit/providers/claude/login-shell-fallback.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9298c3985802a3a8c9e97cf4449db091c2a9681e2be78009758765757724493c"
+  },
+  "tests/unit/providers/claude/resume.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2c1b1718f83fb6a9e7e53af39671b5678fb19ced8cb2998a2738e3ce12d6f6c8"
+  },
+  "tests/unit/providers/claude/spawn.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0c7316e121ef5cd04658cf701db7686906dcd8aafbf7cfd6d616c9cafe9519af"
+  },
+  "tests/unit/providers/claude/ssh-shim-account-delivery.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3c8143f4b849756b3a23ca3f104d9ed6968d1424fce7261d5e566bdc4b328f64"
+  },
+  "tests/unit/providers/claude/ssh-shim-claude-md.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6da6b1f3cf96837cc58b2e273e5404e11d1250b8a6b16b48bee2175139dddc81"
+  },
+  "tests/unit/providers/claude/ssh-shim-mcp-port.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6b1db0b1dabc6a71236bf31084b26e1676cc8d3b00de6665020664e8a20cbcc9"
+  },
+  "tests/unit/providers/claude/ssh-shim-runtime-harness.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b711df3e4732fbcd293759d3fdfbc07f85dd3d89a5d46c77cd31cb496f2be7d5"
+  },
+  "tests/unit/providers/claude/ssh-shim-tmux-statusline.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0f072cd6984cab54d84efc9529e94ef10f38bb281ec6abebe5c013ea5899c6a9"
+  },
+  "tests/unit/providers/claude/ssh-shim.test.ts": {
+   "tests": 88,
+   "passed": 88,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6caff14fa42d9aa7cbc7896a8b4564924371a015ed6f588dc993253586d2d08b"
+  },
+  "tests/unit/providers/claude/statusline-account-read.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ae2457045645644105f736ea57ba5c143716d3f71045010a1e168dad1c87b29b"
+  },
+  "tests/unit/providers/claude/statusline-deploy.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6648d91a70b5d97f587502742d2518da09026bc7a1abc97c92e96a43d1a2fd1d"
+  },
+  "tests/unit/providers/claude/statusline-heal.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bd0b6b337504a6ccbb6e0aeea3daae8f1463f02f0628ea7ee82cd76ef9502add"
+  },
+  "tests/unit/providers/claude/telemetry.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c48c00e3fa15318babc2e8c34f0122e24033e4809742cede03a1ba27161a83e1"
+  },
+  "tests/unit/providers/claude/ui-detection.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b2e30f513852097e276fb007eb2d0b32a0814c2df61666a1b347a4c18a8d3c2c"
+  },
+  "tests/unit/providers/codex/auth-login.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2337a8aa4838649e26ba1ff142b3fecbb5e0fee10f7e7c2075f4a741a0796819"
+  },
+  "tests/unit/providers/codex/auth.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a8f32b9096ea99d9a422ad0f0fc441e21fd85cb2160dbe1af55f8aafd5f81506"
+  },
+  "tests/unit/providers/codex/mcp-config.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d670e7050c8b13df3b0cf8569c717876da39f96d49bb0982b03a166e40d1ec06"
+  },
+  "tests/unit/providers/codex/permissions.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fa6caf39bdd580a258ef0791f5892f896ab88955bf2ce80ef1b0d06cc16ef294"
+  },
+  "tests/unit/providers/codex/pricing.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "766fcf7e5ceec49dce4b59341f4e17633753e506fee99ef94c262af6cad6f382"
+  },
+  "tests/unit/providers/codex/resume-picker-deploy.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "126291c6743c2458d299c47d41cfb1a2e4f8a0cc4b5a962441e45d934138db16"
+  },
+  "tests/unit/providers/codex/spawn.test.ts": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "153601881f722d45587fedbc55929aec452ac83193a4872e2a1cd5399dbf2dba"
+  },
+  "tests/unit/providers/codex/telemetry.test.ts": {
+   "tests": 25,
+   "passed": 25,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8f61498dacc4fdcd66ae402f2abe88d8361713becd9ee0f1fbdb33543c188356"
+  },
+  "tests/unit/providers/codex/ui-detection.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "57eb17cd1c3f20d0e06c683fdca4aaab4be110dd8d778965da1839389dfab646"
+  },
+  "tests/unit/providers/host-color-scheme.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "49e922627633bb1563aa84e35af9a556d9313c68800c8788f9c7124d90b729f1"
+  },
+  "tests/unit/providers/types.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8e560a68a7c423ef6ed1ef6f314e356f1d76977e3d52008e5c0193490c639209"
+  },
+  "tests/unit/pty-buffered-write-ordering.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fc988eec9c6ff067e5918c55555bd5c074f128b629d86eb7b5178a42fa383a33"
+  },
+  "tests/unit/pty-chunked-write.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cad87b40e7de463ba38c9de5f16aee4748cb50f555f92d80ca45968ebc5ed623"
+  },
+  "tests/unit/pty-manager-ssh-container-entry.test.ts": {
+   "tests": 119,
+   "passed": 119,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a551ac569aa94e8756217f8f7dc8cce55f11ed095387f5f899d0801a77264870"
+  },
+  "tests/unit/pty-manager-ssh-password-stage.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6b67d0334ac5dee621f1568a30bd3d73779d2031361ec069ecf2347ee878e34a"
+  },
+  "tests/unit/pty-manager-ssh-tmux.test.ts": {
+   "tests": 136,
+   "passed": 136,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5603705c33a4f95d09e8ef90a485c7d50a5d3975087d3abeaef0851cd2df5478"
+  },
+  "tests/unit/pty-manager-tmux-download.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c593c7dbf46cfa413ae59d9efabcfc556830a57c1af277aedfcbf3c715740cb2"
+  },
+  "tests/unit/pty-manager-watchdog-teardown.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d51c8bd45acd4409184f3af041b13b8267b31d76480fda522e77719435358390"
+  },
+  "tests/unit/pty-session-home-spawn.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "afc20ad5be0e5336e34d3ff240f21304c252985967b6d35b3fca14d74abb381d"
+  },
+  "tests/unit/pty-shell-only-profile-hold.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b91779bfff928d458e708f1e0e1c1e7b2bdde9a2c30278ef4276203533e706c0"
+  },
+  "tests/unit/pty-spawn-env.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e2c1e5bfe269960cf1adbe269e094f5d8ed0a25b50927deac666cf1e85435eff"
+  },
+  "tests/unit/pty-spawn-permission-args.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f1462abcf9a2dc3d7a2d31cd7e81646bd1acc0e371f953df5dbd7ac191100836"
+  },
+  "tests/unit/pty-stale-data-generation-r9.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0241ec9771e690bb55724abeff550e21f01ee797df58e7c5652307b6079ee485"
+  },
+  "tests/unit/pty-stale-exit-notification.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a9d4e0218cb38e8b4982471c1281c3d400e3e509b90b9f63d9e3c147878fcea4"
+  },
+  "tests/unit/reauth-tab-label.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6333d57b0f20ad7afd8331aac297b5dba50de406b7401b2b7ff1beba353ab793"
+  },
+  "tests/unit/renderer/ConductorServicesPanel.pty.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ea8650916fff955928a687e8617a13f765633038789fe7c232db4d8744cd766b"
+  },
+  "tests/unit/renderer/EffortPill.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0edea01b860f9ef4b8b533b66c9fddf45fe5225b5fa3b5acb1af7e450d655b60"
+  },
+  "tests/unit/renderer/SessionRow.effort.test.tsx": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1dd141e5eb4ca69d2ef477f399e8d45407750b3373b8428708f492028ebfa562"
+  },
+  "tests/unit/renderer/account-auth-store.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "55e94e5f680d9e218e9e6fcc1da8a58f74354a020bedd2e7fdae7078348b5f4f"
+  },
+  "tests/unit/renderer/account-gate-store.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7397f8a1d62c1890d2cfd74d65b96bcafc96109344de092a2017a4bc2b0b3ad9"
+  },
+  "tests/unit/renderer/account-launch-gate-lastused.test.tsx": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "91e0581fdad7439149928ec4af08ce58cca4fb9ea65f5383e71a24bfd7ddbaeb"
+  },
+  "tests/unit/renderer/account-panel.test.tsx": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b76eed266ebfd2fdeb4dfe669f86ae751e5b611f375680bdb74e4cc0db74838a"
+  },
+  "tests/unit/renderer/account-picker.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "95bafe46b9cc705e927d7c444fbf33d5757297539aadcb33f319f0ba94c99997"
+  },
+  "tests/unit/renderer/account-profiles-store-create.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "73913cbd15bced8638c140d927b2512df4aa3605e89f761177880ed4ad4535c1"
+  },
+  "tests/unit/renderer/account-profiles-store.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3125c196d671323f6e4553d62d7c622a22e370e384f7eaaee0d7b2615a14ba38"
+  },
+  "tests/unit/renderer/account-usage-panel-streaming.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "066da149a317ba723770c0749fda337b280b9d0e1bc5691f7d1adda5f67b3366"
+  },
+  "tests/unit/renderer/account-usage-panel.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "db55f106fb74ecaaec58c9fbc7d86b2f22aa36a12760a905b4b3ad12b4cea898"
+  },
+  "tests/unit/renderer/account-web-sign-in-mode.test.tsx": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2c54a37356a0f355c8d5e1d0829df540a858a6f68a007528f38ab558c0d47823"
+  },
+  "tests/unit/renderer/accounts-panel.test.tsx": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "35f3a4b30f01d3767b4cee8d34e889b69438ed207c6dfd817ed912ed9794a243"
+  },
+  "tests/unit/renderer/active-indicator.test.tsx": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "790ea1e739692f86c9d8686186760ae7a409a13b750565d9ac55af48af1d3985"
+  },
+  "tests/unit/renderer/agent-canvas-security-guard.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "71809cfd11daeb27d8690885af397dd51e72bda31d9171ce3bd4afbad4a5c7c0"
+  },
+  "tests/unit/renderer/agent-hub-onboarding.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1872ea569d87593004a415c7e34a743dd521aab888e862415825d0f2597b03d5"
+  },
+  "tests/unit/renderer/agentcard-statusdot.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5fd459323ebed5aa633a644a7dcbc077e1036605fe30ce62dedfcdc95ce5ebb9"
+  },
+  "tests/unit/renderer/agentpicker-codex-gate.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6b1a7a838f44161184b2997349a26d9a2a3299cc7bb268c8a371b95096e035fc"
+  },
+  "tests/unit/renderer/agents-summary-metricchip.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a52f07a19f745480154ce8e8ba26c43610272b1f0dd183d9be97f3cdb1dd8037"
+  },
+  "tests/unit/renderer/ai-usage-chip.test.tsx": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "813896b0977dde0cdfe093294ba4038e740745022499380fabacfc8e07fa4a83"
+  },
+  "tests/unit/renderer/ai-usage-format.test.ts": {
+   "tests": 34,
+   "passed": 34,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "aa5ed4d066c7e649721af3e3c37dd13c670295bf10f82c443998c922e43b19c5"
+  },
+  "tests/unit/renderer/alt-pane-coordinator.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bcb4b680f54ac5d0f6f0f032f4dcc5fe61da7029e6b33bd51f3a4fc2e9689f95"
+  },
+  "tests/unit/renderer/app-lifecycle-wiring.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "537693c01a914381e036aa3bdaf6d3f8deac11915145659fecb37ea2b7ceccc3"
+  },
+  "tests/unit/renderer/ask-conductor-launch.test.ts": {
+   "tests": 25,
+   "passed": 25,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "99eefe50063eae4e4422dee6511668ef06988693fe8dfe9455bcb514de813451"
+  },
+  "tests/unit/renderer/ask-conductor-persistence.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c9d995d32f2ada22fa4fbdd5a5830769793a334f27c44204cc391bedddb8479e"
+  },
+  "tests/unit/renderer/ask-conductor-ui.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8d14eb8c6dfb6718dfb1bfd171bd8aec6aca476d623531e82d9998bb990da0a2"
+  },
+  "tests/unit/renderer/ask-slim-command-bar.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fbe320e4c15b394337ab0c2db5e6df6ab5feda3b88e7808abbf4be10dbbfddef"
+  },
+  "tests/unit/renderer/auto-detect-banner-accept.test.tsx": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "13e4d13a2cd05f2bd9680cec9b1dc9b8b67fb40a907003fac7041750bdb569e0"
+  },
+  "tests/unit/renderer/boot-gate-onboarding.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f2fcef9355805989759c54b5a77ee2950e689a16dd4a08fd20d902eb5285fb67"
+  },
+  "tests/unit/renderer/boot-gates.test.ts": {
+   "tests": 31,
+   "passed": 31,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a80253e32e0f64f5bf50ebc1306cb16319bb56bf7551e31c3f04db5a42b526f0"
+  },
+  "tests/unit/renderer/boot-overlay-wiring.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "81d6dc838afadc9dec4c5b96829cab228976d6c942e5032abc15bbf9fc1bc987"
+  },
+  "tests/unit/renderer/bottom-bar.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "259c5a80d7e8421ea756f439153bf83541aeed45a13e3ea65cd96e48f9a8fc72"
+  },
+  "tests/unit/renderer/bottombar-update-poll.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5fbb2071c6c667d81cbb77e55001c69d92e8f347771fb67fa716a9a0e32fd774"
+  },
+  "tests/unit/renderer/build-identity-line.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "66570f13f232a5cd86346a441e49dad96b9e8b46617630bb13195c261929f1cd"
+  },
+  "tests/unit/renderer/canvas-attention-pulse.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "457b5c4cc79e592397abe90570a43cb78a829e9e1ec0be21f7f6ea3b87f37c48"
+  },
+  "tests/unit/renderer/canvas-bridge-analysis.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "992cbdccbca6d807b995c70cac6f60f6bb965f37792c5e7a0e72f20d3532e215"
+  },
+  "tests/unit/renderer/canvas-bridge-anchors.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "01fd9ac17b57f52fcc1b1e02a2b124daf52e6b47b72ce31c83a0966e429519ee"
+  },
+  "tests/unit/renderer/canvas-bridge-axe-join.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "78bbfc6388aeae4ef0bcc3849a9cadb787734c5536428fedcc8c695ba4a5850b"
+  },
+  "tests/unit/renderer/canvas-bridge-bounds.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8f2a7581f47b30d15a37f6e007d9b76692f1f83b505299b5edeaeb9cadf9ad51"
+  },
+  "tests/unit/renderer/canvas-bridge-coverage.test.ts": {
+   "tests": 25,
+   "passed": 25,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2dc298906269b44e143d63f5d5dc8866afc1e751e3b4e57f4c4082501a329af5"
+  },
+  "tests/unit/renderer/canvas-bridge-exemptions.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1c96b3c1a64e6e0ad99f4d1689caf1467f2ae76471875eb518692444f79a80e2"
+  },
+  "tests/unit/renderer/canvas-bridge-field-values.test.ts": {
+   "tests": 39,
+   "passed": 39,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8d1a09c1b067dbbb31166970f3525d564e383a0bb82fa698e850a495aaa7a5ae"
+  },
+  "tests/unit/renderer/canvas-bridge-hover-reporting.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8c74b5a4293f2f3d42545b254bbb41147a7fd9623785bf79a50f6d266dabf533"
+  },
+  "tests/unit/renderer/canvas-bridge-invented-findings.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "40de7b2b8f0f0f4a50564813340983553faa6ab3f9f39ea6939e4ae6f38271ba"
+  },
+  "tests/unit/renderer/canvas-bridge-issue-cap.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7d33a4dde6b33c1edc8d5ea7c6590f35d1e126fdd72dd1360c881a33dffd66a3"
+  },
+  "tests/unit/renderer/canvas-bridge-join.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7a468a052e6799be064b624e383b87abe4df9875aec1a757ffe3748bb138947f"
+  },
+  "tests/unit/renderer/canvas-bridge-name-values.test.ts": {
+   "tests": 75,
+   "passed": 75,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "13f5d1adf8d7180adba93d964bc66e859a6e95597db43c27a72568ed74fcd667"
+  },
+  "tests/unit/renderer/canvas-bridge-shadow.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b7cf3e9a61a121ba709922a7b28230259fa0061047b8e710b70f93e6f07d0b98"
+  },
+  "tests/unit/renderer/canvas-bridge-snapshot.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "288c6b7151f8564795d7707d35c753d13f814f0415abba1f0ace832c1edc596f"
+  },
+  "tests/unit/renderer/canvas-bridge-sronly.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "07551dece1d106123a3ce751adcb42428435532e1e6bd4234cf1bfb54a9050f7"
+  },
+  "tests/unit/renderer/canvas-bridge-suppression.test.ts": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "40ddc3cbc62cbc2f2b3da05773521e556ba6c607f2f353608bce3ce4a9b68e5c"
+  },
+  "tests/unit/renderer/canvas-bridge-trail.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "45054d46b8277515abc8fee27c21c211e6edceca49b1458e6df0508ef690297c"
+  },
+  "tests/unit/renderer/canvas-bridge.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "68c3eca808ea5722fedc9c107f2b3d7ecce157f23c47f25ddf4c481223be70fe"
+  },
+  "tests/unit/renderer/canvas-c1-compose-gate.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1eeb2a688023972183317cf4915bc1bbbff5b19b21f4b9ada9d180b57f4e3827"
+  },
+  "tests/unit/renderer/canvas-c1-sketch-versions.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "29ddab630f4bcdfa846f0fa0c3244d8228eaa53039be40c4aff27a5302bd7d51"
+  },
+  "tests/unit/renderer/canvas-chat-pick-panel.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9a04576b6de2474c4aa9b77f22d873ed86a9dc16c9a89dd777b96876e620bb1c"
+  },
+  "tests/unit/renderer/canvas-closeout-groups.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9e3bc4fbd5d996adbaaca0d392ae22760a777cb5e846ffe63335b64794557d2d"
+  },
+  "tests/unit/renderer/canvas-complete-button.test.tsx": {
+   "tests": 24,
+   "passed": 24,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e03358f5c400029f8328ee2ab00c6988f93ec0be8836e66a4fe9b134062b27c8"
+  },
+  "tests/unit/renderer/canvas-composer-rework.test.tsx": {
+   "tests": 52,
+   "passed": 52,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6090d6ddaea154635c0d0cdf071b74355aacaed1ac1e69d01ccd327d4d6626ed"
+  },
+  "tests/unit/renderer/canvas-coords.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8670996adf0fa3043bf26d75db800c855bbaf1558918926c976f56d96d30780c"
+  },
+  "tests/unit/renderer/canvas-cross-canvas-count.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d0c14f54d7ede5b6a8fda351aa1da8fc19b5e05bea712cfeccbe498aab94811e"
+  },
+  "tests/unit/renderer/canvas-empty-state.test.tsx": {
+   "tests": 37,
+   "passed": 37,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ac6ce9cd19d8846b894d7e85c4ffb778b4762dbed064344c414c31cd142a9446"
+  },
+  "tests/unit/renderer/canvas-evidence-recall.test.tsx": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "41ffeca246c94b2bcf12a75220ed23a0ae372739a28c4db16d409c56c6931ede"
+  },
+  "tests/unit/renderer/canvas-evidence-stamp.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b9d778532bce245ce8a30db20054f7bbf3921fbc04a92cb8e812c47a501557cd"
+  },
+  "tests/unit/renderer/canvas-explained-page.test.tsx": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b1774dc4e84c898e09726c310765669f82d2b1ff24f439dd0e505a657824498d"
+  },
+  "tests/unit/renderer/canvas-filed-strip-retry.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d977585a588368ad64eea7ee5cef57b1fcd388662dac6ea52f829ea63648a9f3"
+  },
+  "tests/unit/renderer/canvas-filing-notice.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3caf53048fb0000c94491e68abfa89079733939e94e43d971d26e80b9662a90b"
+  },
+  "tests/unit/renderer/canvas-frame-rpc-flood.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a053c76767a11af721d9242e25b6950fb09ba2a489168802a45bc95091687eac"
+  },
+  "tests/unit/renderer/canvas-headless-capture.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8858a05b2210b5a32c569cf6939092bf2e2abd47abf49902b84b24cbebddf244"
+  },
+  "tests/unit/renderer/canvas-history-control.test.tsx": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bee16a46b90ef594fa4b50aed18679d354e0c702f3f7cb88152278c4971631b0"
+  },
+  "tests/unit/renderer/canvas-history-projection.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "34ba259894a04a3d2a6cdbe473418099f5d83bf80451c3015a77c2841a574f0e"
+  },
+  "tests/unit/renderer/canvas-inbound-channel.test.ts": {
+   "tests": 63,
+   "passed": 63,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6699fe059539bda83486333c59bcf7576f10754f770603039087d14f2807257e"
+  },
+  "tests/unit/renderer/canvas-library-delete.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9c7a1b45400240aab459e2774ea347e1b03434c9191c4b29d2317cdfc53b1e0c"
+  },
+  "tests/unit/renderer/canvas-library-v2.test.tsx": {
+   "tests": 33,
+   "passed": 33,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ce4677ec02c0dd68082ca5d598794242e172512ca612bbdf684c423f55b36bc5"
+  },
+  "tests/unit/renderer/canvas-note-variant-chips.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f0f172153a481840e021898473a93c5ce67af72cb8f3135cf9eb3684c00c1ab5"
+  },
+  "tests/unit/renderer/canvas-notes-panel-page-reported.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b51482752f46890d7ad455f952c99bde39a065466c16fbc0f38ab3bd04702f90"
+  },
+  "tests/unit/renderer/canvas-notes-panel-round-collapse.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "dede72d455673bebb0b36931644681658ede959bf6fea9518a2b5bcc9c21cb28"
+  },
+  "tests/unit/renderer/canvas-open-reviews.test.tsx": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ff3d6c2d55ca8034c7ab43d7efeaaf6132c754f35cb88c1f3292c7d41eac18bc"
+  },
+  "tests/unit/renderer/canvas-pane-chrome.test.tsx": {
+   "tests": 29,
+   "passed": 29,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "35b6076de007846ad14bd04931dcf28b3e2dbea2711c83494bd1b42c33d9ad4d"
+  },
+  "tests/unit/renderer/canvas-pane-hostile-geometry.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6a51b8272cd5307ad80b86e167c19654e473318b2e7c8d8dd8d85fbd72fb65c3"
+  },
+  "tests/unit/renderer/canvas-pane-inbound-wiring.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "833c173a3182fa37fc3b3323d68422381e2cfe362ab34a0ba3fcb810fd1a6462"
+  },
+  "tests/unit/renderer/canvas-panel-sections.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d67d2e2a53a15cd447ee899a6e48c110989605d661433ef8090cd483066e7e90"
+  },
+  "tests/unit/renderer/canvas-paste-image.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "058a4105475e372d915596aececc99c403c48d05a6e25992dc4846cba10f3117"
+  },
+  "tests/unit/renderer/canvas-paste-panel.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f675a135d4cc67515208fa22ba937765e105f235efd6dbc27a85af52b3860a4f"
+  },
+  "tests/unit/renderer/canvas-plan-review-gate.test.tsx": {
+   "tests": 30,
+   "passed": 30,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a11c45069c6cc1ddb4007e730c4bd23fb7081c62a2ca082502da0831c632438a"
+  },
+  "tests/unit/renderer/canvas-readonly-pane.test.tsx": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d3d7d8a987243bec83ff5dac422e542b755773b97c9b37ca7ea16c4c6d1c3d1e"
+  },
+  "tests/unit/renderer/canvas-resume-signal.test.tsx": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "26efb36ef6d69dce5095b7db09410b2c36b0c7b04b221cfd71f37f736ebd6899"
+  },
+  "tests/unit/renderer/canvas-review-groups.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a34b8c2b33cdb4b9a7e7e72bf5399c68d80d92506448547ec05a3c050d800b9b"
+  },
+  "tests/unit/renderer/canvas-review-guards.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ff78240cc917466d9c0ec17b9718a9a91369aae7ed138b081399cbb30484366e"
+  },
+  "tests/unit/renderer/canvas-review-store.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "da8a4882af63ce00ef83e3281a16534476d8cc32b64595075e97077cec657963"
+  },
+  "tests/unit/renderer/canvas-seen-report-panel.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d4bbd1864345388d75670f866c0eca06456c9cf7533d174725ca2f2d0b2eeb70"
+  },
+  "tests/unit/renderer/canvas-settled-panel.test.tsx": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "63040a3504f1a353b95e6294db0ef4542e7f2549558249d9e30410a821431427"
+  },
+  "tests/unit/renderer/canvas-snapshot-host.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f5b55cbfda76518dce8eb092b93dc49d0a0c94714fc3ce15f66046b9b1c19f80"
+  },
+  "tests/unit/renderer/canvas-submit-return-race.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d544da7aeafe5002d09bf69e35859d496353256d64122d1416706f6518aef834"
+  },
+  "tests/unit/renderer/canvas-testing-composer.test.tsx": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "015485de722d3ded42549d8bcad7151aa0e44c851da75219eb4cd4a9b04ba7ef"
+  },
+  "tests/unit/renderer/canvas-testing-evidence.test.tsx": {
+   "tests": 31,
+   "passed": 31,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8a02e1a6b5bb600a844db56e85b2f38cce44001f3d225d4da2749cd8d1a82ea7"
+  },
+  "tests/unit/renderer/canvas-trail.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3e9b3718e8d993ae038f5072e15a938220c694a57c8f7d09c4f2cc09643a865b"
+  },
+  "tests/unit/renderer/canvas-xray-mode.test.ts": {
+   "tests": 20,
+   "passed": 20,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "33c142fd0f1c42728e8375ca949a4bf33a05e2aac2f1004691a0f46ea11bb938"
+  },
+  "tests/unit/renderer/canvas-xray-pane.test.tsx": {
+   "tests": 44,
+   "passed": 44,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a6f335fd879d639f5f646268559c0fa34bb183a7d527820fd5c560de29e7fff2"
+  },
+  "tests/unit/renderer/canvas-zoom.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "67b7cb4e8bca2bf73f096d7a6b5dc0aff1c9c06bf273b4aab3f351bf15809aba"
+  },
+  "tests/unit/renderer/channel-store.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "470f7a80046456d000d049883e7b23184017bf605fb7cbe5cbfe17f7cb894ef6"
+  },
+  "tests/unit/renderer/claude-web-targets.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9964bec6ce05ad3d247f72dd46ccb3c1a8cd2733050250af01f49be383a7afbb"
+  },
+  "tests/unit/renderer/clear-migrated-local-storage.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cfc289e88669f4f58c5d23aa50e93c14f2ad257e7967a808581aafe72f7104cd"
+  },
+  "tests/unit/renderer/close-dialogs-tokens.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a75c09aef2a74883b17baa854c58caf42d1d518d5e9fc2ce3c9beb1e2790a1d6"
+  },
+  "tests/unit/renderer/close-forgets-browser-profile.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "59414041b7758265697b5bb6a381cdffac0c24a95f08c9f2fff68f14277cef31"
+  },
+  "tests/unit/renderer/close-session-batch.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c87bcfaeff6b26b2bee9eaf426a28f4147538d3cdc5952cd8a1c38334fe373f9"
+  },
+  "tests/unit/renderer/cloud-agent-store-persist-failure.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ffda636f63ed655ef0bb6d28875019bbd0d94846d9c15c6acc88435c29edf286"
+  },
+  "tests/unit/renderer/cloudagents-status-colors.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "66376d5e4b37cf582787c62a4858adcc416f0c8058708289ef87a2a53e14a6fc"
+  },
+  "tests/unit/renderer/codex-mini-icon.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4bae33f04da6b52537a606fc1e17941c688f99cb4335f9692796f1947707b630"
+  },
+  "tests/unit/renderer/codex-models.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "71feb339dded360b48a38c9209c6c4462ec46d49815c813468aa5df322346a6f"
+  },
+  "tests/unit/renderer/codex-review-sub-tool.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5975775f31e3fe895fbec4fd0fb219633c6e25332cc36d407756b71463d471c2"
+  },
+  "tests/unit/renderer/colour-migration-hydration.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bf69860bf66a357936657084c87f254574918005493cff331a86b2f2815e01ed"
+  },
+  "tests/unit/renderer/colour-migration-notice.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bab2c50f3e183147872e6fbe190d93046be8d8b605d106239925d3d62d4e3be4"
+  },
+  "tests/unit/renderer/colour-review-target.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bc56a8353133043de2b5fb2216bda3d58f89b2923614294c32d5bb905eef060b"
+  },
+  "tests/unit/renderer/command-bar-layout.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7bb76eda969488f467bad98edfdc6439eb7ae4ffbc619ea34d331a5d57e86232"
+  },
+  "tests/unit/renderer/command-dialog-capabilities.test.tsx": {
+   "tests": 35,
+   "passed": 35,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "586192a57ad481b713628496e9695101daf129e43baac8cde8a64974fe68f47c"
+  },
+  "tests/unit/renderer/command-dialog-page-kind.test.tsx": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d09cd2b393851c5ce6714b8f3abf3c6b9b40ebc0638bb4edc17315501342be0a"
+  },
+  "tests/unit/renderer/command-dialog-secret-path.test.tsx": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "dceb6133bdf8d9abc73946d2ab33b0b753bff1f4f142a9478e1244ef76db8d0f"
+  },
+  "tests/unit/renderer/command-dialog-secret-value.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f81ca122d83941eef8336de8d0df3f374a7aeee39171e3de5a1ee9bec0cc8f2a"
+  },
+  "tests/unit/renderer/command-dialog-tokens.test.tsx": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d13c493f17459f8cf216b165da50642a8140613e64129ab8c688fee9cb04c0d9"
+  },
+  "tests/unit/renderer/command-dialog-type-first.test.tsx": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ff91b0570979c57d08e1bf52fdb478c9a57df1e577059fd3b55c06b85d170583"
+  },
+  "tests/unit/renderer/command-machine-badge.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "42362936f333b6051ea4023152d1c1da7964aa4121f093e9779efd2426396300"
+  },
+  "tests/unit/renderer/command-row-is-the-truth.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "96b02e69fce74abe207c2502053fa84880078748d7b950046e761ef8eb423597"
+  },
+  "tests/unit/renderer/command-upgrade-review.test.ts": {
+   "tests": 40,
+   "passed": 40,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c14183cd2e349df1897f7651ea896c006342374f570563000b36b4159fe153b9"
+  },
+  "tests/unit/renderer/commandbar-artifacts-button.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7dcc2081b8f65646dbe645468d64879068d4c89d9bcb0cf538a3c87771951f6f"
+  },
+  "tests/unit/renderer/commandbar-codex-toolbar.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ca477dd37181b7ed5ff6731650d28099319a6c594dd4c38b75bf49b2ad05736d"
+  },
+  "tests/unit/renderer/commandbar-drag.test.tsx": {
+   "tests": 27,
+   "passed": 27,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2eeec118bda5b6ecde599ae8349b2ac19ff86870c6df4b6f6c84acfbcaeb0ec2"
+  },
+  "tests/unit/renderer/commandbar-focus-handoff.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fc5b35a7958a16c49e9ca16985eee8558efd4b2155f413c6d4f0eba9b90cc5d4"
+  },
+  "tests/unit/renderer/commandbar-gui-exe-routing.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4d49035c4aa1a5ee88bf3ac7f0d72775715850c5cfbf5b1bf2aeaa721b8ba7a6"
+  },
+  "tests/unit/renderer/commandbar-menus.test.tsx": {
+   "tests": 49,
+   "passed": 47,
+   "skipped": 0,
+   "todo": 2,
+   "namesSha256": "0cd3ec76b65ace1602d1b827a1655a6e20585de3d04923d91402a93f8a2db79b"
+  },
+  "tests/unit/renderer/commandbar-one-row.test.tsx": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "65a932348ceee982d29d488302e77f95b7ee0bead588d10d7a683e3f7e05171c"
+  },
+  "tests/unit/renderer/commandbar-overflow.test.tsx": {
+   "tests": 33,
+   "passed": 33,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1f0b4d2fb8a2e6eab6d59c838bcadd95745db3a6e3226c649e4870b0a1553f3e"
+  },
+  "tests/unit/renderer/commandbar-page-command.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "51e5a60a2b8daadc6bd5c9318bafc794198115081f28d99b63a4a4dc14c9b380"
+  },
+  "tests/unit/renderer/commandbar-quickactions.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1c85bb2926cf820fe0753c5a3ce784fd70a129553e558b306f8ec4e85f381007"
+  },
+  "tests/unit/renderer/commandbar-row-tokens.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "49b04919e1030972c4d2021103398f09f92c1ba38095a42c6fd854abaa4a1dea"
+  },
+  "tests/unit/renderer/commandbar-rows-and-scope.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f292560410e29c181ef372575c3f67544b0e5016ae88d59e6074175f3537e970"
+  },
+  "tests/unit/renderer/commandbar-secret-ref.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b6e3c8811c49c3473d4fef2d306226c49af9be7c628143fdf857796d17f0204c"
+  },
+  "tests/unit/renderer/conductor-health-pill.test.tsx": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c70131a5216cbd02747237112c3cd09681ba4374980237fb62bc6ae94f834400"
+  },
+  "tests/unit/renderer/conductor-mcp-canvas-card.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e676c3247ede128aad201e10e8c07da1d0de29990150056b6a5c5f3d3daaeefc"
+  },
+  "tests/unit/renderer/conductor-mcp-page.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d1d089c0de4a2b5025de01da80eae73af48267c41595cc438331f1a486cbd866"
+  },
+  "tests/unit/renderer/conductor-mcp-store-server-running.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0e4022ac5f619555420dd391b73a61f356d4b0df71a7b1a62cead288829e4e02"
+  },
+  "tests/unit/renderer/conductor-mcp-store-vision-persist.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "63147b30ea2937c64637cc866bbc9ad4bcf9c94b82fa4f1fcc75e15c1c53a882"
+  },
+  "tests/unit/renderer/conductor-services-panel.test.tsx": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "231a31ebafced57235de88c35ae202c055eafd4af747bddf13d30d2cacae8f96"
+  },
+  "tests/unit/renderer/config-edit-guard.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c17cc9026553dc3bdb224682bedfd2b0bd91e846a941b3732a6c06e9e3f5c0e1"
+  },
+  "tests/unit/renderer/config-hydration-guard.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "774fd852ac0dfbd15363b84a05e8534e7be1133285477e629dafc3d8f28a0ebc"
+  },
+  "tests/unit/renderer/config-load-failed-notice-reason.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6b77eef5598e45aa2a11bc38009df5b01042056530894a2ba588d2876cab9141"
+  },
+  "tests/unit/renderer/config-load-failed-rail-indicator.test.tsx": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b759eb2d6d1ff747398fdcf05550a20958ea3ad09aed8d9f8115b3da4286efa7"
+  },
+  "tests/unit/renderer/config-load-failure-write-lock.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a3970babb2f25c9670e79af1059fbdd9b2123dc3afab465c98bd5a8ef7411839"
+  },
+  "tests/unit/renderer/config-read-failure-latch.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d039658e787777ba2a0d3dc7c9541e44b1f4a238ee9973060bdcef9c1f86e8d5"
+  },
+  "tests/unit/renderer/config-row-running.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5892406fd0d761b8aae7b488bbb110a3ec2fc0f300788c722c46fb1b9e601de7"
+  },
+  "tests/unit/renderer/config-saver.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "76a3935a5ca6c4daae15804a107aafd079814fb18a9800b84cdca4840d1b59d0"
+  },
+  "tests/unit/renderer/configrow-identity-colour.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "13b79296404719b06736a7436d06397d4102e460145af0ce0790fb769222deb6"
+  },
+  "tests/unit/renderer/configrow-quiet-launcher.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "01cea4963b1eb0aad7ce479e65f47f6dc17b6ae03372e969e4ff207600bdb607"
+  },
+  "tests/unit/renderer/copilot-meter-settings.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "158443b7aacdc75bf80909cb54bcffe6c76d607219dd0be90691becd7725e749"
+  },
+  "tests/unit/renderer/csp-policy-sync.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "40990e0a6db14e8e99bf3f7ab6f5e1b98fc101f4ceb0cb979ff19d51236c2a13"
+  },
+  "tests/unit/renderer/custom-commands-tab.test.tsx": {
+   "tests": 26,
+   "passed": 26,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a3bde09dd534c2127d8c96082bafd87b48b6354de920bd9db34b9ac78972b1ca"
+  },
+  "tests/unit/renderer/detached-liveness-store.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7d83cab4ee7918d174783389788d570556400371b23b2855e2f2354f3bac3877"
+  },
+  "tests/unit/renderer/detached-remotes-liveness.test.ts": {
+   "tests": 30,
+   "passed": 30,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ff4e9e7794b44b1f49fa3b710167fe7cc8706cd8b4a4f68a9693848b2744a3af"
+  },
+  "tests/unit/renderer/detached-remotes-store.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "08127e8c6f53f4a61a2be375b7a1ed22ff491214f744e21349ca295539956587"
+  },
+  "tests/unit/renderer/detached-remotes.test.ts": {
+   "tests": 35,
+   "passed": 35,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d637f9499d9d1f621e20a0b46e103467352f55df6cf5fed4c02d2a492330eff7"
+  },
+  "tests/unit/renderer/dialog-palette-retired.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0d031df6ac985862594f1722a0ccabbfa2f9611d74f67f17b32b008a916fa054"
+  },
+  "tests/unit/renderer/dialog-primitives.test.tsx": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "575f79176419d00badbad9f882e4eb8ee542c1c8d411ca40bd58e199ca509085"
+  },
+  "tests/unit/renderer/excalidraw-fonts-guard.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "64ccdcc683ae0d7a1a7e45c35d7d5fd64c299dedb67cfb71ac0c5499b5718958"
+  },
+  "tests/unit/renderer/fade-slot.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fadded5896f2f997bdd741c56ea27dd0fd10de584dafbffa5f5b405e6d1ad342"
+  },
+  "tests/unit/renderer/footer-minimal-dots.test.tsx": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a64c73a66448eb708cdff7535339742ca4ced418cd4ad1cb39b52777032c4aa4"
+  },
+  "tests/unit/renderer/github-config-tab.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "89fe766a03dafabb9faaea7df088983366129af3de4196831b70e3593474a5cd"
+  },
+  "tests/unit/renderer/github-config-template-persist.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6c17982b99036374c900e0481cd400c6eee3029699b4caf790887e8fc24cbe6d"
+  },
+  "tests/unit/renderer/github-copilot-card.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "80a5d026fc0dbde34e00b1dbf48e63419ab41ec516bf72bf8f44e764b8ebb7e6"
+  },
+  "tests/unit/renderer/github-onboarding-gate.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f96e1806c359f636aaf4b8237cf50ac58e4547eac1ca06f96754f1c50302c788"
+  },
+  "tests/unit/renderer/github-panel-fab.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5814b9f2619f85b16f42398a3b6b0f4fd89ba6b3040d7bfc8ea512f71ade5866"
+  },
+  "tests/unit/renderer/github-panel-header.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5fe528f71594fa07fcac5fed2f0d23167d3aaf50bb693d8ca33e4574e351330d"
+  },
+  "tests/unit/renderer/global-logs-view.test.tsx": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9f4067cd90e90fb624969bc8a0a7749c38b934acad33fe79210a8ba616929d80"
+  },
+  "tests/unit/renderer/glyph-diagnostic.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fe4811f51d9292a9aadc4a6026401ff72baeb124b028e22c4507e78c0863eb88"
+  },
+  "tests/unit/renderer/gpu-rendering-default.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "566375e2557090fec22c5a20dc57acaea181340ce97e272e2389d5a4e4f267a6"
+  },
+  "tests/unit/renderer/group-sessions.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "114c1746ba26306a767dbff123802b317d8cc920a15c3e1d66e9b109ec67eabe"
+  },
+  "tests/unit/renderer/guided-tour-counter.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1417d3b41d88530d4bf54a601645755d9445fb114537d59953e16360adb00489"
+  },
+  "tests/unit/renderer/hide-core-tools.test.tsx": {
+   "tests": 20,
+   "passed": 20,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fdcb94a19c3c8b13285ef4632307a7c9774af26357bdf7db6880dd9a71178eaf"
+  },
+  "tests/unit/renderer/host-ping-scheduler.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "425ec3819a74ead07cbfbe567c7abb630479fe2ee22ec0dbfd16a3b999d14a39"
+  },
+  "tests/unit/renderer/identity-swatches.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2cd1eafb78353c7849e9867d0de8562afdd7e7cab01561e176fde0aee801d042"
+  },
+  "tests/unit/renderer/inject-attention-styles.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6aeb9716135de2427a100d70559a7833c84d563a198a56a2a18466f2e79a092e"
+  },
+  "tests/unit/renderer/input-diagnostics.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8366a64adfcbaee19c4c99e05fe5f634ae8e4605e533427b894665ed49ee1efc"
+  },
+  "tests/unit/renderer/insights-codex-empty.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e0310bca3dea816e38403fd25b887f8a683da306b0129c42d1736bd804f4d7e7"
+  },
+  "tests/unit/renderer/insights-failed-runs.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2ac801706912be128ef121b1c3a5e46b9ced28073a8c9a0d49feb4f8c43c3916"
+  },
+  "tests/unit/renderer/insights-no-iframe.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e1eb7f54b31e92f9bc168ed5def2a8cb3ed121ece0cd80c03151f87e735415e4"
+  },
+  "tests/unit/renderer/insights-sections.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "dfe0cfeb7dfce920a09b2adf43ab02f83ece1aa21cb916316d33bba4364574c8"
+  },
+  "tests/unit/renderer/keyboard-glyph-capture.test.tsx": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "87899b20b71b15cac27bb314aa2f3cf0f8a496b870432c3807d881d54cbb90cc"
+  },
+  "tests/unit/renderer/keyboard-tab-cycle.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "904cb54ed9af77fe54e92cd52c11abf7f2f839b90b5504fa51d840a914f66b9b"
+  },
+  "tests/unit/renderer/kpi-sidebar-metricchip.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "29f7122e8309e1ae141df4f476d5bafa6f1538a5cc5756a14cc129b1d92e0b3e"
+  },
+  "tests/unit/renderer/launch-always-new.test.tsx": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2efabc45f8c39ecd73423189696bceecb45fc15edf05afd70f6656720ac972a2"
+  },
+  "tests/unit/renderer/leave-running-records-detached.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ad4925dcb67fb9f92be6370654380077d5ac357d43f66e9ec521b74e34b1b3f8"
+  },
+  "tests/unit/renderer/logging-consent.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3eec7dc52be0421a85efcd25ddbd430a9718c833ec9bfc56952d4cf386ee4534"
+  },
+  "tests/unit/renderer/logs-button.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "740d674c26334c42cd534710c7c34d9d381b48fb1d2e087b7f533730221f735e"
+  },
+  "tests/unit/renderer/logs-disabled-states.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "19be11c9a923f30831730de4647c78e660555590d792bd9928cbc47950e6a634"
+  },
+  "tests/unit/renderer/logs-pane.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "806d1ab63f10793e733592b79cfc2e21d40932ce3a6fa701be7fdab6fc8328c6"
+  },
+  "tests/unit/renderer/logs-slot-key.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2cb461b08722b4a365a23224e2cdc28653d4a58fa2549e3af600751afef49f9b"
+  },
+  "tests/unit/renderer/logs-wipe-modal.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "428c939615a1f4444dd314af6fbe7210c125f005415e98b643d2da8848ce5fd7"
+  },
+  "tests/unit/renderer/logs/chat-transcript.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bc471ee77a20e1da9ef3b2f30462ff4b5df3f645cd2ad741a14c118f3fbf6628"
+  },
+  "tests/unit/renderer/logs/log-empty-state.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f96b9d1d3b75b6cfccaf20bd3596330f7651705bd5b59b90905e9aa99d8bd407"
+  },
+  "tests/unit/renderer/logs/markdown-message.test.tsx": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3f5c59c6cce40577f51235dbf99b8b9ab9e159bf38c1ffa51202257e7898c777"
+  },
+  "tests/unit/renderer/logs/timeline-rail.test.tsx": {
+   "tests": 20,
+   "passed": 20,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "77eec072dfa0d12cf5bb02da3e5970786c65dd16a635b6e6f4f2c12de2dbd4da"
+  },
+  "tests/unit/renderer/logs/tool-call-row.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "814bdc9205d4d431370dc65b7fc44ec035d5f76ab6008894c44e2fbc7146e7c3"
+  },
+  "tests/unit/renderer/logs/use-windowed-turns.test.tsx": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2e3c094e5364dda5533f147f25ca9976a03ae23a184d5d5c6ddaa6a1d42a6e3b"
+  },
+  "tests/unit/renderer/mark-restored-predetermined.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d3ed08ac2eb0dd33fbafe774aa663ed66ea449564b2829e50ddd329cf3af0325"
+  },
+  "tests/unit/renderer/memory-codex-coverage-banner.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a34f06ba9daf89161784aefb51846099660828994a3e127297b72ae5908252e6"
+  },
+  "tests/unit/renderer/memory-live-sessions.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "030d0ff71baf52a4740ca7deed19d72f7d17e4f0658599ae2c3a7c0429d92b05"
+  },
+  "tests/unit/renderer/memory-markdown-sanitize.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b54745332a93c5e5c4885263a8b12d46b000fb4c4d51f2f7a3d7722dbf53af03"
+  },
+  "tests/unit/renderer/memory-stats.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bb4a59c91b11cba0a69ca40c4a4cbe832c9e644fc8fdfe19a71b2e715f220467"
+  },
+  "tests/unit/renderer/menu-placement.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "985b366a01ba904afc5149d187685c0e7352144003bb1aade52d8372e08e0fac"
+  },
+  "tests/unit/renderer/metric-chip.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7a3451ed63821b1471420136c577548bdc9540436fda1f958542e7432d6fbf66"
+  },
+  "tests/unit/renderer/migrate-identity-colors.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c121f6c49b986db5faa3fa9a26e5fb417c1361dd0e3ef9d9890d0e01e6f26fe2"
+  },
+  "tests/unit/renderer/model-cache-donut-slices.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b91f3a424327d9ca397d124e211bf162c2ac80131e518b4dcab4bcc415ab8157"
+  },
+  "tests/unit/renderer/model-colors.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4a7d7023dd561d8cf86977e3c974bd6dfc2e5d4507e4a4341419739418ec2a79"
+  },
+  "tests/unit/renderer/multi-account-statusline-render.test.tsx": {
+   "tests": 29,
+   "passed": 29,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0985742fc5684e0430bba79f9ab4a65a6aafd508f0813e072e864fd7e0fc9b79"
+  },
+  "tests/unit/renderer/multi-account-statusline.test.ts": {
+   "tests": 28,
+   "passed": 28,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fedec87b94a2a53afd667574847a0c29332060c80adde3d65ca98dad8dcc5c3e"
+  },
+  "tests/unit/renderer/multi-spawn-launch.test.tsx": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4d357812b9a867a475b9e889a9504eb40d84d3d53704ce96cbc4a76b383c2f52"
+  },
+  "tests/unit/renderer/multi-spawn-rule.test.ts": {
+   "tests": 37,
+   "passed": 37,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "054179f59e808d1a19e8fc191e777ac822efc319fe684e9e99b86a1a9518bb4c"
+  },
+  "tests/unit/renderer/multi-spawn-sidebar.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bb458652415bc7d640ac3c922297093a143ffb674827283893e8ce5a51085109"
+  },
+  "tests/unit/renderer/multi-spawn-startup-page.test.tsx": {
+   "tests": 43,
+   "passed": 43,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "22418dc54e83c13a28273656748a448659a168ec5074e5061fb2b5bb495d71d9"
+  },
+  "tests/unit/renderer/multi-spawn-surfaces.test.tsx": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f234f88b8ff99493e925633cdd5a27f52d55444c656a9b2e9eaef49e823cc165"
+  },
+  "tests/unit/renderer/new-account-prompt.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8d8fde8ecdda4111a5fef64f57a23a49450a50addde18f592a5a3aa215cd7c81"
+  },
+  "tests/unit/renderer/no-direct-config-save.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fec0e27e69e52a7889b553774cb8cee0c14e21c9cdd62f526887e1b184e3405e"
+  },
+  "tests/unit/renderer/note-dialog-decrypt.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3ec0f9f2331afbd14d60b226421fe80c108ea32c760e980cd85480fa5b98c151"
+  },
+  "tests/unit/renderer/notes-tool.test.tsx": {
+   "tests": 29,
+   "passed": 29,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8ca0e5fa48abbf4ab933ef6e42b1f469beddfca7a2509d10be9ce05e0d537bb0"
+  },
+  "tests/unit/renderer/onboarding-commandbar-step.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "04ffc789c63c2eca7b51059503fe5ce40776752964442132cb7c4533ea1fa618"
+  },
+  "tests/unit/renderer/onboarding-gate.test.ts": {
+   "tests": 25,
+   "passed": 25,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2dffbfb6054b9d6141b2a79622de8eba8ad4b14a6b8ee821e465119753133ed1"
+  },
+  "tests/unit/renderer/onboarding-overflow.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "31762060c955f3143514d328998e5136fccd4cb586542e63cddf82d3befb6e66"
+  },
+  "tests/unit/renderer/onboarding-registry.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "410e26ae1fba68c2e10c64995de4f22fb9b568032cb7830d644dd031df7ed4aa"
+  },
+  "tests/unit/renderer/onboarding-transparency-recap.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "00151ea11c9df6fe4aeee5bf41b0ff7b4a37e234e015f1568b3a44f5790ad932"
+  },
+  "tests/unit/renderer/pane-fade.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0681e5f29f741d903834442a85b25be1b9dcf65051d3c899a50b68ff32d3f737"
+  },
+  "tests/unit/renderer/parse-insights-report.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "263289d7c5137c447e37493f5359153e901a6bd8e908075fb410ef40dec0ebb4"
+  },
+  "tests/unit/renderer/paste-hint-store.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "498eaf8b0bf2a984a7310e831f5827da5c44ae32d0c31b40620151feef059b1e"
+  },
+  "tests/unit/renderer/permissions-summary.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "127d32a06ebf48bf6a81908b9db68b3ca1242f581a3b7830b0296b46d54f4dcb"
+  },
+  "tests/unit/renderer/persist-last-used-account.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e948051c57eb95418edee8b96639c800e4b727322ad86aeb122e36c375b265a9"
+  },
+  "tests/unit/renderer/pointer.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "48895ca502a22b6f33d6a29a94f0fa67090ff9923e199394f8587ae25ca92191"
+  },
+  "tests/unit/renderer/quick-start-panel.test.tsx": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "eeafd4e736a8297bdb7a9150538bae1af8c4ff3dad05cda0d3f68a17af90d81a"
+  },
+  "tests/unit/renderer/rate-limit-bar.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ece44e3c87915325ae7b15077a9411720c5fa47a06c9a7957421208e3e4c2da5"
+  },
+  "tests/unit/renderer/ratelimitbar-codex-compat.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9abcacf88a7234eb9d0344b8324a857a07f244d968c910bd21d6a5b75a5ce604"
+  },
+  "tests/unit/renderer/remote-resumable-section.test.tsx": {
+   "tests": 40,
+   "passed": 40,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7fa19ae81562428393e080a6d12e40b837487fd88c2d8f2d38621879bb60c985"
+  },
+  "tests/unit/renderer/remove-retired-commands.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9b0e49eff89ce2b4b8fa9a33620ab24f53912ba95521a3b758ac5b0b3f7d7707"
+  },
+  "tests/unit/renderer/reorder-loose.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "84391b34ed5e5b758246ded086b1dd79a3c740097aa66babc3ba2a262e5c8ca2"
+  },
+  "tests/unit/renderer/resume-sessions-prompt.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9cbea7ad4ccc696e29f1dd39ae0ce6f748de0bc690369cd011f10a2b6a448d40"
+  },
+  "tests/unit/renderer/retire-ask-config.test.ts": {
+   "tests": 36,
+   "passed": 36,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5e9e249404b0a6dfab37e424cda5456e590fd3bbf8d91b826942d66311ff4b6f"
+  },
+  "tests/unit/renderer/saved-configs-view-helpers.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5c2177a0d1be283f040fb734adba245d5698d54fe167e77b0b1a8ed01d0dbe3a"
+  },
+  "tests/unit/renderer/sentinel-panel-copy.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f50ab5b684f3b06db0061a7e1ad50b00c4ac050d7a6c0225f116f36c2ec7df9b"
+  },
+  "tests/unit/renderer/sentinel-report-text.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "377465733c9cdc88780e1f114022fe4fcb5953d8f87d02abe85eaeeaec104d2d"
+  },
+  "tests/unit/renderer/session-auth-pending.test.tsx": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ec0ea19e561fe717e9833a240c1ee12ac9028d9363f575f374a44a762ff9d3ec"
+  },
+  "tests/unit/renderer/session-autosave.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7c4de27f98f2941d78dada2898e2ffaa17170abdccb79e678d9aa067368384de"
+  },
+  "tests/unit/renderer/session-capabilities.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ae3d70a2e57b99c61a06d18130185bfabb0379fd02d7a07d0bfda4e8e809e6f6"
+  },
+  "tests/unit/renderer/session-dialog-credentials.test.tsx": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2cc090d46df17e5ed7a4d33eeca06e6ef70262fd0fd481c86d3fe83c6ae3f89d"
+  },
+  "tests/unit/renderer/session-dialog-effort.test.tsx": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5a600a4ccf8d2eb97e41592eefbc67ce13cb8246714ef2288fc1b55fe5e4ae7a"
+  },
+  "tests/unit/renderer/session-dialog-logging-toggle.test.tsx": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1d3d2f6f5027a10f8d2810d65df5b86c6b7bcc45902534fc16dd82bc19428b00"
+  },
+  "tests/unit/renderer/session-dialog-multi-spawn.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c5f0080e9126f324da4aa501f8cf4e7e3cf70f05051067b75d4528116f0a6cb1"
+  },
+  "tests/unit/renderer/session-dialog-runtime-shell.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d7fc405d809ed0472d4de9eda23656fea320ce1fc0dfadcb9176733ba688eebf"
+  },
+  "tests/unit/renderer/session-dialog-terminal-options.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c734d66a3e6ce3856d2b049ad70043be4d87b21fdbe1f664344d48ffc3a41e55"
+  },
+  "tests/unit/renderer/session-dialog-tokens.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "918f23feb4f81137ff0a824bea98a8c47193500f58736c1c2c98a9474a2a0c69"
+  },
+  "tests/unit/renderer/session-header.test.tsx": {
+   "tests": 38,
+   "passed": 38,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "dabac02d7cb77d2935724f5e3e991275fa3ddc9f25e9c0e7388eaef2064b6c02"
+  },
+  "tests/unit/renderer/session-instance-ordinals.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "32fe9dbb7a078eddcf802d9771623fe8a86d5be8c07510aabfcf673f1e820fdc"
+  },
+  "tests/unit/renderer/session-launch.test.ts": {
+   "tests": 33,
+   "passed": 33,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "50070adce04ef020bbe9775f9f9e02436ea02dc2cde7a8b027268007fbe2555c"
+  },
+  "tests/unit/renderer/session-lifecycle-rc15.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e23d64182b98abe1a646df0fb53fa36b268c1d051584fc485bcd01323ce9acec"
+  },
+  "tests/unit/renderer/session-persistence-codex-review.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "41f7ad109d1969764086e261e13054ad01c32a6aa41dff62fc96045e98ac08fa"
+  },
+  "tests/unit/renderer/session-persistence-detached-only.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c6b60991c6e90d9ccb4c66a29def4925a2d08fe23d0cc58afbb7b2506f590556"
+  },
+  "tests/unit/renderer/session-persistence-logging-optout.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9ccb8349288438aeda95eaff58eb0b1f2b5f0d71537e703d54dcc5f5b45de5cc"
+  },
+  "tests/unit/renderer/session-persistence-restore.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f8ffaee924c1ac16c8e08d300f483ccfc5a541faa5d1f87f86c07a550767c21e"
+  },
+  "tests/unit/renderer/session-persistence-resume.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2ae61fb97fd20d09aba3fdd0cab005533318b69fb1ab0eb8e5b058e8487a2f23"
+  },
+  "tests/unit/renderer/session-pty-exit-recorded.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5c528a6b0327b48d2f02e02ec54f7cb5e097391edbfcba3d1a015436a76ce489"
+  },
+  "tests/unit/renderer/session-status-strip-labelless-model.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "20ce295cb98ecd201871a25f2b659324ca0f6162cc677f2214bc573bad2295a6"
+  },
+  "tests/unit/renderer/session-status-strip-surface.test.tsx": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3c44926141ac4ba9a9849c96ffac3bea1ae14df509cdd21f475f52ba2e7002dd"
+  },
+  "tests/unit/renderer/session-status-strip.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "806fc6c5dd99f62270bce7f963637da23a72d289b67a9a606087e00152c9c973"
+  },
+  "tests/unit/renderer/session-statusstrip-copilot.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4045b3d2e651a0ee0ab13e693dba17d7a0715e5c3505b5ca38ec5b9da1a4dc1a"
+  },
+  "tests/unit/renderer/sessionrow-card.test.ts": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3c1937a769cdf39e718398728454307f42d41aed9a2048611ff73e7c60118922"
+  },
+  "tests/unit/renderer/sessions-panel-state.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "511092b29a22bfa41783a8e0316a89b1ae17d8fd040e7ed18ca80c8debd4a297"
+  },
+  "tests/unit/renderer/settings-check-for-updates.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "02eae2272cd6855fe1bd1f1566cd79829eecdcc49456445f33885cdff6c7491e"
+  },
+  "tests/unit/renderer/settings-section-tokens.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3a8beef220919e87c880a1298eb1f6f0f2152d8dcce1d2f3a0300478f6bd2a45"
+  },
+  "tests/unit/renderer/settings-sessions-panel.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2e48a95f6ca7c43d41875c733ecddc73554934cf8455bc5a184bc07b4ff4f4e4"
+  },
+  "tests/unit/renderer/settings-shortcuts-kbd.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "72c38c5838db531b4776aa3a5bdac9426de9c5823573a97efecb714318b6aeec"
+  },
+  "tests/unit/renderer/settings-tabsrail.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d2a5aefc09754ec23896670e2f8ac69cbfbcdc36c41adb4d3db15b9f622ffdeb"
+  },
+  "tests/unit/renderer/settings-toggle-tokens.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9e39fb8b3df8143eef331646ca3dd30160c98c5842ff1af019d43a79ce8a36ce"
+  },
+  "tests/unit/renderer/setup-cli-hard-stop.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d2b54386c39c6e998c5abe84026cfaac7dd063e9e85761ba62c982be3b05b3e7"
+  },
+  "tests/unit/renderer/short-bucket-label.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a531885aaada9c85f5267f9185b4317ce0626720b437d29f0c1137f5447c2c8a"
+  },
+  "tests/unit/renderer/sidebar-config-edit-guard-entry-points.test.tsx": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1aa42a067879efdb30d97264c07473b2175ed63cd24941012ab7af3dee696996"
+  },
+  "tests/unit/renderer/sidebar-context-menus.test.tsx": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b2eac47839d1a08093283616db0f58b123e2def6113da364ed57438d60749d11"
+  },
+  "tests/unit/renderer/sidebar-dock-tips.test.tsx": {
+   "tests": 23,
+   "passed": 23,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9eb3e03a34094ab68109c525503dff1d41d7fb866c04863c2138561fe5e38071"
+  },
+  "tests/unit/renderer/sidebar-panel-tabs.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "575c342325fdcbd047bf74a4f68c76a2c1abf274446168869e1cff09aa38707f"
+  },
+  "tests/unit/renderer/sidebar-ungrouped-configs-header.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "49c1052bb9eae76df605c644fd36c3db3192ee311dd7d33354ec1318b04b644d"
+  },
+  "tests/unit/renderer/sidebar-ungrouped-sessions-header.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "63d860deedea130bcc5b801d2d7d2cec473df300f1949e9b43fdd19cba54feb0"
+  },
+  "tests/unit/renderer/sidebarnav-rail.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "449b91be0c66a623f565a105e4d0110d9934ab7d58bb3b44d6d56ee29fc1ec70"
+  },
+  "tests/unit/renderer/sidebarnav-tooltip.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "22971c05d2618e156d9248807039377030e3ff9e208db3477bcf301210023c89"
+  },
+  "tests/unit/renderer/sleep-indicator.test.tsx": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c1efe1cf143cb3643befff6f58bc7bcc0b0597813a771ce121f94e617657f30a"
+  },
+  "tests/unit/renderer/ssh-close-container-ends-remote.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "33be1e363d8adb33ab4154b44abf7f569834e4d8764a887c5307962cf191d37e"
+  },
+  "tests/unit/renderer/ssh-flow-overlay.test.tsx": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f34ee1cef0a78d1314620ac2d5552287ff8b50adaf755613a6c357f92d43e446"
+  },
+  "tests/unit/renderer/stage-empty-state.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "39333ebf9e4e4ed8c50604e58d12b857980932a44ee8d781f8934080b3bd7331"
+  },
+  "tests/unit/renderer/stale-glyph-repaint.test.ts": {
+   "tests": 37,
+   "passed": 37,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7b012e368f1072ba67e22b8338907eaec89fb6c120cd6c2356fa828b72f62da2"
+  },
+  "tests/unit/renderer/statusline-banner-codex.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b68c928919142f7fe22ace5db0de956437e4f8333e1a7676e9cf06965efb92c9"
+  },
+  "tests/unit/renderer/statuspill-identitychip.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "065412992a03d6052e7192608c424b709ba2252e4fe259262308743d8db71ef0"
+  },
+  "tests/unit/renderer/tabbar-rename.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "76ee0baa1e71435fc0ef94995d1986564eb3af0d065925fbe871f854d1676cbd"
+  },
+  "tests/unit/renderer/terminal-atlas-coordinator.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c9a82c9a13771bea3cc102245df101132bf97deb0188ab666dabe248446dc3b5"
+  },
+  "tests/unit/renderer/terminal-context-menu.test.tsx": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bae07653a999cc9c4e014c0de131e0c560d4f953ded5b5e52f7c2e943347208d"
+  },
+  "tests/unit/renderer/terminal-font-defaults.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "85b33be88f0412783850aa6c50f18db936d50f5d81b740f60927272d51c8db1c"
+  },
+  "tests/unit/renderer/terminal-input.test.ts": {
+   "tests": 44,
+   "passed": 44,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "aa993ecc36fcdd0355fbbeec8fadc211d01a5ac5ad04848c7525df17f885ea1a"
+  },
+  "tests/unit/renderer/terminal-keybindings.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4b393d144b53fa52e9c27e294727f093c31124fc4638ab8143325c24a1bc80a5"
+  },
+  "tests/unit/renderer/terminal-links.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6be0556c43b9899c43f5e855f00f1f1e6b06f73dff1d115fd77f856521ee0035"
+  },
+  "tests/unit/renderer/terminal-theme.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5fc92312892339d9ebba4d63d62bfa31853fa3dcfc0230a6e0e67c99a1668b2e"
+  },
+  "tests/unit/renderer/terminal-webgl-handle.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "93df9c21cdfeb36f2d5d5c45730589f8ad0e4d5305ef3b1d9ae1151e52933371"
+  },
+  "tests/unit/renderer/terminal-webgl-recovery.test.ts": {
+   "tests": 27,
+   "passed": 27,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5403a51c16c65a11536c411e98ed7944b777719f0b5e5deee4cf6264f9eddad4"
+  },
+  "tests/unit/renderer/terminalview-focus-handoff.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9f969bc7a8672d6a5fb0136d9f75b94d5b9e6fe802f24a714e4ef64881d7aaef"
+  },
+  "tests/unit/renderer/theme-toggle.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "526d3af3ccca5f54c395ecf7828a882eb0a621f0f37c99695a58c653e160fef1"
+  },
+  "tests/unit/renderer/tip-card-e5.test.tsx": {
+   "tests": 33,
+   "passed": 33,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "24ddfddcf0a35e9782c6e382a69610fd959048a8d308ee4839706dda4cb134a5"
+  },
+  "tests/unit/renderer/tips-shown-and-pruning.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bdd86e1b75ff41e3aabfeb9d71da1016aa39299ddcfbc253e18a69ee3a362d1b"
+  },
+  "tests/unit/renderer/titlebar-no-account-picker.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "550a159b3aa42106861f86a93b4f88639cbab336c3292da6584b7403a0c1af02"
+  },
+  "tests/unit/renderer/titlebar-surface.test.tsx": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9de8407e14af56daab2b21539536c6ff083c2936e888e7ffed91be307b7babae"
+  },
+  "tests/unit/renderer/toggle-switch.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7b9b3b084f1ab6a7c6fa1c588f48ff8c0946e2e42aea0d25ad96fe461722dde4"
+  },
+  "tests/unit/renderer/token-contrast.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "35311555bee03cc40138b55fa5289ccda85410e02dd532277a9b5c70c93235c8"
+  },
+  "tests/unit/renderer/tokenomics-new-components.test.tsx": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "16ee2cb0a6fbaf80297d2cc05ca908cc55ea05368cd6d8b40924452d7bfbfd1c"
+  },
+  "tests/unit/renderer/tokenomics-t19-components.test.tsx": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9d53b8be76bfad637629033df252ffbb1b6a1b58e58c27927e6c2f9838229b1d"
+  },
+  "tests/unit/renderer/tokenomicspage-formatting.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bf7861aee10e2bc6146ecb3c5ea1f3fd5bf09c519d7ccbc3ef51668dadc1917f"
+  },
+  "tests/unit/renderer/training-screenshots-exist.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "621e978ac8cf3b9d802f0e602cd6a6df635029f7abcd8ccd9812268a08316c55"
+  },
+  "tests/unit/renderer/transport-badge-truth-table.test.ts": {
+   "tests": 25,
+   "passed": 25,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2074b27bb68a39f2845e78796e8e4eea525a2b8582986d5ea07f2a571ebd1958"
+  },
+  "tests/unit/renderer/ui-primitives.test.tsx": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fa9ef6ec091bc42fd51f0564d3240640809fcb2eab8f1de7733753f6751e803c"
+  },
+  "tests/unit/renderer/upgrade-flow.test.ts": {
+   "tests": 41,
+   "passed": 41,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "84eddc9568b1ec3948dab40c9a8865ef314d80a60fb759303481a7f9b9f0b0e2"
+  },
+  "tests/unit/renderer/use-account-identity-subscription.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "19e0136aa1e09bf65666487df04068eefc288637e14f0006d71a476971b9876f"
+  },
+  "tests/unit/renderer/use-add-account.test.tsx": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ab6e93c5c117ea6621a0113d6fcdbf334ec23e75ed2f76e0a33703a578499667"
+  },
+  "tests/unit/renderer/use-effort-subscription.test.tsx": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0c6cf4f8bcfd4c6bd3b7139d0c02e72f9c45406f63797fe02b80d287edc17550"
+  },
+  "tests/unit/renderer/use-launch-config.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6ca7daaf26c46bf64d8a12063767a6f5d1a0d303f83bf6bd46d3be731aad8308"
+  },
+  "tests/unit/renderer/use-logs-store.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8ad094f9023d430db50cc65e2c0303da157c57a807de8b6237bad51f3f8dd4c6"
+  },
+  "tests/unit/renderer/use-reauth-account.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "688f6cb7525092379466c422aa2e1450c2f7ca4be9a9e1ebd561e57059be88b3"
+  },
+  "tests/unit/renderer/use-restart-session.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c7fa00359c10f677b3beb4b00fcbff64e983daee86e09d590b17b3d038cc2212"
+  },
+  "tests/unit/renderer/use-statusline-subscription.test.tsx": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cbc2c4c0784389553904fd901c6c4c6edd038b4189900192b5ecbfef572b2efc"
+  },
+  "tests/unit/renderer/use-switch-account.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bc06d3a9f98bb8a91f87ac7c25e1c3979f39d0b5c624b89c94d3126c8a8d1dfd"
+  },
+  "tests/unit/renderer/version-label.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2f9a1fc1389c4dfaf224d7f83a8ff65ea25c3d1559a2fc02cfc1f8abaaa94e44"
+  },
+  "tests/unit/renderer/vision-sub-tool.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e1aa4046b692730009c61ad33a37caa0b9ed5745b2aa7acf0d85640fe9f63787"
+  },
+  "tests/unit/renderer/watchdog-subscription-teardown.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "215349d379475192438f8e8cb91c95b82ef146e243964009befcacbabb914780"
+  },
+  "tests/unit/renderer/webgl-visible-only.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "56bfebda20c62749e865972fee7d8f3a517e27c72bcba1c3993343bb832e62cd"
+  },
+  "tests/unit/renderer/webview-button-agent-pill.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e7eb80f9b225032731ebf0122996c4abe3334ece1589d7106c49129407bf02dd"
+  },
+  "tests/unit/renderer/webview-button-always-there.test.tsx": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "82f54c16792a4025f5ea4cc143d630b2f74dd90f6b5221ef7b067045b51232e6"
+  },
+  "tests/unit/renderer/webview-pane-browser.test.tsx": {
+   "tests": 33,
+   "passed": 33,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e30a5797f41cb8697dbd16c21120a9676ddf54004984baafa76902ab9fa2a161"
+  },
+  "tests/unit/renderer/webview-pane-occlusion.test.tsx": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f882ec598c7388f410827170033c8223bdad8d4bbe469fc3f552dab8cd29353c"
+  },
+  "tests/unit/renderer/whats-new-exactly-once.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7a1f5e3f7e3ecafaf0aab4015c498ecfea707563a6a21b3ea1ee3d83dd97be24"
+  },
+  "tests/unit/renderer/whats-new-gate.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2608c4ac72c47b933ced982bd5822d59767795b62f3abecc73d70d0ad15f4faf"
+  },
+  "tests/unit/renderer/whats-new-range.test.tsx": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b10bf85906a2ed0ca6d080f36d3a92c8f5dcb9d4cb2cd2d326c5ddba4e4cac55"
+  },
+  "tests/unit/renderer/whatsnew-showcase.test.tsx": {
+   "tests": 27,
+   "passed": 27,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "938ebb3d18c51b0bf83dd1d6d5113e929845a99930dd7f75eb88d05a89f74374"
+  },
+  "tests/unit/repaint-registry.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "600f575fe02828d1cf558b56bba42d5c8015ba36907b3504369b099187a2d079"
+  },
+  "tests/unit/resolve-executable.test.ts": {
+   "tests": 28,
+   "passed": 28,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "522c5468253f7489e6d96c35c04d83d38256df489d4b173def3b9a1377f90c42"
+  },
+  "tests/unit/resources-dir-hardening.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d89028ef71f170195f22c8e387370caee5985231bfa15cc82b459eca695753a0"
+  },
+  "tests/unit/scripts/build-identity-resolve.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cf5a3ca50d15ebe71a707ab37c5960dd3cd841bf8c6841d480b25d36ab895399"
+  },
+  "tests/unit/scripts/close-in-beta-issues.test.ts": {
+   "tests": 54,
+   "passed": 54,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "aeda88ee61c721317e42433baa23a84299aef618c3411c085a4b2267aa7d5292"
+  },
+  "tests/unit/scripts/codex-resume-picker.test.ts": {
+   "tests": 24,
+   "passed": 24,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4ba3b28067d5bb08f66835d66cf72a30d0c39949e49f14d2bbe48b18ee214845"
+  },
+  "tests/unit/scripts/gen-changelog-scanner.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a5591a82d092a00da6e9b7cdc5e09fa314ddaff240e23bac31ddd6163348456b"
+  },
+  "tests/unit/scripts/preflight-electron.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "31f5218cc37edbf59bddfca3529f0fabf9db62b4ee2a63778ba40a6a37a6b426"
+  },
+  "tests/unit/scripts/promote.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8a02eb87f85102ad7062254b28261f5750ab6ad403d2c93baf132ae54415aaac"
+  },
+  "tests/unit/scripts/reconcile-issue-dispositions.test.ts": {
+   "tests": 57,
+   "passed": 57,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7ae788db898aca8b9642e7169a0ebf3e5fec8f35d878136eae6dc13d8e1fda58"
+  },
+  "tests/unit/scripts/release-gate.test.ts": {
+   "tests": 33,
+   "passed": 33,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b854102b2a03367698b6569db39a13fa66b97777dddb4fda37d5be5192950c7b"
+  },
+  "tests/unit/scripts/release.test.ts": {
+   "tests": 39,
+   "passed": 39,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0443f9e26151fd8c923200e7dfac53c3b5c6191888f59cb4dad9837e43717504"
+  },
+  "tests/unit/scripts/resume-picker-spawn-target.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "abc92e2611b7399d80160c0c84c01c5215f3434ffbc36d46282804db4806cbc9"
+  },
+  "tests/unit/scripts/resume-picker.test.ts": {
+   "tests": 45,
+   "passed": 45,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "78f4a6293195b231257ed9b4e35a5fd12f61b11b50899bc02b5b54ea58f3e3a6"
+  },
+  "tests/unit/scripts/roll-issues-into-release.test.ts": {
+   "tests": 16,
+   "passed": 16,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0ba6121427f4658040cdb96b2da740ab5b8a1f56b619c752a6b8d643c42cefae"
+  },
+  "tests/unit/scripts/verify-release-manifest.test.ts": {
+   "tests": 105,
+   "passed": 105,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "63c7562dcdffa53112a4f5826daf6de9b2f4391262242635aabedf40b186713b"
+  },
+  "tests/unit/sentinel-analysis.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "231fade431b9ae09e79f10f23536df3eabb1662976b9eab22466bf2c3e8b6615"
+  },
+  "tests/unit/sentinel-apply.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ad6d9a7d31e4d15b6412e5ab8d5e290e5c4619300c4adf64eabb3982f52edb97"
+  },
+  "tests/unit/sentinel-changelog.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "13b6720e4c0e481a755366eb130ab4fe84fc0402f33d976a2840f90bf7f85422"
+  },
+  "tests/unit/sentinel-handlers.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "68a390988f2cbc980c331392b8649380e852e8fab14886ef7ad61f0a80da3a3a"
+  },
+  "tests/unit/sentinel-live.test.ts": {
+   "tests": 2,
+   "passed": 0,
+   "skipped": 2,
+   "todo": 0,
+   "namesSha256": "505a6a15ca572f776cc0d75496afcfce2dd109bdc974451d11552f56b3177b2f"
+  },
+  "tests/unit/sentinel-models.test.ts": {
+   "tests": 34,
+   "passed": 34,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "174978ef517f4d5b4d139adaf9ab99a3d8f73a783f24114933afa2e48b4a9027"
+  },
+  "tests/unit/sentinel-observe.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1d84ae11cd21be2e3dd5abb0d6e4a5f6b2bf136d2a976589f33a494e04df13e9"
+  },
+  "tests/unit/sentinel-reachability.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ba96f1e534e26122c1e6b0f7a696fc95c856fdd62e03dfb91731ac52b19e13a1"
+  },
+  "tests/unit/sentinel-state.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "89fdbbb2334e54a3a8d07acf67a972f94c08e1b4cf2341a44968773758cb5d2d"
+  },
+  "tests/unit/sentinel-store-autopen.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4f86c7071dcda05feddf1029cb2b3cd910277672d3aaa337b559ea5a0b0f5aef"
+  },
+  "tests/unit/sentinel-ui-logic.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "79d568e82cd83656e236f000bdc48d88eae436b570c34a46cc44d857926469f3"
+  },
+  "tests/unit/sentinel-version.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "086023c56d0cba2b57fcd5d7ad92dbe0475553238e5775318e7c89c0918a628c"
+  },
+  "tests/unit/services/diagnostics-merge.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9684c6cd175a61d19a0219832e6653ecaecba68ceb5c7b5c5915f5989ff90841"
+  },
+  "tests/unit/services/hooks-backbone-smoke.test.ts": {
+   "tests": 1,
+   "passed": 1,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1832d6971eb2489f424deab4650321ca760f36d87017de93ba12194a8a213a55"
+  },
+  "tests/unit/services/hooks-gateway-proxy-failopen.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "de9501c0d628d779055344bdbb06c2a77df5379ab545cf850201192a308807f3"
+  },
+  "tests/unit/services/hooks-gateway-proxy.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ce42344237738ca0c00e7040e979941886af584e1b837df9d138a7cd29522bfa"
+  },
+  "tests/unit/services/hooks-host-core.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "98b41c5f4c3454b7f6d2ffe5365602d7a70d95188643f27f5d6b6ad7979b1d5c"
+  },
+  "tests/unit/services/loop-stall-monitor.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3c670fc76e22fb4b4855f26508c0be7d2ff5751b11aa9a2755b34f4deef0ecf2"
+  },
+  "tests/unit/services/pty-integrity-monitor.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b9182efe8e80fe29ebd280918011549db3b42ac46e93bbe5b93814858a625c42"
+  },
+  "tests/unit/services/service-health-handlers.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "02efc0157aa536cff3fdccc4f11ee349a38c6ac14636eb1dce7b4534644371ce"
+  },
+  "tests/unit/services/service-supervisor-health.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "920d29fdeabdceb18d5215b4ede57a33697aa91681c0bfa2518ec4c9a936ec58"
+  },
+  "tests/unit/services/service-supervisor-lifecycle.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fd0e030eaa76407e43ad44c15ebf38b9d3e18d98314770c39b087d984e3b9411"
+  },
+  "tests/unit/services/service-transport.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2d5c2685bf112cff61d06193ac19ac0886aa0ce50456b23108b72ff74f87544c"
+  },
+  "tests/unit/session-guard-designated-worktree.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "249883a2992620fa2aa02d3b3f910b46e5cc14bf25b83f89e6d93d415a568e34"
+  },
+  "tests/unit/session-registry.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8cdf5d21899f0e90685c0941d8f9e193c7411f25be1d9aa7fbe49b4b718c97fc"
+  },
+  "tests/unit/session-state-github.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8c9c28ecf71fbb7f0924de377806ba01b1bd7666b8830b5c5f165eb5174fa670"
+  },
+  "tests/unit/session-state-read-failure.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e4e005dc3dbc4bf14096f0f39819bca2d180d2d41d1f9a44828556e6680495bd"
+  },
+  "tests/unit/shared/account-active.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c13009dbf5c52428e0a1634a87335c4bdd68275fe5d2ef60c1007d47fbc4ce7e"
+  },
+  "tests/unit/shared/account-chip-color.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e8a494aad4251736eb495882c9d923b76668ceebe8ee586eeaa155e90f59939c"
+  },
+  "tests/unit/shared/app-knowledge.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b636ca86ff5f4cc45aa5be7aefc7384c09f28451d5032f43960504752d1f74e6"
+  },
+  "tests/unit/shared/browser-url.test.ts": {
+   "tests": 25,
+   "passed": 25,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a689ab1315b66127b07f25127ba63d08b1359a8a5f3459214c985a82c852c5d6"
+  },
+  "tests/unit/shared/build-identity.test.ts": {
+   "tests": 15,
+   "passed": 15,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0f4da1a00981320e3f9dabaa911220c522ff43d138988b4e637cfaa2cb82dc01"
+  },
+  "tests/unit/shared/canvas-envelope-injection.test.ts": {
+   "tests": 25,
+   "passed": 25,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5a1a4caff5013fd6c07db6f5692a19986e0311fdfd115054127fa8b3a134abd1"
+  },
+  "tests/unit/shared/canvas-evidence-contract.test.ts": {
+   "tests": 50,
+   "passed": 50,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b032105e530599f28db0d905cc961ad5e2b9f26c466234b0d185706ef9576b57"
+  },
+  "tests/unit/shared/canvas-review-serialize.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "35ab8f85d00d97774c7f7174c7782b82b3ef83432dc5106442f54f0210d1af2a"
+  },
+  "tests/unit/shared/canvas-snapshot-sanitize.test.ts": {
+   "tests": 55,
+   "passed": 55,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0c0d9e1671415fcc796cc5796a9c612316bc745ec5f465f84864fc74481302c9"
+  },
+  "tests/unit/shared/canvas-snapshot-serialize.test.ts": {
+   "tests": 46,
+   "passed": 46,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "15e9e05bb97561a9a13e71f276bc5beda0cb176957ed99389d74107c9742e022"
+  },
+  "tests/unit/shared/cdp-ports.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9c90887724f838fe39d060c232a8ca385108ece5a41e6d232694926bbfe6ba14"
+  },
+  "tests/unit/shared/command-secret-value.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "83ced3f9e85ff4a49d39f8d259eac445296358c239166cb053611054ef7ef96f"
+  },
+  "tests/unit/shared/command-secret.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9429f09bd27c50defb04f5516affa99a3619aa3d48e814680758085adac1cdb9"
+  },
+  "tests/unit/shared/detached-destination.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1331f6500959aee9406332fd089d28d7e5182c156af50f735f460e6ad4db7a53"
+  },
+  "tests/unit/shared/glyph-diagnostic.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c949a090a0b08893cc92a3a1860a095194294a57fcbf98b9fa549b23ac2de181"
+  },
+  "tests/unit/shared/id.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c5997eb2569f8f16139b5f30631398b2fb6cea2c532e51e601b6f7c220dd370b"
+  },
+  "tests/unit/shared/identity-colors.test.ts": {
+   "tests": 56,
+   "passed": 56,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "32c620f0abc829fc22063538baac3443290b8e471626de3f449aea60f2f3a235"
+  },
+  "tests/unit/shared/legacy-version.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e29b6e2334b8c7ac1d6857e0bc33e87cebdacba7db0309ff91dad2e73fbb5666"
+  },
+  "tests/unit/shared/mcp-ports.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "876141e4bc51c5b209d1647be8d248133177a3f0742a357f73f43a0179113772"
+  },
+  "tests/unit/shared/safe-url.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "14ec4d76991ec71184b45779ddf9776939e93eb5b3a04888d8c837957a50e6bd"
+  },
+  "tests/unit/shared/sentinel-enabled.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "11f787bcc70a0795b8a2dd61a0bf3c7d280ee290b8a63b15ee6eda4ff027ef30"
+  },
+  "tests/unit/shared/service-health.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e50d64a2791012ef69d529eedcdc284d147f5b545cec7a0bbb5699bc895df0ec"
+  },
+  "tests/unit/shared/ssh-tmux-persistence.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "71e458723880f5413385f9a282cc3f6f93adce319b3abc58b0f79b0928c2155e"
+  },
+  "tests/unit/spawn-model-flag-emission.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f6a632c17db06c664cf5664f8ea75e2b3989fbc86a29de96db9d107fdc21d3ef"
+  },
+  "tests/unit/spawn-model-flag-quoting.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "57c5232accf90c5ec692033f25293d27db45a20f9979349fd5e5909a02d19420"
+  },
+  "tests/unit/spawn-model-flag-versioned.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fcd12ccf623b93a2922918a6a8a7480294fbf4d99263d249822c95ab4c38e3d3"
+  },
+  "tests/unit/ssh-args.test.ts": {
+   "tests": 26,
+   "passed": 26,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "8ddec61f954885cf8462fea6d249352d767cebe1206b7a7ef9f7178431990f72"
+  },
+  "tests/unit/ssh-claude-env-mouse.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ad9170fedc16cca0f1df813a8e2850a89c1c845fd82c4e0d41f3a67c1898fef7"
+  },
+  "tests/unit/ssh-mouse-parity.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "178a6ec2fae54bc9eab87db12610ee484247533b946355456318f4ce3f34ae8e"
+  },
+  "tests/unit/ssh-password-autotype.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bb209ab945ea7c06159c46d6a04e1c34edd1e555cfa86fef893f781bb8ff946b"
+  },
+  "tests/unit/ssh-remote-port.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a664403a1266d1edc304d234e10c84f38cc902c8b1f76710cedf6fce2af1a86d"
+  },
+  "tests/unit/ssh-spawn-callsite.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "c0f388bc43595bd48538228b718bfd9563ad89698f0ad211a87543fcc1dd0106"
+  },
+  "tests/unit/ssh-tmux-push.test.ts": {
+   "tests": 45,
+   "passed": 45,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "639d10ccdeb51edaca9ba252bd5cb01bb14ec50b5e68665a2701ebb9db1a7dc7"
+  },
+  "tests/unit/ssh-tmux-stage.test.ts": {
+   "tests": 27,
+   "passed": 27,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d047ad694c807b6eabb31348b2bdc458b3e3095d34f87a1f472c9c2bee880321"
+  },
+  "tests/unit/ssh-tmux.test.ts": {
+   "tests": 26,
+   "passed": 26,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "f4058d358d18fa88b80febc562c9f66286b4589f46d174b0a2e66b61c94e2bd5"
+  },
+  "tests/unit/standing-approvals-store.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "69b010ff886ffa262bab0d231e442f46ddcb521098fae62c231719e29880f5de"
+  },
+  "tests/unit/status-ingest.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "96059acabd8ca687a1e707fb590fa88da093b1fcb2d9e8c6edd58014f6746fe7"
+  },
+  "tests/unit/status-post-url.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b352e4627f79e650faa1d952e91fc82fdea68eac802be9324cb58814a4168952"
+  },
+  "tests/unit/statusline-account-cache.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5c74d5b0a22f23b55130462586f7782cbb9f3c9d191ff13afc2c31071635e3a7"
+  },
+  "tests/unit/statusline-local-bridge-delivery.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "3e208e97cd8ae15da23abb71c4fefb9c72f37c38c70d0d6c2bcf58aaef2344bc"
+  },
+  "tests/unit/statusline-sentinel-sanitiser.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "06f5170b1ba47115cfbff570177cb9411564e2e7748f3044004cbd270102148f"
+  },
+  "tests/unit/statusline-usage-sink.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "59b2652e6dc5016ba264b4239e0ed062c822e1aab5b644a956aecd6f01e144e0"
+  },
+  "tests/unit/stores/accountGateStore.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d37e99418f647cff60005de46b8aad41147d44c7bdb52d7772c097e60182148c"
+  },
+  "tests/unit/stores/appMetaStore.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a34742a003d1ab2cb8ac51a835f5ec85e3f003cc5c4cbc29ed3309d64970ef82"
+  },
+  "tests/unit/stores/browserStore.test.ts": {
+   "tests": 18,
+   "passed": 18,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1e7fccc3edd1b100d0dc7089caedd3593088fdf9ed2585f3adeab251e49c0940"
+  },
+  "tests/unit/stores/canvasTotalsStore.test.ts": {
+   "tests": 20,
+   "passed": 20,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2324ca6c9d3a637bf0bd06eea5d79da2f012a46d3b72bd2a4896b3c6cab96bdb"
+  },
+  "tests/unit/stores/cloudAgentStore.test.ts": {
+   "tests": 22,
+   "passed": 22,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7dc58d20bb14816b8a24825f81249e82cf9ba0bebb48b92cfabe71e91b2b84cb"
+  },
+  "tests/unit/stores/codexAccountStore.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b9ae05b5a2b47d2610015d77319627ad9638942286fceea4de3fbd1d4dbd10a9"
+  },
+  "tests/unit/stores/commandBarStore.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e19459fcb9e9bc4285258a225df1c99c1c39054445fb39ce55477811675a1609"
+  },
+  "tests/unit/stores/commandStore-bands.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "868e315b0618468ad7dac42abe9266bc94fccd52f3b728e17bba8b315e8c7e39"
+  },
+  "tests/unit/stores/commandStore.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e7600af8db33e47d011c3d89994b3836a333536f37399f679783006c541d9c65"
+  },
+  "tests/unit/stores/configStore.test.ts": {
+   "tests": 19,
+   "passed": 19,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "24bcccac56de0edada3a4bb8187ab33cfcceae1b852857ae1d7a0b7e450f1354"
+  },
+  "tests/unit/stores/font-migration.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "2568b3938b52c58f26df9bb42e3848d9a2e0ebf3db854b7dc9a60e26d2590d92"
+  },
+  "tests/unit/stores/insightsStore.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "eb8e4988d1f7fbd1b04b94dfbf485d51567658f6ab1295d8fc7c714b9d82db4c"
+  },
+  "tests/unit/stores/magicButtonStore.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "bac8aaa4463bb1c5b9b3893989c65550066bf9b4b25668818c9bd61b7cfe30bb"
+  },
+  "tests/unit/stores/memoryStore.test.ts": {
+   "tests": 21,
+   "passed": 21,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "596d38a6e0d59cbe64d4478f79d9e3d25b69740e67a342d257a9630d75f9dfe2"
+  },
+  "tests/unit/stores/paneOcclusionStore.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "e7665756a8f976c8f8ddc8924f022735d5efc8e0ba8c8b721605030c3c21aec9"
+  },
+  "tests/unit/stores/sessionStore.test.ts": {
+   "tests": 32,
+   "passed": 32,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a72c03dcce51b0d99e6cf774510734e3ee73eca7469b47e59d9610af0de2a5d4"
+  },
+  "tests/unit/stores/settingsStore.test.ts": {
+   "tests": 7,
+   "passed": 7,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "b71c8acd06f8153f5c48792390be5598cc46edee919acaad0f1c949c4678338d"
+  },
+  "tests/unit/stores/webviewStore-agent-push.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "fc1203588443ae3fc6ea68c6162bcb8ddb7647f23d58e220a6fa39098d53e569"
+  },
+  "tests/unit/stores/webviewStore-browser.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "ffe32f5f89aa01fdd4ab502d484a0a3ecc84b53fa9a3d21449b20c52905a2b49"
+  },
+  "tests/unit/stores/webviewStore.test.ts": {
+   "tests": 24,
+   "passed": 24,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "096cb49543eaa35363f1fc548637c03dd437461cf7c61cc668901b0236e33a04"
+  },
+  "tests/unit/styles/design-tokens.test.ts": {
+   "tests": 14,
+   "passed": 14,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "194ba3de141325f500b998994d3cbc3da07a5f0e32c818cdb17d7b2271ca506c"
+  },
+  "tests/unit/terminalFormatting.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4fddbfa0dd70e35353d9a3bf65bbfd0e865ed3a216aa91547ae8323b4ae10ea4"
+  },
+  "tests/unit/terminalScroll.test.ts": {
+   "tests": 6,
+   "passed": 6,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0a96ad607f436ae1edd2afdc380d017601af2e433f06ff1610c25a0febea74df"
+  },
+  "tests/unit/tk-pricing-registry.test.ts": {
+   "tests": 10,
+   "passed": 10,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "6417e5b43ad06fa5592b2656c4b8d7bb1b00e01d03a47a8db62b47d10605678f"
+  },
+  "tests/unit/tokenomics/tk-config-match.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1ae9593b83ef1299bfd2100a485e954c415f4624803e09f84cbe55e0dff727f3"
+  },
+  "tests/unit/tokenomics/tk-parse.test.ts": {
+   "tests": 13,
+   "passed": 13,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "319c0cdc516e44fb38e302d4ce8950805c504e7399ae606eeffb48220b11bd4d"
+  },
+  "tests/unit/tokenomics/tk-pricing.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "5cab37aa3ffa30c040737e05d53b2081dee00a90e7fd028c6ab4f1419bb0df66"
+  },
+  "tests/unit/tokenomics/tk-supervisor.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d6f2c5f6c64678948dcd7470ebc8805f0e7353af3799bf8491fcc8732379d85d"
+  },
+  "tests/unit/tokenomics/tk-worker-transport.test.ts": {
+   "tests": 2,
+   "passed": 2,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "1606cd99ce9bda44d49361ebae1f0048b0c5c319b5edf42ad1d4eb265923ebf1"
+  },
+  "tests/unit/tokenomics/tokenomics-service.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cc2e3894cdc3398ba909ad08f22f6a6b0cd615e36f83ec780541a43f4c070a72"
+  },
+  "tests/unit/tokenomics/tokenomics2-handlers.test.ts": {
+   "tests": 8,
+   "passed": 8,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "065f53dbf023bc324fadf33af5fc3932f9e888219f17a5edb4c3b28093c4d916"
+  },
+  "tests/unit/tokenomicsStore.test.ts": {
+   "tests": 30,
+   "passed": 30,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "0dc2811facb6de10cac6fdcbd52729269ddeea8b2f717ee48af37856adf28e82"
+  },
+  "tests/unit/training-steps.test.ts": {
+   "tests": 17,
+   "passed": 17,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "73ac15994fa97bad02fb04ad51ad3e04a9887e3d1cdfb977a58d4d38569a68bf"
+  },
+  "tests/unit/typography.test.ts": {
+   "tests": 5,
+   "passed": 5,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "7ed734caee457fcb52075e3facaf71ea156a96c6411b20af753b365241446b91"
+  },
+  "tests/unit/update-watcher.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a7e9217c24578c578f6ce27ab7fc329b5c112b9a1c5d61b386db3f0c7593e618"
+  },
+  "tests/unit/usage-buckets.test.ts": {
+   "tests": 11,
+   "passed": 11,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "a6729ec25959d6b7b724a0bd37ee5ceb45faaecdbcb80ca0be3678b1c52f6694"
+  },
+  "tests/unit/usage-snapshots.test.ts": {
+   "tests": 20,
+   "passed": 20,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "4c767858e18a217c33fd2a13165d695d00b84f63da9c7e24b0535aa00b4c5196"
+  },
+  "tests/unit/verify-release-parser.test.ts": {
+   "tests": 12,
+   "passed": 12,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "50f539a983d507d90d53d52a9613a52a3c598f337e9fc2f8a3d6aaa07b7e5e7d"
+  },
+  "tests/unit/vision-browser-paths.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "d8a333ef937521bce219f052b2e8abd6ae5ab9249117232ad2180b26f4bf8464"
+  },
+  "tests/unit/vision-browser-teardown.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9bf91dab3f483ce56a1b882735fe6e68c2309471ee00c3af8476d7a8b73b7036"
+  },
+  "tests/unit/vision-cleanup-claude-md.test.ts": {
+   "tests": 3,
+   "passed": 3,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cd0e334ad0e851d4d5d68fd7334f404a9bcba381b48ff0c41f61490c6287b4dd"
+  },
+  "tests/unit/vision-launch-args.test.ts": {
+   "tests": 4,
+   "passed": 4,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "cc62b42199f54831a3b8556ff785d3c95bc75cb8bfbaa55992a661795b37b9c0"
+  },
+  "tests/unit/vision-manager-router.test.ts": {
+   "tests": 9,
+   "passed": 9,
+   "skipped": 0,
+   "todo": 0,
+   "namesSha256": "9c91b79eabeab62b1080b1d8ec4a2c8f7412c712e1fbdc8590b6b3d7914e2a33"
+  }
+ }
+}
