@@ -16,6 +16,14 @@
  * No default export (project convention).
  */
 
+import {
+  TMUX_WHEEL_UP_KEYNAME,
+  TMUX_WHEEL_DOWN_KEYNAME,
+  TMUX_WHEEL_EXIT_KEYNAME,
+  TMUX_WHEEL_LINES_PER_NOTCH,
+  TMUX_WHEEL_NOOP_COMMAND,
+} from '../shared/tmux-wheel'
+
 /**
  * Allowlist for a tmux binary path (adversarial review, #242 BLOCKER).
  *
@@ -107,6 +115,91 @@ export const STAGED_TMUX_BIN_EXPR = '"$HOME"/.claude/bin/tmux'
  * happens in the authenticated user's shell at launch time.
  */
 export const ON_PATH_TMUX_BIN_EXPR = 'command tmux'
+
+/**
+ * #85 — the tmux key bindings that turn CCC's private wheel keys into
+ * copy-mode scrollback movement. See src/shared/tmux-wheel.ts for the whole
+ * design (why the wheel breaks under tmux, why `mouse on` is not the fix, and
+ * which bytes the renderer writes).
+ *
+ * Six bindings across two key tables:
+ *
+ *   root      up   -> `copy-mode -e`  (ENTER the scrollback view; `-e` leaves
+ *                                      it again on its own once the user has
+ *                                      scrolled back down to the live bottom)
+ *   root      down -> no-op           (already at the bottom; nothing to do)
+ *   root      exit -> no-op           (the renderer's copy-mode belief can be
+ *                                      stale after an `-e` auto-exit)
+ *   copy-mode up   -> `send -X -N 3 scroll-up`
+ *   copy-mode down -> `send -X -N 3 scroll-down`
+ *   copy-mode exit -> `send -X cancel`
+ *
+ * Each binding is a SINGLE tmux command. A multi-command binding needs a `\;`
+ * INSIDE the binding, and a `;` that reaches tmux unescaped does not bind — it
+ * ends the bind-key command and RUNS the rest immediately (`not in a mode`,
+ * observed against tmux 3.4 on 2026-09-20). The renderer compensates for the
+ * root binding being entry-only by sending the up-key twice on the first notch.
+ *
+ * WHY THESE RUN BESIDE THE SESSION OPTIONS, NOT ONCE UP FRONT. `bind-key` is
+ * server-scoped and needs no target, so hoisting it ahead of the whole
+ * has-session conditional looks free — and silently does nothing: a tmux server
+ * with no sessions EXITS as soon as its last client leaves, so each hoisted
+ * `bind-key` started a server, bound the key, and took the binding down with it
+ * (verified 2026-09-20 — the keys arrived at the pane as raw bytes). They have
+ * to run where a session already exists: the attach branch's pre-attach options
+ * and the fresh pane's own options.
+ *
+ * That means three copies on one command line, so the six bindings ride ONE
+ * tmux invocation, separated by `\;` arguments, and use tmux's standard short
+ * aliases (`bind`/`set`/`send`). The line is read by the remote tty in
+ * canonical mode, where anything past ~4 KiB is silently truncated — with the
+ * full names and one invocation each this fix alone added ~1.4 KiB.
+ *
+ * The `\;` survives both quoting levels: the outer login shell (attach branch)
+ * and tmux's own `sh -c` inside `new-session` (fresh branch, where the whole
+ * inner command is singleQuote'd and the backslash therefore reaches that
+ * inner shell intact) each turn `\;` into a lone `;` ARGUMENT, which is what
+ * tmux's parser splits commands on.
+ *
+ * SCOPE. Unlike the session options beside them these bindings are visible to
+ * the user's other tmux sessions on the same host. Accepted deliberately: the
+ * keys are ctrl+alt+F10/F11/F12, which nothing else binds, and tmux has no
+ * session-scoped binding table — the `key-table` session option REPLACES the
+ * root table rather than adding to it, which would silently drop every other
+ * root binding the user has.
+ *
+ * Trust posture is unchanged from the options beside it (#242): `tmuxBinToken`
+ * is one of the two compile-time binary expressions, every other operand is a
+ * compile-time literal, and no wire-reported value reaches the command. Errors
+ * are swallowed (`2>/dev/null`) so an old tmux that rejects a binding still
+ * falls through to launching claude — the wheel is worth less than the session.
+ */
+export function buildTmuxWheelBindings(tmuxBinToken: string): string {
+  const bind = (table: string, key: string, command: string): string =>
+    `bind -T ${table} ${key} ${command}`
+  const scroll = (direction: 'up' | 'down'): string =>
+    `send -X -N ${TMUX_WHEEL_LINES_PER_NOTCH} scroll-${direction}`
+  // BOTH copy-mode tables, not just the one `mode-keys emacs` should have
+  // selected. That option is set with an error-swallowed `set-option -w`, and a
+  // swallowed failure here does not degrade gracefully -- it strands the user
+  // IN copy-mode with the leave key unbound, eating every keystroke. Observed
+  // for real on the attach branch (2026-09-20), where the window target had to
+  // be corrected; covering both tables means the wheel no longer depends on
+  // that option landing at all.
+  const inCopyMode = (table: string): string[] => [
+    bind(table, TMUX_WHEEL_UP_KEYNAME, scroll('up')),
+    bind(table, TMUX_WHEEL_DOWN_KEYNAME, scroll('down')),
+    bind(table, TMUX_WHEEL_EXIT_KEYNAME, 'send -X cancel'),
+  ]
+  const commands = [
+    bind('root', TMUX_WHEEL_UP_KEYNAME, 'copy-mode -e'),
+    bind('root', TMUX_WHEEL_DOWN_KEYNAME, TMUX_WHEEL_NOOP_COMMAND),
+    bind('root', TMUX_WHEEL_EXIT_KEYNAME, TMUX_WHEEL_NOOP_COMMAND),
+    ...inCopyMode('copy-mode'),
+    ...inCopyMode('copy-mode-vi'),
+  ].join(' \\; ')
+  return `${tmuxBinToken} ${commands} 2>/dev/null`
+}
 
 /**
  * Sanitize a CCC session id into a tmux-safe session name. Mirrors the
@@ -303,12 +396,27 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   //     name, a swallowed error), interval 0 stops the timed CLOCK REPAINT that
   //     is PTY output resetting the watchdog's silence clock every ~15s. The bar
   //     no longer flashes the session "working". Belt-and-braces to `status off`.
-  const sessionOpts = (t: string): string =>
+  //   mode-keys emacs — #85, pins WHICH copy-mode key table the wheel bindings
+  //     below have to cover. A remote `~/.tmux.conf` with `set -g mode-keys vi`
+  //     would route copy-mode keys to `copy-mode-vi` instead, and the wheel
+  //     would stop scrolling on exactly those hosts. Window-scoped (`-w`), so
+  //     the user's other sessions keep their own mode-keys.
+  //
+  // `w` is the WINDOW-target prefix, and it is NOT the session one with `-w`
+  // bolted on: `set-option -w -t =ccc-<sid>` fails outright ("no such window",
+  // observed 2026-09-20 — a session name is not a window target, and the error
+  // is swallowed, so the option silently did not land on the attach branch).
+  // The window form is the same `=`-exact session plus a trailing `:`, which
+  // resolves to that session's CURRENT window while keeping the exact-match
+  // guarantee #242 added to every other `-t` here.
+  const sessionOpts = (t: string, w: string): string =>
     `${tmuxBinToken} set-option ${t}mouse off 2>/dev/null; ` +
     `${tmuxBinToken} set-option ${t}status off 2>/dev/null; ` +
-    `${tmuxBinToken} set-option ${t}status-interval 0 2>/dev/null`
-  const mouseOff = sessionOpts(`-t ${target} `)
-  const mouseOffInPane = sessionOpts('')
+    `${tmuxBinToken} set-option ${t}status-interval 0 2>/dev/null; ` +
+    `${tmuxBinToken} set-option -w ${w}mode-keys emacs 2>/dev/null; ` +
+    buildTmuxWheelBindings(tmuxBinToken)
+  const mouseOff = sessionOpts(`-t ${target} `, `-t ${target}: `)
+  const mouseOffInPane = sessionOpts('', '')
   // Fresh-create branch only: resume the prior conversation on a reconnect
   // where the remote session was gone. Appended to innerCmd BEFORE quoting so
   // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.

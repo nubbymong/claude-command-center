@@ -15,7 +15,8 @@
 // are deleted along with their tests -- there is no longer a wire-reported
 // path reaching this sink for either tier to validate.
 import { describe, it, expect } from 'vitest'
-import { buildTmuxLaunchCommand, buildSshClaudeFlags, shouldAddContinueFlag, ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR } from '../../src/main/ssh-tmux'
+import { buildTmuxLaunchCommand, buildSshClaudeFlags, shouldAddContinueFlag, buildTmuxWheelBindings, ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR } from '../../src/main/ssh-tmux'
+import { TMUX_WHEEL_UP_KEYNAME, TMUX_WHEEL_DOWN_KEYNAME, TMUX_WHEEL_EXIT_KEYNAME, TMUX_WHEEL_LINES_PER_NOTCH } from '../../src/shared/tmux-wheel'
 
 const base = {
   sessionId: 'sid-1',
@@ -39,14 +40,18 @@ function optsTargeted(t: string, sid: string): string {
   return (
     `${t} set-option -t =ccc-${sid} mouse off 2>/dev/null; ` +
     `${t} set-option -t =ccc-${sid} status off 2>/dev/null; ` +
-    `${t} set-option -t =ccc-${sid} status-interval 0 2>/dev/null`
+    `${t} set-option -t =ccc-${sid} status-interval 0 2>/dev/null; ` +
+    `${t} set-option -w -t =ccc-${sid}: mode-keys emacs 2>/dev/null; ` +
+    buildTmuxWheelBindings(t)
   )
 }
 function optsPane(t: string): string {
   return (
     `${t} set-option mouse off 2>/dev/null; ` +
     `${t} set-option status off 2>/dev/null; ` +
-    `${t} set-option status-interval 0 2>/dev/null`
+    `${t} set-option status-interval 0 2>/dev/null; ` +
+    `${t} set-option -w mode-keys emacs 2>/dev/null; ` +
+    buildTmuxWheelBindings(t)
   )
 }
 
@@ -136,7 +141,11 @@ describe('buildTmuxLaunchCommand', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, sessionId: 'a' })
     const targets = [...cmd.matchAll(/-t (\S+)/g)].map((m) => m[1])
     expect(targets.length).toBeGreaterThan(0)
-    for (const t of targets) expect(t).toBe('=ccc-a')
+    // Two shapes, both `=`-exact: the SESSION target every verb here has always
+    // used, and (#85) the WINDOW target `mode-keys` needs — the same session,
+    // `:`-suffixed to name its current window. `set-option -w -t =ccc-a` is not
+    // a window target and fails with "no such window".
+    for (const t of targets) expect(['=ccc-a', '=ccc-a:']).toContain(t)
     // The pre-fix, prefix-matching form is gone from every target verb.
     expect(cmd).not.toMatch(/(has-session|attach|set-option) -t ccc-a\b/)
   })
@@ -368,7 +377,9 @@ describe('launch-token literals are alias/function-proof (fail-posture follow-up
     expect(cmd.startsWith('if command tmux has-session -t =ccc-sid-1 ')).toBe(true)
     // #546 + watchdog: the three session options (same literal token, TARGETED)
     // precede attach on this branch.
-    expect(cmd).toContain('then command tmux set-option -t =ccc-sid-1 mouse off 2>/dev/null; command tmux set-option -t =ccc-sid-1 status off 2>/dev/null; command tmux set-option -t =ccc-sid-1 status-interval 0 2>/dev/null; command tmux attach -t =ccc-sid-1 || command tmux new-session -s ccc-sid-1 ')
+    // (#85 appends mode-keys + the wheel bindings to the same run of options,
+    // asserted in their own block below; this one still owns the literal token.)
+    expect(cmd).toContain(`then ${optsTargeted('command tmux', 'sid-1')}; command tmux attach -t =ccc-sid-1 || command tmux new-session -s ccc-sid-1 `)
     expect(cmd).toContain('else command tmux new-session -s ccc-sid-1 ')
     // The alias-expandable substitution form must never come back, anywhere
     // in the command.
@@ -412,5 +423,78 @@ describe('buildSshClaudeFlags / shouldAddContinueFlag (#242 tier 5)', () => {
     expect(shouldAddContinueFlag({ reconnect: false, tmuxInPlay: false })).toBe(false)
     expect(shouldAddContinueFlag({ reconnect: false, tmuxInPlay: true })).toBe(false)
     expect(buildSshClaudeFlags({ reconnect: false, tmuxInPlay: false })).toBe('')
+  })
+})
+
+// #85 — the wheel bindings that give an SSH/tmux session real scrollback.
+//
+// The behaviour these assert is NOT provable in a unit test: whether tmux
+// parses `ESC [ 24 ; 7 ~` as C-M-F12, whether `send -X -N 3 scroll-up` moves
+// three lines, whether a `;` reaching tmux unescaped splits the bind. All three
+// were verified end-to-end against tmux 3.4 on 2026-09-20 by driving this exact
+// generated command through a real pty client (copy-mode entered, scroll_position
+// 3 -> 9 -> 6, keystrokes leaving copy-mode with no escape bytes reaching the
+// pane). What these tests pin is the SHAPE that verification was done against,
+// so it cannot drift silently.
+describe('buildTmuxWheelBindings (#85)', () => {
+  it('binds all nine commands in ONE tmux invocation, separated by escaped semicolons', () => {
+    const cmd = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+    // One invocation: the token appears exactly once, at the front.
+    expect(cmd.startsWith(`${ON_PATH_TMUX_BIN_EXPR} bind `)).toBe(true)
+    expect(cmd.split(ON_PATH_TMUX_BIN_EXPR)).toHaveLength(2)
+    expect(cmd.split(' \\; ')).toHaveLength(9)
+    // A BARE `;` would end the bind-key command and run the rest immediately
+    // (observed: `not in a mode`), so every separator must carry its backslash.
+    expect(/[^\\]; /.test(cmd.replace(' 2>/dev/null', ''))).toBe(false)
+  })
+
+  it('enters copy-mode from the root table and scrolls from the copy-mode table', () => {
+    const cmd = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+    expect(cmd).toContain(`bind -T root ${TMUX_WHEEL_UP_KEYNAME} copy-mode -e`)
+    expect(cmd).toContain(`bind -T copy-mode ${TMUX_WHEEL_UP_KEYNAME} send -X -N ${TMUX_WHEEL_LINES_PER_NOTCH} scroll-up`)
+    expect(cmd).toContain(`bind -T copy-mode ${TMUX_WHEEL_DOWN_KEYNAME} send -X -N ${TMUX_WHEEL_LINES_PER_NOTCH} scroll-down`)
+    expect(cmd).toContain(`bind -T copy-mode ${TMUX_WHEEL_EXIT_KEYNAME} send -X cancel`)
+  })
+
+  it('binds the down/leave keys to a silent no-op in the root table', () => {
+    // An UNBOUND key is forwarded to the pane -- i.e. raw escape bytes typed at
+    // claude, which is the #85 bug in a different costume. The renderer only
+    // sends these two out of copy-mode when its belief went stale (tmux's `-e`
+    // auto-exit at the bottom, which the renderer cannot observe).
+    const cmd = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+    expect(cmd).toContain(`bind -T root ${TMUX_WHEEL_DOWN_KEYNAME} set -g @ccc-wnoop 1`)
+    expect(cmd).toContain(`bind -T root ${TMUX_WHEEL_EXIT_KEYNAME} set -g @ccc-wnoop 1`)
+  })
+
+  it('swallows errors so an old tmux that rejects a binding still launches claude', () => {
+    expect(buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR).endsWith(' 2>/dev/null')).toBe(true)
+  })
+
+  it('carries no wire-reported operand: every token is compile-time literal (#242 sink posture)', () => {
+    const staged = buildTmuxWheelBindings(STAGED_TMUX_BIN_EXPR)
+    expect(staged.startsWith(`${STAGED_TMUX_BIN_EXPR} `)).toBe(true)
+    // Nothing session-derived: no session id, no target, no `-t`.
+    expect(staged).not.toContain('-t ')
+    expect(staged).not.toContain('ccc-sid')
+  })
+
+  it('rides BOTH launch branches, because bindings made with no session do not survive', () => {
+    // A tmux server with no sessions exits with its last client, taking any
+    // hoisted binding with it (verified 2026-09-20). So the bindings have to
+    // run where a session exists: before the attach, and inside the fresh pane.
+    const cmd = buildTmuxLaunchCommand(base)
+    const bindings = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+    // Attach branch (once) + fresh pane (twice: the attach fall-through and the else).
+    expect(cmd.split(bindings)).toHaveLength(4)
+    // ...and always AFTER `mouse off`, which is what keeps #546's drag-select.
+    expect(cmd.indexOf('mouse off')).toBeLessThan(cmd.indexOf(bindings))
+  })
+
+  it('forces mode-keys emacs so the copy-mode bindings are the table actually consulted', () => {
+    // A remote ~/.tmux.conf with `set -g mode-keys vi` would route copy-mode
+    // keys to `copy-mode-vi` instead and the wheel would stop scrolling there.
+    const cmd = buildTmuxLaunchCommand(base)
+    expect(cmd).toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -w -t =ccc-sid-1: mode-keys emacs 2>/dev/null`)
+    expect(cmd).toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -w mode-keys emacs 2>/dev/null`)
   })
 })
