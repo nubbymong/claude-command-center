@@ -1,8 +1,9 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-19T22:53:06.753Z",
-  "head": "6bafcc33c9b9465713376bf6ad9b8b672ae1b890",
-  "tree": "4faa5cf7f595f274fd148fff73a48cfb21319cee",
+  "generatedAt": "2026-09-20T01:15:16.447Z",
+  "head": "49514d1e3a401e8a01af8e985808f064efacf7c5",
+  "tree": "8bc2a1f798fd923051a17c9132e3d28d23b0a352",
+  "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
     {
@@ -115,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2085,
-  "excludedFileCount": 310,
-  "scannedFileCount": 1775,
+  "trackedFileCount": 2126,
+  "excludedFileCount": 334,
+  "scannedFileCount": 1792,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -138,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 281,
-  "pathDigest": "cbd339b0247afd3126d9cfb26d03377f79543106a7119335f123f0f8d42bdbcf",
+  "matchedPathCount": 289,
+  "pathDigest": "6e37ca4f5da1f90a8ec4e127a78423117154b117bb5c9d56e09875d05570af1d",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -408,10 +409,9 @@
     {
       "path": "src/main/index.ts",
       "predicates": [
-        "P07",
         "P14"
       ],
-      "lineCount": 9
+      "lineCount": 5
     },
     {
       "path": "src/main/install-secret.ts",
@@ -523,9 +523,10 @@
         "P01",
         "P04",
         "P07",
+        "P09",
         "P14"
       ],
-      "lineCount": 25
+      "lineCount": 58
     },
     {
       "path": "src/main/providers/codex/mcp-config.ts",
@@ -591,18 +592,26 @@
       "lineCount": 6
     },
     {
-      "path": "src/main/providers/host-color-scheme.ts",
+      "path": "src/main/providers/compose.ts",
       "predicates": [
+        "P14"
+      ],
+      "lineCount": 3
+    },
+    {
+      "path": "src/main/providers/core/package.ts",
+      "predicates": [
+        "P04",
         "P14"
       ],
       "lineCount": 2
     },
     {
-      "path": "src/main/providers/index.ts",
+      "path": "src/main/providers/host-color-scheme.ts",
       "predicates": [
         "P14"
       ],
-      "lineCount": 3
+      "lineCount": 2
     },
     {
       "path": "src/main/providers/types.ts",
@@ -1162,6 +1171,29 @@
       "lineCount": 9
     },
     {
+      "path": "src/renderer/providers/codex/index.ts",
+      "predicates": [
+        "P01",
+        "P10",
+        "P11"
+      ],
+      "lineCount": 13
+    },
+    {
+      "path": "src/renderer/providers/core/descriptor.ts",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/renderer/providers/index.ts",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 2
+    },
+    {
       "path": "src/renderer/session-persistence.ts",
       "predicates": [
         "P05",
@@ -1300,6 +1332,35 @@
         "P14"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "src/shared/providers/capabilities.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/shared/providers/ids.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/shared/providers/model.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/shared/providers/realm-env.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "lineCount": 4
     },
     {
       "path": "src/shared/types.ts",

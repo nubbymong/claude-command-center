@@ -1,5 +1,10 @@
+// Claude provider package: public entry point (WP1, design 7.1). Everything
+// outside this directory imports from here; the dependency-boundary test
+// ratchets the remaining deep imports down to zero.
 import type { SshCapableProvider, SpawnOptions, TelemetrySource, HistorySession } from '../types'
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
+import type { ProviderCapabilities } from '../../../shared/providers'
+import type { ProviderPackage } from '../core'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
 import { getRemoteSetupCommand, remoteSessionSettingsPath, remoteSessionMcpConfigPath } from './ssh-shim'
 import { detectClaudeUi } from './ui-detection'
@@ -62,5 +67,73 @@ export class ClaudeProvider implements SshCapableProvider {
   }
   async deployResumePickerScript(resourcesDir: string): Promise<void> {
     return deployClaudeResumePickerScript(resourcesDir)
+  }
+}
+
+/** What Claude Code supports through this app, stated honestly (design 7.3).
+ *  A key is `supported` only once this package exposes the operation behind
+ *  it (registration enforces that), so the setup/auth/realm keys stay
+ *  `unknown` until the Claude adapter slice wires them. Account isolation is
+ *  the existing profile-home mechanism (owner decision D1); it is not
+ *  available on macOS, where the login keychain is located through $HOME
+ *  (D2, WP1 only). No tested CLI version range is declared yet: the range is
+ *  established by the D7 conformance evidence (dev host: Claude Code 2.1.278). */
+export const claudeCapabilities: ProviderCapabilities = {
+  'cli.discovery': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'install.recipes': { state: 'unknown', note: 'the official native installer, shown and copied, never scraped; wired in the Claude adapter slice' },
+  'auth.browser': { state: 'unknown', note: 'the genuine CLI login in a Conductor terminal; wired in the Claude adapter slice' },
+  'auth.device': { state: 'unsupported', note: 'Claude Code has no device-code sign-in' },
+  'auth.apiKey': { state: 'unsupported', note: 'managed accounts use the CLI sign-in; an API key is never collected' },
+  'auth.status': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'auth.logout': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2); wired in the Claude adapter slice' },
+  'account.labelFields': { state: 'unknown', note: 'email read from the profile identity file; wired in the Claude adapter slice' },
+  'account.usage': { state: 'unknown', note: 'the per-account usage fetch lives in src/main/usage, not on this package; wired in a later slice' },
+  'session.launch': { state: 'supported' },
+  'session.history': { state: 'supported', note: 'resume picker and history listing' },
+  'session.cloud': { state: 'unknown', note: 'cloud agents run through cloud-agent-manager, not through the provider package; wired in a later slice' },
+  'session.ssh': { state: 'supported' },
+}
+
+/** Ambient variables that could override a bound Claude realm (D3):
+ *  the config-dir override and every credential the CLI reads from the
+ *  environment ahead of its stored login (the long-lived token from
+ *  `claude setup-token`, the API key, the auth token). Reviewed 2026-09-20
+ *  against Claude Code 2.1.278. Authority/cloud switches
+ *  (ANTHROPIC_BASE_URL, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX,
+ *  AWS_BEARER_TOKEN_BEDROCK) redirect where credentials go rather than
+ *  override the realm; whether they belong here is an open owner question
+ *  recorded with slice 1. */
+export const claudeAmbientAuthVariables: readonly string[] = ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
+
+/** Variables the realm patch may set: the profile-home selector, and HOME as
+ *  its POSIX sibling (D1). Nothing else.
+ *
+ *  Three things withProfileHome also sets are deliberately NOT here, for one
+ *  reason: a realm patch can only REPLACE a variable wholesale, and none of
+ *  them is a realm selector.
+ *  - PATH: withProfileHome APPENDS <home>/.local/bin to the inherited PATH, so
+ *    a system binary still wins. Owning it would hand the package the child's
+ *    whole executable search order -- the PATH hijack this contract forbids.
+ *  - GIT_CONFIG_GLOBAL and npm_config_userconfig: withProfileHome points these
+ *    at the REAL home ("keep git/npm reading the real shared config",
+ *    src/main/account-profiles.ts), i.e. deliberately OUTSIDE the realm. They
+ *    take an arbitrary absolute path, and a git config file executes commands
+ *    (core.pager, core.sshCommand, alias.*, filter.*), so owning them would be
+ *    the PATH hijack one indirection later.
+ *  All three stay in the launch path, where withProfileHome already composes
+ *  them. Registration refuses them (NEVER_OWNED_LAUNCH_VARIABLES). */
+export const claudeOwnedLaunchVariables: readonly string[] = ['USERPROFILE', 'HOME']
+
+/** Created by the composition root; importing this entry point has no side effects. */
+export function createClaudePackage(): ProviderPackage {
+  const session = new ClaudeProvider()
+  return {
+    id: session.id,
+    displayName: session.displayName,
+    session,
+    capabilities: claudeCapabilities,
+    ambientAuthVariables: claudeAmbientAuthVariables,
+    ownedLaunchVariables: claudeOwnedLaunchVariables,
   }
 }

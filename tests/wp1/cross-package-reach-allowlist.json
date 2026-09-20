@@ -1,0 +1,16 @@
+{
+  "schema": "wp1-cross-package-reach-allowlist/1",
+  "note": "WP1.55 ratchet: every transitive path by which one concrete provider package reaches the other through shared main-process modules on the base (the packages never import each other directly). Each entry is `from -> via -> to`, where `via` is the first module outside the source package. All ten come from the base's entanglement of both spawn paths with conductor-mcp-server, codex-review-mcp-tool, pty-manager, statusline-watcher and the per-session settings writer; the adapter and launch-handoff slices route those consumers through the entry points. The list may only shrink; tests/wp1/dependency-boundaries.test.ts R2 fails on a new entry and on a stale one.",
+  "entries": [
+    { "from": "src/main/providers/claude/spawn.ts", "via": "src/main/codex-review-mcp-tool.ts", "to": "src/main/providers/codex/auth.ts" },
+    { "from": "src/main/providers/claude/spawn.ts", "via": "src/main/conductor-mcp-server.ts", "to": "src/main/providers/codex/mcp-config.ts" },
+    { "from": "src/main/providers/claude/ssh-shim.ts", "via": "src/main/codex-review-mcp-tool.ts", "to": "src/main/providers/codex/auth.ts" },
+    { "from": "src/main/providers/claude/ssh-shim.ts", "via": "src/main/conductor-mcp-server.ts", "to": "src/main/providers/codex/mcp-config.ts" },
+    { "from": "src/main/providers/codex/spawn.ts", "via": "src/main/hooks/per-session-settings.ts", "to": "src/main/providers/claude/statusline-command.ts" },
+    { "from": "src/main/providers/codex/spawn.ts", "via": "src/main/pty-manager.ts", "to": "src/main/providers/claude/spawn.ts" },
+    { "from": "src/main/providers/codex/spawn.ts", "via": "src/main/pty-manager.ts", "to": "src/main/providers/claude/ssh-shim.ts" },
+    { "from": "src/main/providers/codex/spawn.ts", "via": "src/main/pty-manager.ts", "to": "src/main/providers/claude/ui-detection.ts" },
+    { "from": "src/main/providers/codex/spawn.ts", "via": "src/main/statusline-watcher.ts", "to": "src/main/providers/claude/statusline.ts" },
+    { "from": "src/main/providers/codex/spawn.ts", "via": "src/main/statusline-watcher.ts", "to": "src/main/providers/claude/telemetry.ts" }
+  ]
+}

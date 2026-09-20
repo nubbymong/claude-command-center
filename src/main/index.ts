@@ -23,9 +23,8 @@ import {
 
 import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
 import { recordLiveUsageForSession } from './usage/account-usage'
-import { registerProvider, getProvider } from './providers'
-import { ClaudeProvider } from './providers/claude'
-import { CodexProvider } from './providers/codex'
+import { getProvider } from './providers'
+import { composeProviders } from './providers/compose'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
@@ -490,8 +489,17 @@ if (!gotTheLock) {
 
     // Register built-in providers first — must happen before any code calls
     // getProvider('claude'), including deployStatuslineScript below.
-    registerProvider(new ClaudeProvider())
-    registerProvider(new CodexProvider())
+    // Registration fails closed on a malformed provider declaration, which is
+    // a build-time defect the conformance suite catches; if one ever reaches a
+    // user, say so. Without this the app dies with no window and no message.
+    try {
+      composeProviders()
+    } catch (err) {
+      console.error('[main] composeProviders failed:', err)
+      dialog.showErrorBox('AI Code Conductor cannot start', `Provider registration failed:\n\n${String(err)}`)
+      app.exit(1)
+      return
+    }
 
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything
     // writes to it (deploy/config below, window/handlers later, IPC saves

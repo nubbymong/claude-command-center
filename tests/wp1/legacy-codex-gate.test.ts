@@ -9,6 +9,7 @@
 // included.
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { runManifest, checkLedger, predicateDigest, DISPOSITIONS } from '../../scripts/wp1/legacy-codex-manifest.mjs'
 import { resolvePhaseDetailed } from './phase'
@@ -28,7 +29,10 @@ const has = (problems: string[], prefix: string) => problems.some((p) => p.start
  *  dispositions the live ledger happens to hold. */
 function withSynthetic(over: Partial<Row>, extra: Row[] = []): typeof ledger {
   const clone = JSON.parse(JSON.stringify(ledger))
-  const live = manifest.entries[0]
+  // The first matched path that has a DIRECT ledger row (a path covered only
+  // as some row's newPath would have no row to replace).
+  const live = manifest.entries.find((m) => clone.entries.some((e: Row) => e.path === m.path))!
+  expect(live, 'no manifest path has a direct ledger row').toBeDefined()
   const idx = clone.entries.findIndex((e: Row) => e.path === live.path)
   expect(idx, `live ledger has no row for ${live.path}`).toBeGreaterThanOrEqual(0)
   clone.entries[idx] = { path: live.path, predicates: live.predicates, category: 'TEST', disposition: 'retain', evidence: GOOD, note: '', ...over }
@@ -36,7 +40,30 @@ function withSynthetic(over: Partial<Row>, extra: Row[] = []): typeof ledger {
   return clone
 }
 
+/** Paths present in the commit the ledger is bound to. A matched path absent
+ *  from it was CREATED after that commit -- i.e. by WP1 -- so it cannot carry
+ *  a disposition whose evidence is the pre-WP1 baseline. The ledger checker
+ *  cannot see this: a retain row needs only evidence text naming a WP1 item,
+ *  and src/renderer/providers/core/descriptor.ts slipped through as retain
+ *  with "baseline suite green at 6bafcc33" as its proof. */
+const headTree = new Set(
+  execFileSync('git', ['-C', ROOT, 'ls-tree', '-r', '--name-only', ledger.manifestHead], { encoding: 'utf8', maxBuffer: 1 << 28 })
+    .split('\n').map((s: string) => s.trim()).filter(Boolean),
+)
+const newFileProblems = (rows: Row[]): string[] =>
+  rows.filter((e) => !e.resolved && !headTree.has(e.path) && e.disposition !== 'added')
+    .map((e) => `NEW FILE NOT MARKED added: ${e.path} is absent from ${ledger.manifestHead.slice(0, 8)} but dispositioned ${e.disposition}`)
+
 describe('WP1 legacy Codex manifest gate', () => {
+  it('a matched path the bound commit does not contain is dispositioned added, never retained against the baseline', () => {
+    expect(headTree.size).toBeGreaterThan(1000)
+    const problems = newFileProblems(ledger.entries as Row[])
+    expect(problems, problems.join('\n')).toEqual([])
+    // Verify the verifier, in both directions.
+    expect(newFileProblems([{ path: 'src/wp1-invented.ts', predicates: [], disposition: 'retain', evidence: GOOD }])[0]).toMatch(/^NEW FILE NOT MARKED added/)
+    expect(newFileProblems([{ path: 'src/wp1-invented.ts', predicates: [], disposition: 'added', evidence: GOOD }])).toEqual([])
+    expect(newFileProblems([{ path: [...headTree][0], predicates: [], disposition: 'retain', evidence: GOOD }])).toEqual([])
+  })
   it(`every matched path has a decided disposition with evidence; nothing stale, drifted or unscoped (phase ${phase}: ${reason})`, () => {
     const problems = checkLedger(manifest, ledger, { phase })
     expect(problems, problems.join('\n')).toEqual([])
@@ -48,7 +75,13 @@ describe('WP1 legacy Codex manifest gate', () => {
     expect(committed.predicateDigest).toBe(predicateDigest())
     expect(committed.pathDigest).toBe(manifest.pathDigest)
     expect(committed.matchedPathCount).toBe(manifest.matchedPathCount)
-    expect(ledger.manifestHead).toMatch(/^[0-9a-f]{40}$/) // informational breadcrumb, but never a forged shape
+    expect(ledger.manifestHead).toMatch(/^[0-9a-f]{40}$/)
+    expect(ledger.manifestHead).toBe(committed.head) // the commit the ledger was dispositioned against
+    // head/tree name the PARENT commit. The manifest scans the working tree,
+    // so while slice work is uncommitted it lists paths that commit does not
+    // contain; the record must admit that rather than read as a tree proof.
+    expect(typeof committed.scannedWorkingTree).toBe('boolean')
+    if (!committed.scannedWorkingTree) expect(committed.tree).toMatch(/^[0-9a-f]{40}$/)
   })
 
   it('uses only the six disposition values the ledger defines, with no duplicate paths', () => {
@@ -95,9 +128,28 @@ describe('WP1 legacy Codex manifest gate', () => {
     expect(has(c(withSynthetic({}, [{ ...gone, resolved: true, resolvedEvidence: 'x' }])), 'VACUOUS RESOLUTION')).toBe(true)
     expect(has(c(withSynthetic({ disposition: 'replace', evidence: GOOD, resolved: true, resolvedEvidence: GOOD })), 'RESOLVED BUT STILL MATCHES')).toBe(true)
     expect(has(c(withSynthetic({ disposition: 'retain', resolved: true, resolvedEvidence: GOOD })), 'RESOLVED ON WRONG DISPOSITION')).toBe(true)
-    // At the candidate a non-retain row must cite paths that exist.
-    expect(has(c(withSynthetic({ disposition: 'replace', evidence: 'WP1.33 replacement coverage in tests/wp1/does-not-exist.test.ts' }), 'candidate'), 'EVIDENCE PATH MISSING')).toBe(true)
-    expect(has(c(withSynthetic({ disposition: 'replace', evidence: 'WP1.33 replacement coverage in tests/wp1/does-not-exist.test.ts' }), 'gate0'), 'EVIDENCE PATH MISSING')).toBe(false)
+    // At the candidate a non-retain row must cite paths that exist. The live
+    // ledger legitimately cites planned paths at gate0, so the assertion is on
+    // the SYNTHETIC row's own messages: two absent citations produce exactly
+    // two problems for that row (which also proves the global regex flag), a
+    // trailing sentence dot is not part of the path, and a mis-cased or
+    // directory-only citation is a miss.
+    const livePath = manifest.entries.find((m) => ledger.entries.some((e: Row) => e.path === m.path))!.path
+    const own = (problems: string[]) => problems.filter((p) => p.startsWith(`EVIDENCE PATH MISSING: ${livePath} (`))
+    const twoMissing = 'WP1.33 replacement coverage in tests/wp1/does-not-exist.test.ts and tests/wp1/also-missing.test.ts'
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: twoMissing }), 'candidate'))).toHaveLength(2)
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: twoMissing }), 'gate0'))).toHaveLength(0)
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: 'WP1.33 coverage lives in tests/wp1/legacy-codex-gate.test.ts.' }), 'candidate'))).toHaveLength(0)
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: 'WP1.33 coverage in tests/wp1/Legacy-Codex-Gate.test.ts' }), 'candidate'))).toHaveLength(1)
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: 'WP1.33 coverage in tests/WP1/legacy-codex-gate.test.ts' }), 'candidate'))).toHaveLength(1)
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: 'WP1.33 coverage under tests/wp1/ only' }), 'candidate'))).toHaveLength(1)
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: 'WP1.33 coverage in tests/wp1/legacy-codex-gate.test.ts_' }), 'candidate'))).toHaveLength(0)
+    // The note and resolvedEvidence fields are scanned too.
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: GOOD, note: 'cases move to tests/wp1/does-not-exist.test.ts' }), 'candidate'))).toHaveLength(1)
+    expect(own(c(withSynthetic({ disposition: 'replace', evidence: GOOD, resolved: true, resolvedEvidence: 'WP1.33 landed, see tests/wp1/does-not-exist.test.ts' }), 'candidate'))).toHaveLength(1)
+    // claudeTestChanges rows are checked the same way.
+    const ctc = withSynthetic({}); ctc.claudeTestChanges = [{ path: 'tests/unit/x.test.ts', disposition: 'replace', evidence: 'WP1.33 moves to tests/wp1/nowhere.test.ts' }]
+    expect(c(ctc, 'candidate').filter((p) => p.startsWith('EVIDENCE PATH MISSING') && p.includes('claudeTestChanges'))).toHaveLength(1)
     // Manifest-side failures.
     expect(has(checkLedger({ ...manifest, unscopedMentions: ['some/file.txt'] }, ledger), 'UNSCOPED MENTION')).toBe(true)
     expect(has(checkLedger({ ...manifest, unreadable: ['some/file.ts'] }, ledger), 'UNREADABLE')).toBe(true)

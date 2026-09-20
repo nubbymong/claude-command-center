@@ -154,10 +154,16 @@ export function runManifest({ full = false } = {}) {
   const pathDigest = sha256(entries.map((e) => `${e.path}\t${e.predicates.join(',')}`).join('\n'))
   const head = execFileSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
   const tree = execFileSync('git', ['-C', ROOT, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim()
+  // The scan reads `git ls-files` and the WORKING TREE, not `tree`. While
+  // slice work is staged-but-uncommitted the two differ -- at slice 1 the
+  // manifest listed eight paths absent from the HEAD tree -- so `head`/`tree`
+  // name the parent commit, never a proof of what was scanned. Say so in the
+  // record rather than leaving a reader to assume it.
+  const dirty = execFileSync('git', ['-C', ROOT, 'status', '--porcelain'], { encoding: 'utf8' }).trim() !== ''
   return {
     schema: 'wp1-legacy-codex-manifest/3',
     generatedAt: new Date().toISOString(),
-    head, tree,
+    head, tree, scannedWorkingTree: dirty,
     predicateDigest: predicateDigest(),
     predicates: PREDICATES.map(({ id, kind, desc, re }) => ({ id, kind, desc, re: re.source, flags: re.flags })),
     excludePath: EXCLUDE_PATH.map((r) => r.source),
@@ -209,11 +215,7 @@ export function checkLedger(manifest, ledger, { phase = 'gate0' } = {}) {
     // At the candidate every tests/ or docs/wp1/ path a non-retain row cites
     // must exist: a `replace` whose replacement coverage was never written is
     // otherwise invisible to the ledger side of the gate.
-    if (candidate && l.disposition !== 'retain') {
-      for (const cited of (ev + ' ' + note + ' ' + String(l.resolvedEvidence ?? '')).match(new RegExp(PATH_TOKEN.source, 'g')) ?? []) {
-        if (!existsSync(resolve(ROOT, cited))) problems.push(`EVIDENCE PATH MISSING: ${tag} cites ${cited}`)
-      }
-    }
+    if (candidate && l.disposition !== 'retain') problems.push(...missingCitedPaths(tag, ev + ' ' + note + ' ' + String(l.resolvedEvidence ?? '')))
     for (const t of l.adaptsTests ?? []) {
       const te = byPath.get(t) ?? claudeChanges.get(t)
       if (!te) problems.push(`ADAPTED TEST NOT IN LEDGER: ${tag} adapts ${t}`)
@@ -248,10 +250,29 @@ export function checkLedger(manifest, ledger, { phase = 'gate0' } = {}) {
         break
     }
   }
+  // Claude-side test adaptations carry replacement citations too (WP1.33).
+  if (candidate) for (const c of ledger.claudeTestChanges ?? []) problems.push(...missingCitedPaths(`${c.path} (claudeTestChanges ${c.disposition})`, String(c.evidence ?? '')))
   for (const e of manifest.entries) {
     if (!byPath.has(e.path) && !byNewPath.has(e.path)) problems.push(`UNMATCHED (no ledger entry): ${e.path} [${e.predicates.join(',')}]`)
   }
   return problems
+}
+
+/** Every tests/, docs/wp1/ or scripts/wp1/ path token in `text` must name a
+ *  TRACKED file, spelled exactly as git holds it: membership in `git ls-files`
+ *  is case-exact for every segment on every platform, is implicitly
+ *  file-not-directory, and means cited evidence has been added, not merely
+ *  left on disk. A sentence-ending dot or bracket after the path is not part
+ *  of it. */
+let trackedSet = null
+export function missingCitedPaths(tag, text) {
+  trackedSet ??= new Set(trackedFiles())
+  const out = []
+  for (const raw of text.match(new RegExp(PATH_TOKEN.source, PATH_TOKEN.flags + 'g')) ?? []) {
+    const cited = raw.replace(/[.,;:)\]'"_-]+$/, '')
+    if (!trackedSet.has(cited)) out.push(`EVIDENCE PATH MISSING: ${tag} cites ${cited}`)
+  }
+  return out
 }
 
 function usage(code) {
@@ -285,7 +306,10 @@ if (invokedDirectly) {
     const kept = existing.entries.filter((e) => stillMatches(e) || keepAnyway(e))
     const added = m.entries.filter((e) => !byPath.has(e.path)).map((e) => ({ path: e.path, predicates: e.predicates, category: 'TODO', disposition: 'UNDECIDED', evidence: '', note: '' }))
     for (const e of kept) { const cur = m.entries.find((x) => x.path === e.path); if (cur) e.predicates = cur.predicates }
-    const entries = [...kept, ...added].sort((a, b) => a.path.localeCompare(b.path))
+    // Code-unit order, matching runManifest's `[...matches.keys()].sort()`.
+    // localeCompare folds case, so it orders the ledger differently from the
+    // manifest and every regeneration churns a few hundred lines of diff.
+    const entries = [...kept, ...added].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
     writeFileSync(arg, JSON.stringify({ ...existing, schema: 'wp1-legacy-codex-ledger/2', predicateDigest: m.predicateDigest, manifestPathDigest: m.pathDigest, manifestHead: m.head, entries }, null, 2) + '\n')
     dropped.forEach((e) => console.log(`dropped: ${e.path} (${e.disposition})`))
     console.log(`skeleton: ${entries.length} entries (${entries.filter((e) => e.disposition === 'UNDECIDED').length} undecided, ${added.length} new, ${dropped.length} dropped)`)

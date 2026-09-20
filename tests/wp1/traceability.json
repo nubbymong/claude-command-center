@@ -25,7 +25,8 @@
       "kind": "real-cli",
       "tests": [
         "tests/wp1/mode-matrix.test.ts",
-        "tests/wp1/launch-handoff.test.ts"
+        "tests/wp1/launch-handoff.test.ts",
+        "tests/wp1/tokenomics-realm-discovery.test.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/real-cli-matrix.md"
@@ -72,7 +73,8 @@
       "title": "Existing light-Codex upgrade preserves enablement and imports or reports default Codex state",
       "kind": "automated",
       "tests": [
-        "tests/wp1/migration-codex.test.ts"
+        "tests/wp1/migration-codex.test.ts",
+        "tests/wp1/tokenomics-realm-discovery.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -388,7 +390,8 @@
       "title": "App-managed realm path traversal, invalid IDs and unsafe links are rejected",
       "kind": "automated",
       "tests": [
-        "tests/wp1/realm-paths.test.ts"
+        "tests/wp1/realm-paths.test.ts",
+        "tests/wp1/provider-core.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -540,7 +543,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/launch-handoff.test.ts",
-        "tests/wp1/env-allowlist.test.ts"
+        "tests/wp1/env-allowlist.test.ts",
+        "tests/wp1/provider-core.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -581,7 +585,9 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/capability-registry.test.ts",
-        "tests/wp1/setup-surface.test.tsx"
+        "tests/wp1/setup-surface.test.tsx",
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/provider-conformance.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -593,7 +599,8 @@
       "title": "A mismatched providerId/providerAccountId/authRealmId/identityId binding is rejected before lease or spawn",
       "kind": "automated",
       "tests": [
-        "tests/wp1/launch-handoff.test.ts"
+        "tests/wp1/launch-handoff.test.ts",
+        "tests/wp1/provider-core.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -907,7 +914,8 @@
       "title": "Main and renderer each have explicit Claude/Codex entry points and a single composition root; shared components receive only neutral view models",
       "kind": "automated",
       "tests": [
-        "tests/wp1/dependency-boundaries.test.ts"
+        "tests/wp1/dependency-boundaries.test.ts",
+        "tests/wp1/provider-conformance.test.ts"
       ],
       "evidence": [],
       "status": "planned",

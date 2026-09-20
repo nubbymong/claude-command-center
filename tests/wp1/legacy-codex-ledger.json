@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "cbd339b0247afd3126d9cfb26d03377f79543106a7119335f123f0f8d42bdbcf",
-  "manifestHead": "6bafcc33c9b9465713376bf6ad9b8b672ae1b890",
+  "manifestPathDigest": "6e37ca4f5da1f90a8ec4e127a78423117154b117bb5c9d56e09875d05570af1d",
+  "manifestHead": "49514d1e3a401e8a01af8e985808f064efacf7c5",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -417,7 +417,6 @@
     {
       "path": "src/main/index.ts",
       "predicates": [
-        "P07",
         "P14"
       ],
       "category": "LAUNCH",
@@ -578,6 +577,7 @@
         "P01",
         "P04",
         "P07",
+        "P09",
         "P14"
       ],
       "category": "LAUNCH",
@@ -679,6 +679,27 @@
       "note": ""
     },
     {
+      "path": "src/main/providers/compose.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "main composition root; tests/wp1/dependency-boundaries.test.ts R3 (WP1.66), tests/wp1/provider-conformance.test.ts",
+      "note": "the only main module importing both concrete packages"
+    },
+    {
+      "path": "src/main/providers/core/package.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "provider package contract; tests/wp1/provider-core.test.ts, tests/wp1/dependency-boundaries.test.ts R1 (WP1.55)",
+      "note": "names both providers in a comment only"
+    },
+    {
       "path": "src/main/providers/host-color-scheme.ts",
       "predicates": [
         "P14"
@@ -690,13 +711,13 @@
     },
     {
       "path": "src/main/providers/index.ts",
-      "predicates": [
-        "P14"
-      ],
+      "predicates": [],
       "category": "LAUNCH",
       "disposition": "move",
       "evidence": "tests/wp1/dependency-boundaries.test.ts (WP1.55) proves the registry imports no concrete provider",
-      "note": "session-provider registry adapted in place (ProviderId type, no concrete imports); a newPath is added only if the file is physically renamed"
+      "note": "session-provider registry adapted in place (ProviderId type, no concrete imports); a newPath is added only if the file is physically renamed",
+      "resolved": true,
+      "resolvedEvidence": "WP1.66 slice 1, adapted in place: the registry implementation now lives in src/main/providers/core/registry.ts and this file re-exports the core entry point, naming no provider; kept in the core scope of tests/wp1/dependency-boundaries.test.ts R1"
     },
     {
       "path": "src/main/providers/types.ts",
@@ -813,9 +834,9 @@
         "P14"
       ],
       "category": "TOKENOMICS",
-      "disposition": "defer",
-      "evidence": "owner decision D10 in docs/wp1/gate0-report.md; documented limitation planned in src/shared/app-knowledge.ts known issues (WP1.36); no dependency break for external-default realms (same directory the indexer reads today)",
-      "note": "indexer keeps reading the default Codex sessions directory; rollouts under new managed realms are not indexed until the observability work package"
+      "disposition": "replace",
+      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): tests/wp1/tokenomics-realm-discovery.test.ts proves sessions are discovered from every active managed Codex realm and the external-default realm (WP1.2, WP1.5)",
+      "note": "narrow change: the indexer receives the sessions directories of the active managed Codex realms plus the external-default realm instead of one hard-coded ~/.codex/sessions; no other Tokenomics redesign"
     },
     {
       "path": "src/main/tokenomics/tokenomics-worker.ts",
@@ -824,9 +845,9 @@
         "P14"
       ],
       "category": "TOKENOMICS",
-      "disposition": "defer",
-      "evidence": "as tokenomics-service.ts (owner decision D10, WP1.36)",
-      "note": "directory is passed in by the service"
+      "disposition": "replace",
+      "evidence": "as tokenomics-service.ts: tests/wp1/tokenomics-realm-discovery.test.ts (owner decision D10, WP1.2, WP1.5)",
+      "note": "walks the list of sessions directories it is handed; parsing unchanged"
     },
     {
       "path": "src/main/watchdog/watchdog-manager.ts",
@@ -1481,6 +1502,38 @@
       ]
     },
     {
+      "path": "src/renderer/providers/codex/index.ts",
+      "predicates": [
+        "P01",
+        "P10",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "Codex renderer descriptor entry point; tests/wp1/provider-conformance.test.ts (WP1.56, WP1.66)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/providers/core/descriptor.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "renderer provider descriptor contract and defaultProviderActions; tests/wp1/provider-core.test.ts and tests/wp1/provider-conformance.test.ts (WP1.41, WP1.56)",
+      "note": "names codex only in the scoped-experimental-key example in a comment"
+    },
+    {
+      "path": "src/renderer/providers/index.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "renderer composition root; tests/wp1/dependency-boundaries.test.ts R3 (WP1.66)",
+      "note": ""
+    },
+    {
       "path": "src/renderer/session-persistence.ts",
       "predicates": [
         "P05",
@@ -1679,6 +1732,47 @@
       "disposition": "retain",
       "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
       "note": ""
+    },
+    {
+      "path": "src/shared/providers/capabilities.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "capability contract; tests/wp1/provider-core.test.ts (WP1.41)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/providers/ids.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "provider/opaque ids and the binding shape check; tests/wp1/provider-core.test.ts (WP1.28, WP1.42)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/providers/model.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "provider-neutral data contracts (design 5); realm kind codex-home; tests/wp1/provider-conformance.test.ts (WP1.56)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/providers/realm-env.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "realm environment patch contract (D1/D3); poisoned-environment negatives in tests/wp1/provider-core.test.ts (WP1.38), shipped-package assertions in tests/wp1/provider-conformance.test.ts (WP1.56)",
+      "note": "names CODEX_HOME as the worked example of a variable declared both ambient and owned"
     },
     {
       "path": "src/shared/types.ts",
