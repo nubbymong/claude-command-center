@@ -55,6 +55,7 @@ import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import { injectAttentionStyles } from '../utils/injectAttentionStyles'
 import { closeSessionBatch } from '../utils/closeSessionBatch'
+import { writeSessionInput } from './terminal/tmuxWheelScroll'
 
 interface Props {
   currentView: ViewType
@@ -1665,7 +1666,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                     // login in front of the user instead of telling them a command.
                     // /login is the in-session form, so it reuses this terminal and
                     // this account's config dir rather than starting anything new.
-                    window.electronAPI.pty.write(s.id, '/login\r')
+                    writeSessionInput(s.id, '/login\r')
                     onViewChange('sessions')
                   }
                 : undefined

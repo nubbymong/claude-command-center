@@ -44,6 +44,12 @@ export function useRestartSession(
         // check (findAskSession's, the dock's dot) read the fresh session as
         // dead.
         ptyExited: undefined,
+        // #85: the wheel->tmux-scrollback translation is armed off this flag,
+        // and a restart re-runs SSH connect, auth and remote setup before
+        // anything decides whether tmux is in play this time. Left set, the
+        // wheel would be writing tmux keys into a login shell or a password
+        // prompt. Main re-pushes it when the new launch is actually wrapped.
+        sshTmuxPersistent: undefined,
         // A restart re-runs the spawn effect. Ask Conductor's opening question
         // is one-shot: without this, restarting an Ask session would re-submit
         // whatever the user first typed. TerminalView also consumes it at spawn;

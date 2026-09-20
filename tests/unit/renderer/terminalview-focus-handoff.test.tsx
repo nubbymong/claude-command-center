@@ -40,6 +40,7 @@ const H = vi.hoisted(() => {
     onData() { return { dispose() {} } }
     onScroll() { return { dispose() {} } }
     attachCustomKeyEventHandler() {}
+    attachCustomWheelEventHandler() {}
     registerLinkProvider() { return { dispose() {} } }
     refresh() {}
     paste() {}

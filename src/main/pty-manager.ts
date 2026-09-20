@@ -35,6 +35,7 @@ import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
+import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
 import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
@@ -4741,6 +4742,25 @@ function isSubmittedPayload(data: string): boolean {
   if (data.length < 2) return false
   const last = data.charCodeAt(data.length - 1)
   return last === 13 /* \r */ || last === 10 /* \n */
+}
+
+/**
+ * #85 — submit a programmatic LINE into a session (the watchdog's retry, the
+ * canvas marker queue), leaving tmux copy-mode first when the session is
+ * tmux-wrapped.
+ *
+ * The wheel now opens tmux's scrollback view on an SSH Persistent session, and
+ * copy-mode SWALLOWS input: a user who scrolled up to read something and then
+ * walked away leaves the pane in a state where the watchdog's rate-limit retry
+ * would go to the scrollback viewer instead of claude, and the session would
+ * simply never resume. The leave key is prepended unconditionally for a wrapped
+ * session because main cannot observe copy-mode: outside it, tmux's root table
+ * binds that key to a silent no-op, so the cost of being wrong is nothing
+ * (verified against tmux 3.4, 2026-09-20). Untouched for every other session.
+ */
+export function writeSubmittedLine(sessionId: string, line: string): void {
+  const prefix = sshTmuxWrappedBySession.has(sessionId) ? TMUX_WHEEL_EXIT_KEY : ''
+  writePty(sessionId, `${prefix}${line}\r`)
 }
 
 export function writePty(sessionId: string, data: string): void {

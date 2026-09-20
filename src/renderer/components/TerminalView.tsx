@@ -34,6 +34,7 @@ import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
 import { registerRepainter, requestResync } from './terminal/repaintRegistry'
 import { createGeometryResync, type GeometryResync } from './terminal/geometryResync'
+import { createTmuxWheelScroll, registerTmuxWheelScroll, type TmuxWheelScroll } from './terminal/tmuxWheelScroll'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
@@ -152,6 +153,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // hand cursor at render cadence in a busy Claude session (2026-09-02 fix).
   // The control debounces the leave, and the context menu reads current().
   const linkHoverRef = useRef<LinkHoverControl | null>(null)
+  // #85: wheel -> tmux copy-mode scrollback for SSH sessions. Created once per
+  // TerminalView (not per terminal) so the enable effect below has something to
+  // talk to before the xterm instance exists, and armed only once main confirms
+  // the session really was tmux-wrapped. Inert in every other session.
+  const tmuxWheelRef = useRef<TmuxWheelScroll>(
+    createTmuxWheelScroll((data) => window.electronAPI.pty.write(sessionId, data)),
+  )
   // Explicit right-click menu (Copy/Paste). Opened by the contextmenu handler
   // whenever a blind copy-or-paste decision would be unsafe; null = closed.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSelection: boolean; linkUri?: string } | null>(null)
@@ -228,6 +236,31 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (Object.keys(patch).length > 0) updateSession(sessionId, patch)
     })
   }, [sessionId, ssh, updateSession])
+
+  // #85: the wheel translation is armed ONLY for an SSH session main has
+  // confirmed is tmux-wrapped. A bare (untmuxed) SSH session keeps claude's
+  // inline renderer in the NORMAL screen, so xterm has real scrollback and its
+  // own wheel handling is already correct there -- arming this would replace
+  // working local scrolling with remote round-trips for no gain. Cleared again
+  // if persistence is turned off mid-life, which also drops any stale
+  // "we are in copy-mode" belief.
+  useEffect(() => {
+    // Disarmed again once the PTY is gone. The view stays mounted after an exit
+    // (ptyExited only flips a flag) and sshTmuxPersistent is structural, so
+    // without this the wheel would keep consuming events and writing keys at a
+    // dead session id -- and reading back what a session printed before it died
+    // is exactly when scrollback matters. Disarmed, xterm's own scrolling of
+    // the buffer it still holds takes over.
+    tmuxWheelRef.current.setEnabled(
+      Boolean(ssh) && session?.sshTmuxPersistent === true && session?.ptyExited !== true,
+    )
+  }, [ssh, session?.sshTmuxPersistent, session?.ptyExited])
+
+  // Published under this session's id so code that types into the session
+  // WITHOUT going through xterm (a command button, a slash command from the
+  // status strip, an image paste) can leave tmux copy-mode first -- otherwise
+  // the line it typed is eaten by the scrollback viewer. See writeSessionInput.
+  useEffect(() => registerTmuxWheelScroll(sessionId, tmuxWheelRef.current), [sessionId])
 
   useEffect(() => {
     if (!ssh) return
@@ -598,6 +631,23 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       term.loadAddon(new WebLinksAddon())
       ;(term as unknown as { registerLinkProvider: typeof originalRegister }).registerLinkProvider = originalRegister
 
+      // #85: claim the wheel BEFORE xterm's own listener decides what to do
+      // with it. In an SSH/tmux session xterm is on the alternate screen with
+      // no scrollback, and its documented fallback for that case is to emit a
+      // cursor Up/Down to the PTY -- i.e. every notch typed an arrow key at
+      // claude. Returning false from this handler stops xterm processing the
+      // event at all; the controller has already written the tmux scroll key.
+      // Returns true (xterm's normal path, untouched) in every other session.
+      term.attachCustomWheelEventHandler((event) => {
+        // isMouseTracking: when the remote app has asked for mouse reports (CC's
+        // clickable questions, a remote TUI) the wheel is ITS input, so the
+        // controller declines and xterm forwards the report as usual.
+        const tracking = isMouseTracking(term as unknown as { modes?: { mouseTrackingMode?: string } })
+        if (!tmuxWheelRef.current.handleWheel(event, tracking)) return true
+        event.preventDefault()
+        return false
+      })
+
       term.open(container)
 
       // Load WebGL renderer (Codex recommendation #2). This swaps
@@ -930,6 +980,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // not flash it — the exact-match twin of the main process's sleep-moon
         // grace in writePty.
         if (data === '\x1b[I' || data === '\x1b[O') noteActivityGrace(sessionId)
+        // #85: a tmux copy-mode (the scrollback view the wheel opens) EATS
+        // keystrokes -- scroll up, type, and the text drives the scrollback
+        // viewer instead of reaching claude. Any real input therefore leaves
+        // copy-mode first. Control reports (focus in/out, cursor position) are
+        // not input and must not: they arrive while the user is still reading
+        // scrollback and would yank the view back to the bottom.
+        if (!isControlReportOnly(data)) {
+          const leaveCopyMode = tmuxWheelRef.current.exitPrefixForInput()
+          if (leaveCopyMode) window.electronAPI.pty.write(sessionId, leaveCopyMode)
+        }
         window.electronAPI.pty.write(sessionId, data)
       })
 
@@ -1354,6 +1414,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
+      // #85: the next terminal for this session starts at the live bottom, so
+      // a copy-mode belief left over from this one must not survive the swap.
+      tmuxWheelRef.current.reset()
       unregisterRepainter?.()
       geometryResync?.dispose()
       repainter?.dispose()
