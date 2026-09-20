@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -773,7 +773,7 @@ if (!gotTheLock) {
     startCanvasMarkerQueue({
       // The same submit shape every other programmatic line into the Claude TUI
       // uses (the watchdog retry, the command buttons, the launch line).
-      write: (sessionId, line) => writePty(sessionId, line + '\r'),
+      write: (sessionId, line) => writeSubmittedLine(sessionId, line),
       subscribe: (cb) => {
         const gw = getGateway()
         if (!gw) return
@@ -800,7 +800,7 @@ if (!gotTheLock) {
       getWindow,
       isSessionAlive: isSessionWritable,
       send: (sessionId, text) => {
-        writePty(sessionId, `${text}\r`)
+        writeSubmittedLine(sessionId, text)
       },
       // Refresh the services view live when a watchdog state changes; routed
       // through the same merge so the push carries every source (#235).

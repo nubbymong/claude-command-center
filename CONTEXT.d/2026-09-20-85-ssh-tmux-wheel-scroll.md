@@ -75,6 +75,79 @@ a real pty client:
 Unit: `tests/unit/tmux-wheel-scroll.test.ts` (renderer state machine, pacer),
 `tests/unit/ssh-tmux.test.ts` (binding shape, both branches, target exactness).
 
+### Adversarial review (2026-09-20) -- FINDINGS, then fixed
+
+Four independent attackers (injection/evasion, blast-radius/fail-open,
+design+coverage+mutation, platform/tmux-version parity), all exercising real
+tmux 3.4. The #242 injection posture held everywhere -- safeSid, the `\;`
+quoting through both shell levels, and the `=`-exact targeting all survived
+direct attack, and one attacker showed the `=` is load-bearing (dropping it
+made `-t ccc-a:` land on `ccc-ab`). What did not hold:
+
+1. BLOCKER -- a remote `~/.tmux.conf` with `set -g key-table <custom>` means
+   tmux never consults the `root` table, so every wheel key was forwarded to
+   the pane as raw escape bytes: the original bug, on the hosts whose owner
+   customised tmux most. Fixed by forcing `key-table root` on CCC's own
+   session (session-scoped). Re-verified under that exact hostile config.
+2. BLOCKER -- copy-mode is PANE state and survives a dropped connection and a
+   relaunch, while the renderer's belief starts false in a new process. A user
+   who scrolled up, then dropped the link, reattached into a pane that ate
+   every keystroke with the status bar off and nothing on screen to explain it.
+   #85 is what made this the normal case (the wheel opens copy-mode where it
+   used to take a deliberate `C-b [`). Fixed by `send-keys -X cancel` on the
+   attach branch, before the attach. Re-verified.
+3. MAJOR -- ctrl+wheel was handed BACK to xterm, straight into the arrow-key
+   fallback. A trackpad pinch reports as ctrl+wheel on every platform, so a
+   pinch typed Up/Down at claude. Now consumed, scrolling nothing.
+4. MAJOR -- the launch line. The bindings ride it three times; with a full flag
+   set plus `--extra-args` at its 512-char maximum it measured 4473 bytes, past
+   the 4096 canonical-mode truncation. Truncation lands mid-line and hangs the
+   remote shell at a `> ` prompt, which neither tmux-launch-failure regex in
+   pty-manager matches -- so nothing recovers it. Fixed with a budget
+   (TMUX_LAUNCH_LINE_BUDGET): over it, the bindings are dropped and the session
+   launches with pre-#85 wheel behaviour instead of not launching.
+5. MAJOR -- a `\;` list runs until the FIRST failure and keeps what already
+   ran, so an old tmux rejecting one command left a partial binding set: either
+   nothing bound (keys leak to the pane) or root-bound-with-no-exit (stranded
+   in copy-mode). Fixed by ordering: every key is silenced in the root table
+   first, each copy-mode table gets its leave key before its scroll keys, and
+   the one command that can OPEN copy-mode runs last. Every prefix is now safe.
+6. MAJOR -- the wheel stayed armed over a dead PTY (post-mortem scrollback
+   became unscrollable) and through a Restart (writing tmux keys at a login
+   shell or password prompt). Fixed via `ptyExited` in the arming condition and
+   clearing `sshTmuxPersistent` in useRestartSession.
+7. MAJOR -- copy-mode SWALLOWS input, and every programmatic write bypassed the
+   leave-key: command buttons, the status strip's slash commands, `/login`,
+   image paste, and -- worst -- the watchdog's rate-limit retry, which would
+   have left the session never resuming. Renderer sinks now go through
+   `writeSessionInput`; main's two line-submitting sinks through
+   `writeSubmittedLine`, which prepends the leave key for a tmux-wrapped
+   session (inert outside copy-mode, by the root no-op binding).
+8. MAJOR -- the remote app may itself want the wheel (CC's clickable questions
+   turn SGR reporting on). Now declined when `isMouseTracking`.
+9. MINOR -- `copy-mode -e`'s auto-exit made the first notch of an up-down-up
+   gesture dead. The renderer now counts lines up and down and drops the belief
+   at zero, which is sound: it can only over-estimate, never under.
+10. MINOR -- the byte<->keyname contract was asserted tautologically (both test
+    files interpolate the constants), so four constant mutants survived the
+    whole suite. `tests/unit/tmux-wheel-keys.test.ts` pins the encoding itself.
+
+Accepted, not fixed: `bind-key` is SERVER-scoped, so the three bindings outlive
+CCC's session for the life of the remote tmux server and are visible to the
+user's other sessions there. tmux has no session-scoped binding table (the
+`key-table` option REPLACES root rather than adding to it), the keys are
+ctrl+alt+F10/F11/F12, and nothing else binds them.
+
+Rejected fix: lowering the remote's `escape-time`. It is a server option --
+reaching into the user's other tmux sessions to change a setting they tuned,
+for our convenience. The renderer paces instead.
+
+Rejected refactor: deduplicating the twice-emitted fresh-create argument via a
+shell variable. It would have bought ~1.3 KiB of headroom, but it rewrites the
+shape of a #242-sensitive sink and churned a dozen existing assertions about
+that shape. The budget guard covers the risk this change introduced, which is
+the risk that was ours to fix.
+
 ### Still owed before merge
 
 `src/main/ssh-tmux.ts` is in the SSH statusline blast radius: `npm run

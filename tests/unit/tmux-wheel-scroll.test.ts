@@ -169,9 +169,81 @@ describe('createTmuxWheelScroll (#85)', () => {
     expect(written).toHaveLength(1) // nothing further escaped the queue
   })
 
-  it('leaves ctrl+wheel alone — that is the zoom gesture, not scrollback', () => {
-    expect(wheel.handleWheel(ev(-WHEEL_NOTCH_PX, { ctrlKey: true }))).toBe(false)
+  it('CONSUMES ctrl+wheel without scrolling -- handing it back types arrow keys', () => {
+    // A trackpad pinch reports as ctrl+wheel on every platform. There is no
+    // zoom on the terminal to hand it to, and returning false drops straight
+    // into xterm's arrow-key fallback -- the #85 bug, restored by a pinch
+    // (adversarial review, 2026-09-20). Mutation to prove this can fail:
+    // `if (event.ctrlKey) return false`.
+    expect(wheel.handleWheel(ev(-WHEEL_NOTCH_PX, { ctrlKey: true }))).toBe(true)
+    drain()
     expect(written).toEqual([])
+  })
+
+  it('declines the wheel while the remote app is mouse-tracking -- the wheel is its input', () => {
+    // With CC's clickable questions on, remote claude turns SGR mouse reporting
+    // on and wants the wheel itself. xterm's arrow-key fallback cannot fire
+    // then either: it only runs when the wheel was NOT consumed as a mouse
+    // event, so handing the event back is safe here and stealing it is not.
+    expect(wheel.handleWheel(ev(-WHEEL_NOTCH_PX), true)).toBe(false)
+    drain()
+    expect(written).toEqual([])
+  })
+
+  it('stops believing it is in copy-mode once it has scrolled back to the bottom', () => {
+    // tmux's `copy-mode -e` leaves the mode BY ITSELF at the bottom and the
+    // renderer cannot see it. Left stale, the next up-notch spends its one key
+    // re-entering copy-mode and scrolls nothing -- and up-down-up is the
+    // commonest scrollback gesture there is.
+    wheel.handleWheel(ev(-WHEEL_NOTCH_PX * 2))
+    drain()
+    wheel.handleWheel(ev(WHEEL_NOTCH_PX * 2))
+    drain()
+    expect(wheel.exitPrefixForInput()).toBe('')
+    written = []
+    wheel.handleWheel(ev(-WHEEL_NOTCH_PX))
+    drain()
+    expect(sent()).toBe(TMUX_WHEEL_UP_KEY + TMUX_WHEEL_UP_KEY) // enter + scroll
+  })
+
+  it('still believes it is in copy-mode when only PART of the way back down', () => {
+    wheel.handleWheel(ev(-WHEEL_NOTCH_PX * 3))
+    drain()
+    wheel.handleWheel(ev(WHEEL_NOTCH_PX))
+    drain()
+    expect(wheel.exitPrefixForInput()).toBe(TMUX_WHEEL_EXIT_KEY)
+  })
+
+  it('drops the queue on a keystroke so it cannot replay into the NEXT gesture', () => {
+    wheel.handleWheel(ev(-WHEEL_NOTCH_PX * 6))
+    wheel.exitPrefixForInput()
+    written = []
+    drain()
+    wheel.handleWheel(ev(-WHEEL_NOTCH_PX))
+    drain()
+    expect(sent()).toBe(TMUX_WHEEL_UP_KEY + TMUX_WHEEL_UP_KEY)
+  })
+
+  it('drops the banked sub-notch remainder on a keystroke', () => {
+    wheel.handleWheel(ev(-WHEEL_NOTCH_PX / 2)) // half a notch banked, nothing sent
+    wheel.handleWheel(ev(-WHEEL_NOTCH_PX)) // 1 notch + the banked half -> 1 notch
+    drain()
+    wheel.exitPrefixForInput()
+    written = []
+    wheel.handleWheel(ev(-WHEEL_NOTCH_PX / 2))
+    drain()
+    expect(written).toEqual([]) // the stale half-notch must not complete this one
+  })
+
+  it('reads deltaY in raw pixels, not in units of the notch constant', () => {
+    // Pins WHEEL_NOTCH_PX itself: every other test expresses its deltas in
+    // terms of the constant, so a change to it is invisible to them.
+    wheel.handleWheel(ev(-99))
+    drain()
+    expect(written).toEqual([])
+    wheel.handleWheel(ev(-1))
+    drain()
+    expect(sent()).toBe(TMUX_WHEEL_UP_KEY + TMUX_WHEEL_UP_KEY)
   })
 
   it('drops the copy-mode belief on reset and on a disable, so no stale key is sent', () => {

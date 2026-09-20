@@ -3,6 +3,7 @@ import { generateId } from '../utils/id'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { clearSpawned } from '../ptyTracker'
+import { writeSessionInput } from '../components/terminal/tmuxWheelScroll'
 
 /**
  * Ask Conductor — the in-app help session.
@@ -136,7 +137,7 @@ export function launchAskConductor(question?: string): Promise<string> {
     // already-running branch does.
     const askPrompt = normaliseQuestion(question)
     return inFlightLaunch.then((id) => {
-      if (id && askPrompt) window.electronAPI.pty.write(id, askPrompt + '\r')
+      if (id && askPrompt) writeSessionInput(id, askPrompt + '\r')
       return id
     })
   }
@@ -167,7 +168,7 @@ function handOverTo(existing: Session, askPrompt: string | undefined): string {
   const store = useSessionStore.getState()
   if (askSessionIsLive(existing)) {
     store.setActiveSession(existing.id)
-    if (askPrompt) window.electronAPI.pty.write(existing.id, askPrompt + '\r')
+    if (askPrompt) writeSessionInput(existing.id, askPrompt + '\r')
     return existing.id
   }
 

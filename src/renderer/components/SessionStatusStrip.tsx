@@ -24,6 +24,7 @@ import {
 import { resolvePickedModelId } from '../../shared/model-registry'
 import { useRegistryStore } from '../stores/registryStore'
 import AiUsageChip from './github/AiUsageChip'
+import { writeSessionInput } from './terminal/tmuxWheelScroll'
 
 interface SessionStatusStripProps {
   /** The PTY/session id for THIS terminal. Telemetry is read for this
@@ -108,7 +109,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const modelGroups = useMemo(() => modelGroupsFromRegistry(registry), [registry])
 
   const write = (cmd: string) => {
-    window.electronAPI.pty.write(sessionId, cmd)
+    writeSessionInput(sessionId, cmd)
   }
   const onModel = (si: number, v: string) => {
     // These values are written straight into a live PTY as a slash-command

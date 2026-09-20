@@ -41,6 +41,7 @@ import {
   TMUX_WHEEL_UP_KEY,
   TMUX_WHEEL_DOWN_KEY,
   TMUX_WHEEL_EXIT_KEY,
+  TMUX_WHEEL_LINES_PER_NOTCH,
 } from '../../../shared/tmux-wheel'
 
 /**
@@ -70,8 +71,11 @@ export interface TmuxWheelScroll {
    * NOT process it (the caller returns `false` from xterm's custom wheel
    * handler); `false` means the session is local/untmuxed and xterm's own
    * scrolling should run untouched.
+   *
+   * `mouseTracking` is whether the REMOTE app has asked for mouse reports. When
+   * it has, the wheel is its input and xterm must be left to forward it.
    */
-  handleWheel(event: WheelEvent): boolean
+  handleWheel(event: WheelEvent, mouseTracking?: boolean): boolean
   /**
    * Bytes to write to the PTY immediately BEFORE the user's own input, or ''
    * when nothing is needed. Consumes the "we are in copy-mode" belief and
@@ -84,11 +88,65 @@ export interface TmuxWheelScroll {
   reset(): void
 }
 
+/**
+ * Live controllers by session id, so code that types into a session WITHOUT
+ * going through xterm can leave copy-mode first.
+ *
+ * It has to exist because the wheel created a state that swallows writes. A
+ * command button, a `/model` line from the status strip, `/login` from the
+ * sidebar, an image paste -- all of them call `pty.write` directly, and every
+ * one of them would vanish into the scrollback viewer if the user had scrolled
+ * up. Worse than vanishing, in emacs copy-mode: `/` opens a search, so a
+ * `/model sonnet` line would silently drive the viewer. Before #85 reaching
+ * that state took a deliberate `C-b [`; now one wheel notch does it.
+ */
+const controllers = new Map<string, TmuxWheelScroll>()
+
+/** Register a session's controller. Returns the deregister function. */
+export function registerTmuxWheelScroll(sessionId: string, controller: TmuxWheelScroll): () => void {
+  controllers.set(sessionId, controller)
+  return () => {
+    if (controllers.get(sessionId) === controller) controllers.delete(sessionId)
+  }
+}
+
+/**
+ * Bytes to write before typing `data` into a session from anywhere that is not
+ * xterm's own input path, or '' when nothing is needed. Safe to call for any
+ * session: unknown ids and non-tmux sessions return ''.
+ */
+export function tmuxCopyModeExitPrefix(sessionId: string): string {
+  return controllers.get(sessionId)?.exitPrefixForInput() ?? ''
+}
+
+/**
+ * Type into a session from outside xterm's input path -- a command button, a
+ * slash command from the status strip, an image paste. Leaves tmux copy-mode
+ * first if the wheel opened it, so the line reaches claude instead of the
+ * scrollback viewer. Identical to `pty.write` for every other session.
+ */
+export function writeSessionInput(sessionId: string, data: string): void {
+  const prefix = tmuxCopyModeExitPrefix(sessionId)
+  if (prefix) window.electronAPI.pty.write(sessionId, prefix)
+  window.electronAPI.pty.write(sessionId, data)
+}
+
 export function createTmuxWheelScroll(write: (data: string) => void): TmuxWheelScroll {
   let enabled = false
   let inCopyMode = false
   /** Sub-notch remainder, so a trackpad's small deltas accumulate. */
   let accum = 0
+  /**
+   * Lines we believe we have scrolled up from the live bottom. tmux's
+   * `copy-mode -e` leaves the mode BY ITSELF once the user scrolls back down to
+   * the bottom, and the renderer cannot see that happen. Counting down as well
+   * as up means the commonest reversal -- scroll up, scroll back down -- ends
+   * with the belief CORRECT rather than stale. It can only ever over-estimate
+   * (tmux clamps at the top of the history, we do not), so reaching zero proves
+   * tmux reached the bottom; the reverse is not true, which is why the stale
+   * direction still has to be harmless everywhere else.
+   */
+  let linesUp = 0
   /** Keys not yet written, one per `PACE_MS`. */
   let queue: string[] = []
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -96,6 +154,9 @@ export function createTmuxWheelScroll(write: (data: string) => void): TmuxWheelS
   const stopPacer = (): void => {
     if (timer !== null) clearTimeout(timer)
     timer = null
+    // Emptied, not just unscheduled: a queue left behind would replay this
+    // gesture's leftovers into the NEXT one, and two keys in one tmux read is
+    // already the limit.
     queue = []
   }
 
@@ -133,11 +194,22 @@ export function createTmuxWheelScroll(write: (data: string) => void): TmuxWheelS
   }
 
   return {
-    handleWheel(event: WheelEvent): boolean {
+    handleWheel(event: WheelEvent, mouseTracking = false): boolean {
       if (!enabled) return false
-      // Ctrl+wheel is the zoom gesture and belongs to whoever owns zoom, never
-      // to scrollback. Left entirely alone, exactly as xterm would see it.
-      if (event.ctrlKey) return false
+      // The remote app asked for mouse reports (CC's clickable questions, a
+      // remote TUI): the wheel is ITS input, so hand the event back to xterm to
+      // forward as a mouse report. xterm's arrow-key fallback cannot fire in
+      // that case either -- it only runs when the wheel was NOT consumed as a
+      // mouse event.
+      if (mouseTracking) return false
+      // Ctrl+wheel is a zoom gesture elsewhere in the app, and a trackpad pinch
+      // reports as ctrl+wheel on every platform. The terminal has no zoom to
+      // hand it to, so it is CONSUMED here rather than returned to xterm:
+      // returning it would drop straight into the arrow-key fallback this
+      // module exists to prevent, and a pinch would type Up/Down at claude
+      // (adversarial review, 2026-09-20). Consumed means consumed -- no key is
+      // queued, so a pinch scrolls nothing and sends nothing.
+      if (event.ctrlKey) return true
       const notches = notchesFor(event)
       // Consumed even at zero notches: the event is OURS for this session, and
       // letting xterm see a sub-notch trackpad delta is what emitted an arrow
@@ -148,9 +220,19 @@ export function createTmuxWheelScroll(write: (data: string) => void): TmuxWheelS
         // single `copy-mode -e`), so one extra is queued ahead of the scrolls.
         const enter = inCopyMode ? [] : [TMUX_WHEEL_UP_KEY]
         inCopyMode = true
+        linesUp += -notches * TMUX_WHEEL_LINES_PER_NOTCH
         enqueue([...enter, ...Array<string>(-notches).fill(TMUX_WHEEL_UP_KEY)])
       } else if (inCopyMode) {
         enqueue(Array<string>(notches).fill(TMUX_WHEEL_DOWN_KEY))
+        linesUp -= notches * TMUX_WHEEL_LINES_PER_NOTCH
+        // Back at (or past) the live bottom: tmux's `-e` has left copy-mode on
+        // its own, so stop believing otherwise. Without this the next up-notch
+        // spends its only key re-entering copy-mode and scrolls nothing -- and
+        // up-down-up is the commonest scrollback gesture there is.
+        if (linesUp <= 0) {
+          linesUp = 0
+          inCopyMode = false
+        }
       }
       // Scrolling down while NOT in copy-mode is already at the live bottom:
       // nothing to send, and nothing for xterm to do either.
@@ -160,6 +242,7 @@ export function createTmuxWheelScroll(write: (data: string) => void): TmuxWheelS
       if (!enabled || !inCopyMode) return ''
       inCopyMode = false
       accum = 0
+      linesUp = 0
       stopPacer()
       return TMUX_WHEEL_EXIT_KEY
     },
@@ -168,11 +251,13 @@ export function createTmuxWheelScroll(write: (data: string) => void): TmuxWheelS
       enabled = next
       inCopyMode = false
       accum = 0
+      linesUp = 0
       stopPacer()
     },
     reset(): void {
       inCopyMode = false
       accum = 0
+      linesUp = 0
       stopPacer()
     },
   }

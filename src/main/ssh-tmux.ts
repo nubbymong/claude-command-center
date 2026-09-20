@@ -122,17 +122,20 @@ export const ON_PATH_TMUX_BIN_EXPR = 'command tmux'
  * design (why the wheel breaks under tmux, why `mouse on` is not the fix, and
  * which bytes the renderer writes).
  *
- * Six bindings across two key tables:
+ * Ten commands across three key tables:
  *
- *   root      up   -> `copy-mode -e`  (ENTER the scrollback view; `-e` leaves
- *                                      it again on its own once the user has
- *                                      scrolled back down to the live bottom)
- *   root      down -> no-op           (already at the bottom; nothing to do)
- *   root      exit -> no-op           (the renderer's copy-mode belief can be
- *                                      stale after an `-e` auto-exit)
- *   copy-mode up   -> `send -X -N 3 scroll-up`
- *   copy-mode down -> `send -X -N 3 scroll-down`
- *   copy-mode exit -> `send -X cancel`
+ *   root           every key -> no-op  (nothing can leak to the pane; the
+ *                                       down/exit keys keep this binding, and
+ *                                       the up key's is overwritten last)
+ *   copy-mode      exit -> `send -X cancel`
+ *                  up   -> `send -X -N 3 scroll-up`
+ *                  down -> `send -X -N 3 scroll-down`
+ *   copy-mode-vi   the same three (see `inCopyMode` below for why both tables)
+ *   root           up   -> `copy-mode -e`  (ENTER the scrollback view; `-e`
+ *                                           leaves it again on its own once
+ *                                           the user is back at the live
+ *                                           bottom) -- LAST, see the ordering
+ *                                           note on `commands`
  *
  * Each binding is a SINGLE tmux command. A multi-command binding needs a `\;`
  * INSIDE the binding, and a `;` that reaches tmux unescaped does not bind — it
@@ -187,19 +190,63 @@ export function buildTmuxWheelBindings(tmuxBinToken: string): string {
   // be corrected; covering both tables means the wheel no longer depends on
   // that option landing at all.
   const inCopyMode = (table: string): string[] => [
+    bind(table, TMUX_WHEEL_EXIT_KEYNAME, 'send -X cancel'),
     bind(table, TMUX_WHEEL_UP_KEYNAME, scroll('up')),
     bind(table, TMUX_WHEEL_DOWN_KEYNAME, scroll('down')),
-    bind(table, TMUX_WHEEL_EXIT_KEYNAME, 'send -X cancel'),
   ]
+  // ORDER IS THE SAFETY PROPERTY (adversarial review, 2026-09-20). tmux runs a
+  // `\;` list until the FIRST failure and KEEPS what already ran -- it is not
+  // all-or-nothing, and `2>/dev/null` hides which command stopped it. Two
+  // partial states were reproduced on tmux 3.4:
+  //   - nothing bound at all      -> tmux forwards the keys to the PANE, i.e.
+  //                                  raw `ESC [ 24;7~` typed at claude.
+  //   - root bound, copy-mode not -> the user ENTERS the scrollback view with
+  //                                  no leave key, and CCC has the status line
+  //                                  off, so their typing vanishes with no hint.
+  // So the list is ordered worst-last: every key is first bound to the silent
+  // no-op (nothing can leak from here on), then the copy-mode tables get their
+  // leave key BEFORE their scroll keys, and only the very last command turns
+  // the up-key into the copy-mode ENTRY. Any prefix of this list is safe: the
+  // wheel does less, never more, and it can never open a view it cannot close.
   const commands = [
-    bind('root', TMUX_WHEEL_UP_KEYNAME, 'copy-mode -e'),
-    bind('root', TMUX_WHEEL_DOWN_KEYNAME, TMUX_WHEEL_NOOP_COMMAND),
     bind('root', TMUX_WHEEL_EXIT_KEYNAME, TMUX_WHEEL_NOOP_COMMAND),
+    bind('root', TMUX_WHEEL_DOWN_KEYNAME, TMUX_WHEEL_NOOP_COMMAND),
+    bind('root', TMUX_WHEEL_UP_KEYNAME, TMUX_WHEEL_NOOP_COMMAND),
     ...inCopyMode('copy-mode'),
     ...inCopyMode('copy-mode-vi'),
+    bind('root', TMUX_WHEEL_UP_KEYNAME, 'copy-mode -e'),
   ].join(' \\; ')
   return `${tmuxBinToken} ${commands} 2>/dev/null`
 }
+
+/**
+ * #85 — the hard ceiling on the launch line, and what CCC drops to stay under
+ * it (adversarial review, 2026-09-20).
+ *
+ * The line is typed into the remote shell through a PTY. A tty in CANONICAL
+ * mode has a 4096-byte line limit and TRUNCATES silently past it; an
+ * interactive bash with readline reads it raw and survives, but `/bin/sh`
+ * (dash) and a non-readline bash do not — and `sh` is a first-class choice for
+ * a container runtime (`<engine> exec -it <name> sh`), where an Alpine image
+ * has no bash at all. A truncation lands mid-line, plausibly inside the
+ * single-quoted inner command, leaving the remote shell sitting at a `> `
+ * continuation prompt forever. Neither tmux-launch-failure regex in
+ * pty-manager matches a `> ` prompt, so nothing recovers it: the session
+ * reports claude-running and claude never starts.
+ *
+ * Measured on this builder: pre-#85 the worst case (every flag the app
+ * composes, plus `--extra-args` at its enforced 512-char maximum) was 2837
+ * bytes — under the limit and therefore never a problem. #85's bindings ride
+ * the line THREE times (once before the attach, once in each of the two fresh
+ * creates), and that same worst case became 4473: past the ceiling, entirely
+ * because of this feature. So the bindings — by far the most expendable thing
+ * on the line — are what goes when the result would come close, and such a
+ * session launches with pre-#85 wheel behaviour instead of not launching.
+ *
+ * 3800 keeps the wheel for every ordinary command (a full flag set with no
+ * extra args measures ~3200) while leaving ~300 bytes under the 4096 ceiling.
+ */
+export const TMUX_LAUNCH_LINE_BUDGET = 3800
 
 /**
  * Sanitize a CCC session id into a tmux-safe session name. Mirrors the
@@ -409,22 +456,44 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   // The window form is the same `=`-exact session plus a trailing `:`, which
   // resolves to that session's CURRENT window while keeping the exact-match
   // guarantee #242 added to every other `-t` here.
-  const sessionOpts = (t: string, w: string): string =>
+  //   key-table root — #85, and the reason the wheel bindings are reachable at
+  //     all. `key-table` is a SESSION option naming which table tmux consults
+  //     for an un-prefixed key; a remote `~/.tmux.conf` that builds a modal
+  //     setup with `set -g key-table <custom>` means the `root` table is never
+  //     consulted, so every wheel key would be forwarded to the pane as raw
+  //     escape bytes — the #85 bug restored, on exactly the hosts whose owner
+  //     customised tmux most. Session-scoped, so their other sessions keep
+  //     their custom table.
+  const sessionOpts = (t: string, w: string, wheel: boolean): string =>
     `${tmuxBinToken} set-option ${t}mouse off 2>/dev/null; ` +
     `${tmuxBinToken} set-option ${t}status off 2>/dev/null; ` +
-    `${tmuxBinToken} set-option ${t}status-interval 0 2>/dev/null; ` +
-    `${tmuxBinToken} set-option -w ${w}mode-keys emacs 2>/dev/null; ` +
-    buildTmuxWheelBindings(tmuxBinToken)
-  const mouseOff = sessionOpts(`-t ${target} `, `-t ${target}: `)
-  const mouseOffInPane = sessionOpts('', '')
+    `${tmuxBinToken} set-option ${t}status-interval 0 2>/dev/null` +
+    (wheel
+      ? `; ${tmuxBinToken} set-option ${t}key-table root 2>/dev/null; ` +
+        `${tmuxBinToken} set-option -w ${w}mode-keys emacs 2>/dev/null; ` +
+        buildTmuxWheelBindings(tmuxBinToken)
+      : '')
+  /**
+   * #85 — leave copy-mode before attaching. copy-mode is PANE state, not client
+   * state: it survives a dropped connection, an app restart and the detach, and
+   * the renderer's own "are we scrolled back" belief starts false in a new
+   * process. Reproduced on tmux 3.4 — scroll up, drop the link, reattach, and
+   * every keystroke goes to the scrollback viewer with the status line off and
+   * nothing on screen to say why. #85 is what makes this the NORMAL case: the
+   * wheel now opens copy-mode, where it used to take a deliberate `C-b [`.
+   * `-X cancel` on a pane that is not in a mode is an error, swallowed.
+   */
+  const leaveCopyMode = `${tmuxBinToken} send-keys -t ${target}: -X cancel 2>/dev/null`
+  const buildAttachOpts = (wheel: boolean): string =>
+    `${sessionOpts(`-t ${target} `, `-t ${target}: `, wheel)}${wheel ? `; ${leaveCopyMode}` : ''}`
   // Fresh-create branch only: resume the prior conversation on a reconnect
   // where the remote session was gone. Appended to innerCmd BEFORE quoting so
   // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.
   const claudeInner = input.reconnect ? `${input.innerCmd} --continue` : input.innerCmd
   // The mouse-off runs INSIDE the freshly-created pane (where the session is
   // live and addressable), then claude; both ride tmux's single quoted arg.
-  const freshInner = `${mouseOffInPane}; ${claudeInner}`
-  const fresh = `${tmuxBinToken} new-session -s ${name} ${singleQuote(freshInner)}`
+  const buildFresh = (wheel: boolean): string =>
+    `${tmuxBinToken} new-session -s ${name} ${singleQuote(`${sessionOpts('', '', wheel)}; ${claudeInner}`)}`
   // has-session/attach is NOT atomic: the session can die (claude exits, remote
   // reboots) in the gap between `has-session` returning 0 and `attach` running
   // (measured ~10ms on a real host), and a bare `attach` then fails with
@@ -437,11 +506,21 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   // shell (server reachable — has-session just returned 0) BEFORE attaching, so
   // a reattach to a session created by an older CCC (or before this fix) is also
   // forced mouse-off.
-  return (
-    `if ${tmuxBinToken} has-session -t ${target} 2>/dev/null; ` +
-    `then ${mouseOff}; ${tmuxBinToken} attach -t ${target} || ${fresh}; ` +
-    `else ${fresh}; fi`
-  )
+  const assemble = (wheel: boolean): string => {
+    const fresh = buildFresh(wheel)
+    return (
+      `if ${tmuxBinToken} has-session -t ${target} 2>/dev/null; ` +
+      `then ${buildAttachOpts(wheel)}; ${tmuxBinToken} attach -t ${target} || ${fresh}; ` +
+      `else ${fresh}; fi`
+    )
+  }
+  // #85: the wheel is the most expendable thing on this line, so it is what
+  // goes when the line would come close to the remote tty's canonical-mode
+  // truncation (see TMUX_LAUNCH_LINE_BUDGET). Dropping it costs the user
+  // pre-#85 wheel behaviour on a session with an unusually long claude
+  // command; keeping it would cost them the session.
+  const withWheel = assemble(true)
+  return withWheel.length <= TMUX_LAUNCH_LINE_BUDGET ? withWheel : assemble(false)
 }
 
 /**

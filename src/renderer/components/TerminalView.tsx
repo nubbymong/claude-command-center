@@ -34,7 +34,7 @@ import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
 import { registerRepainter, requestResync } from './terminal/repaintRegistry'
 import { createGeometryResync, type GeometryResync } from './terminal/geometryResync'
-import { createTmuxWheelScroll, type TmuxWheelScroll } from './terminal/tmuxWheelScroll'
+import { createTmuxWheelScroll, registerTmuxWheelScroll, type TmuxWheelScroll } from './terminal/tmuxWheelScroll'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
@@ -245,8 +245,22 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // if persistence is turned off mid-life, which also drops any stale
   // "we are in copy-mode" belief.
   useEffect(() => {
-    tmuxWheelRef.current.setEnabled(Boolean(ssh) && session?.sshTmuxPersistent === true)
-  }, [ssh, session?.sshTmuxPersistent])
+    // Disarmed again once the PTY is gone. The view stays mounted after an exit
+    // (ptyExited only flips a flag) and sshTmuxPersistent is structural, so
+    // without this the wheel would keep consuming events and writing keys at a
+    // dead session id -- and reading back what a session printed before it died
+    // is exactly when scrollback matters. Disarmed, xterm's own scrolling of
+    // the buffer it still holds takes over.
+    tmuxWheelRef.current.setEnabled(
+      Boolean(ssh) && session?.sshTmuxPersistent === true && session?.ptyExited !== true,
+    )
+  }, [ssh, session?.sshTmuxPersistent, session?.ptyExited])
+
+  // Published under this session's id so code that types into the session
+  // WITHOUT going through xterm (a command button, a slash command from the
+  // status strip, an image paste) can leave tmux copy-mode first -- otherwise
+  // the line it typed is eaten by the scrollback viewer. See writeSessionInput.
+  useEffect(() => registerTmuxWheelScroll(sessionId, tmuxWheelRef.current), [sessionId])
 
   useEffect(() => {
     if (!ssh) return
@@ -625,7 +639,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // event at all; the controller has already written the tmux scroll key.
       // Returns true (xterm's normal path, untouched) in every other session.
       term.attachCustomWheelEventHandler((event) => {
-        if (!tmuxWheelRef.current.handleWheel(event)) return true
+        // isMouseTracking: when the remote app has asked for mouse reports (CC's
+        // clickable questions, a remote TUI) the wheel is ITS input, so the
+        // controller declines and xterm forwards the report as usual.
+        const tracking = isMouseTracking(term as unknown as { modes?: { mouseTrackingMode?: string } })
+        if (!tmuxWheelRef.current.handleWheel(event, tracking)) return true
         event.preventDefault()
         return false
       })
