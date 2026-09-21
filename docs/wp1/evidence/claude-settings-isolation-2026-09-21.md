@@ -90,11 +90,16 @@ Calibration: `K0` (no credential anywhere) = none; `K1` (ambient
 | `E3` | LOCAL settings -> `env.ANTHROPIC_API_KEY`, no ambient key | 2 | no credential |
 | `S4` | PROJECT settings -> `env.CLAUDE_CODE_USE_BEDROCK` + `env.CLAUDE_CODE_USE_ANTHROPIC_AWS` | 1 | not applied |
 
-**Finding 1. The USER scope is the live hole, and it is the scope the app writes
-to.** `src/main/account-profiles.ts:1167` copies the shared `settings.json` into
-each managed profile's `.claude/settings.json`, and `:1251-1257` re-copies it after
-shared edits. That file is the USER scope. An `env` block in it reaches the CLI --
-proven twice, with two different variables (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`).
+**Finding 1. The USER scope reaches the CLI, and it is the scope the app writes
+to.** `account-profiles.ts` copies the shared `settings.json` into each managed
+profile's `.claude/settings.json` and re-copies it after shared edits. That file
+is the USER scope. An `env` block in it reaches the CLI -- proven twice, with two
+different variables (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`).
+
+Read as of the probe date, and closed by Part 2 in the SAME commit this record
+ships in: the app's copy is sanitised at both writers and the host control is
+applied on every managed launch. Part 1's present tense describes the CLI's
+behaviour, which is unchanged; not the app's, which is not.
 
 **Finding 2. PROJECT and LOCAL scope env blocks do NOT reach the CLI.** Proven with
 the same two variables under both observables. This is not "doctor ignores project
