@@ -29,7 +29,7 @@ import { promisify } from 'node:util'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo } from '../debug-logger'
-import { getProfileConfigDir, getProfilesRoot } from '../account-profiles'
+import { getProfileConfigDir, getProfilesRoot, withProfileHome } from '../account-profiles'
 import { acquireProfileConsumer, pendingProfileRefresh } from '../profile-consumers'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
@@ -176,7 +176,20 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
         timeout: 10_000,
         windowsHide: true,
         shell: true,          // resolves claude.cmd on Windows, as elsewhere in the app
-        env: { ...process.env, USERPROFILE: home, HOME: home },
+        // `claude auth status` is an AUTH path, so it is a managed launch and
+        // gets the same hardening as a session: ambient authority variables
+        // removed, the host control applied last. It used to hand-build
+        // `{ ...process.env, USERPROFILE, HOME }`, which is the shape
+        // withProfileHome exists to own -- and being the one launch path that
+        // built its own env is exactly how it would have kept inheriting an
+        // ambient ANTHROPIC_API_KEY and reported the wrong account as signed
+        // in. HOME is set unconditionally here (withProfileHome sets it on
+        // Linux only, for the macOS keychain reason documented there), so it
+        // is re-applied after -- by MUTATING the returned object rather than
+        // spreading it into a literal, which would re-attach Object.prototype
+        // to an env the realm patch deliberately built with a null prototype
+        // (see src/shared/providers/realm-env.ts).
+        env: Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home), { HOME: home }),
       })
       const parsed = parseAuthStatus(stdout)
       if (parsed) return parsed

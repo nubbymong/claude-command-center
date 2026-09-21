@@ -80,11 +80,39 @@ export const codexCapabilities: ProviderCapabilities = {
   'session.ssh': { state: 'unsupported', note: 'Codex over SSH is not supported' },
 }
 
-/** Ambient variables that could override a bound Codex realm (D3): the home
- *  override and the API key the CLI prefers over its stored login. Reviewed
- *  2026-09-20 against codex-cli 0.153.4 / 0.155.1. OPENAI_BASE_URL redirects
- *  the authority rather than the realm; open owner question, see slice 1. */
-export const codexAmbientAuthVariables: readonly string[] = ['CODEX_HOME', 'OPENAI_API_KEY']
+/** Ambient variables that could override a bound Codex realm (D3).
+ *
+ *  Slice 1 carried two names. Two things widen it here, both on the owner's
+ *  2026-09-21 ruling:
+ *
+ *  1. The CLI's OWN diagnostic enumerates three credential variables, not one:
+ *     `auth env vars present: OPENAI_API_KEY, CODEX_API_KEY, CODEX_ACCESS_TOKEN`
+ *     (codex-cli 0.153.4). A list derived from the docs alone had the first.
+ *  2. The endpoint variables settle the slice-1 open question the same way the
+ *     Claude list does: redirecting where a credential goes is an authority
+ *     override, whether or not the realm it was read from was correct.
+ *
+ *  `OPENAI_WORKLOAD_IDENTITY_CONTEXT` is deliberately ABSENT -- owner ruling:
+ *  it is attribution-only and removing it would break attribution for no
+ *  security gain. Unrelated AWS/Azure/GCP developer-tool variables are equally
+ *  deliberately absent; this app is a terminal wrapper, and stripping a
+ *  developer's cloud tooling out of their shell is not its business.
+ *
+ *  DERIVED AGAINST 0.153.4, WHICH IS NOT THE PINNED VERSION. D7 pins 0.155.1,
+ *  and this list must be re-derived against that binary before the candidate.
+ *  It is widened rather than narrowed relative to slice 1, so an entry that
+ *  turns out not to exist in 0.155.1 costs a removed variable nobody set, not
+ *  a hole. */
+export const codexAmbientAuthVariables: readonly string[] = [
+  // state roots
+  'CODEX_HOME', 'CODEX_SQLITE_HOME',
+  // credentials, exactly as the CLI's own `auth env vars present:` line names them
+  'OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN',
+  // endpoint routing
+  'OPENAI_BASE_URL', 'CODEX_URL', 'CODEX_CLOUD_TASKS_BASE_URL',
+  // federation
+  'OPENAI_FEDERATION_RULE_ID', 'OPENAI_IDENTITY_TOKEN_FILE',
+]
 
 /** The Codex realm patch sets the home and nothing else. CODEX_HOME appears
  *  in BOTH lists on purpose: it is stripped from the inherited environment as
@@ -102,5 +130,14 @@ export function createCodexPackage(): ProviderPackage {
     capabilities: codexCapabilities,
     ambientAuthVariables: codexAmbientAuthVariables,
     ownedLaunchVariables: codexOwnedLaunchVariables,
+    // NO host-managed control, declared rather than omitted. Codex has no
+    // equivalent of Claude's CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST that this
+    // repo has PROVEN, and an unproven flag copied across by analogy would be
+    // a security claim with no evidence under it. The realm is CODEX_HOME
+    // alone. Revisit when the Codex adapter slice probes for one.
+    hostManagedEnv: {},
+    // No `managedLaunch`: the app writes no Codex settings file today, so it
+    // has nothing to sanitise, and no CLI floor has been established. Both
+    // land with the Codex adapter slice.
   }
 }

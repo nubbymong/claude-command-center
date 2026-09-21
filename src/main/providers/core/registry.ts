@@ -5,7 +5,9 @@
 // package registry WP1 adds (capabilities, ambient/owned variables, setup/
 // auth/realm operations). Only the composition root (`../compose.ts`)
 // registers packages; this module imports no concrete provider.
-import type { ProviderId, RealmEnvPatch } from '../../../shared/providers'
+import type {
+  ProviderId, RealmEnvPatch, SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight,
+} from '../../../shared/providers'
 import {
   PROVIDER_IDS, isProviderId, isCapabilityPlatform, resolveCapability, missingCapabilityKeys, applyRealmEnvPatch,
   CAPABILITY_KEYS, CAPABILITY_OPERATION, isNeverOwnedLaunchVariable,
@@ -56,6 +58,26 @@ export function packageRegistrationProblem(pkg: ProviderPackage): string | null 
     // than a rule, and the launch path, not the realm patch, composes PATH.
     const denied = pkg[list].find((v) => isNeverOwnedLaunchVariable(v))
     if (denied) return `${list} may not contain ${denied}: it decides what the child process executes, not which realm it uses`
+  }
+  // Host-managed controls. Required so that "this provider declares none" is a
+  // recorded decision (`{}`) rather than an omission nobody notices.
+  const host = pkg.hostManagedEnv
+  if (!host || typeof host !== 'object' || Array.isArray(host)) return 'hostManagedEnv must be declared (use {} for a provider with no host controls)'
+  for (const [k, v] of Object.entries(host)) {
+    if (!k || typeof v !== 'string') return `hostManagedEnv.${k} must be a string`
+    if (isNeverOwnedLaunchVariable(k)) return `hostManagedEnv may not contain ${k}: it decides what the child process executes`
+    // A host control the package ALSO claims to own would be settable by its
+    // own realm patch. applyRealmEnvPatch refuses it at apply time; refusing
+    // it at registration means the contradiction never ships at all.
+    if (pkg.ownedLaunchVariables.some((o) => o.toLowerCase() === k.toLowerCase())) return `${k} is both a host-managed control and an owned launch variable; it cannot be both`
+  }
+  const ml = pkg.managedLaunch
+  if (ml !== undefined) {
+    if (typeof ml !== 'object' || ml === null) return 'managedLaunch must be an object when present'
+    if (typeof ml.minimumCliVersion !== 'string' || !ml.minimumCliVersion) return 'managedLaunch.minimumCliVersion must be declared'
+    for (const fn of ['sanitizeManagedSettings', 'preflight'] as const) {
+      if (typeof ml[fn] !== 'function') return `managedLaunch.${fn}() must be a function`
+    }
   }
   for (const key of CAPABILITY_KEYS) {
     const d = pkg.capabilities[key]
@@ -122,7 +144,66 @@ export function providerCapability(
  *  of the ambient-variable removal. */
 export function realmEnvForProvider(id: ProviderId, base: Readonly<Record<string, string | undefined>>, patch: RealmEnvPatch): Record<string, string> {
   const pkg = getProviderPackage(id)
-  return applyRealmEnvPatch(base, patch, { ambientAuthVariables: pkg.ambientAuthVariables, ownedVariables: pkg.ownedLaunchVariables })
+  return applyRealmEnvPatch(base, patch, {
+    ambientAuthVariables: pkg.ambientAuthVariables,
+    ownedVariables: pkg.ownedLaunchVariables,
+    // The host control rides the SAME call as the ambient removal and the
+    // realm patch. A launch path cannot apply one without the others, and
+    // cannot apply them in the wrong order, because there is only one call.
+    hostManagedEnv: pkg.hostManagedEnv,
+  })
+}
+
+/** The host-managed controls a provider declares, as a COPY -- a caller cannot
+ *  mutate the package's declaration through it.
+ *
+ *  This is a READ, not a second way to apply the controls. There is deliberately
+ *  no `applyHostManagedEnv(...)` helper: a second, weaker path to the same
+ *  control is exactly the "a launch path that can apply them separately can
+ *  apply two of the three" hazard that put the controls inside
+ *  `applyRealmEnvPatch` in the first place. `withProfileHome` uses this to
+ *  ASSERT, after the fact, that the one route actually applied them. */
+export function hostManagedEnvForProvider(id: ProviderId): Readonly<Record<string, string>> {
+  return { ...getProviderPackage(id).hostManagedEnv }
+}
+
+/** The ambient authority variables a provider declares. A READ, for a launch
+ *  path that needs to REPORT what the removal pass took out -- the removal
+ *  itself happens inside `realmEnvForProvider` and nowhere else. Returns a
+ *  copy. */
+export function ambientAuthVariablesForProvider(id: ProviderId): readonly string[] {
+  return [...getProviderPackage(id).ambientAuthVariables]
+}
+
+/** Sanitise a settings file the app writes into a managed realm.
+ *
+ *  FAILS CLOSED on an UNREGISTERED provider. The distinction matters and is
+ *  not pedantry: "registered, and declares no sanitiser" is a provider saying
+ *  it has no app-owned settings file, so the text passes through. "Not
+ *  registered" means the composition root has not run, which is a boot-order
+ *  fault -- and passing the text through there would write an UNSANITISED
+ *  settings file into a managed realm, the exact hole this slice closes. The
+ *  caller must not write anything when `text` is null. */
+export function sanitizeManagedSettingsFor(id: ProviderId, raw: string): SanitizedManagedSettings {
+  const pkg = tryGetProviderPackage(id)
+  if (!pkg) {
+    return { text: null, removed: [], refused: `provider package "${id}" is not registered, so its settings sanitiser is unavailable` }
+  }
+  return pkg.managedLaunch ? pkg.managedLaunch.sanitizeManagedSettings(raw) : { text: raw, removed: [] }
+}
+
+/** Run a provider's managed-launch preflight. An unregistered provider, or one
+ *  with no hardening to offer, cannot be reported on -- the caller gets null
+ *  and must not read that as a pass. */
+export function managedLaunchPreflightFor(id: ProviderId, input: ManagedLaunchPreflightInput): ManagedLaunchPreflight | null {
+  const ml = tryGetProviderPackage(id)?.managedLaunch
+  return ml ? ml.preflight(input) : null
+}
+
+/** The oldest CLI version this provider's host controls have been proven on,
+ *  or null when it declares no floor. */
+export function minimumManagedCliVersionFor(id: ProviderId): string | null {
+  return tryGetProviderPackage(id)?.managedLaunch?.minimumCliVersion ?? null
 }
 
 /** Test-only: clear both views. */

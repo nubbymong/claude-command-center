@@ -35,6 +35,26 @@ export interface RealmEnvPolicy {
    *  re-set for a bound realm -- Codex's `CODEX_HOME` -- is declared in BOTH
    *  lists, deliberately and visibly. */
   ownedVariables: readonly string[]
+  /** HOST-MANAGED CONTROLS: variables the HOST sets on every managed launch,
+   *  applied LAST -- after the ambient removal and after the provider's realm
+   *  patch -- and settable by nobody else.
+   *
+   *  This is not a convenience slot. For Claude,
+   *  `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` is the only proven control that
+   *  stops a settings file from redirecting the account: it blocks user-scope
+   *  settings `env` injection and suppresses `apiKeyHelper` in user, project
+   *  AND local scope, and it fails closed
+   *  (docs/wp1/evidence/claude-settings-isolation-2026-09-21.md, findings 3,
+   *  5, 6, 7). Project- and repository-owned settings must never be mutated by
+   *  this app, so for those two scopes the flag is not defence in depth -- it
+   *  is the entire control.
+   *
+   *  It is therefore applied HERE rather than by the caller, and a realm patch
+   *  naming one of these keys is REJECTED rather than silently overwritten. A
+   *  provider package must not be able to turn the host's own control off, and
+   *  "applied last" has to be a property of the mechanism rather than of the
+   *  order a particular launch path happens to call things in. */
+  hostManagedEnv?: Readonly<Record<string, string>>
 }
 
 /** Variables that decide which executable or library a child process loads.
@@ -102,9 +122,17 @@ export function applyRealmEnvPatch(
   // OPEN, and Windows (where env names are case-insensitive) would not show it.
   const settable = new Set(policy.ownedVariables)
   const removable = new Set([...policy.ownedVariables, ...policy.ambientAuthVariables])
+  const hostManaged = policy.hostManagedEnv ?? {}
+  const hostKeys = Object.keys(hostManaged)
+  // Host controls are checked BEFORE ownership, so the error names the real
+  // problem ("the host owns this") rather than the incidental one ("you do
+  // not own this"), and so the refusal still stands if a package ever adds a
+  // host key to its own owned list.
+  const hostOwned = new Set(hostKeys.map((k) => k.toLowerCase()))
   const checkName = (k: string): void => {
     if (!PATCH_NAME.test(k)) throw new Error(`realm env patch: invalid variable name ${JSON.stringify(k)}`)
     if (isNeverOwnedLaunchVariable(k)) throw new Error(`realm env patch: ${k} decides what the child process executes and is never a realm variable`)
+    if (hostOwned.has(k.toLowerCase())) throw new Error(`realm env patch: ${k} is a host-managed control and cannot be set or unset by a provider`)
   }
   for (const k of Object.keys(patch.set)) {
     checkName(k)
@@ -113,6 +141,10 @@ export function applyRealmEnvPatch(
   for (const k of patch.unset ?? []) {
     checkName(k)
     if (!removable.has(k)) throw new Error(`realm env patch: ${k} is not a variable this provider owns`)
+  }
+  for (const k of hostKeys) {
+    if (!PATCH_NAME.test(k)) throw new Error(`realm env patch: invalid host-managed variable name ${JSON.stringify(k)}`)
+    if (isNeverOwnedLaunchVariable(k)) throw new Error(`realm env patch: ${k} decides what the child process executes and is never a host-managed control`)
   }
   // Base keys pass through as the developer environment spells them. Windows
   // carries `ProgramFiles(x86)` and `CommonProgramFiles(x86)`, which MSVC and
@@ -137,6 +169,16 @@ export function applyRealmEnvPatch(
   for (const [k, v] of Object.entries(patch.set)) {
     if (typeof v !== 'string') throw new Error(`realm env patch: ${k} must be a string`)
     if (/[\0\r\n]/.test(v)) throw new Error(`realm env patch: invalid value for ${k}`)
+    env[k] = v
+  }
+  // HOST-MANAGED CONTROLS, LAST. Every case-variant of each key is removed
+  // first, so an inherited `claude_code_provider_managed_by_host=0` cannot sit
+  // alongside the canonical spelling and win on a case-insensitive platform.
+  // Nothing after this line writes to `env`.
+  removeCaseInsensitive(env, hostKeys)
+  for (const [k, v] of Object.entries(hostManaged)) {
+    if (typeof v !== 'string') throw new Error(`realm env patch: host-managed ${k} must be a string`)
+    if (/[\0\r\n]/.test(v)) throw new Error(`realm env patch: invalid value for host-managed ${k}`)
     env[k] = v
   }
   // Returned with the null prototype it was built with: Node enumerates a

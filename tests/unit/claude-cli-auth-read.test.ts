@@ -8,10 +8,11 @@
 // These tests use a REAL temp dir (real fs) and mock only the profile-root
 // resolvers and the CLI subprocess, so the path the code actually joins is under
 // test — revert the `.claude` fix and the credential-file case goes RED.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'
+import { composeProviders } from '../../src/main/providers/compose'
 
 let root: string
 
@@ -26,7 +27,11 @@ vi.mock('node:child_process', () => ({
   execFile: (cmd: string, args: string[], opts: unknown, cb: ExecCb) => execFileImpl(cmd, args, opts, cb),
 }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
-vi.mock('../../src/main/account-profiles', () => ({
+// Only the two profile-root resolvers are faked. `withProfileHome` is the REAL
+// one on purpose: it is what applies the managed-launch hardening to this auth
+// probe, so stubbing it would leave the assertion below testing a stub.
+vi.mock('../../src/main/account-profiles', async () => ({
+  ...(await vi.importActual<typeof import('../../src/main/account-profiles')>('../../src/main/account-profiles')),
   getProfilesRoot: () => root,
   getProfileConfigDir: (id: string) => join(root, id),
 }))
@@ -45,6 +50,13 @@ function writeCredFile(id: string, relDir: string) {
     JSON.stringify({ claudeAiOauth: { accessToken: 'tok', subscriptionType: 'max', expiresAt: NOW } }),
   )
 }
+
+// `claude auth status` is a managed launch: its environment now comes from
+// withProfileHome, which takes the Claude package's ambient-strip list and host
+// control from the registry. Compose the way boot does, or every CLI probe
+// throws before it spawns and silently falls through to the file path -- which
+// is precisely the failure these tests exist to catch.
+beforeAll(() => { composeProviders() })
 
 beforeEach(() => {
   root = fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-auth-'))
@@ -95,6 +107,33 @@ describe('readClaudeCliAuth — CLI probe preferred, and registered as a consume
     expect(r.authenticated).toBe(true)
     expect(r.email).toBe('a@example.com')
     expect(r.source).toBe('cli-status')
+  })
+
+  it('is a MANAGED launch: the host control is applied and ambient authority is stripped', async () => {
+    // WP1.38. This path used to hand-build `{ ...process.env, USERPROFILE }`,
+    // so it was the one managed launch with no hardening on it: an ambient
+    // ANTHROPIC_API_KEY would have decided which account `claude auth status`
+    // reported, under the profile home of a different one.
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    process.env.ANTHROPIC_API_KEY = 'sk-ambient-poison'
+    process.env.CLAUDE_CONFIG_DIR = '/elsewhere'
+    let seen: Record<string, string> | undefined
+    try {
+      execFileImpl = (_c, _a, o, cb) => {
+        seen = (o as { env: Record<string, string> }).env
+        cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' })
+      }
+      await readClaudeCliAuth(ID)
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY
+      delete process.env.CLAUDE_CONFIG_DIR
+    }
+    expect(seen?.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
+    expect(seen?.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(seen?.CLAUDE_CONFIG_DIR).toBeUndefined()
+    // The realm it was pointed at is unchanged.
+    expect(seen?.USERPROFILE).toBe(join(root, ID))
+    expect(seen?.HOME).toBe(join(root, ID))
   })
 
   it('marks the profile in-use FOR THE DURATION of the probe, then releases it', async () => {

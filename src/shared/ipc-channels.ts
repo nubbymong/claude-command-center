@@ -391,6 +391,13 @@ export const IPC = {
    *  the re-auth poll completes on a credential change, not on the pre-existing email (rc.14 review F7). */
   ACCOUNT_PROFILES_CREDENTIAL_STAMP: 'accountProfiles:credentialStamp',
   ACCOUNT_GLOBAL_EMAIL_GET: 'accountProfiles:globalEmail',
+  /** Managed-launch preflight reports, newest first: what the account-isolation
+   *  hardening did to recent launches, and anything it could not confirm.
+   *  Read-only. It names the variables and settings KEYS that were removed and
+   *  never a credential value: the two paths that could carry file text into it
+   *  (a JSON parse failure, a read failure) are reduced to a position and an
+   *  errno in the main process before they leave it. */
+  ACCOUNT_MANAGED_LAUNCH_REPORTS: 'accountProfiles:managedLaunchReports',
 
   // All-accounts usage overview (fetch each profile's usage without a session)
   ACCOUNT_USAGE_FETCH_ALL: 'accountUsage:fetchAll',

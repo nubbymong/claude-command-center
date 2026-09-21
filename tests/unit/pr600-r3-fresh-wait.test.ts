@@ -25,7 +25,7 @@ const profiles = await import('../../src/main/account-profiles')
 const consumers = await import('../../src/main/profile-consumers')
 const identity = await import('../../src/main/claude-account-identity')
 const { spawnPty, killPty, isSessionWritable } = await import('../../src/main/pty-manager')
-const { registerProvider } = await import('../../src/main/providers')
+const { registerFakeClaudePackage } = await import('../helpers/claude-package')
 const messages: string[] = []
 const win = { webContents: { send: (channel: string) => messages.push(channel) }, isDestroyed: () => false } as never
 let root = ''
@@ -40,7 +40,7 @@ beforeEach(() => {
   profileId = profiles.createProfile('Synthetic profile').id
   identity._resetForTest(); consumers._resetProfileConsumersForTest()
   state.attempts = 0; state.refuse = false; messages.length = 0
-  registerProvider({ id: 'claude', displayName: 'Claude', resolveBinary: () => null,
+  registerFakeClaudePackage({ id: 'claude', displayName: 'Claude', resolveBinary: () => null,
     buildSpawnCommand: () => ({ cmd: '', args: [], env: {} }), detectUiRunning: () => false,
     ingestSessionTelemetry: () => ({ stop() {} }), listHistorySessions: async () => [],
     resumeCommand: () => ({ cmd: '', args: [] }), configureMcpServer: async () => {},

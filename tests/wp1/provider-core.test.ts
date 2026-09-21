@@ -33,7 +33,7 @@ const ops = {
   realms: { realmEnvPatch: () => ({ set: {} }) },
 } as unknown as Pick<ProviderPackage, 'setup' | 'auth' | 'realms'>
 const pkg = (id: 'claude' | 'codex', caps = fullCaps(), extra: Partial<ProviderPackage> = {}): ProviderPackage =>
-  ({ id, displayName: `Fake ${id}`, session: fakeSession(id), capabilities: caps, ambientAuthVariables: ['X_TOKEN'], ownedLaunchVariables: ['X_HOME'], ...extra })
+  ({ id, displayName: `Fake ${id}`, session: fakeSession(id), capabilities: caps, ambientAuthVariables: ['X_TOKEN'], ownedLaunchVariables: ['X_HOME'], hostManagedEnv: {}, ...extra })
 
 describe('provider registry (main core)', () => {
   beforeEach(() => _resetProviderRegistryForTest())

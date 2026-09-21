@@ -68,6 +68,7 @@ import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome } from './account-profiles'
 export { withProfileHome } from './account-profiles'
+import { recordManagedLaunchPreflight } from './managed-launch-diagnostics'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
@@ -3896,6 +3897,13 @@ function spawnPtyResolved(
       home = getProfileConfigDir(resolvedProfileId)
     }
     const finalSpawnEnv = withProfileHome(spawnEnv, home)
+    // Layer 4: report on what the hardening did to THIS launch. Diagnostics
+    // only -- withProfileHome has already applied and asserted the host
+    // control, so nothing here can refuse a spawn, and a clean preflight is
+    // never a claim that the session is isolated (see the module header).
+    // Only for a launch bound to a managed profile home: `home == null` is the
+    // user's own default account, which this app does not manage.
+    if (home) recordManagedLaunchPreflight(sessionId, home, finalSpawnEnv)
     // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).

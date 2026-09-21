@@ -89,6 +89,15 @@ export interface ElectronAPI {
     globalEmail: () => Promise<string | null>
     captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
+    /** Managed-launch preflight reports, newest first. Names the variables and
+     *  settings keys the isolation hardening removed, and never a credential
+     *  value -- see the channel comment for how that is kept true. */
+    managedLaunchReports: () => Promise<Array<{
+      home: string
+      sessionId: string
+      at: number
+      preflight: import('../shared/providers').ManagedLaunchPreflight
+    }>>
   }
   accountUsage: {
     fetchAll: () => Promise<import('../shared/usage-types').AccountUsage[]>
@@ -821,6 +830,7 @@ const electronAPI: ElectronAPI = {
     captureDetected: (sessionId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sessionId, name }),
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) =>
       onChannel(IPC.ACCOUNT_NEW_DETECTED, cb),
+    managedLaunchReports: () => ipcRenderer.invoke(IPC.ACCOUNT_MANAGED_LAUNCH_REPORTS),
   },
   accountUsage: {
     fetchAll: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL),

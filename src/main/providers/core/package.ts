@@ -12,6 +12,7 @@
 import type { ProviderId } from '../../../shared/providers'
 import type {
   ProviderCapabilities, CapabilityPlatform, RealmEnvPatch, AuthMethod, KnownAuthState, DiscoveryState, Compatibility,
+  SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight,
 } from '../../../shared/providers'
 import type { SessionProvider } from '../types'
 
@@ -75,6 +76,23 @@ export interface ProviderRealmOperations {
   realmEnvPatch(realm: RealmRef): RealmEnvPatch
 }
 
+/** Managed-launch hardening a provider supplies for launches the APP owns.
+ *
+ *  Separate from `realms` on purpose. `realmEnvPatch` answers "which identity
+ *  does this process use"; this answers "what does the host do so that nothing
+ *  else can change that answer after the fact". */
+export interface ProviderManagedLaunchOperations {
+  /** The oldest CLI version on which this provider's host controls have been
+   *  PROVEN. Not a guess at the oldest that might work: a floor of evidence. */
+  readonly minimumCliVersion: string
+  /** Sanitise a settings file the APP ITSELF writes into a managed realm.
+   *  Pure: takes text, returns text. It never sees, and therefore can never
+   *  modify, the user's own settings or any repository-owned file. */
+  sanitizeManagedSettings(raw: string): SanitizedManagedSettings
+  /** Report on one composed launch. A diagnostic, never the boundary. */
+  preflight(input: ManagedLaunchPreflightInput): ManagedLaunchPreflight
+}
+
 export interface ProviderPackage {
   readonly id: ProviderId
   readonly displayName: string
@@ -87,6 +105,20 @@ export interface ProviderPackage {
   /** Variables the provider's realm patch may set or unset (the realm
    *  selector plus what the existing mechanism already touches). */
   readonly ownedLaunchVariables: readonly string[]
+  /** HOST-MANAGED CONTROLS applied LAST on every app-managed launch of this
+   *  provider, after the ambient removal and after the realm patch.
+   *
+   *  Required, not optional: a provider with nothing to declare says so with
+   *  `{}`, which is a decision on the record rather than a field someone
+   *  forgot. The realm patch cannot set, unset or overwrite any key here --
+   *  applyRealmEnvPatch refuses -- so "the host wins" is enforced by the
+   *  mechanism rather than by call order. */
+  readonly hostManagedEnv: Readonly<Record<string, string>>
+  /** Present when the provider has managed-launch hardening to offer.
+   *  Absent means the app applies no settings sanitiser and enforces no CLI
+   *  floor for it -- which is only honest while that provider has no
+   *  app-owned settings file and no proven host control. */
+  readonly managedLaunch?: ProviderManagedLaunchOperations
   readonly setup?: ProviderSetupOperations
   readonly auth?: ProviderAuthOperations
   readonly realms?: ProviderRealmOperations

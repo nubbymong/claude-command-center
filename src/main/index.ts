@@ -25,6 +25,7 @@ import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, 
 import { recordLiveUsageForSession } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders } from './providers/compose'
+import { probeClaudeCliVersion } from './claude-cli-version'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
@@ -500,6 +501,12 @@ if (!gotTheLock) {
       app.exit(1)
       return
     }
+
+    // Probe the Claude CLI version once, in the background. The managed-launch
+    // preflight needs it to say which side of the verified floor the user is
+    // on, and no launch waits for it: until it answers, the preflight reports
+    // the version as unverified rather than assuming it is fine.
+    void probeClaudeCliVersion()
 
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything
     // writes to it (deploy/config below, window/handlers later, IPC saves

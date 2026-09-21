@@ -544,14 +544,19 @@
       "tests": [
         "tests/wp1/launch-handoff.test.ts",
         "tests/wp1/env-allowlist.test.ts",
-        "tests/wp1/provider-core.test.ts"
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/managed-launch.test.ts"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/wp1/evidence/claude-settings-isolation-2026-09-21.md"
+      ],
       "status": "planned",
       "currentTests": [
         "tests/unit/pty-spawn-env.test.ts",
         "tests/wp1/claude-characterization.test.ts",
-        "tests/wp1/codex-characterization.test.ts"
+        "tests/wp1/codex-characterization.test.ts",
+        "tests/unit/claude-cli-auth-read.test.ts",
+        "tests/unit/account-profiles.test.ts"
       ]
     },
     {

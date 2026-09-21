@@ -14,6 +14,7 @@ import { isAccountActive, type AccountProfile } from '../../shared/account-types
 import ToggleSwitch from './github/config/ToggleSwitch'
 import { Section } from './SettingsPage'
 import { AccountWebSession } from './settings/AccountWebSession'
+import { AccountIsolationNotice } from './settings/AccountIsolationNotice'
 
 // ---- props ------------------------------------------------------------------
 
@@ -323,6 +324,11 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
           Add another account
         </button>
       )}
+
+      {/* Layer 4 of the account-isolation hardening: anything the managed-launch
+          preflight could not confirm. Renders nothing when there is nothing to
+          say, so a healthy install pays no space for it. */}
+      <AccountIsolationNotice />
 
       {/* Informational note - no em dashes */}
       <p className="text-[11px] text-overlay0 leading-relaxed mt-2">

@@ -10,7 +10,8 @@
 // refused and Remove hiding the row. Dispatch now re-reads the record after
 // EVERY pre-spawn await and, if it was cancelled or removed, releases the hold,
 // deletes the prompt file, broadcasts and returns without spawning.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { composeProviders } from '../../src/main/providers/compose'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -37,6 +38,13 @@ vi.mock('../../src/main/account-profiles', async (original) => ({
 
 import { initCloudAgentManager, dispatchAgent, listAgents, cancelAgent, removeAgent, _resetCloudAgentLatchForTest } from '../../src/main/cloud-agent-manager'
 import { noteProfileRefreshInFlight, _resetProfileConsumersForTest, hasTransientProfileConsumer } from '../../src/main/profile-consumers'
+
+// The cloud agent runs the CLI under a managed profile home, so its env goes
+// through withProfileHome -- which takes the Claude package's own ambient-strip
+// list and host control from the registry and fails closed when nothing is
+// registered. Boot composes before anything dispatches; so must this.
+beforeAll(() => { composeProviders() })
+
 
 const handlers: Record<string, (...args: any[]) => void> = {}
 const promptFile = (id: string) => path.join(os.tmpdir(), `ccc-agent-${id}.txt`)

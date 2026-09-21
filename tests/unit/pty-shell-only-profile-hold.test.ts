@@ -52,7 +52,7 @@ vi.mock('node-pty', () => ({
 
 const { _setRootsForTest, getProfileConfigDir } = await import('../../src/main/account-profiles')
 const { spawnPty } = await import('../../src/main/pty-manager')
-const { registerProvider } = await import('../../src/main/providers')
+const { registerFakeClaudePackage } = await import('../helpers/claude-package')
 const { isProfileInUseByLiveSession, _resetClaudeAccounts } = await import('../../src/main/claude-account-identity')
 const { _resetProfileConsumersForTest } = await import('../../src/main/profile-consumers')
 type SessionProvider = import('../../src/main/providers/types').SessionProvider
@@ -84,7 +84,7 @@ beforeEach(() => {
   _setRootsForTest({ resourcesDir: sandbox, sharedRoot: join(sandbox, '.claude') })
   mkdirSync(getProfileConfigDir(PROFILE), { recursive: true })
   ptys.length = 0
-  registerProvider(fakeProvider)
+  registerFakeClaudePackage(fakeProvider)
   _resetClaudeAccounts()
   _resetProfileConsumersForTest()
 })

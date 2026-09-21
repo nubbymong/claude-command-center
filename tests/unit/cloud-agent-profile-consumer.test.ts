@@ -3,7 +3,8 @@
 // usage page's auto-refresh could rotate the token under it and strand the
 // account, and an agent could start mid-rotation and read the old file. The
 // manager now holds the profile for the child's life and waits out a rotation.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+import { composeProviders } from '../../src/main/providers/compose'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -71,6 +72,12 @@ const PROFILE = 'profile-agent-01'
 const tmpDirs: string[] = []
 let child: ReturnType<typeof makeChild>
 const tick = async (n = 3) => { for (let i = 0; i < n; i++) await Promise.resolve() }
+
+// The cloud agent runs the CLI under a managed profile home, so its environment
+// goes through withProfileHome, which takes the Claude package's own ambient-strip
+// list and host control from the registry and fails closed when nothing is
+// registered. Boot composes before anything dispatches; so must this.
+beforeAll(() => { composeProviders() })
 
 beforeEach(() => {
   vi.clearAllMocks()

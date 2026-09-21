@@ -141,6 +141,18 @@ export interface ElectronAPI {
     globalEmail: () => Promise<string | null>
     captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
+    /** Managed-launch preflight reports, newest first: what the account
+     *  isolation hardening did to recent launches, and anything it could not
+     *  confirm. Names removed variables and settings keys, never a credential
+     *  value.
+     *  Optional, matching the rest of this surface -- the renderer guards the
+     *  call so a test harness with a partial mock does not have to restate it. */
+    managedLaunchReports?: () => Promise<Array<{
+      home: string
+      sessionId: string
+      at: number
+      preflight: import('../../shared/providers').ManagedLaunchPreflight
+    }>>
   }
   accountUsage: {
     fetchAll: () => Promise<import('../../shared/usage-types').AccountUsage[]>

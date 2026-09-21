@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+import { composeProviders } from '../../src/main/providers/compose'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -89,6 +90,12 @@ function createMockProcess(): any {
     kill: vi.fn(),
   }
 }
+
+// The cloud agent runs the CLI under a managed profile home, so its environment
+// goes through withProfileHome, which takes the Claude package's own ambient-strip
+// list and host control from the registry and fails closed when nothing is
+// registered. Boot composes before anything dispatches; so must this.
+beforeAll(() => { composeProviders() })
 
 describe('cloud-agent-manager', () => {
   let mockWindow: any
@@ -260,6 +267,11 @@ describe('cloud-agent-manager', () => {
       expect(agent.accountEmail).toBe('work@x.com')
       const env = mockSpawn.mock.calls[0][2].env
       expect(env.USERPROFILE).toBe(dir)
+      // WP1.38: a cloud agent is a managed launch, so it carries the account
+      // isolation control like any other. Asserted HERE, at the spawn this
+      // module actually performs, rather than only at withProfileHome -- "every
+      // managed launch path receives it" is a claim about the paths.
+      expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
     })
 
     it('falls back to the primary profile when none is requested (clobber-proof)', async () => {

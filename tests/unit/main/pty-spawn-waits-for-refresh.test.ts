@@ -73,7 +73,7 @@ vi.mock('https', () => {
 
 const profiles = await import('../../../src/main/account-profiles')
 const { spawnPty, killPty, writePty, isSessionWritable, killAllPty, gracefulExitAllPty } = await import('../../../src/main/pty-manager')
-const { registerProvider } = await import('../../../src/main/providers')
+const { registerFakeClaudePackage } = await import('../../helpers/claude-package')
 const identity = await import('../../../src/main/claude-account-identity')
 const consumers = await import('../../../src/main/profile-consumers')
 const { fetchAccountUsage, _resetLiveUsageForTest, _resetSnapshotsForTest } = await import('../../../src/main/usage/account-usage')
@@ -118,7 +118,7 @@ beforeEach(() => {
   const file = path.join(profiles.getProfileConfigDir(profileId), '.claude', '.credentials.json')
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: 'synthetic-expired', refreshToken: 'synthetic-refresh', expiresAt: 1 } }))
-  registerProvider(fakeProvider)
+  registerFakeClaudePackage(fakeProvider)
   identity._resetClaudeAccounts()
   consumers._resetProfileConsumersForTest()
   _resetLiveUsageForTest()

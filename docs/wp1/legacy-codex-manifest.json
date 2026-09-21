@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-20T01:15:16.447Z",
-  "head": "49514d1e3a401e8a01af8e985808f064efacf7c5",
-  "tree": "8bc2a1f798fd923051a17c9132e3d28d23b0a352",
+  "generatedAt": "2026-09-21T01:06:06.739Z",
+  "head": "6eceb5ac514b4a878da663b6acdf6f953a803e89",
+  "tree": "de6e14728d15707e704c5b2ce07b31f98953faa3",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2126,
-  "excludedFileCount": 334,
-  "scannedFileCount": 1792,
+  "trackedFileCount": 2137,
+  "excludedFileCount": 337,
+  "scannedFileCount": 1800,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -526,7 +526,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 58
+      "lineCount": 69
     },
     {
       "path": "src/main/providers/codex/mcp-config.ts",

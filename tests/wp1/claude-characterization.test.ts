@@ -50,7 +50,8 @@ vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn
 
 const profiles = await import('../../src/main/account-profiles')
 const { spawnPty, killPty } = await import('../../src/main/pty-manager')
-const { registerProvider } = await import('../../src/main/providers')
+const { registerProviderPackage, _resetProviderRegistryForTest } = await import('../../src/main/providers/core')
+const { createClaudePackage } = await import('../../src/main/providers/claude')
 const { getConfigDir } = await import('../../src/main/config-manager')
 const identity = await import('../../src/main/claude-account-identity')
 const consumers = await import('../../src/main/profile-consumers')
@@ -92,7 +93,15 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
     profiles.upsertProfile({ ...p2, accountEmail: 'work@example.test', active: true })
     workId = p2.id
     providerEnv = { PATH: '/usr/bin', FROM_PROVIDER: '1', CCC_SESSION_WORKTREE: 'inherited-from-parent' }
-    registerProvider(fakeClaude)
+    // WP1 slice 2: the launch path now takes the ambient-strip list and the
+    // host control from the REGISTERED PACKAGE, so a bare session provider is
+    // no longer enough to drive a spawn. Register the REAL Claude package with
+    // only its spawn surface faked -- swapping the whole package for a stub
+    // would make these cases characterize a stub's policy rather than the
+    // shipped one, which is the opposite of what a characterization test is
+    // for.
+    _resetProviderRegistryForTest()
+    registerProviderPackage({ ...createClaudePackage(), session: fakeClaude })
     identity._resetClaudeAccounts()
     consumers._resetProfileConsumersForTest()
     canvasLink._resetCanvasSessionLinkForTest()

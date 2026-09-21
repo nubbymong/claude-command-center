@@ -10,6 +10,20 @@ import { getRemoteSetupCommand, remoteSessionSettingsPath, remoteSessionMcpConfi
 import { detectClaudeUi } from './ui-detection'
 import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './statusline'
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
+import {
+  CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_HOST_MANAGED_ENV, CLAUDE_MIN_MANAGED_CLI_VERSION,
+  sanitizeClaudeManagedSettings, claudeManagedLaunchPreflight,
+} from './managed-launch'
+
+// The managed-launch surface is re-exported so the composition root and the
+// conformance suite reach it through this entry point, never by deep import.
+export {
+  CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_HOST_MANAGED_ENV,
+  CLAUDE_COMMAND_HELPER_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
+  isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings,
+  claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
+} from './managed-launch'
+export type { AuthorityKind, AuthoritySource, AuthorityVariable } from './managed-launch'
 
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
@@ -95,16 +109,17 @@ export const claudeCapabilities: ProviderCapabilities = {
   'session.ssh': { state: 'supported' },
 }
 
-/** Ambient variables that could override a bound Claude realm (D3):
- *  the config-dir override and every credential the CLI reads from the
- *  environment ahead of its stored login (the long-lived token from
- *  `claude setup-token`, the API key, the auth token). Reviewed 2026-09-20
- *  against Claude Code 2.1.278. Authority/cloud switches
- *  (ANTHROPIC_BASE_URL, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX,
- *  AWS_BEARER_TOKEN_BEDROCK) redirect where credentials go rather than
- *  override the realm; whether they belong here is an open owner question
- *  recorded with slice 1. */
-export const claudeAmbientAuthVariables: readonly string[] = ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
+/** Ambient variables that could override a bound Claude realm (D3).
+ *
+ *  Slice 1 carried four names and left an open question beside them: do the
+ *  authority/cloud switches (`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`,
+ *  ...) belong here, given they redirect where a credential GOES rather than
+ *  which realm is read? The owner's ruling of 2026-09-21 answers it -- yes:
+ *  a session pointed at an attacker's endpoint is not isolated merely because
+ *  it read the right stored login. The full derived, classified list now lives
+ *  in ./managed-launch, one entry per variable with its authority kind and
+ *  whether it is documented, observed in the pinned binary, or both. */
+export const claudeAmbientAuthVariables: readonly string[] = CLAUDE_AUTHORITY_ENV_VARIABLES
 
 /** Variables the realm patch may set: the profile-home selector, and HOME as
  *  its POSIX sibling (D1). Nothing else.
@@ -135,5 +150,13 @@ export function createClaudePackage(): ProviderPackage {
     capabilities: claudeCapabilities,
     ambientAuthVariables: claudeAmbientAuthVariables,
     ownedLaunchVariables: claudeOwnedLaunchVariables,
+    // The proven control (evidence 2026-09-21). Applied LAST by
+    // applyRealmEnvPatch; a realm patch that names it is refused.
+    hostManagedEnv: CLAUDE_HOST_MANAGED_ENV,
+    managedLaunch: {
+      minimumCliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
+      sanitizeManagedSettings: sanitizeClaudeManagedSettings,
+      preflight: claudeManagedLaunchPreflight,
+    },
   }
 }

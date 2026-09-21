@@ -14,7 +14,11 @@ import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { isValidProfileId, PROFILES_ROOT_DIRNAME } from './profile-id'
 import { atomicWriteFileSync } from './atomic-write'
-import { logWarn } from './debug-logger'
+import { logInfo, logWarn } from './debug-logger'
+// Via the neutral barrel, never a package entry point: the dependency boundary
+// (tests/wp1/dependency-boundaries.test.ts, R3/R4) keeps provider knowledge
+// behind the registry so a launch path cannot opt out of a provider's policy.
+import { realmEnvForProvider, hostManagedEnvForProvider, ambientAuthVariablesForProvider, sanitizeManagedSettingsFor } from './providers'
 import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { AccountProfile, AccountProfilesConfig } from '../shared/account-types'
 
@@ -1145,6 +1149,91 @@ function writeUserScopeClaudeMd(claudeDir: string, shared: string): void {
   fs.writeFileSync(dest, next)
 }
 
+/** What the sanitiser did to each profile's settings copy, last time one was
+ *  written. Read by the managed-launch preflight, which has no other way to
+ *  know: the removal happens at profile-home build time, the report is wanted
+ *  at launch time. Keyed by the profile HOME path, because both writers know
+ *  that and only one of them knows the profile id. */
+const lastSettingsSanitise = new Map<string, { removed: readonly string[]; refused?: string }>()
+
+/** Ambient authority variables the last managed launch for a profile home
+ *  removed from the inherited environment. Same reason as above: the removal
+ *  happens while the launch env is composed, the report is wanted afterwards. */
+const lastAmbientStrip = new Map<string, readonly string[]>()
+
+/** The last sanitise result for a profile home, or null if none was written. */
+export function lastSettingsSanitiseFor(home: string): { removed: readonly string[]; refused?: string } | null {
+  return lastSettingsSanitise.get(home) ?? null
+}
+
+/** What the last managed launch for this profile home stripped, or null. */
+export function lastAmbientStripFor(home: string): readonly string[] | null {
+  return lastAmbientStrip.get(home) ?? null
+}
+
+/**
+ * Write the APP-OWNED copy of the shared user-scope settings into a managed
+ * profile home, with the provider's authority entries removed.
+ *
+ * The source file is the one the USER edits and is never touched: it is read,
+ * and a separate destination is written. That separation is the whole point of
+ * the copy -- the user keeps their `env` block and their helpers on their own
+ * machine; the managed realm gets a copy that cannot redirect the account.
+ *
+ * Two fail-closed behaviours, both deliberate:
+ *   - an unreadable or unparseable source writes NOTHING and leaves no stale
+ *     copy behind. A session then starts without the shared settings, which is
+ *     visible and recoverable; copying a file we could not inspect is neither.
+ *   - the write goes through `atomicWriteFileSync`, which stages under a random
+ *     name with `wx` and RENAMES over the destination. Rename-over replaces the
+ *     directory entry rather than the inode, so it breaks a pre-existing
+ *     hardlink -- the hazard `writeUserScopeClaudeMd` documents for CLAUDE.md,
+ *     where a plain write would edit the user's own settings.json THROUGH the
+ *     link, turning a sanitiser into a mutation of the file it protects. The
+ *     earlier unlink-then-write did break the link, but it also left a window
+ *     on EVERY spawn (`setupProfileLinks` runs per spawn) in which the copy did
+ *     not exist, so a concurrent second session of the same account could start
+ *     with no shared settings at all. Rename has no such window.
+ */
+function writeSanitisedSettingsCopy(src: string, dest: string): void {
+  // `<profileHome>/.claude/settings.json` -> `<profileHome>`. Both call sites
+  // build `dest` as `path.join(<profile home>, '.claude', 'settings.json')`, so
+  // this is the same string the launch path passes to the preflight.
+  const home = path.dirname(path.dirname(dest))
+  let raw: string
+  try {
+    raw = fs.readFileSync(src, 'utf8')
+  } catch (e) {
+    // The errno ONLY, never the message: a Node fs error message embeds the
+    // absolute path, and therefore the OS username, and this string now reaches
+    // a renderer surface. The path is not what the user needs here anyway --
+    // they know where their own shared settings live.
+    const code = (e as NodeJS.ErrnoException)?.code ?? 'unknown error'
+    lastSettingsSanitise.set(home, { removed: [], refused: `shared settings.json could not be read (${code})` })
+    try { fs.rmSync(dest, { force: true }) } catch { /* absent */ }
+    return
+  }
+  const result = sanitizeManagedSettingsFor('claude', raw)
+  lastSettingsSanitise.set(home, { removed: result.removed, refused: result.refused })
+  if (result.text === null) {
+    // A refusal IS a warning: the user's shared settings silently stop applying
+    // to this account until they fix the file.
+    logWarn(`[profiles] not copying shared settings.json into profile ${path.basename(home)}: ${result.refused ?? 'sanitiser refused it'}`)
+    try { fs.rmSync(dest, { force: true }) } catch { /* absent */ }
+    return
+  }
+  // Staged `wx` write + rename-over: atomic, and the rename replaces the
+  // directory entry rather than the inode, so a pre-existing hardlink back to
+  // the shared file is broken instead of written through (see the header).
+  atomicWriteFileSync(dest, result.text)
+  if (result.removed.length) {
+    // Routine, not a fault: this fires on every spawn for a user who keeps an
+    // `env` block in their shared settings, and the profile ID is the useful
+    // part -- the absolute path just puts their directory layout in the log.
+    logInfo(`[profiles] sanitised the settings copy for profile ${path.basename(home)}: removed ${result.removed.join(', ')}`)
+  }
+}
+
 function buildHomeLinks(home: string): void {
   migrateOldLayout(home)
 
@@ -1165,7 +1254,7 @@ function buildHomeLinks(home: string): void {
     ensureLink(target, path.join(claudeDir, name), name === 'projects')
   }
   const srcSettings = path.join(shared, 'settings.json')
-  if (fs.existsSync(srcSettings)) fs.copyFileSync(srcSettings, path.join(claudeDir, 'settings.json'))
+  if (fs.existsSync(srcSettings)) writeSanitisedSettingsCopy(srcSettings, path.join(claudeDir, 'settings.json'))
 
   // #170: user-scope CLAUDE.md, generated beside the settings copy.
   writeUserScopeClaudeMd(claudeDir, shared)
@@ -1248,13 +1337,21 @@ export function repairSharedProjectJunctions(): void {
   }
 }
 
-/** Re-copy settings.json from shared -> profile's `.claude/` (after shared edits). */
+/** Re-copy settings.json from shared -> profile's `.claude/` (after shared edits).
+ *  Sanitised on the same terms as the build-time copy -- both writers go
+ *  through writeSanitisedSettingsCopy, so they cannot diverge.
+ *
+ *  No production caller today: `buildHomeLinks` re-runs on every spawn and
+ *  re-copies there, which covers the shared-edit case in practice. Kept as the
+ *  named resync entry point (and exercised by the suite) because a settings
+ *  copy that is only ever refreshed as a side effect of spawning is a fragile
+ *  contract to rely on silently. */
 export function resyncProfileSettings(id: string): void {
   const src = path.join(sharedRoot(), 'settings.json')
   if (fs.existsSync(src)) {
     const claudeDir = path.join(getProfileConfigDir(id), '.claude')
     fs.mkdirSync(claudeDir, { recursive: true })
-    fs.copyFileSync(src, path.join(claudeDir, 'settings.json'))
+    writeSanitisedSettingsCopy(src, path.join(claudeDir, 'settings.json'))
   }
 }
 
@@ -1829,8 +1926,27 @@ export function captureDetectedAccount(profileId: string, name?: string): Accoun
  * Per-process account isolation: run Claude under a per-account fake HOME so the
  * account identity (~/.claude.json, which follows USERPROFILE on Windows / HOME
  * on Unix) is private. CLAUDE_CONFIG_DIR alone does NOT isolate identity. Git/npm
- * are pointed back at the real home so shared dev tooling is unaffected. Returns
- * the env unchanged for the Default account (home == null).
+ * are pointed back at the real home so shared dev tooling is unaffected.
+ *
+ * THIS IS THE MANAGED-LAUNCH CHOKE POINT for local Claude. Every path that runs
+ * the CLI against an app-managed account comes through here -- the interactive
+ * PTY, shell-only sessions pinned to an account, the headless runner, the
+ * insights runner, the cloud-agent env, and `claude auth status`. So this is
+ * where the host hardening is applied, in one place, rather than restated at
+ * six call sites where the seventh would be the one that forgot:
+ *
+ *   - ambient authority variables the developer's environment might carry are
+ *     REMOVED (the package's `ambientAuthVariables`);
+ *   - `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` is applied LAST
+ *     (the package's `hostManagedEnv`), which is what stops a settings file
+ *     redirecting the session to another account or running a command of its
+ *     choosing (evidence 2026-09-21, findings 3/5/6/7).
+ *
+ * `home == null` is the UNMANAGED case -- the Default account, or a plain shell
+ * that is not pinned to a profile -- and returns the environment untouched. The
+ * user's own machine, their own settings, their own credentials: the host
+ * control is for realms this app manages, and asserting it over a shell the app
+ * does not own would silently disable the user's own apiKeyHelper.
  */
 export function withProfileHome(env: Record<string, string>, home: string | null): Record<string, string> {
   if (!home) return env
@@ -1863,5 +1979,52 @@ export function withProfileHome(env: Record<string, string>, home: string | null
   const curPath = next[pathKey] ?? ''
   const already = curPath.split(path.delimiter).some((p) => p.toLowerCase() === localBin.toLowerCase())
   if (!already) next[pathKey] = curPath ? `${curPath}${path.delimiter}${localBin}` : localBin
-  return next
+
+  // One call does the ambient removal, the realm patch and the host control,
+  // in that order, from the REGISTERED package's own policy. It is deliberately
+  // not three calls: a launch path that can apply them separately is a launch
+  // path that can apply two of the three.
+  //
+  // The patch re-states USERPROFILE/HOME that `next` already carries. That is
+  // not redundant -- those are the only two variables the Claude package is
+  // allowed to own, so routing them through the patch is what makes the realm
+  // selector subject to the same validation as everything else. PATH,
+  // GIT_CONFIG_GLOBAL and npm_config_userconfig stay composed above, because a
+  // realm patch may not own a variable that decides what the child EXECUTES.
+  const hardened = realmEnvForProvider('claude', next, {
+    set: process.platform === 'linux' ? { USERPROFILE: home, HOME: home } : { USERPROFILE: home },
+  })
+
+  // Assertion, not validation: the control is applied by the line above, so the
+  // only way to reach this throw is a regression in the mechanism itself. It is
+  // here because the failure is otherwise SILENT -- a session that starts
+  // without the flag looks exactly like one that starts with it, right up until
+  // a settings file swaps the account under it.
+  //
+  // The EMPTY case is checked first and separately. A loop over an empty
+  // declaration passes VACUOUSLY, so "the package stopped declaring a control"
+  // -- the regression that disables the whole mechanism -- would sail straight
+  // through the assertion written to catch a missing control.
+  const controls = Object.entries(hostManagedEnvForProvider('claude'))
+  if (controls.length === 0) {
+    throw new Error('[profiles] refusing a managed Claude launch: the Claude package declares no host-managed control, so nothing stops a settings file redirecting this session')
+  }
+  for (const [k, v] of controls) {
+    if (hardened[k] !== v) {
+      throw new Error(`[profiles] refusing a managed Claude launch: the host control ${k} was not applied (expected ${JSON.stringify(v)}, got ${JSON.stringify(hardened[k] ?? null)})`)
+    }
+  }
+  // Record what the AMBIENT pass removed, so the preflight can report it.
+  //
+  // The difference between the two key sets is not the answer on its own:
+  // applyRealmEnvPatch also drops keys an environment object cannot carry (an
+  // '=' , NUL, CR or LF in the name) and keys whose value is not a string.
+  // Reporting those under "authority variables were removed" would be a label
+  // the data does not support, so the difference is intersected with the
+  // provider's OWN declared list -- read from the registry, never restated
+  // here, because a second copy of that list is a list that drifts.
+  const kept = new Set(Object.keys(hardened).map((k) => k.toLowerCase()))
+  const ambient = new Set(ambientAuthVariablesForProvider('claude').map((k) => k.toLowerCase()))
+  lastAmbientStrip.set(home, Object.keys(next).filter((k) => !kept.has(k.toLowerCase()) && ambient.has(k.toLowerCase())))
+  return hardened
 }
