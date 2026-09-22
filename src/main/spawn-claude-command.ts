@@ -172,6 +172,26 @@ export interface ResolveResumeLaunchDeps {
  * and the project-settings gate in pty-manager, which must gate the directory
  * an exact resume will actually run in and so has to spell it the same way.
  */
+/**
+ * The worktree paths in `git worktree list --porcelain` output, in order.
+ * Mirrors the parser in scripts/resume-picker.js, which builds the picker's
+ * candidate list from the same command: the directories the picker may
+ * relaunch the CLI in are exactly these, and the project-settings gate must
+ * gate every one of them before a managed picker launch (adversarial final
+ * pass, MAJOR). Tolerant of CRLF and of a missing trailing blank line.
+ */
+export function parseWorktreePaths(porcelainText: string): string[] {
+  const out: string[] = []
+  for (const rawLine of String(porcelainText ?? '').split('\n')) {
+    const line = rawLine.replace(/\r$/, '')
+    if (line.startsWith('worktree ')) {
+      const p = line.slice('worktree '.length).trim()
+      if (p) out.push(p)
+    }
+  }
+  return out
+}
+
 export function expandResumeTargetCwd(cwd: string, home: string): string {
   if (cwd === '~') return home
   if (cwd.startsWith('~/') || cwd.startsWith('~\\')) return nodePath.join(home, cwd.slice(2))

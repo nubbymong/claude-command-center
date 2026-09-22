@@ -16,8 +16,10 @@
 //      byte-for-byte reproduction. It SKIPS when the binary is absent. The
 //      binary is proprietary and is never vendored, excerpted or committed.
 import { describe, it, expect, vi } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import os from 'node:os'
 import path from 'node:path'
 import {
   validateAuthorityManifest, authorityManifest, authorityManifestProvenance,
@@ -37,13 +39,35 @@ import { CLI_OWNED_CENSUS_RULINGS } from '../../scripts/claude-authority-census-
 const REPO = path.resolve(__dirname, '..', '..')
 const MANIFEST_PATH = path.join(REPO, 'src', 'main', 'providers', 'claude', 'claude-authority-manifest.json')
 
-/** The pinned development fixture. Absent on CI and on a fresh clone. */
+/** The pinned development fixture. Absent on CI and on a fresh clone.
+ *
+ *  Chosen by DIGEST, not by path: `~/.local/bin/claude` is the live install
+ *  and auto-updates under a running suite (2.1.278 became 2.1.280 between two
+ *  runs of the same session), and the generator's anchors are laid out for one
+ *  build -- so the live binary is the fixture only while it still IS the pinned
+ *  one. The installer keeps every version it has run under
+ *  `~/.local/share/claude/versions/<version>`, which is where the pinned build
+ *  is found once the live one has moved on. A candidate of another digest is
+ *  not the fixture; with none matching, the regeneration is skipped and says
+ *  which builds it saw. */
 function pinnedBinary(): string | null {
+  const prov = authorityManifestProvenance()
+  const exe = process.platform === 'win32' ? 'claude.exe' : 'claude'
+  const homes = [...new Set([process.env.USERPROFILE, process.env.HOME, os.homedir()].filter((h): h is string => Boolean(h)))]
   const candidates = [
     process.env.CLAUDE_BINARY,
-    path.join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude'),
-  ].filter((c): c is string => Boolean(c))
-  return candidates.find((c) => existsSync(c)) ?? null
+    ...(prov?.cliVersion ? homes.map((h) => path.join(h, '.local', 'share', 'claude', 'versions', prov.cliVersion)) : []),
+    ...homes.map((h) => path.join(h, '.local', 'bin', exe)),
+  ].filter((c): c is string => Boolean(c) && existsSync(c))
+  for (const c of candidates) {
+    if (typeof prov?.binaryBytes === 'number' && statSync(c).size !== prov.binaryBytes) continue
+    if (prov?.binarySha256 && createHash('sha256').update(readFileSync(c)).digest('hex') !== prov.binarySha256) continue
+    return c
+  }
+  if (candidates.length > 0) {
+    console.warn(`authority-manifest: no candidate binary matches the pinned digest (${prov?.cliVersion ?? '?'}, ${prov?.binarySha256?.slice(0, 8) ?? '?'}); regeneration skipped. Seen: ${candidates.join(', ')}`)
+  }
+  return null
 }
 
 describe('the generated authority manifest', () => {

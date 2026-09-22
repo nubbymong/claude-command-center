@@ -30,7 +30,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd } from './spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
@@ -919,6 +919,41 @@ function managedLaunchGateDirs(sessionId: string, resolvedCwd: string, options: 
   const resumeCwd = expandResumeTargetCwd(target.cwd, os.homedir())
   if (resumeCwd !== resolvedCwd) dirs.push(resumeCwd)
   return dirs
+}
+
+/** A managed launch that will run the resume PICKER in the terminal. */
+function managedPickerLaunch(options: SpawnPtyOptions | undefined): boolean {
+  return !!options?.useResumePicker && !options.shellOnly && !options.ssh && (options.provider ?? 'claude') === 'claude'
+}
+
+/**
+ * The directories the resume PICKER may relaunch the CLI in: every worktree of
+ * the repository at `cwd`, as `git worktree list --porcelain` reports them
+ * from that directory -- which is the list scripts/resume-picker.js builds its
+ * candidates from, and where it `spawnSync`s the CLI with `cwd` set to the
+ * chosen conversation's worktree. The two in-process directory asserts fire
+ * before the PTY exists and cannot see a retarget made by a grandchild, so a
+ * managed picker launch gated only the configured directory while the CLI
+ * could run in any sibling worktree, reading that worktree's own settings
+ * files (adversarial final pass, MAJOR). Every candidate is gated up front,
+ * and the gated set travels to the picker in CCC_GATED_DIRS, which refuses a
+ * retarget outside it -- so a worktree that appears between the two
+ * enumerations is refused rather than run unchecked. Fail-safe like the
+ * picker's own enumeration: no git, no repository, or a timeout yields no
+ * extra directories, and the picker then degrades to its single-candidate
+ * behaviour in the configured directory, which is gated.
+ */
+function pickerCandidateDirs(cwd: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    try {
+      execFile('git', ['worktree', 'list', '--porcelain'], { cwd, timeout: 5000, windowsHide: true, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout) => {
+        if (err || !stdout) { resolve([]); return }
+        resolve(parseWorktreePaths(String(stdout)).map((p) => path.resolve(p)))
+      })
+    } catch {
+      resolve([])
+    }
+  })
 }
 
 /**
@@ -4088,9 +4123,16 @@ function spawnPtyResolved(
     // the launch will spell it; the two verdicts merge into one.
     if (resolvedProfileId && options?.projectGate === undefined) {
       const gateDirs = managedLaunchGateDirs(sessionId, resolvedCwd, options)
-      deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, gateManagedLaunchDirs(gateDirs),
-        `checking the project settings in ${gateDirs.map(describePathForLog).join(' and ')} before the managed launch`,
-        (verdict) => ({ ...options, refreshAwaited: true, projectGate: verdict, projectGateDirs: gateDirs }))
+      // The picker's candidates join the set (see pickerCandidateDirs); the
+      // verdict and the FULL set it was formed for travel together.
+      const pending = (managedPickerLaunch(options) ? pickerCandidateDirs(resolvedCwd) : Promise.resolve<string[]>([]))
+        .then(async (candidates) => {
+          const dirs = [...new Set([...gateDirs, ...candidates])]
+          return { verdict: await gateManagedLaunchDirs(dirs), dirs }
+        })
+      deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
+        `checking the project settings in ${gateDirs.map(describePathForLog).join(' and ')}${managedPickerLaunch(options) ? ' and every worktree the resume picker may open' : ''} before the managed launch`,
+        ({ verdict, dirs }) => ({ ...options, refreshAwaited: true, projectGate: verdict, projectGateDirs: dirs }))
       return
     }
     // Home selection (Bug 2): EVERY session of an account -- shell-only (plain
@@ -4125,6 +4167,11 @@ function spawnPtyResolved(
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).
     try { finalSpawnEnv.CCC_CONFIG_DIR = getConfigDir() } catch { /* best-effort */ }
+    // The directories this launch's verdict covers, for the resume picker: it
+    // relaunches the CLI in the chosen conversation's worktree and must not
+    // step outside the gated set (see pickerCandidateDirs). Only a managed
+    // launch carries one; an unmanaged picker is not gated and gets nothing.
+    if (options?.projectGateDirs) finalSpawnEnv.CCC_GATED_DIRS = JSON.stringify(options.projectGateDirs)
     // Session isolation + Agent Canvas (ADR-016): CCC DESIGNATES where this
     // session's guard worktree lives — `<worktree base>/<ccc-session-short>`,
     // derived from the CONFIGURED project directory and CCC's own session id,

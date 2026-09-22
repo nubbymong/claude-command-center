@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "6e37ca4f5da1f90a8ec4e127a78423117154b117bb5c9d56e09875d05570af1d",
-  "manifestHead": "6eceb5ac514b4a878da663b6acdf6f953a803e89",
+  "manifestPathDigest": "bde1e9bb23f99efb172ed6dcc5e221796e63d251f41a8a7e61e68a24a641ffa7",
+  "manifestHead": "b8e0217f00f8f21e4c6da3539658d0751bff3b45",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -2187,6 +2187,16 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP1 harness for the managed Claude launch: the project-gate deferral carries the launch, and the resume picker candidate set (WP1.38); docs/wp1/evidence/claude-settings-isolation-2026-09-21.md Part 10",
+      "note": "Codex appears only as a key of the mocked pty-manager deps object (registerCodexReviewSession); no Codex code path"
     },
     {
       "path": "tests/unit/main/pty-session-liveness.test.ts",

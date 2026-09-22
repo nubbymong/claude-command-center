@@ -70,7 +70,8 @@ things make sure that is the account the session actually signs in as:
   before the session starts, and **if they carry one of those settings the
   session is refused** — in the terminal, naming the file and the key (never a
   value). When a session resumes a conversation that ran in another folder,
-  that folder is checked too, and the refusal says which one. On Linux and
+  that folder is checked too, and so is every worktree the resume picker can
+  offer; the refusal says which one. On Linux and
   macOS, Claude Code also reads `settings.local.json` from the root of the git
   checkout you are in (the main checkout, for a linked worktree), so that file
   is checked as well. CCC never edits a project's files, and it has no way to

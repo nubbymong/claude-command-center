@@ -1798,10 +1798,13 @@ And four things layer 4 does now that Part 9 did not say:
 
 - **Every directory a launch may land in is gated**, and the verdict is bound
   to that set: the configured directory, plus the resume target's for an
-  interactive Claude session. A directory the launch does not use in the end
-  (a resume target whose transcript is gone) is gated all the same, so a
-  poisoned resume folder refuses a launch that would have run cleanly
-  elsewhere. That is the fail-closed side, and it is deliberate.
+  interactive Claude session, plus -- since the final pass below -- every
+  worktree the resume PICKER can offer (`git worktree list` from the configured
+  directory, read by the main process; the picker is handed the gated set in
+  `CCC_GATED_DIRS` and exits rather than retarget outside it). A directory the
+  launch does not use in the end (a resume target whose transcript is gone) is
+  gated all the same, so a poisoned resume folder refuses a launch that would
+  have run cleanly elsewhere. That is the fail-closed side, and it is deliberate.
 - **A directory that appeared, vanished or was re-pointed during the deferral
   refuses** (`launch-directory-unverified`, shown on the panel). The CONTENT of
   a gated file is not re-read between the gate and the spawn; only the
@@ -1814,10 +1817,10 @@ And four things layer 4 does now that Part 9 did not say:
 
 ## Residuals and the scope matrix
 
-- **The round-2 fixes (B1, M2, M3, M4, m5-m10, r1-r3) have had the two
-  independent reviews and their own mutants, and no fresh attacker pass.** The
-  bound was one re-attack and it was spent on round 1. Whether to spend
-  another is the owner's call.
+- **The round-2 fixes have now had their own attacker pass and two
+  confirmation passes** (rounds 5 to 7 below, ordered by the owner as ONE
+  final bounded pass with same-role confirmation). Verdict at the end of round
+  7: HOLDS A-E.
 - **Platforms.** All assertions ran on Windows 11 except the FIFO case and the
   POSIX branch of the repository-root case (git root, worktree pointer,
   symlinked `.git`, uid veto, unbounded walk), which ran on Ubuntu 24.04 under
@@ -1837,3 +1840,121 @@ And four things layer 4 does now that Part 9 did not say:
   design); the warning it can show is true of the probe.
 - The in-app refusal on a real project, and the resume-in-worktree case on a
   real transcript, remain the VM checks in the manual matrix. Not done here.
+
+## Rounds 5 to 7 -- the final bounded pass over the round-2 fixes, and its confirmations (2026-09-22)
+
+**Bound, stated before the first attacker ran (owner's instruction):** one
+attacker pass, Opus bypass lens, scoped to the round-2 fixes only -- A = the
+linked-worktree canonical root (B1), B = loopback/UNC path classification
+(M2), C = directory binding across the spawn deferral (M3), D = exact-resume
+preservation across the deferral (M4), E = the related minors (m5-m10, r1-r3).
+Concrete repro required for any finding; in-scope defects fixed and proven with
+a red mutant; then targeted confirmation from the SAME role (a fresh Opus
+attacker with the same brief) asked to confirm the fixes and hunt new gaps in
+them only. The confirmation broke two scopes, so a fix round and a second,
+targeted confirmation followed. Three attacker rounds in all; the last returned
+HOLDS A-E with no new finding. Nothing here ran on macOS.
+
+**The pinned binary moved under the session.** The live `~/.local/bin/claude.exe`
+auto-updated from 2.1.278 to 2.1.280 at 17:49 on 2026-09-22, between two runs
+of the same suite. Every "the CLI does X" in this section was re-read from the
+installer's version-store copy of **2.1.278** (`~/.local/share/claude/versions/2.1.278`,
+237,232,800 bytes, sha256 `006ea5c8...cced8` -- the doc's pin, verified by the
+confirming attacker independently). `tests/wp1/authority-manifest.test.ts` now
+selects its regeneration fixture by that digest (falling back to the
+version-store path) instead of by the live path, so an auto-update cannot fail
+the suite or, worse, silently regenerate against another build.
+
+### Round 5 -- the final bounded pass (Opus, over `6290f8e4..b8e0217f`)
+
+| # | severity | finding | fix | test (red under the mutant) |
+|---|---|---|---|---|
+| R5-1 | MAJOR (C/D) | the resume PICKER (`scripts/resume-picker.js`) retargets `claude` into a sibling worktree (`spawnOpts.cwd = sourceCwd`, from its own `git worktree list`) that the gate never scanned -- the deferral carried the verdict for the configured and the resume directories, and the picker's choice was a third | `pickerCandidateDirs` (main process: `execFile git worktree list --porcelain`, 5 s timeout, fail-safe `[]`; `parseWorktreePaths`) merges the worktrees into the gated set; the deferral resolves `{ verdict, dirs }`; `CCC_GATED_DIRS` (JSON) is handed to the picker; `gatedDirsFromEnv` / `isGatedDir` / `resolveRetargetCwd` decide, and the spawn site EXITS 1 on `refused` -- never the configured directory instead | `pty-managed-deferral-carries-launch` (poisoned sibling refuses; clean -> `CCC_GATED_DIRS` on the PTY env; git failure degrades to the configured dir); `resume-picker-gated-dirs` (the pure decision, a source pin that the exit precedes `spawnSync`); mutants: candidates not gated, set not handed, picker ignores set |
+| R5-2 | MAJOR (B) | the IPv6 loopback UNC forms Windows resolves (`\\0--1.ipv6-literal.net\C$`, the eight-hextet form; *measured*, Test-Path true, the CLI reads them) were classified network -> not-scanned, launch anyway | `isLoopbackHost`: the `*.ipv6-literal.net` spelling (`-` -> `:`, `s` -> `%`), zone strip, `normaliseIpv6` (`::` expansion, dotted-v4 tail), `::ffff:127.x` | the loopback rows + the `_isLoopbackHostForTest` matrix; mutants: ipv6-literal, no-normalise |
+| R5-3 | MINOR (A) | a symlinked `.git` diverged from the CLI's `Ce`: the walk skipped every link | followed with `stat` -- **superseded in round 6** (R6-3), which showed a bare follow is the opposite error | the symlinked-`.git` case (later rewritten) |
+
+Everything else in A-E held. Out of scope, noted and not pursued: the
+shell-only first-run command and Codex `spawnArgs` are logged un-stripped;
+Codex sessions are never gated (pre-existing); `recentVerdicts` is unbounded
+per spelling; a symlinked `.claude/settings*.json` is over-read (safe direction).
+
+### Round 6 -- the same-role confirmation (fresh Opus, same brief)
+
+C, D and E held (the picker enforcement could not be made to land the CLI in
+an unscanned directory across 12 `CCC_GATED_DIRS` shapes x 10 path spellings;
+a planted `git.exe` in the cwd was not picked up; a 100,000-character env value
+survived `CreateProcess` untruncated; `exit(1)` precedes the only `spawnSync`).
+A and B did not:
+
+| # | severity | finding | fix | test (red under the mutant) |
+|---|---|---|---|---|
+| R6-1 | MAJOR (B) | a trailing FQDN dot defeats the suffix rule outright: `0--1.ipv6-literal.net.` resolves like the undotted name (*measured*: the CLI reads the poisoned file through it) and classified network | trailing dots stripped before every rule | the root-dotted rows (`localhost.`, `127.0.0.1.`, three literal.net forms, the hostname); `localhost.evil` stays network; mutant |
+| R6-2 | MAJOR (B) | the machine's OWN non-loopback addresses are UNC hosts for itself -- every IPv4 (LAN, Tailscale, both Hyper-V/WSL vEthernet) and every IPv6 (ULA, link-local in the `...s<zone>.ipv6-literal.net` form) resolved `\\<addr>\C$` and classified network; end-to-end the CLI read the poisoned file and the gate said not-scanned | `ownAddresses()` from `os.networkInterfaces()` on each call (zone stripped, try/catch -> []); an own IPv4 matches by string, an own IPv6 by `normaliseIpv6` equality, and the IPv4-MAPPED spelling of an own IPv4 too | synthetic-interface rows in every spelling incl. zero-expanded; neighbours stay network; a throwing `networkInterfaces` degrades to the name rules; three mutants. The confirming attacker then wrote a marker into the scratchpad and read it back through EACH live own address's admin share: every reachable one returned this machine's own bytes, so none points at another machine's disk |
+| R6-3 | MAJOR (A) | round 5's bare `stat` accepted a `.git` link the CLI's `Ce` REFUSES (a link whose text carries a byte that is not UTF-8 -- legal on Linux and macOS), so the gate stopped BELOW the root the CLI used and never read that root's `settings.local.json`; repro: `clean` from the gate, `apiKeyHelper` applied by the CLI | `isGitRootEntry`: a transcription of 2.1.278's `Ce` (offset 197,227,427) and its helpers `lCt` / `Li` / `_Se` / `e$` / `Ya` / `nN` / `$5` / `FV` / `QS` / `Q` / `re` / `en` (197,243,151 and 195,98x,xxx): lstat; a symlink only when its text is NUL-free valid UTF-8, names nothing on another host or a network mount, every component of the target -- and of every link met on the way, forty deep -- is a plain entry, and the target is a directory or a file. The darwin-only volume rule (`jt`) and the stubbed `so` / `XJ` are not ported (macOS residual) | the repro verbatim (root refused via `settings.local.json (repository root)`), a relative `..` target accepted, a 40-link chain refused / 1-link accepted, `\??\foo` text refused, a nested hop with non-UTF-8 text refused; mutants: bare-stat walk, lstat-only walk, UTF-8 check dropped, host rule dropped, target walk dropped. The confirming attacker ran the port against a verbatim JS transcription of the CLI's functions over 29 on-disk layouts: **0 divergences in either direction** |
+| R6-4 | MINOR (C) | the picker created the companion directory under `~/.claude/projects/<unscanned worktree>/` BEFORE it refused the retarget -- a durable side effect keyed on a directory the gate never checked | the retarget decision and its exit precede the companion block | source-order test; mutant |
+| R6-5 | MINOR (C) | the refusal message wrote the raw directory to the terminal (every other path sink strips) | `displayPath` in the picker -- the same class as `src/shared/safe-text.ts`, 500 code points, surrogate-safe | 12 vectors (ESC/CSI, C1 CSI, OSC+ST, bidi, LS/PS, TAG, ZW*, NUL, DEL) and the cut; two mutants |
+| R6-6 | suspected, not reproduced | `stat` follows a `.git` link into a hung mount where `lstat` did not, holding a threadpool slot | left: bounded by the two-slot ceiling and the 3 s deadline (which bounds the promise, not the thread) | -- |
+
+### Round 7 -- targeted re-confirmation of round 6 (same attacker)
+
+R6-1 to R6-5 all CONFIRMED-FIXED (R6-2 with the live admin-share read-back
+above). One new finding, in the same function as R6-3:
+
+| # | severity | finding | fix | test (red under the mutant) |
+|---|---|---|---|---|
+| R7-1 | MAJOR (A) | the BARE-REPOSITORY branch of `canonicalGitRootOf` still asked "does the shared directory hold a `.git` of its own" with a bare `stat`, where `Bt` asks with `Ce`; a `.git` link the CLI refuses under the bare directory kept the gate at the worktree while the CLI canonicalised to the bare directory and applied ITS local settings | `isGitRootEntry(join(common, '.git'), common)` -- `Bt`'s tail verbatim | the bare-repository case, three states of `<common>/.git`: absent (root resolves to the bare directory, and then the CLI's ownership probe `Lf` lstat()s `<root>/.git`, throws, and `iao` keeps the store at the cwd -- the gate agrees: clean), a real directory (worktree), a refused link (bare directory, refused); mutant. The attacker's 13-state end-to-end chain (`Kt` -> `Ce` -> `Bt` -> `cV` / `nPn` / `iao` / `Lf`): 0 divergences |
+| R7-2 | MINOR (B) | classifying a UNC host now costs about 5 ms of synchronous main-process work (`os.networkInterfaces()`, 14 addresses) | left: an ordinary local directory pays nothing (`isUncPath` returns first), loopback short-circuits earlier, and the cost lands only where a UNC path is about to be declined -- beside the SMB attempt it replaces | measured, not tested |
+
+**Verdict after round 7: HOLDS A-E.**
+
+### Mutants recorded as EQUIVALENT (expected green, kept for fidelity)
+
+- `readGitPointer(entry, true)` -> `readGitPointer(entry)`: a symlinked
+  `.git` FILE can never satisfy the back-pointer rule (`realpath(gitdir/gitdir)`
+  is the link's target, `realpath(root)/.git` is the link itself), so both
+  variants return `root`; confirmed over six layouts, and `Bt` shares the
+  comparison.
+- the `isDirectory() || isFile()` kind check after the target walk: the walk
+  (`re`) already rejects a special-file component, and a dangling target
+  throws in the `stat`.
+- the 40-deep bound on Linux: the kernel's MAXSYMLINKS is forty, so `stat`
+  ELOOPs at exactly the depth the bound refuses. Observable only on a kernel
+  with a higher limit.
+
+### Corrections to the text above
+
+- Row B1: "a symlinked `.git` is not a root" was the first version's rule and
+  was wrong in that direction; round 5 reversed it and was wrong in the other;
+  the rule is now the CLI's own (R6-3, R7-1).
+- "A project on a network path is never read on the launch path" is narrower
+  again: a UNC host that is this machine BY ADDRESS (any interface, any
+  spelling Windows resolves) is local and scanned, as a loopback or own-name
+  host already was.
+- The Codex disposition ledger had no row for `pty-managed-deferral-carries-launch.test.ts`
+  (added at `b8e0217f`; it matches P13 through a mocked `registerCodexReviewSession`
+  key), so `legacy-codex-gate` was RED at `b8e0217f` and the round-2 close
+  shipped with a red gate that its verification did not run. Reconciled
+  (`added`, WP1.38) and the manifest digest regenerated; recorded here as a
+  miss in that round's "full suite" claim.
+- The fake-timer ceiling test stubs `stat` as well as `lstat` now that the
+  walk follows links; the attacker confirmed the stub masks nothing (the
+  assertion is on `open` counts).
+
+### Residuals added by these rounds
+
+- **macOS:** `Ce`'s darwin-only volume rule (`jt`, `/Volumes`) and `Kt`'s
+  `/Network/Servers` form are not ported; a cross-volume `.git` link on macOS
+  is a root for the gate and not for the CLI (same class as R6-3, macOS only).
+  Nothing ran on macOS.
+- The gate's `.claude` ownership lstat swallows every error where `Lf`
+  rethrows anything but ENOENT: an EACCES on `<root>/.claude` lets the gate
+  canonicalise where the CLI declines -- the cwd's own file is still read, so
+  this is over-refusal, and it needs a second uid to reproduce.
+- One worktree on a network path degrades the whole managed launch's verdict
+  from clean to not-scanned (refusals still win); not-scanned is never cached,
+  so every such launch repays it.
+- The gated set is a whitelist of directories, not of contents: a settings
+  file written into a gated worktree between the scan and the spawn is the
+  pre-existing scan-to-spawn window, unchanged.
+- Added launch-path latency, measured: 79 ms (32 ms git, 47 ms for eight
+  directories); designed worst case 5 s (git timeout) + N x 3 s.

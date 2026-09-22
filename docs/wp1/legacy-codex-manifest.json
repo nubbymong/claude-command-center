@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-21T01:06:06.739Z",
-  "head": "6eceb5ac514b4a878da663b6acdf6f953a803e89",
-  "tree": "de6e14728d15707e704c5b2ce07b31f98953faa3",
+  "generatedAt": "2026-09-22T16:41:38.488Z",
+  "head": "b8e0217f00f8f21e4c6da3539658d0751bff3b45",
+  "tree": "6a8e0baa6fa3c267a53a1a88eab127f895d58baa",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2137,
-  "excludedFileCount": 337,
-  "scannedFileCount": 1800,
+  "trackedFileCount": 2149,
+  "excludedFileCount": 338,
+  "scannedFileCount": 1811,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 289,
-  "pathDigest": "6e37ca4f5da1f90a8ec4e127a78423117154b117bb5c9d56e09875d05570af1d",
+  "matchedPathCount": 290,
+  "pathDigest": "bde1e9bb23f99efb172ed6dcc5e221796e63d251f41a8a7e61e68a24a641ffa7",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -526,7 +526,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 69
+      "lineCount": 65
     },
     {
       "path": "src/main/providers/codex/mcp-config.ts",
@@ -630,7 +630,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 78
+      "lineCount": 80
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -1658,6 +1658,13 @@
         "P13"
       ],
       "lineCount": 11
+    },
+    {
+      "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
     },
     {
       "path": "tests/unit/main/pty-session-liveness.test.ts",

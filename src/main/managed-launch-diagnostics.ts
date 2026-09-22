@@ -200,10 +200,10 @@ const MAX_GIT_POINTER_BYTES = 4096
 /** The text of a small pointer file, or null when it is absent, a symlink,
  *  not a regular file, or larger than a pointer file can be. Bounded exactly
  *  as the settings read is: a fixed buffer, and a byte over the cap is a miss. */
-async function readGitPointer(file: string): Promise<string | null> {
+async function readGitPointer(file: string, followSymlink = false): Promise<string | null> {
   let handle: fs.promises.FileHandle | null = null
   try {
-    if ((await fs.promises.lstat(file)).isSymbolicLink()) return null
+    if (!followSymlink && (await fs.promises.lstat(file)).isSymbolicLink()) return null
     handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0))
     const stat = await handle.stat()
     if (!stat.isFile() || stat.size > MAX_GIT_POINTER_BYTES) return null
@@ -217,6 +217,160 @@ async function readGitPointer(file: string): Promise<string | null> {
     await handle?.close().catch(() => {})
   }
 }
+
+/**
+ * The CLI's root-entry predicate (`Ce` in the pinned 2.1.278; its walk `Kt`
+ * asks it of `<dir>/.git` at every level): a directory or a regular file by
+ * `lstat`; a SYMLINK only when its text is NUL-free valid UTF-8 (`lCt`), names
+ * nothing on another host or a network mount (`Li`), every component of the
+ * target -- and of every link met on the way, forty deep -- is a plain entry
+ * (`Q` -> `re`), and the target is a directory or a regular file. A link the
+ * CLI refuses is NOT a root, and the CLI walks past it to a higher one; the
+ * first port of this followed every link with a bare `stat`, so it stopped at
+ * a link the CLI skipped and never read the root the CLI used (adversarial
+ * confirmation pass, MAJOR). Each helper below is named for the function it
+ * transcribes; the two the win32/linux builds stub to false (`so`, `jt`, the
+ * darwin volume rule) are left out and recorded as a macOS residual.
+ */
+async function isGitRootEntry(entry: string, dir: string): Promise<boolean> {
+  try {
+    const st = await fs.promises.lstat(entry)
+    if (st.isSymbolicLink()) {
+      const target = await readLinkText(entry)
+      if (target === null) return false
+      if (linkTargetIsElsewhere(target, dir)) return false
+      if (!(await linkPathIsPlain(target, dir))) return false
+      const real = await fs.promises.stat(entry)
+      return real.isDirectory() || real.isFile()
+    }
+    return st.isDirectory() || st.isFile()
+  } catch {
+    return false
+  }
+}
+
+/** `lCt`: the link text, or null when it holds a NUL or is not valid UTF-8. */
+async function readLinkText(link: string): Promise<string | null> {
+  try {
+    const raw = await fs.promises.readlink(link, { encoding: 'buffer' })
+    const text = raw.toString('utf8')
+    if (text.includes(String.fromCharCode(0)) || !Buffer.from(text, 'utf8').equals(raw)) return null
+    return text
+  } catch {
+    return null
+  }
+}
+
+const DEVICE_PREFIX_RE = /^[\\/]\?\?[\\/]/
+const UNC_DEVICE_RE = /^[\\/]{2}[?.][\\/]/
+const DOT_SEGMENT_RE = /(^|[\\/])\.{1,2}[. ]*([\\/]|$)/
+const ABSOLUTE_RE = /^(?:[/\\]|[A-Za-z]:[/\\])/
+const ROOT_PREFIX_RE = /^(?:[/\\]{2}[^/\\]+[/\\][^/\\]+[/\\]?|[A-Za-z]:[/\\]|[/\\])/
+const SEPARATORS_RE = /[/\\]+/
+const TRAILING_SEPARATOR_RE = /[\\/]$/
+
+/** `$5`: an NT object path (`\??\`), before or after win32 normalisation. */
+function isNtObjectPath(t: string): boolean {
+  return DEVICE_PREFIX_RE.test(t) || (t.includes('??') && DEVICE_PREFIX_RE.test(path.win32.normalize(t)))
+}
+/** `Nn`: two leading separators, or an NT object path. */
+function isUncLike(t: string): boolean {
+  return /^[\\/]{2}/.test(t) || isNtObjectPath(t)
+}
+/** `e$`: the UNC host, lower-cased; null for a device path that is not `UNC\`. */
+function uncHostOf(t: string): string | null {
+  if (/^[\\/]{2}[?.][\\/](?!unc[\\/])/i.test(t)) return null
+  const m = t.match(/^[\\/]{2}(?:[?.][\\/]unc[\\/])?([^\\/]+)/i)
+  return m?.[1]?.replace(/[A-Z]/g, (c) => c.toLowerCase()) ?? null
+}
+/** `_Se`: a UNC-like path that is a device path, has a dot segment, or names a host other than `base`'s. */
+function isForeignUnc(t: string, base: string): boolean {
+  if (!isUncLike(t)) return false
+  if (UNC_DEVICE_RE.test(t) || isNtObjectPath(t)) return true
+  if (DOT_SEGMENT_RE.test(t)) return true
+  const host = uncHostOf(t)
+  return host === null || host !== uncHostOf(base)
+}
+/** The segments of an absolute POSIX path with `.` and `..` folded, or null when it is not absolute. */
+function foldedPosixSegments(t: string): string[] | null {
+  if (!t.startsWith('/')) return null
+  const out: string[] = []
+  for (const seg of t.split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') { out.pop(); continue }
+    out.push(seg)
+  }
+  return out
+}
+/** `FV`: under `/network` (case-insensitive) by its first folded segment. */
+function isNetworkMount(t: string): boolean {
+  if (!t.startsWith('/')) return false
+  const out: string[] = []
+  for (const seg of t.split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') { out.pop(); continue }
+    out.push(seg)
+    if (out.length === 1 && out[0].toLowerCase() === 'network') return true
+  }
+  return false
+}
+/** `QS`: exactly `/net`, the automounter root. */
+function isNetRoot(t: string): boolean {
+  const segs = foldedPosixSegments(t)
+  return segs !== null && segs.length === 1 && segs[0].toLowerCase() === 'net'
+}
+/** `Li`: the link text, as written and as resolved against `dir`, is on another host or a network mount. */
+function linkTargetIsElsewhere(text: string, dir: string): boolean {
+  const resolved = path.resolve(dir, text)
+  if (isForeignUnc(text, dir) || isForeignUnc(resolved, dir)) return true
+  for (const o of [text, resolved]) if (isNetworkMount(o) || isNetRoot(o)) return true
+  return false
+}
+/** `en`: the kind of an entry by `lstat`; any error but a missing path is `other`. */
+async function entryKind(p: string): Promise<'symlink' | 'file' | 'dir' | 'other' | 'absent'> {
+  try {
+    const st = await fs.promises.lstat(p)
+    if (st.isSymbolicLink()) return 'symlink'
+    return st.isFile() ? 'file' : st.isDirectory() ? 'dir' : 'other'
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code
+    return code === 'ENOENT' || code === 'ENOTDIR' ? 'absent' : 'other'
+  }
+}
+/** `Q`: the target -- as written under `dir`, and as resolved -- walks clean. */
+async function linkPathIsPlain(text: string, dir: string): Promise<boolean> {
+  if (!(await pathWalksPlain(ABSOLUTE_RE.test(text) ? text : dir + path.sep + text, 40))) return false
+  return pathWalksPlain(path.resolve(dir, text), 40)
+}
+/** `re`: every component of `p` is a plain entry; a link met on the way is validated and followed, `depth` deep. */
+async function pathWalksPlain(p: string, depth: number): Promise<boolean> {
+  if (depth <= 0) return false
+  const m = ROOT_PREFIX_RE.exec(p)
+  let prefix = m ? m[0] : ''
+  const segs = p.slice(prefix.length).split(SEPARATORS_RE)
+  for (let u = 0; u < segs.length; u += 1) {
+    const seg = segs[u]
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') { prefix = path.dirname(prefix); continue }
+    prefix = path.join(prefix, seg)
+    if (isNetworkMount(prefix)) return false
+    const kind = await entryKind(prefix)
+    if (kind === 'other') return false
+    if (kind === 'symlink') {
+      const text = await readLinkText(prefix)
+      if (text === null) return false
+      if (linkTargetIsElsewhere(text, path.dirname(prefix))) return false
+      const head = ABSOLUTE_RE.test(text) ? text : path.dirname(prefix) + path.sep + text
+      const rest = segs.slice(u + 1).join(path.sep)
+      const next = rest ? (TRAILING_SEPARATOR_RE.test(head) ? head + rest : head + path.sep + rest) : head
+      return pathWalksPlain(next, depth - 1)
+    }
+  }
+  return true
+}
+
+/** TEST SEAM for the root-entry predicate. */
+export const _isGitRootEntryForTest = isGitRootEntry
 
 /**
  * The directory the CLI treats as the CANONICAL root of a checkout whose
@@ -241,11 +395,14 @@ async function readGitPointer(file: string): Promise<string | null> {
 async function canonicalGitRootOf(root: string): Promise<string> {
   const entry = path.join(root, '.git')
   try {
-    if (!(await fs.promises.lstat(entry)).isFile()) return root
+    // `stat`, following a symlink: the CLI reads a symlinked `.git` FILE
+    // through it (`ve` -> readFileSync). The pointer files INSIDE the git
+    // directory stay symlink-refused (`tA`).
+    if (!(await fs.promises.stat(entry)).isFile()) return root
   } catch {
     return root
   }
-  const text = (await readGitPointer(entry))?.trim()
+  const text = (await readGitPointer(entry, true))?.trim()
   if (!text || !text.startsWith('gitdir:')) return root
   const gitdir = path.resolve(root, text.slice(7).trim())
   const commonText = (await readGitPointer(path.join(gitdir, 'commondir')))?.trim()
@@ -262,8 +419,12 @@ async function canonicalGitRootOf(root: string): Promise<string> {
   }
   if (path.basename(common) !== '.git') {
     // A shared directory not named `.git` (a bare repository): the CLI treats
-    // it as the root itself unless it holds a `.git` of its own.
-    try { await fs.promises.lstat(path.join(common, '.git')); return root } catch { return common }
+    // it as the root itself unless it holds a `.git` of its own, asked with
+    // the SAME predicate as the walk (`Bt`: `Ce(R(a,".git"),a)`) -- a bare
+    // `stat` here took a link the CLI refuses as that `.git`, stayed at the
+    // worktree, and never read the bare directory's local settings the CLI
+    // applied (adversarial confirmation pass, round 6, MAJOR).
+    return (await isGitRootEntry(path.join(common, '.git'), common)) ? root : common
   }
   return path.dirname(common)
 }
@@ -287,9 +448,12 @@ export const _canonicalGitRootOfForTest = canonicalGitRootOf
  * launch in a subdirectory of an owned checkout (adversarial review, MAJOR,
  * POSIX only).
  *
- * The root is found the way the CLI finds it: walk up for a `.git` entry that
- * is a directory or a regular file (a symlinked `.git` is not a root and the
- * walk continues past it), with no depth bound other than the filesystem root
+ * The root is found the way the CLI finds it: walk up for a `.git` entry the
+ * CLI's `Ce` accepts (`isGitRootEntry`: a directory or a regular file, or a
+ * symlink that passes the CLI's own text, host and path checks and lands on
+ * one -- the first version walked past every symlinked `.git`, the second
+ * followed every one, and each missed a root the CLI used: adversarial final
+ * pass MINOR, confirmation pass MAJOR) -- with no depth bound other than the filesystem root
  * -- the CLI's walk has none, and a bound the CLI does not share is a layout
  * in which the CLI finds a root this gate does not; then a linked worktree's
  * pointer is followed to the main checkout (`canonicalGitRootOf`).
@@ -300,10 +464,7 @@ async function posixCanonicalLocalSettingsRoot(cwd: string): Promise<string | nu
   let dir = resolved
   let root: string | null = null
   for (;;) {
-    try {
-      const st = await fs.promises.lstat(path.join(dir, '.git'))
-      if (st.isDirectory() || st.isFile()) { root = dir; break }
-    } catch { /* not here; go up */ }
+    if (await isGitRootEntry(path.join(dir, '.git'), dir)) { root = dir; break }
     const parent = path.dirname(dir)
     if (parent === dir) break
     dir = parent
@@ -484,9 +645,45 @@ function isUncPath(p: string): boolean {
  *  is local and is scanned; a local read that the share refuses fails closed
  *  as an absent file, which is what the CLI sees too. */
 function isLoopbackHost(host: string): boolean {
-  const h = host.toLowerCase().replace(/^\[|\]$/g, '')
-  if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0:0:0:0:0:0:0:1') return true
+  // A trailing dot is the DNS root: `localhost.` and `0--1.ipv6-literal.net.`
+  // resolve exactly as the undotted names do, and a suffix rule that did not
+  // see past the dot put the dotted spelling in the not-scanned bucket
+  // (adversarial confirmation pass, MAJOR, measured). Strip it first.
+  let h = host.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '')
+  // The IPv6 forms Windows resolves as a UNC host: the *.ipv6-literal.net
+  // spelling (`0--1.ipv6-literal.net`, `-` for `:`, `s` for a zone `%`),
+  // the full eight-hextet form, and -- measured on this box, contrary to the
+  // first note here -- `::1` and `[::1]` themselves. The first rule
+  // enumerated `::1` and its zero-padded twin and missed the literal.net
+  // form, leaving it in the not-scanned, launch-anyway bucket for a directory
+  // the CLI reads (adversarial final pass, MAJOR). Normalise, then compare.
+  if (h.endsWith('.ipv6-literal.net')) h = h.slice(0, -'.ipv6-literal.net'.length).replace(/-/g, ':').replace(/s/g, '%')
+  h = h.replace(/%.*$/, '')
+  if (h === 'localhost' || h === '127.0.0.1') return true
   if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true
+  const v6 = normaliseIpv6(h)
+  let mappedV4: string | null = null
+  if (v6 !== null) {
+    if (v6 === '0:0:0:0:0:0:0:1') return true
+    // An IPv4-mapped address, ::ffff:a.b.c.d, in either spelling: loopback
+    // when it maps 127/8, and otherwise compared below as the IPv4 it maps.
+    const m = /^0:0:0:0:0:ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6)
+    if (m) {
+      const hi = parseInt(m[1], 16), lo = parseInt(m[2], 16)
+      if (hi >> 8 === 127) return true
+      mappedV4 = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+    }
+  }
+  // This machine's OWN addresses are UNC hosts for itself: `\\\\192.168.1.20\\C$`
+  // and the ipv6-literal.net spelling of its own link-local or ULA address
+  // (zone included) resolve to the local admin share exactly as `localhost`
+  // does, and a rule that knew this host only by NAME left every one of them
+  // in the not-scanned bucket (adversarial confirmation pass, MAJOR,
+  // measured). Compare against every address the OS reports right now.
+  for (const own of ownAddresses()) {
+    if (own.includes(':')) { if (v6 !== null && normaliseIpv6(own) === v6) return true }
+    else if (own === h || own === mappedV4) return true
+  }
   let self = ''
   try { self = os.hostname().toLowerCase() } catch { /* no name to compare */ }
   if (self === '') return false
@@ -496,6 +693,48 @@ function isLoopbackHost(host: string): boolean {
   const short = self.split('.')[0]
   return h === self || h === `${self}.local` || (short !== '' && h === short)
 }
+
+/** Every IPv4 and IPv6 address on this machine's interfaces, zone stripped,
+ *  lower-cased; empty when the OS will not say. Read on each call: interfaces
+ *  come and go, and the classification is asked only of a UNC-shaped path. */
+function ownAddresses(): string[] {
+  const out: string[] = []
+  try {
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const entry of list ?? []) {
+        if (typeof entry?.address !== 'string' || entry.address === '') continue
+        out.push(entry.address.toLowerCase().replace(/%.*$/, ''))
+      }
+    }
+  } catch { /* no interfaces to compare */ }
+  return out
+}
+
+/** An IPv6 address as eight lower-case hextets with no leading zeros, or null
+ *  when `text` is not one. `::` expands; a dotted IPv4 tail folds into the
+ *  last two hextets. */
+function normaliseIpv6(text: string): string | null {
+  if (!text.includes(':') || !/^[0-9a-f:.]+$/.test(text)) return null
+  let body = text
+  const v4 = /(?:^|:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(body)
+  if (v4) {
+    const oct = v4.slice(1, 5).map((o) => parseInt(o, 10))
+    if (oct.some((o) => o > 255)) return null
+    body = body.slice(0, body.length - v4[0].length + (v4[0].startsWith(':') ? 1 : 0)) + ((oct[0] << 8) | oct[1]).toString(16) + ':' + ((oct[2] << 8) | oct[3]).toString(16)
+  }
+  const parts = body.split('::')
+  if (parts.length > 2) return null
+  const head = parts[0] === '' ? [] : parts[0].split(':')
+  const tail = parts.length === 2 ? (parts[1] === '' ? [] : parts[1].split(':')) : []
+  const fill = parts.length === 2 ? 8 - head.length - tail.length : 0
+  if (fill < 0 || (parts.length === 1 && head.length !== 8)) return null
+  const all = [...head, ...Array.from({ length: fill }, () => '0'), ...tail]
+  if (all.length !== 8 || all.some((x) => !/^[0-9a-f]{1,4}$/.test(x))) return null
+  return all.map((x) => parseInt(x, 16).toString(16)).join(':')
+}
+
+/** TEST SEAM for the loopback rule: host in, verdict out. */
+export const _isLoopbackHostForTest = isLoopbackHost
 
 /** TEST SEAM for the network-path rule: string in, verdict out, no disk. */
 export const _isUncPathForTest = isUncPath
@@ -644,9 +883,12 @@ export async function gateManagedLaunchDirs(cwds: readonly string[]): Promise<Pr
 }
 
 /** One verdict for several directories (see `gateManagedLaunchDirs`). Pure,
- *  and exported for its test. Keys are already bounded per directory, and the
- *  directory set is at most the configured and the resume directory, so the
- *  merged list is bounded by construction without re-counting an "and N more". */
+ *  and exported for its test. Keys are already bounded per directory; the
+ *  directory set is the configured directory, the resume target's and every
+ *  worktree the resume picker can offer (`pickerCandidateDirs`), so the merged
+ *  list grows with the repository's worktrees -- each directory's keys are
+ *  prefixed by its own path and bounded by its own scan, and no "and N more"
+ *  is re-counted across them. */
 export function mergeProjectGateResults(
   results: ReadonlyArray<{ cwd: string; result: ProjectGateResult }>,
 ): ProjectGateResult {
