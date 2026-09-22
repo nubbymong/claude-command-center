@@ -111,19 +111,10 @@ export interface ProviderPackage {
   /** Variables the provider's realm patch may set or unset (the realm
    *  selector plus what the existing mechanism already touches). */
   readonly ownedLaunchVariables: readonly string[]
-  /** HOST-MANAGED CONTROLS applied LAST on every app-managed launch of this
-   *  provider, after the ambient removal and after the realm patch.
-   *
-   *  Required, not optional: a provider with nothing to declare says so with
-   *  `{}`, which is a decision on the record rather than a field someone
-   *  forgot. The realm patch cannot set, unset or overwrite any key here --
-   *  applyRealmEnvPatch refuses -- so "the host wins" is enforced by the
-   *  mechanism rather than by call order. */
-  readonly hostManagedEnv: Readonly<Record<string, string>>
   /** Present when the provider has managed-launch hardening to offer.
-   *  Absent means the app applies no settings sanitiser and enforces no CLI
-   *  floor for it -- which is only honest while that provider has no
-   *  app-owned settings file and no proven host control. */
+   *  Absent means the app applies no settings sanitiser, runs no project gate
+   *  and enforces no CLI floor for it -- which is only honest while that
+   *  provider has no app-owned settings file. */
   readonly managedLaunch?: ProviderManagedLaunchOperations
   readonly setup?: ProviderSetupOperations
   readonly auth?: ProviderAuthOperations

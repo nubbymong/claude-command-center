@@ -4910,10 +4910,10 @@
     },
     {
       "name": "CLAUDE_CODE_ENTRYPOINT",
-      "kind": "non-redirecting-identifier",
-      "settingsEnv": "keep",
-      "ambient": "keep",
-      "reason": "names the surface that launched the session; goes into the user-agent and telemetry, gates desktop/SDK-only behaviour, and the CLI normalises and re-sets it itself -- an identifier a separate credential authorises; with that credential removed it selects nothing (D3)",
+      "kind": "host-hook",
+      "settingsEnv": "strip",
+      "ambient": "strip",
+      "reason": "names the surface that launched the session, and with a Claude Desktop value it changes the session's AUTH: the stored claude.ai login is preferred over an ambient or settings API key, profile auth is disabled, the settings-env filter switches on for project/local/policy scope, and every request is attributed to Claude Desktop (evidence Part 8, measured on 2.1.278). An inherited value therefore selects which credential wins and misattributes the session; the CLI sets its own value for its own surfaces (sdk-cli for -p), so nothing this app runs needs an inherited one -- a Claude host-integration hook: this app never sets it, and an inherited one is an authority override it did not choose",
       "sources": [
         "census"
       ]
@@ -12001,5 +12001,5 @@
       ]
     }
   ],
-  "digest": "f1f309fa9cfcd523dcc0def0f0af8dd3a1740ee873b5fb05ecf973ad7efff31c"
+  "digest": "89098f7df000f12a53eff4bcaedce54c195e08565cede355a0e43eba96f67fe4"
 }

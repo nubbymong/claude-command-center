@@ -33,7 +33,7 @@ const ops = {
   realms: { realmEnvPatch: () => ({ set: {} }) },
 } as unknown as Pick<ProviderPackage, 'setup' | 'auth' | 'realms'>
 const pkg = (id: 'claude' | 'codex', caps = fullCaps(), extra: Partial<ProviderPackage> = {}): ProviderPackage =>
-  ({ id, displayName: `Fake ${id}`, session: fakeSession(id), capabilities: caps, ambientAuthVariables: ['X_TOKEN'], ownedLaunchVariables: ['X_HOME'], hostManagedEnv: {}, ...extra })
+  ({ id, displayName: `Fake ${id}`, session: fakeSession(id), capabilities: caps, ambientAuthVariables: ['X_TOKEN'], ownedLaunchVariables: ['X_HOME'], ...extra })
 
 describe('provider registry (main core)', () => {
   beforeEach(() => _resetProviderRegistryForTest())
@@ -268,22 +268,6 @@ describe('realm environment patch (D1/D3, WP1.38 contract level)', () => {
     const fullwidth = 'OPENAI' + String.fromCharCode(0xff3f) + 'API' + String.fromCharCode(0xff3f) + 'KEY'
     const out = applyRealmEnvPatch({ [fullwidth]: 'sk-poison', KEEP: '1' }, { set: {} }, policy)
     expect(out).toEqual({ KEEP: '1' })
-  })
-
-  it('REFUSES a launch that requires a host control when the provider declares none', () => {
-    // The per-entry checks all iterate the declaration, so an EMPTY one passes
-    // every one of them vacuously and composes a perfectly ordinary-looking
-    // environment with the entire mechanism switched off. `withProfileHome`
-    // asserts non-empty afterwards, but `realmEnvForProvider` is exported and a
-    // future caller inherits none of its checks -- so the refusal belongs in
-    // the one call every launch path shares (adversarial review, MINOR 7).
-    const required = { ...policy, hostManagedEnv: {}, requireHostManagedEnv: true }
-    expect(() => applyRealmEnvPatch({}, { set: {} }, required)).toThrow(/requires a host-managed control and the provider declares none/)
-    // A provider with no host controls and no requirement is unaffected: Codex
-    // declares `{}` deliberately, and that is a recorded decision.
-    expect(applyRealmEnvPatch({ KEEP: '1' }, { set: {} }, { ...policy, hostManagedEnv: {} })).toEqual({ KEEP: '1' })
-    // ...and one that declares a control still gets it.
-    expect(applyRealmEnvPatch({}, { set: {} }, { ...policy, hostManagedEnv: { H: '1' }, requireHostManagedEnv: true })).toEqual({ H: '1' })
   })
 
   it('the main-core wrapper takes the policy from the registered package, so a launch cannot opt out', () => {

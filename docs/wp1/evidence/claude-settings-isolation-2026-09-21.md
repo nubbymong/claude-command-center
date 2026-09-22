@@ -1606,3 +1606,111 @@ isolation onto the app's sanitiser with no CLI backstop.
 Options 1 and 3 were not pursued, as instructed. Nothing in the committed
 slice was modified by this part.
 
+---
+
+# Part 9 -- the scope correction: the supported launch model, a refusing gate, stated boundaries (2026-09-22)
+
+**Owner decision.** Option 2 rejected; no further identity-mode search. Slice 2
+is corrected around the existing supported Claude launch model. Option 1
+(this app as credential host) and option 3 (warn instead of prevent) are not
+targets. The guarantee has changed, so a fresh ADR-009 pass follows this part.
+
+**Scope of every claim.** Claude Code **2.1.278**, **win32-x64**, binary sha256
+`006ea5c8...cced8`, one host. The manifest is now **1,167 entries, 146 stripped
+from the settings copy, 142 from the ambient environment**, digest
+`89098f7df000f12a53eff4bcaedce54c195e08565cede355a0e43eba96f67fe4`, byte-for-byte
+from the pinned binary. The one ruling change from Part 6: `CLAUDE_CODE_ENTRYPOINT`
+is now stripped on both axes (`host-hook`), because Part 8 measured that an
+inherited Claude Desktop value changes which credential wins and attributes the
+session to Claude Desktop; the CLI sets its own value for its own surfaces.
+
+## What the corrected model is
+
+Four layers, in the order a launch applies them. Nothing else.
+
+1. **Ambient strip.** The 142 ambient-authority variables are removed from the
+   environment the session starts with; the developer's shell is untouched.
+   This is the ledger's WP1.38 ("ambient poisoning cannot override" the realm
+   env), and it is met by construction: the app composes that environment.
+2. **Realm.** `USERPROFILE` (and `HOME` on Linux) point at the profile home,
+   plus the two realm roots the CLI reads outside the home
+   (`ANTHROPIC_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`). Unchanged from
+   rounds 4 and 5; measured continuity-safe on real profiles in Part 7.
+3. **The app-owned copy.** The per-account `settings.json` copy is sanitised
+   of the 146 settings-strip keys and the five credential helpers; the shared
+   source and every repository-owned file are never touched. The
+   self-reference, containment and leaf-link guards on both the write and the
+   delete path stay (the data-loss fix).
+4. **The project gate.** Before a managed session starts in a directory, that
+   directory's own `.claude/settings.json` and `.claude/settings.local.json`
+   are read (bounded: cap+1 bytes, regular files only, no network path, a
+   3-second deadline, at most two filesystem threads, one scan per directory
+   shared by concurrent launches) and classified with the same manifest. A
+   credential helper, an account pin, a provider switch or an endpoint redirect
+   **refuses the launch**: `withProfileHome` records a report whose finding is
+   `repository-settings-refused` (blocked) and throws; the PTY path prints the
+   refusal in the terminal, file and key named, never a value, then the exit;
+   the Accounts panel shows it. A directory the gate cannot read safely or in
+   time launches with `project-settings-not-scanned` as a **warning** -- the
+   session started, the files were not checked, and the panel says so.
+
+**Removed.** `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` is no longer set (Part 7:
+it stops the stored login). `CLAUDE_CODE_ENTRYPOINT` is never set (Part 8) and
+an inherited one is stripped. The whole "host-managed control" concept is gone
+from the realm patch, the registry and the preflight: there is no slot for one,
+no "applied last" step, no "at least one control" rule, no `host-control-*`
+finding. The app owns no OAuth token and refreshes none; Claude Code signs in
+from the account's stored login exactly as in a plain terminal.
+
+**The launch paths.** All five run the gate. The PTY spawn stays a synchronous
+function: a managed spawn is deferred once through the same mechanism the
+profile-refresh wait already used, and re-enters with the verdict; the two
+waits chain (the profile is held across both -- the test rework found and this
+part fixed a teardown that did not survive the chain). Cloud agents and the
+insights runner await the gate; the auth-status probe and the headless runner
+read a recent verdict synchronously and await only on a miss, so overlapping
+probes still share one subprocess and cannot race a single-use refresh token.
+
+## Gate A1, reframed (owner's five rows)
+
+| # | row | status |
+|---|---|---|
+| 1 | Existing Claude authentication and profile switching still work | **PASS, measured 2026-09-22.** Real profile, the corrected environment exactly as `withProfileHome` composes it (gate run, no flag, no entrypoint -- both asserted absent): `auth status --json` signed in via claude.ai with the config directory under the profile home; one tool-less haiku `-p` request answered, exit 0, no token string in either stream. Switching is by home: two real profiles each report their own account (Part 8's `auth status` rows, valid without the entrypoint). Part 7's bisect showed the realm roots continuity-safe |
+| 2 | Two managed profiles remain isolated under the existing supported mechanism | **PASS, measured.** Two real profiles: signed in, distinct accounts, config dir = own home (Part 8, `auth status` rows, still valid without the entrypoint); two synthetic stores each put only their own token on the wire (Part 8 R11, the mechanism is the realm, not the flag) |
+| 3 | App-owned settings cannot silently redirect authentication | **PASS, by construction and by test.** The copy is sanitised at both writers; refusals are recorded and shown; the source guard proves every launch path composes through the choke point; mutation-tested in Parts 6 and 9 |
+| 4 | Detectable repository overrides fail visibly before launch | **PASS, by test through the real code path.** Eight fixtures (four kinds, two files) refuse from the gate; `withProfileHome` records the blocked finding then throws; the real `spawnPty` path (node-pty mocked) does not spawn, writes the refusal to the terminal naming file and key and no value, then the exit. The in-app run on a real project is the VM check in the manual matrix, not done here |
+| 5 | No new Claude Desktop attribution or credential custody is introduced | **PASS, by inspection.** Nothing in `src/` sets `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, `CLAUDE_CODE_HOST_*`, `CLAUDE_CODE_OAUTH_TOKEN*` or `CLAUDE_CODE_SDK_HAS_*`; the manifest strips all of them; no code reads or writes `.credentials.json` on a launch path |
+
+## Boundaries, recorded rather than claimed
+
+- **Settings edited after a session started** are read by the CLI without any
+  further check. The gate runs once, before launch.
+- **Remote / organisation-managed settings** are fetched by the CLI for a
+  signed-in account and are not locally observable.
+- **Another process of the same OS user** can change the profile home, the
+  settings copy or the project files at any time; this app does not police
+  what the user can already run (D17).
+- **A project on a network path** is never read on the launch path (a dead
+  share froze the app for 42 s); it launches with a warning. A wedged mapped
+  drive reaches the same warning through the deadline or the thread ceiling.
+- **A user-scope override lives only in the app-owned copy**, which the app
+  sanitises; the CLI itself applies user-scope settings in full.
+- **A helper the gate refuses is one that was DECLARED.** A settings file the
+  gate cannot parse, or one over the size cap, is skipped (clean) exactly as
+  the CLI skips it.
+
+Guaranteeing against the first three needs a credential host -- this app
+supplying and rotating the token so the CLI reads no settings-sourced
+credential at all -- which is option 1, a separate design, not authorised.
+Nothing in this part implies the gate provides that guarantee.
+
+## Part 1, corrected
+
+Part 1's Finding 2 ("project and local `env` blocks do not reach the CLI")
+was wrong on the request path (Part 8, rows R5x and R7). Without any flag, a
+PROJECT or LOCAL `env.ANTHROPIC_BASE_URL` redirects the request and
+`env.CLAUDE_CODE_USE_BEDROCK` switches the provider. That is precisely why the
+gate refuses rather than warns, and why the ruling of 2026-09-21 that "a launch
+must not be refused for settings the proven mechanism suppresses" no longer
+applies: there is no suppressing mechanism.
+

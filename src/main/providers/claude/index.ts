@@ -11,22 +11,19 @@ import { detectClaudeUi } from './ui-detection'
 import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './statusline'
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
 import {
-  CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_HOST_MANAGED_ENV, CLAUDE_MIN_MANAGED_CLI_VERSION,
+  CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_MIN_MANAGED_CLI_VERSION,
   sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight,
 } from './managed-launch'
 
 // The managed-launch surface is re-exported so the composition root and the
 // conformance suite reach it through this entry point, never by deep import.
 export {
-  CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_HOST_MANAGED_ENV,
+  CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES,
   CLAUDE_CREDENTIAL_HELPER_SETTINGS_KEYS, CLAUDE_AUTH_PIN_SETTINGS_KEYS,
   CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
   isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys,
   claudeAuthorityFamilyRules,
   claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
-  // Test seam: the preflight against a GIVEN control set, so the two checks the
-  // one-entry production declaration makes unreachable can be exercised.
-  _claudeManagedLaunchPreflightAgainstControls,
 } from './managed-launch'
 export type { AuthorityKind, AuthorityEntry } from './managed-launch'
 
@@ -170,9 +167,6 @@ export function createClaudePackage(): ProviderPackage {
     capabilities: claudeCapabilities,
     ambientAuthVariables: claudeAmbientAuthVariables,
     ownedLaunchVariables: claudeOwnedLaunchVariables,
-    // The proven control (evidence 2026-09-21). Applied LAST by
-    // applyRealmEnvPatch; a realm patch that names it is refused.
-    hostManagedEnv: CLAUDE_HOST_MANAGED_ENV,
     managedLaunch: {
       minimumCliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
       sanitizeManagedSettings: sanitizeClaudeManagedSettings,

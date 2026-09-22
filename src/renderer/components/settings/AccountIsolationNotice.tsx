@@ -1,17 +1,19 @@
-// Layer 4 of the account-isolation hardening, made visible.
+// Layer 4 of the managed launch, made visible.
 //
-// Every managed Claude launch runs a preflight in the main process (see
+// Every managed Claude launch records a preflight in the main process (see
 // src/main/managed-launch-diagnostics.ts). Without this component its findings
-// reach only app.log, which means a session that started WITHOUT its isolation
-// control looks exactly like one that started with it. That is the failure this
-// panel exists to prevent: not to claim a session is isolated -- it cannot know
-// that, because remote and mid-session settings sources are not locally
-// observable -- but to make a MISSING or unverifiable control loud.
+// reach only app.log, which means a session that was REFUSED, or one that
+// started with its project settings UNCHECKED, looks exactly like one that
+// started clean. That is the failure this panel exists to prevent: not to claim
+// a session is isolated -- it cannot know that, because remote and mid-session
+// settings sources are not locally observable -- but to make a refusal, a
+// missing check or an unverifiable CLI loud.
 //
-// Only `blocked` findings are shown. The `info` ones (what the sanitiser
-// removed from the settings copy, what the ambient pass stripped) are recorded
-// and available on the same channel, but a panel that lists routine activity is
-// a panel people stop reading.
+// `blocked` (the launch did not start) and `warning` (it started with something
+// unchecked) are shown prominently. The `info` ones (what the sanitiser removed
+// from the settings copy, what the ambient pass stripped) are recorded and
+// available on the same channel, but a panel that lists routine activity is a
+// panel people stop reading.
 import React, { useEffect, useState } from 'react'
 import type { PreflightFinding, ManagedLaunchReport } from '../../../shared/providers'
 
@@ -65,6 +67,7 @@ function findingsOfSeverity(reports: readonly Report[], severity: PreflightFindi
 
 export function AccountIsolationNotice({ profileId }: { profileId: string }) {
   const [blocked, setBlocked] = useState<PreflightFinding[]>([])
+  const [warnings, setWarnings] = useState<PreflightFinding[]>([])
   const [info, setInfo] = useState<PreflightFinding[]>([])
   const [showInfo, setShowInfo] = useState(false)
 
@@ -75,27 +78,29 @@ export function AccountIsolationNotice({ profileId }: { profileId: string }) {
         const reports = await window.electronAPI.accountProfiles?.managedLaunchReports?.(profileId)
         if (cancelled || !reports) return
         setBlocked(findingsOfSeverity(reports, 'blocked'))
+        setWarnings(findingsOfSeverity(reports, 'warning'))
         setInfo(findingsOfSeverity(reports, 'info'))
       } catch { /* best-effort: a diagnostic that breaks the panel is worse than none */ }
     })()
     return () => { cancelled = true }
   }, [profileId])
 
-  if (blocked.length === 0 && info.length === 0) return null
+  const prominent = [...blocked, ...warnings]
+  if (prominent.length === 0 && info.length === 0) return null
 
   return (
     <div data-testid={`account-isolation-notice-${profileId}`} className="mt-3 space-y-2">
-      {blocked.length > 0 && (
+      {prominent.length > 0 && (
         <div
           className="rounded-lg border py-2 px-3"
           style={{ borderColor: 'var(--color-yellow)', backgroundColor: 'color-mix(in srgb, var(--color-yellow) 8%, transparent)' }}
           role="status"
         >
           <p className="text-[11px] font-medium" style={{ color: 'var(--color-yellow)' }}>
-            Account isolation could not be confirmed
+            {blocked.length > 0 ? 'A session for this account did not start' : 'A session for this account started with something unchecked'}
           </p>
           <ul className="mt-1 space-y-1.5">
-            {blocked.map((f) => (
+            {prominent.map((f) => (
               <li key={f.id} data-testid={`isolation-finding-${f.id}`} className="text-[11px] text-overlay1 leading-relaxed">
                 <span className="text-subtext0">{f.title}.</span> {f.detail}
                 {f.action && <> <span className="text-subtext0">{f.action}</span></>}

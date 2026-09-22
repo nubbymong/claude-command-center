@@ -29,6 +29,7 @@ import { promisify } from 'node:util'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo, logWarn } from '../debug-logger'
+import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
 import { getProfileConfigDir, getProfilesRoot, withProfileHome, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
 import { acquireProfileConsumer, pendingProfileRefresh } from '../profile-consumers'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
@@ -162,13 +163,20 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
   //    can start), then wait for the in-flight one to land, then spawn. The
   //    other order left a microtask between the wait settling and the acquire
   //    in which a fresh rotation could begin (adversarial pass on #598).
-  //    Awaited ONLY when a rotation is actually in flight: the common path
-  //    stays synchronous up to the spawn, which is what lets overlapping probes
-  //    for one profile share a single subprocess.
+  //    Awaited ONLY when a rotation is actually in flight, or when the project
+  //    gate has no recent verdict for this process's directory (the first
+  //    probe, and once per reuse window after): the common path stays
+  //    synchronous up to the spawn, which is what lets overlapping probes for
+  //    one profile share a single subprocess.
   const release = acquireProfileConsumer(profileId)
   try {
     const rotation = pendingProfileRefresh(profileId)
     if (rotation) await rotation
+    // The project gate for the directory this probe inherits. A recent verdict
+    // is read synchronously so the common path stays synchronous up to the
+    // spawn (see above); only a miss awaits the gate.
+    const probeCwd = process.cwd()
+    const projectGate = peekGateVerdict(probeCwd) ?? await gateManagedLaunch(probeCwd)
     const home = join(getProfilesRoot(), profileId)
     if (existsSync(home)) {
       const { stdout } = await execFileAsync('claude', ['auth', 'status'], {
@@ -189,7 +197,7 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
         // spreading it into a literal, which would re-attach Object.prototype
         // to an env the realm patch deliberately built with a null prototype
         // (see src/shared/providers/realm-env.ts).
-        env: Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', probe: true }), { HOME: home }),
+        env: Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate }), { HOME: home }),
       })
       const parsed = parseAuthStatus(stdout)
       if (parsed) return parsed

@@ -11,6 +11,6 @@
 // from the registered package rather than being restated at each call site.
 export { registerProvider, getProvider, tryGetProvider } from './core'
 export {
-  realmEnvForProvider, hostManagedEnvForProvider, ambientAuthVariablesForProvider,
+  realmEnvForProvider, ambientAuthVariablesForProvider,
   sanitizeManagedSettingsFor, authoritySettingsKeysFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
 } from './core'

@@ -130,12 +130,6 @@ export function createCodexPackage(): ProviderPackage {
     capabilities: codexCapabilities,
     ambientAuthVariables: codexAmbientAuthVariables,
     ownedLaunchVariables: codexOwnedLaunchVariables,
-    // NO host-managed control, declared rather than omitted. Codex has no
-    // equivalent of Claude's CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST that this
-    // repo has PROVEN, and an unproven flag copied across by analogy would be
-    // a security claim with no evidence under it. The realm is CODEX_HOME
-    // alone. Revisit when the Codex adapter slice probes for one.
-    hostManagedEnv: {},
     // No `managedLaunch`: the app writes no Codex settings file today, so it
     // has nothing to sanitise, and no CLI floor has been established. Both
     // land with the Codex adapter slice.

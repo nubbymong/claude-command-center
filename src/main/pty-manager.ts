@@ -68,6 +68,8 @@ import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome } from './account-profiles'
 export { withProfileHome } from './account-profiles'
+import { gateManagedLaunch } from './managed-launch-diagnostics'
+import type { ProjectGateResult } from '../shared/providers'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
@@ -892,6 +894,94 @@ export function emitDeferredSpawnFailure(
   win.webContents.send(`pty:exit:${sessionId}`, -1)
 }
 
+/**
+ * Hold a managed spawn until `pending` settles, then re-enter `spawnPty` with
+ * the options `next` builds from the settled value.
+ *
+ * Two waits use this: the profile-refresh wait (rc.15 review R3) and the
+ * project-settings gate (2026-09-22). Both hold the profile first, so no token
+ * rotation can begin while the spawn is deferred; both carry the teardown of
+ * the PTY this spawn replaced; both surface a failed re-entry in the terminal
+ * rather than as a bare exit code (adversarial review, MAJOR 7). When two waits
+ * chain, the second takes its hold synchronously inside the first's re-entry,
+ * before the first's `finally` releases -- so the profile is held across both.
+ */
+function deferSpawnUntil<T>(
+  win: BrowserWindow,
+  sessionId: string,
+  profileId: string,
+  inheritedTeardown: (() => void) | undefined,
+  pending: Promise<T>,
+  why: string,
+  next: (settled: T) => SpawnPtyOptions,
+): void {
+  const release = acquireProfileConsumer(profileId, { maxAgeMs: Infinity })
+  let cancelled = false
+  refreshWaitSpawns.set(sessionId, {
+    cancel: () => { cancelled = true; refreshWaitSpawns.delete(sessionId); release() },
+    // Carried over from the wait this spawn superseded (see spawnPty).
+    abandonedTeardown: inheritedTeardown,
+    win,
+  })
+  logInfo(`[profiles] session ${sessionId}: ${why}`)
+  void pending.then((settled) => {
+    if (cancelled) return
+    const wait = refreshWaitSpawns.get(sessionId)
+    refreshWaitSpawns.delete(sessionId)
+    // ADR-009 (Lens C, U13): the window can be destroyed while the wait holds
+    // (app quit, a renderer crash) -- never spawn a PTY into a gone window. End
+    // the session its predecessor's exit deferred, release the hold, and stop.
+    if (win.isDestroyed()) {
+      logInfo(`[profiles] session ${sessionId}: window destroyed during the wait -- not spawning`)
+      wait?.abandonedTeardown?.()
+      release()
+      return
+    }
+    try {
+      // Re-enter through spawnPtyResolved with the teardown this wait carries,
+      // NOT through spawnPty: the map entry that spawnPty would read it from
+      // was deleted three lines up, so a re-entry that is deferred AGAIN (a
+      // refresh wait followed by the project gate) would start its second
+      // wait with no teardown, and a final spawn that then failed without a
+      // PTY would tell the renderer the session exited while never ending the
+      // session it replaced -- 697d3448 reopened by the second wait (found by
+      // the test rework of 2026-09-22).
+      spawnPtyResolved(win, sessionId, next(settled), wait?.abandonedTeardown)
+    } catch (err) {
+      logError(`[profiles] session ${sessionId}: the spawn after the wait failed: ${(err as Error)?.message ?? err}`)
+      // No successor: end the session the replaced PTY's exit was told to leave
+      // alone. Only when the failed spawn registered no PTY (quality round 3,
+      // M2): a throw AFTER registration leaves a live PTY that killPty ends
+      // later, exactly as a synchronous spawn that throws there does, and the
+      // teardown would delete that PTY's entry and report an exit the renderer
+      // would act on.
+      if (!ptySessions.has(sessionId)) {
+        if (wait?.abandonedTeardown) {
+          wait.abandonedTeardown()
+        } else if (!win.isDestroyed()) {
+          // ADR-009 round 3 (Codex finding 3): a FRESH deferred spawn has no
+          // predecessor teardown. Its pty:spawn IPC already resolved, so without
+          // a notification the renderer is left with a blank terminal treated as
+          // spawned (no error/exit handler fires). Tell it the start ended and
+          // drop the canvas stamp the spawn handler wrote before spawnPty ran.
+          logError(`[profiles] session ${sessionId}: fresh deferred spawn failed with no PTY -- notifying the renderer the start ended`)
+          forgetSessionForCanvas(sessionId)
+          // Say WHY, in the terminal, before the exit code. On the synchronous
+          // path a spawn failure rejects the pty:spawn invoke and the renderer
+          // shows a readable error; here the invoke has already resolved, so
+          // the same failure would arrive as a bare `pty:exit -1` (adversarial
+          // review, MAJOR 7). The text is the error's own, which on the
+          // refusal path names the settings file and key that refused the
+          // launch -- never a value.
+          emitDeferredSpawnFailure(win, sessionId, err)
+        }
+      }
+    } finally {
+      release()
+    }
+  })
+}
+
 export function spawnPty(win: BrowserWindow, sessionId: string, options?: SpawnPtyOptions): void {
   const supersededWait = refreshWaitSpawns.get(sessionId)
   const inheritedTeardown = supersededWait?.abandonedTeardown
@@ -964,6 +1054,10 @@ function spawnPtyResolved(
      *  profile refresh wait. Never accepted from the renderer -- pty:spawn builds
      *  its options object field by field and does not copy this one. */
     refreshAwaited?: boolean
+    /** MAIN-INTERNAL (2026-09-22): the project-settings gate's verdict for the
+     *  working directory, set by the deferred re-entry after the gate answers.
+     *  `undefined` means "not gated yet"; never accepted from the renderer. */
+    projectGate?: ProjectGateResult
     /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
     enableCodexReview?: boolean
     /**
@@ -3870,72 +3964,27 @@ function spawnPtyResolved(
     if (resolvedProfileId && !options?.refreshAwaited) {
       const pending = pendingProfileRefresh(resolvedProfileId)
       if (pending) {
-        const waitedProfile = resolvedProfileId
-        const release = acquireProfileConsumer(waitedProfile, { maxAgeMs: Infinity })
-        let cancelled = false
-        refreshWaitSpawns.set(sessionId, {
-          cancel: () => { cancelled = true; refreshWaitSpawns.delete(sessionId); release() },
-          // Carried over from the wait this spawn superseded (see spawnPty).
-          abandonedTeardown: inheritedTeardown,
-          win,
-        })
-        logInfo(`[profiles] session ${sessionId}: profile ${waitedProfile} is mid-refresh -- holding the spawn until it settles`)
-        void pending.then(() => {
-          if (cancelled) return
-          const wait = refreshWaitSpawns.get(sessionId)
-          refreshWaitSpawns.delete(sessionId)
-          // ADR-009 (Lens C, U13): the window can be destroyed while the wait
-          // holds (app quit, a renderer crash) -- never spawn a PTY into a gone
-          // window. End the session its predecessor's exit deferred, release the
-          // hold, and stop.
-          if (win.isDestroyed()) {
-            logInfo(`[profiles] session ${sessionId}: window destroyed during the refresh wait -- not spawning`)
-            wait?.abandonedTeardown?.()
-            release()
-            return
-          }
-          try {
-            spawnPty(win, sessionId, { ...options, refreshAwaited: true })
-          } catch (err) {
-            logError(`[profiles] session ${sessionId}: the spawn after the refresh wait failed: ${(err as Error)?.message ?? err}`)
-            // No successor: end the session the replaced PTY's exit was told to
-            // leave alone. Only when the failed spawn registered no PTY (quality
-            // round 3, M2): a throw AFTER registration leaves a live PTY that
-            // killPty ends later, exactly as a synchronous spawn that throws
-            // there does, and the teardown would delete that PTY's entry and
-            // report an exit the renderer would act on.
-            if (!ptySessions.has(sessionId)) {
-              if (wait?.abandonedTeardown) {
-                wait.abandonedTeardown()
-              } else if (!win.isDestroyed()) {
-                // ADR-009 round 3 (Codex finding 3): a FRESH deferred spawn has no
-                // predecessor teardown. Its pty:spawn IPC already resolved, so
-                // without a notification the renderer is left with a blank
-                // terminal treated as spawned (no error/exit handler fires). Tell
-                // it the start ended and drop the canvas stamp the spawn handler
-                // wrote before spawnPty ran.
-                logError(`[profiles] session ${sessionId}: fresh deferred spawn failed with no PTY -- notifying the renderer the start ended`)
-                forgetSessionForCanvas(sessionId)
-                // Say WHY, in the terminal, before the exit code.
-                //
-                // On the synchronous path a spawn failure rejects the pty:spawn
-                // invoke and the renderer shows a readable error. Here the
-                // invoke has already resolved, so the same failure arrived as a
-                // bare `pty:exit -1` and rendered as a generic grey "[Process
-                // exited with code -1]" -- the SAME class of fault, a refused
-                // isolation control included, surfacing at a different severity
-                // purely because of spawn timing (adversarial review, MAJOR 7).
-                // The text is the error's own, which on the refusal path names
-                // the host control that was not applied.
-                emitDeferredSpawnFailure(win, sessionId, err)
-              }
-            }
-          } finally {
-            release()
-          }
-        })
+        deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
+          `profile ${resolvedProfileId} is mid-refresh -- holding the spawn until it settles`,
+          () => ({ ...options, refreshAwaited: true }))
         return
       }
+    }
+    // THE PROJECT GATE (managed launches, layer 3). Before a session runs in a
+    // managed account's realm, its working directory's own settings files are
+    // checked for a credential helper, an account pin, a provider switch or an
+    // endpoint redirect. The check is asynchronous and bounded (it must never
+    // block the main thread on a dead share -- see managed-launch-diagnostics),
+    // so the spawn is DEFERRED exactly as it is for a refresh wait, and re-enters
+    // with the verdict. withProfileHome then enforces it: a refusal throws, and
+    // on this deferred path the throw is what emitDeferredSpawnFailure prints
+    // in red in the terminal, file and key named, before the exit code. The
+    // verdict is main-internal: pty:spawn never copies it from the renderer.
+    if (resolvedProfileId && options?.projectGate === undefined) {
+      deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, gateManagedLaunch(resolvedCwd),
+        `checking the project settings in ${resolvedCwd} before the managed launch`,
+        (verdict) => ({ ...options, refreshAwaited: true, projectGate: verdict }))
+      return
     }
     // Home selection (Bug 2): EVERY session of an account -- shell-only (plain
     // shells + the add-account login flow) AND interactive Claude -- runs in the
@@ -3960,7 +4009,7 @@ function spawnPtyResolved(
     // the other four (adversarial review, MAJOR 9). `cwd` is passed so the
     // report can name project-owned settings the host control is suppressing;
     // the files themselves are never read for anything else and never modified.
-    const finalSpawnEnv = withProfileHome(spawnEnv, home, { launchId: sessionId, cwd: resolvedCwd, probe: false })
+    const finalSpawnEnv = withProfileHome(spawnEnv, home, { launchId: sessionId, cwd: resolvedCwd, probe: false, projectGate: options?.projectGate ?? null })
     // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).

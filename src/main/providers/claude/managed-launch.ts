@@ -1,4 +1,4 @@
-// Claude package: the managed-launch security controls (WP1 slice 2).
+// Claude package: the managed-launch controls (WP1 slice 2, corrected 2026-09-22).
 //
 // Four layers, in the order a launch applies them:
 //
@@ -7,38 +7,47 @@
 //      the package's `ambientAuthVariables`).
 //   2. SANITISE the app-owned copy of the user-scope settings file
 //      (`sanitizeClaudeManagedSettings`) -- the app writes that file, so the
-//      app is responsible for what is in it.
-//   3. APPLY the host control `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` LAST
-//      (CLAUDE_HOST_MANAGED_ENV, consumed as the package's `hostManagedEnv`,
-//      applied by applyRealmEnvPatch after everything else).
-//   4. PREFLIGHT (`claudeManagedLaunchPreflight`) -- a visible diagnostic.
+//      app is responsible for what is in it. Never the shared source, never a
+//      repository's files.
+//   3. GATE the launch on the project's own settings files
+//      (`claudeAuthoritySettingsKeys`, run by the launch gate in
+//      src/main/managed-launch-diagnostics.ts): a `.claude/settings.json` or
+//      `settings.local.json` in the working directory that carries a
+//      credential helper, an account pin, a provider switch or an endpoint
+//      redirect REFUSES the launch before it starts, naming the file and the
+//      key and never the value. Those files are not this app's to change, and
+//      this app has no control that makes them safe to launch under.
+//   4. PREFLIGHT (`claudeManagedLaunchPreflight`) -- the visible record of
+//      what the three layers did, including the refusal.
 //
-// Why layer 3 is load-bearing rather than defence in depth
-// -------------------------------------------------------
-// Proven against Claude Code 2.1.278 on 2026-09-21 and recorded in
-// docs/wp1/evidence/claude-settings-isolation-2026-09-21.md:
+// Why there is no host control any more
+// -------------------------------------
+// Slice 2 first applied `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` last on every
+// managed launch: proven on 2.1.278 to block user-scope settings `env`
+// injection and to suppress `apiKeyHelper` in every scope (evidence Parts 1
+// to 6). Gate A1 then measured that the same flag makes the CLI read NO stored
+// login -- it is Claude Desktop's mode, in which the host application supplies
+// and rotates the token -- so a managed session could not sign in (Part 7). An
+// alternative, presenting the session as a Claude Desktop entrypoint, was
+// probed and rejected: it still executes `apiKeyHelper`, leaves user scope
+// unfiltered, and attributes every request to Claude Desktop (Part 8). The
+// owner's correction: keep the supported launch model (USERPROFILE/HOME realm
+// plus the realm roots), do not make this app a credential host, and refuse
+// rather than suppress. This app now sets no flag the CLI would read as
+// "managed by a host".
 //
-//   - a USER-scope settings `env` block DOES reach the CLI (finding 1), and
-//     that is exactly the file this app writes into every managed profile;
-//   - `apiKeyHelper` executes and supplies the credential from USER, PROJECT
-//     and LOCAL scope (finding 5) -- it is arbitrary command execution and an
-//     account redirect at once;
-//   - `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` blocks the first and suppresses
-//     the second in all three scopes, and fails CLOSED (findings 3, 6);
-//   - PROJECT and LOCAL `env` blocks do NOT reach the CLI, but `apiKeyHelper`
-//     from those same scopes DOES (finding 7).
+// What is measured about repository-owned settings on 2.1.278 (Part 8, without
+// any flag): a PROJECT or LOCAL `env` block DOES redirect the endpoint and DOES
+// switch the provider, and `apiKeyHelper` from either scope executes and
+// supplies the credential. That is why the gate refuses rather than warns.
 //
-// Layer 2 cannot cover project or repository-owned settings, because this app
-// must never mutate files it does not own. For those scopes layer 3 is the
-// ONLY control. That is why it is declared as a host-managed control on the
-// package (applied last by the core mechanism, rejectable by nobody) instead
-// of being merged into a realm patch a provider could later overwrite.
-//
-// What is NOT claimed: complete settings-source isolation. Remote /
-// organizationally managed settings, mid-session settings mutation, and two
-// managed realms with conflicting credentials are manual acceptance items and
-// are not locally observable. The preflight is a diagnostic, never the
-// boundary -- see `claudeManagedLaunchPreflight`.
+// What is NOT claimed, and is recorded as a boundary rather than prevented:
+// settings edited after the session started; remote / organisation-managed
+// settings the CLI fetches for a signed-in account; another process of the same
+// OS user acting on the realm; and a project directory the gate cannot read
+// safely (a network path), which launches with a warning rather than a
+// refusal. Guaranteeing against those needs a credential host, which is a
+// separate design and was explicitly not authorised.
 import { compareVersions } from '../../../shared/version-order'
 import {
   authorityManifest, CLAUDE_AMBIENT_STRIP, isClaudeSettingsEnvAuthority, authorityEntryFor,
@@ -50,15 +59,6 @@ import type {
   SanitizedManagedSettings, ManagedCliCompatibility, PreflightFinding,
   ManagedLaunchPreflightInput, ManagedLaunchPreflight, ProjectScanSkipReason,
 } from '../../../shared/providers'
-
-/** The host control, applied LAST on every app-managed Claude launch.
- *
- *  Declared as a map rather than a bare name so the core mechanism owns both
- *  the key and the value: a provider patch cannot set it, unset it, or set it
- *  to `0`, and every case-variant is removed before it is written. */
-export const CLAUDE_HOST_MANAGED_ENV: Readonly<Record<string, string>> = Object.freeze({
-  CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',
-})
 
 /**
  * The authority set is no longer written by hand. It is GENERATED from the
@@ -122,17 +122,11 @@ export function isClaudeAuthorityEnvVariable(name: string): boolean {
  *                           executed before workspace trust is confirmed";
  *   - `proxyAuthHelper`     mints a `Proxy-Authorization` header.
  *
- *  WHICH OF THEM THE HOST CONTROL ALSO COVERS, which is not the same question.
- *  Probed on 2026-09-21 with the provider preconditions actually supplied
- *  (loopback endpoints, synthetic values, no real cloud credential):
- *  `awsAuthRefresh`, `awsCredentialExport` and `gcpAuthRefresh` fire without the
- *  host flag and do NOT fire with it -- so for those, as for `apiKeyHelper`, the
- *  flag is the control that reaches project and local scope. `proxyAuthHelper`
- *  fires either way: it is removed from the app-owned copy and NOWHERE else.
- *  That is accepted rather than fixed, because it mints a header for whichever
- *  proxy the environment already selects and the proxy selector is deliberately
- *  preserved (D18 item 1), so it chooses no account, credential or endpoint.
- *  Do not describe the host control as covering all five.
+ *  All five are removed from the app-owned copy (layer 2) and all five REFUSE
+ *  a launch when a project or local settings file declares one (layer 3).
+ *  There is no longer a host control that suppresses any of them at run time:
+ *  the probes of 2026-09-21 that showed the flag suppressing four of the five
+ *  are history (evidence Parts 1 and 5), and the flag is gone (Part 7).
  *
  *  `otelHeadersHelper` is NOT here. It is a telemetry header helper: it does not
  *  select the model account, its credentials or its provider, so it stays (D13
@@ -230,9 +224,8 @@ function jsonErrorPosition(e: unknown): string {
  *  is the same defect as a dead-end `action` string. */
 const PROJECT_SCAN_SKIP_DETAIL: Record<ProjectScanSkipReason, string> = {
   'network-path': 'The working directory is on a network path, which AI Code Conductor never reads on the launch path because a slow share was measured freezing the app.',
-  'scan-outstanding': 'Another project scan was still running when this session started, and only one runs at a time.',
-  'thread-ceiling': 'Earlier project scans never returned (a wedged mount holds each one), so this session\'s scan was not started.',
-  'timed-out': 'The project scan did not answer within two seconds.',
+  'thread-ceiling': 'Earlier project checks never returned (a wedged mount holds each one), so this session\'s check could not be started in time.',
+  'timed-out': 'The project settings check did not answer within its deadline.',
 }
 
 export function sanitizeClaudeManagedSettings(raw: string): SanitizedManagedSettings {
@@ -291,8 +284,8 @@ export function sanitizeClaudeManagedSettings(raw: string): SanitizedManagedSett
  * WITHOUT producing a sanitised copy.
  *
  * For files this app does not own (a project's or a repository's), where the
- * question is "what is the host control suppressing here?" and no copy is ever
- * written. `sanitizeClaudeManagedSettings` answers it too, but it also
+ * question is "does this file carry something that would redirect the launch?"
+ * and no copy is ever written -- the launch gate's question. `sanitizeClaudeManagedSettings` answers it too, but it also
  * `JSON.stringify`s the result, which that caller throws away -- and a
  * pretty-printed stringify is O(depth^2) in output size, so a deeply nested
  * settings file inside the size cap cost seconds of main-thread CPU per launch
@@ -326,14 +319,15 @@ export function claudeAuthoritySettingsKeys(raw: string): readonly string[] {
 // Minimum compatible CLI version
 // ---------------------------------------------------------------------------
 
-/** The oldest Claude Code this app will treat as enforcing the host control.
+/** The oldest Claude Code this app will run a managed multi-account launch on.
  *
- *  2.1.278 is the version the control was PROVEN on (evidence doc, rounds 1-3).
- *  It is a floor of evidence, not of capability: the control may well work in
- *  earlier releases, but nothing here has tested one, and the owner's ruling of
- *  2026-09-21 is that the floor stays at the proven version until an earlier
- *  one is independently proven. Lowering it means re-running the probe matrix
- *  against that version and recording the result beside the 2.1.278 rows. */
+ *  2.1.278 is the version everything here was MEASURED on: which settings
+ *  scopes reach the request path, which variables redirect the realm and the
+ *  stores (the authority manifest is censused from that binary), and that the
+ *  realm roots keep a stored login signed in. It is a floor of evidence, not
+ *  of capability: an earlier release may behave the same, but nothing here has
+ *  tested one, and the owner's ruling of 2026-09-21 is that the floor stays at
+ *  the measured version until an earlier one is independently proven. */
 export const CLAUDE_MIN_MANAGED_CLI_VERSION = '2.1.278'
 
 /** Classify an observed CLI version against the floor.
@@ -356,13 +350,13 @@ export function claudeManagedCliCompatibility(found: string | null | undefined):
   if (compareVersions(version, required) >= 0) {
     // "at or above the verified version", NOT "isolation works". The latter is
     // a claim gate A1 has not yet supported, and this string is user-facing.
-    return { state: 'supported', required, found: version, message: `Claude Code ${version} is at or above ${required}, the version the host isolation control was verified on.` }
+    return { state: 'supported', required, found: version, message: `Claude Code ${version} is at or above ${required}, the version managed multi-account launches were verified on.` }
   }
   return {
     state: 'too-old',
     required,
     found: version,
-    message: `Claude Code ${version} is older than ${required}, the oldest version host-managed account isolation has been verified on. Update Claude Code (\`claude update\`, or re-run the native installer) before relying on multiple accounts in AI Code Conductor.`,
+    message: `Claude Code ${version} is older than ${required}, the oldest version managed multi-account launches have been verified on. Update Claude Code (\`claude update\`, or re-run the native installer) before relying on multiple accounts in AI Code Conductor.`,
   }
 }
 
@@ -370,98 +364,19 @@ export function claudeManagedCliCompatibility(found: string | null | undefined):
 // Preflight
 // ---------------------------------------------------------------------------
 
-/** A visible diagnostic for one managed launch.
+/** The visible record of one managed launch.
  *
- *  THIS IS NOT THE SECURITY BOUNDARY, and no caller may treat a clean result as
- *  "isolated". It reports only what is locally observable, and the sources that
- *  matter most are not: remote / organizationally managed settings are fetched
- *  from the server for a signed-in account, and settings can change after the
- *  process has started. The boundary is the host control itself
- *  (CLAUDE_HOST_MANAGED_ENV), which the core mechanism applies last and which
- *  fails closed. The preflight's job is to make a MISSING control loud, and to
- *  show the user what the sanitiser took out. */
+ *  THIS IS NOT A PROOF OF ISOLATION, and no caller may treat a clean result as
+ *  "isolated". It reports what the launch did and what it could observe: the
+ *  CLI floor, what the sanitiser removed from the app-owned copy, what the
+ *  ambient pass stripped, and what the project gate decided -- a refusal
+ *  included, so the panel can say why a session did not start. What it cannot
+ *  observe is recorded as a boundary in the module header, not implied here. A
+ *  finding names files, variables and settings KEYS, never a value. */
 export function claudeManagedLaunchPreflight(input: ManagedLaunchPreflightInput): ManagedLaunchPreflight {
-  return preflightAgainstControls(input, CLAUDE_HOST_MANAGED_ENV)
-}
-
-/**
- * TEST SEAM. The preflight run against a GIVEN set of host controls.
- *
- * The production entry point above always passes the package's own declaration,
- * which has exactly one entry -- so two of the checks below could never be
- * exercised by any test that went through it: the loop "checks EVERY declared
- * control" ran over a one-entry constant, and `host-control-undeclared` was
- * unreachable code with a test name implying otherwise (adversarial review,
- * MINOR). Both are regressions worth catching, so the seam exists to make them
- * reachable rather than to give a caller a second, weaker preflight: nothing in
- * `src/` calls this, and the registry wrapper passes the input alone.
- */
-export function _claudeManagedLaunchPreflightAgainstControls(
-  input: ManagedLaunchPreflightInput,
-  hostManagedEnv: Readonly<Record<string, string>>,
-): ManagedLaunchPreflight {
-  return preflightAgainstControls(input, hostManagedEnv)
-}
-
-function preflightAgainstControls(
-  input: ManagedLaunchPreflightInput,
-  hostManagedEnv: Readonly<Record<string, string>>,
-): ManagedLaunchPreflight {
   const findings: PreflightFinding[] = []
-  const env = input.env ?? {}
-  const hostEntries = Object.entries(hostManagedEnv)
-  const hostKey = hostEntries[0]?.[0] ?? 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST'
 
-  // 1. Was the control actually applied to the environment being spawned?
-  //
-  //    EVERY declared entry is checked, not just the first. The declaration has
-  //    one entry today; reading only `[0]` would mean a second control added
-  //    later went unchecked, and an EMPTY declaration -- the regression that
-  //    disables the whole mechanism -- would destructure `undefined` and throw
-  //    where the caller swallows it. An empty declaration is itself a finding.
-  if (hostEntries.length === 0) {
-    findings.push({
-      id: 'host-control-undeclared',
-      severity: 'blocked',
-      title: 'Account isolation declares no host control at all',
-      detail: 'The Claude provider package declares an empty set of host-managed controls, so nothing prevents a settings file from redirecting this session.',
-      action: 'Report this: it is a fault in AI Code Conductor, not in your configuration.',
-    })
-  }
-  for (const [key, expected] of hostEntries) {
-    // Read case-insensitively so a launch path that lower-cased its keys is
-    // reported honestly rather than flagged as missing.
-    const applied = Object.entries(env).find(([k]) => k.toLowerCase() === key.toLowerCase())
-    if (!applied) {
-      findings.push({
-        id: 'host-control-missing',
-        severity: 'blocked',
-        title: 'Account isolation control was not applied',
-        detail: `${key} is absent from this session's environment. Without it, a settings file can redirect the session to a different account or run a command of its choosing.`,
-        action: 'Report this: it indicates a fault in AI Code Conductor, not in your configuration. Sessions started this way are not account-isolated.',
-      })
-    } else if (applied[1] !== expected) {
-      findings.push({
-        id: 'host-control-altered',
-        severity: 'blocked',
-        title: 'Account isolation control carries an unexpected value',
-        // The OBSERVED value is deliberately NOT interpolated. This string
-        // travels to a renderer surface, and the module's own rule is that a
-        // finding names variables and settings KEYS, never their values. The
-        // fs-read and JSON-parse paths were both reduced for exactly that
-        // reason; this one was not, which made "never a credential value"
-        // false as written (adversarial review, MAJOR 6). It is bounded today
-        // -- the only host key is our own frozen literal -- but the next host
-        // control added to CLAUDE_HOST_MANAGED_ENV inherits this line, and a
-        // bound that depends on a constant nobody rechecks is not a bound.
-        // That it diverged is the actionable part; what it diverged to is not.
-        detail: `${applied[0]} does not carry the value this app applied (expected "${expected}").`,
-        action: 'Report this: something overwrote a host-managed control after it was applied.',
-      })
-    }
-  }
-
-  // 2. Is the CLI new enough for the control to be one we have verified?
+  // 1. Is the CLI a version this launch model was measured on?
   const compatibility = claudeManagedCliCompatibility(input.cliVersion ?? null)
   if (compatibility.state === 'too-old') {
     findings.push({
@@ -481,14 +396,14 @@ function preflightAgainstControls(
     })
   }
 
-  // 3. What did the sanitiser do to the app-owned copy?
+  // 2. What did the sanitiser do to the app-owned copy?
   const s = input.sanitizedSettings
   if (s === 'not-evaluated') {
     // NOT the same as "nothing was removed". The copy is written when the
     // profile home is built, and a launch that did not build one has no result
     // to report -- which silently read as a clean check (adversarial review,
     // MAJOR). Info, because it is a gap in what this report can SAY, not a
-    // fault in the session: the host control is applied either way.
+    // fault the user can act on.
     findings.push({
       id: 'settings-copy-not-evaluated',
       severity: 'info',
@@ -520,7 +435,7 @@ function preflightAgainstControls(
     })
   }
 
-  // 4. What did the ambient strip take out of the inherited environment?
+  // 3. What did the ambient strip take out of the inherited environment?
   //    Reported because it is otherwise SILENT and the list is wide: it
   //    includes the endpoint and provider-switch variables, so a developer
   //    who routes Claude through Bedrock, Vertex or a corporate proxy by
@@ -539,30 +454,33 @@ function preflightAgainstControls(
     })
   }
 
-  // 5. Project/local settings: reported, never blocking. The owner's ruling of
-  //    2026-09-21 is explicit -- a launch must not be refused because a
-  //    repository carries settings the proven mechanism already suppresses.
+  // 4. Project/local settings: a detectable override REFUSES the launch (owner
+  //    decision, 2026-09-22, reversing the 2026-09-21 ruling that a launch must
+  //    not be refused for settings the host control suppressed -- there is no
+  //    host control now). The keys are named, file and key, never a value; the
+  //    files are never modified.
   if (input.repositorySettingsKeys?.length) {
     findings.push({
-      id: 'repository-settings-suppressed',
-      severity: 'info',
-      title: 'This project carries settings that could redirect the account',
-      detail: `Suppressed by ${hostKey} for this session: ${summariseNames(input.repositorySettingsKeys)}. AI Code Conductor does not modify project or repository files.`,
+      id: 'repository-settings-refused',
+      severity: 'blocked',
+      title: 'This project carries settings that could redirect the account, so the session was not started',
+      detail: `Found in the project's own settings files: ${summariseNames(input.repositorySettingsKeys)}. AI Code Conductor does not modify project or repository files, and has no control that makes a managed session safe to start under them.`,
+      action: 'Remove those keys from the project\'s .claude/settings.json or settings.local.json (or move them to your own shared settings, which AI Code Conductor sanitises per account), then start the session again. A session outside a managed account is not gated.',
     })
   }
-  //    ...and a scan that did NOT answer says so, for the same reason the
-  //    settings copy has its third state: the panel reads the newest report,
-  //    and a report that was silent about the project read as "this project
-  //    carries nothing" -- permanently, for a project on a network path, and
-  //    for the newest of two launches spawned in one tick (code-quality review,
-  //    MAJOR). Info, not blocking: the host control is applied either way; this
-  //    is a gap in what the report can SAY.
+  //    ...and a gate that did NOT answer says so, as a WARNING rather than a
+  //    refusal: a network path is never read on the launch path, a wedged
+  //    mount or a slow one can exhaust the ceiling or the deadline, and the
+  //    launch goes ahead with the project's settings UNCHECKED. That is a
+  //    recorded boundary, and the report must not read as "checked, clean"
+  //    (code-quality review, MAJOR; owner decision, 2026-09-22).
   if (input.projectScanSkipped) {
     findings.push({
       id: 'project-settings-not-scanned',
-      severity: 'info',
-      title: 'This launch did not check the project\'s own settings files',
-      detail: `${PROJECT_SCAN_SKIP_DETAIL[input.projectScanSkipped]} Any authority settings the project carries are still suppressed by ${hostKey}; this report just cannot name them.`,
+      severity: 'warning',
+      title: 'This session started without its project settings files being checked',
+      detail: `${PROJECT_SCAN_SKIP_DETAIL[input.projectScanSkipped]} If that directory's .claude/settings.json or settings.local.json carries a credential helper, an account pin, a provider switch or an endpoint redirect, this session is using it.`,
+      action: 'Check those two files yourself, or start the session from a local directory.',
     })
   }
 

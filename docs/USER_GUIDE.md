@@ -52,31 +52,45 @@ CCC isolates accounts per session so you can run different Claude logins side by
 side. Switch a session's account from its sidebar right-click menu → *Switch
 Account*. (macOS runs a single account — see the keychain note in the README.)
 
-**What that isolation is, exactly.** It keeps the *logins* apart. A session
-launched as one account signs in as that account, and neither a settings file
-nor a stale variable in your environment can make it authenticate as another:
-credentials, login pins and endpoint overrides are left out of the settings copy
-CCC writes into each account, and dropped from the environment CCC starts a
-session with. Project and repository settings are never edited, because they are
-not CCC's files to change; instead the session is told the app is managing which
-account it runs as, and Claude Code then ignores most of that class of setting
-from every file for that session.
+**What that isolation is, exactly.** It keeps the *logins* apart. Each account
+has its own home folder, and a session launched as that account runs in it: its
+own stored login, its own settings copy, its own Anthropic profile store. Three
+things make sure that is the account the session actually signs in as:
 
-*Most*, not all. A proxy authorization command configured in a project file
-still runs under that instruction — it mints a header for whichever proxy the
-environment already selects, rather than choosing an account — so if you use
-one, which account it presents to a proxy is not something this isolation
-decides. Your own files and your own shell are untouched. Settings → *Accounts*
-shows what was left out for each account, and says so plainly when a launch
-could not be confirmed.
+- the settings copy CCC writes into each account leaves out anything that
+  decides *which* account signs in — a key or token, a command that fetches
+  one, a login pin, a provider switch, an endpoint that sends the credential
+  somewhere else. Your own shared `settings.json` keeps all of it; only the
+  per-account copy is trimmed;
+- those same variables are dropped from the environment CCC starts the session
+  with, so a stale `ANTHROPIC_API_KEY` in your shell does not win over the
+  account's login. Your own shell is untouched;
+- a project's own settings files (`.claude/settings.json` and
+  `settings.local.json` in the folder the session starts in) are checked
+  before the session starts, and **if they carry one of those settings the
+  session is refused** — in the terminal, naming the file and the key (never a
+  value). CCC never edits a project's files, and it has no way to make a
+  session safe to start under such a file, so it does not start one. Remove
+  the key, or move it to your own shared settings, and start the session again.
+  A session that is not tied to a managed account is not gated.
+
+**What it does not cover**, so you are not relying on something it never
+promised: settings edited after a session has started; settings your
+organisation manages, which Claude Code fetches for a signed-in account; and a
+program running as you on this machine, which can change what a session sees.
+A project on a network path is not checked at all — reading it could freeze CCC
+— so such a session starts with a warning instead of a check. Settings →
+*Accounts* shows what was left out for each account, says when a session was
+refused and why, and says when a session started with something unchecked,
+rather than pretending otherwise.
 
 **What it is not.** It is not a sandbox. Hooks, status line commands and
 everything else in your settings still run, and a session can read and write
 whatever you can. A hook you configure runs under whichever account the session
-uses, so treat it as shared across accounts; and because CCC does not police
-what you could already run yourself, a program running as you on this machine
-can change what a session sees. Isolation also stops at this machine: an SSH
-session uses the remote's own login.
+uses, so treat it as shared across accounts. Isolation also stops at this
+machine: an SSH session uses the remote's own login. And CCC never holds or
+refreshes a login token itself: Claude Code signs in from the account's own
+stored login exactly as it does in a normal terminal.
 
 ## Logs & transcript viewer
 

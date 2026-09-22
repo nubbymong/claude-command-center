@@ -3,6 +3,8 @@
 import { spawn, execSync } from 'child_process'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
+import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics'
+import type { ProjectGateResult } from '../shared/providers'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { profileIdFromHome } from './profile-id'
 
@@ -116,12 +118,20 @@ export function spawnClaudeHeadless(
   // one settled left a microtask in which a fresh refresh could begin and
   // rotate the token this run is about to read. The wait itself is bounded by
   // the refresh's own socket timeout, well inside the ref's grace.
+  //
+  // The project gate rides the same rule. The run inherits this process's
+  // working directory, whose own settings files are gated like any other; a
+  // recent verdict is read synchronously, and only a miss (the first run, or
+  // one after the reuse window) defers the spawn behind the gate -- the same
+  // deferral shape as the refresh wait, for the same single-subprocess reason.
   const profileId = profileIdFromHome(home)
+  const cwd = process.cwd()
   const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
   const pending = profileId ? pendingProfileRefresh(profileId) : null
-  const p = pending
-    ? pending.then(() => spawnNow(args, timeoutMs, stdinData, home, signal))
-    : spawnNow(args, timeoutMs, stdinData, home, signal)
+  const cachedGate = profileId ? peekGateVerdict(cwd) : null
+  const p = pending || (profileId && cachedGate === undefined)
+    ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate))
+    : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null)
   if (release) p.then(release, release)
   return p
 }
@@ -131,7 +141,9 @@ function spawnNow(
   timeoutMs: number,
   stdinData: string | undefined,
   home: string | null,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  cwd: string,
+  projectGate: ProjectGateResult | null,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
@@ -142,7 +154,7 @@ function spawnNow(
       // `headless` is the launch id the Accounts panel shows beside a finding:
       // these runs have no PTY session to name, and a report with no launch on
       // it is a report nobody can place.
-      env: withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', probe: true })
+      env: withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', cwd, probe: true, projectGate })
     })
 
     // Pipe prompt via stdin if provided

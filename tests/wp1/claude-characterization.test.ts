@@ -73,7 +73,20 @@ let sandbox = ''
 let primaryId = ''
 let workId = ''
 const sids: string[] = []
-const launch = (sid: string, opts: Record<string, unknown>) => { sids.push(sid); spawnPty(win, sid, { cwd: sandbox, ...opts } as never) }
+// A MANAGED spawn -- one that resolves a profile -- is DEFERRED once behind the
+// project-settings gate (src/main/managed-launch-diagnostics.ts) and re-enters
+// `spawnPty` asynchronously with the verdict, so the PTY does not exist when
+// this returns. An UNMANAGED spawn (shell-only with no profile) is still
+// synchronous. Awaiting the PTY covers both, bounded so a genuinely absent
+// spawn fails the assertion rather than hanging the suite.
+const launch = async (sid: string, opts: Record<string, unknown>) => {
+  sids.push(sid)
+  const before = spawned.length
+  spawnPty(win, sid, { cwd: sandbox, ...opts } as never)
+  const deadline = Date.now() + 4000
+  while (spawned.length === before && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+  return spawned[spawned.length - 1]
+}
 const lastEnv = () => spawned[spawned.length - 1].env
 
 // ---------------------------------------------------------------------------
@@ -116,8 +129,8 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
     fs.rmSync(sandbox, { recursive: true, force: true })
   })
 
-  it('a requested valid profile becomes the child USERPROFILE; CLAUDE_CONFIG_DIR is never set; git/npm stay on the real home', () => {
-    launch('wp1-c1-requested', { shellOnly: false, profileId: workId })
+  it('a requested valid profile becomes the child USERPROFILE; CLAUDE_CONFIG_DIR is never set; git/npm stay on the real home', async () => {
+    await launch('wp1-c1-requested', { shellOnly: false, profileId: workId })
     const env = lastEnv()
     expect(env.USERPROFILE).toBe(profiles.getProfileConfigDir(workId))
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
@@ -129,42 +142,42 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
     else expect(env.HOME).toBeUndefined()
   })
 
-  it('an invalid or escaping requested id falls back to the primary profile instead of failing the spawn', () => {
-    launch('wp1-c1-invalid', { shellOnly: false, profileId: '../escape' })
+  it('an invalid or escaping requested id falls back to the primary profile instead of failing the spawn', async () => {
+    await launch('wp1-c1-invalid', { shellOnly: false, profileId: '../escape' })
     expect(lastEnv().USERPROFILE).toBe(profiles.getProfileConfigDir(primaryId))
-    launch('wp1-c1-missing', { shellOnly: false, profileId: 'profile-does-not-exist' })
-    expect(lastEnv().USERPROFILE).toBe(profiles.getProfileConfigDir(primaryId))
-  })
-
-  it('an interactive session with no requested profile never runs on the bare global home (clobber-proofing)', () => {
-    launch('wp1-c1-default', { shellOnly: false })
+    await launch('wp1-c1-missing', { shellOnly: false, profileId: 'profile-does-not-exist' })
     expect(lastEnv().USERPROFILE).toBe(profiles.getProfileConfigDir(primaryId))
   })
 
-  it('a shell-only session with no requested profile keeps the provider env untouched (bare global home)', () => {
-    launch('wp1-c1-shell', { shellOnly: true })
+  it('an interactive session with no requested profile never runs on the bare global home (clobber-proofing)', async () => {
+    await launch('wp1-c1-default', { shellOnly: false })
+    expect(lastEnv().USERPROFILE).toBe(profiles.getProfileConfigDir(primaryId))
+  })
+
+  it('a shell-only session with no requested profile keeps the provider env untouched (bare global home)', async () => {
+    await launch('wp1-c1-shell', { shellOnly: true })
     const env = lastEnv()
     expect(env.USERPROFILE).toBeUndefined()
     expect(env.GIT_CONFIG_GLOBAL).toBeUndefined()
     expect(env.npm_config_userconfig).toBeUndefined()
   })
 
-  it('an inherited CCC_SESSION_WORKTREE is deleted for a session that does not designate its own worktree (ADR-016)', () => {
-    launch('wp1-c1-wt-shell', { shellOnly: true })
+  it('an inherited CCC_SESSION_WORKTREE is deleted for a session that does not designate its own worktree (ADR-016)', async () => {
+    await launch('wp1-c1-wt-shell', { shellOnly: true })
     expect(lastEnv().CCC_SESSION_WORKTREE).toBeUndefined()
-    launch('wp1-c1-wt-interactive', { shellOnly: false, profileId: workId }) // sandbox cwd is not a git checkout
+    await launch('wp1-c1-wt-interactive', { shellOnly: false, profileId: workId }) // sandbox cwd is not a git checkout
     expect(lastEnv().CCC_SESSION_WORKTREE).toBeUndefined()
   })
 
-  it('the redirected profile .local/bin is appended to PATH exactly once (case-insensitive) and the real entry stays first', () => {
-    launch('wp1-c1-path', { shellOnly: false, profileId: workId })
+  it('the redirected profile .local/bin is appended to PATH exactly once (case-insensitive) and the real entry stays first', async () => {
+    await launch('wp1-c1-path', { shellOnly: false, profileId: workId })
     const localBin = path.join(profiles.getProfileConfigDir(workId), '.local', 'bin')
     const parts = lastEnv().PATH.split(path.delimiter)
     expect(parts[0]).toBe('/usr/bin')
     expect(parts.filter((p) => p.toLowerCase() === localBin.toLowerCase())).toHaveLength(1)
     // Already present in a different case: not appended again.
     providerEnv = { ...providerEnv, PATH: `/usr/bin${path.delimiter}${localBin.toUpperCase()}` }
-    launch('wp1-c1-path-dedupe', { shellOnly: false, profileId: workId })
+    await launch('wp1-c1-path-dedupe', { shellOnly: false, profileId: workId })
     const parts2 = lastEnv().PATH.split(path.delimiter)
     expect(parts2.filter((p) => p.toLowerCase() === localBin.toLowerCase())).toHaveLength(1)
     expect(parts2).toHaveLength(2)

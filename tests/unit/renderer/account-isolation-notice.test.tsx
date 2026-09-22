@@ -31,6 +31,12 @@ import { AccountIsolationNotice } from '../../../src/renderer/components/setting
 
 const P1 = 'p1'
 const blocked = (id: string) => ({ id, severity: 'blocked' as const, title: `T ${id}`, detail: `D ${id}`, action: `A ${id}` })
+/** The third severity (2026-09-22): the launch WENT AHEAD, but a check it
+ *  should have made did not answer -- the project-settings gate on a network
+ *  path, at its thread ceiling, or past its deadline. Shown as prominently as a
+ *  refusal, because "started with its project settings unchecked" is exactly
+ *  what a report that said nothing used to look like. */
+const warning = (id: string) => ({ id, severity: 'warning' as const, title: `T ${id}`, detail: `D ${id}`, action: `A ${id}` })
 const info = (id: string) => ({ id, severity: 'info' as const, title: `T ${id}`, detail: `D ${id}` })
 /** A report as the main process hands it over: already scoped to ONE profile,
  *  and with no absolute home path on it -- that path carries the OS username
@@ -146,6 +152,36 @@ describe('AccountIsolationNotice', () => {
     mockApi([{ ...report(P1, 9, [blocked('cli-below-floor')]), sessionId: 'auth-status', kind: 'probe' }])
     await mount()
     expect(find('isolation-finding-cli-below-floor')).not.toBeNull()
+  })
+
+  it('shows a WARNING as prominently as a refusal, under a heading that says the session STARTED unchecked', async () => {
+    // A launch that went ahead with its project settings unchecked is not an
+    // `info`: a report that hid it behind the toggle read exactly like a
+    // project that carries nothing, which is the silence the third severity
+    // exists to end. `ok` is irrelevant here -- the preflight is `ok: true`,
+    // because nothing BLOCKED, and the notice must still appear.
+    mockApi([report(P1, 2, [warning('project-settings-not-scanned')])])
+    await mount()
+    const notice = find(`account-isolation-notice-${P1}`)
+    expect(notice, 'a warning-only report rendered nothing').not.toBeNull()
+    expect(find('isolation-finding-project-settings-not-scanned')).not.toBeNull()
+    // ...and it is NOT behind the info toggle.
+    expect(find('isolation-info-toggle')).toBeNull()
+    expect(notice!.textContent).toContain('started with something unchecked')
+    expect(notice!.textContent).not.toContain('did not start')
+  })
+
+  it('a BLOCKED finding says the session DID NOT START, even when a warning is beside it', async () => {
+    // The heading is chosen by the worst severity present, not by which came
+    // first: a refusal and an unchecked directory on one report must read as a
+    // refusal, or the user is told the session started when it did not.
+    mockApi([report(P1, 2, [warning('project-settings-not-scanned'), blocked('repository-settings-refused')])])
+    await mount()
+    const notice = find(`account-isolation-notice-${P1}`)
+    expect(notice!.textContent).toContain('did not start')
+    expect(notice!.textContent).not.toContain('started with something unchecked')
+    expect(find('isolation-finding-repository-settings-refused')).not.toBeNull()
+    expect(find('isolation-finding-project-settings-not-scanned')).not.toBeNull()
   })
 
   it('shows one row per distinct finding id in the newest report', async () => {

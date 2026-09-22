@@ -1,9 +1,10 @@
 // The installed Claude Code version, cached.
 //
-// Needed because the host control that isolates managed accounts
-// (CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST) has been PROVEN on one version, and
-// the managed-launch preflight has to say which side of that floor the user is
-// on. See src/main/providers/claude/managed-launch.ts.
+// Needed because everything the managed launch relies on -- the realm roots the
+// CLI honours, the authority manifest the sanitiser and the project gate read,
+// the settings scopes the CLI actually applies -- was measured on ONE pinned
+// version, and the managed-launch preflight has to say which side of that
+// floor the user is on. See src/main/providers/claude/managed-launch.ts.
 //
 // It RESOLVES the binary through `probeClaudeCli()` rather than execing the
 // bare name. That is not tidiness: claude-cli-probe.ts documents why a bare

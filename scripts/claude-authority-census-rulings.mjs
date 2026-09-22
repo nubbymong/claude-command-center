@@ -58,6 +58,9 @@ export const CLI_OWNED_CENSUS_FRAGMENTS = Object.freeze([
 ])
 
 export const CLI_OWNED_CENSUS_RULINGS = Object.freeze({
+  // --- host-hook (1) ---
+  CLAUDE_CODE_ENTRYPOINT: ["host-hook", "names the surface that launched the session, and with a Claude Desktop value it changes the session's AUTH: the stored claude.ai login is preferred over an ambient or settings API key, profile auth is disabled, the settings-env filter switches on for project/local/policy scope, and every request is attributed to Claude Desktop (evidence Part 8, measured on 2.1.278). An inherited value therefore selects which credential wins and misattributes the session; the CLI sets its own value for its own surfaces (sdk-cli for -p), so nothing this app runs needs an inherited one"],
+
   // --- account-pin (1) ---
   CLAUDE_BRIDGE_REATTACH_OWNER_ACCT: ["account-pin", "asserts the owning ACCOUNT UUID of the bridge session being reattached, and is compared against the resolved owner identity; the exact account twin of CLAUDE_BRIDGE_REATTACH_OWNER_ORG, which this manifest already strips as an account pin"],
 
@@ -90,13 +93,12 @@ export const CLI_OWNED_CENSUS_RULINGS = Object.freeze({
   CLAUDE_RUNNER_REPO_SOURCES: ["cli-set-child-variable", "the CLI assigns the serialised repo-source list from its verified claims into the spawn-runner hook child's environment"],
   CLAUDE_RUNNER_WORK_ORDER_FILE: ["cli-set-child-variable", "the CLI writes the work-order JWT to a file of its own and assigns that path into the spawn-runner hook child's environment"],
 
-  // --- non-redirecting-identifier (15) ---
+  // --- non-redirecting-identifier (14) ---
   ANTHROPIC_ENVIRONMENT_ID: ["non-redirecting-identifier", "supplies environmentId to EnvironmentWorker.handleItem, a work-order field whose authorisation is the separate ANTHROPIC_ENVIRONMENT_KEY (already stripped)"],
   ANTHROPIC_WORK_ID: ["non-redirecting-identifier", "supplies workId to EnvironmentWorker.handleItem, a work-order field authorised by the separate ANTHROPIC_ENVIRONMENT_KEY (already stripped)"],
   CLAUDE_AGENT_SDK_CLIENT_APP: ["non-redirecting-identifier", "appended to the user-agent and sent as the x-client-app request header to name the embedding app"],
   CLAUDE_AGENT_SDK_VERSION: ["non-redirecting-identifier", "appended to the claude-cli/claude-code user-agent string as agent-sdk/<version>"],
   CLAUDE_CODE_DESKTOP_APP_VERSION: ["non-redirecting-identifier", "reports the embedding Claude Desktop app's version, read only when the entrypoint is claude-desktop or local-agent"],
-  CLAUDE_CODE_ENTRYPOINT: ["non-redirecting-identifier", "names the surface that launched the session; goes into the user-agent and telemetry, gates desktop/SDK-only behaviour, and the CLI normalises and re-sets it itself"],
   CLAUDE_CODE_ENVIRONMENT_RUNNER_VERSION: ["non-redirecting-identifier", "is copied verbatim into the x-environment-runner-version header on the remote-io transport's requests and header refreshes"],
   CLAUDE_CODE_EXTRA_METADATA: ["non-redirecting-identifier", "a JSON object merged into the request's metadata block beside device_id and account_uuid; attribution inside a request the separate credential authorises"],
   CLAUDE_CODE_PLUGIN_ATTRIBUTION: ["non-redirecting-identifier", "supplies JSON plugin-attribution entries (validated field by field) that label telemetry rows; the CLI also deletes it from every subprocess environment it builds"],

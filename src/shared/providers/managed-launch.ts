@@ -36,10 +36,13 @@ export interface ManagedCliCompatibility {
   message: string
 }
 
-/** `blocked` marks a control that is missing or unverifiable. `info` records
- *  something the proven mechanism handles: reported so the user can see what
- *  was done, never a reason to fail a launch. */
-export type PreflightSeverity = 'info' | 'blocked'
+/** `blocked` marks a launch that was REFUSED, or a control that is missing or
+ *  unverifiable. `warning` marks a check the launch could not complete, so the
+ *  session started with something unverified: shown as prominently as a
+ *  refusal, but the launch went ahead. `info` records something the mechanism
+ *  handled: reported so the user can see what was done, never a reason to
+ *  fail a launch. */
+export type PreflightSeverity = 'info' | 'warning' | 'blocked'
 
 export interface PreflightFinding {
   id: string
@@ -67,21 +70,32 @@ export interface ManagedLaunchPreflightInput {
   /** Ambient authority variables the launch path removed from the inherited
    *  environment. Reported so a wide removal list is never silent. */
   strippedAmbient?: readonly string[]
-  /** Authority-bearing keys seen in project/repository-owned settings, if the
-   *  caller looked. Reported, never blocking: those files are not the app's to
-   *  change, and the host control suppresses them. */
+  /** Authority-bearing keys seen in project/repository-owned settings by the
+   *  launch gate: `<file>: <key>`, names only, never a value. NON-EMPTY MEANS
+   *  THE LAUNCH WAS REFUSED. Those files are not the app's to change, and this
+   *  app has no control that makes them safe to launch under, so a detectable
+   *  override fails visibly before the session starts (owner decision,
+   *  2026-09-22). */
   repositorySettingsKeys?: readonly string[]
-  /** Why the project scan did NOT answer for this launch, when it did not.
-   *  A third state again, for the same reason as `sanitizedSettings`: the
-   *  scan refuses itself on a network path, while another is outstanding, at
-   *  the thread ceiling, and at its deadline -- and a report that then said
-   *  nothing read exactly like "this project carries nothing" (code-quality
-   *  review, MAJOR). Omitted means the scan ran, or nobody asked it to. */
+  /** Why the project-settings gate did NOT answer for this launch, when it did
+   *  not. A third state again, for the same reason as `sanitizedSettings`:
+   *  the gate declines on a network path, at the thread ceiling and at its
+   *  deadline -- and a report that then said nothing read exactly like "this
+   *  project carries nothing" (code-quality review, MAJOR). The launch goes
+   *  ahead with a WARNING: an unscannable directory is a recorded residual,
+   *  not a refusal. Omitted means the gate ran, or the launch had no
+   *  directory to gate. */
   projectScanSkipped?: ProjectScanSkipReason
 }
 
-/** The ways the project-settings scan declines or fails to answer. */
-export type ProjectScanSkipReason = 'network-path' | 'scan-outstanding' | 'thread-ceiling' | 'timed-out'
+/** The ways the project-settings gate declines or fails to answer. */
+export type ProjectScanSkipReason = 'network-path' | 'thread-ceiling' | 'timed-out'
+
+/** What the project-settings gate decided for one launch directory. */
+export type ProjectGateResult =
+  | { readonly status: 'clean' }
+  | { readonly status: 'refused'; readonly keys: readonly string[] }
+  | { readonly status: 'not-scanned'; readonly reason: ProjectScanSkipReason }
 
 /** At most this many names in one finding's prose or one stored list. Every
  *  such list is driven by a file the user controls (their settings.json, a

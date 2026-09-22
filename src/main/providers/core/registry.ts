@@ -59,27 +59,9 @@ export function packageRegistrationProblem(pkg: ProviderPackage): string | null 
     const denied = pkg[list].find((v) => isNeverOwnedLaunchVariable(v))
     if (denied) return `${list} may not contain ${denied}: it decides what the child process executes, not which realm it uses`
   }
-  // Host-managed controls. Required so that "this provider declares none" is a
-  // recorded decision (`{}`) rather than an omission nobody notices.
-  const host = pkg.hostManagedEnv
-  if (!host || typeof host !== 'object' || Array.isArray(host)) return 'hostManagedEnv must be declared (use {} for a provider with no host controls)'
-  for (const [k, v] of Object.entries(host)) {
-    if (!k || typeof v !== 'string') return `hostManagedEnv.${k} must be a string`
-    if (isNeverOwnedLaunchVariable(k)) return `hostManagedEnv may not contain ${k}: it decides what the child process executes`
-    // A host control the package ALSO claims to own would be settable by its
-    // own realm patch. applyRealmEnvPatch refuses it at apply time; refusing
-    // it at registration means the contradiction never ships at all.
-    if (pkg.ownedLaunchVariables.some((o) => o.toLowerCase() === k.toLowerCase())) return `${k} is both a host-managed control and an owned launch variable; it cannot be both`
-  }
   const ml = pkg.managedLaunch
   if (ml !== undefined) {
     if (typeof ml !== 'object' || ml === null) return 'managedLaunch must be an object when present'
-    // A package with managed-launch hardening and NO host control is a
-    // contradiction: the hardening's whole point is a control applied last that
-    // a settings file cannot undo. Refused at registration so it never reaches
-    // a launch, where an empty declaration would pass every per-entry check
-    // vacuously (adversarial review, MINOR 7).
-    if (Object.keys(host).length === 0) return 'a package that declares managedLaunch must declare at least one hostManagedEnv control'
     if (typeof ml.minimumCliVersion !== 'string' || !ml.minimumCliVersion) return 'managedLaunch.minimumCliVersion must be declared'
     for (const fn of ['sanitizeManagedSettings', 'preflight', 'authoritySettingsKeys'] as const) {
       if (typeof ml[fn] !== 'function') return `managedLaunch.${fn}() must be a function`
@@ -153,31 +135,7 @@ export function realmEnvForProvider(id: ProviderId, base: Readonly<Record<string
   return applyRealmEnvPatch(base, patch, {
     ambientAuthVariables: pkg.ambientAuthVariables,
     ownedVariables: pkg.ownedLaunchVariables,
-    // The host control rides the SAME call as the ambient removal and the
-    // realm patch. A launch path cannot apply one without the others, and
-    // cannot apply them in the wrong order, because there is only one call.
-    hostManagedEnv: pkg.hostManagedEnv,
-    // A package that declares MANAGED-LAUNCH hardening is a package whose
-    // launches must carry a host control; one that declares no `managedLaunch`
-    // has nothing to apply, and its empty declaration is a recorded decision
-    // rather than an omission. Deriving the requirement from the package --
-    // rather than from the caller -- means every caller of this function gets
-    // the refusal, not just `withProfileHome`.
-    requireHostManagedEnv: pkg.managedLaunch !== undefined,
   })
-}
-
-/** The host-managed controls a provider declares, as a COPY -- a caller cannot
- *  mutate the package's declaration through it.
- *
- *  This is a READ, not a second way to apply the controls. There is deliberately
- *  no `applyHostManagedEnv(...)` helper: a second, weaker path to the same
- *  control is exactly the "a launch path that can apply them separately can
- *  apply two of the three" hazard that put the controls inside
- *  `applyRealmEnvPatch` in the first place. `withProfileHome` uses this to
- *  ASSERT, after the fact, that the one route actually applied them. */
-export function hostManagedEnvForProvider(id: ProviderId): Readonly<Record<string, string>> {
-  return { ...getProviderPackage(id).hostManagedEnv }
 }
 
 /** The ambient authority variables a provider declares. A READ, for a launch

@@ -1,18 +1,18 @@
 // Register the REAL Claude provider package with a faked spawn surface.
 //
 // Since WP1 slice 2 the local launch path takes the Claude package's own
-// policy -- the ambient authority variables it strips and the host control it
-// applies last -- from the registry. A bare `registerProvider(fakeSession)` is
+// policy -- the ambient authority variables it strips and the realm variables
+// it owns -- from the registry. A bare `registerProvider(fakeSession)` is
 // no longer enough to drive `spawnPty`: there is no package behind the id, and
 // a managed launch fails closed rather than composing an environment with no
 // policy in it.
 //
 // The obvious fix, registering a wholly fake PACKAGE, would be worse than the
 // problem: every one of these suites would then assert against a stub's empty
-// ambient list and absent host control, and would keep passing if the real
-// declarations regressed to nothing. So this layers the caller's fake session
-// over a real `ClaudeProvider` instance and keeps everything else -- the
-// capability declarations, `ambientAuthVariables`, `hostManagedEnv`,
+// ambient list and absent managed-launch hardening, and would keep passing if
+// the real declarations regressed to nothing. So this layers the caller's fake
+// session over a real `ClaudeProvider` instance and keeps everything else --
+// the capability declarations, `ambientAuthVariables`, `ownedLaunchVariables`,
 // `managedLaunch` -- exactly as the app ships it.
 import { registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
 import { createClaudePackage } from '../../src/main/providers/claude'

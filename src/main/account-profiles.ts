@@ -20,9 +20,10 @@ import { recordManagedLaunchPreflight } from './managed-launch-diagnostics'
 // Via the neutral barrel, never a package entry point: the dependency boundary
 // (tests/wp1/dependency-boundaries.test.ts, R3/R4) keeps provider knowledge
 // behind the registry so a launch path cannot opt out of a provider's policy.
-import { realmEnvForProvider, hostManagedEnvForProvider, ambientAuthVariablesForProvider, sanitizeManagedSettingsFor } from './providers'
+import { realmEnvForProvider, ambientAuthVariablesForProvider, sanitizeManagedSettingsFor } from './providers'
 import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { AccountProfile, AccountProfilesConfig } from '../shared/account-types'
+import type { ProjectGateResult } from '../shared/providers'
 
 // Shared-directory names junctioned from a profile back to the shared root.
 // Identity files (.credentials.json, .claude.json, statsig, telemetry, caches)
@@ -2141,21 +2142,29 @@ export function captureDetectedAccount(profileId: string, name?: string): Accoun
  * the CLI against an app-managed account comes through here -- the interactive
  * PTY, shell-only sessions pinned to an account, the headless runner, the
  * insights runner, the cloud-agent env, and `claude auth status`. So this is
- * where the host hardening is applied, in one place, rather than restated at
- * six call sites where the seventh would be the one that forgot:
+ * where the realm is applied and the launch is gated, in one place, rather
+ * than restated at six call sites where the seventh would be the one that
+ * forgot:
  *
  *   - ambient authority variables the developer's environment might carry are
  *     REMOVED (the package's `ambientAuthVariables`);
- *   - `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` is applied LAST
- *     (the package's `hostManagedEnv`), which is what stops a settings file
- *     redirecting the session to another account or running a command of its
- *     choosing (evidence 2026-09-21, findings 3/5/6/7).
+ *   - the realm is set: USERPROFILE (and HOME on Linux) to the profile home,
+ *     plus the two realm roots the CLI reads outside the home;
+ *   - the project gate's verdict is enforced: a working directory whose own
+ *     settings files carry an override REFUSES the launch here, after the
+ *     report that says so has been recorded (owner decision, 2026-09-22).
+ *
+ * There is no host-side control any more. The flag slice 2 first applied made
+ * the CLI read no stored login at all (evidence Part 7), and the Claude Desktop
+ * entrypoint that was probed instead was rejected (Part 8). This app sets
+ * nothing the CLI reads as "managed by a host", owns no token and refreshes
+ * none.
  *
  * `home == null` is the UNMANAGED case -- the Default account, or a plain shell
  * that is not pinned to a profile -- and returns the environment untouched. The
- * user's own machine, their own settings, their own credentials: the host
- * control is for realms this app manages, and asserting it over a shell the app
- * does not own would silently disable the user's own apiKeyHelper.
+ * user's own machine, their own settings, their own credentials: the gate is
+ * for realms this app manages, and refusing a shell the app does not own would
+ * be refusing the user their own machine.
  *
  * The PREFLIGHT is recorded here too, for the same reason the hardening is.
  * It used to be a separate call in `pty-manager`, which is one of FIVE paths
@@ -2175,9 +2184,12 @@ export const MANAGED_LAUNCH_REFUSAL = '[profiles] refusing a managed Claude laun
  *
  *  `launchId` is what the Accounts panel shows beside a finding, so it is the
  *  PTY session id where there is one and a stable name for the four background
- *  paths that have no session (`headless`, `insights`, ...). `cwd` is passed
- *  only by a launch that runs in a project directory; it is what lets the
- *  preflight report the project-owned settings the host control is suppressing.
+ *  paths that have no session (`headless`, `insights`, ...). `cwd` is the
+ *  directory the launch runs in; `projectGate` is what `gateManagedLaunch`
+ *  decided about that directory's own settings files, awaited by the caller
+ *  BEFORE this synchronous function runs -- a refusal is enforced here, so
+ *  every launch path refuses the same way, and a caller that has a directory
+ *  but no verdict is a caller that skipped the gate.
  *
  *  Optional in the TYPE and mandatory in PRACTICE: every call site in `src/` is
  *  required to pass one by the source guard in tests/wp1/managed-launch.test.ts,
@@ -2187,6 +2199,12 @@ export const MANAGED_LAUNCH_REFUSAL = '[profiles] refusing a managed Claude laun
 export interface ManagedLaunchContext {
   launchId: string
   cwd?: string | null
+  /** The project gate's verdict for `cwd`. Required whenever `cwd` is given:
+   *  `withProfileHome` refuses a launch that names a directory and no verdict,
+   *  because that is a launch that skipped the gate, and the source guard
+   *  checks every call site states it. `null` says "this launch has no
+   *  directory to gate" and is only honest when `cwd` is absent. */
+  projectGate?: ProjectGateResult | null
   /** True for a launch THIS APP started by itself rather than one the user
    *  asked for -- the `claude auth status` probe behind the Accounts panel. It
    *  is a real managed launch and gets the full hardening; it is flagged so the
@@ -2359,29 +2377,12 @@ export function withProfileHome(
     throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the launch environment could not be hardened (${(e as Error)?.message ?? String(e)})`)
   }
 
-  // Assertion, not validation: the control is applied by the line above, so the
-  // only way to reach this throw is a regression in the mechanism itself. It is
-  // here because the failure is otherwise SILENT -- a session that starts
-  // without the flag looks exactly like one that starts with it, right up until
-  // a settings file swaps the account under it.
-  //
-  // The EMPTY case is checked first and separately. A loop over an empty
-  // declaration passes VACUOUSLY, so "the package stopped declaring a control"
-  // -- the regression that disables the whole mechanism -- would sail straight
-  // through the assertion written to catch a missing control.
-  let controls: [string, string][]
-  try {
-    controls = Object.entries(hostManagedEnvForProvider('claude'))
-  } catch (e) {
-    throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the host-managed controls could not be read (${(e as Error)?.message ?? String(e)})`)
-  }
-  if (controls.length === 0) {
-    throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the Claude package declares no host-managed control, so nothing stops a settings file redirecting this session`)
-  }
-  for (const [k, v] of controls) {
-    if (hardened[k] !== v) {
-      throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the host control ${k} was not applied (expected ${JSON.stringify(v)}, got ${JSON.stringify(hardened[k] ?? null)})`)
-    }
+  // A launch that names a working directory but carries no gate verdict skipped
+  // the gate. That is refused rather than tolerated: the gate is the one thing
+  // that stands between a repository's settings file and the account this
+  // session runs as, and "the caller forgot" must not look like "clean".
+  if (context?.cwd && context.projectGate === undefined) {
+    throw new Error(`${MANAGED_LAUNCH_REFUSAL}: launch ${context.launchId} names a working directory but did not run the project-settings gate`)
   }
   // Record what the AMBIENT pass removed, so the preflight can report it.
   //
@@ -2400,10 +2401,9 @@ export function withProfileHome(
   // the block began below these two lines (adversarial review, MINOR).
   //
   // Layer 4 is recorded from the choke point rather than from one of the five
-  // callers. Diagnostics only: the control is already applied and asserted
-  // above, so nothing here can refuse a launch. A home outside the profiles
-  // root has no account to attribute a report to -- that is a fault worth
-  // saying out loud rather than a report worth inventing.
+  // callers. Diagnostics only: nothing in this block can refuse a launch. A
+  // home outside the profiles root has no account to attribute a report to --
+  // that is a fault worth saying out loud rather than a report worth inventing.
   try {
     const kept = new Set(Object.keys(hardened).map((k) => k.toLowerCase()))
     const ambient = new Set(ambientAuthVariablesForProvider('claude').map((k) => k.toLowerCase()))
@@ -2414,13 +2414,28 @@ export function withProfileHome(
       if (profileId) {
         recordManagedLaunchPreflight(
           context.launchId, profileId, home, hardened,
-          context.cwd ?? null,
+          context.projectGate ?? null,
           context.probe ? 'probe' : 'launch',
         )
       } else {
         logWarn(`[managed-launch] ${context.launchId}: no profile id resolves from this launch home, so no preflight was recorded`)
       }
     }
-  } catch { /* never let a diagnostic refuse a launch that is already hardened */ }
+  } catch { /* never let a diagnostic refuse a launch */ }
+
+  // THE REFUSAL, after the record that explains it and before any caller sees
+  // an environment. The gate found a credential helper, an account pin, a
+  // provider switch or an endpoint redirect in the working directory's own
+  // settings files. Those files are not this app's to change, and there is no
+  // control that makes a managed session safe to start under them, so the
+  // session does not start. File and key are named; a value never is (the gate
+  // produces names only, and the terminal line that shows this strips control
+  // and spoofing characters -- see emitDeferredSpawnFailure).
+  if (context?.projectGate?.status === 'refused') {
+    throw new Error(
+      `${MANAGED_LAUNCH_REFUSAL}: the project's own settings could redirect this account -- ${context.projectGate.keys.join(', ')}. ` +
+      'Remove those keys from .claude/settings.json or settings.local.json in that directory (AI Code Conductor never edits them), then start the session again.',
+    )
+  }
   return hardened
 }

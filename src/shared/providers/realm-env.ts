@@ -35,39 +35,21 @@ export interface RealmEnvPolicy {
    *  re-set for a bound realm -- Codex's `CODEX_HOME` -- is declared in BOTH
    *  lists, deliberately and visibly. */
   ownedVariables: readonly string[]
-  /** HOST-MANAGED CONTROLS: variables the HOST sets on every managed launch,
-   *  applied LAST -- after the ambient removal and after the provider's realm
-   *  patch -- and settable by nobody else.
-   *
-   *  This is not a convenience slot. For Claude,
-   *  `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` is the only proven control that
-   *  stops a settings file from redirecting the account: it blocks user-scope
-   *  settings `env` injection and suppresses `apiKeyHelper` in user, project
-   *  AND local scope, and it fails closed
-   *  (docs/wp1/evidence/claude-settings-isolation-2026-09-21.md, findings 3,
-   *  5, 6, 7). Project- and repository-owned settings must never be mutated by
-   *  this app, so for those two scopes the flag is not defence in depth -- it
-   *  is the entire control.
-   *
-   *  It is therefore applied HERE rather than by the caller, and a realm patch
-   *  naming one of these keys is REJECTED rather than silently overwritten. A
-   *  provider package must not be able to turn the host's own control off, and
-   *  "applied last" has to be a property of the mechanism rather than of the
-   *  order a particular launch path happens to call things in. */
-  hostManagedEnv?: Readonly<Record<string, string>>
-  /** Does this launch REQUIRE at least one host-managed control?
-   *
-   *  True for a provider whose managed launches are hardened (Claude), false
-   *  for one with no host controls to apply (Codex declares `{}` deliberately).
-   *  When it is true and the declaration is empty, the patch is REFUSED here --
-   *  in the mechanism -- rather than only by the assertion `withProfileHome`
-   *  happens to run afterwards. An empty declaration disables the entire
-   *  control, and a loop over it passes VACUOUSLY, so the one call every launch
-   *  path shares has to be the place that catches it: `realmEnvForProvider` is
-   *  exported, and a future caller that is not `withProfileHome` would
-   *  otherwise inherit none of its checks (adversarial review, MINOR 7). */
-  requireHostManagedEnv?: boolean
 }
+
+// There is deliberately NO "host-managed control" slot here any more. Slice 2
+// first applied `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` last on every managed
+// launch, as the one proven control against settings-sourced redirection.
+// Gate A1 then measured that the pinned CLI reads NO stored login under that
+// flag -- it is Claude Desktop's mode, in which the host supplies the token --
+// so a managed session could not sign in at all (evidence Part 7). The owner's
+// correction (2026-09-22) removes the flag rather than making this app a
+// credential host: the realm is the USERPROFILE/HOME redirect plus the realm
+// roots, the app-owned settings copy is sanitised, ambient authority is
+// removed, and repository-owned settings that carry authority REFUSE the
+// launch before it starts (the project gate). What this cannot prevent --
+// mid-session edits, remote/organisation settings, another process of the
+// same OS user -- is recorded as a boundary, not claimed.
 
 /** Variables that decide which executable or library a child process loads.
  *  A provider package may never own one: a realm patch able to rewrite them
@@ -158,25 +140,9 @@ export function applyRealmEnvPatch(
   // OPEN, and Windows (where env names are case-insensitive) would not show it.
   const settable = new Set(policy.ownedVariables)
   const removable = new Set([...policy.ownedVariables, ...policy.ambientAuthVariables])
-  const hostManaged = policy.hostManagedEnv ?? {}
-  const hostKeys = Object.keys(hostManaged)
-  // FIRST, before anything is composed: a launch that requires a host control
-  // and has none is refused outright. The checks further down iterate the
-  // declaration, so an empty one passes every one of them vacuously -- the
-  // regression that silently disables the whole mechanism would otherwise
-  // produce a perfectly ordinary-looking environment.
-  if (policy.requireHostManagedEnv && hostKeys.length === 0) {
-    throw new Error('realm env patch: this launch requires a host-managed control and the provider declares none, so nothing would stop a settings file redirecting it')
-  }
-  // Host controls are checked BEFORE ownership, so the error names the real
-  // problem ("the host owns this") rather than the incidental one ("you do
-  // not own this"), and so the refusal still stands if a package ever adds a
-  // host key to its own owned list.
-  const hostOwned = new Set(hostKeys.map((k) => k.toLowerCase()))
   const checkName = (k: string): void => {
     if (!PATCH_NAME.test(k)) throw new Error(`realm env patch: invalid variable name ${JSON.stringify(k)}`)
     if (isNeverOwnedLaunchVariable(k)) throw new Error(`realm env patch: ${k} decides what the child process executes and is never a realm variable`)
-    if (hostOwned.has(k.toLowerCase())) throw new Error(`realm env patch: ${k} is a host-managed control and cannot be set or unset by a provider`)
   }
   for (const k of Object.keys(patch.set)) {
     checkName(k)
@@ -185,10 +151,6 @@ export function applyRealmEnvPatch(
   for (const k of patch.unset ?? []) {
     checkName(k)
     if (!removable.has(k)) throw new Error(`realm env patch: ${k} is not a variable this provider owns`)
-  }
-  for (const k of hostKeys) {
-    if (!PATCH_NAME.test(k)) throw new Error(`realm env patch: invalid host-managed variable name ${JSON.stringify(k)}`)
-    if (isNeverOwnedLaunchVariable(k)) throw new Error(`realm env patch: ${k} decides what the child process executes and is never a host-managed control`)
   }
   // Base keys pass through as the developer environment spells them. Windows
   // carries `ProgramFiles(x86)` and `CommonProgramFiles(x86)`, which MSVC and
@@ -200,8 +162,8 @@ export function applyRealmEnvPatch(
   // SSH); a NUL in a value truncates in the native APIs. Those are dropped.
   // Everything else is carried verbatim.
   //
-  // VALUES are held to the same CR/LF rule as the names, and as the patch and
-  // host-control values below. A value carrying a newline cannot survive the
+  // VALUES are held to the same CR/LF rule as the names, and as the patch
+  // values below. A value carrying a newline cannot survive the
   // `export NAME=value` serialisation this repo builds for remote launches: it
   // ends the statement and everything after it is read as the next one. The
   // patch path REFUSES such a value, because a provider authored it and a
@@ -224,16 +186,7 @@ export function applyRealmEnvPatch(
     if (/[\0\r\n]/.test(v)) throw new Error(`realm env patch: invalid value for ${k}`)
     env[k] = v
   }
-  // HOST-MANAGED CONTROLS, LAST. Every case-variant of each key is removed
-  // first, so an inherited `claude_code_provider_managed_by_host=0` cannot sit
-  // alongside the canonical spelling and win on a case-insensitive platform.
   // Nothing after this line writes to `env`.
-  removeCaseInsensitive(env, hostKeys)
-  for (const [k, v] of Object.entries(hostManaged)) {
-    if (typeof v !== 'string') throw new Error(`realm env patch: host-managed ${k} must be a string`)
-    if (/[\0\r\n]/.test(v)) throw new Error(`realm env patch: invalid value for host-managed ${k}`)
-    env[k] = v
-  }
   // Returned with the null prototype it was built with: Node enumerates a
   // spawn env with `for...in` and deliberately includes prototype properties,
   // so re-attaching Object.prototype here would let anything that polluted it
