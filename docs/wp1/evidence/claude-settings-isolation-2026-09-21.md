@@ -2044,10 +2044,24 @@ commit that contains it.
   squash merge it is reachable only through GitHub's `refs/pull/619/*`, which
   `git fetch origin <sha>` serves. If that ever stops, re-bind the ledger to a
   commit on `beta`.
-- **The Windows CI `SyntaxError: Invalid or unexpected token`** reported on the
-  ledger gate at `a0eace5d` was not reproduced locally (an absent bound commit
-  shows the git error here); it is expected to be the same missing object and
-  is to be confirmed gone on this head's CI.
+- **The Windows CI `SyntaxError: Invalid or unexpected token`** on the ledger
+  gate was NOT the missing object. It came back at `4abe355c` with the bound
+  commit fetched on both legs (macOS green). Root cause: the Windows runner
+  checks out with `core.autocrlf`, and the #207 rule that keeps a hashbang
+  `.mjs` LF (`scripts/*.mjs text eol=lf`) does not cross a slash, so
+  `scripts/wp1/`'s manifest script arrived CRLF. Vite finds a hashbang with
+  `/^#!.*\n/`, which does not match a CRLF first line, so it inserts its own
+  code ahead of the `#!` and the module does not parse. Reproduced locally
+  under Node 20 and 24 (CRLF fails, LF passes, only the hashbang line
+  matters); `git check-attr` showed `scripts/release-gate.mjs` pinned and the
+  WP1 script unspecified, which is why the older hashbang script passes on the
+  same runner; an autocrlf `checkout-index` of the WP1 script gave 323 CRs
+  under the old glob and none under the new. Fixed in `e8985073`: the glob is
+  `scripts/**/*.mjs`, and `tests/unit/scripts/mjs-eol.test.ts` asserts the
+  attribute for every tracked hashbang `.mjs` under `scripts/` on every
+  platform (red under the old glob). Not covered by that test: a hashbang
+  file outside `scripts/`, or a `.js` one, that a test ESM-imports; today the
+  `.js` ones are loaded with `require()`, which Node strips cleanly.
 
 ### Corrections to the text above
 
