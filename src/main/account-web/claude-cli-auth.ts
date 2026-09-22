@@ -28,8 +28,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { logError, logInfo } from '../debug-logger'
-import { getProfileConfigDir, getProfilesRoot, withProfileHome } from '../account-profiles'
+import { logError, logInfo, logWarn } from '../debug-logger'
+import { getProfileConfigDir, getProfilesRoot, withProfileHome, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
 import { acquireProfileConsumer, pendingProfileRefresh } from '../profile-consumers'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
@@ -189,13 +189,26 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
         // spreading it into a literal, which would re-attach Object.prototype
         // to an env the realm patch deliberately built with a null prototype
         // (see src/shared/providers/realm-env.ts).
-        env: Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home), { HOME: home }),
+        env: Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', probe: true }), { HOME: home }),
       })
       const parsed = parseAuthStatus(stdout)
       if (parsed) return parsed
     }
-  } catch {
+  } catch (e) {
     // CLI absent, slow, or erroring — fall through to the file.
+    //
+    // But a managed-launch REFUSAL is not that. `withProfileHome` throws when
+    // the host control could not be applied, and this bare catch swallowed it
+    // with no log line at all; the probe then fell back to reading the
+    // credential file and answered as if nothing had happened. This call site
+    // records no preflight either, so a regressed control here left ZERO trace
+    // anywhere (adversarial review, MAJOR 7). The fallback is still correct --
+    // it reads a file rather than launching the CLI, so it cannot act as the
+    // wrong account -- but the silence was not.
+    const message = (e as Error)?.message ?? String(e)
+    if (message.includes(MANAGED_LAUNCH_REFUSAL)) {
+      logWarn(`[account-web] profile ${profileId}: the CLI auth probe was refused -- ${message}. Falling back to the credential file; this is an isolation fault, not a missing CLI.`)
+    }
   } finally {
     release()
   }

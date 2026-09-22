@@ -52,6 +52,32 @@ CCC isolates accounts per session so you can run different Claude logins side by
 side. Switch a session's account from its sidebar right-click menu → *Switch
 Account*. (macOS runs a single account — see the keychain note in the README.)
 
+**What that isolation is, exactly.** It keeps the *logins* apart. A session
+launched as one account signs in as that account, and neither a settings file
+nor a stale variable in your environment can make it authenticate as another:
+credentials, login pins and endpoint overrides are left out of the settings copy
+CCC writes into each account, and dropped from the environment CCC starts a
+session with. Project and repository settings are never edited, because they are
+not CCC's files to change; instead the session is told the app is managing which
+account it runs as, and Claude Code then ignores most of that class of setting
+from every file for that session.
+
+*Most*, not all. A proxy authorization command configured in a project file
+still runs under that instruction — it mints a header for whichever proxy the
+environment already selects, rather than choosing an account — so if you use
+one, which account it presents to a proxy is not something this isolation
+decides. Your own files and your own shell are untouched. Settings → *Accounts*
+shows what was left out for each account, and says so plainly when a launch
+could not be confirmed.
+
+**What it is not.** It is not a sandbox. Hooks, status line commands and
+everything else in your settings still run, and a session can read and write
+whatever you can. A hook you configure runs under whichever account the session
+uses, so treat it as shared across accounts; and because CCC does not police
+what you could already run yourself, a program running as you on this machine
+can change what a session sees. Isolation also stops at this machine: an SSH
+session uses the remote's own login.
+
 ## Logs & transcript viewer
 
 Every session's conversation is indexed locally (never leaves your machine). The

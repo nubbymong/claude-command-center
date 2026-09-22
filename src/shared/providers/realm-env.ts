@@ -55,6 +55,18 @@ export interface RealmEnvPolicy {
    *  "applied last" has to be a property of the mechanism rather than of the
    *  order a particular launch path happens to call things in. */
   hostManagedEnv?: Readonly<Record<string, string>>
+  /** Does this launch REQUIRE at least one host-managed control?
+   *
+   *  True for a provider whose managed launches are hardened (Claude), false
+   *  for one with no host controls to apply (Codex declares `{}` deliberately).
+   *  When it is true and the declaration is empty, the patch is REFUSED here --
+   *  in the mechanism -- rather than only by the assertion `withProfileHome`
+   *  happens to run afterwards. An empty declaration disables the entire
+   *  control, and a loop over it passes VACUOUSLY, so the one call every launch
+   *  path shares has to be the place that catches it: `realmEnvForProvider` is
+   *  exported, and a future caller that is not `withProfileHome` would
+   *  otherwise inherit none of its checks (adversarial review, MINOR 7). */
+  requireHostManagedEnv?: boolean
 }
 
 /** Variables that decide which executable or library a child process loads.
@@ -100,13 +112,37 @@ export function isNeverOwnedLaunchVariable(name: string): boolean {
  *  are NOT held to it (see below). */
 const PATCH_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
-/** Windows environment names are case-insensitive, and an inherited variable
- *  can arrive in any spelling. Removal is therefore case-insensitive on every
- *  platform: a variable that differs only by case from a known ambient
- *  authentication variable is treated as that variable, never trusted. */
+/** Fold a variable name to the form removal compares on.
+ *
+ *  NFKC first, then lower case. The case fold is the load-bearing half: Windows
+ *  resolves `Path` and `PATH` to one variable, so a name differing only by case
+ *  from a known ambient authority variable IS that variable and is never
+ *  trusted. The NFKC fold closes the spelling gap the case fold leaves -- a
+ *  fullwidth or compatibility-form character folds onto its ASCII counterpart,
+ *  so `ANTHROPIC＿API＿KEY` is removed rather than carried through as an
+ *  unrecognised name.
+ *
+ *  Folding wider than the OS does can only REMOVE more, never keep more, so it
+ *  cannot open a hole: the worst case is discarding an oddly-spelled variable
+ *  that was not the one it resembles.
+ *
+ *  SCOPE, stated exactly, because the earlier wording did not. NFKC folds
+ *  COMPATIBILITY forms -- fullwidth characters and the like. It does NOT fold
+ *  cross-script confusables: a Cyrillic-A `АNTHROPIC_API_KEY` survives this
+ *  pass unchanged (adversarial round 4). That is not a hole, and the reason is
+ *  the OS rather than this function -- environment names match byte-exactly on
+ *  POSIX and with an ASCII case-fold on Windows, so the surviving entry is not
+ *  the variable it resembles and nothing reads it, neither the CLI nor any
+ *  child. The claim this supports is "a COMPATIBILITY spelling of an authority
+ *  variable is never trusted", not "anything that looks like one". */
+function foldName(name: string): string {
+  try { return name.normalize('NFKC').toLowerCase() } catch { return name.toLowerCase() }
+}
+
+/** Remove every variable whose folded name matches one of `names`. */
 function removeCaseInsensitive(env: Record<string, string>, names: readonly string[]): void {
-  const lower = new Set(names.map((n) => n.toLowerCase()))
-  for (const key of Object.keys(env)) if (lower.has(key.toLowerCase())) delete env[key]
+  const folded = new Set(names.map(foldName))
+  for (const key of Object.keys(env)) if (folded.has(foldName(key))) delete env[key]
 }
 
 export function applyRealmEnvPatch(
@@ -124,6 +160,14 @@ export function applyRealmEnvPatch(
   const removable = new Set([...policy.ownedVariables, ...policy.ambientAuthVariables])
   const hostManaged = policy.hostManagedEnv ?? {}
   const hostKeys = Object.keys(hostManaged)
+  // FIRST, before anything is composed: a launch that requires a host control
+  // and has none is refused outright. The checks further down iterate the
+  // declaration, so an empty one passes every one of them vacuously -- the
+  // regression that silently disables the whole mechanism would otherwise
+  // produce a perfectly ordinary-looking environment.
+  if (policy.requireHostManagedEnv && hostKeys.length === 0) {
+    throw new Error('realm env patch: this launch requires a host-managed control and the provider declares none, so nothing would stop a settings file redirecting it')
+  }
   // Host controls are checked BEFORE ownership, so the error names the real
   // problem ("the host owns this") rather than the incidental one ("you do
   // not own this"), and so the refusal still stands if a package ever adds a
@@ -155,10 +199,19 @@ export function applyRealmEnvPatch(
   // serialises an env to text (this repo builds remote `export` lines over
   // SSH); a NUL in a value truncates in the native APIs. Those are dropped.
   // Everything else is carried verbatim.
+  //
+  // VALUES are held to the same CR/LF rule as the names, and as the patch and
+  // host-control values below. A value carrying a newline cannot survive the
+  // `export NAME=value` serialisation this repo builds for remote launches: it
+  // ends the statement and everything after it is read as the next one. The
+  // patch path REFUSES such a value, because a provider authored it and a
+  // provider getting it wrong is a bug; a base entry is INHERITED rather than
+  // authored, so it is dropped in the same way an unrepresentable name is
+  // (adversarial review, MINOR).
   const env: Record<string, string> = Object.create(null)
   for (const [k, v] of Object.entries(base)) {
     if (typeof v !== 'string' || !k) continue
-    if (/[=\0\r\n]/.test(k) || v.includes('\0')) continue
+    if (/[=\0\r\n]/.test(k) || /[\0\r\n]/.test(v)) continue
     env[k] = v
   }
   removeCaseInsensitive(env, policy.ambientAuthVariables)

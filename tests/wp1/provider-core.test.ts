@@ -241,6 +241,12 @@ describe('realm environment patch (D1/D3, WP1.38 contract level)', () => {
       'A=B': 'x', GOOD: 'y', '': 'z',
       ['CR' + String.fromCharCode(13) + 'KEY']: 'x', ['LF' + String.fromCharCode(10) + 'KEY']: 'x',
       ['NUL' + String.fromCharCode(0) + 'KEY']: 'x', NULVAL: 'a' + String.fromCharCode(0) + 'b',
+      // VALUES are held to the same rule as the names. A newline in a value
+      // ends the `export NAME=value` statement this repo builds for remote
+      // launches and turns the rest into a statement of its own; the patch path
+      // refuses one outright, and an inherited one is dropped here. Only the
+      // NUL case was covered before (adversarial review, MINOR).
+      CRVAL: 'a' + String.fromCharCode(13) + 'b', LFVAL: 'a' + String.fromCharCode(10) + 'b',
     }
     expect(applyRealmEnvPatch(base as never, { set: {} }, policy)).toEqual({ 'ProgramFiles(x86)': '/pf86', 'CommonProgramFiles(x86)': '/cpf86', 'has space': 'kept', GOOD: 'y' })
     // A REAL own __proto__ key (an object literal creates none, so the old
@@ -249,6 +255,35 @@ describe('realm environment patch (D1/D3, WP1.38 contract level)', () => {
     expect(applyRealmEnvPatch(polluting, { set: {} }, policy)).toEqual({ GOOD: 'y' })
     expect(() => applyRealmEnvPatch({}, { set: JSON.parse(String.raw`{"__proto__":"x"}`) }, policy)).toThrow(/not a variable this provider owns/)
     expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
+  it('removes an authority variable spelled with compatibility characters, not only a case variant', () => {
+    // The documented rule is that a variable resembling an authority variable
+    // is never trusted. The case fold alone did not make that true: a fullwidth
+    // or compatibility spelling passed straight through as an unrecognised
+    // name. It is NOT independently exploitable -- to the OS that is a
+    // different variable, and the probe confirmed the CLI does not read it --
+    // but folding NFKC makes the rule true as written (adversarial review,
+    // MINOR). Folding can only ever remove MORE, never keep more.
+    const fullwidth = 'OPENAI' + String.fromCharCode(0xff3f) + 'API' + String.fromCharCode(0xff3f) + 'KEY'
+    const out = applyRealmEnvPatch({ [fullwidth]: 'sk-poison', KEEP: '1' }, { set: {} }, policy)
+    expect(out).toEqual({ KEEP: '1' })
+  })
+
+  it('REFUSES a launch that requires a host control when the provider declares none', () => {
+    // The per-entry checks all iterate the declaration, so an EMPTY one passes
+    // every one of them vacuously and composes a perfectly ordinary-looking
+    // environment with the entire mechanism switched off. `withProfileHome`
+    // asserts non-empty afterwards, but `realmEnvForProvider` is exported and a
+    // future caller inherits none of its checks -- so the refusal belongs in
+    // the one call every launch path shares (adversarial review, MINOR 7).
+    const required = { ...policy, hostManagedEnv: {}, requireHostManagedEnv: true }
+    expect(() => applyRealmEnvPatch({}, { set: {} }, required)).toThrow(/requires a host-managed control and the provider declares none/)
+    // A provider with no host controls and no requirement is unaffected: Codex
+    // declares `{}` deliberately, and that is a recorded decision.
+    expect(applyRealmEnvPatch({ KEEP: '1' }, { set: {} }, { ...policy, hostManagedEnv: {} })).toEqual({ KEEP: '1' })
+    // ...and one that declares a control still gets it.
+    expect(applyRealmEnvPatch({}, { set: {} }, { ...policy, hostManagedEnv: { H: '1' }, requireHostManagedEnv: true })).toEqual({ H: '1' })
   })
 
   it('the main-core wrapper takes the policy from the registered package, so a launch cannot opt out', () => {

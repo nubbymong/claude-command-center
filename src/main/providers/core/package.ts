@@ -89,6 +89,12 @@ export interface ProviderManagedLaunchOperations {
    *  Pure: takes text, returns text. It never sees, and therefore can never
    *  modify, the user's own settings or any repository-owned file. */
   sanitizeManagedSettings(raw: string): SanitizedManagedSettings
+  /** The authority-bearing keys a settings payload CONTAINS, canonically named
+   *  and with no copy produced. For a file the app does NOT own -- a project's
+   *  or a repository's -- where the only question is what the host control is
+   *  suppressing. Separate from `sanitizeManagedSettings` because producing the
+   *  sanitised TEXT is the expensive half and this caller discards it. */
+  authoritySettingsKeys(raw: string): readonly string[]
   /** Report on one composed launch. A diagnostic, never the boundary. */
   preflight(input: ManagedLaunchPreflightInput): ManagedLaunchPreflight
 }

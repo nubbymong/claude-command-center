@@ -10,5 +10,5 @@ export {
   registerProviderPackage, packageRegistrationProblem, getProviderPackage, tryGetProviderPackage, listProviderPackages,
   providerCapability, realmEnvForProvider, _resetProviderRegistryForTest,
   hostManagedEnvForProvider, ambientAuthVariablesForProvider,
-  sanitizeManagedSettingsFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
+  sanitizeManagedSettingsFor, authoritySettingsKeysFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
 } from './registry'

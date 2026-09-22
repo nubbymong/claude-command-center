@@ -29,6 +29,7 @@ const renameMock = vi.fn<[string, string], Promise<{ ok: boolean }>>()
 const setActiveMock = vi.fn<[string, boolean], Promise<{ ok: boolean; error?: string }>>()
 const globalEmailMock = vi.fn<[], Promise<string | null>>()
 const refreshIdentityMock = vi.fn<[string], Promise<{ ok: boolean; email: string; configDir: string } | null>>()
+const managedLaunchReportsMock = vi.fn()
 const updateSettingsMock = vi.fn()
 
 const configSaveMock = vi.fn<[string, unknown], Promise<unknown>>().mockResolvedValue(undefined)
@@ -44,6 +45,7 @@ const configSaveMock = vi.fn<[string, unknown], Promise<unknown>>().mockResolved
     globalEmail: globalEmailMock,
     create: vi.fn(),
     refreshIdentity: refreshIdentityMock,
+    managedLaunchReports: managedLaunchReportsMock,
   },
   config: {
     save: configSaveMock,
@@ -136,6 +138,7 @@ describe('AccountsPanel', () => {
     setActiveMock.mockResolvedValue({ ok: true })
     globalEmailMock.mockResolvedValue(null)
     refreshIdentityMock.mockResolvedValue(null)
+    managedLaunchReportsMock.mockResolvedValue([])
     configSaveMock.mockResolvedValue(undefined)
     vi.mocked((globalThis as any).window.confirm).mockReturnValue(true)
   })
@@ -143,6 +146,39 @@ describe('AccountsPanel', () => {
   afterEach(() => {
     unmount?.()
     vi.clearAllMocks()
+  })
+
+  it('renders the account-isolation notice INSIDE each account row, asking for that account alone', async () => {
+    // The notice is layer 4 of the isolation hardening made visible, and it is
+    // per account by construction. This test exists because the component was
+    // once imported by this panel and never rendered: the whole surface was
+    // dead, and no test noticed because every other assertion here is about
+    // rows, badges and buttons.
+    managedLaunchReportsMock.mockImplementation(async (id: string) => (
+      id === profileWithEmail.id
+        ? [{
+            profileId: id, sessionId: 'insights', at: 1,
+            preflight: { ok: false, findings: [{ id: 'cli-below-floor', severity: 'blocked', title: 'T', detail: 'D', action: 'A' }] },
+          }]
+        : []
+    ))
+    useAccountProfilesStore.setState({ profiles: [primaryProfile, profileWithEmail] })
+
+    const { container, unmount: u } = renderComponent(
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
+    )
+    unmount = u
+    await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve() })
+
+    // One request per account, each naming its own id -- never one merged list.
+    expect(managedLaunchReportsMock.mock.calls.map((c) => c[0]).sort())
+      .toEqual([primaryProfile.id, profileWithEmail.id].sort())
+    // ...and the finding appears under the account it belongs to, and only there.
+    const notice = container.querySelector(`[data-testid="account-isolation-notice-${profileWithEmail.id}"]`)
+    expect(notice, 'the isolation notice is not rendered in the account row').toBeTruthy()
+    expect(notice!.textContent).toContain('A')
+    expect(container.querySelector(`[data-testid="account-isolation-notice-${primaryProfile.id}"]`)).toBeNull()
+    expect(container.querySelector(`[data-testid="profile-row-${profileWithEmail.id}"]`)!.parentElement!.contains(notice!)).toBe(true)
   })
 
   it('shows a "primary" badge on the primary profile row', () => {

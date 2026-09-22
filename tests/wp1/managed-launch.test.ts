@@ -18,22 +18,26 @@
 // The behaviour under test is proven, not assumed: see
 // docs/wp1/evidence/claude-settings-isolation-2026-09-21.md for the probe
 // matrix against Claude Code 2.1.278 that established the control.
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest'
 import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path, { resolve } from 'node:path'
 import { applyRealmEnvPatch } from '../../src/shared/providers'
 import {
   CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_HOST_MANAGED_ENV,
-  CLAUDE_COMMAND_HELPER_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
-  sanitizeClaudeManagedSettings, claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
-  createClaudePackage,
+  CLAUDE_CREDENTIAL_HELPER_SETTINGS_KEYS, CLAUDE_AUTH_PIN_SETTINGS_KEYS,
+  CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
+  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeAuthorityFamilyRules,
+  claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
+  _claudeManagedLaunchPreflightAgainstControls,
+  createClaudePackage, claudeOwnedLaunchVariables,
 } from '../../src/main/providers/claude'
 import { createCodexPackage } from '../../src/main/providers/codex'
 import {
   registerProviderPackage, packageRegistrationProblem, _resetProviderRegistryForTest,
   realmEnvForProvider, hostManagedEnvForProvider,
-  sanitizeManagedSettingsFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
+  sanitizeManagedSettingsFor, authoritySettingsKeysFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
 } from '../../src/main/providers/core'
 import * as providerCore from '../../src/main/providers/core'
 import { composeProviders } from '../../src/main/providers/compose'
@@ -55,25 +59,330 @@ const HOST_KEY = 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST'
  *      naming the function bought the exemption outright;
  *   2. it matches HOME as well as USERPROFILE (the POSIX sibling selects the
  *      same realm on Linux) and property assignment as well as object
- *      literals, so `env.HOME = profileDir` is not a way around it. */
+ *      literals, so `env.HOME = profileDir` is not a way around it;
+ *   3. it matches the NAME AS A STRING, wherever it appears, so the indirect
+ *      forms are covered too -- `const k = 'USERPROFILE'; env[k] = home`, a
+ *      computed ternary key, `Object.defineProperty(env, 'HOME', ...)`, and a
+ *      literal split by concatenation or across lines. Forms 1 and 2 alone
+ *      missed every one of those (adversarial review, MAJOR 8).
+ *
+ *  WHAT IT STILL DOES NOT CATCH, stated plainly: a name ASSEMBLED at runtime
+ *  from pieces that are not themselves string concatenation -- an array join, a
+ *  charcode sequence, a value read from JSON. That is deliberate obfuscation
+ *  rather than the accident this guard exists to catch, and at that point the
+ *  guard is not the control: `withProfileHome` asserting the host control on
+ *  every managed launch is. */
+/** The text of the object literal ENCLOSING line `i`, from its opening brace.
+ *
+ *  This replaces a fixed six-line lookback. Six lines was chosen as "a
+ *  formatter's object literal, not a program", and it is not: a spread followed
+ *  by a short jsdoc block, or by seven sibling keys, puts the `...env` outside
+ *  the window while the literal is still plainly composing an environment, and
+ *  the guard then treats a lowercase `home:` in it as an ordinary identifier
+ *  (adversarial round 4). Brace depth answers the question the window was
+ *  approximating.
+ *
+ *  The enclosing brace must open an OBJECT LITERAL, not a block. Without that
+ *  test the scan walks out of a parameter list or a `let` declaration into the
+ *  enclosing FUNCTION BODY, and any `...env` anywhere in that function then
+ *  makes an ordinary `home: string` parameter an offender -- which is how this
+ *  first attempt reported `managed-launch-diagnostics.ts:217  home: string,`.
+ *  A literal's brace follows `=`, `(`, `,`, `[`, `:` or `return`; a block's
+ *  follows `)` or a keyword.
+ *
+ *  Bounded at 80 lines, which is a bound on COST rather than a claim about
+ *  formatting: past that there is no enclosing literal to find and the scan
+ *  would run to the top of the file for every hit. Strings and comments are not
+ *  parsed -- a brace inside either can end the scan early, which loses a window
+ *  and can only cost a false NEGATIVE on an already-narrow rule, never a false
+ *  positive. */
+function enclosingLiteral(lines: readonly string[], i: number): string {
+  const OPENS_LITERAL = /(?:[=(,[:]|\breturn)\s*$/
+  let depth = 0
+  const start = Math.max(0, i - 80)
+  for (let j = i; j >= start; j -= 1) {
+    const line = lines[j] ?? ''
+    // Walk the line backwards so depth tracks what encloses the END of it.
+    for (let k = line.length - 1; k >= 0; k -= 1) {
+      const ch = line[k]
+      if (ch === '}') depth += 1
+      else if (ch === '{') {
+        if (depth > 0) {
+          depth -= 1
+          continue
+        }
+        // An unmatched `{`. If it opens a literal this is the window; if it
+        // opens a block, the hit is not inside an object literal at all.
+        const before = line.slice(0, k).trimEnd()
+        return OPENS_LITERAL.test(before) || before === ''
+          ? lines.slice(j, i + 1).join('\n')
+          : ''
+      }
+    }
+  }
+  // No enclosing brace within the bound means no enclosing literal. Returning
+  // the raw 80-line slice here would hand ENV_SPREAD a window that is not a
+  // literal at all -- which is the same false positive the block test above
+  // closes, arriving by the other door.
+  return ''
+}
+
 export function profileHomeEnvOffenders(files: ReadonlyArray<{ path: string; text: string }>): string[] {
   const ALLOWED = new Set(['src/main/account-profiles.ts'])   // the choke point itself
-  const LITERAL = /(^|[^%\w])(USERPROFILE|HOME)\s*:/               // { USERPROFILE: home }
-  const ASSIGN = /(\.|\['|\[")(USERPROFILE|HOME)('\]|"\])?\s*=[^=]/ // env.HOME = home
+  /** Lines outside the choke point that may name a home variable as a STRING,
+   *  matched on the EXACT source line. A path allowlist would exempt everything
+   *  else in the same file; this exempts one known declaration and nothing more,
+   *  so buying an exemption means editing this table where a reviewer sees it. */
+  const ALLOWED_LITERALS = new Map<string, ReadonlySet<string>>([
+    ['src/main/providers/claude/index.ts', new Set([
+      "'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',",
+    ])],
+  ])
+  // CASE-INSENSITIVE, because the property being policed is. Windows resolves
+  // `UserProfile` and `USERPROFILE` to one variable, so `{ ...env, UserProfile:
+  // home }` composes a profile-home environment just as surely -- and the
+  // case-sensitive version of these patterns returned [] for it (adversarial
+  // review, MAJOR). Everywhere else in this slice treats env-name case as
+  // load-bearing; the guard over it did not.
+  //
+  // ONE spelling is excluded, and deliberately: the ALL-LOWERCASE `home`. It is
+  // this area's ordinary identifier for a profile-home PATH -- a parameter name,
+  // a field, a type annotation -- so matching it flags roughly thirty lines of
+  // signatures across the main process and the guard becomes noise nobody
+  // reads, which is worse than the gap. The gap is `{ ...env, home: dir }`
+  // exactly: on POSIX it is not the HOME variable at all, and on Windows it is,
+  // so it is covered by the narrower ENV_SPREAD rule below rather than left
+  // open.
+  const LITERAL = /(^|[^%\w])(USERPROFILE|HOME)\s*:/i               // { USERPROFILE: home }
+  const ASSIGN = /(\.|\['|\[")(USERPROFILE|HOME)('\]|"\])?\s*=[^=]/i // env.HOME = home
+  // Quote-AGNOSTIC on each end, not back-referenced. Collapsing a mixed-quote
+  // concatenation leaves the name between the two surviving delimiters --
+  // `'USER' + "PROFILE"` becomes `'USERPROFILE"` -- so a rule requiring the same
+  // quote on both sides undoes the collapse that had just caught it.
+  const NAME = /['"`](USERPROFILE|HOME)['"`]/i                        // any string spelling it
+  // Mixed quotes count. The first version back-referenced the opening quote, so
+  // `'USER' + "PROFILE"` -- no harder to write than the same-quote form it did
+  // catch -- survived the collapse and the name never formed (adversarial
+  // round 4).
+  const CONCAT = /(['"`])\s*\+\s*(['"`])/g                           // 'USER' + "PROFILE"
+  /** A line that spreads an environment AND names a home variable in ANY
+   *  spelling, lower case included: that is an env composition, not a
+   *  signature. */
+  const ENV_SPREAD = /\.\.\.\s*[A-Za-z_$][\w$]*(\.env)?\b[\s\S]*\b(USERPROFILE|HOME)\s*:/i
+  /** Does the match rely on the all-lowercase spelling alone? */
+  const lowercaseOnly = (text: string): boolean => {
+    const m = /(USERPROFILE|HOME)/i.exec(text)
+    return m ? m[1] === m[1].toLowerCase() : false
+  }
   const offenders: string[] = []
   for (const f of files) {
     if (ALLOWED.has(f.path)) continue
-    f.text.split(/\r?\n/).forEach((line, i) => {
-      if (!LITERAL.test(line) && !ASSIGN.test(line)) return
+    const exempt = ALLOWED_LITERALS.get(f.path)
+    const lines = f.text.split(/\r?\n/)
+    lines.forEach((line, i) => {
+      // A literal split by `+` and a literal split across LINES are one dodge,
+      // so join forward while the text ends in that operator, then collapse the
+      // concatenation. Bounded: three continuations is a formatter wrapping a
+      // line, not a program.
+      let probe = line
+      for (let j = 1; j <= 3 && /\+\s*$/.test(probe); j += 1) probe += lines[i + j] ?? ''
+      probe = probe.replace(CONCAT, '')
+      const hit = [LITERAL, ASSIGN, NAME].map((re) => re.exec(probe)).find(Boolean)
+      // The spread and the key are usually on DIFFERENT lines, because that is
+      // how this codebase formats an object literal:
+      //     const e = {
+      //       ...env,
+      //       home: dir,
+      //     }
+      // Testing ENV_SPREAD against one line alone therefore missed the single
+      // commonest shape it was added to catch (adversarial re-attack, MAJOR).
+      // The window looks BACK to the enclosing literal's opening brace, bounded
+      // at six lines -- a formatter's object literal, not a program.
+      // A line with no hit at all is never an offender, whatever surrounds it:
+      // the window below decides whether a lowercase `home` COUNTS, not whether
+      // an unrelated line does.
+      if (!hit) return
+      const back = enclosingLiteral(lines, i)
+      const composing = ENV_SPREAD.test(probe) || ENV_SPREAD.test(back)
+      // An all-lowercase `home` on its own is this area's ordinary identifier,
+      // not an environment name -- unless the surrounding literal is composing
+      // an environment.
+      if (lowercaseOnly(hit[0]) && !composing) return
       // Re-applying a variable ON the choke point's own result is legal --
       // claude-cli-auth re-sets HOME unconditionally for the macOS keychain
       // reason withProfileHome documents. Scoped to THAT line, so a hand-built
       // env elsewhere in the same file still fails.
       if (line.includes('withProfileHome')) return
+      if (exempt?.has(line.trim())) return
       offenders.push(`${f.path}:${i + 1}  ${line.trim()}`)
     })
   }
   return offenders
+}
+
+/** Every `withProfileHome(...)` CALL in production source that does not pass a
+ *  launch context, one entry per call site.
+ *
+ *  The context is what makes the launch reportable: the choke point records the
+ *  preflight from it, so a call site that omits one is a managed launch the
+ *  Accounts panel will never hear about -- which is the shape MAJOR 9 found,
+ *  four of five paths silently unreported.
+ *
+ *  The rule is that the call's arguments NAME a launch (`launchId`), not that it
+ *  passes three of them. Counting was the first shape, and it was wrong in a way
+ *  worth recording rather than quietly correcting: `withProfileHome({
+ *  ...process.env } as Record<string, string>, home)` has THREE top-level
+ *  commas, because the one inside the generic sits in no bracket the scanner
+ *  tracks -- so a real uncontexted call site counted as compliant, and the
+ *  mutant that removed a context survived. Looking for the field is simpler and
+ *  exact, and it fails CLOSED: a call passing a prebuilt context variable is
+ *  REPORTED rather than missed, and the fix is to update this guard on purpose.
+ *
+ *  Pure, so the self-test below can feed it synthetic call sites. */
+/** Every `withProfileHome(...)` CALL in production source whose context does not
+ *  STATE whether the launch is a probe.
+ *
+ *  The first guard over this was an enumeration: two files that had to match
+ *  `probe: true` and three that had to not. That asserts today's classification
+ *  and calls itself "what keeps this true as call sites are added", which it is
+ *  not -- a SIXTH file passing a `launchId` and no `probe` satisfies both it and
+ *  the context guard, and silently rejoins the ring the user's real session is
+ *  read from (adversarial round 4). Requiring the field to be NAMED scales,
+ *  because it is a property of the call rather than of the file list.
+ *
+ *  `probe` stays optional on `ManagedLaunchContext` so a test may omit it; this
+ *  guard is what makes it mandatory in production, where omitting it is a
+ *  decision nobody took. */
+export function withProfileHomeCallsWithoutProbeDecision(
+  files: ReadonlyArray<{ path: string; text: string }>,
+): string[] {
+  return withProfileHomeCallSites(files).filter((c) => !/\bprobe\s*:/.test(c.args)).map((c) => c.where)
+}
+
+/** Every `withProfileHome(...)` call site in production source, with the text of
+ *  its arguments. One scanner, because both guards below ask a question about
+ *  the SAME set of calls and a second copy of the alias resolution is a second
+ *  thing to keep correct. */
+export function withProfileHomeCallSites(
+  files: ReadonlyArray<{ path: string; text: string }>,
+): Array<{ where: string; args: string }> {
+  const out: Array<{ where: string; args: string }> = []
+  // A RENAMED import is still a call to the choke point. Matching only the
+  // literal `withProfileHome(` meant `import { withProfileHome as wph }`
+  // followed by `wph(base, home)` was invisible (adversarial review, MINOR).
+  //
+  // Collected across ALL files in ONE pass, before any file is scanned. Doing
+  // it per file meant a barrel that re-exports the alias (`export {
+  // withProfileHome as wph } from ...`) taught the guard nothing about the file
+  // that then imports `wph` -- and this repo does use barrels for exactly that
+  // kind of re-export (adversarial re-attack, MINOR).
+  // Import/export renames, and PLAIN re-binding. The first version collected
+  // only `withProfileHome as X`, which is import syntax -- so `const fn =
+  // withProfileHome; fn(base, home)` used no import rename at all and was
+  // invisible, as was `{ fn: withProfileHome }` followed by `helpers.fn(...)`
+  // (adversarial round 4). Both are ordinary JavaScript, not obfuscation.
+  //
+  // Fixed-point, because a rebinding can be renamed again (`const a =
+  // withProfileHome; const b = a`). Bounded by the number of names found, which
+  // only ever grows, so it terminates.
+  const names = new Set(['withProfileHome'])
+  for (const f of files) {
+    for (const a of f.text.matchAll(/\bwithProfileHome\s+as\s+([A-Za-z_$][\w$]*)/g)) names.add(a[1])
+  }
+  // COMMENTS ARE NOT CODE, and here that is load-bearing rather than tidy: this
+  // file's own neighbour documents the contract with the line
+  //   *  - PATH: withProfileHome APPENDS <home>/.local/bin ...
+  // which reads as `PATH: withProfileHome` and seeded `PATH` as an alias. The
+  // fixed point then snowballed through prose until a one-letter identifier got
+  // in and every call in the main process was an offender.
+  const code = files.map((f) => ({
+    path: f.path,
+    text: f.text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1'),
+  }))
+  for (let grew = true; grew; ) {
+    grew = false
+    const known = [...names].join('|')
+    // `const X = <known>` or `X: <known>` -- a REFERENCE, so it is followed by a
+    // clean terminator and never by `(`. The terminator is what keeps prose out:
+    // `PATH: withProfileHome APPENDS ...` continues into a word and is not a
+    // rebinding.
+    const TERM = '(?=\\s*(?:[;,)}\\]]|$))'
+    const REBIND = new RegExp(
+      `(?:\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:${known})\\b${TERM}` +
+        `|\\b([A-Za-z_$][\\w$]*)\\s*:\\s*(?:${known})\\b${TERM})`,
+      'gm',
+    )
+    for (const f of code) {
+      for (const m of f.text.matchAll(REBIND)) {
+        const alias = m[1] ?? m[2]
+        if (alias && !names.has(alias)) {
+          names.add(alias)
+          grew = true
+        }
+      }
+    }
+  }
+  for (const f of files) {
+    const re = new RegExp(`\\b(${[...names].join('|')})\\(`, 'g')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(f.text)) !== null) {
+      // The declaration is not a call. (The re-export carries no `(` at all.)
+      if (/function\s+$/.test(f.text.slice(Math.max(0, m.index - 24), m.index))) continue
+      const args = callArgumentText(f.text, m.index + m[0].length - 1)
+      // An unbalanced call is reported as having NO arguments, so it fails both
+      // guards rather than passing either -- fail closed, as before.
+      out.push({ where: `${f.path}:${f.text.slice(0, m.index).split(/\r?\n/).length}`, args: args ?? '' })
+    }
+  }
+  return out
+}
+
+export function withProfileHomeCallsWithoutContext(
+  files: ReadonlyArray<{ path: string; text: string }>,
+): string[] {
+  return withProfileHomeCallSites(files).filter((c) => !/\blaunchId\b/.test(c.args)).map((c) => c.where)
+}
+
+/** Every production `.ts`/`.tsx` file, path-relative and slash-normalised, for
+ *  the source guards below. */
+function productionSourceFiles(): Array<{ path: string; text: string }> {
+  const src = resolve(__dirname, '..', '..', 'src')
+  const walk = (dir: string, out: string[] = []): string[] => {
+    for (const name of fs.readdirSync(dir)) {
+      const p = path.join(dir, name)
+      if (fs.statSync(p).isDirectory()) walk(p, out)
+      else if (/\.tsx?$/.test(name)) out.push(p)
+    }
+    return out
+  }
+  return walk(src).map((abs) => ({
+    path: path.relative(path.join(src, '..'), abs).replace(/\\/g, '/'),
+    text: fs.readFileSync(abs, 'utf8'),
+  }))
+}
+
+/** The text BETWEEN the parentheses of the call whose `(` is at `open`, or null
+ *  if they do not balance. Depth-aware over (), [] and {}, and string/template
+ *  aware, so the closing paren of a nested call or one inside `')'` does not end
+ *  the argument list early. */
+function callArgumentText(text: string, open: number): string | null {
+  let depth = 0
+  let quote: string | null = null
+  for (let i = open; i < text.length; i += 1) {
+    const c = text[i]
+    if (quote) {
+      if (c === '\\') { i += 1; continue }
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue }
+    if (c === '(' || c === '[' || c === '{') { depth += 1; continue }
+    if (c === ')' || c === ']' || c === '}') {
+      depth -= 1
+      if (depth === 0) return text.slice(open + 1, i)
+    }
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +471,18 @@ describe('package registration validates the host controls', () => {
   it('accepts an EMPTY declaration -- "this provider has none" is a decision', () => {
     expect(packageRegistrationProblem(createCodexPackage())).toBeNull()
     expect(createCodexPackage().hostManagedEnv).toEqual({})
+    // ...and that provider declares no managed-launch hardening either, which
+    // is what makes the empty set coherent rather than a hole.
+    expect(createCodexPackage().managedLaunch).toBeUndefined()
+  })
+
+  it('refuses an EMPTY declaration on a package that DOES declare managed-launch hardening', () => {
+    // The contradiction the assertion in withProfileHome catches at launch
+    // time, refused one stage earlier so it never reaches a launch at all. Every
+    // other host-control check iterates the declaration, so an empty one passes
+    // all of them vacuously (adversarial review, MINOR 7).
+    expect(packageRegistrationProblem({ ...base(), hostManagedEnv: {} }))
+      .toMatch(/must declare at least one hostManagedEnv control/)
   })
 
   it('refuses a key that is both a host control and an owned launch variable', () => {
@@ -179,6 +500,14 @@ describe('package registration validates the host controls', () => {
       .toMatch(/minimumCliVersion must be declared/)
     expect(packageRegistrationProblem({ ...base(), managedLaunch: { minimumCliVersion: '1.0.0' } as never }))
       .toMatch(/sanitizeManagedSettings\(\) must be a function/)
+    // The third operation, added with the project scan, was missing from this
+    // loop: a package without it registered cleanly and threw inside the scan's
+    // per-file catch, so the scan silently returned nothing (code-quality
+    // review, MINOR).
+    const { authoritySettingsKeys, ...withoutScan } = base().managedLaunch!
+    void authoritySettingsKeys
+    expect(packageRegistrationProblem({ ...base(), managedLaunch: withoutScan as never }))
+      .toMatch(/authoritySettingsKeys\(\) must be a function/)
   })
 
   it('the shipped Claude package declares the proven control and the verified floor', () => {
@@ -227,15 +556,85 @@ describe('package registration validates the host controls', () => {
 // Layer 1: the derived authority list.
 // ---------------------------------------------------------------------------
 describe('the ambient authority list', () => {
-  it('covers every class of authority the CLI reads from the environment', () => {
+  it('covers every class the manifest can classify a name into', () => {
     const kinds = new Set(CLAUDE_AUTHORITY_VARIABLES.map((v) => v.kind))
-    expect([...kinds].sort()).toEqual(['config-root', 'credential', 'federation', 'host-hook', 'provider-switch', 'routing'])
+    // The manifest is the extracted INVENTORY, so it also carries names that are
+    // deliberately preserved. Kind names say which side of D18 each falls on.
+    expect([...kinds].sort()).toEqual([
+      'account-pin', 'child-helper-channel', 'claude-credential', 'claude-endpoint',
+      'claude-realm-root', 'cli-set-child-variable', 'dev-tool-credential', 'host-hook',
+      'model-selection', 'non-redirecting-endpoint', 'non-redirecting-exec-path',
+      'non-redirecting-identifier', 'non-redirecting-operator-switch', 'non-redirecting-secret',
+      'non-redirecting-sink', 'non-redirecting-subcommand-credential', 'operational', 'posix-home-selector', 'provider-switch', 'runtime', 'shared-sdk-config',
+      'superseded-config-root', 'transport',
+    ])
   })
 
-  it('classifies every entry by where its authority claim comes from', () => {
+  it('removes exactly the kinds that can independently redirect the account (D18)', () => {
+    // D3 is the whole test: a kind is REMOVED only if a value of that kind can
+    // override the selected account, credential, provider or endpoint.
+    // `child-helper-channel` qualifies because the CLI spreads the ambient
+    // environment into a credential-minting helper CONDITIONALLY, so an
+    // inherited value reaches it. The `non-redirecting-*` kinds exist because
+    // the first pass over the widened census stripped on resemblance rather
+    // than on that test, and D3 preserves the developer's environment
+    // (adversarial round 4, owner requirement 1).
+    const removed = [
+      'claude-credential', 'account-pin', 'provider-switch', 'claude-endpoint',
+      'claude-realm-root', 'host-hook', 'child-helper-channel',
+    ]
+    const preserved = [
+      'dev-tool-credential', 'shared-sdk-config', 'transport', 'runtime',
+      'model-selection', 'operational', 'cli-set-child-variable',
+      'non-redirecting-secret', 'non-redirecting-identifier', 'non-redirecting-sink',
+      'non-redirecting-endpoint', 'non-redirecting-exec-path',
+      'non-redirecting-subcommand-credential', 'non-redirecting-operator-switch',
+    ]
+    // ONE kind is split across the two axes, and deliberately:
+    // `superseded-config-root` (APPDATA, XDG_CONFIG_HOME) is stripped from a
+    // settings `env` block -- a settings file has no business introducing a
+    // config root -- and KEPT from the ambient environment, because that is
+    // where gh, npm and git read the developer's own configuration. It is safe
+    // to keep only because ANTHROPIC_CONFIG_DIR outranks it and the patch owns
+    // and sets that (owner requirement 4).
     for (const v of CLAUDE_AUTHORITY_VARIABLES) {
-      expect(['official-doc', 'pinned-binary', 'both'], v.name).toContain(v.source)
+      if (v.kind === 'superseded-config-root' || v.kind === 'posix-home-selector') {
+        expect(v.settingsEnv, v.name).toBe('strip')
+        expect(v.ambient, v.name).toBe('keep')
+      } else if (removed.includes(v.kind)) {
+        expect(v.settingsEnv, v.name).toBe('strip')
+        // USERPROFILE is 'replace' -- set deliberately, not merely removed.
+        expect(['strip', 'replace'], v.name).toContain(v.ambient)
+      } else {
+        expect(preserved, v.name).toContain(v.kind)
+        expect(v.settingsEnv, v.name).toBe('keep')
+        expect(v.ambient, v.name).toBe('keep')
+      }
     }
+  })
+
+  it('gives every entry a recorded reason, so each disposition is a decision', () => {
+    // A family-ruled entry's reason is the RULE'S ID, and the rule's prose is
+    // written once in provenance -- repeating 300 characters of it for each of
+    // a bundled SDK's credential names would triple the manifest without adding
+    // a word. So the assertion is that a reason RESOLVES, not that it is long:
+    // either a sentence of its own, or an id the manifest itself explains.
+    const families = new Set(claudeAuthorityFamilyRules().map((r) => r.id))
+    for (const v of CLAUDE_AUTHORITY_VARIABLES) {
+      if (families.has(v.reason)) continue
+      expect(v.reason.length, v.name).toBeGreaterThan(20)
+    }
+  })
+
+  it('never settles a CLAUDE or ANTHROPIC name with a family rule', () => {
+    // The names that decide which account a session runs as are exactly the
+    // ones a pattern must not settle. Each carries a ruling of its own, and the
+    // manifest validator refuses a manifest where one does not.
+    const families = new Set(claudeAuthorityFamilyRules().map((r) => r.id))
+    const byPattern = CLAUDE_AUTHORITY_VARIABLES
+      .filter((v) => /^(CLAUDE|ANTHROPIC)/.test(v.name) && families.has(v.reason))
+      .map((v) => v.name)
+    expect(byPattern, 'these were ruled by a pattern instead of by name').toEqual([])
   })
 
   it('keeps the names the owner called out by name', () => {
@@ -258,9 +657,15 @@ describe('the ambient authority list', () => {
     const poisoned: Record<string, string> = { PATH: '/x', HARMLESS: 'keep-me' }
     for (const name of CLAUDE_AUTHORITY_ENV_VARIABLES) poisoned[name.toLowerCase()] = 'poison'
     const env = realmEnvForProvider('claude', poisoned, { set: { USERPROFILE: '/home/a' } })
+    // The host controls are the ONE exception: they are re-applied last, by
+    // design, and 'host-managed controls are applied last and cannot be
+    // overwritten' covers them. Everything else must be gone.
+    const hostManaged = new Set(Object.keys(CLAUDE_HOST_MANAGED_ENV).map((k) => k.toLowerCase()))
     for (const name of CLAUDE_AUTHORITY_ENV_VARIABLES) {
+      if (hostManaged.has(name.toLowerCase())) continue
       expect(Object.keys(env).some((k) => k.toLowerCase() === name.toLowerCase()), name).toBe(false)
     }
+    for (const [k, v] of Object.entries(CLAUDE_HOST_MANAGED_ENV)) expect(env[k]).toBe(v)
     expect(env.HARMLESS).toBe('keep-me')
     expect(env.PATH).toBe('/x')
     _resetProviderRegistryForTest()
@@ -279,10 +684,10 @@ describe('sanitising the app-owned settings copy', () => {
 
   it('removes every command/credential helper key, not only the proven one', () => {
     const input: Record<string, unknown> = {}
-    for (const k of CLAUDE_COMMAND_HELPER_SETTINGS_KEYS) input[k] = 'run-something'
+    for (const k of CLAUDE_REMOVED_SETTINGS_KEYS) input[k] = 'run-something'
     const r = sanitizeClaudeManagedSettings(JSON.stringify(input))
     expect(JSON.parse(r.text!)).toEqual({})
-    expect([...r.removed].sort()).toEqual([...CLAUDE_COMMAND_HELPER_SETTINGS_KEYS].sort())
+    expect([...r.removed].sort()).toEqual([...CLAUDE_REMOVED_SETTINGS_KEYS].sort())
   })
 
   it('removes ONLY the authority entries from env, and keeps the harmless ones', () => {
@@ -316,6 +721,36 @@ describe('sanitising the app-owned settings copy', () => {
     expect(out.statusLine).toEqual(settings.statusLine)
     expect(out.env).toEqual({ EDITOR: 'vim' })
     expect(out.apiKeyHelper).toBeUndefined()
+  })
+
+  it('REFUSES rather than throwing when the copy cannot be serialised', () => {
+    // The parse was guarded and the stringify was not, one line apart. A
+    // pretty-printed stringify is O(depth^2) in output size, so a deeply nested
+    // settings file inside any byte cap throws `RangeError: Invalid string
+    // length` -- measured on this machine at about 136 KB of input, after 606 ms
+    // of blocked main thread. That is not a parse error, nothing between here
+    // and the spawn caught it, and every caller of the copy swallows a throw
+    // into one warn line, so the profile home build aborted half-done and the
+    // session silently lost its mirrored git/ssh/npm config (adversarial
+    // round 4).
+    //
+    // The throw is INJECTED rather than provoked: provoking it really costs
+    // ~500 MB of RSS and most of a second, and what needs proving here is that
+    // the catch turns a throw into a refusal. That real inputs can reach it is
+    // what the byte cap in writeSanitisedSettingsCopy is for.
+    const spy = vi.spyOn(JSON, 'stringify').mockImplementation(() => {
+      throw new RangeError('Invalid string length')
+    })
+    try {
+      const r = sanitizeClaudeManagedSettings('{"model":"opus"}')
+      expect(r.text).toBeNull()
+      expect(r.refused).toMatch(/nested too deeply/)
+      expect(r.removed).toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
+    // ...and the guard does not swallow the ordinary path.
+    expect(sanitizeClaudeManagedSettings('{"model":"opus"}').text).toContain('"model": "opus"')
   })
 
   it('leaves an empty env block in place rather than deleting a key the user wrote', () => {
@@ -378,6 +813,22 @@ describe('sanitising the app-owned settings copy', () => {
     expect(r.refused).toMatch(/not registered/)
   })
 
+  it('the KEY LISTING wrapper says "nobody to ask" rather than "nothing found"', () => {
+    // The sibling above separates "registered, no sanitiser" from "not
+    // registered". The key listing collapsed both into an empty array, which
+    // the project scan reads as "this project carries no authority settings" --
+    // an answer the data does not support (adversarial re-attack, MINOR).
+    _resetProviderRegistryForTest()
+    expect(authoritySettingsKeysFor('claude', JSON.stringify({ apiKeyHelper: 'evil' }))).toBeNull()
+    registerProviderPackage(createCodexPackage())
+    expect(authoritySettingsKeysFor('codex', JSON.stringify({ apiKeyHelper: 'evil' })), 'no managedLaunch is also nobody to ask').toBeNull()
+    _resetProviderRegistryForTest()
+    registerProviderPackage(createClaudePackage())
+    expect(authoritySettingsKeysFor('claude', JSON.stringify({ apiKeyHelper: 'evil' }))).toEqual(['apiKeyHelper'])
+    expect(authoritySettingsKeysFor('claude', JSON.stringify({ model: 'opus' })), 'a clean file is an EMPTY answer, not a null one').toEqual([])
+    _resetProviderRegistryForTest()
+  })
+
   it('a registered provider with no sanitiser passes text through unchanged', () => {
     _resetProviderRegistryForTest()
     registerProviderPackage(createCodexPackage())
@@ -425,6 +876,135 @@ describe('the profile settings copy on disk', () => {
     expect(fs.readFileSync(sharedSettings(), 'utf8')).toBe(source)
   })
 
+  it('REFUSES a shared settings.json over the size cap instead of reading it', async () => {
+    // This runs SYNCHRONOUSLY on every spawn, from all five launch paths plus
+    // the boot-time junction repair, so it blocks the Electron main thread
+    // before the PTY exists. The project-settings scan was capped for exactly
+    // this reason and this path was not: measured at 128 KB nested 4000 deep it
+    // cost 734 ms of blocked main thread and +533 MB RSS per spawn, and past
+    // ~136 KB it threw (adversarial round 4).
+    const { lastSettingsSanitiseFor } = await import('../../src/main/managed-launch-state')
+    const big = { model: 'opus', pad: 'x'.repeat(200 * 1024) }
+    fs.writeFileSync(sharedSettings(), JSON.stringify(big))
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+
+    expect(fs.existsSync(copyFor(p.id))).toBe(false)
+    const record = lastSettingsSanitiseFor(profiles.getProfileConfigDir(p.id))
+    expect(record?.refused).toMatch(/larger than 128 KB/)
+    expect(record?.removed).toEqual([])
+    // A file UNDER the cap is still copied, so the cap is a bound and not an
+    // off switch.
+    fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus', apiKeyHelper: 'curl evil' }))
+    profiles.resyncProfileSettings(p.id)
+    expect(JSON.parse(fs.readFileSync(copyFor(p.id), 'utf8'))).toEqual({ model: 'opus' })
+  })
+
+  it('fails VISIBLY on oversized or malformed settings, and never touches the source', async () => {
+    // Three properties, asserted together because each is worthless without the
+    // others (owner requirement): the refusal is RECORDED, it surfaces as a
+    // BLOCKED finding rather than an info line nobody reads, and the user's own
+    // file is byte-for-byte what they wrote on every refusal path.
+    const { lastSettingsSanitiseFor } = await import('../../src/main/managed-launch-state')
+    const p = profiles.createProfile('P')
+    const home = profiles.getProfileConfigDir(p.id)
+    const cases: Array<{ name: string; body: string; refused: RegExp }> = [
+      { name: 'oversized', body: JSON.stringify({ pad: 'x'.repeat(200 * 1024) }), refused: /larger than 128 KB/ },
+      { name: 'not JSON', body: '{ "model": "opus", ', refused: /not valid JSON/ },
+      { name: 'JSON but not an object', body: '[1, 2, 3]', refused: /not a JSON object/ },
+      { name: 'JSON null', body: 'null', refused: /not a JSON object/ },
+    ]
+    for (const c of cases) {
+      // A good copy first, so a refusal has something STALE to leave behind.
+      fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus' }))
+      profiles.setupProfileLinks(p.id)
+      expect(fs.existsSync(copyFor(p.id)), `${c.name}: precondition`).toBe(true)
+
+      fs.writeFileSync(sharedSettings(), c.body)
+      const before = fs.readFileSync(sharedSettings())
+      profiles.setupProfileLinks(p.id)
+
+      // 1. RECORDED, with a reason the user can act on.
+      const record = lastSettingsSanitiseFor(home)
+      expect(record?.refused, c.name).toMatch(c.refused)
+      // 2. VISIBLE: `blocked`, which is what the Accounts panel renders as a
+      //    warning. An `info` finding sits collapsed under routine activity.
+      const preflight = claudeManagedLaunchPreflight({
+        env: { [HOST_KEY]: '1' },
+        cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
+        sanitizedSettings: record!,
+      })
+      const finding = preflight.findings.find((f) => f.id === 'settings-copy-refused')
+      expect(finding?.severity, c.name).toBe('blocked')
+      expect(preflight.ok, c.name).toBe(false)
+      // 3. The stale copy is GONE, so the old settings do not keep applying in
+      //    silence while the panel says they were refused.
+      expect(fs.existsSync(copyFor(p.id)), `${c.name}: stale copy left behind`).toBe(false)
+      // 4. The SOURCE is untouched -- same bytes, not merely the same parse.
+      expect(fs.readFileSync(sharedSettings()).equals(before), `${c.name}: source modified`).toBe(true)
+    }
+  })
+
+  it('drops the account copy when the shared settings file is DELETED', () => {
+    // Every refusal path removed the copy; "the source is gone" did not, so a
+    // user who deleted their shared settings.json kept the last copy applying to
+    // the account indefinitely while the panel reported nothing to sanitise
+    // (adversarial round 5).
+    fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus' }))
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+    expect(fs.existsSync(copyFor(p.id))).toBe(true)
+    fs.rmSync(sharedSettings())
+    profiles.setupProfileLinks(p.id)
+    expect(fs.existsSync(copyFor(p.id))).toBe(false)
+  })
+
+  it('keeps the realm stores out of reach of the dot-entry mirror', () => {
+    // The mirror links every dot-entry of the real home into the profile home.
+    // A realm store placed under a mirrored name -- `.config` was the first
+    // choice -- is therefore the developer's REAL directory, shared by every
+    // profile, and the isolation is a no-op (adversarial round 5, BLOCKER,
+    // proven by execution). `.claude` is the one directory the mirror excludes.
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+    const home = profiles.getProfileConfigDir(p.id)
+    expect(fs.lstatSync(path.join(home, '.claude')).isSymbolicLink(), '.claude is a link, so nothing under it is private').toBe(false)
+    for (const root of [profiles.profileRealmConfigRoot(home), profiles.profileSecureStorageRoot(home)]) {
+      if (!root) continue // macOS: not redirected, by design
+      expect(fs.existsSync(root), root).toBe(true)
+      // Resolves INSIDE the profile home -- not through a link to anywhere else.
+      expect(fs.realpathSync.native(root).toLowerCase().startsWith(fs.realpathSync.native(home).toLowerCase()), root).toBe(true)
+    }
+  })
+
+  it('reports NOT-EVALUATED, never the previous launch verdict, when a build aborts early', async () => {
+    // The record was per-process and never invalidated, so `'not-evaluated'`
+    // only ever fired for a home's FIRST launch. Any later launch that threw
+    // before the settings block reused the earlier verdict verbatim -- and if
+    // that verdict was clean, the Accounts panel showed a clean isolation
+    // report for a launch that had checked nothing (adversarial round 4).
+    const { lastSettingsSanitiseFor } = await import('../../src/main/managed-launch-state')
+    fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus' }))
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+    const home = profiles.getProfileConfigDir(p.id)
+    // A clean verdict is on the record.
+    expect(lastSettingsSanitiseFor(home)).toEqual({ removed: [], refused: undefined })
+
+    // Now make the NEXT build throw before it reaches the settings block, the
+    // way an orphaned real `.claude/memory` does: ensureLink ends at an
+    // unguarded symlinkSync and the orphan recovery covers only `projects`.
+    const orphan = path.join(home, '.claude', 'memory')
+    try { fs.rmSync(orphan, { recursive: true, force: true }) } catch { /* not a dir */ }
+    fs.mkdirSync(orphan, { recursive: true })
+    fs.writeFileSync(path.join(orphan, 'MEMORY.md'), '# not empty')
+    try { profiles.setupProfileLinks(p.id) } catch { /* callers swallow it, and so does this */ }
+
+    // The stale CLEAN verdict must be GONE, so the preflight reports
+    // 'not-evaluated' rather than inheriting it.
+    expect(lastSettingsSanitiseFor(home)).toBeNull()
+  })
+
   it('re-sanitises on resync, so an edit to the shared file cannot slip one in', () => {
     fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus' }))
     const p = profiles.createProfile('P')
@@ -462,6 +1042,131 @@ describe('the profile settings copy on disk', () => {
     expect(profiles.lastSettingsSanitiseFor(profiles.getProfileConfigDir(p.id))?.refused).toMatch(/not valid JSON/)
   })
 
+  it('refuses to write when the account config dir has been redirected OUT of its home', () => {
+    // A `.claude` junction pointing somewhere else sends this account's copy
+    // into a directory the app did not resolve -- another profile's realm, for
+    // instance. The self-reference guard only catches the destination landing
+    // back on the SOURCE; this catches it landing anywhere outside the account
+    // home (adversarial review, MINOR). Same-OS-user, so it is not a privilege
+    // boundary (D17) -- but it is not something to do silently either.
+    fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus', apiKeyHelper: 'curl evil' }))
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+
+    const home = profiles.getProfileConfigDir(p.id)
+    const elsewhere = path.join(tmp, 'elsewhere')
+    fs.mkdirSync(elsewhere, { recursive: true })
+    fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true })
+    fs.symlinkSync(elsewhere, path.join(home, '.claude'), 'junction')
+
+    profiles.resyncProfileSettings(p.id)
+
+    expect(fs.existsSync(path.join(elsewhere, 'settings.json')), 'the copy was written outside the account home').toBe(false)
+    expect(profiles.lastSettingsSanitiseFor(home)?.refused).toMatch(/resolves outside its own home/)
+  })
+
+  it('refuses to REMOVE a stale copy through a redirected config dir, as it refuses to write one', () => {
+    // The source-absent branch deletes the app-written copy. It ran with none
+    // of the guards the write path has, so a `.claude` junction into another
+    // profile made it delete THAT account's copy (code-quality review, MINOR).
+    // Delete is the more destructive of the two; it is not the less guarded.
+    fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus' }))
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+    const home = profiles.getProfileConfigDir(p.id)
+    const elsewhere = path.join(tmp, 'elsewhere-victim')
+    fs.mkdirSync(elsewhere, { recursive: true })
+    fs.writeFileSync(path.join(elsewhere, 'settings.json'), '{"model":"the other account\'s copy"}')
+    fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true })
+    fs.symlinkSync(elsewhere, path.join(home, '.claude'), 'junction')
+    fs.rmSync(sharedSettings())
+
+    // The source-absent branch lives on the home build, which every launch
+    // path and the boot-time repair run.
+    profiles.setupProfileLinks(p.id)
+
+    expect(fs.existsSync(path.join(elsewhere, 'settings.json')), 'the other account\'s copy was deleted through the junction').toBe(true)
+    expect(profiles.lastSettingsSanitiseFor(home)?.refused).toMatch(/resolves outside its own home/)
+  })
+
+  it('records NOTHING TO COPY as a result, not as an unchecked copy', () => {
+    // A user with no shared settings.json is an ordinary, healthy install --
+    // this app deliberately stopped writing that file. With no record, every
+    // launch reported "this launch did not check the settings copy", which put
+    // a permanent notice on every account and told the user to do something
+    // that could not change it (adversarial re-attack, MAJOR).
+    expect(fs.existsSync(sharedSettings())).toBe(false)
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+
+    const record = profiles.lastSettingsSanitiseFor(profiles.getProfileConfigDir(p.id))
+    expect(record, 'the home was built, so there is a result to record').not.toBeNull()
+    expect(record!.removed).toEqual([])
+    expect(record!.refused).toBeUndefined()
+  })
+
+  it('refuses to write through a settings file that is itself a LINK', () => {
+    // Both path guards canonicalise through the PARENT and re-append the
+    // basename, because the leaf is usually a file about to be created. That
+    // leaves a leaf which ALREADY exists as a symlink, inside an ordinary
+    // `.claude`, resolving "inside" and "not self-referential" on its parent's
+    // strength alone. The write is a rename-over, which should replace the
+    // directory entry rather than follow the link -- but that is a property of
+    // the WRITE, argued for POSIX, and an adversarial pass could not verify it
+    // for a Windows symlink. So the leaf is checked rather than trusted to
+    // rename semantics (adversarial review, MAJOR-plausible).
+    fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus', apiKeyHelper: 'curl evil' }))
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+
+    const home = profiles.getProfileConfigDir(p.id)
+    const dest = copyFor(p.id)
+    const elsewhere = path.join(tmp, 'other-file.json')
+    const sentinel = JSON.stringify({ mine: true })
+    fs.writeFileSync(elsewhere, sentinel)
+    fs.rmSync(dest, { force: true })
+
+    // A FILE symlink is the shape that matters, and creating one needs a
+    // privilege Windows does not grant by default (no Developer Mode, no
+    // SeCreateSymbolicLinkPrivilege) -- which is exactly why the adversarial
+    // pass could not settle this one empirically. A DIRECTORY junction needs no
+    // privilege and `lstat` reports it as a link too, so it exercises the same
+    // branch on a machine that cannot make the first kind. Whichever is
+    // available, the assertion below is the same.
+    const elsewhereDir = path.join(tmp, 'other-dir')
+    fs.mkdirSync(elsewhereDir, { recursive: true })
+    let planted = false
+    for (const [target, type] of [[elsewhere, 'file'], [elsewhereDir, 'junction']] as const) {
+      try { fs.symlinkSync(target, dest, type); planted = true; break } catch { /* try the next kind */ }
+    }
+    expect(planted, 'neither a symlink nor a junction could be planted, so this test proves nothing').toBe(true)
+
+    profiles.resyncProfileSettings(p.id)
+
+    expect(fs.readFileSync(elsewhere, 'utf8'), 'the write followed the link').toBe(sentinel)
+    expect(profiles.lastSettingsSanitiseFor(home)?.refused).toMatch(/is a link/)
+  })
+
+  it('reports an UNREADABLE shared file by errno alone, never by its path', () => {
+    // The read-failure branch had no test at all (adversarial review, MINOR),
+    // and it is the one that carries a Node fs error -- whose message embeds
+    // the ABSOLUTE path, and therefore the OS username, into a string that now
+    // travels over IPC and onto the Accounts panel. A directory where the file
+    // should be produces a real EISDIR/EPERM rather than a stubbed throw.
+    fs.mkdirSync(sharedSettings())
+    const p = profiles.createProfile('P')
+    profiles.setupProfileLinks(p.id)
+
+    const home = profiles.getProfileConfigDir(p.id)
+    const refused = profiles.lastSettingsSanitiseFor(home)?.refused ?? ''
+    expect(refused).toMatch(/could not be read \([A-Z]+\)/)
+    expect(refused).not.toContain(tmp)
+    expect(refused).not.toContain(os.userInfo().username)
+    expect(refused).not.toContain(path.sep)
+    // Fail closed: no copy is left behind for the session to read.
+    expect(fs.existsSync(copyFor(p.id))).toBe(false)
+  })
+
   it('removes a STALE copy when a later shared edit becomes unsanitisable', () => {
     fs.writeFileSync(sharedSettings(), JSON.stringify({ model: 'opus' }))
     const p = profiles.createProfile('P')
@@ -472,6 +1177,83 @@ describe('the profile settings copy on disk', () => {
     profiles.resyncProfileSettings(p.id)
     expect(fs.existsSync(copyFor(p.id))).toBe(false)
   })
+
+  // -------------------------------------------------------------------------
+  // MAJOR 4 (adversarial review): DATA LOSS when source and destination are ONE
+  // file. `sharedRoot()` is os.homedir()-derived, os.homedir() reads USERPROFILE,
+  // and a CCC launched from INSIDE a CCC session inherits
+  // USERPROFILE=<profileDir> -- so the "shared" settings the sanitiser reads and
+  // the profile copy it writes resolve to the same path. Without the guard the
+  // sanitiser rewrites the user's real settings.json (valid JSON) or deletes it
+  // outright (malformed JSON). Both directions are asserted, because they run
+  // through DIFFERENT exit paths in the writer.
+  // -------------------------------------------------------------------------
+  /** Re-point the shared root INTO the profile home, the reachable collision. */
+  const collideSharedRootWith = (id: string): string => {
+    const claudeDir = path.join(profiles.getProfileConfigDir(id), '.claude')
+    fs.mkdirSync(claudeDir, { recursive: true })
+    profiles._setRootsForTest({ resourcesDir: path.join(tmp, 'resources'), sharedRoot: claudeDir })
+    // Guard the guard: if these ever stop being one file the test proves nothing.
+    expect(resolve(path.join(profiles.sharedRoot(), 'settings.json'))).toBe(resolve(copyFor(id)))
+    return path.join(claudeDir, 'settings.json')
+  }
+
+  it('does not REWRITE the real settings.json when the profile home resolves to the shared root', () => {
+    const p = profiles.createProfile('P')
+    const real = collideSharedRootWith(p.id)
+    const source = JSON.stringify(
+      { model: 'opus', apiKeyHelper: 'curl evil', env: { ANTHROPIC_API_KEY: 'sk-poison', EDITOR: 'vim' } },
+      null,
+      2,
+    )
+    fs.writeFileSync(real, source)
+
+    profiles.resyncProfileSettings(p.id)
+
+    // Byte-for-byte what the user wrote: their own helper and env authority
+    // entries are still there. Stripping them HERE is data loss, not hardening.
+    expect(fs.existsSync(real)).toBe(true)
+    expect(fs.readFileSync(real, 'utf8')).toBe(source)
+  })
+
+  it('does not DELETE the real settings.json when it is malformed and resolves to the shared root', () => {
+    const p = profiles.createProfile('P')
+    const real = collideSharedRootWith(p.id)
+    const source = '{ not json'
+    fs.writeFileSync(real, source)
+
+    profiles.resyncProfileSettings(p.id)
+
+    // The refusal path's fs.rmSync would have removed the user's settings.json.
+    expect(fs.existsSync(real)).toBe(true)
+    expect(fs.readFileSync(real, 'utf8')).toBe(source)
+  })
+
+  it('records the self-reference refusal, so the skipped copy is not silent', () => {
+    const p = profiles.createProfile('P')
+    const real = collideSharedRootWith(p.id)
+    fs.writeFileSync(real, JSON.stringify({ model: 'opus' }))
+
+    profiles.resyncProfileSettings(p.id)
+
+    expect(profiles.lastSettingsSanitiseFor(profiles.getProfileConfigDir(p.id))?.refused)
+      .toMatch(/resolves to the shared settings location/)
+  })
+
+  it('survives the same collision through the production spawn path', () => {
+    // resyncProfileSettings is the direct entry point; setupProfileLinks is what
+    // actually runs on every spawn. Both go through writeSanitisedSettingsCopy,
+    // and this proves the guard sits in the shared writer rather than in one caller.
+    const p = profiles.createProfile('P')
+    const real = collideSharedRootWith(p.id)
+    const source = JSON.stringify({ model: 'opus', apiKeyHelper: 'curl evil' }, null, 2)
+    fs.writeFileSync(real, source)
+
+    profiles.setupProfileLinks(p.id)
+
+    expect(fs.existsSync(real)).toBe(true)
+    expect(fs.readFileSync(real, 'utf8')).toBe(source)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -479,10 +1261,13 @@ describe('the profile settings copy on disk', () => {
 // ---------------------------------------------------------------------------
 describe('the launch paths', () => {
   let withProfileHome: typeof import('../../src/main/account-profiles').withProfileHome
+  let profileRealmConfigRoot: typeof import('../../src/main/account-profiles').profileRealmConfigRoot
 
   beforeAll(async () => {
     composeProviders()
-    withProfileHome = (await import('../../src/main/account-profiles')).withProfileHome
+    const m = await import('../../src/main/account-profiles')
+    withProfileHome = m.withProfileHome
+    profileRealmConfigRoot = m.profileRealmConfigRoot
   })
 
   const HOME = path.resolve('/r/account-profiles/p1')
@@ -495,6 +1280,26 @@ describe('the launch paths', () => {
     const env = withProfileHome({ PATH: '/x', ANTHROPIC_API_KEY: 'sk-poison', ANTHROPIC_BASE_URL: 'http://evil', EDITOR: 'vim' }, HOME)
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(env.EDITOR).toBe('vim')
+  })
+
+  it('strips the Windows credential-store selector from a managed launch', () => {
+    // WP1.38. The store a launch reads its credential from is the same question
+    // as which account it runs as, so an inherited selector must not survive
+    // into a managed launch. It is the name neither CLI enumeration lists (see
+    // authority-manifest.test.ts), which is why it is asserted at the LAUNCH
+    // level too and not only in the manifest.
+    //
+    // Not gated on win32: the strip is by name and is platform-independent, so
+    // running it everywhere means a Linux or macOS CI run catches a regression
+    // in it rather than skipping past one.
+    const env = withProfileHome({
+      PATH: '/x',
+      CLAUDE_CODE_FORCE_WINDOWS_CREDMAN: '1',
+      claude_code_force_windows_credman: '1',   // Windows resolves both to one
+      EDITOR: 'vim',
+    }, HOME)
+    expect(Object.keys(env).filter((k) => /force_windows_credman/i.test(k))).toEqual([])
     expect(env.EDITOR).toBe('vim')
   })
 
@@ -521,6 +1326,566 @@ describe('the launch paths', () => {
 
   it('an inherited host flag of 0 is overwritten, not honoured', () => {
     expect(withProfileHome({ [HOST_KEY]: '0' }, HOME)[HOST_KEY]).toBe('1')
+  })
+
+  // -------------------------------------------------------------------------
+  // WP1.38 / adversarial review MAJOR 9: the report comes from the CHOKE POINT.
+  //
+  // `recordManagedLaunchPreflight` used to be called from pty-manager, which is
+  // ONE of the five paths through withProfileHome. A profile used only for
+  // cloud agents, headless runs or insights therefore produced no report at
+  // all -- and the Accounts panel, which renders nothing when there are no
+  // findings, said everything was fine because it had never been told anything.
+  // -------------------------------------------------------------------------
+  describe('the preflight report', () => {
+    let diag: typeof import('../../src/main/managed-launch-diagnostics')
+
+    beforeAll(async () => {
+      diag = await import('../../src/main/managed-launch-diagnostics')
+    })
+    beforeEach(() => { diag._resetManagedLaunchReportsForTest() })
+    afterEach(() => { diag._resetManagedLaunchReportsForTest() })
+
+    it('is recorded for the profile the launch home belongs to', () => {
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 'headless' })
+      const reports = diag.listManagedLaunchReports('p1')
+      expect(reports).toHaveLength(1)
+      expect(reports[0].sessionId).toBe('headless')
+      expect(reports[0].profileId).toBe('p1')
+    })
+
+    it('is recorded for EVERY launch id, not just a PTY session', () => {
+      for (const launchId of ['s-123', 'headless', 'insights', 'cloud-agent', 'auth-status']) {
+        withProfileHome({ PATH: '/x' }, HOME, { launchId })
+      }
+      expect(diag.listManagedLaunchReports('p1').map((r) => r.sessionId).sort())
+        .toEqual(['auth-status', 'cloud-agent', 'headless', 'insights', 's-123'])
+    })
+
+    it('composing an environment that is NOT a launch records nothing', () => {
+      // The context is what says "this is a launch". Without one there is no
+      // launch to attribute a report to, and inventing an id would put rows on
+      // the panel for something the user never started.
+      withProfileHome({ PATH: '/x' }, HOME)
+      expect(diag.listManagedLaunchReports('p1')).toEqual([])
+    })
+
+    it('a home outside the profiles root records nothing and still hardens', () => {
+      // No profile owns it, so there is no account to attribute a report to.
+      // The hardening is unconditional; only the diagnostic is skipped.
+      const env = withProfileHome({ PATH: '/x' }, path.resolve('/elsewhere/p1'), { launchId: 's-1' })
+      expect(env[HOST_KEY]).toBe('1')
+      expect(diag.listManagedLaunchReports('p1')).toEqual([])
+    })
+
+    /** The project scan is deliberately ASYNC and off the spawn path, so the
+     *  report it amends arrives after the launch returns -- after real file I/O,
+     *  which no amount of microtask draining brings forward. With a finding id,
+     *  polls for that amendment on the NEWEST report for as long as the
+     *  production deadline allows plus a margin -- a 400 ms poll against a
+     *  2000 ms deadline went red on a loaded machine for correct code
+     *  (code-quality review, MINOR). Without one, gives the scan a moment to
+     *  have decided NOT to amend. */
+    const settled = async (expectId: string | boolean = false) => {
+      const id = expectId === true ? 'repository-settings-suppressed' : expectId
+      const rounds = id ? 260 : 40
+      for (let i = 0; i < rounds; i += 1) {
+        await new Promise((r) => setTimeout(r, 10))
+        if (!id) continue
+        const latest = diag.listManagedLaunchReports('p1')[0]
+        if (latest?.preflight.findings.some((f) => f.id === id)) return
+      }
+    }
+
+    it('names the PROJECT settings the host control suppresses, without touching them', async () => {
+      // `repositorySettingsKeys` was a dead field: nothing populated it, so
+      // `repository-settings-suppressed` could never fire and a project that
+      // carried an apiKeyHelper was silently suppressed (MAJOR 9, second half).
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      try {
+        fs.mkdirSync(path.join(cwd, '.claude'))
+        const file = path.join(cwd, '.claude', 'settings.json')
+        const source = JSON.stringify({ apiKeyHelper: 'curl evil', model: 'opus' }, null, 2)
+        fs.writeFileSync(file, source)
+
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-2', cwd })
+        await settled(true)
+
+        const finding = diag.listManagedLaunchReports('p1')[0].preflight.findings
+          .find((f) => f.id === 'repository-settings-suppressed')
+        expect(finding, 'the project settings finding was not raised').toBeDefined()
+        expect(finding!.detail).toContain('apiKeyHelper')
+        expect(finding!.severity).toBe('info')   // reported, never blocking
+        // The repository's file is not the app's to change (D17).
+        expect(fs.readFileSync(file, 'utf8')).toBe(source)
+      } finally {
+        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('does NOT read the project directory on the launch path itself', async () => {
+      // The blocking failure this was moved for: `statSync`/`readFileSync` on a
+      // working directory that lives on an unreachable share froze the Electron
+      // main thread for the SMB timeout -- measured at 42 s, per file, per
+      // launch, with no attacker involved (adversarial review, BLOCKER). A
+      // `try/catch` does not catch a blocking syscall; the only fix is not to
+      // make the call there. This asserts the shape: the launch returns with no
+      // project finding, and the finding appears only once the scan settles.
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      try {
+        fs.mkdirSync(path.join(cwd, '.claude'))
+        fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: 'x' }))
+
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-sync', cwd })
+        // Synchronously after the launch: recorded, and nothing read yet.
+        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
+          .not.toContain('repository-settings-suppressed')
+
+        await settled(true)
+        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
+          .toContain('repository-settings-suppressed')
+      } finally {
+        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('refuses a project settings file that is over the size cap', async () => {
+      // The cap had no test at all, so nothing stopped it being raised or
+      // deleted (adversarial review, MAJOR). 128 KiB is already generous for a
+      // settings file; the point is that SOMETHING bounds what a repository can
+      // make this parse.
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      try {
+        fs.mkdirSync(path.join(cwd, '.claude'))
+        // Valid JSON, authority-bearing, and comfortably over the cap.
+        const padding = 'x'.repeat(200 * 1024)
+        fs.writeFileSync(
+          path.join(cwd, '.claude', 'settings.json'),
+          JSON.stringify({ apiKeyHelper: 'curl evil', note: padding }),
+        )
+
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-big', cwd })
+        await settled()
+
+        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
+          .not.toContain('repository-settings-suppressed')
+      } finally {
+        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('refuses a project settings path that is not a regular file', async () => {
+      // The portable half: a directory where the settings file should be. It
+      // must not crash and must not produce a finding. Note honestly that this
+      // does NOT discriminate the `isFile()` check on its own -- reading a
+      // directory throws anyway; the test below is the one that does.
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      try {
+        fs.mkdirSync(path.join(cwd, '.claude', 'settings.json'), { recursive: true })
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-dir', cwd })
+        await settled()
+        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
+          .not.toContain('repository-settings-suppressed')
+      } finally {
+        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it.skipIf(process.platform === 'win32')('returns rather than BLOCKING on a FIFO where the settings file should be', async () => {
+      // The discriminating case, and the reason the check is on the fstat'ed
+      // HANDLE rather than on `size` alone: `size` is 0 for a FIFO and for a
+      // character device, so a cap keyed on it passes and the READ is what
+      // blocks -- forever, with no writer (adversarial review, BLOCKER, same
+      // class as the network-path freeze). A directory cannot show this,
+      // because reading one throws.
+      //
+      // Windows has no mkfifo, so this runs on POSIX, where CI runs it. Stated
+      // plainly because Windows is this app's primary target: no
+      // Windows-reproducible non-regular-file HANG is known at a plain file
+      // path, so on win32 the `isFile()` half of that check is UNVERIFIED and a
+      // mutant removing it survives there. If such a shape is found, add it.
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-fifo-'))
+      try {
+        fs.mkdirSync(path.join(cwd, '.claude'))
+        execFileSync('mkfifo', [path.join(cwd, '.claude', 'settings.json')])
+
+        const scan = diag._projectAuthoritySettingsKeysForTest(cwd)
+        const timeout = new Promise((resolve) => setTimeout(() => resolve('BLOCKED'), 3000))
+        expect(await Promise.race([scan.then(() => 'RETURNED'), timeout]), 'the scan blocked on a FIFO').toBe('RETURNED')
+        expect(await scan).toEqual([])
+      } finally {
+        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    }, 10000)
+
+    it('collapses many SPELLINGS of one authority name to one reported key', async () => {
+      // The first of the two bounds. JSON keys are distinct and the `env` match
+      // is case-insensitive, so one authority name can appear hundreds of times
+      // in a file well inside the size cap. Reporting the CANONICAL name makes
+      // that one entry (adversarial review, MINOR).
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      try {
+        fs.mkdirSync(path.join(cwd, '.claude'))
+        const env: Record<string, string> = {}
+        for (let i = 0; i < 200; i += 1) {
+          env[i % 2 ? `anthropic_api_key${'_'.repeat(i)}` : `ANTHROPIC_API_KEY${'_'.repeat(i)}`] = 'x'
+        }
+        env.ANTHROPIC_API_KEY = 'x'
+        fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), JSON.stringify({ env }))
+
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-many', cwd })
+        await settled(true)
+
+        const finding = diag.listManagedLaunchReports('p1')[0].preflight.findings
+          .find((f) => f.id === 'repository-settings-suppressed')
+        expect(finding).toBeDefined()
+        expect(finding!.detail.length, 'the finding text is unbounded').toBeLessThan(2000)
+      } finally {
+        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('caps how many DISTINCT project keys reach the panel', async () => {
+      // The second bound, and the one canonicalisation does not provide: a file
+      // can carry many different authority names. The finding text crosses IPC
+      // and renders into a single list item, so the list is capped and the rest
+      // become a count.
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      try {
+        fs.mkdirSync(path.join(cwd, '.claude'))
+        const env: Record<string, string> = {}
+        for (const e of CLAUDE_AUTHORITY_VARIABLES.filter((v) => v.settingsEnv === 'strip').slice(0, 60)) env[e.name] = 'x'
+        expect(Object.keys(env).length, 'not enough distinct names to exceed the cap').toBeGreaterThan(40)
+        fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), JSON.stringify({ env }))
+
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-distinct', cwd })
+        await settled(true)
+
+        const finding = diag.listManagedLaunchReports('p1')[0].preflight.findings
+          .find((f) => f.id === 'repository-settings-suppressed')
+        expect(finding).toBeDefined()
+        expect(finding!.detail, 'the overflow is not reported as a count').toMatch(/and \d+ more/)
+        // 20 names plus the overflow line, not 60.
+        expect(finding!.detail.split(',').length).toBeLessThan(25)
+      } finally {
+        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('a project with no settings of its own raises no such finding', async () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      try {
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-3', cwd })
+        await settled()
+        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
+          .not.toContain('repository-settings-suppressed')
+      } finally {
+        try { fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('runs at most ONE project scan at a time, however many launches there are', async () => {
+      // The deadline bounds the PROMISE, not the syscall: `fs.promises.open`
+      // takes no AbortSignal, so a scan that gives up leaves the open running
+      // on the libuv threadpool until the OS gives up. Four of those starve the
+      // pool -- every `fs.promises` call and every `dns.lookup` in the main
+      // process stalls, measured at 21 s (adversarial re-attack, BLOCKER
+      // reopened). Single-flight is what caps the exposure at one thread.
+      const a = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-a-'))
+      const b = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-b-'))
+      try {
+        for (const dir of [a, b]) {
+          fs.mkdirSync(path.join(dir, '.claude'))
+          fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: 'x' }))
+        }
+        // Both launches in ONE tick: the second sees the first's scan
+        // outstanding, because the flag is taken before any await.
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-a', cwd: a })
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-b', cwd: b })
+        await settled()
+
+        const amended = diag.listManagedLaunchReports('p1')
+          .filter((r) => r.preflight.findings.some((f) => f.id === 'repository-settings-suppressed'))
+        expect(amended.map((r) => r.sessionId), 'more than one scan ran concurrently').toEqual(['s-a'])
+        // ...and the launch whose scan was SKIPPED says so on its own report --
+        // the newest one, which is the one the panel reads. Left silent, it read
+        // as "this project carries nothing" (code-quality review, MAJOR).
+        const skipped = diag.listManagedLaunchReports('p1').find((r) => r.sessionId === 's-b')!
+        const notScanned = skipped.preflight.findings.find((f) => f.id === 'project-settings-not-scanned')
+        expect(notScanned, 'the skipped scan left the report looking clean').toBeDefined()
+        expect(notScanned!.severity).toBe('info')
+        expect(notScanned!.detail).toMatch(/another project scan was still running/i)
+        expect(skipped.preflight.ok).toBe(true)
+      } finally {
+        for (const dir of [a, b]) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ } }
+      }
+    })
+
+    it('gives the thread BACK when a scan settles, so healthy scans never reach the ceiling', async () => {
+      // The other half of the ceiling. It counts scans started and not settled,
+      // so a settle that failed to decrement would disable the diagnostic after
+      // the second healthy launch of the session -- the ceiling turning an
+      // availability guard into a permanent off switch.
+      diag._resetProjectScanStateForTest()
+      const dirs: string[] = []
+      try {
+        // Well past MAX_OUTSTANDING_PROJECT_SCANS, strictly one after another.
+        for (let i = 0; i < 5; i += 1) {
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wp1-project-seq-${i}-`))
+          dirs.push(dir)
+          fs.mkdirSync(path.join(dir, '.claude'))
+          fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: 'x' }))
+          withProfileHome({ PATH: '/x' }, HOME, { launchId: `seq-${i}`, cwd: dir })
+          await settled(true)
+          const newest = diag.listManagedLaunchReports('p1').find((r) => r.sessionId === `seq-${i}`)
+          expect(newest?.preflight.findings.map((f) => f.id), `scan ${i} did not run`).toContain('repository-settings-suppressed')
+        }
+      } finally {
+        for (const dir of dirs) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ } }
+        diag._resetProjectScanStateForTest()
+      }
+    })
+
+    it('holds at most TWO filesystem threads, however long a wedged mount stays wedged', async () => {
+      // The watchdog re-opens the single-flight FLAG after a minute so one
+      // wedged mount does not disable the diagnostic for the life of the
+      // process. It cannot give the THREAD back -- `fs.promises.open` takes no
+      // AbortSignal -- so the first version stranded one more libuv thread per
+      // window, and four launches into one dead mapped drive, a minute apart,
+      // consumed the whole default pool for good: every `fs.promises` call and
+      // every DNS lookup in the main process then queued behind them
+      // (adversarial round 5, BLOCKER). The flag is not the bound; the count of
+      // scans STARTED AND NOT SETTLED is.
+      diag._resetProjectScanStateForTest()
+      vi.useFakeTimers()
+      // An open that never returns: the wedged mount.
+      const open = vi.spyOn(fs.promises, 'open').mockImplementation(() => new Promise(() => {}))
+      try {
+        const launch = (id: string) => withProfileHome({ PATH: '/x' }, HOME, { launchId: id, cwd: 'Z:/dead/project' })
+        launch('w-1')
+        await vi.advanceTimersByTimeAsync(0)
+        expect(open).toHaveBeenCalledTimes(1)
+
+        // Inside the first window the FLAG refuses the second launch.
+        launch('w-2')
+        await vi.advanceTimersByTimeAsync(0)
+        expect(open).toHaveBeenCalledTimes(1)
+        // ...INCLUDING after the two-second DEADLINE. The deadline abandons the
+        // await; it does not end the syscall, so the flag must outlive it.
+        // Releasing here is the original starvation bug -- a second scan two
+        // seconds into a blocked open, a third two seconds after that -- and
+        // the mutant that reintroduces it survived until this assertion existed,
+        // because every other test finishes inside the deadline.
+        await vi.advanceTimersByTimeAsync(2_500)
+        launch('w-after-deadline')
+        await vi.advanceTimersByTimeAsync(0)
+        expect(open, 'the flag was released at the DEADLINE, while the open still held its thread').toHaveBeenCalledTimes(1)
+
+        // The watchdog re-opens the flag; a second scan may start. Two threads.
+        await vi.advanceTimersByTimeAsync(60_000)
+        launch('w-3')
+        await vi.advanceTimersByTimeAsync(0)
+        expect(open).toHaveBeenCalledTimes(2)
+
+        // ...and that is the CEILING. However many more windows pass, and
+        // however many more launches arrive, no third thread is ever taken.
+        for (let i = 0; i < 5; i += 1) {
+          await vi.advanceTimersByTimeAsync(60_000)
+          launch(`w-more-${i}`)
+          await vi.advanceTimersByTimeAsync(0)
+        }
+        expect(open, 'a third scan started while two earlier ones still held threads').toHaveBeenCalledTimes(2)
+
+        // Each refused launch SAYS it was refused, with the reason that applied:
+        // the first wedged scan timed out on its own report, the flag refused
+        // the second, the ceiling refused the rest (code-quality review, MAJOR).
+        const reason = (id: string): string | undefined =>
+          diag.listManagedLaunchReports('p1').find((r) => r.sessionId === id)?.preflight.findings
+            .find((f) => f.id === 'project-settings-not-scanned')?.detail
+        expect(reason('w-1')).toMatch(/did not answer within two seconds/)
+        expect(reason('w-2')).toMatch(/another project scan was still running/i)
+        expect(reason('w-more-4')).toMatch(/never returned/)
+        expect(reason('w-more-4'), 'the ceiling is transient, not a switch').not.toMatch(/DISABLED/)
+      } finally {
+        open.mockRestore()
+        vi.useRealTimers()
+        diag._resetProjectScanStateForTest()
+      }
+    })
+
+    it('logs the ceiling once per EPISODE, not once per process', async () => {
+      // The flag that de-duplicated the ceiling warning was never cleared
+      // outside the test seam, so a genuinely new episode an hour later logged
+      // nothing (code-quality review, MINOR). It clears when a scan settles and
+      // the count drops back under the ceiling.
+      diag._resetProjectScanStateForTest()
+      vi.useFakeTimers()
+      // A scan opens two files in turn. The FIRST hangs until told to settle;
+      // the second is refused at once, so settling the first settles the scan.
+      const settle: (() => void)[] = []
+      const open = vi.spyOn(fs.promises, 'open').mockImplementation((p) =>
+        String(p).endsWith('settings.local.json')
+          ? Promise.reject(new Error('gone'))
+          : new Promise((_, reject) => { settle.push(() => reject(new Error('gone'))) }),
+      )
+      const scansStarted = () => open.mock.calls.filter((c) => !String(c[0]).endsWith('settings.local.json')).length
+      try {
+        const launch = (id: string) => withProfileHome({ PATH: '/x' }, HOME, { launchId: id, cwd: 'Z:/dead/project' })
+        // Two wedged scans, a watchdog window apart (the flag refuses inside a
+        // window; only the watchdog lets a second thread be taken).
+        launch('e-1'); await vi.advanceTimersByTimeAsync(60_000)
+        launch('e-2'); await vi.advanceTimersByTimeAsync(60_000)
+        expect(scansStarted()).toBe(2)
+        expect(diag._projectScanStateForTest().ceilingLogged).toBe(false)
+        launch('e-3'); await vi.advanceTimersByTimeAsync(0)
+        expect(diag._projectScanStateForTest()).toMatchObject({ outstanding: 2, ceilingLogged: true })
+        // A scan settles: the thread is back, the episode is over, and the
+        // de-duplication flag is cleared with it.
+        settle.shift()!(); await vi.advanceTimersByTimeAsync(0)
+        expect(diag._projectScanStateForTest(), 'the flag outlived the episode').toMatchObject({ outstanding: 1, ceilingLogged: false })
+        // ...a new scan takes the freed slot, and the NEXT ceiling hit is a
+        // new episode that logs again.
+        launch('e-5'); await vi.advanceTimersByTimeAsync(60_000)
+        expect(scansStarted()).toBe(3)
+        launch('e-6'); await vi.advanceTimersByTimeAsync(0)
+        expect(diag._projectScanStateForTest()).toMatchObject({ outstanding: 2, ceilingLogged: true })
+      } finally {
+        for (const s of settle) s()
+        open.mockRestore()
+        vi.useRealTimers()
+        diag._resetProjectScanStateForTest()
+      }
+    })
+
+    it('never scans a project directory on a NETWORK path', async () => {
+      // The measured freeze came from a UNC working directory, and it is the
+      // one shape recognisable from the string without a call that could itself
+      // block. Refused before any syscall.
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-unc', cwd: '\\\\10.255.255.1\\share\\proj' })
+      await settled('project-settings-not-scanned')
+      const unc = diag.listManagedLaunchReports('p1')[0].preflight.findings
+      expect(unc.map((f) => f.id)).not.toContain('repository-settings-suppressed')
+      // The refusal is on the REPORT. A project on a share is refused on every
+      // launch for ever, and a report that said nothing about it was
+      // indistinguishable from a project with no settings -- so a
+      // `.claude/settings.json` carrying `apiKeyHelper` there was suppressed
+      // with the panel silent about it, permanently (code-quality review, MAJOR).
+      const notScanned = unc.find((f) => f.id === 'project-settings-not-scanned')
+      expect(notScanned).toBeDefined()
+      expect(notScanned!.detail).toMatch(/network path/)
+      expect(notScanned!.detail, 'the finding must still say the control applies').toMatch(/still suppressed/)
+      // ...and a scan for a LOCAL directory still runs right afterwards, so the
+      // refusal did not leave the single-flight flag stuck.
+      const local = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
+      try {
+        fs.mkdirSync(path.join(local, '.claude'))
+        fs.writeFileSync(path.join(local, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: 'x' }))
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-local', cwd: local })
+        await settled(true)
+        expect(diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id))
+          .toContain('repository-settings-suppressed')
+      } finally {
+        try { fs.rmSync(local, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('a probe can never EVICT a real launch from the ring', () => {
+      // One shared ring meant the auth-status probe this app fires on every
+      // Accounts row mount pushed real launches out: sixteen panel opens on a
+      // three-account install and the panel fell back to a probe with no
+      // findings (adversarial re-attack, MAJOR).
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-real' })
+      for (let i = 0; i < 60; i += 1) {
+        withProfileHome({ PATH: '/x' }, HOME, { launchId: `auth-status-${i}`, probe: true })
+      }
+      const reports = diag.listManagedLaunchReports('p1')
+      expect(reports.find((r) => r.kind !== 'probe')?.sessionId, 'the launch was evicted by probes').toBe('s-real')
+      // ...and the probes are bounded too.
+      expect(reports.filter((r) => r.kind === 'probe').length).toBeLessThanOrEqual(20)
+    })
+
+    it('marks an app-started PROBE as such, so it cannot displace a real launch', () => {
+      // The Accounts panel triggers `auth status` from every account row's
+      // mount. That is a real managed launch and records a real report -- and
+      // reading "the newest report" then meant opening the panel replaced what
+      // the panel was about to show (adversarial review, MAJOR).
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-real' })
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 'auth-status', probe: true })
+      const reports = diag.listManagedLaunchReports('p1')
+      expect(reports[0].sessionId).toBe('auth-status')   // newest overall
+      expect(reports[0].kind).toBe('probe')
+      expect(reports.find((r) => r.kind !== 'probe')?.sessionId).toBe('s-real')
+    })
+
+    it('EVERY app-started path is marked a probe, not just the auth check', () => {
+      // `probe` reached one of the app-started paths and not the others, so a
+      // Sentinel background analysis (which goes through the headless runner)
+      // still displaced the user's session report -- and displaced it with one
+      // carrying a finding a real session would not produce (adversarial
+      // re-attack, MAJOR). The source guard below is what keeps this true as
+      // call sites are added.
+      const src = productionSourceFiles()
+      const byFile = (p: string) => src.find((f) => f.path === p)?.text ?? ''
+      for (const p of ['src/main/account-web/claude-cli-auth.ts', 'src/main/claude-headless.ts']) {
+        expect(byFile(p), `${p} starts a launch the user did not ask for`).toMatch(/probe:\s*true/)
+      }
+      // ...and the paths the user DOES start are not marked probes, or the
+      // panel would answer with a stale session.
+      for (const p of ['src/main/pty-manager.ts', 'src/main/insights-runner.ts', 'src/main/cloud-agent-manager.ts']) {
+        const call = /withProfileHome\([^;]*?\)/s.exec(byFile(p))?.[0] ?? ''
+        expect(call, `${p} should be a user-started launch`).not.toMatch(/probe:\s*true/)
+      }
+    })
+
+    it('says a launch did not evaluate the settings copy, instead of reporting it clean', () => {
+      // A headless or probe launch does not build the profile home, so there is
+      // no sanitise result for it. Reporting nothing read as "checked, all
+      // clear" -- a fail-OPEN diagnostic, worse than the silence it replaced
+      // (adversarial review, MAJOR).
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 'headless' })
+      const ids = diag.listManagedLaunchReports('p1')[0].preflight.findings.map((f) => f.id)
+      expect(ids).toContain('settings-copy-not-evaluated')
+      expect(ids).not.toContain('settings-copy-sanitised')
+    })
+
+    it('...including the ambient-strip record, which is diagnostic too', async () => {
+      // The guard has to start ABOVE the ambient record, not below it: that
+      // record is a diagnostic as well, and it calls the same registry that is
+      // wrapped a few lines earlier precisely because an uncomposed one throws.
+      // The comment claimed "the whole block is guarded" while the block began
+      // two lines late (adversarial review, MINOR).
+      const state = await import('../../src/main/managed-launch-state')
+      const spy = vi.spyOn(state, 'recordAmbientStrip').mockImplementation(() => {
+        throw new Error('synthetic diagnostic failure')
+      })
+      try {
+        const env = withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-ambient-throws' })
+        expect(env[HOST_KEY], 'the launch was refused by a diagnostic').toBe('1')
+      } finally {
+        spy.mockRestore()
+      }
+    })
+
+    it('a diagnostic that throws can never refuse a launch that is already hardened', async () => {
+      // T4, which had no test of its own: the guard in the choke point was
+      // redundant with the recorder's own catch, so removing it changed nothing
+      // and nothing would have noticed (adversarial review, MAJOR). Driven by
+      // making the derivation itself throw, which is INSIDE the choke point's
+      // guard and outside the recorder's.
+      const profileId = await import('../../src/main/profile-id')
+      const original = profileId.profileIdFromHome
+      const spy = vi.spyOn(profileId, 'profileIdFromHome').mockImplementation(() => {
+        throw new Error('synthetic diagnostic failure')
+      })
+      try {
+        const env = withProfileHome({ PATH: '/x' }, HOME, { launchId: 's-throws' })
+        expect(env[HOST_KEY], 'the launch was refused by a diagnostic').toBe('1')
+        expect(diag.listManagedLaunchReports('p1')).toEqual([])
+      } finally {
+        spy.mockRestore()
+        expect(profileId.profileIdFromHome).toBe(original)
+      }
+    })
   })
 
   it('an UNMANAGED launch (no profile home) is left completely alone', () => {
@@ -553,21 +1918,86 @@ describe('the launch paths', () => {
     // 2. It matches HOME as well as USERPROFILE (the POSIX sibling selects the
     //    same realm on Linux) and property assignment as well as object
     //    literals, so `env.HOME = profileDir` is not a way around it.
-    const src = resolve(__dirname, '..', '..', 'src')
-    const walk = (dir: string, out: string[] = []): string[] => {
-      for (const name of fs.readdirSync(dir)) {
-        const p = path.join(dir, name)
-        if (fs.statSync(p).isDirectory()) walk(p, out)
-        else if (/\.tsx?$/.test(name)) out.push(p)
-      }
-      return out
-    }
-    const files = walk(src).map((abs) => ({
-      path: path.relative(path.join(src, '..'), abs).replace(/\\/g, '/'),
-      text: fs.readFileSync(abs, 'utf8'),
-    }))
-    const offenders = profileHomeEnvOffenders(files)
+    // Scoped to the processes that can actually SPAWN something. The renderer
+    // cannot: it has no child_process, no PTY and no environment to hand one
+    // (the repo rule is that it never imports a Node module, and every such
+    // call goes over IPC). What it does have is user-facing text -- a "Home:"
+    // label, a `e.key === 'Home'` check -- which a case-insensitive scan reads
+    // as an environment name. Main, preload and shared are all still covered,
+    // and a launch composed in any of them is what this guard is about.
+    const offenders = profileHomeEnvOffenders(productionSourceFiles().filter((f) => !f.path.startsWith('src/renderer/')))
     expect(offenders, `these compose a profile-home env outside the managed-launch choke point:\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('...and every launch that DOES go through it says which launch it is', () => {
+    // The other half of the same rule. Passing through the choke point makes a
+    // launch hardened; passing a context makes it REPORTED, and four of the
+    // five paths were doing only the first (adversarial review, MAJOR 9).
+    const missing = withProfileHomeCallsWithoutContext(productionSourceFiles())
+    expect(missing, `these managed launches are composed without a launch context, so they are never reported:\n${missing.join('\n')}`).toEqual([])
+  })
+
+  it('...and every launch STATES whether it is a probe, so a new call site cannot omit it', () => {
+    // The scalable half of the probe rule. The enumeration below asserts how
+    // today's five paths are classified; this asserts that a SIXTH cannot be
+    // added without classifying it at all, which is the gap the enumeration
+    // left open (adversarial round 4).
+    const undecided = withProfileHomeCallsWithoutProbeDecision(productionSourceFiles())
+    expect(undecided, `these managed launches never say whether they are a probe, so the Accounts panel cannot tell them from the user's own session:\n${undecided.join('\n')}`).toEqual([])
+  })
+
+  it('...and THAT guard goes red on a call site that omits `probe`', () => {
+    const withProbe = "withProfileHome(env, home, { launchId: 'x', probe: false })"
+    const without = "withProfileHome(env, home, { launchId: 'x' })"
+    expect(withProfileHomeCallsWithoutProbeDecision([{ path: 'src/main/a.ts', text: withProbe }])).toEqual([])
+    expect(withProfileHomeCallsWithoutProbeDecision([{ path: 'src/main/a.ts', text: without }])).toEqual(['src/main/a.ts:1'])
+    // A sixth call site in a file the probe enumeration does not name -- the
+    // exact shape that passed both older guards.
+    expect(withProfileHomeCallsWithoutProbeDecision([{
+      path: 'src/main/brand-new-feature.ts',
+      text: "const e = withProfileHome(base, home, { launchId: 'sentinel' })",
+    }])).toEqual(['src/main/brand-new-feature.ts:1'])
+  })
+
+  it('...and THAT guard goes red on a call site that omits the context', () => {
+    const call = (text: string) => withProfileHomeCallsWithoutContext([{ path: 'src/main/rogue.ts', text }])
+    expect(call('const e = withProfileHome(base, home)')).toHaveLength(1)
+    expect(call('const e = withProfileHome(base, home, { launchId: id })')).toEqual([])
+    // The shape that defeated the first version of this guard, which counted
+    // top-level commas: the comma inside the GENERIC made a two-argument call
+    // look like a three-argument one, and this is the real call site.
+    expect(call('const e = withProfileHome({ ...process.env } as Record<string, string>, home)')).toHaveLength(1)
+    expect(call("const e = withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless' })")).toEqual([])
+    // A nested call's own parentheses must not end the argument list early.
+    expect(call('const e = withProfileHome(base, join(a, b))')).toHaveLength(1)
+    expect(call("const e = withProfileHome(base, home, { launchId: fmt('a, b'), cwd })")).toEqual([])
+    // Multi-line call sites are read whole, not line by line.
+    expect(call('const e = withProfileHome(\n  base,\n  home,\n  { launchId: sessionId, cwd },\n)')).toEqual([])
+    expect(call('const e = withProfileHome(\n  base,\n  home,\n)')).toHaveLength(1)
+    // A RENAMED import is still the choke point (adversarial review, MINOR).
+    expect(call("import { withProfileHome as wph } from './account-profiles'\nconst e = wph(base, home)")).toHaveLength(1)
+    expect(call("import { withProfileHome as wph } from './account-profiles'\nconst e = wph(base, home, { launchId: id })")).toEqual([])
+    // ...including a TWO-HOP alias, where a barrel re-exports the name and a
+    // different file imports the alias. Aliases are collected across every file
+    // before any file is scanned (adversarial re-attack, MINOR).
+    expect(withProfileHomeCallsWithoutContext([
+      { path: 'src/main/barrel.ts', text: "export { withProfileHome as wph } from './account-profiles'" },
+      { path: 'src/main/rogue.ts', text: "import { wph } from './barrel'\nconst e = wph(base, home)" },
+    ])).toHaveLength(1)
+    // The declaration itself is not a call site.
+    expect(call('export function withProfileHome(env, home, context) {')).toEqual([])
+    // A PLAIN re-binding -- no import syntax at all, so the alias collector saw
+    // nothing and the call was invisible (adversarial round 4).
+    expect(call('const fn = withProfileHome\nconst e = fn(base, home)')).toHaveLength(1)
+    expect(call("const fn = withProfileHome\nconst e = fn(base, home, { launchId: 'x' })")).toEqual([])
+    expect(call('const helpers = { fn: withProfileHome }\nconst e = helpers.fn(base, home)')).toHaveLength(1)
+    // ...and a re-binding of a re-binding, which is why the collector iterates
+    // to a fixed point rather than passing once.
+    expect(call('const a = withProfileHome\nconst b = a\nconst e = b(base, home)')).toHaveLength(1)
+    // PROSE IS NOT A REBINDING. This exact line lives in the Claude package and
+    // reads as `PATH: withProfileHome`; treating it as one seeded `PATH` as an
+    // alias and the fixed point then reported every call in the main process.
+    expect(call(' *  - PATH: withProfileHome APPENDS <home>/.local/bin to the inherited PATH\nconst e = PATH(1)')).toEqual([])
   })
 
   it('...and that guard itself goes red on a synthetic violation', () => {
@@ -591,12 +2021,102 @@ describe('the launch paths', () => {
       text: '// see withProfileHome\nconst e = { ...process.env, USERPROFILE: home }',
     }])).toHaveLength(1)
 
+    // INDIRECT forms. Every one of these composed a profile-home environment
+    // and returned [] from the syntactic-only guard (adversarial review,
+    // MAJOR 8): the rule is now the NAME AS A STRING, wherever it appears.
+    const indirect = [
+      "const k = 'USERPROFILE'; env[k] = home",                         // via a variable
+      "env[process.platform === 'win32' ? 'USERPROFILE' : 'HOME'] = home", // computed key
+      "Object.defineProperty(env, 'HOME', { value: home })",            // defineProperty
+      "const k = 'USER' + 'PROFILE'; env[k] = home",                    // split literal
+      "const k = new Map([['HOME', home]])",                            // entry pair
+      // MIXED QUOTES. The collapse back-referenced the opening quote, so this
+      // -- no harder to write than the same-quote form above -- survived it and
+      // the name never formed (adversarial round 4).
+      'const k = \'USER\' + "PROFILE"; env[k] = home',
+      'env[\'USER\' + "PROFILE"] = home',
+      'const k = \'USE\' + `R` + "PROFILE"; env[k] = home',
+    ]
+    for (const text of indirect) {
+      expect(profileHomeEnvOffenders([{ path: 'src/main/rogue.ts', text }]), text).toHaveLength(1)
+    }
+
+    // CASE VARIANTS. Windows resolves `UserProfile` and `USERPROFILE` to one
+    // variable, so the case-sensitive guard returned [] for a real composition
+    // (adversarial review, MAJOR).
+    for (const text of [
+      'const e = { ...process.env, UserProfile: home }',
+      'const e = { ...process.env, Userprofile: home }',
+      'env.UserProfile = profileDir',
+      "env['Home'] = profileDir",
+      "const k = 'UserProfile'; env[k] = home",
+    ]) {
+      expect(profileHomeEnvOffenders([{ path: 'src/main/rogue.ts', text }]), text).toHaveLength(1)
+    }
+    // ...and the all-lowercase `home`, which is this area's ordinary identifier,
+    // is flagged only when the surrounding literal is composing an environment.
+    expect(profileHomeEnvOffenders([{ path: 'src/main/rogue.ts', text: 'const e = { ...process.env, home: dir }' }])).toHaveLength(1)
+    // ...INCLUDING when the spread and the key are on different lines, which is
+    // how this codebase actually formats an object literal and is the shape
+    // that defeated the first version of this exception.
+    expect(profileHomeEnvOffenders([{
+      path: 'src/main/rogue.ts',
+      text: 'const e = {\n  ...env,\n  home: dir,\n}',
+    }])).toHaveLength(1)
+    expect(profileHomeEnvOffenders([{
+      path: 'src/main/rogue.ts',
+      text: 'const e = {\n  ...process.env,\n  PATH: p,\n  home: dir,\n}',
+    }])).toHaveLength(1)
+    // ...and however FAR apart they are. The window was six lines, chosen as
+    // "a formatter's object literal, not a program"; seven filler keys, or a
+    // short jsdoc block between the spread and the key, put the spread outside
+    // it and the composition went unreported (adversarial round 4). Brace depth
+    // answers the question the window was approximating.
+    expect(profileHomeEnvOffenders([{
+      path: 'src/main/rogue.ts',
+      text: 'const e = {\n  ...process.env,\n  A: 1, B: 2, C: 3, D: 4, E: 5, F: 6,\n  home: dir,\n}',
+    }])).toHaveLength(1)
+    expect(profileHomeEnvOffenders([{
+      path: 'src/main/rogue.ts',
+      text: `const e = {\n  ...process.env,\n${'  // filler\n'.repeat(20)}  home: dir,\n}`,
+    }])).toHaveLength(1)
+    // The other direction still holds: a parameter list or a declaration is not
+    // an object literal, whatever the enclosing FUNCTION body happens to spread.
+    // Walking out of the literal into the function body is how the first brace
+    // scan reported `home: string,` in a signature.
+    expect(profileHomeEnvOffenders([{ path: 'src/main/rogue.ts', text: 'function f(home: string | null): void {' }])).toEqual([])
+    expect(profileHomeEnvOffenders([{ path: 'src/main/rogue.ts', text: 'return { home: getProfileConfigDir(id), profileId: id }' }])).toEqual([])
+    expect(profileHomeEnvOffenders([{
+      path: 'src/main/rogue.ts',
+      text: 'function build() {\n  const e = { ...process.env }\n  send(e)\n}\n\nfunction other(\n  home: string,\n): void {}',
+    }])).toEqual([])
+
+    // ...including a literal split across LINES, which a per-line regex reads
+    // as two harmless fragments.
+    expect(profileHomeEnvOffenders([{
+      path: 'src/main/rogue.ts',
+      text: "const k =\n  'USER' +\n  'PROFILE'\nenv[k] = home",
+    }])).toHaveLength(1)
+
     // Legitimate forms stay green: the choke point itself, a re-application on
     // its own result, a remote `%USERPROFILE%` command string, and a log line.
     expect(profileHomeEnvOffenders([{ path: 'src/main/account-profiles.ts', text: 'USERPROFILE: home' }])).toEqual([])
     expect(profileHomeEnvOffenders([{ path: 'src/main/x.ts', text: 'Object.assign(withProfileHome(e, home), { HOME: home })' }])).toEqual([])
     expect(profileHomeEnvOffenders([{ path: 'src/main/x.ts', text: 'const s = "%USERPROFILE%\\\\.claude"' }])).toEqual([])
     expect(profileHomeEnvOffenders([{ path: 'src/main/x.ts', text: 'logInfo(`USERPROFILE=${home}`)' }])).toEqual([])
+
+    // The ONE production line that may spell the names as strings: the Claude
+    // package's owned-variable declaration, exempted by its exact text. The
+    // exemption is that line and nothing else in the same file -- the whole-file
+    // form is the mistake this guard was rewritten to stop making twice.
+    const decl = "  'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',"
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/claude/index.ts', text: decl }])).toEqual([])
+    expect(profileHomeEnvOffenders([{
+      path: 'src/main/providers/claude/index.ts',
+      text: `${decl}\nenv['HOME'] = home`,
+    }])).toHaveLength(1)
+    // ...and the same declaration in ANOTHER file is not exempt.
+    expect(profileHomeEnvOffenders([{ path: 'src/main/rogue.ts', text: decl }])).toHaveLength(1)
   })
 
   it('still composes the launch variables it owned before, unchanged', () => {
@@ -607,6 +2127,107 @@ describe('the launch paths', () => {
     expect(env.PATH).toBe(`/x${path.delimiter}${path.join(HOME, '.local', 'bin')}`)
     // The lever that never isolated identity is still never set.
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
+  })
+
+  it('isolates the Anthropic profile store WITHOUT taking APPDATA from the developer', () => {
+    // Redirecting USERPROFILE alone was not isolation: the SDK resolves its
+    // profile store as ANTHROPIC_CONFIG_DIR, then %APPDATA%\Anthropic, and only
+    // then %USERPROFILE%\AppData\Roaming\Anthropic, so APPDATA decided which
+    // stored identity was read (adversarial round 4).
+    //
+    // The fix sets the FIRST key. Owning APPDATA would have isolated the store
+    // too, and taken `gh`'s OAuth tokens, npm's cache and prefix and git's
+    // XDG config with it -- the developer configuration D3 says an interactive
+    // session inherits. Both properties have to hold at once, and this is the
+    // test that says so (owner requirement 4).
+    const root = profileRealmConfigRoot(HOME)
+    // Forward slashes deliberately: a backslashed literal here once carried a
+    // real CR, which the base-value CR/LF guard then dropped -- a test failure
+    // that looked like a policy bug and was a quoting one.
+    const realAppData = 'C:/Users/real/AppData/Roaming'
+    const realXdg = '/home/real/.config'
+    const env = withProfileHome({ APPDATA: realAppData, XDG_CONFIG_HOME: realXdg, ANTHROPIC_CONFIG_DIR: '/poison' }, HOME)
+
+    // 1. the poisoned first key never survives, on ANY platform -- it is ruled
+    //    `strip`, so the removal pass takes it before the patch runs.
+    expect(env.ANTHROPIC_CONFIG_DIR).not.toBe('/poison')
+    // 2. the developer's own config roots are UNTOUCHED.
+    expect(env.APPDATA).toBe(realAppData)
+    expect(env.XDG_CONFIG_HOME).toBe(realXdg)
+
+    if (root) {
+      // 3. ...and the store is pointed inside the realm.
+      expect(env.ANTHROPIC_CONFIG_DIR).toBe(root)
+      expect(root.startsWith(HOME)).toBe(true)
+      // Under .claude, NOT under .config: mirrorRealHome links every dot-entry
+      // of the real home into the profile home and excludes only .claude and
+      // .claude.json, so <profileHome>/.config IS the developer's real ~/.config
+      // and a store placed there is shared by every profile -- the round-4 defect
+      // surviving inside its own fix, proven by execution (adversarial round 5).
+      expect(root).toBe(path.join(HOME, '.claude', 'anthropic'))
+      expect(root.split(path.sep)).not.toContain('.config')
+    } else {
+      // macOS: HOME is not redirected either (the keychain reason
+      // withProfileHome documents) and multi-account is disabled in the UI. The
+      // poisoned value is still REMOVED rather than left standing, which is why
+      // the ruling is `strip` and not `replace`.
+      expect(env.ANTHROPIC_CONFIG_DIR).toBeUndefined()
+    }
+  })
+
+  it('keys the OAuth store on the profile too, so a server-side flag cannot merge the accounts', () => {
+    // Claude Code's own OAuth store has a second backend: a Windows Credential
+    // Manager entry named `Claude Code-credentials` plus a directory hash that is
+    // added ONLY when CLAUDE_SECURESTORAGE_CONFIG_DIR or CLAUDE_CONFIG_DIR is
+    // set. A managed launch set neither, so the name was a per-OS-user CONSTANT
+    // -- identical for every profile -- and that backend is selected by a
+    // server-side feature flag, not by this app or the user. Off in the pinned
+    // build, which makes the collapse latent rather than absent: the trigger is
+    // someone else's (adversarial round 5). Pinned: CLI 2.1.278, win32-x64.
+    const env = withProfileHome({ CLAUDE_SECURESTORAGE_CONFIG_DIR: '/poison' }, HOME)
+    expect(env.CLAUDE_SECURESTORAGE_CONFIG_DIR).not.toBe('/poison')
+    if (process.platform === 'darwin') {
+      expect(env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBeUndefined()
+    } else {
+      expect(env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(path.join(HOME, '.claude'))
+      // Two profiles, two values -- which is the whole property.
+      const other = path.resolve('/r/account-profiles/p2')
+      expect(withProfileHome({}, other).CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(path.join(other, '.claude'))
+      expect(withProfileHome({}, other).CLAUDE_SECURESTORAGE_CONFIG_DIR).not.toBe(env.CLAUDE_SECURESTORAGE_CONFIG_DIR)
+    }
+    // Owned AND stripped, the same shape as the profile store: removed on every
+    // platform, re-set only where this app has a value.
+    expect(claudeOwnedLaunchVariables).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR')
+    expect(CLAUDE_AUTHORITY_ENV_VARIABLES).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR')
+  })
+
+  it('declares every variable it sets as one the Claude package OWNS', () => {
+    // The invariant the `replace` ruling depends on. A variable ruled
+    // `ambient: 'replace'` is not stripped, so if nothing owns and sets it, an
+    // inherited value survives untouched -- which is exactly what happened to
+    // APPDATA and XDG_CONFIG_HOME. Ownership and the ruling have to move
+    // together, so this asserts they do.
+    const replaced = CLAUDE_AUTHORITY_VARIABLES.filter((v) => v.ambient === 'replace').map((v) => v.name)
+    for (const name of replaced) expect(claudeOwnedLaunchVariables, name).toContain(name)
+    // ...and the converse half, which is what the APPDATA defect actually was:
+    // `replace` means the removal pass SKIPS this name because the patch sets
+    // it. A name ruled `replace` that the patch does not set on some platform
+    // is neither removed nor replaced there. Only HOME and USERPROFILE earn
+    // that, because removing a home the patch does not set would be worse.
+    // USERPROFILE ALONE. HOME used to be here too, and 'the patch sets this' was
+    // false of it on win32 and macOS -- the shape of the APPDATA defect, kept
+    // true-by-exception. HOME now has a kind of its own that says what happens
+    // to it, so this list is checkable rather than aspirational.
+    expect(replaced.sort()).toEqual(['USERPROFILE'])
+    const homeEntry = CLAUDE_AUTHORITY_VARIABLES.find((v) => v.name === 'HOME')
+    expect(homeEntry?.kind).toBe('posix-home-selector')
+    expect(homeEntry?.ambient).toBe('keep')
+    // ...and on Linux the patch still owns and overwrites it.
+    expect(claudeOwnedLaunchVariables).toContain('HOME')
+    // The profile store is owned but ruled `strip`, so it is removed on every
+    // platform and re-set only where this app has a value for it.
+    expect(claudeOwnedLaunchVariables).toContain('ANTHROPIC_CONFIG_DIR')
+    expect(CLAUDE_AUTHORITY_ENV_VARIABLES).toContain('ANTHROPIC_CONFIG_DIR')
   })
 })
 
@@ -697,14 +2318,47 @@ describe('the managed-launch preflight', () => {
     expect(f.detail).toMatch(/ANTHROPIC_BASE_URL/)
   })
 
-  it('checks EVERY declared host control, not just the first', () => {
-    // A second control added to the declaration must be checked too. Reading
-    // only `[0]` would leave it unverified for as long as the first one held.
+  it('checks the declared host control on the SHIPPED declaration', () => {
+    // What this can prove with the production declaration, which has exactly
+    // one entry. The "every" claim is the test below; conflating the two is how
+    // a one-entry loop came to read as multi-control coverage (MINOR).
+    expect(Object.keys(CLAUDE_HOST_MANAGED_ENV)).toHaveLength(1)
     const p = claudeManagedLaunchPreflight({ env: { [HOST_KEY]: '1' }, cliVersion: '2.1.278' })
     expect(p.findings.filter((f) => f.id.startsWith('host-control-')).length).toBe(0)
     const missing = claudeManagedLaunchPreflight({ env: {}, cliVersion: '2.1.278' })
     expect(missing.findings.filter((f) => f.id === 'host-control-missing').length)
       .toBe(Object.keys(CLAUDE_HOST_MANAGED_ENV).length)
+  })
+
+  it('checks EVERY declared host control, not just the first -- proven on a TWO-control set', () => {
+    // Against the production declaration this assertion was vacuous: one entry,
+    // so `[0]` and "all of them" are the same loop. Driven through the seam, a
+    // second control that is absent is reported while the first one holds --
+    // which is the regression the loop exists to catch.
+    const two = { [HOST_KEY]: '1', CLAUDE_CODE_SECOND_CONTROL: '1' }
+    const p = _claudeManagedLaunchPreflightAgainstControls({ env: { [HOST_KEY]: '1' }, cliVersion: '2.1.278' }, two)
+    const missing = p.findings.filter((f) => f.id === 'host-control-missing')
+    expect(missing).toHaveLength(1)
+    expect(missing[0].detail).toContain('CLAUDE_CODE_SECOND_CONTROL')
+    // Both present -> nothing reported. Both absent -> both reported.
+    expect(_claudeManagedLaunchPreflightAgainstControls({ env: two, cliVersion: '2.1.278' }, two)
+      .findings.filter((f) => f.id.startsWith('host-control-'))).toEqual([])
+    expect(_claudeManagedLaunchPreflightAgainstControls({ env: {}, cliVersion: '2.1.278' }, two)
+      .findings.filter((f) => f.id === 'host-control-missing')).toHaveLength(2)
+  })
+
+  it('reports an EMPTY declaration as a blocked finding -- the branch the shipped set cannot reach', () => {
+    // `host-control-undeclared` was unreachable: the production declaration is
+    // never empty, so no test going through it could execute the branch, and a
+    // test named for it proved only that the shipped set is non-empty (MINOR).
+    const p = _claudeManagedLaunchPreflightAgainstControls({ env: {}, cliVersion: '2.1.278' }, {})
+    const undeclared = p.findings.find((f) => f.id === 'host-control-undeclared')
+    expect(undeclared, 'an empty control set must be a finding of its own').toBeDefined()
+    expect(undeclared!.severity).toBe('blocked')
+    expect(undeclared!.action, 'a blocked finding with no action is a dead end').toBeTruthy()
+    expect(p.ok).toBe(false)
+    // ...and it does not silently pass as "nothing missing" either.
+    expect(p.findings.filter((f) => f.id === 'host-control-missing')).toEqual([])
   })
 
   it('survives an env of null/undefined rather than throwing on the spawn path', () => {
@@ -743,25 +2397,25 @@ describe('the managed-launch diagnostics recorder', () => {
   beforeEach(() => { diag._resetManagedLaunchReportsForTest() })
 
   it('records a report per managed launch, newest first', () => {
-    diag.recordManagedLaunchPreflight('s1', '/home/a', { [HOST_KEY]: '1' })
-    diag.recordManagedLaunchPreflight('s2', '/home/b', { [HOST_KEY]: '1' })
-    expect(diag.listManagedLaunchReports().map((r) => r.sessionId)).toEqual(['s2', 's1'])
+    diag.recordManagedLaunchPreflight('s1', 'pA', '/home/a', { [HOST_KEY]: '1' })
+    diag.recordManagedLaunchPreflight('s2', 'pA', '/home/b', { [HOST_KEY]: '1' })
+    expect(diag.listManagedLaunchReports('pA').map((r) => r.sessionId)).toEqual(['s2', 's1'])
   })
 
   it('reports a MISSING control rather than swallowing it', () => {
-    const p = diag.recordManagedLaunchPreflight('s3', '/home/a', { PATH: '/x' })
+    const p = diag.recordManagedLaunchPreflight('s3', 'pA', '/home/a', { PATH: '/x' })
     expect(p?.ok).toBe(false)
     expect(p?.findings.map((f) => f.id)).toContain('host-control-missing')
   })
 
   it('never throws on the spawn path, whatever it is handed', () => {
     // A diagnostic that can break a launch is worse than no diagnostic.
-    expect(() => diag.recordManagedLaunchPreflight('s4', '/home/a', null as never)).not.toThrow()
+    expect(() => diag.recordManagedLaunchPreflight('s4', 'pA', '/home/a', null as never)).not.toThrow()
   })
 
   it('is bounded, so a long-running app cannot accumulate one per session forever', () => {
-    for (let i = 0; i < 120; i++) diag.recordManagedLaunchPreflight(`s${i}`, '/home/a', { [HOST_KEY]: '1' })
-    expect(diag.listManagedLaunchReports().length).toBeLessThanOrEqual(50)
+    for (let i = 0; i < 120; i++) diag.recordManagedLaunchPreflight(`s${i}`, 'pA', '/home/a', { [HOST_KEY]: '1' })
+    expect(diag.listManagedLaunchReports('pA').length).toBeLessThanOrEqual(50)
   })
 })
 
@@ -798,5 +2452,520 @@ describe('the minimum verified CLI version', () => {
     for (const v of [null, '2.1.200', 'garbage']) {
       expect(claudeManagedCliCompatibility(v).message, String(v)).toMatch(/2\.1\.278/)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D18: environment fidelity. A variable is removed ONLY when it can
+// INDEPENDENTLY override the selected account, credential source, provider or
+// model endpoint. Everything else stays, because Claude's Bash/PowerShell tools
+// inherit this environment -- stripping a developer's AWS_PROFILE or corporate
+// HTTPS_PROXY breaks the agent's own tooling to defend against a redirect that
+// a probe showed cannot happen (see scripts/claude-authority-classification.mjs).
+// ---------------------------------------------------------------------------
+describe('D18 environment fidelity on a managed Claude launch', () => {
+  /** A developer machine's real environment, plus every poisoning attempt. */
+  const POISON = {
+    // account / credential overrides
+    ANTHROPIC_API_KEY: 'sk-poison',
+    ANTHROPIC_AUTH_TOKEN: 'poison',
+    CLAUDE_CODE_OAUTH_TOKEN: 'poison',
+    CLAUDE_CODE_OAUTH_REFRESH_TOKEN: 'poison',
+    CLAUDE_CODE_SESSION_ACCESS_TOKEN: 'poison',
+    // account / org pins
+    ANTHROPIC_ORGANIZATION_ID: 'org-poison',
+    ANTHROPIC_SCOPE: 'poison',
+    ANTHROPIC_SERVICE_ACCOUNT_ID: 'poison',
+    // provider selectors -- the probe's necessary switch
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_USE_VERTEX: '1',
+    CLAUDE_CODE_USE_GATEWAY: '1',
+    CLAUDE_CODE_SKIP_BEDROCK_AUTH: '1',
+    // Claude-specific endpoints
+    ANTHROPIC_BASE_URL: 'http://evil.example',
+    ANTHROPIC_VERTEX_BASE_URL: 'http://evil.example',
+    CLAUDE_CODE_API_BASE_URL: 'http://evil.example',
+    ANTHROPIC_UNIX_SOCKET: '/tmp/evil.sock',
+    // realm roots
+    CLAUDE_CONFIG_DIR: '/tmp/evil',
+    ANTHROPIC_CONFIG_DIR: '/tmp/evil',
+    CLAUDE_SECURESTORAGE_CONFIG_DIR: '/tmp/evil',
+    // host hooks
+    CLAUDE_CODE_HOST_CREDS_FILE: '/tmp/evil.json',
+    CLAUDE_CODE_REMOTE_SETTINGS_PATH: '/tmp/evil.json',
+  }
+  const CORPORATE = {
+    HTTPS_PROXY: 'http://proxy.corp:3128',
+    HTTP_PROXY: 'http://proxy.corp:3128',
+    NO_PROXY: 'localhost,.corp',
+    NODE_EXTRA_CA_CERTS: '/etc/ssl/corp-root.pem',
+  }
+  const DEV_CREDS = {
+    AWS_PROFILE: 'dev',
+    AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+    AWS_SECRET_ACCESS_KEY: 'secretexample',
+    AWS_REGION: 'eu-west-2',
+    AWS_ENDPOINT_URL: 'http://localstack:4566',
+    GOOGLE_APPLICATION_CREDENTIALS: '/home/dev/.config/gcloud/adc.json',
+    GOOGLE_CLOUD_PROJECT: 'dev-project',
+    CLOUDSDK_CONFIG: '/home/dev/.config/gcloud',
+  }
+
+  function managedEnv(): Record<string, string> {
+    _resetProviderRegistryForTest()
+    registerProviderPackage(createClaudePackage())
+    const ambient = { PATH: '/usr/bin', ...POISON, ...CORPORATE, ...DEV_CREDS }
+    const env = realmEnvForProvider('claude', ambient, { set: { USERPROFILE: '/home/profile-a' } })
+    _resetProviderRegistryForTest()
+    return env
+  }
+
+  it('removes every poisoned account, credential, provider and endpoint input', () => {
+    const env = managedEnv()
+    const lower = new Set(Object.keys(env).map((k) => k.toLowerCase()))
+    for (const name of Object.keys(POISON)) {
+      // The host control is the one name that is re-applied by design.
+      if (name.toLowerCase() === HOST_KEY.toLowerCase()) continue
+      expect(lower.has(name.toLowerCase()), name).toBe(false)
+    }
+    expect(env[HOST_KEY]).toBe('1')
+  })
+
+  it('retains corporate proxy and CA configuration', () => {
+    const env = managedEnv()
+    for (const [k, v] of Object.entries(CORPORATE)) expect(env[k], k).toBe(v)
+  })
+
+  it('retains representative AWS and GCP developer credentials', () => {
+    const env = managedEnv()
+    for (const [k, v] of Object.entries(DEV_CREDS)) expect(env[k], k).toBe(v)
+  })
+
+  it('passes the retained values through to a CHILD tool process', () => {
+    // Claude's Bash/PowerShell tools inherit Claude's environment. Asserting on
+    // the env object alone would not prove the values survive the spawn, which
+    // is the property that actually keeps `aws` and `gcloud` working.
+    const env = managedEnv()
+    const script = 'process.stdout.write(JSON.stringify(process.env))'
+    const out = execFileSync(process.execPath, ['-e', script], {
+      env: { ...env, SystemRoot: process.env.SystemRoot ?? '', PATH: process.env.PATH ?? '' },
+      encoding: 'utf8',
+    })
+    const child = JSON.parse(out) as Record<string, string>
+    for (const [k, v] of Object.entries({ ...CORPORATE, ...DEV_CREDS })) expect(child[k], k).toBe(v)
+    // and the poison did not survive into the child either
+    for (const name of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'ANTHROPIC_BASE_URL', 'CLAUDE_CONFIG_DIR']) {
+      expect(child[name], name).toBeUndefined()
+    }
+  })
+
+  it('sanitises the same names out of the app-owned settings copy, and only those', () => {
+    const raw = JSON.stringify({
+      model: 'opus',
+      env: { ...POISON, ...CORPORATE, ...DEV_CREDS, EDITOR: 'vim' },
+    })
+    const result = sanitizeClaudeManagedSettings(raw)
+    const kept = JSON.parse(result.text ?? '{}').env as Record<string, string>
+    for (const name of Object.keys(POISON)) expect(kept[name], name).toBeUndefined()
+    for (const [k, v] of Object.entries({ ...CORPORATE, ...DEV_CREDS })) expect(kept[k], k).toBe(v)
+    expect(kept.EDITOR).toBe('vim')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D13: the app-owned settings copy removes every CLI-enumerated
+// credential-producing helper and all four authentication pins, preserves
+// otelHeadersHelper and everything unrelated, and never touches the source.
+//
+// Evidence behind the choices (Claude Code 2.1.278, win32-x64):
+//   - the CLI enumerates its own command-executing keys at ~@196699017;
+//   - gcpAuthRefresh is confirmed command-executing by the binary's own warning
+//     "Security: gcpAuthRefresh executed before workspace trust is confirmed";
+//   - settings keys are matched CASE-SENSITIVELY: probed, `apiKeyHelper`
+//     executes while `ApiKeyHelper` and `apikeyhelper` are not seen at all.
+// ---------------------------------------------------------------------------
+describe('D13 settings-copy sanitising', () => {
+  const HELPERS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'gcpAuthRefresh', 'proxyAuthHelper']
+  const PINS = ['forceLoginMethod', 'forceLoginOrgUUID', 'forceLoginGatewayUrl', 'gatewayInternalNetworks']
+
+  it('removes every credential-producing helper the CLI enumerates', () => {
+    expect([...CLAUDE_CREDENTIAL_HELPER_SETTINGS_KEYS].sort()).toEqual([...HELPERS].sort())
+    const input: Record<string, unknown> = {}
+    for (const k of HELPERS) input[k] = 'run-something'
+    const r = sanitizeClaudeManagedSettings(JSON.stringify(input))
+    const out = JSON.parse(r.text ?? '{}')
+    for (const k of HELPERS) expect(out[k], k).toBeUndefined()
+    expect([...r.removed].sort()).toEqual([...HELPERS].sort())
+  })
+
+  it('removes all four authentication pins, forceLoginMethod included', () => {
+    expect([...CLAUDE_AUTH_PIN_SETTINGS_KEYS].sort()).toEqual([...PINS].sort())
+    const input: Record<string, unknown> = {
+      forceLoginMethod: 'console',
+      forceLoginOrgUUID: '00000000-0000-4000-8000-000000000000',
+      forceLoginGatewayUrl: 'https://gateway.invalid',
+      gatewayInternalNetworks: ['10.0.0.0/8'],
+    }
+    const r = sanitizeClaudeManagedSettings(JSON.stringify(input))
+    const out = JSON.parse(r.text ?? '{}')
+    for (const k of PINS) expect(out[k], k).toBeUndefined()
+    expect([...r.removed].sort()).toEqual([...PINS].sort())
+  })
+
+  it('PRESERVES otelHeadersHelper -- it selects no account, credential or provider', () => {
+    const r = sanitizeClaudeManagedSettings(JSON.stringify({ otelHeadersHelper: 'emit-headers.sh' }))
+    expect(JSON.parse(r.text ?? '{}').otelHeadersHelper).toBe('emit-headers.sh')
+    expect(r.removed).toEqual([])
+  })
+
+  it('preserves every unrelated setting, including the CLI\'s other command keys', () => {
+    // fileSuggestion/processWrapper/policyHelpers/statusLine/subagentStatusLine
+    // all run a command, and none of them produces a credential. D17: AICC does
+    // not sandbox code the same OS user can already run.
+    const unrelated = {
+      model: 'opus',
+      statusLine: { type: 'command', command: 'show-status.sh' },
+      subagentStatusLine: 'sub-status.sh',
+      fileSuggestion: 'suggest.sh',
+      processWrapper: 'wrap.sh',
+      policyHelpers: ['policy.sh'],
+      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'hook.sh' }] }] },
+      permissions: { deny: ['Read(./secret)'] },
+    }
+    const r = sanitizeClaudeManagedSettings(JSON.stringify(unrelated))
+    expect(JSON.parse(r.text ?? '{}')).toEqual(unrelated)
+    expect(r.removed).toEqual([])
+  })
+
+  it('D17 both halves at once: account authority goes, an unrelated hook stays', () => {
+    // The owner's ruling of 2026-09-21, asserted as ONE fact rather than two
+    // adjacent ones, because the guarantee is the pair: what a managed launch
+    // suppresses is ACCOUNT, CREDENTIAL, PROVIDER and ENDPOINT authority --
+    // nothing else. Settings files are not made inert, and this app does not
+    // sandbox code the same OS user can already run.
+    //
+    // The CLI-side half (a SessionStart hook still executes under the host
+    // control while apiKeyHelper is suppressed) is a probe result, recorded in
+    // docs/wp1/evidence/claude-settings-isolation-2026-09-21.md. This is the
+    // half this repo owns: what the copy it writes still contains.
+    const hook = { SessionStart: [{ hooks: [{ type: 'command', command: 'hook.sh' }] }] }
+    const r = sanitizeClaudeManagedSettings(JSON.stringify({
+      apiKeyHelper: 'mint-a-key.sh',              // account authority -> removed
+      forceLoginMethod: 'console',                // account authority -> removed
+      env: { ANTHROPIC_API_KEY: 'sk-poison', EDITOR: 'vim' },
+      hooks: hook,                                // ordinary configuration -> kept
+      statusLine: { type: 'command', command: 'show-status.sh' },
+      outputStyle: 'concise',
+      permissions: { deny: ['Read(./secret)'] },
+    }))
+    const out = JSON.parse(r.text ?? '{}')
+
+    expect(out.apiKeyHelper, 'a credential helper survived the copy').toBeUndefined()
+    expect(out.forceLoginMethod).toBeUndefined()
+    expect(out.env).toEqual({ EDITOR: 'vim' })
+    // ...and the same file's unrelated settings are byte-identical, hooks first.
+    expect(out.hooks).toEqual(hook)
+    expect(out.statusLine).toEqual({ type: 'command', command: 'show-status.sh' })
+    expect(out.outputStyle).toBe('concise')
+    expect(out.permissions).toEqual({ deny: ['Read(./secret)'] })
+    expect([...r.removed].sort()).toEqual(['apiKeyHelper', 'env.ANTHROPIC_API_KEY', 'forceLoginMethod'])
+  })
+
+  it('reports a project key by its CANONICAL name, never as the file spells it', () => {
+    // `env` names are matched case-insensitively, and JS folds some non-ASCII
+    // characters onto ASCII -- so a repository can write a key that classifies
+    // as an authority variable while LOOKING like a different name, and the raw
+    // text used to be echoed into a security notice the user reads (adversarial
+    // review, MINOR). The name shown is the manifest's, so what the panel says
+    // is what the mechanism acts on.
+    const kelvin = `ANTHROPIC_API_${String.fromCodePoint(0x212a)}EY`
+    expect(kelvin).not.toBe('ANTHROPIC_API_KEY')
+    const keys = claudeAuthoritySettingsKeys(JSON.stringify({ env: { [kelvin]: 'x' } }))
+    expect(keys).toEqual(['env.ANTHROPIC_API_KEY'])
+    expect(keys.join('')).not.toContain(String.fromCodePoint(0x212a))
+  })
+
+  it('lists authority keys without producing the sanitised copy', () => {
+    // The cost half: `sanitizeClaudeManagedSettings` also pretty-prints the
+    // result, which the project-scan caller throws away -- and a pretty-print
+    // is O(depth^2), so a nested file well under the size cap cost seconds of
+    // main-thread CPU per launch (adversarial review, MAJOR).
+    const raw = JSON.stringify({ apiKeyHelper: 'x', model: 'opus', env: { ANTHROPIC_API_KEY: 'y', EDITOR: 'vim' } })
+    expect([...claudeAuthoritySettingsKeys(raw)].sort()).toEqual(['apiKeyHelper', 'env.ANTHROPIC_API_KEY'])
+    // Same verdict as the sanitiser, which is the point: one classification.
+    expect([...claudeAuthoritySettingsKeys(raw)].sort()).toEqual([...sanitizeClaudeManagedSettings(raw).removed].sort())
+    // Malformed input is nothing to report, not a throw on the launch path.
+    expect(claudeAuthoritySettingsKeys('{ not json')).toEqual([])
+    expect(claudeAuthoritySettingsKeys('null')).toEqual([])
+  })
+
+  it('matches settings keys CASE-SENSITIVELY, as the CLI does', () => {
+    // Probed: only the exact spelling executes. Removing a spelling the CLI
+    // cannot see would edit the user's configuration on a false premise.
+    const r = sanitizeClaudeManagedSettings(JSON.stringify({
+      apiKeyHelper: 'gone',
+      ApiKeyHelper: 'kept',
+      apikeyhelper: 'kept',
+      FORCELOGINMETHOD: 'kept',
+    }))
+    const out = JSON.parse(r.text ?? '{}')
+    expect(out.apiKeyHelper).toBeUndefined()
+    expect(out.ApiKeyHelper).toBe('kept')
+    expect(out.apikeyhelper).toBe('kept')
+    expect(out.FORCELOGINMETHOD).toBe('kept')
+    expect(r.removed).toEqual(['apiKeyHelper'])
+  })
+
+  it('still matches env-block NAMES case-insensitively, which is a different rule', () => {
+    // Environment variable names, not JSON properties: the CLI upper-cases
+    // before testing and Windows resolves them case-insensitively.
+    const r = sanitizeClaudeManagedSettings(JSON.stringify({ env: { anthropic_api_key: 'x', Anthropic_Base_Url: 'y', EDITOR: 'vim' } }))
+    const out = JSON.parse(r.text ?? '{}')
+    expect(out.env).toEqual({ EDITOR: 'vim' })
+  })
+
+  it('fails closed on malformed settings WITHOUT exposing the source content', () => {
+    // A half-edited API key is a likely way to malform this file, and the
+    // refusal string reaches a renderer surface.
+    const secret = 'sk-ant-api03-REALLOOKINGSECRET'
+    const r = sanitizeClaudeManagedSettings(`{ "apiKeyHelper": ${secret} }`)
+    expect(r.text).toBeNull()
+    expect(r.removed).toEqual([])
+    expect(r.refused).toBeTruthy()
+    expect(r.refused).not.toContain(secret)
+    expect(r.refused).not.toContain('sk-ant')
+    expect(r.refused).toMatch(/not valid JSON/)
+  })
+
+  it('refuses a JSON value that is not a settings object, rather than guessing', () => {
+    for (const raw of ['null', '[]', '"a string"', '42']) {
+      const r = sanitizeClaudeManagedSettings(raw)
+      expect(r.text, raw).toBeNull()
+      expect(r.refused, raw).toBeTruthy()
+    }
+  })
+
+  it('is PURE, so the shared, user, project and local sources are out of reach', () => {
+    // The sanitiser takes text and returns text. It has no path, no fs handle
+    // and no way to reach any settings file other than the copy its caller
+    // writes -- which is the structural reason project/local files are safe.
+    const raw = JSON.stringify({ apiKeyHelper: 'x', model: 'opus' })
+    const before = raw
+    sanitizeClaudeManagedSettings(raw)
+    expect(raw).toBe(before)
+    expect(sanitizeClaudeManagedSettings.length).toBe(1)
+  })
+
+  it('leaves project and local authority to the HOST CONTROL, which every managed launch applies', () => {
+    // The sanitiser only owns the copy AICC writes. Project and local settings
+    // are repository- and user-owned and must never be modified, so the only
+    // defence there is CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST -- probed to
+    // suppress an apiKeyHelper supplied from BOTH project and local scope
+    // (the helper does not run and the host key is what reaches the wire).
+    _resetProviderRegistryForTest()
+    registerProviderPackage(createClaudePackage())
+    const env = realmEnvForProvider('claude', { PATH: '/x' }, { set: { USERPROFILE: '/home/a' } })
+    expect(env[HOST_KEY]).toBe('1')
+    _resetProviderRegistryForTest()
+  })
+
+  it('keeps the preserved settings in the copy Claude actually reads', () => {
+    const r = sanitizeClaudeManagedSettings(JSON.stringify({
+      apiKeyHelper: 'gone', forceLoginMethod: 'gone',
+      otelHeadersHelper: 'headers.sh', statusLine: 'status.sh',
+      env: { HTTPS_PROXY: 'http://proxy.corp:3128', AWS_PROFILE: 'dev', EDITOR: 'vim' },
+    }))
+    const out = JSON.parse(r.text ?? '{}')
+    expect(out.otelHeadersHelper).toBe('headers.sh')
+    expect(out.statusLine).toBe('status.sh')
+    expect(out.env).toEqual({ HTTPS_PROXY: 'http://proxy.corp:3128', AWS_PROFILE: 'dev', EDITOR: 'vim' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MAJOR 5 (adversarial review): the diagnostic shipped to make isolation
+// visible was leaking ACROSS the boundary it defends. One process-wide ring
+// buffer was handed to any renderer with no argument and no scoping, and the
+// panel deduped by finding id -- so a second account's occurrence was not
+// merely unattributed, it was invisible. What crossed: the absolute profile
+// path (and therefore the OS username), the settings keys stripped from that
+// account's copy, and the ambient variable names stripped from its environment
+// (enough to tell one account's owner that another routes through Bedrock or a
+// corporate proxy).
+// ---------------------------------------------------------------------------
+describe('the managed-launch report channel is scoped to one account', () => {
+  let diag: typeof import('../../src/main/managed-launch-diagnostics')
+
+  beforeAll(async () => {
+    composeProviders()
+    diag = await import('../../src/main/managed-launch-diagnostics')
+  })
+  beforeEach(() => { diag._resetManagedLaunchReportsForTest() })
+  afterEach(() => { diag._resetManagedLaunchReportsForTest() })
+
+  it('returns only the requesting profile\'s reports', () => {
+    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/a', { [HOST_KEY]: '1' })
+    diag.recordManagedLaunchPreflight('sB', 'profile-b', '/home/b', { [HOST_KEY]: '1' })
+
+    const a = diag.listManagedLaunchReports('profile-a')
+    const b = diag.listManagedLaunchReports('profile-b')
+    expect(a.map((r) => r.sessionId)).toEqual(['sA'])
+    expect(b.map((r) => r.sessionId)).toEqual(['sB'])
+    expect(a.every((r) => r.profileId === 'profile-a')).toBe(true)
+  })
+
+  it('never puts the absolute profile home -- and so the OS username -- on the wire', () => {
+    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/someuser/.ccc/profile-a', { [HOST_KEY]: '1' })
+    const [report] = diag.listManagedLaunchReports('profile-a')
+    expect(report).toBeDefined()
+    expect(JSON.stringify(report)).not.toContain('someuser')
+    expect((report as unknown as { home?: string }).home).toBeUndefined()
+  })
+
+  it('does not let one account see what another account stripped', () => {
+    // The finding DETAIL is the sensitive part: it names the settings keys and
+    // environment variable names removed from that account.
+    diag.recordManagedLaunchPreflight('sB', 'profile-b', '/home/b', { PATH: '/x' })
+    const a = diag.listManagedLaunchReports('profile-a')
+    expect(a).toEqual([])
+  })
+
+  // Two mechanisms enforce this -- the explicit guard AND the per-entry
+  // filter -- so removing either alone leaves the behaviour correct. The
+  // mutant that proves this test load-bearing removes the guard AND makes the
+  // filter truthiness-based, which is the realistic bug; it goes red here.
+  it('returns nothing for a missing or non-string profile id, rather than everything', () => {
+    diag.recordManagedLaunchPreflight('sA', 'profile-a', '/home/a', { [HOST_KEY]: '1' })
+    expect(diag.listManagedLaunchReports('')).toEqual([])
+    expect(diag.listManagedLaunchReports(undefined as never)).toEqual([])
+    expect(diag.listManagedLaunchReports(null as never)).toEqual([])
+    expect(diag.listManagedLaunchReports({} as never)).toEqual([])
+  })
+
+  it('keeps the ring buffer bound PER PROCESS, not per profile', () => {
+    for (let i = 0; i < 120; i += 1) {
+      diag.recordManagedLaunchPreflight(`s${i}`, 'profile-a', '/home/a', { [HOST_KEY]: '1' })
+    }
+    expect(diag.listManagedLaunchReports('profile-a').length).toBeLessThanOrEqual(50)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MAJOR 6 (adversarial review): "a finding names variables and settings KEYS,
+// never their values" was false as written. `host-control-altered` interpolated
+// the OBSERVED environment value verbatim into a string that reaches a renderer
+// surface. Bounded today, because the only host key is our own frozen literal --
+// but the next entry added to CLAUDE_HOST_MANAGED_ENV inherits the line.
+// ---------------------------------------------------------------------------
+describe('preflight findings never carry an observed VALUE', () => {
+  it('reports that the host control diverged without quoting what it holds', () => {
+    const secret = 'sk-ant-api03-LOOKS-LIKE-A-REAL-SECRET'
+    const preflight = claudeManagedLaunchPreflight({ env: { [HOST_KEY]: secret }, cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION })
+    const altered = preflight?.findings.find((f) => f.id === 'host-control-altered')
+    expect(altered).toBeDefined()
+    expect(altered!.detail).not.toContain(secret)
+    expect(altered!.detail).not.toContain('sk-ant')
+    // The actionable facts survive: which control, and that it is not ours.
+    expect(altered!.detail).toContain(HOST_KEY)
+    expect(altered!.severity).toBe('blocked')
+  })
+
+  it('carries no observed value anywhere in the whole preflight payload', () => {
+    const secret = 'sk-ant-api03-ANOTHER-SECRET'
+    const preflight = claudeManagedLaunchPreflight({ env: { [HOST_KEY]: secret }, cliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION })
+    expect(JSON.stringify(preflight)).not.toContain(secret)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MAJOR 7 (adversarial review): the fail posture was silent at two of six call
+// sites. A refused isolation control is the loudest thing this subsystem can
+// find; it must not depend on which code path happened to hit it.
+// ---------------------------------------------------------------------------
+describe('a refused managed launch is never silent', () => {
+  it('tags every refusal with the shared marker, so a caller can tell it apart', async () => {
+    // The marker is what claude-cli-auth keys on to distinguish an ISOLATION
+    // FAULT from an ordinary CLI failure (absent, slow, non-zero). If the throw
+    // text drifts away from the constant, that catch silently stops matching
+    // and the fault goes back to being invisible -- so assert the linkage on a
+    // REAL refusal rather than on the constant alone.
+    const profiles = await import('../../src/main/account-profiles')
+    _resetProviderRegistryForTest()   // no package registered -> declares no control
+    let thrown: unknown
+    try {
+      profiles.withProfileHome({ PATH: '/x' }, '/home/a')
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message.startsWith(profiles.MANAGED_LAUNCH_REFUSAL)).toBe(true)
+    composeProviders()
+  })
+
+  it('surfaces a DEFERRED spawn failure readably instead of as a bare exit code', async () => {
+    // Same fault, different severity purely because a credential refresh was in
+    // flight: the synchronous path rejects the pty:spawn invoke and the renderer
+    // shows an error, while the deferred path could only send `pty:exit -1`,
+    // rendered as a generic grey "[Process exited with code -1]".
+    const { emitDeferredSpawnFailure } = await import('../../src/main/pty-manager')
+    const sent: Array<[string, unknown]> = []
+    const win = { isDestroyed: () => false, webContents: { send: (ch: string, payload: unknown) => { sent.push([ch, payload]) } } }
+
+    emitDeferredSpawnFailure(win as never, 'sess-1', new Error('the host control X was not applied'))
+
+    expect(sent.map(([ch]) => ch)).toEqual(['pty:data:sess-1', 'pty:exit:sess-1'])
+    const [, body] = sent[0]
+    expect(String(body)).toContain('the host control X was not applied')
+    expect(String(body)).toContain('\x1b[31m')          // red, not grey
+    expect(sent[1][1]).toBe(-1)
+    // Order matters: the reason must arrive BEFORE the exit, or the terminal
+    // closes over it.
+    expect(sent.findIndex(([ch]) => ch.startsWith('pty:data'))).toBeLessThan(
+      sent.findIndex(([ch]) => ch.startsWith('pty:exit')),
+    )
+  })
+
+  it('never writes into a window that is already gone', async () => {
+    const { emitDeferredSpawnFailure } = await import('../../src/main/pty-manager')
+    const sent: string[] = []
+    const win = { isDestroyed: () => true, webContents: { send: (ch: string) => { sent.push(ch) } } }
+    emitDeferredSpawnFailure(win as never, 'sess-2', new Error('boom'))
+    expect(sent).toEqual([])
+  })
+
+  it('writes no control sequence of the error\'s own into the terminal, 7-bit OR 8-bit', async () => {
+    // On the deferred path `err` is whatever the spawn threw, and a node-pty
+    // error embeds argv and cwd. The first sanitiser removed 0x00-0x1F and DEL
+    // and stopped, which closes the 7-bit door only: U+009B is CSI, U+009D is
+    // OSC and U+009C is ST as SINGLE code points, NTFS permits all three in a
+    // file name, and xterm parses them -- so a directory named with an OSC 8
+    // sequence rendered a clickable link of the attacker's choosing, in the
+    // terminal and the transcript (adversarial round 5).
+    const { emitDeferredSpawnFailure } = await import('../../src/main/pty-manager')
+    const data: string[] = []
+    const win = {
+      isDestroyed: () => false,
+      webContents: { send: (ch: string, payload: unknown) => { if (ch.startsWith('pty:data:')) data.push(String(payload)) } },
+    }
+    const C = (n: number) => String.fromCharCode(n)
+    const hostile = `ENOENT '${C(0x9d)}8;;http://evil.example${C(0x07)}click me${C(0x9c)}' ${C(0x1b)}[2J${C(0x9b)}31m${C(0x7f)}${C(0x202e)}desrever${C(0x2066)}x${C(0x2069)}${C(0x2028)}FAKE SECOND LINE${C(0x2029)}`
+    emitDeferredSpawnFailure(win as never, 'sess-3', new Error(hostile))
+
+    expect(data).toHaveLength(1)
+    // Strip the app's OWN framing -- the red SGR it adds on purpose -- and what
+    // is left must carry no C0, no DEL and no C1 at all.
+    const framed = data[0]
+    const inner = framed.slice(framed.indexOf('m') + 1, framed.lastIndexOf(C(0x1b)))
+    const controls = [...inner].filter((ch) => {
+      const n = ch.charCodeAt(0)
+      // C0, DEL and C1 -- and the characters that are not controls but spoof
+      // just as well: bidi overrides/isolates and the Unicode line separators.
+      return n <= 0x1f || (n >= 0x7f && n <= 0x9f) || n === 0x2028 || n === 0x2029
+        || (n >= 0x202a && n <= 0x202e) || (n >= 0x2066 && n <= 0x2069)
+    })
+    expect(controls, 'a control character from the error reached the PTY stream').toEqual([])
+    // The prose survives, so the user still learns what failed.
+    expect(inner).toContain('ENOENT')
+    expect(inner).toContain('click me')
   })
 })

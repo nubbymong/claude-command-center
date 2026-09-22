@@ -23,8 +23,15 @@ import { createClaudePackage } from '../../src/main/providers/claude'
  *
  * Layered rather than substituted so the capability-backing check still finds
  * the methods a partial fake omits (`listHistorySessions`,
- * `configureRemoteSettings`, ...) on the real prototype -- a fake that only
- * needs to intercept `buildSpawnCommand` should not have to restate the rest.
+ * `configureRemoteSettings`, ...) -- a fake that only needs to intercept
+ * `buildSpawnCommand` should not have to restate the rest.
+ *
+ * It takes BOTH mechanisms below, and the comment used to name only one.
+ * `Object.create` of the real prototype carries ordinary class METHODS;
+ * the `Object.assign` of `real.session` carries the instance's own enumerable
+ * properties, which is what an arrow-function class field is. "Found on the
+ * real prototype" describes half of it, and would be wrong the first time the
+ * provider declared a member as a field (adversarial review, MINOR).
  */
 export function registerFakeClaudePackage(fakeSession: Record<string, unknown>): void {
   const real = createClaudePackage()

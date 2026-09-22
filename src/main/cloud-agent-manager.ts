@@ -72,7 +72,7 @@ function resolveAgentEnv(profileId: string | undefined): {
   try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[cloud-agent] home refresh failed for ${resolvedProfileId}: ${e}`) }
   const home = getProfileConfigDir(resolvedProfileId)
   const accountEmail = listProfiles().find(p => p.id === resolvedProfileId)?.accountEmail || undefined
-  return { env: withProfileHome(baseEnv, home), resolvedProfileId, accountEmail }
+  return { env: withProfileHome(baseEnv, home, { launchId: 'cloud-agent', probe: false }), resolvedProfileId, accountEmail }
 }
 
 const MAX_OUTPUT_BYTES = 512 * 1024 // 500KB cap per agent

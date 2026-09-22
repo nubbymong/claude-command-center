@@ -243,7 +243,7 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
       cols: 120,
       rows: 30,
       cwd,
-      env: withProfileHome(process.env as Record<string, string>, home)
+      env: withProfileHome(process.env as Record<string, string>, home, { launchId: 'insights', probe: false })
     })
 
     let output = ''

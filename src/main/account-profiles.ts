@@ -12,9 +12,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { isValidProfileId, PROFILES_ROOT_DIRNAME } from './profile-id'
+import { isValidProfileId, profileIdFromHome, PROFILES_ROOT_DIRNAME } from './profile-id'
 import { atomicWriteFileSync } from './atomic-write'
 import { logInfo, logWarn } from './debug-logger'
+import { recordSettingsSanitise, recordAmbientStrip, clearSettingsSanitise } from './managed-launch-state'
+import { recordManagedLaunchPreflight } from './managed-launch-diagnostics'
 // Via the neutral barrel, never a package entry point: the dependency boundary
 // (tests/wp1/dependency-boundaries.test.ts, R3/R4) keeps provider knowledge
 // behind the registry so a launch path cannot opt out of a provider's policy.
@@ -71,6 +73,12 @@ export function getProfileConfigDir(id: string): string {
 // Linux those copies would land 0o644 (world-readable), letting any other local
 // user read the tokens. We chmod them to 0o600 (and credential dirs to 0o700).
 // On Windows fs mode bits are ignored, so these are cheap no-ops there.
+/** The largest shared `settings.json` this app will read and copy, matching the
+ *  cap the project-settings scan already uses. Both sit on the launch path, and
+ *  this one is SYNCHRONOUS, so the bound is on blocked main-thread time rather
+ *  than on disk. See writeSanitisedSettingsCopy. */
+const MAX_SHARED_SETTINGS_BYTES = 128 * 1024
+
 const IS_POSIX = process.platform !== 'win32'
 const CRED_FILE_MODE = 0o600
 const CRED_DIR_MODE = 0o700
@@ -903,6 +911,53 @@ function isSelfReferentialLink(target: string, link: string): boolean {
   }
 }
 
+/**
+ * Does `child` resolve INSIDE `dir`?
+ *
+ * Both sides are canonicalised before comparing, so a junctioned profiles root
+ * (which this app supports -- the resources directory is user-chosen and may
+ * itself be a link) stays inside itself, while a link planted at
+ * `<home>/.claude` that points somewhere else does not. The comparison folds
+ * case exactly where the filesystem does, and appends a separator so
+ * `<...>/profiles/ab` is not read as inside `<...>/profiles/a`.
+ *
+ * `child` is resolved through its PARENT plus its basename: the leaf is usually
+ * a file about to be written and may not exist yet. An unresolvable path falls
+ * back to its textual resolution, which can only make the check STRICTER.
+ */
+function resolvesInsideDir(dir: string, child: string): boolean {
+  const canon = (p: string): string => {
+    try { return fs.realpathSync.native(p) } catch { return path.resolve(p) }
+  }
+  const fold = (p: string): string => (isWin || process.platform === 'darwin' ? p.toLowerCase() : p)
+  const root = fold(canon(dir))
+  const leaf = fold(path.join(canon(path.dirname(child)), path.basename(child)))
+  return leaf === root || leaf.startsWith(root.endsWith(path.sep) ? root : root + path.sep)
+}
+
+/**
+ * Is `p` itself a link?
+ *
+ * Both path guards canonicalise through the PARENT and re-append the basename,
+ * because the leaf is usually a file about to be created. That is right for the
+ * case they were written for and blind to one they were not: a leaf that
+ * ALREADY exists as a symlink, in an otherwise ordinary directory, resolves
+ * "inside" and "not self-referential" on the strength of its parent alone. The
+ * write is then a rename-over, which replaces the directory entry rather than
+ * following the link -- but that is a property of the write, argued for POSIX,
+ * and the adversarial pass could not verify it for a Windows symlink because
+ * creating one needs a privilege the sandbox did not have (PLAUSIBLE, not
+ * confirmed).
+ *
+ * So do not rely on rename semantics for it. A leaf this app owns is never a
+ * link; if it is one, something else planted it, and refusing costs a settings
+ * copy while accepting could cost whatever the link points at. Never throws: an
+ * absent leaf is not a link.
+ */
+function isLink(p: string): boolean {
+  try { return fs.lstatSync(p).isSymbolicLink() } catch { return false }
+}
+
 /** The real user home (parent of the shared ~/.claude). Test-overridable seam. */
 function realHomeDir(): string {
   return rootsOverride ? path.dirname(rootsOverride.sharedRoot) : os.homedir()
@@ -1149,27 +1204,13 @@ function writeUserScopeClaudeMd(claudeDir: string, shared: string): void {
   fs.writeFileSync(dest, next)
 }
 
-/** What the sanitiser did to each profile's settings copy, last time one was
- *  written. Read by the managed-launch preflight, which has no other way to
- *  know: the removal happens at profile-home build time, the report is wanted
- *  at launch time. Keyed by the profile HOME path, because both writers know
- *  that and only one of them knows the profile id. */
-const lastSettingsSanitise = new Map<string, { removed: readonly string[]; refused?: string }>()
-
-/** Ambient authority variables the last managed launch for a profile home
- *  removed from the inherited environment. Same reason as above: the removal
- *  happens while the launch env is composed, the report is wanted afterwards. */
-const lastAmbientStrip = new Map<string, readonly string[]>()
-
-/** The last sanitise result for a profile home, or null if none was written. */
-export function lastSettingsSanitiseFor(home: string): { removed: readonly string[]; refused?: string } | null {
-  return lastSettingsSanitise.get(home) ?? null
-}
-
-/** What the last managed launch for this profile home stripped, or null. */
-export function lastAmbientStripFor(home: string): readonly string[] | null {
-  return lastAmbientStrip.get(home) ?? null
-}
+// What the sanitiser removed from a profile's settings copy, and what the
+// ambient pass removed from its launch environment, both live in
+// `./managed-launch-state`. They are re-exported here because every existing
+// caller imports them from this module, and because the preflight recorder --
+// which this module now calls from the choke point -- has to read them without
+// importing this module back (see that file's header).
+export { lastSettingsSanitiseFor, lastAmbientStripFor } from './managed-launch-state'
 
 /**
  * Write the APP-OWNED copy of the shared user-scope settings into a managed
@@ -1195,27 +1236,151 @@ export function lastAmbientStripFor(home: string): readonly string[] | null {
  *     not exist, so a concurrent second session of the same account could start
  *     with no shared settings at all. Rename has no such window.
  */
+/**
+ * Remove the app-written settings copy at `dest` because its source is gone.
+ * Returns false, with the refusal RECORDED for the panel, when the location
+ * fails the same containment and leaf-link guards the write path applies --
+ * a `.claude` junction into another profile's realm, or a settings.json
+ * planted as a link. Never touches anything but the app-written copy.
+ */
+function removeStaleSettingsCopy(home: string, dest: string): boolean {
+  if (!resolvesInsideDir(home, dest)) {
+    recordSettingsSanitise(home, {
+      removed: [],
+      refused: 'the settings location for this account resolves outside its own home, so the stale copy was left in place',
+    })
+    logWarn(`[profiles] the settings copy path for ${path.basename(home)} resolves outside that profile home; refusing to remove it`)
+    return false
+  }
+  if (isLink(dest)) {
+    recordSettingsSanitise(home, {
+      removed: [],
+      refused: 'the settings file for this account is a link to somewhere else, so it was left in place',
+    })
+    logWarn(`[profiles] the settings copy path for ${path.basename(home)} is a symbolic link; refusing to remove it`)
+    return false
+  }
+  try { fs.rmSync(dest, { force: true }) } catch { /* absent */ }
+  return true
+}
+
 function writeSanitisedSettingsCopy(src: string, dest: string): void {
   // `<profileHome>/.claude/settings.json` -> `<profileHome>`. Both call sites
   // build `dest` as `path.join(<profile home>, '.claude', 'settings.json')`, so
   // this is the same string the launch path passes to the preflight.
   const home = path.dirname(path.dirname(dest))
+
+  // SELF-REFERENCE GUARD -- FIRST, before any read, delete or write.
+  //
+  // Mirrors the guard `writeUserScopeClaudeMd` already carries, for the same
+  // REACHABLE case: `sharedRoot()` is `os.homedir()`-derived, `os.homedir()`
+  // reads USERPROFILE, and a CCC launched from INSIDE a CCC session inherits
+  // USERPROFILE=<profileDir> -- so `src` and `dest` become ONE file.
+  //
+  // Both outcomes destroy the very file this function exists to protect:
+  //   - valid JSON: the source is REWRITTEN, silently and permanently stripping
+  //     the user's own `apiKeyHelper` and `env` authority entries from their
+  //     real settings.json;
+  //   - malformed JSON: the refusal path's `fs.rmSync(dest, { force: true })`
+  //     DELETES it outright.
+  // `atomicWriteFileSync` does not save us -- it breaks a hardlink AT the
+  // destination, so when the destination IS the source the rename-over lands
+  // back on the source. Use the canonicalising check rather than a bare string
+  // compare, so an 8.3 short name, a `\\?\` prefix or a symlinked shared root
+  // cannot spell its way around it. (adversarial review, MAJOR 4)
+  if (isSelfReferentialLink(src, dest)) {
+    recordSettingsSanitise(home, {
+      removed: [],
+      refused: 'the profile home resolves to the shared settings location, so no copy was written',
+    })
+    logWarn(`[profiles] shared settings.json and the profile copy for ${path.basename(home)} resolve to one file; leaving it untouched`)
+    return
+  }
+
+  // CONTAINMENT GUARD. The self-reference check above catches the destination
+  // resolving back onto the SOURCE. This catches it resolving anywhere else
+  // outside the account home it is supposed to be inside -- a `.claude`
+  // junction pointing at another profile, so one account's copy lands in
+  // another's realm. Same-OS-user, so it is not a privilege boundary (D17), but
+  // writing an account's settings into a directory this app did not resolve is
+  // not something to do silently: refuse, and say so on the panel.
+  if (!resolvesInsideDir(home, dest)) {
+    recordSettingsSanitise(home, {
+      removed: [],
+      refused: 'the settings location for this account resolves outside its own home, so no copy was written',
+    })
+    logWarn(`[profiles] the settings copy path for ${path.basename(home)} resolves outside that profile home; refusing to write it`)
+    return
+  }
+
+  // ...and the LEAF itself, which neither guard above canonicalises: both
+  // resolve the parent and re-append the basename, so a settings.json planted
+  // as a symlink inside an ordinary `.claude` passes both. The app never
+  // creates this file as a link, so one here was planted by something else.
+  if (isLink(dest)) {
+    recordSettingsSanitise(home, {
+      removed: [],
+      refused: 'the settings file for this account is a link to somewhere else, so no copy was written',
+    })
+    logWarn(`[profiles] the settings copy path for ${path.basename(home)} is a symbolic link; refusing to write through it`)
+    return
+  }
+
   let raw: string
   try {
-    raw = fs.readFileSync(src, 'utf8')
+    // SIZE-GATE BEFORE READ. This function is on the SYNCHRONOUS spawn path --
+    // all five launch paths plus the boot-time junction repair -- so everything
+    // it does blocks the Electron main thread before the PTY exists.
+    //
+    // The project-settings scan got this cap when a pretty-printed stringify was
+    // measured at O(depth^2) in output size; this path kept an uncapped
+    // `readFileSync` and an unguarded stringify, one function away. Measured on
+    // this machine: a 128 KB shared settings.json nested 4000 deep produced a
+    // 512 MB string, 734 ms of blocked main thread and +533 MB RSS on EVERY
+    // spawn; at 136 KB it threw `RangeError: Invalid string length`, which every
+    // caller swallows into a single warn line -- so the home build aborted
+    // before the CLAUDE.md regeneration and the dot-entry mirror, and the
+    // session lost its git/ssh/npm config with no other trace (adversarial
+    // round 4).
+    //
+    // THE BUFFER IS THE BOUND, not a stat. The first version of this gate was
+    // `statSync(src).size` followed by an unconditional `readFileSync(src)`, so a
+    // file that grew between the two was read in full anyway -- the same
+    // advisory-cap defect the project scan had, restated one function away
+    // (adversarial round 5). One descriptor, one read of at most cap+1 bytes:
+    // a byte past the cap IS the refusal, whatever any stat said. Read-only, so
+    // the source is never opened for writing on any path through here.
+    const fd = fs.openSync(src, 'r')
+    let bytesRead: number
+    const buf = Buffer.allocUnsafe(MAX_SHARED_SETTINGS_BYTES + 1)
+    try {
+      bytesRead = fs.readSync(fd, buf, 0, MAX_SHARED_SETTINGS_BYTES + 1, 0)
+    } finally {
+      fs.closeSync(fd)
+    }
+    if (bytesRead > MAX_SHARED_SETTINGS_BYTES) {
+      recordSettingsSanitise(home, {
+        removed: [],
+        refused: `shared settings.json is larger than ${Math.floor(MAX_SHARED_SETTINGS_BYTES / 1024)} KB, so no copy was written`,
+      })
+      logWarn(`[profiles] shared settings.json is over the ${MAX_SHARED_SETTINGS_BYTES}-byte cap; not copying it into profile ${path.basename(home)}`)
+      try { fs.rmSync(dest, { force: true }) } catch { /* absent */ }
+      return
+    }
+    raw = buf.toString('utf8', 0, bytesRead)
   } catch (e) {
     // The errno ONLY, never the message: a Node fs error message embeds the
     // absolute path, and therefore the OS username, and this string now reaches
     // a renderer surface. The path is not what the user needs here anyway --
     // they know where their own shared settings live.
     const code = (e as NodeJS.ErrnoException)?.code ?? 'unknown error'
-    lastSettingsSanitise.set(home, { removed: [], refused: `shared settings.json could not be read (${code})` })
+    recordSettingsSanitise(home, { removed: [], refused: `shared settings.json could not be read (${code})` })
     try { fs.rmSync(dest, { force: true }) } catch { /* absent */ }
     return
   }
   const result = sanitizeManagedSettingsFor('claude', raw)
-  lastSettingsSanitise.set(home, { removed: result.removed, refused: result.refused })
   if (result.text === null) {
+    recordSettingsSanitise(home, { removed: result.removed, refused: result.refused })
     // A refusal IS a warning: the user's shared settings silently stop applying
     // to this account until they fix the file.
     logWarn(`[profiles] not copying shared settings.json into profile ${path.basename(home)}: ${result.refused ?? 'sanitiser refused it'}`)
@@ -1225,7 +1390,12 @@ function writeSanitisedSettingsCopy(src: string, dest: string): void {
   // Staged `wx` write + rename-over: atomic, and the rename replaces the
   // directory entry rather than the inode, so a pre-existing hardlink back to
   // the shared file is broken instead of written through (see the header).
+  //
+  // The record is written AFTER this, not before: a failed write (ENOSPC, or a
+  // rename that never wins its retry budget) otherwise left a report claiming
+  // removals that are not in the copy on disk (adversarial round 4).
   atomicWriteFileSync(dest, result.text)
+  recordSettingsSanitise(home, { removed: result.removed, refused: result.refused })
   if (result.removed.length) {
     // Routine, not a fault: this fires on every spawn for a user who keeps an
     // `env` block in their shared settings, and the profile ID is the useful
@@ -1235,6 +1405,11 @@ function writeSanitisedSettingsCopy(src: string, dest: string): void {
 }
 
 function buildHomeLinks(home: string): void {
+  // This build's verdict starts empty. Anything that throws between here and
+  // the settings block then reports `'not-evaluated'` -- the truth -- instead of
+  // reusing the verdict of whichever launch last got that far. See
+  // clearSettingsSanitise.
+  clearSettingsSanitise(home)
   migrateOldLayout(home)
 
   // Private Claude config dir: shared junctions + a one-way settings copy.
@@ -1243,6 +1418,15 @@ function buildHomeLinks(home: string): void {
   // 0700 (POSIX): it holds .credentials.json + the settings copy; the umask
   // default (0755) left the credential filenames enumerable by other local users.
   hardenCredentialDir(claudeDir)
+  // The per-realm Anthropic profile store (profileRealmConfigRoot). Created
+  // eagerly, and AFTER the harden above, for one reason: it then sits under a
+  // 0700 .claude from the moment it exists, rather than being created later by
+  // the CLI under whatever umask it runs with. It is NOT created because the
+  // CLI needs it to exist -- measured against the pinned binary, a nonexistent
+  // store and an empty one behave identically. (The secure-storage root needs
+  // no line of its own: it IS .claude.)
+  const realmConfigRoot = profileRealmConfigRoot(home)
+  if (realmConfigRoot) fs.mkdirSync(realmConfigRoot, { recursive: true })
   const shared = sharedRoot()
   for (const name of SHARED_DIR_NAMES) {
     const target = path.join(shared, name)
@@ -1254,7 +1438,32 @@ function buildHomeLinks(home: string): void {
     ensureLink(target, path.join(claudeDir, name), name === 'projects')
   }
   const srcSettings = path.join(shared, 'settings.json')
-  if (fs.existsSync(srcSettings)) writeSanitisedSettingsCopy(srcSettings, path.join(claudeDir, 'settings.json'))
+  if (fs.existsSync(srcSettings)) {
+    writeSanitisedSettingsCopy(srcSettings, path.join(claudeDir, 'settings.json'))
+  } else {
+    // The source is GONE, so the copy goes too. Every refusal path already
+    // removes it; this one did not, so a user who deleted their shared
+    // settings.json kept the last copy applying to the account indefinitely
+    // while the panel reported there was nothing to sanitise (adversarial
+    // round 5). Only ever the app-written COPY: the source is never touched.
+    //
+    // ...under the same two guards the write path carries for this location
+    // (code-quality review, MINOR): a `.claude` junction into another profile
+    // would otherwise make this line delete THAT account's copy, and a leaf
+    // link here was planted by something other than this app. Delete is the
+    // more destructive of the two operations; it is not the less guarded. A
+    // refusal is recorded and the rest of the home is still built.
+    if (removeStaleSettingsCopy(home, path.join(claudeDir, 'settings.json'))) {
+      // NOTHING TO COPY is a RESULT, not the absence of one. A user with no
+      // shared settings.json is an ordinary, healthy install -- this app
+      // deliberately stopped writing that file -- and leaving no record made
+      // every launch report "this launch did not check the settings copy", which
+      // put a permanent notice on every account and told the user to do something
+      // that could not change it (adversarial re-attack, MAJOR). The home WAS
+      // built; there was simply nothing to sanitise.
+      recordSettingsSanitise(home, { removed: [] })
+    }
+  }
 
   // #170: user-scope CLAUDE.md, generated beside the settings copy.
   writeUserScopeClaudeMd(claudeDir, shared)
@@ -1947,8 +2156,134 @@ export function captureDetectedAccount(profileId: string, name?: string): Accoun
  * user's own machine, their own settings, their own credentials: the host
  * control is for realms this app manages, and asserting it over a shell the app
  * does not own would silently disable the user's own apiKeyHelper.
+ *
+ * The PREFLIGHT is recorded here too, for the same reason the hardening is.
+ * It used to be a separate call in `pty-manager`, which is one of FIVE paths
+ * through this function -- so a stale CLI or a refused settings copy on a
+ * profile only ever used headlessly, for insights or for cloud agents produced
+ * no report at all, and the Accounts panel said nothing was wrong because it
+ * had never been told (adversarial review, MAJOR 9). Recording it from the
+ * choke point makes "every managed launch is reported" the same kind of fact as
+ * "every managed launch is hardened".
  */
-export function withProfileHome(env: Record<string, string>, home: string | null): Record<string, string> {
+/** Prefix every managed-launch refusal carries, so a caller can tell an
+ *  ISOLATION FAULT apart from an ordinary failure (a missing CLI, a timeout)
+ *  instead of swallowing both in one bare catch (adversarial review, MAJOR 7). */
+export const MANAGED_LAUNCH_REFUSAL = '[profiles] refusing a managed Claude launch'
+
+/** Who is launching, for the preflight report.
+ *
+ *  `launchId` is what the Accounts panel shows beside a finding, so it is the
+ *  PTY session id where there is one and a stable name for the four background
+ *  paths that have no session (`headless`, `insights`, ...). `cwd` is passed
+ *  only by a launch that runs in a project directory; it is what lets the
+ *  preflight report the project-owned settings the host control is suppressing.
+ *
+ *  Optional in the TYPE and mandatory in PRACTICE: every call site in `src/` is
+ *  required to pass one by the source guard in tests/wp1/managed-launch.test.ts,
+ *  which is what stops a sixth launch path being added without a report. It
+ *  stays optional so a caller composing an environment for something that is
+ *  not a launch does not have to invent one. */
+export interface ManagedLaunchContext {
+  launchId: string
+  cwd?: string | null
+  /** True for a launch THIS APP started by itself rather than one the user
+   *  asked for -- the `claude auth status` probe behind the Accounts panel. It
+   *  is a real managed launch and gets the full hardening; it is flagged so the
+   *  panel cannot mistake it for the newest thing the user ran. */
+  probe?: boolean
+}
+
+/**
+ * The per-realm Anthropic PROFILE STORE for a profile home, or null on a
+ * platform where the realm is not redirected.
+ *
+ * Redirecting USERPROFILE (win32) or HOME (linux) is not enough on its own. The
+ * bundled Anthropic SDK does not resolve its config root from the home
+ * directory first. In Claude Code 2.1.278, win32-x64, binary digest
+ * 006ea5c8638f67f10a5ae66bb232fd267c9f6af294e3f03f4cfcf1fd3f2cced8, it resolves:
+ *
+ *     ANTHROPIC_CONFIG_DIR                                  <- checked FIRST, returns immediately
+ *       Windows: %APPDATA%\Anthropic
+ *                then %USERPROFILE%\AppData\Roaming\Anthropic
+ *       else:    $XDG_CONFIG_HOME/anthropic
+ *                then $HOME/.config/anthropic
+ *
+ * APPDATA and XDG_CONFIG_HOME therefore OUTRANK the variable this app
+ * redirects, and both carried `ambient: 'replace'` -- "the fake-home mechanism
+ * sets this deliberately" -- while nothing set either. Every managed profile
+ * resolved that identity store to the SAME real-user directory whichever
+ * profile was selected (adversarial round 4).
+ *
+ * WHY THIS SETS THE FIRST KEY RATHER THAN OWNING THE SECOND. Owning APPDATA
+ * would isolate the store and break everything else that reads it: `gh` keeps
+ * its OAuth tokens under %APPDATA%\GitHub CLI, npm its cache and global prefix,
+ * git its XDG-style config -- all tools Claude's Bash tool is meant to run
+ * against the DEVELOPER's real configuration (D3, terminal-wrapper fidelity).
+ * Stripping APPDATA is worse again. Because ANTHROPIC_CONFIG_DIR is consulted
+ * first and returns immediately, setting it isolates the Anthropic identity
+ * store completely while leaving APPDATA and XDG_CONFIG_HOME at the user's own
+ * values. Both properties hold; neither is traded for the other.
+ *
+ * SCOPE: this is a statement about the pinned binary above and nothing else. A
+ * CLI whose resolution order changed would need revalidating BY A MAINTAINER --
+ * nothing at runtime does it. The manifest's digest covers the manifest's own
+ * entries, never the installed binary, and the only runtime gate is a version
+ * FLOOR, so a newer auto-updated CLI reports "supported" with this order
+ * unverified. That is a known limit of a pinned-binary claim, stated here
+ * rather than implied away (adversarial round 5).
+ *
+ * WHY IT LIVES UNDER `.claude`. The obvious choices mirror the SDK's own
+ * layout -- `<home>/AppData/Roaming/Anthropic` on Windows, `<home>/.config/anthropic`
+ * elsewhere -- and the second is a NO-OP. `mirrorRealHome` links every dot-entry
+ * of the real home into the profile home, and `HOME_PRIVATE` excludes only
+ * `.claude` and `.claude.json`, so `<profileHome>/.config` IS a symlink to the
+ * developer's real `~/.config`: every profile would resolve to one shared store,
+ * which is the exact defect this function exists to fix. Proven by execution
+ * against the pinned binary, not reasoned (adversarial round 5, BLOCKER).
+ *
+ * `.claude` is mirror-private and `anthropic` is not a SHARED_DIR_NAME, so this
+ * path is per-profile on every platform and the two platforms stop differing.
+ *
+ * macOS returns null deliberately: HOME is not redirected there either (the
+ * keychain reason withProfileHome documents), multi-account is disabled in the
+ * UI, and a half-redirected realm is worse than an honest single one.
+ */
+export function profileRealmConfigRoot(home: string): string | null {
+  if (process.platform === 'darwin') return null
+  return path.join(home, '.claude', 'anthropic')
+}
+
+/**
+ * The per-realm SECURE-STORAGE root, or null where the realm is not redirected.
+ *
+ * Claude Code's own OAuth store has a second backend that neither
+ * ANTHROPIC_CONFIG_DIR nor USERPROFILE outranks: a Windows Credential Manager
+ * entry whose service name is built as
+ * `Claude Code-credentials` + (a directory hash, ONLY when
+ * CLAUDE_SECURESTORAGE_CONFIG_DIR or CLAUDE_CONFIG_DIR is set). With neither
+ * set the suffix is empty, so the target is a per-OS-USER CONSTANT -- identical
+ * for every managed profile -- and the credman backend is selected by a
+ * server-side feature flag (`tengu_windows_credman`), not by anything this app
+ * or the user controls. The flag is off in this build, which makes the collapse
+ * LATENT rather than absent: the trigger belongs to someone else (adversarial
+ * round 5, MAJOR).
+ *
+ * Setting this keys both backends on the profile home -- the credman service
+ * name by its hash, and the plaintext fallback by the same directory -- so the
+ * store is isolated whichever backend the flag selects. Nothing outside Claude
+ * Code reads this variable, so D3 fidelity is untouched.
+ */
+export function profileSecureStorageRoot(home: string): string | null {
+  if (process.platform === 'darwin') return null
+  return path.join(home, '.claude')
+}
+
+export function withProfileHome(
+  env: Record<string, string>,
+  home: string | null,
+  context?: ManagedLaunchContext,
+): Record<string, string> {
   if (!home) return env
   const realHome = os.homedir()
   const next: Record<string, string> = {
@@ -1991,9 +2326,38 @@ export function withProfileHome(env: Record<string, string>, home: string | null
   // selector subject to the same validation as everything else. PATH,
   // GIT_CONFIG_GLOBAL and npm_config_userconfig stay composed above, because a
   // realm patch may not own a variable that decides what the child EXECUTES.
-  const hardened = realmEnvForProvider('claude', next, {
-    set: process.platform === 'linux' ? { USERPROFILE: home, HOME: home } : { USERPROFILE: home },
-  })
+  // Any failure to HARDEN is itself a refusal, and must be marked as one.
+  //
+  // With the provider registry uncomposed, `realmEnvForProvider` throws
+  // `ProviderPackage "claude" not registered` -- which fails closed correctly,
+  // but carries none of the marker a caller keys on, so `claude-cli-auth`'s
+  // catch would log nothing and fall back to the credential file in silence.
+  // That is the same MAJOR 7 defect one layer up, and it is why this wrap
+  // exists rather than only the assertion below.
+  // The realm selector, and with it the Anthropic profile store -- because the
+  // SDK resolves that store BEFORE consulting the home directory, so the
+  // selector alone did not move it (profileRealmConfigRoot). Both go through
+  // the patch for the same reason: they are the variables the Claude package is
+  // allowed to own, so routing them here subjects them to the same validation
+  // as everything else.
+  //
+  // APPDATA and XDG_CONFIG_HOME are deliberately NOT set. They outrank the home
+  // selector too, but they are also where `gh`, npm and git keep the
+  // developer's own configuration, which D3 says a managed session inherits.
+  // ANTHROPIC_CONFIG_DIR outranks THEM, so isolating the store costs nothing
+  // here.
+  const realmConfigRoot = profileRealmConfigRoot(home)
+  const realmSet: Record<string, string> =
+    process.platform === 'linux' ? { USERPROFILE: home, HOME: home } : { USERPROFILE: home }
+  if (realmConfigRoot) realmSet.ANTHROPIC_CONFIG_DIR = realmConfigRoot
+  const secureStorageRoot = profileSecureStorageRoot(home)
+  if (secureStorageRoot) realmSet.CLAUDE_SECURESTORAGE_CONFIG_DIR = secureStorageRoot
+  let hardened: Record<string, string>
+  try {
+    hardened = realmEnvForProvider('claude', next, { set: realmSet })
+  } catch (e) {
+    throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the launch environment could not be hardened (${(e as Error)?.message ?? String(e)})`)
+  }
 
   // Assertion, not validation: the control is applied by the line above, so the
   // only way to reach this throw is a regression in the mechanism itself. It is
@@ -2005,13 +2369,18 @@ export function withProfileHome(env: Record<string, string>, home: string | null
   // declaration passes VACUOUSLY, so "the package stopped declaring a control"
   // -- the regression that disables the whole mechanism -- would sail straight
   // through the assertion written to catch a missing control.
-  const controls = Object.entries(hostManagedEnvForProvider('claude'))
+  let controls: [string, string][]
+  try {
+    controls = Object.entries(hostManagedEnvForProvider('claude'))
+  } catch (e) {
+    throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the host-managed controls could not be read (${(e as Error)?.message ?? String(e)})`)
+  }
   if (controls.length === 0) {
-    throw new Error('[profiles] refusing a managed Claude launch: the Claude package declares no host-managed control, so nothing stops a settings file redirecting this session')
+    throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the Claude package declares no host-managed control, so nothing stops a settings file redirecting this session`)
   }
   for (const [k, v] of controls) {
     if (hardened[k] !== v) {
-      throw new Error(`[profiles] refusing a managed Claude launch: the host control ${k} was not applied (expected ${JSON.stringify(v)}, got ${JSON.stringify(hardened[k] ?? null)})`)
+      throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the host control ${k} was not applied (expected ${JSON.stringify(v)}, got ${JSON.stringify(hardened[k] ?? null)})`)
     }
   }
   // Record what the AMBIENT pass removed, so the preflight can report it.
@@ -2023,8 +2392,35 @@ export function withProfileHome(env: Record<string, string>, home: string | null
   // the data does not support, so the difference is intersected with the
   // provider's OWN declared list -- read from the registry, never restated
   // here, because a second copy of that list is a list that drifts.
-  const kept = new Set(Object.keys(hardened).map((k) => k.toLowerCase()))
-  const ambient = new Set(ambientAuthVariablesForProvider('claude').map((k) => k.toLowerCase()))
-  lastAmbientStrip.set(home, Object.keys(next).filter((k) => !kept.has(k.toLowerCase()) && ambient.has(k.toLowerCase())))
+  // EVERYTHING DIAGNOSTIC FROM HERE DOWN IS INSIDE ONE GUARD, and the guard
+  // starts HERE rather than three lines further on. The ambient-strip record is
+  // diagnostic too, and it calls the registry -- the same registry read that is
+  // wrapped a few lines above precisely because an uncomposed one throws. An
+  // earlier version of this comment claimed "the whole block is guarded" while
+  // the block began below these two lines (adversarial review, MINOR).
+  //
+  // Layer 4 is recorded from the choke point rather than from one of the five
+  // callers. Diagnostics only: the control is already applied and asserted
+  // above, so nothing here can refuse a launch. A home outside the profiles
+  // root has no account to attribute a report to -- that is a fault worth
+  // saying out loud rather than a report worth inventing.
+  try {
+    const kept = new Set(Object.keys(hardened).map((k) => k.toLowerCase()))
+    const ambient = new Set(ambientAuthVariablesForProvider('claude').map((k) => k.toLowerCase()))
+    recordAmbientStrip(home, Object.keys(next).filter((k) => !kept.has(k.toLowerCase()) && ambient.has(k.toLowerCase())))
+
+    if (context) {
+      const profileId = profileIdFromHome(home)
+      if (profileId) {
+        recordManagedLaunchPreflight(
+          context.launchId, profileId, home, hardened,
+          context.cwd ?? null,
+          context.probe ? 'probe' : 'launch',
+        )
+      } else {
+        logWarn(`[managed-launch] ${context.launchId}: no profile id resolves from this launch home, so no preflight was recorded`)
+      }
+    }
+  } catch { /* never let a diagnostic refuse a launch that is already hardened */ }
   return hardened
 }

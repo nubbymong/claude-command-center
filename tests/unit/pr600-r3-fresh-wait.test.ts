@@ -27,7 +27,16 @@ const identity = await import('../../src/main/claude-account-identity')
 const { spawnPty, killPty, isSessionWritable } = await import('../../src/main/pty-manager')
 const { registerFakeClaudePackage } = await import('../helpers/claude-package')
 const messages: string[] = []
-const win = { webContents: { send: (channel: string) => messages.push(channel) }, isDestroyed: () => false } as never
+// Payloads too, not just channel names: what the renderer is TOLD is now part
+// of the contract (see the exit assertion below), and a recorder that keeps
+// only the channel cannot tell a readable reason from an empty frame.
+const payloads: Array<[string, unknown]> = []
+const win = {
+  webContents: {
+    send: (channel: string, payload?: unknown) => { messages.push(channel); payloads.push([channel, payload]) },
+  },
+  isDestroyed: () => false,
+} as never
 let root = ''
 let profileId = ''
 const ids = ['freshfail', 'freshcancel', 'syncfail']
@@ -66,7 +75,18 @@ describe('PR600 R3 fresh deferred spawn failure (Codex finding 3)', () => {
     expect(consumers.profileConsumerCount(profileId)).toBe(0)
     // 7565739c: no exit was ever emitted -> a blank terminal treated as spawned.
     expect(messages).toContain('pty:exit:freshfail')
-    expect(messages).not.toContain('pty:data:freshfail')
+    // The assertion here used to be that NO data frame was sent. That was the
+    // right shape when the only alternative was noise, and the wrong one once
+    // the deferred path started explaining itself: the same failure arriving on
+    // the async path rendered as a generic grey "[Process exited with code -1]"
+    // while the synchronous path handed the caller the real message -- one
+    // fault at two severities, purely because of spawn timing (adversarial
+    // review, MAJOR 7). The reason is now WRITTEN to the terminal, and this
+    // test holds it to that: a readable reason, BEFORE the exit.
+    const data = payloads.find(([channel]) => channel === 'pty:data:freshfail')
+    expect(data, 'the refusal reason never reached the terminal').toBeDefined()
+    expect(String(data![1])).toContain('synthetic node-pty refusal')
+    expect(messages.indexOf('pty:data:freshfail')).toBeLessThan(messages.indexOf('pty:exit:freshfail'))
   })
   it('control: cancel of a fresh parked spawn notifies the renderer', async () => {
     let settle!: () => void

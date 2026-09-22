@@ -147,12 +147,7 @@ export interface ElectronAPI {
      *  value.
      *  Optional, matching the rest of this surface -- the renderer guards the
      *  call so a test harness with a partial mock does not have to restate it. */
-    managedLaunchReports?: () => Promise<Array<{
-      home: string
-      sessionId: string
-      at: number
-      preflight: import('../../shared/providers').ManagedLaunchPreflight
-    }>>
+    managedLaunchReports?: (profileId: string) => Promise<Array<import('../../shared/providers').ManagedLaunchReport>>
   }
   accountUsage: {
     fetchAll: () => Promise<import('../../shared/usage-types').AccountUsage[]>

@@ -26,7 +26,12 @@ let execFileImpl: (cmd: string, args: string[], opts: unknown, cb: ExecCb) => vo
 vi.mock('node:child_process', () => ({
   execFile: (cmd: string, args: string[], opts: unknown, cb: ExecCb) => execFileImpl(cmd, args, opts, cb),
 }))
-vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
+// `logWarn` belongs in this mock's surface, not as an afterthought: the managed
+// launch path warns, and a mock that omits a function the code under test calls
+// turns a log line into a TypeError -- which the probe's own catch then reports
+// as "the CLI did not answer", i.e. exactly the silent fallback these tests
+// exist to catch.
+vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 // Only the two profile-root resolvers are faked. `withProfileHome` is the REAL
 // one on purpose: it is what applies the managed-launch hardening to this auth
 // probe, so stubbing it would leave the assertion below testing a stub.

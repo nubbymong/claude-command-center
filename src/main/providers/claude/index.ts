@@ -12,18 +12,23 @@ import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
 import {
   CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_HOST_MANAGED_ENV, CLAUDE_MIN_MANAGED_CLI_VERSION,
-  sanitizeClaudeManagedSettings, claudeManagedLaunchPreflight,
+  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight,
 } from './managed-launch'
 
 // The managed-launch surface is re-exported so the composition root and the
 // conformance suite reach it through this entry point, never by deep import.
 export {
   CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_HOST_MANAGED_ENV,
-  CLAUDE_COMMAND_HELPER_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
-  isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings,
+  CLAUDE_CREDENTIAL_HELPER_SETTINGS_KEYS, CLAUDE_AUTH_PIN_SETTINGS_KEYS,
+  CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
+  isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys,
+  claudeAuthorityFamilyRules,
   claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
+  // Test seam: the preflight against a GIVEN control set, so the two checks the
+  // one-entry production declaration makes unreachable can be exercised.
+  _claudeManagedLaunchPreflightAgainstControls,
 } from './managed-launch'
-export type { AuthorityKind, AuthoritySource, AuthorityVariable } from './managed-launch'
+export type { AuthorityKind, AuthorityEntry } from './managed-launch'
 
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
@@ -121,8 +126,21 @@ export const claudeCapabilities: ProviderCapabilities = {
  *  whether it is documented, observed in the pinned binary, or both. */
 export const claudeAmbientAuthVariables: readonly string[] = CLAUDE_AUTHORITY_ENV_VARIABLES
 
-/** Variables the realm patch may set: the profile-home selector, and HOME as
- *  its POSIX sibling (D1). Nothing else.
+/** Variables the realm patch may set: the profile-home selector, HOME as its
+ *  POSIX sibling (D1), and the Anthropic PROFILE STORE that outranks the home
+ *  selector in the bundled SDK's own resolution order. Nothing else.
+ *
+ *  ANTHROPIC_CONFIG_DIR is here because the SDK checks it FIRST and returns
+ *  immediately; %APPDATA%\Anthropic and then
+ *  %USERPROFILE%\AppData\Roaming\Anthropic come after it. Until this entry
+ *  nothing set any of the three, so APPDATA decided which stored identity was
+ *  read and the home redirect never got a vote (adversarial round 4).
+ *
+ *  APPDATA and XDG_CONFIG_HOME are deliberately NOT owned. They would isolate
+ *  the store too, and they are also where `gh` keeps its OAuth tokens, npm its
+ *  cache and global prefix, and git its XDG-style config -- the developer
+ *  configuration D3 says a managed session inherits. Owning the first key costs
+ *  none of that. See profileRealmConfigRoot.
  *
  *  Three things withProfileHome also sets are deliberately NOT here, for one
  *  reason: a realm patch can only REPLACE a variable wholesale, and none of
@@ -138,7 +156,9 @@ export const claudeAmbientAuthVariables: readonly string[] = CLAUDE_AUTHORITY_EN
  *    the PATH hijack one indirection later.
  *  All three stay in the launch path, where withProfileHome already composes
  *  them. Registration refuses them (NEVER_OWNED_LAUNCH_VARIABLES). */
-export const claudeOwnedLaunchVariables: readonly string[] = ['USERPROFILE', 'HOME']
+export const claudeOwnedLaunchVariables: readonly string[] = [
+  'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+]
 
 /** Created by the composition root; importing this entry point has no side effects. */
 export function createClaudePackage(): ProviderPackage {
@@ -156,6 +176,7 @@ export function createClaudePackage(): ProviderPackage {
     managedLaunch: {
       minimumCliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
       sanitizeManagedSettings: sanitizeClaudeManagedSettings,
+      authoritySettingsKeys: claudeAuthoritySettingsKeys,
       preflight: claudeManagedLaunchPreflight,
     },
   }

@@ -68,7 +68,6 @@ import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome } from './account-profiles'
 export { withProfileHome } from './account-profiles'
-import { recordManagedLaunchPreflight } from './managed-launch-diagnostics'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
@@ -845,6 +844,54 @@ type SpawnPtyOptions = NonNullable<Parameters<typeof spawnPtyResolved>[2]>
  * else would end the session the carried teardown was for, so it runs here,
  * once, before the error goes on to the caller.
  */
+/**
+ * Tell the renderer, readably, that a DEFERRED spawn failed.
+ *
+ * The synchronous path rejects the `pty:spawn` invoke and the renderer renders
+ * an error. A deferred spawn's invoke has already resolved, so its only signal
+ * was `pty:exit -1`, which renders as a generic grey "[Process exited with code
+ * -1]". The same fault -- including a refused account-isolation control --
+ * therefore surfaced at two different severities depending only on whether a
+ * credential refresh happened to be in flight (adversarial review, MAJOR 7).
+ *
+ * Writing the reason to the terminal first is what makes the two paths match:
+ * the message is the error's own text, and for the refusal it names the host
+ * control that was not applied. Exported so it has a test without standing up a
+ * real PTY.
+ */
+export function emitDeferredSpawnFailure(
+  win: Pick<BrowserWindow, 'isDestroyed'> & { webContents: Pick<BrowserWindow['webContents'], 'send'> },
+  sessionId: string,
+  err: unknown,
+): void {
+  if (win.isDestroyed()) return
+  // CONTROL CHARACTERS OUT. On the refusal path the text is this app's own; on
+  // the deferred path `err` is whatever the spawn threw, and a node-pty error
+  // embeds argv and cwd -- so a directory name containing ESC would write raw
+  // escape sequences into a terminal the user is reading as program output, and
+  // into the session transcript with it (adversarial round 4). The message is
+  // prose either way, so nothing legitimate is lost.
+  //
+  // C1 AS WELL AS C0. The first version of this stripped 0x00-0x1F and DEL and
+  // stopped there, which closes the 7-bit door and leaves the 8-bit one open:
+  // U+009B is CSI, U+009D is OSC and U+009C is ST as single code points, NTFS
+  // permits all three in a file name, and xterm parses them. A directory named
+  // with an OSC 8 sequence would have rendered a clickable link of the
+  // attacker's choosing in the terminal and the transcript (adversarial round 5).
+  //
+  // ...and the Unicode characters that are not controls at all but spoof just
+  // as well: the bidi overrides and isolates (U+202A-202E, U+2066-2069), which
+  // make the text DISPLAY in a different order from its content, and the line
+  // and paragraph separators (U+2028/2029), which let a path fake a second,
+  // separate message on its own line. Cosmetic rather than control-sequence
+  // injection, so a smaller blast radius -- and the same one-line fix.
+  const raw = (err as Error)?.message ?? String(err)
+  const why = raw.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ').slice(0, 500)
+  // Red, and bracketed so it cannot be mistaken for program output.
+  win.webContents.send(`pty:data:${sessionId}`, `\r\n\x1b[31m${why}\x1b[0m\r\n`)
+  win.webContents.send(`pty:exit:${sessionId}`, -1)
+}
+
 export function spawnPty(win: BrowserWindow, sessionId: string, options?: SpawnPtyOptions): void {
   const supersededWait = refreshWaitSpawns.get(sessionId)
   const inheritedTeardown = supersededWait?.abandonedTeardown
@@ -3869,7 +3916,18 @@ function spawnPtyResolved(
                 // wrote before spawnPty ran.
                 logError(`[profiles] session ${sessionId}: fresh deferred spawn failed with no PTY -- notifying the renderer the start ended`)
                 forgetSessionForCanvas(sessionId)
-                win.webContents.send(`pty:exit:${sessionId}`, -1)
+                // Say WHY, in the terminal, before the exit code.
+                //
+                // On the synchronous path a spawn failure rejects the pty:spawn
+                // invoke and the renderer shows a readable error. Here the
+                // invoke has already resolved, so the same failure arrived as a
+                // bare `pty:exit -1` and rendered as a generic grey "[Process
+                // exited with code -1]" -- the SAME class of fault, a refused
+                // isolation control included, surfacing at a different severity
+                // purely because of spawn timing (adversarial review, MAJOR 7).
+                // The text is the error's own, which on the refusal path names
+                // the host control that was not applied.
+                emitDeferredSpawnFailure(win, sessionId, err)
               }
             }
           } finally {
@@ -3896,14 +3954,13 @@ function spawnPtyResolved(
       try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
       home = getProfileConfigDir(resolvedProfileId)
     }
-    const finalSpawnEnv = withProfileHome(spawnEnv, home)
-    // Layer 4: report on what the hardening did to THIS launch. Diagnostics
-    // only -- withProfileHome has already applied and asserted the host
-    // control, so nothing here can refuse a spawn, and a clean preflight is
-    // never a claim that the session is isolated (see the module header).
-    // Only for a launch bound to a managed profile home: `home == null` is the
-    // user's own default account, which this app does not manage.
-    if (home) recordManagedLaunchPreflight(sessionId, home, finalSpawnEnv)
+    // Layer 4 (the preflight report on this launch) is recorded by
+    // withProfileHome itself, from the launch CONTEXT passed here. It used to be
+    // a separate call on this line -- which reported the PTY path and none of
+    // the other four (adversarial review, MAJOR 9). `cwd` is passed so the
+    // report can name project-owned settings the host control is suppressing;
+    // the files themselves are never read for anything else and never modified.
+    const finalSpawnEnv = withProfileHome(spawnEnv, home, { launchId: sessionId, cwd: resolvedCwd, probe: false })
     // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).

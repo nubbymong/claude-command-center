@@ -244,6 +244,16 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
         <div className="mt-2">
           <AccountWebSession profileId={profile.id} accountName={profile.name} />
         </div>
+        {/* Layer 4 of the account-isolation hardening: whatever the
+            managed-launch preflight could not confirm FOR THIS ACCOUNT. Per
+            row, not once for the panel: a single merged notice folded every
+            account's findings into one list and deduped by finding id, so a
+            second account's occurrence was invisible rather than merely
+            unattributed, and the detail text carried that account's stripped
+            settings keys across the boundary this panel exists to defend
+            (adversarial review, MAJOR 5). Renders nothing when there is nothing
+            to say, so a healthy install pays no space for it. */}
+        <AccountIsolationNotice profileId={profile.id} />
         {deleteError && (
           <p
             className="text-[11px] text-red mt-1.5"
@@ -325,10 +335,6 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
         </button>
       )}
 
-      {/* Layer 4 of the account-isolation hardening: anything the managed-launch
-          preflight could not confirm. Renders nothing when there is nothing to
-          say, so a healthy install pays no space for it. */}
-      <AccountIsolationNotice />
 
       {/* Informational note - no em dashes */}
       <p className="text-[11px] text-overlay0 leading-relaxed mt-2">

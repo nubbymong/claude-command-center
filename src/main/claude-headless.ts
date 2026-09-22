@@ -139,7 +139,10 @@ function spawnNow(
     const proc = spawn('claude', args, {
       shell: true,
       windowsHide: true,
-      env: withProfileHome({ ...process.env } as Record<string, string>, home)
+      // `headless` is the launch id the Accounts panel shows beside a finding:
+      // these runs have no PTY session to name, and a report with no launch on
+      // it is a report nobody can place.
+      env: withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', probe: true })
     })
 
     // Pipe prompt via stdin if provided

@@ -27,9 +27,14 @@ export function registerAccountProfilesHandlers(): void {
   // exactly like one that started with it, unless somebody opens app.log.
   // Read-only, and non-secret by construction -- a finding names the variables
   // and settings KEYS that were removed, never their values.
-  ipcMain.handle(IPC.ACCOUNT_MANAGED_LAUNCH_REPORTS, () => {
+  // SCOPED TO ONE PROFILE. The buffer is process-wide and holds every account
+  // that has launched, so handing all of it to a renderer leaked one account's
+  // stripped settings keys and ambient variable names -- and its absolute
+  // profile path, and therefore the OS username -- to another (MAJOR 5).
+  ipcMain.handle(IPC.ACCOUNT_MANAGED_LAUNCH_REPORTS, (_e, profileId: unknown) => {
     try {
-      return listManagedLaunchReports()
+      if (typeof profileId !== 'string' || profileId.length === 0) return []
+      return listManagedLaunchReports(profileId)
     } catch (err) {
       logError('[account-profiles] managedLaunchReports failed:', err)
       return []

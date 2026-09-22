@@ -425,7 +425,7 @@ that could invalidate the design, and it is not optional:
 
 | # | Gate | Why it cannot be automated | Status |
 | --- | --- | --- | --- |
-| A1 | With the host flag set, a real signed-in profile home still authenticates from its STORED OAuth credential | Part 1's `X3` proved fail-closed with NO host key present. It never tested a stored OAuth login under the flag. If the flag suppresses stored credentials too, managed sessions cannot sign in at all and the design needs rework | NOT RUN |
+| A1 | With the host flag set, a real signed-in profile home still authenticates from its STORED OAuth credential | Part 1's `X3` proved fail-closed with NO host key present. It never tested a stored OAuth login under the flag. If the flag suppresses stored credentials too, managed sessions cannot sign in at all and the design needs rework | **RUN 2026-09-22 -- FAILED.** The flag alone makes the CLI report not signed in and refuse a request. See Part 7 |
 | A2 | Two managed realms with different accounts stay distinct under the flag | needs two real signed-in accounts | NOT RUN |
 | A3 | Remote / organizationally managed settings | the CLI fetches these from the server for a signed-in account; not locally observable | NOT RUN |
 | A4 | Settings changed mid-session | needs a live session and a real edit | NOT RUN |
@@ -644,3 +644,824 @@ Three decisions are recorded for the owner rather than taken quietly:
 2. a CLI below the floor produces a blocking, visible requirement but does not
    refuse the spawn (Part 2);
 3. the 33-name ambient strip now reaches plain account-pinned shells (Part 3).
+
+---
+
+# Part 5 -- ADR-009 remediation round (2026-09-21)
+
+An adversarial pass over the slice-2 tree returned one blocker and nine findings.
+Findings 4-7 were closed in the preceding session and are recorded in the commit;
+this part records what closed the rest, and the probe that turned four VOID rows
+from Part 2 into decided ones.
+
+## The provider-conditioned helpers -- now decided, not assumed
+
+Part 2 could say only that `apiKeyHelper` is suppressed by the host control. The
+other four credential helpers produced VOID rows: they never fired **even in the
+control**, because that run gave the CLI no reason to reach for them -- no
+Bedrock, no Vertex, no configured proxy. A row whose control does not fire says
+nothing about the test.
+
+This run supplies the preconditions, with synthetic values only: loopback capture
+servers in place of the Bedrock, Vertex, proxy and Anthropic endpoints, **no real
+cloud credential anywhere** (the point is that the CLI has none and must run the
+helper to get one), and sentinels that record that they ran and echo a
+syntactically shaped fake answer. Each helper is probed twice, control then
+hosted.
+
+| row | preconditions | helper(s) | control fired | with host flag | verdict |
+| --- | --- | --- | --- | --- | --- |
+| B1/B2 | `CLAUDE_CODE_USE_BEDROCK=1`, region, loopback Bedrock endpoint, no AWS credentials | `awsAuthRefresh`, `awsCredentialExport` | **both** | **neither** | SUPPRESSED |
+| V1/V2 | `CLAUDE_CODE_USE_VERTEX=1`, project, region, loopback Vertex endpoint, no GCP credentials | `gcpAuthRefresh` | **yes** | **no** | SUPPRESSED |
+| X1/X2 | `HTTPS_PROXY` at a loopback capture, `CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER=1` | `proxyAuthHelper` | **yes** | **yes** | **NOT suppressed** |
+
+Two details that make B2 and V2 more than an absence:
+
+- B2 did not merely fail to run the helper, it refused the credential class
+  outright and sent nothing: *"Bedrock credentials are managed by the desktop
+  app, but none are available."* The capture server recorded a request in B1 and
+  none in B2, so the host flag fails CLOSED on that path rather than falling back.
+- V2 ended on the ordinary "could not load Google Cloud credentials" error, i.e.
+  the CLI looked for credentials the normal way and never consulted the helper.
+
+**X1/X2 is the finding, and it corrects a claim.** `proxyAuthHelper` fires under
+the host flag exactly as it does without it. Both rows exited at `Not logged in`,
+so what this shows precisely is that the helper is invoked while the connection
+is being configured, before authentication, and that the flag makes no difference
+at that point. So:
+
+- the helpers that can supply a **model credential** -- `apiKeyHelper`,
+  `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh` -- are suppressed by
+  the host control in every settings scope. All four are now behaviourally
+  proven, where Part 2 could prove only the first;
+- `proxyAuthHelper` is **not** suppressed by the host control, in any scope. It
+  is removed from the app-owned settings copy and nowhere else. That is
+  acceptable and is recorded rather than fixed: it mints a `Proxy-Authorization`
+  header for whichever proxy the environment already selects, and the proxy
+  selector (`HTTPS_PROXY` and friends) is deliberately PRESERVED under D18 item
+  1, so the helper selects no account, credential source or model endpoint. The
+  claim that had to change is the wording, not the disposition.
+
+The authentication PINS (`forceLoginOrgUUID`, `forceLoginGatewayUrl`,
+`gatewayInternalNetworks`) remain what Part 2 said they were: binary-path
+evidence plus app-owned-copy sanitisation, with no local observable. They stay on
+the remote/organisational manual gate. `forceLoginMethod` keeps its verbatim
+binary-path evidence at @199007641.
+
+Probe: `probe/d13b.mjs` in the session scratchpad, with per-row transcripts and
+`results-d13b.json`. It is a maintainer tool against a pinned CLI, not a test.
+
+## The credential-store selector the CLI enumerations do not list
+
+The generated manifest is derived from two enumerations the CLI maintains. Those
+are what the CLI singles out, which is not the same set as everything that
+decides which stored identity a launch resolves: a credential-STORE selector is
+read before either filter is consulted, so neither enumeration contains it and
+the extraction alone missed it.
+
+`CLAUDE_CODE_FORCE_WINDOWS_CREDMAN` is now classified in this repo as a
+`claude-realm-root` and removed on both axes -- out of the inherited environment
+of every managed launch, and out of the `env` block of the settings copy the app
+writes. It is recorded in the manifest under a fifth source, `repo-added`, and
+the generator asserts that each `repo-added` name still OCCURS in the pinned
+binary, so the list cannot drift back into a hand-maintained denylist carried
+forward on faith. AT THE TIME THIS PARAGRAPH WAS WRITTEN the manifest was 169
+entries (was 168), 89 stripped from the settings copy and 85 from the ambient
+environment, with a digest beginning `2c69fac6`. **Those figures are history,
+not the shipped artefact**: the census added in later rounds took the manifest to
+1,167 entries. The current counts, digest and scope are in Part 6, which is the
+only place they are stated. Unchanged throughout: schemaVersion 2, cli 2.1.278,
+win32-x64, binary sha256 `006ea5c8638f67f10a5ae66bb232fd267c9f6af294e3f03f4cfcf1fd3f2cced8`.
+
+## D17 -- what the guarantee covers, stated the same way everywhere
+
+The owner's ruling is that host management suppresses **provider and
+authentication authority** and nothing else: ordinary settings, hooks included,
+continue to operate, and this app does not sandbox code the same OS user can
+already run. The probe supports both halves -- the flag refuses
+`ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` from a settings `env` block and
+suppresses the credential helpers, while a `SessionStart` hook still executes.
+
+That wording now appears in three user-facing places rather than only in code
+comments: the Feature Guide / Ask Conductor knowledge (`settings-scope`, plus a
+"what account isolation does NOT cover" entry under known issues), and the user
+guide's *Multiple accounts* section. A regression test asserts the code half of
+the pair as one fact: the same settings file loses `apiKeyHelper`,
+`forceLoginMethod` and its `env` authority entry while its `hooks`, `statusLine`,
+`outputStyle` and `permissions` survive byte-identical.
+
+## The Accounts panel was importing a component it never rendered
+
+Worth recording because no test caught it and the whole of layer 4 was invisible
+in the UI: when the notice became per-account it was removed from the panel body
+and never added to the account row, so `AccountIsolationNotice` was imported and
+unused. It now renders inside each account's row, and a panel test asserts that
+one request is made per account id and that a finding appears under the account
+it belongs to and nowhere else.
+
+# Part 6 -- ADR-009 rounds 2 to 9, the D3 re-ruling, and the full mutation scope (2026-09-22)
+
+**Scope of every claim in this part.** Claude Code **2.1.278**, **win32-x64**,
+binary sha256 `006ea5c8638f67f10a5ae66bb232fd267c9f6af294e3f03f4cfcf1fd3f2cced8`.
+Nothing here is a claim about another CLI version or another platform. Where a
+statement about Linux or macOS appears it says whether it was MEASURED or
+REASONED, and almost all of them are reasoned: the only host these rounds ran on
+is Windows.
+
+**The manifest is a census, not a policy.** It now has **1,167 entries**. That
+number is what five read forms found in one binary: every name in one of the
+CLI's own namespaces (875, after round 8) and every authority-shaped name
+outside them. It is not the isolation policy and it is not a completeness
+claim: **145** of those entries are stripped from the settings copy and **141**
+from the ambient environment, and the other thousand-odd are inventoried and
+deliberately KEPT, each with a ruling of its own. Which entries are removed is
+decided separately, by D3, and that decision is what most of this part is
+about. Manifest digest
+`f1f309fa9cfcd523dcc0def0f0af8dd3a1740ee873b5fb05ecf973ad7efff31c`;
+`gen-claude-authority-manifest.mjs --check` reproduces it byte for byte from the
+pinned binary.
+
+**Correction to Part 5.** Part 5 quotes "169 entries ... 89 stripped ... 85 from
+the ambient environment" and a digest beginning `2c69fac6`. Those figures were
+true of the manifest when that paragraph was written and are not true of the
+manifest this change ships. Part 5 has been amended to say so; the figures above
+are the current ones.
+
+## Rounds 2 and 3 -- owed from the previous part
+
+**The threadpool finding.** The project-settings scan ran `statSync` and
+`readFileSync` on the synchronous spawn path, and a working directory on an
+unreachable share froze the Electron main thread for 42 seconds, measured twice.
+Moving it off that path and racing it against a two-second deadline was not
+enough: `fs.promises.open` takes no AbortSignal, so the deadline abandons the
+await and leaves the syscall running on the libuv pool. Four launches consumed
+the whole default four-thread pool and stalled every `fs.promises` call and DNS
+lookup in the process for 21 seconds. The fix was a UNC refusal before any
+syscall plus SINGLE-FLIGHT, with the flag released when the SCAN settles rather
+than when the deadline does. Round 5 found that this was still not a bound --
+see below.
+
+**The census.** Rounds 2 and 3 each found another hand-anchored enumeration the
+extractor had missed (the identity names, then the background-auth snapshot path
+and the messaging token, then a name outside every listed namespace). Adding a
+fourth and fifth anchor was the defect, not the cure, so the generator stopped
+anchoring and began CENSUSING the binary, with a hard failure for any
+authority-SHAPED name that has no ruling. Non-Claude names are settled by three
+documented family rules; a Claude- or Anthropic-namespaced name settled by a
+family rule is refused by the validator.
+
+**The probe/launch split and `'not-evaluated'`.** The `claude auth status` probe
+behind the Accounts panel is a real managed launch and recorded a report of its
+own, newer than the session it described, so opening the panel replaced what the
+panel was about to show. Reports now carry a `kind`, live in two rings, and the
+notice answers with the newest non-probe. Separately, a launch that never built
+the profile home reported the settings copy as CLEAN; there is now a third state,
+`'not-evaluated'`, and "there was no shared settings file to copy" records
+`{removed: []}` so a healthy install does not carry a permanent notice.
+
+## Round 4 -- the census could not see four read forms
+
+Three patterns is what round 3 shipped. The pinned binary uses at least four
+more, and a bearer token was hiding behind each:
+
+| read form | why round 3 missed it | what it hid |
+|---|---|---|
+| a list containing a SPREAD | the pattern matched a whole `[...]` literal, so one `...x` inside made it match nothing | the CLI's own token list |
+| an alias longer than two characters | `\w{1,2}` | `this.deps.env.NAME` |
+| a typed env-schema object KEY | the name exists only as a key; every consumer is rewritten to a local binding | the CLI's authentication module (six such maps ship) |
+| a lone quoted argument | no list to belong to, no key to be | the environments worker's key, sent as `authToken` |
+
+The census now uses five forms: spread-tolerant list RUNS, `process.env.NAME`,
+alias reads of any depth, object keys, and standalone quoted literals. A run is
+an environment list when at least ONE member is namespaced -- a presence test,
+deliberately not the majority vote round 3 removed, because the secret-redaction
+list is four Claude names out of nine. **Stated limit:** a name ASSEMBLED AT
+RUNTIME from fragments is invisible to any literal scan, and the binary contains
+some. That residual is recorded in the classification header and in the
+manifest's own provenance text rather than closed.
+
+**A family rule had swallowed a Claude credential.** `ENVIRONMENT_SERVICE_KEY`
+carries no Claude prefix, so the rule "a Claude name needs a ruling of its own"
+did not apply, and the third-party family ruled it KEEP on both axes with a
+reason that was false of it. The generator now extracts the lists the CLI ITSELF
+designates as secret names, and membership forces an exact ruling whatever the
+prefix. Round 5 found two more members of the same list with the same false
+reason, which is why that rule is structural rather than a one-name patch.
+
+**The Anthropic profile store.** The SDK resolves its config root as
+`ANTHROPIC_CONFIG_DIR`, then `%APPDATA%\Anthropic`, then
+`%USERPROFILE%\AppData\Roaming\Anthropic` (elsewhere `$XDG_CONFIG_HOME/anthropic`,
+then `$HOME/.config/anthropic`). Redirecting the home alone therefore moved
+nothing, and `APPDATA` and `XDG_CONFIG_HOME` had been ruled `replace` -- "the
+fake-home mechanism sets this" -- while nothing set either. How that was fixed
+is the subject of owner requirement 4, below.
+
+## The D3 re-ruling of the 49 hand rulings (owner requirements 1 to 3)
+
+Round 4's first pass over the widened census stripped on resemblance: "this app
+never sets it, so stripping is harmless". That is not the rule. **D3** removes a
+variable only when it can override the selected **account, credential, provider
+or provider endpoint**; an interactive session otherwise INHERITS the developer's
+environment, and a strip that redirects nothing is a cost with no benefit. All
+49 were re-ruled against that test, and an independent attacker then re-checked
+every one against the binary: **44 agreed, 5 had a correct disposition resting on
+a wrong or unproven reason, none was an over-strip and none an under-strip.**
+
+| disposition | names | what decided it |
+|---|---|---|
+| REMOVED -- credential | `ANTHROPIC_ENVIRONMENT_KEY`, `CLAUDE_CODE_HFI_BEARER_TOKEN`, `ENVIRONMENT_SERVICE_KEY` | each is sent as a bearer credential on an Anthropic-side request |
+| REMOVED -- child helper | `CLAUDE_CODE_PROXY_URL`, `_HOST`, `_AUTHENTICATE` | assigned CONDITIONALLY into a credential-minting helper's environment, so an inherited value survives where the CLI has none of its own |
+| kept -- inbound secret | `ANTHROPIC_WEBHOOK_SIGNING_KEY` | verifies inbound payloads; never sent; selects nothing |
+| kept -- identifier | `ANTHROPIC_SESSION_ID` | see below |
+| kept -- log sink | `CLAUDE_CODE_DEBUG_LOGS_DIR` | see below |
+| kept -- exec path | `CLAUDE_CODE_POLICY_HELPER_PS1_PATH` | command execution, the accepted D17 class beside `PATH` and `CLAUDE_CODE_GIT_BASH_PATH` |
+| kept -- CLI-set | eleven `CLAUDE_RUNNER_*`, the marketplace/plugin/MCP helper URLs, `CLAUDE_TEST_PROJECT_DIR` | assigned UNCONDITIONALLY from the CLI's own state, so an inherited value is overwritten before anything reads it |
+| kept -- non-model endpoint | `CLAUDE_CODE_GB_BASE_URL`, `CLAUDE_CODE_DEV_RAW_CHANGELOG_URL` | feature flags and a changelog; no account credential, not a provider endpoint |
+| kept -- not a variable | `CLAUDE_AI_AUTHORIZE_URL` | a key in the CLI's OAuth constants object |
+| kept -- subcommand credential | `SELF_HOSTED_RUNNER_POOL_SECRET`, `SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET` | Anthropic-side, but read only by a subcommand a managed launch never runs |
+| kept -- third-party credential | nineteen registry, cloud and MCP-server secrets | D18 item 2; each now ruled BY NAME because the CLI lists it as a secret |
+
+**`CLAUDE_CODE_DEBUG_LOGS_DIR` is preserved (requirement 2).** Every read of it is
+the log-path chain, and the writer only creates directories, appends, rotates
+and marks a latest-symlink. Nothing is ever read back from that directory, and no
+credential, configuration or provider decision consults it. An independent
+attempt to find static or behavioural evidence of an account or provider effect
+found none. The residual is recorded rather than used to justify a strip: an
+inherited value decides WHERE a transcript is written, which is a confidentiality
+question and the accepted D17 class, not an isolation one.
+
+**`ANTHROPIC_SESSION_ID` is preserved (requirement 3).** It reaches exactly one
+place: the `data: {type: "session", id}` field of a work-order payload. The only
+authorisation on that call is the separate environment key, which IS removed, and
+the read is an exact, unnormalised environment lookup, so there is no alias path
+around that removal. It therefore cannot override managed identity. On
+cross-account attribution: work is scoped by the environment id plus that key, so
+with the key gone the id selects nothing, and a party who already holds the key
+does not need the id.
+
+**One recorded reason was false and is corrected in place.** The marketplace,
+plugin-archive and MCP headers helpers were first ruled kept because their
+environments were "built FRESH, with no `...process.env` spread". They are not:
+all three route through the CLI's subprocess-environment helper, which returns
+the ambient environment. The disposition holds on the SAME test as the runner
+group -- each name is assigned unconditionally and applied last.
+Conditional-versus-unconditional is the rule. Fresh-versus-spread never was.
+
+## Round 5
+
+**The realm store's Linux half was a no-op.** The store was first placed at
+`<home>/.config/anthropic` off Windows. `mirrorRealHome` links every dot-entry of
+the real home into the profile home and excludes only `.claude` and
+`.claude.json`, so `<profileHome>/.config` IS the developer's real `~/.config`
+and every profile resolved one shared store -- the round-4 defect surviving inside
+its own fix. This was proven by execution against the pinned binary with the
+mirror semantics reproduced literally, not reasoned. Both stores now live under
+`.claude`, the one directory the mirror excludes, on every platform.
+
+**A second credential backend.** Claude Code's own OAuth store can be backed by
+the Windows Credential Manager under a service name that gains a directory hash
+ONLY when `CLAUDE_SECURESTORAGE_CONFIG_DIR` or `CLAUDE_CONFIG_DIR` is set. A
+managed launch set neither, so the name was a per-OS-user CONSTANT, and that
+backend is selected by a server-side feature flag rather than by this app or the
+user. It is off in the pinned build, which makes the collapse latent rather than
+absent. The realm patch now owns and sets `CLAUDE_SECURESTORAGE_CONFIG_DIR`, which
+keys both backends on the profile. Nothing outside Claude Code reads that
+variable, so fidelity is untouched. **Not demonstrated:** no entry was written to
+the Credential Manager to show the cross-account read; the mechanism is read from
+the binary.
+
+**An incomplete SHAPE test, not an incomplete census.** Three names were already
+among the census's names and never became entries, because the authority-shape
+pattern did not match them and so the hard-failure gate never fired:
+`CLAUDE_CODE_RATE_LIMIT_TIER` and `CLAUDE_BG_DISPATCHER_RATE_LIMIT_TIER` -- the
+tier twins of two names already stripped as account pins, which the CLI writes
+together out of authenticated account state and scrubs together from its own
+children -- and `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, which turns off the CLI's own
+credential redaction for every subprocess. The pattern now covers both shapes,
+the gate fired on exactly those three, and each is ruled. A sixth namespace,
+`ANT_`, was added to the census for the same typed-map read form.
+
+**The watchdog was not a bound.** Round 4 added a 60-second watchdog so one
+wedged mount could not disable the project scan for the life of the process, and
+described the cost as "at most one more occupied thread". It was one more PER
+WINDOW: re-opening the flag does not return the thread, so repeated launches into
+one dead mapped drive stranded the whole pool for good. The flag is no longer the
+bound. A count of scans STARTED AND NOT SETTLED is, with a ceiling of two -- half
+the default pool. At the ceiling the diagnostic turns itself off and says so
+once. **Stated residual:** a mapped drive or a junction onto a dead host is still
+not detectable from the path string, and two of them cost this feature.
+
+**The rest.** The size caps are now fixed-buffer reads of cap-plus-one bytes, so a
+byte past the cap IS the refusal whatever a stat said; the terminal failure line
+strips C1 controls as well as C0, because `U+009B`, `U+009D` and `U+009C` are CSI,
+OSC and ST as single code points and NTFS permits them in a file name; the sanitise
+record is cleared at the top of the home build and written after the atomic write;
+a deleted shared settings file now removes the account's copy; and the probe rule
+is "every call site states `probe`" rather than a list of five files.
+
+## Owner requirement 4 -- isolation and developer-tool fidelity, both
+
+The first fix redirected `APPDATA` and `XDG_CONFIG_HOME` into the profile home.
+That isolates the store and breaks everything else that reads those variables:
+`gh` keeps its OAuth tokens under `%APPDATA%\GitHub CLI`, npm its cache and global
+prefix, git its XDG-style configuration. It was replaced before it was attacked.
+
+`ANTHROPIC_CONFIG_DIR` is consulted FIRST and returns immediately, so owning it
+isolates the store while `APPDATA` and `XDG_CONFIG_HOME` stay at the developer's
+own values. They are ruled `superseded-config-root`: stripped from a settings
+`env` block, KEPT from the ambient environment. `ANTHROPIC_CONFIG_DIR` and
+`CLAUDE_SECURESTORAGE_CONFIG_DIR` are ruled `strip` AND are owned by the realm
+patch -- not `replace` -- so a poisoned value is removed on every platform and the
+app's own is set only where it has one. `replace` would have been a hole on macOS,
+where neither is set.
+
+| | win32 | linux | darwin |
+|---|---|---|---|
+| (A) isolation of the identity stores | HOLDS -- measured: with a profile under `%APPDATA%\Anthropic` and the first key pointed elsewhere, the CLI reported not signed in | REASONED to hold after the move under `.claude`; the pre-move failure was measured on win32 with the Linux mirror semantics reproduced, not on a Linux host | not attempted: the home is not redirected, multi-account is disabled, and the store is stripped and not re-set |
+| (B) `gh` | HOLDS -- measured live inside a managed launch | reasoned | reasoned |
+| (B) `git` | HOLDS -- measured; the global config resolves from the real file | reasoned; a global config kept ONLY at the XDG path is lost, which predates this change | as linux |
+| (B) `npm` | HOLDS -- measured: userconfig, prefix and cache all real | reasoned | reasoned |
+| (B) ordinary child processes | HOLDS -- inherited unmodified apart from one appended PATH entry | reasoned | reasoned |
+
+**The one place the two properties genuinely collide** is the Anthropic SDK's own
+store: Anthropic's command line tool, or an SDK script, run from inside a managed
+session now sees that account's private store rather than the developer's. That
+store IS the identity store isolation is about, so isolating it is the correct
+resolution; it is user-visible with a workaround and has a known-issues entry.
+
+**No design blocker was found.** Both properties hold at once on the platform
+where both could be measured.
+
+## Owner requirement 5 -- oversized or malformed settings
+
+Verified end to end by reading and then by test: an oversized file, invalid JSON,
+JSON that is not an object, and JSON `null` are each RECORDED with a reason the
+user can act on, surface as a `blocked` finding rather than `info` (the Accounts
+panel renders `blocked` as a warning and collapses `info` under routine
+activity), remove any stale copy so old settings do not keep applying in silence,
+and leave the source file byte-for-byte unchanged. No path through the copy opens
+the source for writing.
+
+## Owner requirement 6 -- the FULL mutation scope across Slice 2
+
+An earlier handoff quoted "33 mutants across five rounds, 32 detected". **That
+figure could not be reproduced and is withdrawn.** The five runners from those
+rounds define **49** mutants, and their result files held only 14 because each
+partial re-run overwrote the file. All 49 were therefore re-run in full against
+the FINAL tree, which is the only tree the number should describe.
+
+| set | defined | detected as written | corrected, then detected | not detected |
+|---|---|---|---|---|
+| rounds 1 to 5 of the earlier sessions (M, N, R, C, F) | 49 | 43 | 4 (M1, M5, F2, R2: anchor drift) | 2 (N6, N7) |
+| round 4 of this session | 8 | 6 | 0 | 2 superseded (see below) |
+| round 5 of this session | 12 | 10 | 2 (R5-7, R5-12: invalid as first written) | 0 |
+| the combined mutant that settles N6 | 1 | 1 | 0 | 0 |
+| round 6 of this session (the re-attack fixes) | 3 | 3 | 0 | 0 |
+| round 7 of this session (the second re-attack) | 7 | 6 | 1 (R7-5: the test never reached the floor) | 0 |
+| round 8 of this session (the round-7 confirm, and its confirm) | 10 | 10 | 0 | 0 |
+| round 9 of this session (the independent code-quality review) | 9 | 9 | 0 | 0 |
+| **all** | **99** | **88** | **7** | **4** |
+
+ONE bucketing rule, applied to every row: a mutant counts as "detected as
+written" only if its FIRST definition applied and was caught. A first draft of
+this table put round 5 at 12 of 12 while its own raw results recorded R5-7 as
+"test did not run" and R5-12 as "survived" before both were corrected -- the same
+thing the row above calls a correction. The prose said so; the table did not, and
+a table is what gets skimmed.
+
+The four that are not detected, each accounted for rather than rounded away:
+
+- **N7** -- the `isFile()` half of the project-scan guard. Its only discriminating
+  test needs a POSIX FIFO and is skipped on win32 at an `it.skipIf` that says so.
+  A PLATFORM survivor: untested HERE, not untested.
+- **N6** -- the project stat-size check removed on its own. It is now an
+  EQUIVALENT mutant: the fixed-buffer bound added in round 5 refuses the same
+  file. Proven rather than asserted -- removing the stat check alone survives,
+  and removing BOTH bounds is detected.
+- **round 4's "size cap removed" and "APPDATA no longer set"** -- the code each
+  mutated no longer exists. Their successors are round 5's buffer-bound and
+  realm-store mutants, all detected.
+
+Two things the re-run found that a quoted number would have hidden. **R2** --
+"the flag is released on the DEADLINE, not the scan", the mutant for the original
+starvation bug -- had silently stopped being that mutant: its main edit no longer
+matched, a secondary edit still changed the file, so it reported "applied" while
+mutating something harmless. Re-anchored to its real intent it SURVIVED, because
+every test finished inside the two-second deadline. An assertion now advances
+past the deadline and requires the flag to still be held, and the mutant is
+detected. And **two of round 5's own mutants were invalid as first written**: one
+had no test that isolated it, and one mutated a spread that the literal after it
+overrode, so it changed nothing. Both were corrected and re-run; the first needed
+a new test.
+
+**Guards with no mutation evidence, stated plainly:** the census SHAPE pattern and
+the generator's read forms themselves, which can only be exercised against the
+proprietary binary -- the suite asserts that the names they found are in the
+shipped manifest, not that a narrowed pattern would still find them; the
+two-second deadline as
+a TIMING value (its ordering against the flag is covered, its magnitude is not);
+the project scan's cap-plus-one skip when a file grows between stat and read,
+which needs a concurrent writer to reach; and the manifest-derived strip lists
+under a corrupt manifest, which are covered only transitively, by the test that
+the module refuses to load at all.
+
+## Round 6 -- the re-attack
+
+One verification round, the same four attackers. **No blocker.** Both round-5
+blockers were re-proven fixed by execution: with the mirror reproduced and a
+shared store under the real home, the old realm path reported signed in and the
+new one did not; and an existing signed-in profile stayed signed in with the
+secure-storage root set, while an unrelated directory signed it out, so the
+variable selects the store and the chosen value is continuity-safe. Writing to
+the Credential Manager to demonstrate the hashed service name was, again, not
+done.
+
+What the re-attack still found, all fixed:
+
+- **The `ANT_` fix reopened the hole it sat beside.** Adding the namespace to the
+  census made the family visible and nothing more: the exact-ruling rule still
+  tested CLAUDE and ANTHROPIC only, so every `ANT_` name fell to the catch-all
+  family rule -- whose reason, "not an environment variable the CLI reads", was
+  false of both that landed -- and a future `ANT_` bearer would have been kept
+  with no hard failure. The rule and the validator guard now both cover `ANT_`,
+  and the two entries carry their own ruling (telemetry endpoints, kept).
+- **`_OVERRIDES` was not an authority shape.** With it added, the gate asked about
+  `CLAUDE_INTERNAL_FC_OVERRIDES` -- the feature-flag override channel, which the
+  CLI lists in its own provider-env allowlist -- and
+  `CLAUDE_CODE_EVAL_ALLOW_FLAG_OVERRIDES`. Both are INERT in the pinned build: the
+  consumer is a stub. They are ruled by the owner's existing precedent for
+  exactly that, D16 item 8 -- stripped, because inactivity is pinned-version
+  evidence and not a contract -- and the precedent has some force here, since what
+  the channel would override is feature flags and the credential-store backend is
+  selected by one. **This is the one ruling in this part made by precedent rather
+  than by a D3 effect in the pinned binary, and it is flagged for the owner as
+  such.**
+- **`HOME` was ruled `replace` and set on one platform of three.** That is the
+  shape of the `APPDATA` defect, kept true-by-exception. Its behaviour is
+  unchanged -- stripping it breaks Git Bash, setting it on macOS breaks the
+  keychain -- but it now has a kind of its own, `posix-home-selector`, that says
+  what happens to it, and `replace` means `USERPROFILE` alone, which IS set
+  everywhere the realm is redirected.
+- The terminal failure line now also strips bidi overrides and isolates and the
+  Unicode line and paragraph separators, which are not controls but spoof as well;
+  a stale comment about why the realm store is created eagerly was corrected, and
+  the store is now created after `.claude` is hardened rather than before; and the
+  generator's census paragraph no longer says "every".
+
+**Considered and deliberately left unruled**, with the attacker's agreement on each:
+`CLAUDE_PLUGIN_ROOT` and `CLAUDE_CODE_MARKETPLACE_NAME` are assigned conditionally
+and do reach a helper, but a plugin path and a marketplace name select no realm;
+`CLAUDE_CODE_POLICY_HELPER_PSMODULEPATH` and `CLAUDE_ENV_FILE` are command
+execution under the same OS user, the accepted D17 class, and the second runs
+after credentials are resolved and reaches only the Bash tool's children; and five
+OAuth and host CONSTANTS remain stripped as endpoints although they are not
+variables, which costs nothing and is untidy rather than wrong.
+
+**Open and out of scope, stated rather than buried:** the profile-home build is
+still fully synchronous -- some sixty blocking calls per spawn with no deadline --
+so a resources directory on an unreachable share freezes the main process. It
+predates this change, this change made it slightly smaller rather than larger
+(one bounded read in place of a stat and an unbounded one), and rewriting it
+touches all five launch paths and the boot-time repair.
+
+## Round 7 -- the second re-attack
+
+Two of the four attackers had open findings after round 6 and were asked to
+verify the fixes. The evidence auditor returned PASS. The policy attacker passed
+the ANT_ instance and found the CLASS was still open: the exact-ruling rule and
+the validator guard were a three-item prefix list while the census treated
+CCR_, AGENT_PROXY, SESSION_INGRESS and the two OAuth switches as the CLI's own
+-- so AGENT_PROXY_AUTH_TOKEN is stripped as a credential while a hypothetical
+AGENT_PROXY_AUTH_TOKEN_V2 would have been family-ruled keep with no hard
+failure. The third occurrence of the ENVIRONMENT_SERVICE_KEY defect.
+
+**Fix: one list.** CLI_OWNED_NAMESPACES is declared once in the classification
+module; the generator builds the census namespaces from it and writes it into
+the manifest as provenance.cliOwnedNamespaces; the runtime validator reads THAT
+copy, refuses a manifest without it or one that drops the CLAUDE/ANTHROPIC
+floor, and the list is in the digest; the WP1 suite checks the manifest's copy
+against the module's. **The moment the list existed the gate found two more**:
+CCR_OAUTH_TOKEN_FILE, a credential SOURCE the CLI reports as its login method
+(now claude-credential, stripped), and CCR_SESSION_ACCOUNT_EMAIL, a session
+identity written into the git hook the CLI installs (now account-pin,
+stripped). Both had been family-ruled keep while their sibling
+CCR_SESSION_PROFILE was stripped.
+
+The same attacker also showed the round-6 ruling of
+CLAUDE_CODE_EVAL_ALLOW_FLAG_OVERRIDES was WRONG: it is not stubbed, it is live
+in the pinned build, and the CLI's own error text says its value "must come
+from the operator's shell". An operator opt-in that selects nothing is what D3
+preserves, so it is now kept (non-redirecting-operator-switch) with that
+evidence; CLAUDE_INTERNAL_FC_OVERRIDES stays stripped under D16 item 8.
+
+Manifest after round 7: 564 entries, 144 stripped from the settings copy, 140
+from the ambient environment, digest beginning `89bb1dc3`. Superseded by round
+8, below; the figures at the top of this part are the current ones.
+
+## Round 8 -- the round-7 confirm, and the gate that was written but not built
+
+The policy attacker was asked once more to confirm the round-7 fixes and
+nothing else: the one shared namespace list, the two CCR rulings, the
+eval-switch keep. It confirmed all three -- the three regexes are built from
+one list with identical construction, the list is in both digests, the floor
+cannot be bypassed through the validator's charset, the eval switch selects
+nothing and runs in a realm the eval harness builds itself, and
+`CCR_SESSION_ACCOUNT_EMAIL` is set beside the account UUID and written into the
+git hook the CLI installs. Then it reproduced the census offline, got the same
+1,294 names and the same digest as the manifest's provenance, and diffed that
+against the entries.
+
+**The exact-ruling gate never ran on most of the names it was written for.**
+The generator filtered the census to AUTHORITY-SHAPED names BEFORE asking
+`classify`, so the rule "a CLI-owned name is never settled by a pattern" was
+applied only to the names a shape pattern happened to describe -- and the
+generator's own comment claimed the wider gate. **611** names in the CLI's own
+namespaces were counted, digested and never ruled. One of them is
+`CLAUDE_BRIDGE_REATTACH_OWNER_ACCT`: read off the environment in the same
+statement as `CLAUDE_BRIDGE_REATTACH_OWNER_ORG`, written from the owning
+account UUID, compared against the resolved owner on reattach. The `_ORG` half
+was in the strip as an account pin because `_ORG` is a shape the pattern knew;
+the `_ACCT` half was inherited because `ACCT` is not. The round-5 "tier twins"
+defect, verbatim, and the fourth shape in a row the pattern lacked.
+
+**The fix is not a fifth word in the pattern.** A shape pattern is a denylist of
+shapes, and this repo has been here before. Every CLI-owned census name is now
+an entry with a ruling of its own; the shape test still qualifies third-party
+names on its own. Eight names that END in `_` are prefix fragments of names
+the CLI assembles at run time (`CLAUDE_CODE_SESSION_`, `CLAUDE_CODE_SDK_`,
+`CLAUDE_CODE_RELAUNCH_`, `CLAUDE_CODE_HOST_`, `CLAUDE_BG_`, `CLAUDE_CODE_`,
+`CLAUDE_`, `ANTHROPIC_`); they are not variables, they are not ruled, and they
+are recorded in `provenance.census.fragments` so the residual "assembled at run
+time" now names the prefixes it hides behind. The generator refuses a binary
+whose fragments differ from the declared list.
+
+**How 603 names were ruled.** Two independent reviews of the pinned binary, each
+name with its occurrences read (up to six, 240 bytes of context either side)
+and the surrounding code where that was not enough, then this pass re-checked
+the strips and the flagged keeps. The rulings live in
+`scripts/claude-authority-census-rulings.mjs` as `[kind, what]` rows, composed
+into exact rulings by the classification module with the same dispositions the
+kind carries everywhere else; the binary excerpts are NOT committed. The
+outcome, against the D3 test: **one strip** (the `_ACCT` twin, account-pin) and
+602 keeps -- 525 operational, 27 CLI-set child variables, 15 identifiers a
+separate credential authorises, 13 model selectors, 8 exec paths, 4 sinks, 3
+operator switches, 2 transport, 2 runtime, 2 non-model endpoints, 1 inbound
+secret. 128 of the keeps were FLAGGED by a reviewer as sent in a request, used
+to open a file, choosing a backend, or relaxing a permission, and each was kept
+on a stated reason; the ones worth naming:
+
+- `CLAUDE_CODE_EXTRA_METADATA` -- JSON merged into request metadata beside
+  `account_uuid`. The merge order IS visible: the CLI's own fields are spread
+  LAST, so an inherited value cannot override the account field. Kept.
+- `CLAUDE_BG_RENDEZVOUS_SOCK` -- the path the CLI LISTENS on for its background
+  control server, under the same OS user; its auth token is already stripped.
+  Not the `CLAUDE_CODE_MESSAGING_SOCKET` case, which is a socket the CLI
+  connects OUT to and relays messages from. Kept.
+- `CLAUDE_PLUGIN_ROOT` and `CLAUDE_CODE_MARKETPLACE_NAME` -- one reviewer ruled
+  both child-helper channels on the round-5 test (conditional assignment into a
+  headers helper). Round 6 had considered exactly this and kept them, and that
+  holds: the helper mints a THIRD-PARTY server's headers (D18 item 2), and a
+  plugin path or marketplace name selects no Claude account, credential,
+  provider or endpoint. Where a helper command resolves through the path, that
+  is same-OS-user command execution, the accepted D17 class. Kept, with the
+  disagreement recorded in the row.
+- `ANTHROPIC_ENVIRONMENT_ID`, `ANTHROPIC_WORK_ID` -- work-order fields
+  authorised by `ANTHROPIC_ENVIRONMENT_KEY`, which is stripped; the
+  `ANTHROPIC_SESSION_ID` argument of requirement 3 applies to both. Kept.
+- `CLAUDE_CODE_HTTPS_PROXY` / `_HTTP_PROXY` -- Claude-specific egress proxy,
+  kept as transport for consistency with `HTTPS_PROXY` (D18 item 1); the
+  closest call in the set.
+- `CLAUDE_CODE_USE_COWORK_PLUGINS` -- selects a settings file and plugin
+  directory INSIDE the already-selected config root; it cannot move the root or
+  the credential store. Kept; the one the reviewer would re-argue first.
+- 32 names occur in this build only as a key in the CLI's typed env-schema
+  map, a label or a constant, with NO consuming read; each says so and is
+  ruled anyway, because a later build may add the read.
+
+**Also fixed this round, from the same confirm:**
+
+- The runtime validator enforced only the first trigger of the exact-ruling
+  rule. A manifest edited so that a CLI-designated SECRET outside the CLI
+  namespaces carried a family id as its reason validated clean, although the
+  generator would refuse to build it. It now refuses to load one.
+- The validator checks that exactly `census.cliOwned` CLI-owned entries cite
+  the census, after the digest. An entry ending in `_` is refused as not a
+  variable. **The confirm of this round found the count was not in the
+  digest**: neither canonical digest covered `provenance.census`, so an entry
+  deleted, the count decremented and the digest re-signed validated clean, and
+  the new test passed only because it left the count alone. The census figures
+  are now in both digests. Stated plainly: this is DRIFT DETECTION, not proof.
+  An edit that deletes an entry, decrements the count and re-signs is
+  consistent by construction, and so is swapping one CLI-owned entry for
+  another; only `--check` against the binary catches those, and the test says
+  so in its last assertion rather than implying otherwise.
+- `CCR_OAUTH_TOKEN_FILE` is a credential-source LABEL in the pinned build, not
+  a variable it reads: every occurrence is the resolver's `source` string, a
+  `case` arm or a display-map key, and the token it names is found by a
+  well-known path. Round 7's reason said an inherited value authenticates as
+  another account, which is false of it. It stays stripped -- a build that read
+  the name it labels would read a credential file, and the strip costs nothing
+  -- with the reason corrected.
+- The generator's census comment claimed the wider gate; it now says what was
+  true, what is true, and why.
+- **From the independent specification review of this round:** 65 CLI-owned
+  hand rulings from rounds 3 to 7 (the carrier set's "everything else" and the
+  census "PRESERVED" group) shipped one shared reason, "telemetry or timeout
+  behaviour", which is false of several of them -- a bash executable path, a
+  key in the OAuth constants object, two plugin directories code is loaded
+  from, a git-config rewrite. The disposition of every one was right; the
+  reason of record was not, which is the defect round 4 counted five of and
+  round 7 corrected for `CCR_OAUTH_TOKEN_FILE`. All 65, plus the six
+  third-party names in the same groups, now carry an individual finding read
+  from the binary to the round-8 standard (the same reviewer, the same method),
+  composed with the kind's D3 clause; twenty-two changed KIND while staying keep
+  (`CLAUDE_CODE_GIT_BASH_PATH`, `CLAUDE_CODE_PLUGIN_CACHE_DIR` and
+  `_SEED_DIR` to exec-path; `CLAUDE_CODE_AGENT_PROXY_GIT_CONFIG` and
+  `_GH_SHIM` and `API_FORCE_IDLE_TIMEOUT` to transport; eleven identifiers,
+  two sinks, two endpoints and one CLI-set variable to their own kinds). No
+  entry in the manifest now carries that shared reason. Worth naming from
+  that pass: `CLAUDE_CODE_REMOTE_MEMORY_DIR` REPLACES the directory auto-memory
+  is read from and written to -- a read-and-write root, not a sink -- and is
+  kept on the same reasoning as `CLAUDE_CODE_DEBUG_LOGS_DIR` (requirement 2):
+  the credential store does not resolve from it, so it selects no account,
+  and where a session's memory lands is the accepted D17 class, recorded as a
+  residual rather than used to justify a strip.
+
+**Ten mutants, ten detected, all as first written**: the gate narrowed back to
+shaped names (`--check` fails), each validator guard removed, the entry-name
+regex loosened, `classify` no longer consulting the table, the collision check
+removed, the `_ACCT` entry flipped to keep in the shipped manifest with its
+digest re-signed, the count invariant miscounted, and the census dropped from
+both digests with the manifest re-signed to match (exactly one test red, the
+one that asserts the binding). Runners and results are in the session
+scratchpad (`mutate-r8.mjs`, `mutate-r8b.mjs`, `mutate-r8.json`); the row is
+in the table above.
+
+**The confirm's verdict.** The same attacker re-ran its census reproduction
+against the new manifest: 875 CLI-owned non-fragment names, all 875 entries,
+all citing the census, none missing on either the CLI-owned or the shaped
+path, no entry ending in `_`, the eight fragments exactly its own eight. It
+checked every CLI-set child-variable row in the manifest (42, counting the
+rounds before this one) for a conditional assignment mis-ruled as
+unconditional and found none; verified fourteen flagged keeps against the
+binary; and accepted the `CLAUDE_PLUGIN_ROOT` / `CLAUDE_CODE_MARKETPLACE_NAME`
+keeps on the same reasoning as round 6, having constructed no path from either
+name to the model endpoint's headers.
+
+Manifest after round 8: the figures at the top of this part.
+
+## Round 9 -- the independent code-quality review
+
+Run after the specification review passed, on the whole uncommitted tree, by a
+reviewer who had seen none of it. **No blocker. One MAJOR, six MINORs, all
+fixed**, each with a test that goes red under its mutant (nine of nine).
+
+**The MAJOR was the settings-copy defect again, one function over.** The
+project-settings scan refuses itself on a network path, while another scan is
+outstanding, at the thread ceiling, and at its two-second deadline -- and every
+refusal was a LOG LINE. The stored report was left as it stood, and the panel
+reads the newest non-probe report, so a refused scan was indistinguishable from
+"this project carries nothing". For a project on a UNC share that is permanent:
+a `.claude/settings.json` there carrying `apiKeyHelper` was suppressed by the
+host control with the panel silent about it on every launch. For two sessions
+restored in one tick, the second's report -- the newest, the one shown -- said
+nothing until the user happened to start a solo session. This is exactly the
+shape `'not-evaluated'` was added for in the previous part, and the code's own
+justification ("the next launch re-runs it") did not hold for the report the
+panel actually reads. Every refusal now AMENDS the report with an `info`
+finding, `project-settings-not-scanned`, carrying the reason that applied and
+the statement that the control still applies; the deadline case does too.
+
+**The MINORs, each fixed:** the registry's required-operation loop did not
+include the third managed-launch operation the project scan added, so a
+package without it registered cleanly and threw inside the scan's per-file
+catch, silently returning nothing; the ceiling warning said scans were
+"DISABLED for this run" when the ceiling is transient, and its de-duplication
+flag was never cleared, so a second episode an hour later logged nothing (it
+clears when a scan settles under the ceiling, and a test seam exposes the
+counters rather than spying on the logger); the bounded-list helper existed
+twice with two private `20`s (one `boundNames` / `summariseNames` in the shared
+providers module now); the source-absent branch that deletes the stale settings
+copy ran with none of the guards the write path has, so a `.claude` junction
+into another profile made it delete THAT account's copy (it now carries the
+containment and leaf-link guards, records the refusal, and the rest of the home
+build continues); the validator's namespace-prefix charset admitted `?`, which
+interpolated into a RegExp would WIDEN the family-rule guard (literal prefixes
+only); and the amendment tests polled 400 ms against a 2000 ms deadline, going
+red on a loaded machine for correct code (they poll to the deadline plus a
+margin for the finding they expect). The reviewer also noted, without making
+findings of them, four exports with no production consumer and one assertion
+that cannot fail (`AUTHORITY_MANIFEST_ERROR` is unobservable because the
+module-scope accessor throws first); both are recorded here rather than
+addressed in this slice.
+
+## What this part does not claim
+
+It does not claim the census is complete. Three rounds in a row each found a read
+form or a name it had missed, a fourth found that most of what it HAD found was
+never ruled, and a name assembled at runtime cannot be found by scanning -- the
+fragments list says where such names are known to start, not what they are. It
+does not claim the 602 keep rulings of round 8 were each measured: they were
+read from the binary by two reviewers and re-checked, which is the same
+standard as the 49 of round 4 and not a stronger one. It does not claim anything about a CLI other than the one pinned: the
+manifest's digest covers the manifest's own entries, never the installed binary,
+and the only runtime gate is a version FLOOR, so a newer auto-updated CLI reports
+"supported" with none of this re-verified. And it does not claim that the Linux
+and macOS rows of the fidelity table were measured, because they were not.
+
+---
+
+# Part 7 -- Gate A1, run (2026-09-22)
+
+**Scope.** Claude Code **2.1.278**, **win32-x64**, binary sha256
+`006ea5c8638f67f10a5ae66bb232fd267c9f6af294e3f03f4cfcf1fd3f2cced8`, one real
+managed profile home with a stored claude.ai login
+(`<home>/.claude/.credentials.json`, 524 bytes, subscription max), the
+launch environment composed by `withProfileHome` exactly as every app launch
+path composes it, `claude auth status --json` and one `claude -p` request
+with `--tools ""` `--model haiku` `--max-turns 1` from an empty temporary
+working directory. Nothing else was run. No token or email is reproduced here.
+
+## Result: FAILED
+
+Under the full realm patch the CLI reports `loggedIn: false, authMethod:
+"none"` with `configDirectory` resolving correctly to the profile's
+`.claude`, and the request prints `Not logged in - Please run /login` and
+exits 1. The same profile, same binary, same working directory, with only
+`USERPROFILE` redirected, reports `loggedIn: true, authMethod: "claude.ai"`
+and the stored subscription.
+
+**Bisected, one variable at a time, every row measured:**
+
+| environment on top of `USERPROFILE=<home>` | `auth status` |
+|---|---|
+| nothing else | signed in, claude.ai |
+| `CLAUDE_SECURESTORAGE_CONFIG_DIR=<home>/.claude` | signed in, claude.ai |
+| `ANTHROPIC_CONFIG_DIR=<home>/.claude/anthropic` | signed in, claude.ai |
+| `HOME=<home>` | signed in, claude.ai |
+| all three of the above | signed in, claude.ai |
+| **`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` alone** | **not signed in, none; exit 1** |
+| the full patch (all four) | not signed in, none |
+
+The realm roots added in rounds 4 and 5 are continuity-safe, which the round-6
+attacker had measured on a scratch profile and this run confirms on a real one.
+**The host control is not.** The one control Part 1 proved to stop
+settings-sourced redirection is also the one that stops the profile's own
+stored login.
+
+## Why, from the pinned binary
+
+The CLI's OAuth-credential resolver, read from the binary: with the flag set it
+returns a token handed to it by the HOST (`CLAUDE_CODE_OAUTH_TOKEN`, or the
+token file descriptor / well-known path the CCR host uses) and otherwise
+returns `null` **before** the branch that reads the stored `claudeAiOauth`
+credential -- `if (managedByHost) return null` sits ahead of the store read
+in both the synchronous and the asynchronous resolver, and the same flag turns
+off the subscription and `/login`-managed-key paths. The error text the CLI
+prepares for this state says what the flag means to it: *"credentials are
+managed by the desktop app, but none are available ... restart the desktop
+app"*. `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` is Claude Desktop's mode, in
+which the host application supplies and rotates the token
+(`CLAUDE_CODE_HOST_AUTH_ENV_VAR`, `CLAUDE_CODE_HOST_CREDS_FILE`,
+`CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH`). It is not a "suppress the settings
+files" switch that leaves credential resolution alone, which is what Part 1's
+probes -- all run against synthetic keys, never a stored login -- took it for.
+Part 2's constraint 6 and this matrix's first row were written precisely
+because that gap was visible then; it is now measured.
+
+## What this does and does not invalidate
+
+- INVALIDATED as shipped: a managed launch under this control cannot use the
+  account it was launched for. Every other layer of slice 2 stands on its own
+  and was reviewed on its own -- the sanitised settings copy, the ambient
+  strip, the realm roots, the manifest, the diagnostics -- but the control they
+  were built around fails the one row that could invalidate it.
+- NOT invalidated: the evidence of Parts 1 to 6 about what the flag suppresses.
+  It suppresses settings-sourced redirection; it also suppresses the stored
+  login. Both were true all along; only the second was unmeasured.
+- Rows A2 to A5 were NOT run. They presuppose a session that signs in.
+
+## Options seen in the binary, for the owner -- none chosen, none probed
+
+1. **Become the host the flag expects.** Read the profile's stored OAuth
+   token and hand it to the CLI the way Claude Desktop does (a token variable
+   or descriptor, plus the host-refresh contract). Keeps the proven control;
+   makes this app the token's custodian, including refresh -- a new credential
+   surface with its own review.
+2. **A second mode the binary distinguishes.** The settings-env filter has a
+   separate branch for a "desktop host" (`CLAUDE_CODE_ENTRYPOINT` in a small
+   set of Claude Desktop entrypoints) that ignores provider and auth variables
+   from project, local and policy settings and excludes the `apiKeyHelper`
+   path, WITHOUT the managed-by-host credential rule -- the stored login is
+   read. Unprobed; and it means presenting the session as a Claude Desktop
+   entrypoint to the CLI and its telemetry, which is not this app's identity to
+   claim without a decision.
+3. **Drop the flag; detect rather than prevent.** Keep every other layer and
+   turn the project-settings scan, which already names the redirecting keys,
+   from an informational finding into a refusal or a prominent warning. Weaker:
+   it stops nothing the user does not read.
+
+The temporary probe that produced the measurements was a one-file vitest
+test under `tests/unit/`, gated on an environment variable and deleted after
+the run; the recipe above is enough to reproduce it.
+

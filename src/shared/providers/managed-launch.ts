@@ -55,8 +55,15 @@ export interface ManagedLaunchPreflightInput {
   env: Readonly<Record<string, string | undefined>>
   /** The observed CLI version, or null when no probe has answered. */
   cliVersion?: string | null
-  /** What the sanitiser removed from the app-owned settings copy. */
-  sanitizedSettings?: { removed: readonly string[]; refused?: string }
+  /** What the sanitiser removed from the app-owned settings copy.
+   *
+   *  `'not-evaluated'` is a THIRD state, and it is not the same as omitting the
+   *  field. The copy is written when a profile home is BUILT, which not every
+   *  launch path does -- so on a fresh process a headless or probe launch has no
+   *  result to report, and reporting nothing read as "checked, all clear", which
+   *  is a fail-OPEN diagnostic (adversarial review, MAJOR). Omitting the field
+   *  still means "this caller is not reporting on the copy at all". */
+  sanitizedSettings?: { removed: readonly string[]; refused?: string } | 'not-evaluated'
   /** Ambient authority variables the launch path removed from the inherited
    *  environment. Reported so a wide removal list is never silent. */
   strippedAmbient?: readonly string[]
@@ -64,6 +71,34 @@ export interface ManagedLaunchPreflightInput {
    *  caller looked. Reported, never blocking: those files are not the app's to
    *  change, and the host control suppresses them. */
   repositorySettingsKeys?: readonly string[]
+  /** Why the project scan did NOT answer for this launch, when it did not.
+   *  A third state again, for the same reason as `sanitizedSettings`: the
+   *  scan refuses itself on a network path, while another is outstanding, at
+   *  the thread ceiling, and at its deadline -- and a report that then said
+   *  nothing read exactly like "this project carries nothing" (code-quality
+   *  review, MAJOR). Omitted means the scan ran, or nobody asked it to. */
+  projectScanSkipped?: ProjectScanSkipReason
+}
+
+/** The ways the project-settings scan declines or fails to answer. */
+export type ProjectScanSkipReason = 'network-path' | 'scan-outstanding' | 'thread-ceiling' | 'timed-out'
+
+/** At most this many names in one finding's prose or one stored list. Every
+ *  such list is driven by a file the user controls (their settings.json, a
+ *  project's), is kept in a ring, crosses IPC and is rendered as one list item
+ *  -- so it is bounded HERE, once, for every caller. */
+export const MAX_REPORTED_NAMES = 20
+
+/** `names`, bounded: the first MAX_REPORTED_NAMES and one trailing
+ *  "and N more" element in place of the rest. */
+export function boundNames(names: readonly string[]): string[] {
+  if (names.length <= MAX_REPORTED_NAMES) return [...names]
+  return [...names.slice(0, MAX_REPORTED_NAMES), `and ${names.length - MAX_REPORTED_NAMES} more`]
+}
+
+/** A comma-separated list of names, bounded the same way. */
+export function summariseNames(names: readonly string[]): string {
+  return boundNames(names).join(', ')
 }
 
 export interface ManagedLaunchPreflight {
@@ -71,4 +106,26 @@ export interface ManagedLaunchPreflight {
   ok: boolean
   findings: readonly PreflightFinding[]
   compatibility: ManagedCliCompatibility
+}
+
+/**
+ * Whether a managed launch was one the USER asked for, or one the app started
+ * by itself -- the `claude auth status` probe behind the Accounts panel, and the
+ * headless helper.
+ *
+ * Shared rather than main-process-only because it crosses the wire: the panel
+ * decides which report to show from it, and a renderer-local copy of the field
+ * meant `tsc` could not tell if the main process ever stopped sending it
+ * (adversarial round 4).
+ */
+export type ManagedLaunchKind = 'launch' | 'probe'
+
+/** One managed-launch report as it reaches the renderer. The absolute profile
+ *  home never crosses -- see the channel comment in the preload. */
+export interface ManagedLaunchReport {
+  profileId: string
+  sessionId: string
+  kind: ManagedLaunchKind
+  at: number
+  preflight: ManagedLaunchPreflight
 }

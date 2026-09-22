@@ -12,5 +12,5 @@
 export { registerProvider, getProvider, tryGetProvider } from './core'
 export {
   realmEnvForProvider, hostManagedEnvForProvider, ambientAuthVariablesForProvider,
-  sanitizeManagedSettingsFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
+  sanitizeManagedSettingsFor, authoritySettingsKeysFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
 } from './core'

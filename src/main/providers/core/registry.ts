@@ -74,8 +74,14 @@ export function packageRegistrationProblem(pkg: ProviderPackage): string | null 
   const ml = pkg.managedLaunch
   if (ml !== undefined) {
     if (typeof ml !== 'object' || ml === null) return 'managedLaunch must be an object when present'
+    // A package with managed-launch hardening and NO host control is a
+    // contradiction: the hardening's whole point is a control applied last that
+    // a settings file cannot undo. Refused at registration so it never reaches
+    // a launch, where an empty declaration would pass every per-entry check
+    // vacuously (adversarial review, MINOR 7).
+    if (Object.keys(host).length === 0) return 'a package that declares managedLaunch must declare at least one hostManagedEnv control'
     if (typeof ml.minimumCliVersion !== 'string' || !ml.minimumCliVersion) return 'managedLaunch.minimumCliVersion must be declared'
-    for (const fn of ['sanitizeManagedSettings', 'preflight'] as const) {
+    for (const fn of ['sanitizeManagedSettings', 'preflight', 'authoritySettingsKeys'] as const) {
       if (typeof ml[fn] !== 'function') return `managedLaunch.${fn}() must be a function`
     }
   }
@@ -151,6 +157,13 @@ export function realmEnvForProvider(id: ProviderId, base: Readonly<Record<string
     // realm patch. A launch path cannot apply one without the others, and
     // cannot apply them in the wrong order, because there is only one call.
     hostManagedEnv: pkg.hostManagedEnv,
+    // A package that declares MANAGED-LAUNCH hardening is a package whose
+    // launches must carry a host control; one that declares no `managedLaunch`
+    // has nothing to apply, and its empty declaration is a recorded decision
+    // rather than an omission. Deriving the requirement from the package --
+    // rather than from the caller -- means every caller of this function gets
+    // the refusal, not just `withProfileHome`.
+    requireHostManagedEnv: pkg.managedLaunch !== undefined,
   })
 }
 
@@ -190,6 +203,20 @@ export function sanitizeManagedSettingsFor(id: ProviderId, raw: string): Sanitiz
     return { text: null, removed: [], refused: `provider package "${id}" is not registered, so its settings sanitiser is unavailable` }
   }
   return pkg.managedLaunch ? pkg.managedLaunch.sanitizeManagedSettings(raw) : { text: raw, removed: [] }
+}
+
+/** The authority-bearing keys a settings payload contains, for a file the app
+ *  does not own.
+ *
+ *  NULL when there is nobody to ask -- the provider is not registered, or
+ *  declares no managed-launch hardening. That is deliberately distinct from an
+ *  empty list, for the same reason `sanitizeManagedSettingsFor` separates the
+ *  two: an unregistered provider is a boot-order fault, and reporting it as
+ *  "this project carries no authority settings" would be an answer the data
+ *  does not support (adversarial re-attack, MINOR). */
+export function authoritySettingsKeysFor(id: ProviderId, raw: string): readonly string[] | null {
+  const ml = tryGetProviderPackage(id)?.managedLaunch
+  return ml ? ml.authoritySettingsKeys(raw) : null
 }
 
 /** Run a provider's managed-launch preflight. An unregistered provider, or one
