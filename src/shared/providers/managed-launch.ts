@@ -106,7 +106,7 @@ export interface ManagedLaunchPreflightInput {
  *                              error, or it changed while it was being read),
  *                              or a git pointer file naming the repository
  *                              root changed while it was being read;
- *   - `over-cap`              larger than the 2 MiB the CLI itself reads;
+ *   - `over-cap`               larger than the 2 MiB the CLI itself reads;
  *   - `classifier-unavailable` no registered Claude package could classify it,
  *                              or classifying it failed;
  *   - `scan-failed`            the check itself failed unexpectedly. */

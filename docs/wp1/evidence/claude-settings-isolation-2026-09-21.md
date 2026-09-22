@@ -1958,3 +1958,105 @@ above). One new finding, in the same function as R6-3:
   pre-existing scan-to-spawn window, unchanged.
 - Added launch-path latency, measured: 79 ms (32 ms git, 47 ms for eight
   directories); designed worst case 5 s (git timeout) + N x 3 s.
+
+## Round 8 -- the exact-head Codex review of `a0eace5d`, and the double review of its fixes (2026-09-22)
+
+**Scope.** Codex's exact-head review of PR #619 at `a0eace5d` (review
+5283868877): three blockers, three CI/test corrections, and the administrative
+gates (update onto `beta@2566c429`, a lowercase conventional PR title, the
+desktop gate stays red). The branch was updated by merge (`d3d585df`, no
+conflicts); the fixes are `4f8afcc8`. An independent spec-compliance review
+(Opus) and code-quality review (Sonnet) of `d3d585df..4f8afcc8` then found
+one gap in CI4 and five smaller defects, fixed in `152ed38e` and re-reviewed
+by the same two reviewers: both PASS, no new blocker. No ADR-009 attacker
+pass ran in this round; the Codex review is the adversarial input.
+
+### The Codex items
+
+| # | finding | fix | test | mutants |
+|---|---|---|---|---|
+| B1 | the manifest was derived at MODULE LOAD (`CLAUDE_AUTHORITY_VARIABLES = authorityManifest().entries`), and `index.ts` imports that chain statically, so a malformed manifest killed the main process before `composeProviders()`' try, its error dialog and its exit | nothing is derived at load: a memoised `derived()` that re-throws on every call for a bad manifest; the constants are functions (`authorityEntries()`, `claudeSettingsEnvStrip()`, `claudeAmbientStrip()`, `claudeAuthorityVariables()`, `claudeAuthorityEnvVariables()`, `claudeAmbientAuthVariables()`); the validator is wrapped; `createClaudePackage()` reads the derived data first, inside `composeProviders()`' try | `startup-manifest-boundary.test.ts`: computes `index.ts`'s real static import graph (the only route to the manifest: index -> compose -> claude/index -> managed-launch -> authority-manifest), imports every module on it with the manifest corrupted (each must load), proves `composeProviders()` throws, and pins the try / `showErrorBox` / `exit(1)` shape; the manifest test now reads "loads, and every derived answer throws" | B1-a..e |
+| B2 | one `FileHandle.read()` was taken as the whole file; a legal short read classified a prefix while the unread bytes carried the authority key | `readFully`: reads to end of file or cap + 1 into the same fixed buffer; the deadline and the two-slot thread ceiling are untouched; a byte count different from the `fstat` size is `unreadable` (the pointer reader too since R9-3) | 512 B and 1 B per read (key past 4 KiB); a size that changed mid-read; the linked-worktree pointers at 3 B per read (POSIX) | B2-a, B2-b, B2-c |
+| B3 | read and classification failures collapsed to `[]` and were CACHED CLEAN | `absent` / `keys` / `uncertain(reason)`; only ENOENT and ENOTDIR are absent; `verdictOfScan`: refused > not-scanned > clean; not-scanned is never cached (and evicts an older clean, R9-2); the scan's catch is `scan-failed`; new reasons `unreadable`, `over-cap`, `classifier-unavailable`, `scan-failed`, each with its warning text | over-cap; EACCES / EPERM / EBUSY / EIO / ELOOP on open; a stat or read failing after open; a directory and a FIFO (POSIX); no classifier, a throwing classifier; a failed scan; a refusal over an uncertain sibling | B3-a..i |
+| CI4 | the ledger gate lists the bound commit's tree, absent from CI's depth-1 checkout (`not a tree object` on both platforms) | the gate reads that tree lazily and fails one case with the fix; `scripts/wp1/fetch-ledger-commit.mjs` (git without a shell, the SHA format-checked, `fetch --depth=1`, then `cat-file -e`) runs before the suite in `ci.yml` and, since R9-1, in both `release.yml` test jobs; the manifest and ledger are re-bound (`manifestHead` `4f8afcc8`) | the CI run on the pushed head | -- |
+| CI5 | the `killAllAgents` test stopped awaiting `dispatchAgent()` once production gained an await, so on macOS it killed before either child registered | both dispatches awaited; spawn count, distinct pids, and a second sweep that kills nothing | `cloud-agent-manager.test.ts` | CI5 |
+| CI6 | the "foreign" `fe80::1` rows depended on the runner's own interfaces (macOS owns that address) | the foreign rows run under `os.networkInterfaces()` stubbed to loopback only; the own-address rows keep their own stub | the loopback / UNC rows | -- (a determinism fix) |
+
+`tests/unit/claude-headless-profile-consumer.test.ts` now composes the providers:
+it had passed only through the B3 fail-open (no classifier meant clean).
+
+### The double review of the fixes (`152ed38e`)
+
+| # | from | severity | finding | fix | mutant |
+|---|---|---|---|---|---|
+| R9-1 | spec | MAJOR | `release.yml`'s Windows and Linux test jobs run the suite from depth-1 checkouts too, so the first release run after merge would fail the gate | the fetch is one script called by all three steps; `ci.yml` no longer names the ledger, so its ledger row is dropped | -- |
+| R9-2 | spec | MINOR | an uncertain scan left the previous clean verdict in the reuse cache, and `peekGateVerdict` handed it out for up to 5 s | an uncertain verdict evicts it | R9-e |
+| R9-3 | quality (MAJOR), spec (MINOR) | MAJOR | the pointer reader had the loop but not the size check: a `commondir` rewritten mid-read came back spliced or as a miss, and a miss keeps the root at the worktree while the CLI reads the main checkout | `GitPointerChangedError` out of the reader; the scan catches only that and reports `unreadable`; a key in the working directory still refuses | R9-a, R9-b, R9-c, R9-d |
+| R9-4 | spec | MINOR | stale text: the cap comment (over-cap "clean"); the manifest error comment ("ordinary shells are unaffected" -- a bad manifest now stops startup at the dialog); the warning's "this session IS using it" for an over-cap file the pinned CLI skips | rewritten; the warning says "may be using it", and `unreadable` names the git pointer | -- |
+| R9-5 | quality | MINOR | `readFully` can take cap + 1 reads on a one-byte-per-read filesystem, holding a ceiling slot | bounded and inside the deadline; recorded in the comment | -- |
+| R9-6 | spec | MINOR | the mutant runner counted a suite that failed to COMPILE as red (B3-h's first run) | the runner reports it as an error; B3-h re-run for real | -- |
+
+### Mutant results (restored from an in-memory copy after each; never `git checkout`)
+
+| mutant | guard removed | Windows | Linux (WSL Ubuntu 24.04) |
+|---|---|---|---|
+| B1-a / B1-b | an eager manifest read at module load (manifest module / managed-launch) | RED | -- |
+| B1-c | the factory never reads the manifest | RED | -- |
+| B1-d | derived data degrades to empty | RED | -- |
+| B1-e | a throwing validator escapes at load | RED | -- |
+| B2-a | one read taken as the file | RED | -- |
+| B2-b | the settings read's size check | RED | -- |
+| B2-c | the pointer reader reads once (and loses its size check) | RED | RED (3 tests) |
+| B3-a..g, B3-i | each uncertainty folded into absent or clean | RED | -- |
+| B3-h | an uncertain verdict cached | RED (7 tests) | RED (8 tests) |
+| R9-a | a torn pointer is a miss (the old check) | RED | RED |
+| R9-b | the reader swallows the torn pointer | RED | RED |
+| R9-c | the scan swallows the torn pointer | skipped (POSIX test) | RED |
+| R9-d | the torn pointer fails the whole scan | skipped (POSIX test) | RED |
+| R9-e | an uncertain scan keeps the older clean | RED | RED |
+| CI5 | the dispatches not awaited (test mutated back) | RED | -- |
+
+B2-c removes the pointer reader's loop and its size check together, so it is
+not a single-guard proof of that loop; B2-a is the single-guard proof on the
+settings read. Targeted suites at `152ed38e`: Windows 12 files, 363 passed /
+4 skipped; Linux (the touched suites the copy can run -- it has no `.git`, so
+not the ledger gate) 225 passed / 3 skipped. The full-suite result for the
+exact pushed head is in the PR body: a document cannot carry the hash of the
+commit that contains it.
+
+### Boundaries stated for the reviewer, not changed
+
+- **A complete file that does not parse stays CLEAN.** The CLI applies
+  nothing from a settings file it cannot parse (measured, Part 9), so "clean"
+  is what the session gets. A SHORT or TORN read is not this case: a byte
+  count different from the `fstat` size is `unreadable`. Read literally,
+  Codex's "absent/valid-clean" would make an unparseable file `not-scanned`;
+  that is a ruling for Codex, and this round did not take it.
+- **Over the cap is `not-scanned`**, although the pinned CLI skips such a file
+  as well: that is one CLI version's behaviour, and the gate did not read it.
+- **Root resolution.** Only a torn pointer is uncertainty. An absent or
+  invalid pointer, and the home and ownership checks, still mean "no root", as
+  they do in the CLI; Round 7's ownership residual stands.
+- **The startup-boundary test walks static relative `import` / `export`
+  only.** A top-level `require()` of the manifest would not be followed; none
+  exists.
+- **The ledger's bound commit (`4f8afcc8`) is a branch commit.** After a
+  squash merge it is reachable only through GitHub's `refs/pull/619/*`, which
+  `git fetch origin <sha>` serves. If that ever stops, re-bind the ledger to a
+  commit on `beta`.
+- **The Windows CI `SyntaxError: Invalid or unexpected token`** reported on the
+  ledger gate at `a0eace5d` was not reproduced locally (an absent bound commit
+  shows the git error here); it is expected to be the same missing object and
+  is to be confirmed gone on this head's CI.
+
+### Corrections to the text above
+
+- Part 9's "a settings file the gate cannot parse, or one over the size cap,
+  is skipped (clean)" and Part 10's restatement: an over-cap file is now
+  `not-scanned` (`over-cap`), never clean; an unparseable one stays clean
+  (above).
+- `CLAUDE_AUTHORITY_VARIABLES` (the ambient list section) and the other
+  derived constants are functions now: `claudeAuthorityVariables()`,
+  `claudeAuthorityEnvVariables()`, `claudeSettingsEnvStrip()`,
+  `claudeAmbientStrip()`, `claudeAmbientAuthVariables()`,
+  `authorityEntries()`.
