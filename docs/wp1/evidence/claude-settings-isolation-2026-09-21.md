@@ -1465,3 +1465,144 @@ The temporary probe that produced the measurements was a one-file vitest
 test under `tests/unit/`, gated on an environment variable and deleted after
 the run; the recipe above is enough to reproduce it.
 
+---
+
+# Part 8 -- Option 2 probe: `CLAUDE_CODE_ENTRYPOINT=claude-desktop` (2026-09-22)
+
+**Authorised as evidence gathering only, not as approval to ship.** Scope: Claude
+Code **2.1.278**, **win32-x64**, binary sha256 `006ea5c8...cced8`, one host.
+Every dynamic row ran against **loopback only**: two capture servers stood in
+for the API base (answering 400, so no OAuth refresh path is entered) and a
+loopback egress proxy RECORDED and REFUSED every other outbound attempt, so
+nothing left the machine and every attempt is on record. Every credential was
+synthetic except the two `auth status` rows, which read real stores and print
+nothing but signed-in / method / "distinct". The harness is
+`scratchpad/probe2/probe2.mjs` (not committed); one recipe reproduces it:
+`claude -p "say ok" --tools "" --max-turns 1` from a scratch project, scratch
+`USERPROFILE`/`HOME` with a seeded `.claude.json`, a fake
+`.claude/.credentials.json` (`claudeAiOauth`), the realm roots set as the app
+sets them, `ANTHROPIC_BASE_URL` at the capture server, `HTTPS_PROXY` at the
+refusing proxy with `NO_PROXY=127.0.0.1`, and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
+A first harness used a synchronous spawn, which blocked the process hosting the
+capture servers; every row below is from the asynchronous one.
+
+## Verdict: NOT complete and unambiguous. Stopped before gate A1 and before any ADR-009 pass, as instructed.
+
+Two of the six requirements hold, one holds only partially, and three are
+answered by facts the owner has to judge rather than by a pass. Nothing was
+changed in the committed slice.
+
+## The matrix
+
+Observables: **wire** = the credential the CLI put on the captured request
+(which store, which key); **sentinel** = the `apiKeyHelper` command wrote its
+marker, i.e. it EXECUTED; **server** = which capture server received the
+request (primary = the launch environment's base URL; secondary = the URL a
+settings file tried to inject); **egress** = hosts the CLI tried to reach
+outside loopback (all refused). "entry" = `CLAUDE_CODE_ENTRYPOINT=claude-desktop`.
+
+| row | fixture | without entry (positive control) | with entry |
+|---|---|---|---|
+| R0 | stored fake login only | Bearer STORE-A | Bearer STORE-A |
+| R1-user | `apiKeyHelper` in USER settings + store | sentinel FIRED, wire = HELPER key | sentinel **FIRED**, wire = STORE-A |
+| R1-project | same, PROJECT settings | sentinel FIRED, wire = HELPER key | sentinel **FIRED**, wire = STORE-A |
+| R1-local | same, LOCAL settings | sentinel FIRED, wire = HELPER key | sentinel **FIRED**, wire = STORE-A |
+| R4 | USER settings `env.ANTHROPIC_API_KEY` + store | wire = x-api-key ENVKEY | wire = Bearer STORE-A |
+| R5x-user | USER settings `env.ANTHROPIC_BASE_URL` -> secondary, name ABSENT from the launch env | secondary (APPLIED) | secondary (**APPLIED**) |
+| R5x-project | same, PROJECT settings | secondary (APPLIED) | primary absent -> default host, refused (BLOCKED) |
+| R5x-local | same, LOCAL settings | secondary (APPLIED) | BLOCKED |
+| R5 / R6 | the same three rows with `ANTHROPIC_BASE_URL` PRESENT in the launch env | user/project/local all APPLIED | all BLOCKED -- by the host-env VETO (see below), not by the filter |
+| R7-user | USER settings `env.CLAUDE_CODE_USE_BEDROCK=1` + store | provider switched (AWS credential error, no request) | provider **switched** |
+| R7-project | same, PROJECT settings | provider switched | Bearer STORE-A on primary (BLOCKED) |
+| R9 | AMBIENT `ANTHROPIC_API_KEY` + store | wire = x-api-key AMBIENT | wire = Bearer STORE-A |
+| R11 | two homes, two stores, one project, both with entry | -- | A -> STORE-A only; B -> STORE-B only |
+| R12 | fake tokens anywhere on disk or in `--debug` logs outside their store | -- | none |
+| real | `auth status --json` on two real managed profiles | signed in, claude.ai, distinct, config dir = own home | signed in, claude.ai, distinct, config dir = own home |
+
+Egress in every OAuth row, with or without the entrypoint: one refused
+`CONNECT api.anthropic.com:443` -- the CLI's own OAuth profile fetch, made with
+the fake bearer. No other host was attempted (non-essential traffic was
+disabled; telemetry destinations were therefore not observed dynamically and
+are covered by the census below).
+
+**Corrections to Part 1 this matrix forces.** Part 1's Finding 2 ("project and
+local `env` blocks do not reach the CLI") was measured through `doctor`'s
+remote-settings line, and it is false of the request path: without the host
+flag, PROJECT and LOCAL `env.ANTHROPIC_BASE_URL` redirected the request
+(R5x-project/local, R6) and PROJECT `env.CLAUDE_CODE_USE_BEDROCK` switched the
+provider (R7-project). Repository-owned settings inject provider and endpoint
+overrides in 2.1.278; the flag, and only the flag, was stopping all of it.
+
+## Requirement by requirement
+
+1. **Preserves the correct profile's stored login -- HOLDS.** R0, R4, R9, R11,
+   and both real profiles under `auth status`. The desktop branch changes
+   precedence, not the store: the stored claude.ai login is read and WINS over
+   an ambient or user-settings API key (R4e, R9e), where without the entrypoint
+   the key wins.
+2. **Blocks credential/provider overrides and `apiKeyHelper` from user, project
+   and local settings -- PARTIAL.** Credential SELECTION is blocked in all three
+   scopes (R1e, R4e, R9e). Endpoint and provider overrides are blocked from
+   PROJECT and LOCAL scope (R5x-project/local, R7-project) and **NOT from USER
+   scope** (R5x-user APPLIED, R7-user switched): the CLI's desktop filter covers
+   `policySettings`/`projectSettings`/`localSettings` and not
+   `userSettings`, so for the user scope the app's sanitised copy is the only
+   control. And `apiKeyHelper` **still executes** in all three scopes (R1e
+   sentinel fired every time). Read from the binary: it is spawned by an
+   unconditional warm-up at startup gated only on "is a helper declared";
+   `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` empties that getter and the desktop
+   entrypoint does not. Its output is cached in-process and remains reachable
+   through an ungated getter that feeds key-fingerprint telemetry and, if the
+   OAuth bearer were ever absent, the `x-api-key` header. A repository's
+   settings file therefore still runs a command of its choosing on every
+   session start; only its key is not selected.
+3. **Isolation between two managed profiles -- HOLDS** on synthetic stores
+   (R11) and real ones (`auth status`).
+4. **No credential exposure in logs, reports, child environments, diagnostics
+   -- HOLDS for what was observable.** R12 found neither fake token anywhere on
+   disk outside its store, `--debug` logs included. Child environments were not
+   exercised (no tool ran); the census found the entrypoint variable itself is
+   deleted from children and the credential scrub is unchanged. The app's own
+   reports were not part of this probe.
+5. **No material change to permissions, product behaviour, session ownership,
+   account attribution -- FAILS on the census, one item measured.** From the
+   86-site census (`scratchpad/entrypoint-census.md`):
+   - permission grants made in a session are persisted to USER settings instead
+     of the session (`tln()`), i.e. into the file this app writes and re-writes;
+   - the session's tool-permission callback is parked process-globally for
+     out-of-turn artifact-comment replies;
+   - host-supplied SDK MCP servers become declarable to the model;
+   - **the launch environment becomes a veto list over every settings scope**:
+     a settings `env` entry whose NAME exists in the process environment is
+     silently ignored, user scope included. Measured: R5/R6 were "blocked" only
+     because the harness carried `ANTHROPIC_BASE_URL`; R5x, without it, shows
+     the user-scope override going through;
+   - auth failures become a host-refresh RETRY instead of a clean stop, with no
+     host to refresh;
+   - desktop transcripts are exempted from local retention deletion.
+6. **Telemetry / identity differences -- RECORDED, and they are attribution
+   changes.** Measured on the wire: User-Agent `claude-cli/2.1.278 (external,
+   claude-desktop)` and the billing block `cc_entrypoint=claude-desktop`
+   carried as a system-prompt text on every request (R0e vs R0n; headers
+   otherwise identical, `anthropic-client-platform` unset because no desktop
+   app version was presented). From the census: MCP OAuth start URLs on the
+   claude.ai origin carry `product_surface=claude-desktop`; error telemetry is
+   tagged `entrypoint:claude-desktop`; a flag-gated PR footer would read "via
+   Claude Desktop". Every one of these tells Anthropic the session is Claude
+   Desktop.
+
+## Why this stops here
+
+The instruction was to proceed to gate A1 and a fresh ADR-009 pass only if the
+result was complete and unambiguous, and to stop on any open security,
+identity, telemetry or compatibility question. Three are open and none is
+this app's to settle: a repository's `apiKeyHelper` still executes (security);
+every request is attributed to Claude Desktop (identity, telemetry); and
+session permission grants are written into the app-managed settings copy while
+the launch environment silently vetoes settings entries (compatibility). The
+user-scope gap is a fourth, milder one: it moves the whole of user-scope
+isolation onto the app's sanitiser with no CLI backstop.
+
+Options 1 and 3 were not pursued, as instructed. Nothing in the committed
+slice was modified by this part.
+
