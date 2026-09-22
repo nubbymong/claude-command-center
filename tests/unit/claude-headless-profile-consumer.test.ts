@@ -9,6 +9,9 @@ import path from 'node:path'
 import os from 'node:os'
 
 const spawnCalls: Array<{ executable: string; args: string[]; opts: any }> = []
+/** Set by a test: the stubbed choke point REFUSES the launch, exactly as the
+ *  real one throws on a refused project gate. */
+const gate = vi.hoisted(() => ({ refuse: false }))
 /** One fake child per spawn, in spawn order, so a test with two runs settles each on its own. */
 const children: Array<ReturnType<typeof makeChild>> = []
 
@@ -22,7 +25,12 @@ vi.mock('child_process', () => ({
   execSync: vi.fn(),
 }))
 // withProfileHome pulls in the heavy pty-manager graph (reaches electron); stub it.
-vi.mock('../../src/main/pty-manager', () => ({ withProfileHome: (env: any) => env }))
+vi.mock('../../src/main/pty-manager', () => ({
+  withProfileHome: (env: any) => {
+    if (gate.refuse) throw new Error('[profiles] refusing a managed Claude launch: the project\'s own settings could redirect this account -- settings.json: apiKeyHelper. Remove those keys.')
+    return env
+  },
+}))
 // `logWarn` belongs in this mock's surface too: the project gate below logs
 // through it, and a mock that omits a function the code under test calls turns
 // a log line into a TypeError inside the scan's own catch -- which then looks
@@ -68,6 +76,7 @@ const tick = async (n = 3) => { for (let i = 0; i < n; i++) await Promise.resolv
 beforeEach(async () => {
   spawnCalls.length = 0
   children.length = 0
+  gate.refuse = false
   _resetProfileConsumersForTest()
   _resetProjectScanStateForTest()
   // WARM the gate for this process's directory, so the cases below drive the
@@ -201,5 +210,34 @@ describe('spawnClaudeHeadless — starting mid-rotation waits for the refresh (#
     expect(spawnCalls).toHaveLength(1)
     children[0].handlers.close(0)
     await p
+  })
+})
+
+describe('spawnClaudeHeadless -- a REFUSED managed launch settles like every other failure', () => {
+  it('RESOLVES { code: 1 } with the refusal on stderr, spawns nothing, and releases the hold', async () => {
+    // withProfileHome throws to refuse, and it used to throw INSIDE the
+    // promise executor: this promise then REJECTED -- the one failure shape no
+    // other exit here has -- and neither insights caller catches a rejection,
+    // so a refused KPI extraction took a finished run to 'failed' instead of
+    // 'report ready, KPIs unavailable' (adversarial review, MAJOR). Same shape
+    // as a timeout, an abort or a spawn error: resolve, code 1, reason on
+    // stderr, file and key named.
+    gate.refuse = true
+    const res = await spawnClaudeHeadless(['-p'], 10_000, 'prompt', HOME)
+    expect(res.code).toBe(1)
+    expect(res.stderr).toContain('refusing a managed Claude launch')
+    expect(res.stderr).toContain('settings.json: apiKeyHelper')
+    expect(spawnCalls, 'a refused launch still spawned the CLI').toHaveLength(0)
+    expect(hasTransientProfileConsumer(PROFILE), 'the profile hold leaked past the refusal').toBe(false)
+  })
+
+  it('...on the DEFERRED path too (a gate miss awaits the gate before the same spawn)', async () => {
+    gate.refuse = true
+    _resetProjectScanStateForTest()   // the MISS: the gate is awaited, then spawnNow refuses
+    const res = await spawnClaudeHeadless(['-p'], 10_000, 'prompt', HOME)
+    expect(res.code).toBe(1)
+    expect(res.stderr).toContain('refusing a managed Claude launch')
+    expect(spawnCalls).toHaveLength(0)
+    expect(hasTransientProfileConsumer(PROFILE)).toBe(false)
   })
 })

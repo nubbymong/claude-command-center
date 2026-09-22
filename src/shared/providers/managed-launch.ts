@@ -86,6 +86,12 @@ export interface ManagedLaunchPreflightInput {
    *  not a refusal. Omitted means the gate ran, or the launch had no
    *  directory to gate. */
   projectScanSkipped?: ProjectScanSkipReason
+  /** The directory a launch would have run in that is NOT one the gate's
+   *  verdict was formed for -- it appeared, vanished or was re-pointed
+   *  between the check and the spawn. NON-EMPTY MEANS THE LAUNCH WAS REFUSED
+   *  (adversarial re-attack, MAJOR; recorded so the Accounts panel can say so,
+   *  spec review). Display-safe text, never a raw path. */
+  launchDirectoryUnverified?: string
 }
 
 /** The ways the project-settings gate declines or fails to answer. */
@@ -113,6 +119,16 @@ export function boundNames(names: readonly string[]): string[] {
 /** A comma-separated list of names, bounded the same way. */
 export function summariseNames(names: readonly string[]): string {
   return boundNames(names).join(', ')
+}
+
+/** `text` without a leading U+FEFF. The Claude CLI's settings parser removes
+ *  exactly this before its strict `JSON.parse` (pinned 2.1.278), so every
+ *  parser of settings text in this app does the same -- a BOM-prefixed file
+ *  that parsed as nothing here was reported clean while the CLI applied it
+ *  (adversarial review, design lens). See src/main/settings-text.ts for the
+ *  byte-level decode this sits under. */
+export function stripLeadingBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
 }
 
 export interface ManagedLaunchPreflight {

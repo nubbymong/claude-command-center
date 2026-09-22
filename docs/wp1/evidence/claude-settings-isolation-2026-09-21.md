@@ -1714,3 +1714,126 @@ gate refuses rather than warns, and why the ruling of 2026-09-21 that "a launch
 must not be refused for settings the proven mechanism suppresses" no longer
 applies: there is no suppressing mechanism.
 
+
+# Part 10 -- the fresh ADR-009 pass on the correction, and what it changed (2026-09-22)
+
+**Bound, stated before the first attacker ran:** one round of four lenses,
+then one re-attack. Lenses: bypass (Opus), injection (Sonnet), blast-radius
+(Sonnet), design and coverage (Sonnet). The re-attack was a fresh Opus bypass
+lens over the fixes. Both bounds were spent; what the re-attack found was
+fixed, tested and put through the two independent reviews (specification on
+Opus, code quality on Sonnet, both PASS), and the round-2 fixes have had **no
+attacker pass of their own**. That is the standing at the end of this part, and
+it is recorded rather than rounded up.
+
+**Scope of every claim.** Claude Code **2.1.278**, **win32-x64**, binary sha256
+`006ea5c8...cced8`. Every "the CLI does X" below was read from the pinned
+binary's own code (offsets in the 197,000,000 region are the settings loader;
+`Bt`/`Wr`/`Kt` at ~197,229,000 are the git-root resolver; `Kpr`/`A9t`/`NTt` at
+~196,643,000 are the file reader; `St`/`se`/`Ko` at ~196,538,000 are the
+settings parser), and the ones marked *measured* were then confirmed by
+running the binary against a fixture on this host. Tests ran on Windows 11 and
+on Ubuntu 24.04 (WSL 2, a copy of the worktree with a Linux `npm ci`).
+**Nothing ran on macOS.**
+
+## What the round found, and what was done about it
+
+Twenty-eight findings in all: sixteen from the first round (two BLOCKER, four
+MAJOR, four MINOR, five coverage gaps, one note), one found on Linux while
+proving the first fixes there, ten from the re-attack (one BLOCKER, three
+MAJOR, six MINOR), and one more from the reviews. Every one is fixed except the
+note, which is recorded below as left by design. Every fix has a regression
+test that was run RED under a mutant that removes the guard -- fourteen
+mutants on Windows, seven on Linux, one (the FIFO) on Linux only -- and green
+with the guard back.
+
+| # | severity | finding | fix | test (goes red under the mutant) |
+|---|---|---|---|---|
+| 1 | BLOCKER | `pty:spawn` forwarded the raw options; a renderer could send `projectGate: {status:'clean'}` and skip the gate | `MAIN_INTERNAL_SPAWN_FIELDS` deleted by name in `pty-handlers.ts` (now `refreshAwaited`, `projectGate`, `projectGateDirs`) | `pty-handlers-command-secrets` "STRIPS projectGate" + the list pin |
+| 2 | BLOCKER | the gate ran on the configured directory, but an exact resume relaunches the CLI in the resume target's own directory -- for a session in its designated worktree, every resume | `managedLaunchGateDirs` gates the configured directory AND the resume target's (peeked, expanded exactly as `resolveResumeLaunch` expands it); `gateManagedLaunchDirs` merges: any refusal refuses, keys prefixed by their directory; else the first not-scanned warns; else clean | `pr600-r3-fresh-wait` "gates the RESUME target's directory"; `managed-launch` "gates EVERY directory a launch may run in" |
+| 3 | MAJOR | `isUncPath` matched `\\?\C:\proj` (an extended-length LOCAL path) as network | device-prefix parsing: a drive letter or `Volume{}` is local, `UNC\` is a share, anything else is treated as network | "tells an extended-length LOCAL path from a network path"; win32 end-to-end |
+| 4 | MAJOR | the gate's size cap was 128 KiB; the CLI reads settings through `maxBytes` 2,097,152 (`A9t` throws only ABOVE it, *measured*: exactly 2,097,152 bytes is applied by the CLI and flagged by the gate; 2,097,153 is refused by both) -- a file between the two was too big for the gate and small enough for the CLI | cap = 2 MiB, the CLI's own | "REFUSES a project settings file between the OLD 128 KiB cap and the CLI's 2 MiB cap" |
+| 5 | MAJOR | scan and cache keys were lower-cased everywhere; on Linux/macOS `/Proj` and `/proj` shared a verdict | no case folding on any platform (the re-attack showed an NTFS directory with per-directory case sensitivity, no admin needed, where two spellings are two directories on Windows too) | "never folds the verdict cache key by case" |
+| 6 | MAJOR (POSIX) | with uid semantics the CLI resolves `localSettings` to the canonical git root (`STt`/`cV`/`nPn`/`iao`/`Lf`: root differs from cwd and from the real home; root, `.git` entry and `.claude` entry owned by the current uid) and reads the ROOT's `settings.local.json` as well as the cwd's | `posixCanonicalLocalSettingsRoot` mirrors those rules; the root's file is read and reported as `settings.local.json (repository root): <key>`; `settings.json` stays at the cwd; win32 unchanged | "reads the repository ROOT's settings.local.json where the CLI does" (Linux) |
+| 7 | MAJOR | `withProfileHome` threw inside `spawnNow`'s promise executor, so a refused headless launch REJECTED where every other failure resolves `{code:1}`; neither insights caller catches a rejection | the environment is composed before the executor; a refusal resolves `{code:1, stderr}` | `claude-headless-profile-consumer` "RESOLVES { code: 1 } with the refusal on stderr" |
+| 8 | MAJOR (was filed MINOR) | the CLI's reader sniffs `FF FE` as UTF-16LE and its parser drops a leading U+FEFF before a strict `JSON.parse` (`NTt`, `Ko`, `se`; *measured*); the gate decoded UTF-8 and parsed as-is, so a BOM-prefixed or UTF-16 settings file parsed as nothing and was reported CLEAN while the CLI applied it | `decodeSettingsText` + `stripLeadingBom`, in the gate, the classifier, the sanitiser and the app-owned copy reader | "REFUSES a settings file the CLI parses through a BOM or as UTF-16" |
+| 9 | MINOR | raw working directories in log lines (the log sink escapes only CR/LF) | `stripSpoofableText` (`src/shared/safe-text.ts`) applied to every path-bearing log line in the gate and in pty-manager | "never writes a control or spoofing character from a directory name into the log" |
+| 10 | MINOR | `deferSpawnUntil` had no rejection path: a wait that rejected leaked the profile hold and left a blank terminal | a rejection handler with the same exit as a failed re-entry | `pr600-r3-fresh-wait` "a wait that REJECTS releases the hold" |
+| 11 | note | the auth-status probe gates `process.cwd()`, so a not-scanned warning can show on a profile with no launches | **left as is**: the report is true of the probe, and the panel prefers a launch over a probe whenever one exists | -- |
+| T5 | coverage | the commit's own headline ruling (`CLAUDE_CODE_ENTRYPOINT` strip) had no name-anchored test; a self-consistent re-ruling to `keep` with the digest regenerated left every test green | name-anchored assertion on the manifest entry and a real strip | "strips an inherited CLAUDE_CODE_ENTRYPOINT on BOTH axes, by name" |
+| T8 | coverage | "a not-scanned verdict is never cached" was asserted for `network-path` only | `peekGateVerdict` asserted undefined after the deadline and the ceiling | the two existing cases, extended |
+| T6 | coverage | "a network path is never read" was asserted by verdict only | `fs.promises.open` spied, never called | the UNC case, extended |
+| T13 | coverage | the insights path had no refusal test | real gate, real choke point, poisoned install directory | `insights-project-gate-refusal` |
+| T14 | coverage | the auth-status probe had no refusal test | the gate answers refused through a test seam; the probe does not spawn, warns, falls back to the file | `claude-cli-auth-read` "a REFUSED project gate never launches the CLI" |
+| 17 | MAJOR (Linux) | opening a FIFO at `.claude/settings.json` for reading BLOCKED -- before the `isFile()` refusal could run; the FIFO test was red on Linux at `6290f8e4`, which had only ever been run on Windows | `O_RDONLY \| O_NONBLOCK` on the open (the constant is absent on win32, hence `?? 0`; a numeric open of a regular file behaves as `'r'`, *measured*) | the FIFO case, now green on Linux |
+| B1 | BLOCKER (re-attack, POSIX) | the CLI's `canonicalGitRoot` follows a linked worktree's `.git` FILE to the MAIN checkout (`Bt`: `gitdir:` -> `commondir` -> `dirname(<common>)`, validated by the `worktrees` parent and the `gitdir` back-pointer); the walk stopped at the worktree, so a helper in the main checkout's local settings applied to every session in every linked worktree -- this repo's own session model | `canonicalGitRootOf` mirrors `Bt`, every validation miss leaving the root as it was, exactly as the CLI does; a symlinked `.git` is not a root | the worktree block of the repository-root case (Linux) |
+| M2 | MAJOR (re-attack) | `\\localhost\C$\proj` and `\\127.0.0.1\C$\proj` were declined as network paths -- the not-scanned, launch-anyway bucket -- while the CLI reads them (*measured*) | a loopback host by name, by `127.0.0.0/8`, `::1`, or this machine's own name (full, short, `.local`) is local and scanned | the loopback rows of the path-rule case; win32 end-to-end against the admin share (skipped where the share is absent) |
+| M3 | MAJOR (re-attack) | the verdict was carried across the deferral but `resolvedCwd` was re-derived from disk on the re-entry; a directory that vanished collapsed to the home directory and ran there under the project's verdict | `projectGateDirs` carried with the verdict; `assertGatedDirectory` refuses at the working-directory point and again at the resume-directory point, recording a `launch-directory-unverified` blocked finding so the panel shows it | `pty-managed-deferral-carries-launch` "REFUSES when the configured directory vanished", "REFUSES when the resume decision lands the CLI in a directory the gate did not scan" |
+| M4 | MAJOR (re-attack) | the self-captured resume target is stored after each entry's `killPty`; the deferred re-entry's own `killPty` wiped it and its own capture found nothing -- every deferred Restart and account switch silently lost its exact resume | `deferSpawnUntil` carries the target captured (and gated) by the first pass and re-enters it as the persisted target | "relaunches the exact conversation in ITS directory after the gate deferral" (binder answers once, as the real one does) |
+| m5-m10 | MINOR (re-attack) | win32 case fold on case-sensitive NTFS; bidi marks / invisibles / tag block / mid-surrogate cut survived the strip; four more raw-path log lines; the merged refusal prefix carried a raw path to the panel; a two-directory gate took both scan slots; the walk was bounded at 64 where the CLI's is not | see 5 and 9; the strip class extended and the cut made code-point-safe; sequential gating (one slot per launch); the walk unbounded to the filesystem root; the prefix stripped, bounded and home-relative (`~`) | each has its own assertion and mutant |
+| r1-r3 | MINOR (reviews) | the directory-changed refusal was printed but not recorded for the panel; `app-knowledge` under-described the gate; a case-differing home prefix defeated the `~` shortening on Windows; a shared in-flight scan wrote its cache and log line once per waiter; the admin-share case passed vacuously where the share is absent | recorded as a finding; the Feature Guide text updated; case-insensitive on win32; side effects moved to the scan's completion; `ctx.skip()` | each has its own assertion |
+
+## Part 9, corrected
+
+Three sentences in Part 9's "Boundaries" were wrong when written and are true
+now, and the difference is worth stating as a hole that was open, not only as
+one that is closed:
+
+- "A settings file over the size cap is skipped (clean) exactly as the CLI
+  skips it" was **false between 128 KiB and 2 MiB**. The cap is the CLI's own
+  now.
+- "A settings file the gate cannot parse is skipped (clean) exactly as the CLI
+  skips it" was **false for a BOM-prefixed or UTF-16LE file**: the CLI parsed
+  it and this gate did not. The decode mirrors the CLI's reader now; a file
+  with a comment or a trailing comma is not applied by the CLI (*measured*:
+  its settings fell back to defaults) and is honestly clean here.
+- "A project on a network path is never read on the launch path" is narrower
+  now: a UNC path whose host is loopback or this machine IS read and gated,
+  because the CLI reads it; `\\?\C:\`, `\\.\C:\` and `\\?\Volume{}\` are local
+  and gated; `\\?\GLOBALROOT\`, `\\?\pipe\` and any other device prefix stay in
+  the warning bucket. A host reached by a name this machine does not answer to
+  (an FQDN reached by a different alias) stays in the warning bucket too.
+
+And four things layer 4 does now that Part 9 did not say:
+
+- **Every directory a launch may land in is gated**, and the verdict is bound
+  to that set: the configured directory, plus the resume target's for an
+  interactive Claude session. A directory the launch does not use in the end
+  (a resume target whose transcript is gone) is gated all the same, so a
+  poisoned resume folder refuses a launch that would have run cleanly
+  elsewhere. That is the fail-closed side, and it is deliberate.
+- **A directory that appeared, vanished or was re-pointed during the deferral
+  refuses** (`launch-directory-unverified`, shown on the panel). The CONTENT of
+  a gated file is not re-read between the gate and the spawn; only the
+  directory's identity is held to.
+- **On POSIX only, the repository root's `settings.local.json` is read** when
+  the CLI would canonicalise to it, and a linked worktree canonicalises to the
+  main checkout.
+- **One spelling, one verdict:** the scan and cache key is the resolved path,
+  case-folded on no platform.
+
+## Residuals and the scope matrix
+
+- **The round-2 fixes (B1, M2, M3, M4, m5-m10, r1-r3) have had the two
+  independent reviews and their own mutants, and no fresh attacker pass.** The
+  bound was one re-attack and it was spent on round 1. Whether to spend
+  another is the owner's call.
+- **Platforms.** All assertions ran on Windows 11 except the FIFO case and the
+  POSIX branch of the repository-root case (git root, worktree pointer,
+  symlinked `.git`, uid veto, unbounded walk), which ran on Ubuntu 24.04 under
+  WSL 2 only. The two Windows end-to-end path cases (extended-length,
+  loopback admin share) never run on POSIX, and the loopback one is skipped
+  where the admin share is absent. **Nothing ran on macOS**, where the POSIX
+  git-root code executes in production.
+- **T14 is proven through a seam** (the gate answers refused by a test flag):
+  it proves the probe's plumbing on a refusal, not the gate, which the gate's
+  own cases prove.
+- **The win32 `isFile()` half of the non-regular-file check is still
+  unverified** (Part 6): no Windows-reproducible non-regular-file hang at a
+  plain file path is known.
+- **A two-directory gate can add up to 6 s** (two 3 s deadlines, sequential)
+  before the PTY appears, only when a directory is wedged.
+- **The auth-status probe still gates `process.cwd()`** (finding 11, left by
+  design); the warning it can show is true of the probe.
+- The in-app refusal on a real project, and the resume-in-worktree case on a
+  real transcript, remain the VM checks in the manual matrix. Not done here.

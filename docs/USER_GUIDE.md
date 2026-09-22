@@ -69,10 +69,14 @@ things make sure that is the account the session actually signs in as:
   `settings.local.json` in the folder the session starts in) are checked
   before the session starts, and **if they carry one of those settings the
   session is refused** — in the terminal, naming the file and the key (never a
-  value). CCC never edits a project's files, and it has no way to make a
-  session safe to start under such a file, so it does not start one. Remove
-  the key, or move it to your own shared settings, and start the session again.
-  A session that is not tied to a managed account is not gated.
+  value). When a session resumes a conversation that ran in another folder,
+  that folder is checked too, and the refusal says which one. On Linux and
+  macOS, Claude Code also reads `settings.local.json` from the root of the git
+  checkout you are in (the main checkout, for a linked worktree), so that file
+  is checked as well. CCC never edits a project's files, and it has no way to
+  make a session safe to start under such a file, so it does not start one.
+  Remove the key, or move it to your own shared settings, and start the session
+  again. A session that is not tied to a managed account is not gated.
 
 **What it does not cover**, so you are not relying on something it never
 promised: settings edited after a session has started; settings your

@@ -145,16 +145,34 @@ function spawnNow(
   cwd: string,
   projectGate: ProjectGateResult | null,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  // The environment is composed OUTSIDE the promise executor. withProfileHome
+  // THROWS to refuse a managed launch (the project gate found an authority key
+  // in this directory's own settings), and a throw inside the executor
+  // rejected this promise -- the one failure shape every other exit here
+  // (timeout, abort, spawn error, non-zero exit) does not have. Neither of the
+  // callers that await this catch a rejection: a refused KPI extraction took a
+  // finished insights run to `failed` instead of "report ready, KPIs
+  // unavailable" (adversarial review, MAJOR). The refusal is a `{ code: 1 }`
+  // like the rest, with the refusal text -- file and key, never a value -- on
+  // stderr where the caller's own reporting already looks.
+  let env: Record<string, string>
+  try {
+    // `headless` is the launch id the Accounts panel shows beside a finding:
+    // these runs have no PTY session to name, and a report with no launch on
+    // it is a report nobody can place.
+    env = withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', cwd, probe: true, projectGate })
+  } catch (e) {
+    const message = (e as Error)?.message ?? String(e)
+    logError(`[claude-headless] Not spawning: ${message}`)
+    return Promise.resolve({ code: 1, stdout: '', stderr: message })
+  }
   return new Promise((resolve) => {
     logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
 
     const proc = spawn('claude', args, {
       shell: true,
       windowsHide: true,
-      // `headless` is the launch id the Accounts panel shows beside a finding:
-      // these runs have no PTY session to name, and a report with no launch on
-      // it is a report nobody can place.
-      env: withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', cwd, probe: true, projectGate })
+      env,
     })
 
     // Pipe prompt via stdin if provided

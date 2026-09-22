@@ -32,6 +32,21 @@ vi.mock('node:child_process', () => ({
 // as "the CLI did not answer", i.e. exactly the silent fallback these tests
 // exist to catch.
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
+// The gate is REAL except for one seam: a flag under which the directory the
+// probe inherits (process.cwd(), which a worker thread cannot chdir away from)
+// answers REFUSED. The refusal itself -- withProfileHome throwing, the probe
+// not spawning, the warn line, the file fallback -- is all the real code.
+const gateSeam = vi.hoisted(() => ({ refuse: false }))
+vi.mock('../../src/main/managed-launch-diagnostics', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/main/managed-launch-diagnostics')>()
+  return {
+    ...real,
+    peekGateVerdict: (cwd: string) => (gateSeam.refuse ? undefined : real.peekGateVerdict(cwd)),
+    gateManagedLaunch: async (cwd: string) => (gateSeam.refuse
+      ? { status: 'refused' as const, keys: ['settings.local.json: apiKeyHelper'] }
+      : real.gateManagedLaunch(cwd)),
+  }
+})
 // Only the two profile-root resolvers are faked. `withProfileHome` is the REAL
 // one on purpose: it is what applies the managed-launch hardening to this auth
 // probe, so stubbing it would leave the assertion below testing a stub.
@@ -71,6 +86,7 @@ beforeAll(() => { composeProviders() })
 beforeEach(async () => {
   root = fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-auth-'))
   execFileImpl = (_cmd, _args, _opts, cb) => cb(new Error('no cli'))
+  gateSeam.refuse = false
   _resetProfileConsumersForTest()
   _resetProjectScanStateForTest()
   // The probe stays SYNCHRONOUS up to its spawn only while a recent project-gate
@@ -82,6 +98,33 @@ beforeEach(async () => {
 })
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+describe('readClaudeCliAuth -- a REFUSED project gate never launches the CLI', () => {
+  it('does not spawn the probe, says so, and falls back to the credential file', async () => {
+    // T14 (design lens): the probe's refusal path had no test at all -- only
+    // the clean verdict was ever driven, so a probe that spawned the CLI
+    // regardless of the verdict, or swallowed the refusal in silence, left
+    // every test green. The refusal is an isolation fault, not a missing CLI,
+    // and the probe must say so; the file fallback is still the right answer,
+    // because reading a file cannot act as the wrong account.
+    writeCredFile(ID, '.claude')
+    gateSeam.refuse = true
+    let spawned = false
+    execFileImpl = (_c, _a, _o, cb) => { spawned = true; cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' }) }
+    const logger = await import('../../src/main/debug-logger')
+    const warn = vi.mocked(logger.logWarn)
+    warn.mockClear()
+    const r = await readClaudeCliAuth(ID)
+    expect(spawned, 'the CLI was launched in a directory the gate refused').toBe(false)
+    expect(r.source).toBe('credential-file')
+    expect(r.authenticated).toBe(true)
+    const said = warn.mock.calls.map((c) => c.map(String).join(' ')).join('\n')
+    expect(said).toContain('refused')
+    expect(said).toContain('settings.local.json: apiKeyHelper')
+    expect(said).toContain('isolation fault')
+    expect(hasTransientProfileConsumer(ID), 'the hold leaked past the refusal').toBe(false)
+  })
 })
 
 describe('readClaudeCliAuth — credential-file fallback path', () => {

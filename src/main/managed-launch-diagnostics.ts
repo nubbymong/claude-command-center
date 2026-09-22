@@ -22,16 +22,19 @@
 // evidence Parts 7 and 8). Refusing before launch is what this app can do
 // honestly; the rest it says.
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { logInfo, logWarn } from './debug-logger'
 import { managedLaunchPreflightFor, authoritySettingsKeysFor } from './providers'
 import { peekClaudeCliVersion, ensureClaudeCliVersion } from './claude-cli-version'
+import { decodeSettingsText } from './settings-text'
 // From the shared state module, NOT from account-profiles: the choke point in
 // account-profiles calls this recorder, so importing back would make the launch
 // path and its own diagnostics a cycle (see ./managed-launch-state.ts).
 import { lastSettingsSanitiseFor, lastAmbientStripFor } from './managed-launch-state'
 import { boundNames } from '../shared/providers'
-import type { ManagedLaunchPreflight, ManagedLaunchPreflightInput, ProjectGateResult } from '../shared/providers'
+import { stripSpoofableText } from '../shared/safe-text'
+import type { ManagedLaunchPreflight, ManagedLaunchPreflightInput, ProjectGateResult, ProjectScanSkipReason } from '../shared/providers'
 
 /** A launch the USER started, or a PROBE this app ran by itself.
  *
@@ -92,9 +95,17 @@ const ringFor = (kind: ManagedLaunchKind): StoredReport[] => (kind === 'probe' ?
  *  The app never writes or modifies either: they belong to the repository. */
 const PROJECT_SETTINGS_FILES = ['settings.json', 'settings.local.json'] as const
 
-/** A settings file large enough to be something other than a settings file is
- *  not read. The preflight is on the launch path; it does not parse megabytes. */
-const MAX_PROJECT_SETTINGS_BYTES = 128 * 1024
+/** The largest settings file the gate reads, and it is the CLI's OWN cap:
+ *  Claude Code 2.1.278 reads a settings file through a `maxBytes` of
+ *  2,097,152 and reports one over it as unreadable, applying nothing. The two
+ *  must match exactly, because a byte past THIS cap is a SKIP -- a file the
+ *  gate does not read is a file it reports as clean -- so a gate cap below the
+ *  CLI's was a window (128 KiB to 2 MiB) in which a repository's settings file
+ *  was too big for the gate and small enough for the CLI (adversarial review,
+ *  MAJOR). Over the CLI's own cap the skip is faithful: the CLI skips it too.
+ *  The fixed-buffer read stays, so the cost is bounded by the cap, not by what
+ *  the file is at the moment of reading. */
+const MAX_PROJECT_SETTINGS_BYTES = 2 * 1024 * 1024
 
 // At most MAX_REPORTED_NAMES key names reach the panel; the rest become a
 // count (`boundNames`, shared with the settings-copy finding so the two bounds
@@ -103,6 +114,224 @@ const MAX_PROJECT_SETTINGS_BYTES = 128 * 1024
 // of spellings in a file that is still inside the size cap -- which turned the
 // finding text into a megabyte of string, crossing IPC and rendering into a
 // single list item (adversarial review, MINOR).
+
+/** A path as it may be written to the app log: control and spoofing
+ *  characters out (see ../shared/safe-text.ts). The log sink escapes only CR
+ *  and LF, and a working directory is user-chosen text. */
+const describePath = (p: string): string => stripSpoofableText(p, 300)
+
+/** A path as it may reach the TERMINAL or the ACCOUNTS PANEL: the same strip,
+ *  and the user's home directory shortened to `~` -- an absolute path under
+ *  the home carries the OS username, which this module keeps off the wire
+ *  everywhere else (spec review, MINOR). The rest of the path stays, because
+ *  "which directory" is the whole point of naming it. */
+export function displayPath(p: string): string {
+  let home = ''
+  try { home = os.homedir() } catch { /* no home to shorten */ }
+  // Case-insensitively on Windows: a configured directory arrives in whatever
+  // case the user typed it, and a miss here is the username on the wire
+  // (code-quality review, MINOR).
+  const fold = (s: string): string => (process.platform === 'win32' ? s.toLowerCase() : s)
+  const under = home !== '' && (fold(p) === fold(home) || fold(p).startsWith(fold(home) + path.sep))
+  const shortened = under ? '~' + p.slice(home.length) : p
+  return stripSpoofableText(shortened, 300)
+}
+
+/** `keys` of `file` (a `.claude/settings*.json`), read under the size cap and
+ *  the regular-file rule; `null` when the file is absent, unreadable, over the
+ *  cap, not a regular file, or unparseable -- every one of which is a file the
+ *  CLI applies nothing from, and therefore nothing to report. */
+async function authorityKeysOfSettingsFile(file: string): Promise<readonly string[] | null> {
+  let handle: fs.promises.FileHandle | null = null
+  try {
+    // O_NONBLOCK on the OPEN, not only on the read. On POSIX, opening a FIFO
+    // for reading blocks until a writer appears -- BEFORE the `isFile()` check
+    // below can refuse it -- so the check that was written against "the read
+    // blocks" never ran: the open itself held the threadpool thread, and the
+    // FIFO test below was red on Linux the first time it was run there (this
+    // branch had only ever been tested on Windows). With O_NONBLOCK the open
+    // returns at once and the fstat does the refusing. A regular file is not
+    // affected by the flag; Windows has no such flag and the constant is
+    // absent there, hence the fallback to 0.
+    handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0))
+    const stat = await handle.stat()
+    // A FIFO, a device or a directory is not a settings file, and its `size`
+    // tells you nothing about what reading it would cost.
+    if (!stat.isFile() || stat.size > MAX_PROJECT_SETTINGS_BYTES) return null
+    // Read into a FIXED buffer rather than calling `handle.readFile()`. That
+    // helper re-stats the handle and allocates for whatever the file is at
+    // that moment, so the check above was advisory rather than a bound: with a
+    // concurrent local writer, a file that stat'd at 7 bytes was measured
+    // coming back at 314 MB, decoded and parsed on the main thread
+    // (adversarial round 4). The buffer is the bound.
+    // cap + 1, and a byte past the cap is a SKIP. Reading exactly the cap
+    // would hand JSON.parse a truncated prefix of a file that grew -- possibly
+    // cut mid-character -- and report whatever survived as if it were the file.
+    const buf = Buffer.allocUnsafe(MAX_PROJECT_SETTINGS_BYTES + 1)
+    const { bytesRead } = await handle.read(buf, 0, MAX_PROJECT_SETTINGS_BYTES + 1, 0)
+    if (bytesRead > MAX_PROJECT_SETTINGS_BYTES) return null
+    // Decoded as the CLI decodes it: a byte-order mark selects the encoding and
+    // is dropped, so a BOM-prefixed or UTF-16 file the CLI parses is one the
+    // gate parses too (adversarial review, design lens; see ./settings-text.ts).
+    const raw = decodeSettingsText(buf, bytesRead)
+    const keys = authoritySettingsKeysFor('claude', raw)
+    // `null` means there was nobody to ask (no registered provider), which is
+    // not the same as "this file carries nothing" -- so say so rather than
+    // reporting an absence the data does not support.
+    if (keys === null) {
+      logWarn(`[managed-launch] project settings not classified: no registered Claude package to ask`)
+      return null
+    }
+    // A file that cannot be parsed is reported as nothing rather than as a
+    // fault: it is not ours, the CLI applies nothing from it, and the CLI will
+    // tell the user about it.
+    return keys
+  } catch {
+    return null /* absent, unreadable, or not ours: nothing to report */
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
+/** The most a `.git` pointer file or a `commondir` / `gitdir` file inside a
+ *  linked worktree's git directory is read: they hold one path each. */
+const MAX_GIT_POINTER_BYTES = 4096
+
+/** The text of a small pointer file, or null when it is absent, a symlink,
+ *  not a regular file, or larger than a pointer file can be. Bounded exactly
+ *  as the settings read is: a fixed buffer, and a byte over the cap is a miss. */
+async function readGitPointer(file: string): Promise<string | null> {
+  let handle: fs.promises.FileHandle | null = null
+  try {
+    if ((await fs.promises.lstat(file)).isSymbolicLink()) return null
+    handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0))
+    const stat = await handle.stat()
+    if (!stat.isFile() || stat.size > MAX_GIT_POINTER_BYTES) return null
+    const buf = Buffer.allocUnsafe(MAX_GIT_POINTER_BYTES + 1)
+    const { bytesRead } = await handle.read(buf, 0, MAX_GIT_POINTER_BYTES + 1, 0)
+    if (bytesRead > MAX_GIT_POINTER_BYTES) return null
+    return buf.toString('utf8', 0, bytesRead)
+  } catch {
+    return null
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
+/**
+ * The directory the CLI treats as the CANONICAL root of a checkout whose
+ * `.git` entry is at `root` -- which is `root` itself for an ordinary clone,
+ * and the MAIN checkout for a LINKED WORKTREE.
+ *
+ * Mirrored from the pinned 2.1.278 (`Bt`, the `canonicalRootByRoot` resolver):
+ * a `.git` FILE reading `gitdir: <dir>` names the worktree's private git
+ * directory under `<main>/.git/worktrees/<name>`; `<dir>/commondir` names the
+ * shared git directory (`<main>/.git`); `<dir>/gitdir` must point back at this
+ * worktree's own `.git`; and the parent of `<dir>` must be `<common>/worktrees`.
+ * When all of that holds the canonical root is `dirname(<common>)`, the main
+ * checkout -- and on POSIX that is where the CLI reads `settings.local.json`
+ * from for a launch inside the worktree. The first version of this walked up
+ * to the worktree and stopped, so a helper declared in the MAIN checkout's
+ * local settings applied to every managed session in every linked worktree of
+ * the repository with a clean verdict -- and this repo's own session model
+ * puts every session in a linked worktree (adversarial re-attack, BLOCKER).
+ * Any pointer that does not validate leaves the root as it was, exactly as
+ * the CLI does; neither pointer file may be a symlink.
+ */
+async function canonicalGitRootOf(root: string): Promise<string> {
+  const entry = path.join(root, '.git')
+  try {
+    if (!(await fs.promises.lstat(entry)).isFile()) return root
+  } catch {
+    return root
+  }
+  const text = (await readGitPointer(entry))?.trim()
+  if (!text || !text.startsWith('gitdir:')) return root
+  const gitdir = path.resolve(root, text.slice(7).trim())
+  const commonText = (await readGitPointer(path.join(gitdir, 'commondir')))?.trim()
+  if (!commonText) return root
+  const common = path.resolve(gitdir, commonText)
+  if (path.dirname(gitdir) !== path.join(common, 'worktrees')) return root
+  const backText = (await readGitPointer(path.join(gitdir, 'gitdir')))?.trim()
+  if (!backText) return root
+  try {
+    const back = await fs.promises.realpath(path.resolve(gitdir, backText))
+    if (back !== path.join(await fs.promises.realpath(root), '.git')) return root
+  } catch {
+    return root
+  }
+  if (path.basename(common) !== '.git') {
+    // A shared directory not named `.git` (a bare repository): the CLI treats
+    // it as the root itself unless it holds a `.git` of its own.
+    try { await fs.promises.lstat(path.join(common, '.git')); return root } catch { return common }
+  }
+  return path.dirname(common)
+}
+
+/** TEST SEAM for the worktree pointer rule. */
+export const _canonicalGitRootOfForTest = canonicalGitRootOf
+
+/**
+ * Where the CLI reads `settings.local.json` from on POSIX, when that is NOT
+ * the working directory -- or `null` when it is.
+ *
+ * Measured on the pinned 2.1.278: `localSettings` resolves to the CANONICAL
+ * GIT ROOT of the working directory when (a) the platform has uid semantics
+ * (`process.geteuid`), so never on win32; (b) the root differs from the
+ * working directory and from the real home directory; and (c) the root, its
+ * `.git` entry and its `.claude` entry (when present) are all owned by the
+ * current user. The working directory's own `settings.local.json` is then
+ * ALSO read, as the legacy location. `settings.json` stays at the working
+ * directory in every case. A gate that read only the working directory
+ * therefore missed the file the CLI reads from the repository root for every
+ * launch in a subdirectory of an owned checkout (adversarial review, MAJOR,
+ * POSIX only).
+ *
+ * The root is found the way the CLI finds it: walk up for a `.git` entry that
+ * is a directory or a regular file (a symlinked `.git` is not a root and the
+ * walk continues past it), with no depth bound other than the filesystem root
+ * -- the CLI's walk has none, and a bound the CLI does not share is a layout
+ * in which the CLI finds a root this gate does not; then a linked worktree's
+ * pointer is followed to the main checkout (`canonicalGitRootOf`).
+ */
+async function posixCanonicalLocalSettingsRoot(cwd: string): Promise<string | null> {
+  if (typeof process.geteuid !== 'function') return null
+  const resolved = path.resolve(cwd)
+  let dir = resolved
+  let root: string | null = null
+  for (;;) {
+    try {
+      const st = await fs.promises.lstat(path.join(dir, '.git'))
+      if (st.isDirectory() || st.isFile()) { root = dir; break }
+    } catch { /* not here; go up */ }
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  if (root === null) return null
+  root = await canonicalGitRootOf(root)
+  if (root === resolved) return null
+  try {
+    if (root === await fs.promises.realpath(os.homedir())) return null
+  } catch {
+    return null
+  }
+  try {
+    const uid = process.geteuid()
+    const rootUid = (await fs.promises.stat(root)).uid
+    const gitUid = (await fs.promises.lstat(path.join(root, '.git'))).uid
+    let claudeUid: number | null = null
+    try { claudeUid = (await fs.promises.lstat(path.join(root, '.claude'))).uid } catch { /* absent: not a veto */ }
+    if (rootUid !== uid || gitUid !== uid || (claudeUid !== null && claudeUid !== uid)) return null
+  } catch {
+    return null
+  }
+  return root
+}
+
+/** TEST SEAM for the POSIX git-root rule, so a test can drive it on a
+ *  fixture checkout without a launch. */
+export const _posixCanonicalLocalSettingsRootForTest = posixCanonicalLocalSettingsRoot
 
 /**
  * Authority-bearing keys a PROJECT's own settings carry, for the report.
@@ -129,6 +358,11 @@ const MAX_PROJECT_SETTINGS_BYTES = 128 * 1024
  *   - the whole amendment is raced against a short deadline, so a slow path
  *     that is merely slow rather than dead still costs nothing visible.
  *
+ * The files read are the ones the CLI reads for this directory: its own
+ * `settings.json` and `settings.local.json`, plus, on POSIX only, the
+ * repository root's `settings.local.json` when the CLI would canonicalise to
+ * it (see `posixCanonicalLocalSettingsRoot`).
+ *
  * It never modifies anything it reads. These files belong to the repository;
  * what a managed session does about them is REFUSE to start, not an edit.
  */
@@ -136,41 +370,13 @@ async function projectAuthoritySettingsKeys(cwd: string | null): Promise<string[
   if (!cwd) return []
   const found: string[] = []
   for (const name of PROJECT_SETTINGS_FILES) {
-    const file = path.join(cwd, '.claude', name)
-    let handle: fs.promises.FileHandle | null = null
-    try {
-      handle = await fs.promises.open(file, 'r')
-      const stat = await handle.stat()
-      // A FIFO, a device or a directory is not a settings file, and its `size`
-      // tells you nothing about what reading it would cost.
-      if (!stat.isFile() || stat.size > MAX_PROJECT_SETTINGS_BYTES) continue
-      // Read into a FIXED buffer rather than calling `handle.readFile()`. That
-      // helper re-stats the handle and allocates for whatever the file is at
-      // that moment, so the check above was advisory rather than a bound: with a
-      // concurrent local writer, a file that stat'd at 7 bytes was measured
-      // coming back at 314 MB, decoded and parsed on the main thread
-      // (adversarial round 4). The buffer is the bound.
-      // cap + 1, and a byte past the cap is a SKIP. Reading exactly the cap
-      // would hand JSON.parse a truncated prefix of a file that grew -- possibly
-      // cut mid-character -- and report whatever survived as if it were the file.
-      const buf = Buffer.allocUnsafe(MAX_PROJECT_SETTINGS_BYTES + 1)
-      const { bytesRead } = await handle.read(buf, 0, MAX_PROJECT_SETTINGS_BYTES + 1, 0)
-      if (bytesRead > MAX_PROJECT_SETTINGS_BYTES) continue
-      const raw = buf.toString('utf8', 0, bytesRead)
-      const keys = authoritySettingsKeysFor('claude', raw)
-      // `null` means there was nobody to ask (no registered provider), which is
-      // not the same as "this file carries nothing" -- so say so rather than
-      // reporting an absence the data does not support.
-      if (keys === null) {
-        logWarn(`[managed-launch] project settings not classified: no registered Claude package to ask`)
-        return []
-      }
-      // A file that cannot be parsed is reported as nothing rather than as a
-      // fault: it is not ours, and the CLI will tell the user about it.
-      for (const key of keys) found.push(`${name}: ${key}`)
-    } catch { /* absent, unreadable, or not ours: nothing to report */ } finally {
-      await handle?.close().catch(() => {})
-    }
+    const keys = await authorityKeysOfSettingsFile(path.join(cwd, '.claude', name))
+    for (const key of keys ?? []) found.push(`${name}: ${key}`)
+  }
+  const root = await posixCanonicalLocalSettingsRoot(cwd)
+  if (root !== null) {
+    const keys = await authorityKeysOfSettingsFile(path.join(root, '.claude', 'settings.local.json'))
+    for (const key of keys ?? []) found.push(`settings.local.json (repository root): ${key}`)
   }
   return boundNames(found)
 }
@@ -242,9 +448,68 @@ export function _projectScanStateForTest(): { inFlight: number; outstanding: num
  * at the same dead host) is not detectable without a call that can itself
  * block, so it is not attempted -- the thread ceiling is what bounds that case,
  * and saying so is better than a check that pretends to cover it.
+ *
+ * Two leading separators are not enough on their own. The Win32 device and
+ * extended-length prefixes (`\\?\` and `\\.\`) start the same way and are
+ * followed by a LOCAL drive (`\\?\C:\proj`, which is how a long path arrives)
+ * or a local volume (`\\?\Volume{...}\`) -- and a launch there was declined as
+ * a network path, unchecked, with a warning that named the wrong reason
+ * (adversarial review, MAJOR). Under such a prefix, `UNC\` names a share and
+ * is network; a drive letter or a volume is local and is scanned; anything
+ * else (`GLOBALROOT`, a device name) is opaque and treated as network, because
+ * an unchecked launch with a warning beats a read that can block.
  */
 function isUncPath(p: string): boolean {
-  return /^[\\/]{2}[^\\/]/.test(p)
+  const s = p.replace(/\//g, '\\')
+  const device = /^\\\\[?.]\\(.*)$/s.exec(s)
+  if (device) {
+    const rest = device[1]
+    if (/^[A-Za-z]:(?:\\|$)/.test(rest)) return false
+    if (/^Volume\{[^\\]*\}(?:\\|$)/i.test(rest)) return false
+    const unc = /^UNC\\([^\\]+)(?:\\|$)/i.exec(rest)
+    if (unc) return !isLoopbackHost(unc[1])
+    return true
+  }
+  const share = /^\\\\([^\\]+)(?:\\|$)/.exec(s)
+  if (!share) return false
+  return !isLoopbackHost(share[1])
+}
+
+/** A UNC host that is THIS machine. `\\localhost\C$\proj` is a spelling of a
+ *  local directory -- the CLI reads it and applies what it finds -- and the
+ *  first version of the rule above declined it as a network path, which is
+ *  the not-scanned, launch-anyway bucket: a directory the CLI reads with a
+ *  verdict the gate never formed, chosen by spelling alone (adversarial
+ *  re-attack, MAJOR). Loopback by name or address, or this host's own name,
+ *  is local and is scanned; a local read that the share refuses fails closed
+ *  as an absent file, which is what the CLI sees too. */
+function isLoopbackHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '')
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0:0:0:0:0:0:0:1') return true
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true
+  let self = ''
+  try { self = os.hostname().toLowerCase() } catch { /* no name to compare */ }
+  if (self === '') return false
+  // The name as given, its .local form, and its short form: a host whose name
+  // is fully qualified is reached as `\\\\box\\share` far more often than as
+  // `\\\\box.corp.example\\share` (spec review, INFO).
+  const short = self.split('.')[0]
+  return h === self || h === `${self}.local` || (short !== '' && h === short)
+}
+
+/** TEST SEAM for the network-path rule: string in, verdict out, no disk. */
+export const _isUncPathForTest = isUncPath
+
+/** The cache and in-flight key for a directory: ONE SPELLING, ONE VERDICT.
+ *  The first version lower-cased the key everywhere, so on Linux and macOS
+ *  `/Proj` and `/proj` -- two directories -- shared a verdict (adversarial
+ *  review, MAJOR); the second folded only on Windows, and the re-attack showed
+ *  an NTFS directory with per-directory case sensitivity enabled (no admin
+ *  needed) where `proj` and `Proj` are two directories there too. So no
+ *  folding at all: a directory reached under another spelling is scanned
+ *  again, which costs a read, where a shared key could cost a verdict. */
+function scanKeyFor(cwd: string): string {
+  return path.resolve(cwd)
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms).unref?.())
@@ -271,10 +536,10 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  */
 export async function gateManagedLaunch(cwd: string): Promise<ProjectGateResult> {
   if (isUncPath(cwd)) {
-    logInfo(`[managed-launch] project settings in ${cwd} not checked -- the working directory is a network path`)
+    logInfo(`[managed-launch] project settings in ${describePath(cwd)} not checked -- the working directory is a network path`)
     return { status: 'not-scanned', reason: 'network-path' }
   }
-  const key = path.resolve(cwd).toLowerCase()
+  const key = scanKeyFor(cwd)
   const deadlineAt = Date.now() + PROJECT_GATE_DEADLINE_MS
   let scan = inFlightScans.get(key)
   if (!scan) {
@@ -299,6 +564,23 @@ export async function gateManagedLaunch(cwd: string): Promise<ProjectGateResult>
       outstandingProjectScans += 1
       scan = projectAuthoritySettingsKeys(cwd)
         .catch(() => [] as string[])
+        .then((keys) => {
+          // The verdict is cached and a refusal logged HERE, once, when the
+          // scan settles -- not by each waiter after the race, which wrote the
+          // cache and the log line once per concurrent launch into the same
+          // directory (code-quality review, MINOR). A scan that settles after
+          // every waiter gave up still leaves its verdict for the next caller:
+          // the verdict is true whoever waited for it.
+          const verdict: ProjectGateResult = keys.length === 0 ? { status: 'clean' } : { status: 'refused', keys }
+          recentVerdicts.set(key, { verdict, at: Date.now() })
+          if (verdict.status === 'refused') {
+            // The directory is named HERE, in the log, where the launch's own
+            // refusal text (file and key only) cannot say which of several
+            // directories a multi-directory launch was refused for.
+            logWarn(`[managed-launch] project settings in ${describePath(cwd)} refuse a managed launch: ${keys.join(', ')}`)
+          }
+          return keys
+        })
         .finally(() => {
           // The THREAD is back only now.
           outstandingProjectScans = Math.max(0, outstandingProjectScans - 1)
@@ -314,12 +596,75 @@ export async function gateManagedLaunch(cwd: string): Promise<ProjectGateResult>
     sleep(remaining).then(() => null),
   ])
   if (keys === null) {
-    logInfo(`[managed-launch] project settings in ${cwd} not checked -- the check did not answer within ${PROJECT_GATE_DEADLINE_MS} ms`)
+    logInfo(`[managed-launch] project settings in ${describePath(cwd)} not checked -- the check did not answer within ${PROJECT_GATE_DEADLINE_MS} ms`)
     return { status: 'not-scanned', reason: 'timed-out' }
   }
-  const verdict: ProjectGateResult = keys.length === 0 ? { status: 'clean' } : { status: 'refused', keys }
-  recentVerdicts.set(key, { verdict, at: Date.now() })
-  return verdict
+  // Only a clean or a refused verdict is ever cached (see peekGateVerdict),
+  // and the scan cached it itself when it settled: the three `not-scanned`
+  // returns above never produce one.
+  return keys.length === 0 ? { status: 'clean' } : { status: 'refused', keys }
+}
+
+/**
+ * THE LAUNCH GATE over EVERY directory a launch might run in.
+ *
+ * The interactive PTY path does not always run where it was configured: an
+ * exact resume relaunches the CLI in the conversation's own directory, taken
+ * from the persisted resume target or from the transcript, and for a session
+ * that ran in its designated worktree that is the COMMON case, not an edge.
+ * A gate that checked only the configured directory therefore gated a
+ * directory the session did not run in and left the one it did unchecked
+ * (adversarial review, BLOCKER). The resume decision itself is made late, in
+ * the Claude branch, with side effects (it consumes the self-captured target
+ * and may relocate a transcript), so it is not hoisted; instead every
+ * directory the spawn could land in is gated here, and one verdict covers them:
+ *
+ *   - any `refused` refuses, with each key prefixed by the directory it was
+ *     found in when more than one was gated, so the refusal names the file the
+ *     user must fix;
+ *   - otherwise any `not-scanned` warns (the first reason wins);
+ *   - otherwise clean.
+ *
+ * A directory the launch does not use in the end (the resume target that turns
+ * out to be gone, so the spawn falls back to the configured one) is gated too:
+ * an absent directory is clean, and a present one with an authority key is
+ * one the user asked to resume in. Over-refusal is the fail-closed side.
+ */
+export async function gateManagedLaunchDirs(cwds: readonly string[]): Promise<ProjectGateResult> {
+  const unique = [...new Set(cwds.filter((c) => typeof c === 'string' && c.length > 0))]
+  if (unique.length === 0) return { status: 'clean' }
+  if (unique.length === 1) return gateManagedLaunch(unique[0])
+  // ONE AT A TIME: a launch holds at most one of the two scan slots however
+  // many directories it gates, so a resume launch cannot push a concurrent
+  // launch into the thread ceiling, which is the not-scanned, launch-anyway
+  // bucket (adversarial re-attack, MINOR). The deadline is per directory.
+  const results: Array<{ cwd: string; result: ProjectGateResult }> = []
+  for (const cwd of unique) results.push({ cwd, result: await gateManagedLaunch(cwd) })
+  return mergeProjectGateResults(results)
+}
+
+/** One verdict for several directories (see `gateManagedLaunchDirs`). Pure,
+ *  and exported for its test. Keys are already bounded per directory, and the
+ *  directory set is at most the configured and the resume directory, so the
+ *  merged list is bounded by construction without re-counting an "and N more". */
+export function mergeProjectGateResults(
+  results: ReadonlyArray<{ cwd: string; result: ProjectGateResult }>,
+): ProjectGateResult {
+  const refusedKeys: string[] = []
+  let skipped: ProjectScanSkipReason | undefined
+  for (const { cwd, result } of results) {
+    if (result.status === 'refused') {
+      // The prefix names a directory the user chose, or one a transcript
+      // named: stripped and bounded before it can reach the Accounts panel,
+      // like everything else that crosses to the renderer (re-attack, MINOR).
+      for (const k of result.keys) refusedKeys.push(results.length > 1 ? `${displayPath(cwd)}: ${k}` : k)
+    } else if (result.status === 'not-scanned' && skipped === undefined) {
+      skipped = result.reason
+    }
+  }
+  if (refusedKeys.length > 0) return { status: 'refused', keys: refusedKeys }
+  if (skipped !== undefined) return { status: 'not-scanned', reason: skipped }
+  return { status: 'clean' }
 }
 
 /**
@@ -334,7 +679,7 @@ export async function gateManagedLaunch(cwd: string): Promise<ProjectGateResult>
  * is worth a fresh attempt.
  */
 export function peekGateVerdict(cwd: string): ProjectGateResult | undefined {
-  const hit = recentVerdicts.get(path.resolve(cwd).toLowerCase())
+  const hit = recentVerdicts.get(scanKeyFor(cwd))
   if (!hit || Date.now() - hit.at > GATE_VERDICT_REUSE_MS) return undefined
   return hit.verdict
 }
@@ -359,6 +704,10 @@ export function recordManagedLaunchPreflight(
   env: Readonly<Record<string, string | undefined>>,
   gate: ProjectGateResult | null = null,
   kind: ManagedLaunchKind = 'launch',
+  /** A refusal decided AFTER the gate, by the spawn itself: the directory it
+   *  would use is not one the verdict covers (see pty-manager's
+   *  assertGatedDirectory). Recorded here so the panel shows it. */
+  extra: { launchDirectoryUnverified?: string } = {},
 ): ManagedLaunchPreflight | null {
   try {
     // If the boot probe never answered (the CLI was installed after launch, or
@@ -374,6 +723,7 @@ export function recordManagedLaunchPreflight(
       strippedAmbient: lastAmbientStripFor(home) ?? undefined,
       ...(gate?.status === 'refused' ? { repositorySettingsKeys: gate.keys } : {}),
       ...(gate?.status === 'not-scanned' ? { projectScanSkipped: gate.reason } : {}),
+      ...(extra.launchDirectoryUnverified ? { launchDirectoryUnverified: extra.launchDirectoryUnverified } : {}),
     }
     const preflight = managedLaunchPreflightFor('claude', input)
     if (!preflight) return null

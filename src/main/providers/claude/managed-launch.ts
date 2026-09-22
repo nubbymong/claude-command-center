@@ -54,7 +54,7 @@ import {
   claudeAuthorityFamilyRules,
   type AuthorityEntry as AuthorityEntryRef,
 } from './authority-manifest'
-import { summariseNames } from '../../../shared/providers'
+import { summariseNames, stripLeadingBom } from '../../../shared/providers'
 import type {
   SanitizedManagedSettings, ManagedCliCompatibility, PreflightFinding,
   ManagedLaunchPreflightInput, ManagedLaunchPreflight, ProjectScanSkipReason,
@@ -231,7 +231,9 @@ const PROJECT_SCAN_SKIP_DETAIL: Record<ProjectScanSkipReason, string> = {
 export function sanitizeClaudeManagedSettings(raw: string): SanitizedManagedSettings {
   let parsed: unknown
   try {
-    parsed = JSON.parse(raw)
+    // A leading BOM is dropped exactly as the CLI drops it (see stripLeadingBom):
+    // the copy is meant to apply wherever the source would have.
+    parsed = JSON.parse(stripLeadingBom(raw))
   } catch (e) {
     return { text: null, removed: [], refused: `settings.json is not valid JSON${jsonErrorPosition(e)}` }
   }
@@ -298,7 +300,12 @@ export function sanitizeClaudeManagedSettings(raw: string): SanitizedManagedSett
  */
 export function claudeAuthoritySettingsKeys(raw: string): readonly string[] {
   let parsed: unknown
-  try { parsed = JSON.parse(raw) } catch { return [] }
+  // The parse mirrors the CLI's (pinned 2.1.278): a leading BOM dropped, then
+  // a STRICT JSON.parse -- no comments, no trailing commas. A file the CLI
+  // cannot parse is one it does not apply, so "unparseable" is honestly
+  // nothing here; a file it CAN parse and this could not was the gap
+  // (adversarial review, design lens).
+  try { parsed = JSON.parse(stripLeadingBom(raw)) } catch { return [] }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return []
   const settings = parsed as Record<string, unknown>
   const found: string[] = []
@@ -450,7 +457,8 @@ export function claudeManagedLaunchPreflight(input: ManagedLaunchPreflightInput)
       // No "set these per account instead" -- there is no per-account
       // environment feature to point at, and a dead-end instruction is the
       // same defect as a dead-end action string.
-      detail: `Removed so they cannot override the account this session runs as: ${input.strippedAmbient.join(', ')}. Your own shell is unchanged.`,
+      // Bounded like every other name list that reaches the panel.
+      detail: `Removed so they cannot override the account this session runs as: ${summariseNames(input.strippedAmbient)}. Your own shell is unchanged.`,
     })
   }
 
@@ -466,6 +474,19 @@ export function claudeManagedLaunchPreflight(input: ManagedLaunchPreflightInput)
       title: 'This project carries settings that could redirect the account, so the session was not started',
       detail: `Found in the project's own settings files: ${summariseNames(input.repositorySettingsKeys)}. AI Code Conductor does not modify project or repository files, and has no control that makes a managed session safe to start under them.`,
       action: 'Remove those keys from the project\'s .claude/settings.json or settings.local.json (or move them to your own shared settings, which AI Code Conductor sanitises per account), then start the session again. A session outside a managed account is not gated.',
+    })
+  }
+  //    A verdict is a verdict FOR the directories it was formed for. When the
+  //    launch's directory turned out to be another one, the launch is refused
+  //    and recorded as such -- a refusal the terminal printed and the panel
+  //    could not show was a refusal half-reported (spec review, MINOR).
+  if (input.launchDirectoryUnverified) {
+    findings.push({
+      id: 'launch-directory-unverified',
+      severity: 'blocked',
+      title: 'The session\'s directory changed while its project settings were being checked, so the session was not started',
+      detail: `The session would have run in ${input.launchDirectoryUnverified}, which is not one of the directories the check covered.`,
+      action: 'Start the session again; the check runs afresh for the directory it will use.',
     })
   }
   //    ...and a gate that did NOT answer says so, as a WARNING rather than a

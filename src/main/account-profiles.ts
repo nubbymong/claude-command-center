@@ -17,6 +17,7 @@ import { atomicWriteFileSync } from './atomic-write'
 import { logInfo, logWarn } from './debug-logger'
 import { recordSettingsSanitise, recordAmbientStrip, clearSettingsSanitise } from './managed-launch-state'
 import { recordManagedLaunchPreflight } from './managed-launch-diagnostics'
+import { decodeSettingsText } from './settings-text'
 // Via the neutral barrel, never a package entry point: the dependency boundary
 // (tests/wp1/dependency-boundaries.test.ts, R3/R4) keeps provider knowledge
 // behind the registry so a launch path cannot opt out of a provider's policy.
@@ -1368,7 +1369,10 @@ function writeSanitisedSettingsCopy(src: string, dest: string): void {
       try { fs.rmSync(dest, { force: true }) } catch { /* absent */ }
       return
     }
-    raw = buf.toString('utf8', 0, bytesRead)
+    // Decoded as the CLI decodes it (BOM-aware, UTF-16LE recognised), so a
+    // file the CLI applies is one the copy carries: a BOM-prefixed source used
+    // to be refused here as invalid JSON (adversarial review, design lens).
+    raw = decodeSettingsText(buf, bytesRead)
   } catch (e) {
     // The errno ONLY, never the message: a Node fs error message embeds the
     // absolute path, and therefore the OS username, and this string now reaches
