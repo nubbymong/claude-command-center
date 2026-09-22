@@ -94,8 +94,23 @@ export interface ManagedLaunchPreflightInput {
   launchDirectoryUnverified?: string
 }
 
-/** The ways the project-settings gate declines or fails to answer. */
-export type ProjectScanSkipReason = 'network-path' | 'thread-ceiling' | 'timed-out'
+/** The ways the project-settings gate declines or fails to answer.
+ *
+ *  Only two outcomes are CLEAN: a settings file that is absent, and one read in
+ *  full and classified. Everything else the gate met is uncertainty and is
+ *  reported as one of these -- never folded into "clean" (exact-head review,
+ *  BLOCKER: unreadable, over-cap and unclassifiable files, and a failed scan,
+ *  were all cached as a clean verdict):
+ *   - `unreadable`             a settings file exists and could not be read in
+ *                              full (permission, not a regular file, an I/O
+ *                              error, or it changed while it was being read);
+ *   - `over-cap`               larger than the 2 MiB the CLI itself reads;
+ *   - `classifier-unavailable` no registered Claude package could classify it,
+ *                              or classifying it failed;
+ *   - `scan-failed`            the check itself failed unexpectedly. */
+export type ProjectScanSkipReason =
+  | 'network-path' | 'thread-ceiling' | 'timed-out'
+  | 'unreadable' | 'over-cap' | 'classifier-unavailable' | 'scan-failed'
 
 /** What the project-settings gate decided for one launch directory. */
 export type ProjectGateResult =

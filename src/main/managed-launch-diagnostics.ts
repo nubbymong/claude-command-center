@@ -137,11 +137,31 @@ export function displayPath(p: string): string {
   return stripSpoofableText(shortened, 300)
 }
 
-/** `keys` of `file` (a `.claude/settings*.json`), read under the size cap and
- *  the regular-file rule; `null` when the file is absent, unreadable, over the
- *  cap, not a regular file, or unparseable -- every one of which is a file the
- *  CLI applies nothing from, and therefore nothing to report. */
-async function authorityKeysOfSettingsFile(file: string): Promise<readonly string[] | null> {
+/** What one `.claude/settings*.json` turned out to be. Only `absent` and
+ *  `keys` are certain; `uncertain` carries why (see ProjectScanSkipReason). */
+type SettingsFileScan =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'keys'; readonly keys: readonly string[] }
+  | { readonly kind: 'uncertain'; readonly reason: 'unreadable' | 'over-cap' | 'classifier-unavailable' }
+
+/** The authority `keys` of `file` (a `.claude/settings*.json`), read under the
+ *  size cap and the regular-file rule, to end of file.
+ *
+ *  THREE OUTCOMES, AND ONLY TWO OF THEM ARE CLEAN. The first version returned
+ *  `null` for everything that was not a list of keys -- absent, unreadable,
+ *  over the cap, not a regular file, no classifier -- and the caller read
+ *  `null` as "nothing to report", so each of those produced a CLEAN verdict
+ *  that was cached and launched with no warning (exact-head review, BLOCKER).
+ *  Now:
+ *   - `absent`: the file (or its `.claude` directory) does not exist -- the
+ *     CLI reads nothing there either;
+ *   - `keys`: the file was read IN FULL and classified; an empty list is a
+ *     clean file. A file read in full that the CLI's strict parser rejects is
+ *     classified as carrying nothing, which is what the CLI applies from it
+ *     (measured, evidence Part 9) -- that is a certain answer, not a failure;
+ *   - `uncertain`: anything else. The gate does not know what the file
+ *     carries, and says so as `not-scanned` with the reason. */
+async function authorityKeysOfSettingsFile(file: string): Promise<SettingsFileScan> {
   let handle: fs.promises.FileHandle | null = null
   try {
     // O_NONBLOCK on the OPEN, not only on the read. On POSIX, opening a FIFO
@@ -153,41 +173,58 @@ async function authorityKeysOfSettingsFile(file: string): Promise<readonly strin
     // returns at once and the fstat does the refusing. A regular file is not
     // affected by the flag; Windows has no such flag and the constant is
     // absent there, hence the fallback to 0.
-    handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0))
+    try {
+      handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0))
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code
+      // Nothing there: the one open failure that is an answer.
+      if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'absent' }
+      return { kind: 'uncertain', reason: 'unreadable' }
+    }
     const stat = await handle.stat()
     // A FIFO, a device or a directory is not a settings file, and its `size`
-    // tells you nothing about what reading it would cost.
-    if (!stat.isFile() || stat.size > MAX_PROJECT_SETTINGS_BYTES) return null
+    // tells you nothing about what reading it would cost. It is also not
+    // ABSENT, so it is not clean either.
+    if (!stat.isFile()) return { kind: 'uncertain', reason: 'unreadable' }
+    if (stat.size > MAX_PROJECT_SETTINGS_BYTES) return { kind: 'uncertain', reason: 'over-cap' }
     // Read into a FIXED buffer rather than calling `handle.readFile()`. That
     // helper re-stats the handle and allocates for whatever the file is at
     // that moment, so the check above was advisory rather than a bound: with a
     // concurrent local writer, a file that stat'd at 7 bytes was measured
     // coming back at 314 MB, decoded and parsed on the main thread
-    // (adversarial round 4). The buffer is the bound.
-    // cap + 1, and a byte past the cap is a SKIP. Reading exactly the cap
+    // (adversarial round 4). The buffer is the bound, and `readFully` fills
+    // it to end of file rather than trusting one read.
+    // cap + 1, and a byte past the cap is over the cap. Reading exactly the cap
     // would hand JSON.parse a truncated prefix of a file that grew -- possibly
     // cut mid-character -- and report whatever survived as if it were the file.
     const buf = Buffer.allocUnsafe(MAX_PROJECT_SETTINGS_BYTES + 1)
-    const { bytesRead } = await handle.read(buf, 0, MAX_PROJECT_SETTINGS_BYTES + 1, 0)
-    if (bytesRead > MAX_PROJECT_SETTINGS_BYTES) return null
+    const bytesRead = await readFully(handle, buf)
+    if (bytesRead > MAX_PROJECT_SETTINGS_BYTES) return { kind: 'uncertain', reason: 'over-cap' }
+    // Fewer or more bytes than the file had when it was measured: it changed
+    // while it was being read, and what arrived is not a file that ever
+    // existed whole. Not clean.
+    if (bytesRead !== stat.size) return { kind: 'uncertain', reason: 'unreadable' }
     // Decoded as the CLI decodes it: a byte-order mark selects the encoding and
     // is dropped, so a BOM-prefixed or UTF-16 file the CLI parses is one the
     // gate parses too (adversarial review, design lens; see ./settings-text.ts).
     const raw = decodeSettingsText(buf, bytesRead)
-    const keys = authoritySettingsKeysFor('claude', raw)
+    let keys: readonly string[] | null
+    try {
+      keys = authoritySettingsKeysFor('claude', raw)
+    } catch (err) {
+      logWarn(`[managed-launch] project settings not classified: ${stripSpoofableText(err instanceof Error ? err.message : String(err), 300)}`)
+      return { kind: 'uncertain', reason: 'classifier-unavailable' }
+    }
     // `null` means there was nobody to ask (no registered provider), which is
-    // not the same as "this file carries nothing" -- so say so rather than
-    // reporting an absence the data does not support.
+    // not the same as "this file carries nothing".
     if (keys === null) {
       logWarn(`[managed-launch] project settings not classified: no registered Claude package to ask`)
-      return null
+      return { kind: 'uncertain', reason: 'classifier-unavailable' }
     }
-    // A file that cannot be parsed is reported as nothing rather than as a
-    // fault: it is not ours, the CLI applies nothing from it, and the CLI will
-    // tell the user about it.
-    return keys
+    return { kind: 'keys', keys }
   } catch {
-    return null /* absent, unreadable, or not ours: nothing to report */
+    // The handle opened and a stat or a read then failed.
+    return { kind: 'uncertain', reason: 'unreadable' }
   } finally {
     await handle?.close().catch(() => {})
   }
@@ -197,9 +234,35 @@ async function authorityKeysOfSettingsFile(file: string): Promise<readonly strin
  *  linked worktree's git directory is read: they hold one path each. */
 const MAX_GIT_POINTER_BYTES = 4096
 
+/**
+ * Read `handle` from offset 0 into `buf` until end of file or until `buf` is
+ * full, and return how many bytes arrived.
+ *
+ * ONE `FileHandle.read` IS A PREFIX, NOT THE FILE. A read may legally return
+ * fewer bytes than asked for -- routinely on network and FUSE filesystems, and
+ * on any file a signal or a concurrent writer interrupts -- and the gate used to
+ * take the first answer as the whole file: a valid prefix was parsed (or failed
+ * to parse, and so reported nothing) while the unread bytes carried the
+ * authority setting (exact-head review, BLOCKER). The loop keeps the fixed
+ * allocation: the buffer is still the bound, so a file that grows mid-read
+ * stops at `buf.length`, and the caller sizes it at cap + 1 to see the growth.
+ * Every iteration advances by at least one byte or ends the loop.
+ */
+async function readFully(handle: fs.promises.FileHandle, buf: Buffer): Promise<number> {
+  let total = 0
+  while (total < buf.length) {
+    const { bytesRead } = await handle.read(buf, total, buf.length - total, total)
+    if (bytesRead <= 0) break
+    total += bytesRead
+  }
+  return total
+}
+
 /** The text of a small pointer file, or null when it is absent, a symlink,
  *  not a regular file, or larger than a pointer file can be. Bounded exactly
- *  as the settings read is: a fixed buffer, and a byte over the cap is a miss. */
+ *  as the settings read is: a fixed buffer, read to end of file (a short read
+ *  would hand the worktree rule a truncated path, and the root the CLI uses
+ *  would go unread), and a byte over the cap is a miss. */
 async function readGitPointer(file: string, followSymlink = false): Promise<string | null> {
   let handle: fs.promises.FileHandle | null = null
   try {
@@ -208,7 +271,7 @@ async function readGitPointer(file: string, followSymlink = false): Promise<stri
     const stat = await handle.stat()
     if (!stat.isFile() || stat.size > MAX_GIT_POINTER_BYTES) return null
     const buf = Buffer.allocUnsafe(MAX_GIT_POINTER_BYTES + 1)
-    const { bytesRead } = await handle.read(buf, 0, MAX_GIT_POINTER_BYTES + 1, 0)
+    const bytesRead = await readFully(handle, buf)
     if (bytesRead > MAX_GIT_POINTER_BYTES) return null
     return buf.toString('utf8', 0, bytesRead)
   } catch {
@@ -527,19 +590,34 @@ export const _posixCanonicalLocalSettingsRootForTest = posixCanonicalLocalSettin
  * It never modifies anything it reads. These files belong to the repository;
  * what a managed session does about them is REFUSE to start, not an edit.
  */
-async function projectAuthoritySettingsKeys(cwd: string | null): Promise<string[]> {
-  if (!cwd) return []
+async function projectAuthoritySettingsKeys(cwd: string | null): Promise<ProjectScan> {
+  if (!cwd) return { keys: [], uncertain: null }
   const found: string[] = []
-  for (const name of PROJECT_SETTINGS_FILES) {
-    const keys = await authorityKeysOfSettingsFile(path.join(cwd, '.claude', name))
-    for (const key of keys ?? []) found.push(`${name}: ${key}`)
+  let uncertain: ProjectScanSkipReason | null = null
+  const take = (label: string, scan: SettingsFileScan): void => {
+    if (scan.kind === 'keys') for (const key of scan.keys) found.push(`${label}: ${key}`)
+    else if (scan.kind === 'uncertain') uncertain ??= scan.reason
   }
+  for (const name of PROJECT_SETTINGS_FILES) take(name, await authorityKeysOfSettingsFile(path.join(cwd, '.claude', name)))
   const root = await posixCanonicalLocalSettingsRoot(cwd)
-  if (root !== null) {
-    const keys = await authorityKeysOfSettingsFile(path.join(root, '.claude', 'settings.local.json'))
-    for (const key of keys ?? []) found.push(`settings.local.json (repository root): ${key}`)
-  }
-  return boundNames(found)
+  if (root !== null) take('settings.local.json (repository root)', await authorityKeysOfSettingsFile(path.join(root, '.claude', 'settings.local.json')))
+  return { keys: boundNames(found), uncertain }
+}
+
+/** What a directory's scan found: every authority key it could name, and the
+ *  first reason it could not be certain of a file, if any. */
+interface ProjectScan {
+  readonly keys: readonly string[]
+  readonly uncertain: ProjectScanSkipReason | null
+}
+
+/** One verdict from one scan. A refusal stands whatever else was uncertain --
+ *  a named authority key is reason enough; with no key, any uncertainty is
+ *  `not-scanned`, never `clean`. */
+function verdictOfScan(scan: ProjectScan): ProjectGateResult {
+  if (scan.keys.length > 0) return { status: 'refused', keys: scan.keys }
+  if (scan.uncertain !== null) return { status: 'not-scanned', reason: scan.uncertain }
+  return { status: 'clean' }
 }
 
 /** TEST SEAM. The scan on its own, so a test can assert that it RETURNS on a
@@ -579,7 +657,7 @@ let outstandingProjectScans = 0
  *  everything else in the main process however badly a mount is wedged. */
 const MAX_OUTSTANDING_PROJECT_SCANS = 2
 /** One scan per directory at a time; concurrent launches into it share it. */
-const inFlightScans = new Map<string, Promise<string[]>>()
+const inFlightScans = new Map<string, Promise<ProjectGateResult>>()
 let projectScanCeilingLogged = false
 /** The last verdict per directory, for `peekGateVerdict`. */
 const recentVerdicts = new Map<string, { verdict: ProjectGateResult; at: number }>()
@@ -764,10 +842,13 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  *                        refuse the launch and name `keys` (file and key, never
  *                        a value -- `projectAuthoritySettingsKeys` produces
  *                        names only);
- *   - `not-scanned`  -- the files could not be read safely or in time; the
- *                        caller proceeds and the report carries a WARNING. A
- *                        network path is never read on the launch path; the
- *                        thread ceiling and the deadline are the other two.
+ *   - `not-scanned`  -- the files could not be read safely, in full, or in
+ *                        time, or could not be classified; the caller proceeds
+ *                        and the report carries a WARNING. A network path is
+ *                        never read on the launch path; the thread ceiling and
+ *                        the deadline are two more; an unreadable, over-cap or
+ *                        unclassifiable file and a failed scan are the rest.
+ *                        Never cached, and never reported as clean.
  *
  * Owner decision 2026-09-22: a detectable repository override fails visibly
  * BEFORE launch. What is not detectable is a recorded boundary, not a claim.
@@ -802,23 +883,32 @@ export async function gateManagedLaunch(cwd: string): Promise<ProjectGateResult>
     if (!scan) {
       outstandingProjectScans += 1
       scan = projectAuthoritySettingsKeys(cwd)
-        .catch(() => [] as string[])
-        .then((keys) => {
+        // A scan that FAILED is not a scan that found nothing: it used to be
+        // caught into an empty key list and cached as clean (exact-head
+        // review, BLOCKER).
+        .catch((err): ProjectScan => {
+          logWarn(`[managed-launch] project settings check in ${describePath(cwd)} failed: ${stripSpoofableText(err instanceof Error ? err.message : String(err), 300)}`)
+          return { keys: [], uncertain: 'scan-failed' }
+        })
+        .then((outcome) => {
           // The verdict is cached and a refusal logged HERE, once, when the
           // scan settles -- not by each waiter after the race, which wrote the
           // cache and the log line once per concurrent launch into the same
           // directory (code-quality review, MINOR). A scan that settles after
           // every waiter gave up still leaves its verdict for the next caller:
-          // the verdict is true whoever waited for it.
-          const verdict: ProjectGateResult = keys.length === 0 ? { status: 'clean' } : { status: 'refused', keys }
-          recentVerdicts.set(key, { verdict, at: Date.now() })
+          // the verdict is true whoever waited for it. Only a clean or a
+          // refused verdict is ever cached; an uncertain one is asked afresh.
+          const verdict = verdictOfScan(outcome)
+          if (verdict.status !== 'not-scanned') recentVerdicts.set(key, { verdict, at: Date.now() })
           if (verdict.status === 'refused') {
             // The directory is named HERE, in the log, where the launch's own
             // refusal text (file and key only) cannot say which of several
             // directories a multi-directory launch was refused for.
-            logWarn(`[managed-launch] project settings in ${describePath(cwd)} refuse a managed launch: ${keys.join(', ')}`)
+            logWarn(`[managed-launch] project settings in ${describePath(cwd)} refuse a managed launch: ${verdict.keys.join(', ')}`)
+          } else if (verdict.status === 'not-scanned') {
+            logInfo(`[managed-launch] project settings in ${describePath(cwd)} not checked -- ${verdict.reason}`)
           }
-          return keys
+          return verdict
         })
         .finally(() => {
           // The THREAD is back only now.
@@ -830,18 +920,18 @@ export async function gateManagedLaunch(cwd: string): Promise<ProjectGateResult>
     }
   }
   const remaining = Math.max(0, deadlineAt - Date.now())
-  const keys = await Promise.race([
+  const verdict = await Promise.race([
     scan,
     sleep(remaining).then(() => null),
   ])
-  if (keys === null) {
+  if (verdict === null) {
     logInfo(`[managed-launch] project settings in ${describePath(cwd)} not checked -- the check did not answer within ${PROJECT_GATE_DEADLINE_MS} ms`)
     return { status: 'not-scanned', reason: 'timed-out' }
   }
   // Only a clean or a refused verdict is ever cached (see peekGateVerdict),
-  // and the scan cached it itself when it settled: the three `not-scanned`
-  // returns above never produce one.
-  return keys.length === 0 ? { status: 'clean' } : { status: 'refused', keys }
+  // and the scan cached it itself when it settled: no `not-scanned` verdict --
+  // the three returns above, or an uncertain scan -- ever produces one.
+  return verdict
 }
 
 /**

@@ -146,6 +146,26 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The WP1 legacy-Codex gate (tests/wp1/legacy-codex-gate.test.ts) lists the
+      # tree of the commit its disposition ledger is bound to, to tell a file WP1
+      # created from one it inherited. The checkout above is depth 1 and does not
+      # carry that commit, so fetch exactly it: one commit, not the history. The
+      # SHA comes from a file a PR can edit, so it is format-checked first -- a
+      # value starting with `--` would otherwise be read by `git fetch` as an
+      # option.
+      - name: Fetch the WP1 ledger's bound commit
+        shell: bash
+        run: |
+          ledger=tests/wp1/legacy-codex-ledger.json
+          if [ ! -f "$ledger" ]; then echo "no WP1 ledger in this tree"; exit 0; fi
+          sha=$(node -p "String(require('./' + process.argv[1]).manifestHead)" "$ledger")
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::$ledger manifestHead is not a 40-hex commit id"
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin "$sha"
+          git cat-file -e "$sha^{tree}"
+
       - name: Unit tests
         run: npx vitest run
 

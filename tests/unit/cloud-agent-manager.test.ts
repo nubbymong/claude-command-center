@@ -426,19 +426,37 @@ describe('cloud-agent-manager', () => {
   })
 
   describe('killAllAgents', () => {
-    it('kills all active processes', () => {
+    it('kills all active processes', async () => {
+      // BOTH dispatches are AWAITED. dispatchAgent awaits the project gate
+      // before it spawns, so an un-awaited dispatch registers its process only
+      // after the test has moved on: killAllAgents then found nothing to kill,
+      // and on macOS the SIGTERM assertions failed while the spawns landed after
+      // the test (exact-head review). Awaiting also keeps both dispatches from
+      // running past the end of the case.
       const proc1 = createMockProcess()
-      const proc2 = createMockProcess()
+      const proc2 = { ...createMockProcess(), pid: 12346 }
       mockSpawn.mockReturnValueOnce(proc1).mockReturnValueOnce(proc2)
-      dispatchAgent({ name: 'A', description: 'd', projectPath: '/p' })
-      dispatchAgent({ name: 'B', description: 'd', projectPath: '/p' })
+      await dispatchAgent({ name: 'A', description: 'd', projectPath: '/p' })
+      await dispatchAgent({ name: 'B', description: 'd', projectPath: '/p' })
+      expect(mockSpawn, 'both agents must be running before they are killed').toHaveBeenCalledTimes(2)
+      mockExecSync.mockClear()
       killAllAgents()
       if (process.platform === 'win32') {
-        expect(mockExecSync).toHaveBeenCalled()
+        const commands = mockExecSync.mock.calls.map((c) => String(c[0]))
+        expect(commands).toContain('taskkill /pid 12345 /T /F')
+        expect(commands).toContain('taskkill /pid 12346 /T /F')
       } else {
         expect(proc1.kill).toHaveBeenCalledWith('SIGTERM')
         expect(proc2.kill).toHaveBeenCalledWith('SIGTERM')
       }
+      // ...and nothing is left registered: a second sweep kills nothing.
+      mockExecSync.mockClear()
+      proc1.kill.mockClear()
+      proc2.kill.mockClear()
+      killAllAgents()
+      expect(mockExecSync).not.toHaveBeenCalled()
+      expect(proc1.kill).not.toHaveBeenCalled()
+      expect(proc2.kill).not.toHaveBeenCalled()
     })
   })
 

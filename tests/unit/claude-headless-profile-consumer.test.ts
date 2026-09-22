@@ -23,6 +23,8 @@ vi.mock('child_process', () => ({
     return child
   },
   execSync: vi.fn(),
+  // Reached at import by the provider packages this suite now composes.
+  execFile: vi.fn(),
 }))
 // withProfileHome pulls in the heavy pty-manager graph (reaches electron); stub it.
 vi.mock('../../src/main/pty-manager', () => ({
@@ -51,6 +53,14 @@ const {
 // share a single subprocess; only a MISS defers it.
 const { gateManagedLaunch, peekGateVerdict, _resetProjectScanStateForTest } =
   await import('../../src/main/managed-launch-diagnostics')
+// The gate classifies a settings file through the REGISTERED Claude package,
+// and with none registered it answers NOT SCANNED -- never clean (exact-head
+// review, BLOCKER 3). This suite used to warm the gate with no package
+// composed and got a clean verdict for this process's directory, which
+// carries a .claude/settings.json: the fail-open, relied on. Compose the
+// providers as the app does at startup, so the warm verdict is a real one.
+const { composeProviders } = await import('../../src/main/providers/compose')
+composeProviders()
 
 /** A child whose 'close' / 'error' the test fires by hand. */
 function makeChild() {

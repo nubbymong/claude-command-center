@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "bde1e9bb23f99efb172ed6dcc5e221796e63d251f41a8a7e61e68a24a641ffa7",
-  "manifestHead": "b8e0217f00f8f21e4c6da3539658d0751bff3b45",
+  "manifestPathDigest": "ce40509a8afcbf2608d641f9dafcc550166a19b52d4fdb0bf7abee270491b1dc",
+  "manifestHead": "d3d585dfcd232d7d352e04cb3ceb571d2a06be74",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -39,6 +39,16 @@
     }
   ],
   "entries": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "predicates": [
+        "P14"
+      ],
+      "category": "CI",
+      "disposition": "retain",
+      "evidence": "mentions codex only as the path of the WP1 ledger file and its gate test, in the step that fetches the ledger bound commit for the depth-1 checkout; no Codex code path; the test job is otherwise unchanged (WP1.58)",
+      "note": "added by the exact-head review fix for the depth-1 CI checkout"
+    },
     {
       "path": "AGENTS.md",
       "predicates": [

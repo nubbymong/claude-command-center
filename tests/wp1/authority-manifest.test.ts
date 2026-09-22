@@ -25,7 +25,7 @@ import {
   validateAuthorityManifest, authorityManifest, authorityManifestProvenance,
   isClaudeSettingsEnvAuthority, isClaudeAmbientAuthority, authorityEntryFor,
   claudeCliPrefixRules,
-  CLAUDE_SETTINGS_ENV_STRIP, CLAUDE_AMBIENT_STRIP,
+  claudeSettingsEnvStrip, claudeAmbientStrip,
   AUTHORITY_MANIFEST_ERROR, AUTHORITY_MANIFEST_SCHEMA_VERSION,
 } from '../../src/main/providers/claude/authority-manifest'
 // The generator is maintainer-only and needs a binary; its presence RULE is a
@@ -231,8 +231,8 @@ describe('the generated authority manifest', () => {
 
   it('keeps transport and corporate trust configuration on BOTH axes (D18 item 1)', () => {
     for (const name of ['HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS']) {
-      expect(CLAUDE_SETTINGS_ENV_STRIP, name).not.toContain(name)
-      expect(CLAUDE_AMBIENT_STRIP, name).not.toContain(name)
+      expect(claudeSettingsEnvStrip(), name).not.toContain(name)
+      expect(claudeAmbientStrip(), name).not.toContain(name)
     }
   })
 
@@ -650,15 +650,15 @@ describe('the generated authority manifest', () => {
     // `env` block of the settings copy the app writes.
     expect(isClaudeAmbientAuthority('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN')).toBe(true)
     expect(isClaudeSettingsEnvAuthority('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN')).toBe(true)
-    expect(CLAUDE_AMBIENT_STRIP).toContain('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN')
-    expect(CLAUDE_SETTINGS_ENV_STRIP).toContain('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN')
+    expect(claudeAmbientStrip()).toContain('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN')
+    expect(claudeSettingsEnvStrip()).toContain('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN')
     // ...in any spelling, because Windows resolves env names case-insensitively.
     expect(isClaudeAmbientAuthority('claude_code_force_windows_credman')).toBe(true)
   })
 
   it('never lists a name twice, so "removed" means removed once', () => {
-    expect(new Set(CLAUDE_AMBIENT_STRIP).size).toBe(CLAUDE_AMBIENT_STRIP.length)
-    expect(new Set(CLAUDE_SETTINGS_ENV_STRIP).size).toBe(CLAUDE_SETTINGS_ENV_STRIP.length)
+    expect(new Set(claudeAmbientStrip()).size).toBe(claudeAmbientStrip().length)
+    expect(new Set(claudeSettingsEnvStrip()).size).toBe(claudeSettingsEnvStrip().length)
   })
 })
 
@@ -672,18 +672,62 @@ describe('an unusable manifest fails CLOSED in this module, not by import order 
   //
   // So this imports the module DIRECTLY, with a corrupted manifest, exactly as
   // a future second consumer would.
-  it('refuses to load rather than degrading to an empty strip list', async () => {
+  //
+  // The module LOADS and every derived answer THROWS. The previous contract --
+  // "refuses to load" -- was fail-closed at the wrong moment: the import chain
+  // from index.ts evaluated it before the startup error boundary, so the app
+  // died with no window and no message (exact-head review, BLOCKER). The
+  // boundary itself is proven in startup-manifest-boundary.test.ts.
+  const corrupt = { schemaVersion: 2, provenance: {}, entries: [], digest: 'nope' }
+  const everyDerivedAnswer = (m: typeof import('../../src/main/providers/claude/authority-manifest')) => ({
+    authorityManifest: () => m.authorityManifest(),
+    authorityEntries: () => m.authorityEntries(),
+    claudeSettingsEnvStrip: () => m.claudeSettingsEnvStrip(),
+    claudeAmbientStrip: () => m.claudeAmbientStrip(),
+    claudeCliPrefixRules: () => m.claudeCliPrefixRules(),
+    claudeAuthorityFamilyRules: () => m.claudeAuthorityFamilyRules(),
+    isClaudeSettingsEnvAuthority: () => m.isClaudeSettingsEnvAuthority('ANTHROPIC_API_KEY'),
+    isClaudeAmbientAuthority: () => m.isClaudeAmbientAuthority('ANTHROPIC_API_KEY'),
+    authorityEntryFor: () => m.authorityEntryFor('ANTHROPIC_API_KEY'),
+  })
+  async function withManifest<T>(value: unknown, body: (m: typeof import('../../src/main/providers/claude/authority-manifest')) => Promise<T> | T): Promise<T> {
     vi.resetModules()
-    vi.doMock('../../src/main/providers/claude/claude-authority-manifest.json', () => ({
-      default: { schemaVersion: 2, provenance: {}, entries: [], digest: 'nope' },
-    }))
+    vi.doMock('../../src/main/providers/claude/claude-authority-manifest.json', () => ({ default: value }))
     try {
-      await expect(import('../../src/main/providers/claude/authority-manifest'))
-        .rejects.toThrow(/manifest is unusable/)
+      return await body(await import('../../src/main/providers/claude/authority-manifest'))
     } finally {
       vi.doUnmock('../../src/main/providers/claude/claude-authority-manifest.json')
       vi.resetModules()
     }
+  }
+
+  it('LOADS with a corrupted manifest, and then every derived answer throws -- never an empty list or a false', async () => {
+    await withManifest(corrupt, (m) => {
+      expect(m.AUTHORITY_MANIFEST_ERROR, 'the corruption was not detected').toMatch(/\S/)
+      expect(m.authorityManifestProvenance()).toBeNull()
+      for (const [name, call] of Object.entries(everyDerivedAnswer(m))) {
+        expect(call, `${name} answered instead of failing closed`).toThrow(/manifest is unusable/)
+      }
+    })
+  })
+
+  it('treats a validator that THROWS on an unexpected shape as an unusable manifest, not as a load failure', async () => {
+    const hostile = new Proxy({}, { get() { throw new Error('hostile getter') } })
+    await withManifest(hostile, (m) => {
+      expect(m.AUTHORITY_MANIFEST_ERROR).toMatch(/manifest validation threw: hostile getter/)
+      expect(() => m.claudeAmbientStrip()).toThrow(/manifest is unusable/)
+    })
+  })
+
+  it('answers normally with the real manifest, and the answers are stable across calls', async () => {
+    const real = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
+    await withManifest(real, (m) => {
+      expect(m.AUTHORITY_MANIFEST_ERROR).toBeNull()
+      expect(m.claudeAmbientStrip()).toContain('ANTHROPIC_API_KEY')
+      expect(m.claudeAmbientStrip()).toBe(m.claudeAmbientStrip())
+      expect(Object.isFrozen(m.claudeSettingsEnvStrip())).toBe(true)
+      expect(m.isClaudeSettingsEnvAuthority('anthropic_api_key')).toBe(true)
+    })
   })
 })
 

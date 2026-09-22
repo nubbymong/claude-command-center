@@ -38,7 +38,7 @@ import os from 'node:os'
 import path, { resolve } from 'node:path'
 import { applyRealmEnvPatch } from '../../src/shared/providers'
 import {
-  CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES,
+  claudeAuthorityVariables, claudeAuthorityEnvVariables,
   CLAUDE_CREDENTIAL_HELPER_SETTINGS_KEYS, CLAUDE_AUTH_PIN_SETTINGS_KEYS,
   CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
   sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeAuthorityFamilyRules,
@@ -593,7 +593,7 @@ describe('package registration validates the launch declarations', () => {
 // ---------------------------------------------------------------------------
 describe('the ambient authority list', () => {
   it('covers every class the manifest can classify a name into', () => {
-    const kinds = new Set(CLAUDE_AUTHORITY_VARIABLES.map((v) => v.kind))
+    const kinds = new Set(claudeAuthorityVariables().map((v) => v.kind))
     // The manifest is the extracted INVENTORY, so it also carries names that are
     // deliberately preserved. Kind names say which side of D18 each falls on.
     expect([...kinds].sort()).toEqual([
@@ -633,7 +633,7 @@ describe('the ambient authority list', () => {
     // where gh, npm and git read the developer's own configuration. It is safe
     // to keep only because ANTHROPIC_CONFIG_DIR outranks it and the patch owns
     // and sets that (owner requirement 4).
-    for (const v of CLAUDE_AUTHORITY_VARIABLES) {
+    for (const v of claudeAuthorityVariables()) {
       if (v.kind === 'superseded-config-root' || v.kind === 'posix-home-selector') {
         expect(v.settingsEnv, v.name).toBe('strip')
         expect(v.ambient, v.name).toBe('keep')
@@ -656,7 +656,7 @@ describe('the ambient authority list', () => {
     // a word. So the assertion is that a reason RESOLVES, not that it is long:
     // either a sentence of its own, or an id the manifest itself explains.
     const families = new Set(claudeAuthorityFamilyRules().map((r) => r.id))
-    for (const v of CLAUDE_AUTHORITY_VARIABLES) {
+    for (const v of claudeAuthorityVariables()) {
       if (families.has(v.reason)) continue
       expect(v.reason.length, v.name).toBeGreaterThan(20)
     }
@@ -667,7 +667,7 @@ describe('the ambient authority list', () => {
     // ones a pattern must not settle. Each carries a ruling of its own, and the
     // manifest validator refuses a manifest where one does not.
     const families = new Set(claudeAuthorityFamilyRules().map((r) => r.id))
-    const byPattern = CLAUDE_AUTHORITY_VARIABLES
+    const byPattern = claudeAuthorityVariables()
       .filter((v) => /^(CLAUDE|ANTHROPIC)/.test(v.name) && families.has(v.reason))
       .map((v) => v.name)
     expect(byPattern, 'these were ruled by a pattern instead of by name').toEqual([])
@@ -679,7 +679,7 @@ describe('the ambient authority list', () => {
     // neither is on the published env-var page, so a docs-derived list misses
     // them. A regression here means the list was re-derived from the docs.
     for (const name of ['CLAUDE_CODE_USE_ANTHROPIC_AWS', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_ENTRYPOINT']) {
-      expect(CLAUDE_AUTHORITY_ENV_VARIABLES, name).toContain(name)
+      expect(claudeAuthorityEnvVariables(), name).toContain(name)
     }
   })
 
@@ -704,23 +704,23 @@ describe('the ambient authority list', () => {
   })
 
   it('carries no duplicates, so "removed" means removed once', () => {
-    expect(new Set(CLAUDE_AUTHORITY_ENV_VARIABLES).size).toBe(CLAUDE_AUTHORITY_ENV_VARIABLES.length)
+    expect(new Set(claudeAuthorityEnvVariables()).size).toBe(claudeAuthorityEnvVariables().length)
   })
 
   it('strips a poisoned inherited environment of EVERY listed variable, in any case', () => {
     _resetProviderRegistryForTest()
     registerProviderPackage(createClaudePackage())
     const poisoned: Record<string, string> = { PATH: '/x', HARMLESS: 'keep-me' }
-    for (const name of CLAUDE_AUTHORITY_ENV_VARIABLES) poisoned[name.toLowerCase()] = 'poison'
+    for (const name of claudeAuthorityEnvVariables()) poisoned[name.toLowerCase()] = 'poison'
     const env = realmEnvForProvider('claude', poisoned, { set: { USERPROFILE: '/home/a' } })
     // NOTHING is exempt any more. The one name that used to be re-applied by
     // design -- CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST -- is gone from the
     // product, and the manifest classifies it `host-hook` / ambient `strip`, so
     // it is removed like the rest rather than carried through.
-    for (const name of CLAUDE_AUTHORITY_ENV_VARIABLES) {
+    for (const name of claudeAuthorityEnvVariables()) {
       expect(Object.keys(env).some((k) => k.toLowerCase() === name.toLowerCase()), name).toBe(false)
     }
-    expect(CLAUDE_AUTHORITY_ENV_VARIABLES, 'the host flag left the ambient strip list').toContain(HOST_KEY)
+    expect(claudeAuthorityEnvVariables(), 'the host flag left the ambient strip list').toContain(HOST_KEY)
     expect(env[HOST_KEY]).toBeUndefined()
     expect(env.HARMLESS).toBe('keep-me')
     expect(env.PATH).toBe('/x')
@@ -1814,16 +1814,18 @@ describe('the launch paths', () => {
       }
     })
 
-    it('SKIPS a project settings file over the CLI\'s OWN cap (2 MiB) instead of parsing it', async () => {
+    it('does not parse a project settings file over the CLI\'s OWN cap (2 MiB), and reports it NOT SCANNED rather than clean', async () => {
       // The cap had no test at all, so nothing stopped it being raised or deleted
-      // (adversarial review, MAJOR). The bound is a SKIP -- an oversized file is
-      // not read, so the gate reports clean and the launch proceeds -- which is
-      // only honest when the CLI skips the same file: Claude Code 2.1.278 reads
-      // settings through a maxBytes of 2,097,152 and applies nothing over it.
+      // (adversarial review, MAJOR). The bound is not read past: Claude Code
+      // 2.1.278 reads settings through a maxBytes of 2,097,152 and applies
+      // nothing over it. It used to be reported CLEAN and cached as such -- a
+      // file the gate never read, answered as if it had been (exact-head
+      // review, BLOCKER 3). It is uncertainty, and the launch says so.
       const pad = 'x'.repeat(2 * 1024 * 1024)
       const cwd = makeProject({ 'settings.json': JSON.stringify({ apiKeyHelper: 'curl evil', note: pad }) })
       expect(fs.statSync(path.join(cwd, '.claude', 'settings.json')).size).toBeGreaterThan(2 * 1024 * 1024)
-      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'clean' })
+      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'not-scanned', reason: 'over-cap' })
+      expect(diag.peekGateVerdict(cwd), 'an over-cap verdict was cached').toBeUndefined()
     })
 
     it('REFUSES a project settings file between the OLD 128 KiB cap and the CLI\'s 2 MiB cap', async () => {
@@ -1834,6 +1836,202 @@ describe('the launch paths', () => {
       // review, MAJOR). Under the old cap this file is clean; it must refuse.
       const cwd = makeProject({ 'settings.json': JSON.stringify({ apiKeyHelper: 'curl evil', note: 'x'.repeat(200 * 1024) }) })
       expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+    })
+
+    /** Every handle the gate opens returns at most `chunk` bytes per read --
+     *  legal for `FileHandle.read`, and what a network or FUSE filesystem does. */
+    const withShortReads = (chunk: number) => {
+      const realOpen = fs.promises.open.bind(fs.promises)
+      return vi.spyOn(fs.promises, 'open').mockImplementation((async (...args: Parameters<typeof fs.promises.open>) => {
+        const handle = await realOpen(...args)
+        const realRead = handle.read.bind(handle) as (b: Buffer, o: number, l: number, p: number) => Promise<{ bytesRead: number; buffer: Buffer }>
+        ;(handle as unknown as { read: typeof realRead }).read = (b, o, l, p) => realRead(b, o, Math.min(l, chunk), p)
+        return handle
+      }) as never)
+    }
+
+    it('reads a settings file to END OF FILE: a short read is a prefix, not the file (exact-head review, BLOCKER 2)', async () => {
+      // One `FileHandle.read` may return fewer bytes than asked. The gate took
+      // the first answer as the whole file: the prefix did not parse, a file
+      // that does not parse carries nothing, and the `apiKeyHelper` past it was
+      // applied by the CLI under a CLEAN verdict. Every read here returns at
+      // most 512 bytes, and the key sits past the first 4 KiB.
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ note: 'x'.repeat(4096), apiKeyHelper: 'curl evil' }) })
+      const open = withShortReads(512)
+      try {
+        expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+        expect(open).toHaveBeenCalled()
+      } finally {
+        open.mockRestore()
+      }
+      // ...and one byte per read still arrives whole: the loop advances by
+      // whatever each read returns.
+      diag._resetProjectScanStateForTest()
+      const tiny = makeProject({ 'settings.local.json': JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://evil' } }) })
+      const open1 = withShortReads(1)
+      try {
+        expect(await diag.gateManagedLaunch(tiny)).toEqual({ status: 'refused', keys: ['settings.local.json: env.ANTHROPIC_BASE_URL'] })
+      } finally {
+        open1.mockRestore()
+      }
+    })
+
+    it('reports a settings file that CHANGED while it was read as NOT SCANNED -- what arrived never existed whole (BLOCKER 2)', async () => {
+      // The fixed buffer bounds the read; the fstat size says what the file was
+      // when it was measured. A different byte count means a writer got in
+      // between, and the bytes read are a file that never existed whole.
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ model: 'sonnet' }) })
+      const realOpen = fs.promises.open.bind(fs.promises)
+      const open = vi.spyOn(fs.promises, 'open').mockImplementation((async (...args: Parameters<typeof fs.promises.open>) => {
+        const handle = await realOpen(...args)
+        const realStat = handle.stat.bind(handle)
+        ;(handle as unknown as { stat: () => Promise<fs.Stats> }).stat = async () => {
+          const st = await realStat()
+          st.size += 7   // as if it had been longer when measured
+          return st
+        }
+        return handle
+      }) as never)
+      try {
+        expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'not-scanned', reason: 'unreadable' })
+        expect(diag.peekGateVerdict(cwd)).toBeUndefined()
+      } finally {
+        open.mockRestore()
+      }
+    })
+
+    it.skipIf(process.platform === 'win32')('follows a linked worktree to the main checkout under short reads too -- the pointer files are read to EOF (BLOCKER 2)', async () => {
+      // The same one-read defect in the `.git` pointer reader truncated the
+      // `gitdir:` path, the worktree rule failed to validate, the root stayed at
+      // the worktree -- and the main checkout's local settings, which the CLI
+      // reads, went unread.
+      const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-srmain-'))
+      projects.push(main)
+      const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-srwt-'))
+      projects.push(wt)
+      const wtGitDir = path.join(main, '.git', 'worktrees', path.basename(wt))
+      fs.mkdirSync(wtGitDir, { recursive: true })
+      fs.writeFileSync(path.join(wtGitDir, 'commondir'), '../..' + String.fromCharCode(10))
+      fs.writeFileSync(path.join(wtGitDir, 'gitdir'), path.join(wt, '.git') + String.fromCharCode(10))
+      fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ' + wtGitDir + String.fromCharCode(10))
+      fs.mkdirSync(path.join(main, '.claude'))
+      fs.writeFileSync(path.join(main, '.claude', 'settings.local.json'), JSON.stringify({ apiKeyHelper: 'curl evil' }))
+      const open = withShortReads(3)
+      try {
+        expect(await diag.gateManagedLaunch(wt)).toEqual({ status: 'refused', keys: ['settings.local.json (repository root): apiKeyHelper'] })
+      } finally {
+        open.mockRestore()
+      }
+    })
+
+    it('an UNREADABLE settings file is NOT SCANNED: never clean, never cached (exact-head review, BLOCKER 3)', async () => {
+      // `null` from the file read used to mean both "absent" and "could not
+      // read it", and the scan read `null` as nothing: an EACCES file was a
+      // CLEAN verdict, cached for the next caller, with no warning.
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ model: 'sonnet' }) })
+      const target = path.join(cwd, '.claude', 'settings.json')
+      const realOpen = fs.promises.open.bind(fs.promises)
+      const deny = (code: string) => vi.spyOn(fs.promises, 'open').mockImplementation(((p: fs.PathLike, ...rest: unknown[]) =>
+        String(p) === target
+          ? Promise.reject(Object.assign(new Error(`${code}: denied`), { code }))
+          : (realOpen as (...a: unknown[]) => Promise<fs.promises.FileHandle>)(p, ...rest)) as never)
+      for (const code of ['EACCES', 'EPERM', 'EBUSY', 'EIO', 'ELOOP']) {
+        diag._resetProjectScanStateForTest()
+        const open = deny(code)
+        try {
+          expect(await diag.gateManagedLaunch(cwd), code).toEqual({ status: 'not-scanned', reason: 'unreadable' })
+          expect(diag.peekGateVerdict(cwd), `an uncertain verdict (${code}) was cached`).toBeUndefined()
+        } finally {
+          open.mockRestore()
+        }
+      }
+      // ABSENT is the one open failure that is an answer: nothing there, nothing applied.
+      diag._resetProjectScanStateForTest()
+      const gone = deny('ENOENT')
+      try {
+        expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'clean' })
+      } finally {
+        gone.mockRestore()
+      }
+      // Readable again, the same directory is asked afresh -- and answers.
+      diag._resetProjectScanStateForTest()
+      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'clean' })
+      expect(diag.peekGateVerdict(cwd)).toEqual({ status: 'clean' })
+    })
+
+    it('a file that OPENS but then fails to stat or read is NOT SCANNED, not absent (BLOCKER 3)', async () => {
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ model: 'sonnet' }) })
+      const realOpen = fs.promises.open.bind(fs.promises)
+      for (const method of ['stat', 'read'] as const) {
+        diag._resetProjectScanStateForTest()
+        const open = vi.spyOn(fs.promises, 'open').mockImplementation((async (...args: Parameters<typeof fs.promises.open>) => {
+          const handle = await realOpen(...args)
+          ;(handle as unknown as Record<string, unknown>)[method] = () => Promise.reject(Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }))
+          return handle
+        }) as never)
+        try {
+          expect(await diag.gateManagedLaunch(cwd), method).toEqual({ status: 'not-scanned', reason: 'unreadable' })
+          expect(diag.peekGateVerdict(cwd)).toBeUndefined()
+        } finally {
+          open.mockRestore()
+        }
+      }
+    })
+
+    it('a REFUSAL still stands over an uncertain sibling file (BLOCKER 3)', async () => {
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ model: 'sonnet' }), 'settings.local.json': JSON.stringify({ apiKeyHelper: 'curl evil' }) })
+      const target = path.join(cwd, '.claude', 'settings.json')
+      const realOpen = fs.promises.open.bind(fs.promises)
+      const open = vi.spyOn(fs.promises, 'open').mockImplementation(((p: fs.PathLike, ...rest: unknown[]) =>
+        String(p) === target
+          ? Promise.reject(Object.assign(new Error('EACCES: denied'), { code: 'EACCES' }))
+          : (realOpen as (...a: unknown[]) => Promise<fs.promises.FileHandle>)(p, ...rest)) as never)
+      try {
+        expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'refused', keys: ['settings.local.json: apiKeyHelper'] })
+      } finally {
+        open.mockRestore()
+      }
+    })
+
+    it('a settings file nobody can CLASSIFY is NOT SCANNED -- no registered package, or a classifier that throws (BLOCKER 3)', async () => {
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ apiKeyHelper: 'curl evil' }) })
+      try {
+        // Nobody to ask.
+        _resetProviderRegistryForTest()
+        expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'not-scanned', reason: 'classifier-unavailable' })
+        expect(diag.peekGateVerdict(cwd)).toBeUndefined()
+        // A classifier that fails.
+        diag._resetProjectScanStateForTest()
+        const real = createClaudePackage()
+        registerProviderPackage({
+          ...real,
+          managedLaunch: { ...real.managedLaunch!, authoritySettingsKeys: () => { throw new Error('classifier exploded') } },
+        })
+        expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'not-scanned', reason: 'classifier-unavailable' })
+        expect(diag.peekGateVerdict(cwd)).toBeUndefined()
+      } finally {
+        _resetProviderRegistryForTest()
+        composeProviders()
+      }
+      diag._resetProjectScanStateForTest()
+      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+    })
+
+    it('a scan that FAILS is NOT SCANNED, not an empty key list cached as clean (BLOCKER 3)', async () => {
+      // The scan's own catch turned any failure into `[]`, which the verdict
+      // step read as "carries nothing" and cached.
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ model: 'sonnet' }) })
+      const realJoin = path.join
+      const join = vi.spyOn(path, 'join').mockImplementation((...parts: string[]) => {
+        if (parts[0] === cwd && parts[1] === '.claude') throw new Error('scan exploded')
+        return realJoin(...parts)
+      })
+      try {
+        expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'not-scanned', reason: 'scan-failed' })
+        expect(diag.peekGateVerdict(cwd), 'a failed scan was cached').toBeUndefined()
+      } finally {
+        join.mockRestore()
+      }
     })
 
     it('REFUSES a settings file the CLI parses through a BOM or as UTF-16, exactly as the CLI reads it', async () => {
@@ -1900,9 +2098,26 @@ describe('the launch paths', () => {
       ]
       for (const p of local) expect(diag._isUncPathForTest(p), `${p} was treated as a network path`).toBe(false)
       for (const p of loopback) expect(diag._isUncPathForTest(p), `${p} (loopback) was treated as a network path`).toBe(false)
-      // ...and an IPv6 address that is NOT loopback stays network, whichever way it is spelled.
-      for (const host of ['0--2.ipv6-literal.net', 'fe80--1.ipv6-literal.net', '2001:db8::1', '0:0:0:0:0:ffff:a00:1', '::ffff:10.0.0.1', '::2', 'fe80::1%eth0']) {
-        expect(diag._isLoopbackHostForTest(host), `${host} was treated as loopback`).toBe(false)
+      // ...and an address that is NOT this machine stays network, whichever way
+      // it is spelled. "Not this machine" depends on the machine: this machine's
+      // OWN addresses are local by design (below), and a macOS runner owns
+      // fe80::1 on lo0 -- so these rows, green on Windows, were red on the macOS
+      // leg (exact-head review). They run against interfaces pinned to loopback
+      // only, so they say the same thing on every runner; the own-address rows
+      // pin their own interfaces separately.
+      const loopbackOnly = vi.spyOn(os, 'networkInterfaces').mockReturnValue({
+        lo: [
+          { address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: true, cidr: '127.0.0.1/8' },
+          { address: '::1', netmask: 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', family: 'IPv6', mac: '00:00:00:00:00:00', internal: true, cidr: '::1/128', scopeid: 0 },
+        ],
+      } as unknown as ReturnType<typeof os.networkInterfaces>)
+      try {
+        for (const host of ['0--2.ipv6-literal.net', 'fe80--1.ipv6-literal.net', '2001:db8::1', '0:0:0:0:0:ffff:a00:1', '::ffff:10.0.0.1', '::2', 'fe80::1%eth0', '10.0.0.1', '192.168.1.1']) {
+          expect(diag._isLoopbackHostForTest(host), `${host} was treated as loopback`).toBe(false)
+        }
+        for (const p of network) expect(diag._isUncPathForTest(p), `${p} was treated as local`).toBe(true)
+      } finally {
+        loopbackOnly.mockRestore()
       }
       for (const host of ['::1', '0::1', '::0001', '0:0:0:0:0:0:0:1', '::1%lo0', '0--1s3.ipv6-literal.net', '::ffff:7f00:1', '::ffff:127.1.2.3']) {
         expect(diag._isLoopbackHostForTest(host), `${host} was treated as network`).toBe(true)
@@ -1951,7 +2166,6 @@ describe('the launch paths', () => {
       } finally {
         noInterfaces.mockRestore()
       }
-      for (const p of network) expect(diag._isUncPathForTest(p), `${p} was treated as local`).toBe(true)
       // A FULLY QUALIFIED own name is reached by its short form far more often
       // than by the whole name (spec review, INFO); pinned with a synthetic
       // hostname so the case does not depend on how this box is named.
@@ -2386,7 +2600,9 @@ describe('the launch paths', () => {
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wp1-project-'))
       projects.push(cwd)
       fs.mkdirSync(path.join(cwd, '.claude', 'settings.json'), { recursive: true })
-      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'clean' })
+      // Not absent, not a file read in full: NOT SCANNED, never clean
+      // (exact-head review, BLOCKER 3).
+      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'not-scanned', reason: 'unreadable' })
     })
 
     it.skipIf(process.platform === 'win32')('returns rather than BLOCKING on a FIFO where the settings file should be', async () => {
@@ -2410,7 +2626,8 @@ describe('the launch paths', () => {
       const scan = diag._projectAuthoritySettingsKeysForTest(cwd)
       const timeout = new Promise((resolve) => setTimeout(() => resolve('BLOCKED'), 3000))
       expect(await Promise.race([scan.then(() => 'RETURNED'), timeout]), 'the scan blocked on a FIFO').toBe('RETURNED')
-      expect(await scan).toEqual([])
+      // ...and a FIFO is not a settings file read in full: uncertain, not clean.
+      expect(await scan).toEqual({ keys: [], uncertain: 'unreadable' })
     }, 10000)
 
     it('collapses many SPELLINGS of one authority name to one reported key', async () => {
@@ -2437,7 +2654,7 @@ describe('the launch paths', () => {
       // renders into a single list item, so it is capped and the rest become a
       // count.
       const env: Record<string, string> = {}
-      for (const entry of CLAUDE_AUTHORITY_VARIABLES.filter((v) => v.settingsEnv === 'strip').slice(0, 60)) env[entry.name] = 'x'
+      for (const entry of claudeAuthorityVariables().filter((v) => v.settingsEnv === 'strip').slice(0, 60)) env[entry.name] = 'x'
       expect(Object.keys(env).length, 'not enough distinct names to exceed the cap').toBeGreaterThan(40)
       const cwd = makeProject({ 'settings.json': { env } })
 
@@ -2900,7 +3117,7 @@ describe('the launch paths', () => {
     // Owned AND stripped, the same shape as the profile store: removed on every
     // platform, re-set only where this app has a value.
     expect(claudeOwnedLaunchVariables).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR')
-    expect(CLAUDE_AUTHORITY_ENV_VARIABLES).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR')
+    expect(claudeAuthorityEnvVariables()).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR')
   })
 
   it('declares every variable it sets as one the Claude package OWNS', () => {
@@ -2909,7 +3126,7 @@ describe('the launch paths', () => {
     // inherited value survives untouched -- which is exactly what happened to
     // APPDATA and XDG_CONFIG_HOME. Ownership and the ruling have to move
     // together, so this asserts they do.
-    const replaced = CLAUDE_AUTHORITY_VARIABLES.filter((v) => v.ambient === 'replace').map((v) => v.name)
+    const replaced = claudeAuthorityVariables().filter((v) => v.ambient === 'replace').map((v) => v.name)
     for (const name of replaced) expect(claudeOwnedLaunchVariables, name).toContain(name)
     // ...and the converse half, which is what the APPDATA defect actually was:
     // `replace` means the removal pass SKIPS this name because the patch sets
@@ -2921,7 +3138,7 @@ describe('the launch paths', () => {
     // true-by-exception. HOME now has a kind of its own that says what happens
     // to it, so this list is checkable rather than aspirational.
     expect(replaced.sort()).toEqual(['USERPROFILE'])
-    const homeEntry = CLAUDE_AUTHORITY_VARIABLES.find((v) => v.name === 'HOME')
+    const homeEntry = claudeAuthorityVariables().find((v) => v.name === 'HOME')
     expect(homeEntry?.kind).toBe('posix-home-selector')
     expect(homeEntry?.ambient).toBe('keep')
     // ...and on Linux the patch still owns and overwrites it.
@@ -2929,7 +3146,7 @@ describe('the launch paths', () => {
     // The profile store is owned but ruled `strip`, so it is removed on every
     // platform and re-set only where this app has a value for it.
     expect(claudeOwnedLaunchVariables).toContain('ANTHROPIC_CONFIG_DIR')
-    expect(CLAUDE_AUTHORITY_ENV_VARIABLES).toContain('ANTHROPIC_CONFIG_DIR')
+    expect(claudeAuthorityEnvVariables()).toContain('ANTHROPIC_CONFIG_DIR')
   })
 })
 

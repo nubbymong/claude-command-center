@@ -3,7 +3,7 @@
 // Four layers, in the order a launch applies them:
 //
 //   1. STRIP the ambient authority variables an inherited developer
-//      environment could carry (CLAUDE_AUTHORITY_ENV_VARIABLES, consumed as
+//      environment could carry (`claudeAuthorityEnvVariables()`, consumed as
 //      the package's `ambientAuthVariables`).
 //   2. SANITISE the app-owned copy of the user-scope settings file
 //      (`sanitizeClaudeManagedSettings`) -- the app writes that file, so the
@@ -50,7 +50,7 @@
 // separate design and was explicitly not authorised.
 import { compareVersions } from '../../../shared/version-order'
 import {
-  authorityManifest, CLAUDE_AMBIENT_STRIP, isClaudeSettingsEnvAuthority, authorityEntryFor,
+  authorityEntries, claudeAmbientStrip, isClaudeSettingsEnvAuthority, authorityEntryFor,
   claudeAuthorityFamilyRules,
   type AuthorityEntry as AuthorityEntryRef,
 } from './authority-manifest'
@@ -75,7 +75,7 @@ import type {
  * claim -- it is specific to one version, platform and binary digest.
  *
  * Two consumers, and they differ deliberately:
- *   - `CLAUDE_AUTHORITY_ENV_VARIABLES` is the package's `ambientAuthVariables`,
+ *   - `claudeAuthorityEnvVariables()` is the package's `ambientAuthVariables`,
  *     removed from the inherited environment of every managed launch;
  *   - `isClaudeAuthorityEnvVariable` drives `sanitizeClaudeManagedSettings`,
  *     which strips keys from the `env` block of the app-owned settings copy.
@@ -85,16 +85,26 @@ import type {
  */
 export type { AuthorityKind, AuthorityEntry } from './authority-manifest'
 
-/** Every classified authority variable, with its kind and provenance. */
-export const CLAUDE_AUTHORITY_VARIABLES: readonly AuthorityEntryRef[] = authorityManifest().entries
+/** Every classified authority variable, with its kind and provenance.
+ *
+ *  A FUNCTION, never a module-level constant: evaluating the manifest while
+ *  this module loads threw before the main process reached its startup error
+ *  boundary (see `./authority-manifest`). Throws for an unusable manifest. */
+export function claudeAuthorityVariables(): readonly AuthorityEntryRef[] {
+  return authorityEntries()
+}
 
 /** The family rules the manifest was built with. An entry whose `reason` is one
  *  of these ids was ruled by that rule rather than by name, which is allowed
  *  only outside the Claude and Anthropic namespaces. */
 export { claudeAuthorityFamilyRules }
 
-/** The ambient strip list, for the package's `ambientAuthVariables`. */
-export const CLAUDE_AUTHORITY_ENV_VARIABLES: readonly string[] = CLAUDE_AMBIENT_STRIP
+/** The ambient strip list, for the package's `ambientAuthVariables`. Throws
+ *  for an unusable manifest, and is first asked for while the package is being
+ *  composed -- inside the startup boundary. */
+export function claudeAuthorityEnvVariables(): readonly string[] {
+  return claudeAmbientStrip()
+}
 
 /** Is this key authority-bearing in a settings `env` block?
  *
@@ -226,6 +236,10 @@ const PROJECT_SCAN_SKIP_DETAIL: Record<ProjectScanSkipReason, string> = {
   'network-path': 'The working directory is on a network path, which AI Code Conductor never reads on the launch path because a slow share was measured freezing the app.',
   'thread-ceiling': 'Earlier project checks never returned (a wedged mount holds each one), so this session\'s check could not be started in time.',
   'timed-out': 'The project settings check did not answer within its deadline.',
+  'unreadable': 'A project settings file exists but could not be read in full, so what it carries is unknown.',
+  'over-cap': 'A project settings file is larger than the 2 MiB Claude Code reads, so it was not checked.',
+  'classifier-unavailable': 'The project settings could not be classified for this account.',
+  'scan-failed': 'The project settings check failed before it could answer.',
 }
 
 export function sanitizeClaudeManagedSettings(raw: string): SanitizedManagedSettings {

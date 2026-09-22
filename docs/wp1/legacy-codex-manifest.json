@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-22T16:41:38.488Z",
-  "head": "b8e0217f00f8f21e4c6da3539658d0751bff3b45",
-  "tree": "6a8e0baa6fa3c267a53a1a88eab127f895d58baa",
+  "generatedAt": "2026-09-22T21:46:07.326Z",
+  "head": "d3d585dfcd232d7d352e04cb3ceb571d2a06be74",
+  "tree": "5aa3f36a7d2ea2cf921968d37114e37ea51d8661",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2149,
-  "excludedFileCount": 338,
-  "scannedFileCount": 1811,
+  "trackedFileCount": 2154,
+  "excludedFileCount": 339,
+  "scannedFileCount": 1815,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,9 +139,16 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 290,
-  "pathDigest": "bde1e9bb23f99efb172ed6dcc5e221796e63d251f41a8a7e61e68a24a641ffa7",
+  "matchedPathCount": 291,
+  "pathDigest": "ce40509a8afcbf2608d641f9dafcc550166a19b52d4fdb0bf7abee270491b1dc",
   "entries": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 2
+    },
     {
       "path": "AGENTS.md",
       "predicates": [

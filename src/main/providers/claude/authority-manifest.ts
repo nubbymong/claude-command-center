@@ -266,7 +266,15 @@ export function validateAuthorityManifest(value: unknown): { ok: true; manifest:
   return { ok: true, manifest: m }
 }
 
-const loaded = validateAuthorityManifest(manifestJson as unknown)
+// Validation itself never throws at module evaluation: a validator that met a
+// shape it did not anticipate is an unusable manifest, reported like any other.
+const loaded: ReturnType<typeof validateAuthorityManifest> = (() => {
+  try {
+    return validateAuthorityManifest(manifestJson as unknown)
+  } catch (err) {
+    return { ok: false, error: `manifest validation threw: ${err instanceof Error ? err.message : String(err)}` }
+  }
+})()
 
 /**
  * A manifest that fails validation must not silently degrade into a shorter strip
@@ -287,28 +295,54 @@ export function authorityManifestProvenance(): AuthorityProvenance | null {
   return MANIFEST?.provenance ?? null
 }
 
-// THE DERIVED EXPORTS FAIL CLOSED HERE, IN THIS FILE.
+// THE DERIVED DATA FAILS CLOSED -- AND ONLY WHEN FIRST USED.
 //
-// They used to be `MANIFEST?.entries ?? []`, so an unusable manifest produced an
+// It used to be `MANIFEST?.entries ?? []`, so an unusable manifest produced an
 // EMPTY strip list and a predicate that answered `false` for every name -- the
 // "silently degrade into a shorter strip list" failure the comment above says
-// must never happen. Nothing shipped reached it, but only because of IMPORT
-// ORDER: the single consumer, `managed-launch.ts`, evaluates the throwing
-// `authorityManifest()` a few lines before it re-exports these. That is a
-// property of today's import graph, not of this module, and the next direct
-// importer would have reinstated the fail-open silently (adversarial review,
-// MAJOR).
+// must never happen (adversarial review, MAJOR). The fix derived everything at
+// module evaluation through the throwing accessor, which closed that and opened
+// another: `index.ts` imports `compose.ts` statically, `compose.ts` imports the
+// Claude package, and so this module was evaluated -- and threw -- while the
+// main process was still loading, long before `app.whenReady()` reached the
+// `try` around `composeProviders()`. A malformed manifest ended the app with no
+// window and no message, which is the startup failure that `try` exists to
+// report (exact-head review, BLOCKER).
 //
-// Deriving them through the throwing accessor moves the guarantee into this
-// file. The blast radius is unchanged: importing this module already implied
-// importing `managed-launch.ts`'s own throwing line, so a bad manifest fails
-// provider composition exactly as before, and every managed launch then refuses
-// through the marked refusal in `withProfileHome`. Ordinary shells are
-// unaffected (D15).
-const entries: readonly AuthorityEntry[] = authorityManifest().entries
-const PREFIX_RULES: readonly string[] = authorityManifest().provenance.prefixRules
+// So nothing here reads the manifest at module evaluation. Every derived value
+// is built on first use through `authorityManifest()`, which throws for an
+// unusable manifest; the Claude package factory asks for the ambient list while
+// it is being composed, so the throw lands inside the startup boundary and the
+// user sees the error dialog. Any later caller that reaches a predicate or a
+// list gets the same throw -- never an empty answer. The manifest is a
+// constant of the build, so the first successful derivation is memoised.
+interface DerivedAuthority {
+  readonly entries: readonly AuthorityEntry[]
+  readonly prefixRules: readonly string[]
+  readonly byLowerName: ReadonlyMap<string, AuthorityEntry>
+  readonly settingsEnvStrip: readonly string[]
+  readonly ambientStrip: readonly string[]
+}
+let derivedAuthority: DerivedAuthority | null = null
 
-const byLowerName = new Map(entries.map((e) => [e.name.toLowerCase(), e]))
+function derived(): DerivedAuthority {
+  if (derivedAuthority) return derivedAuthority
+  const manifest = authorityManifest()
+  const entries = manifest.entries
+  derivedAuthority = {
+    entries,
+    prefixRules: manifest.provenance.prefixRules,
+    byLowerName: new Map(entries.map((e) => [e.name.toLowerCase(), e])),
+    settingsEnvStrip: Object.freeze(entries.filter((e) => e.settingsEnv === 'strip').map((e) => e.name)),
+    ambientStrip: Object.freeze(entries.filter((e) => e.ambient === 'strip').map((e) => e.name)),
+  }
+  return derivedAuthority
+}
+
+/** Every classified entry. Throws for an unusable manifest. */
+export function authorityEntries(): readonly AuthorityEntry[] {
+  return derived().entries
+}
 
 /**
  * The CLI's own predicate also matches two open-ended families by PREFIX
@@ -328,18 +362,18 @@ export function claudeAuthorityFamilyRules(): readonly { id: string; why: string
   return authorityManifest().provenance.familyRules
 }
 export function claudeCliPrefixRules(): readonly string[] {
-  return PREFIX_RULES
+  return derived().prefixRules
 }
 
 /** Names removed from the `env` block of the app-owned settings copy. */
-export const CLAUDE_SETTINGS_ENV_STRIP: readonly string[] = Object.freeze(
-  entries.filter((e) => e.settingsEnv === 'strip').map((e) => e.name),
-)
+export function claudeSettingsEnvStrip(): readonly string[] {
+  return derived().settingsEnvStrip
+}
 
 /** Names removed from the inherited environment of a managed launch. */
-export const CLAUDE_AMBIENT_STRIP: readonly string[] = Object.freeze(
-  entries.filter((e) => e.ambient === 'strip').map((e) => e.name),
-)
+export function claudeAmbientStrip(): readonly string[] {
+  return derived().ambientStrip
+}
 
 /**
  * Is this key authority-bearing in a settings `env` block?
@@ -351,17 +385,17 @@ export const CLAUDE_AMBIENT_STRIP: readonly string[] = Object.freeze(
  */
 export function isClaudeSettingsEnvAuthority(name: string): boolean {
   if (typeof name !== 'string') return false
-  return byLowerName.get(name.toLowerCase())?.settingsEnv === 'strip'
+  return derived().byLowerName.get(name.toLowerCase())?.settingsEnv === 'strip'
 }
 
 /** Is this an inherited environment name a managed launch must remove? */
 export function isClaudeAmbientAuthority(name: string): boolean {
   if (typeof name !== 'string') return false
-  return byLowerName.get(name.toLowerCase())?.ambient === 'strip'
+  return derived().byLowerName.get(name.toLowerCase())?.ambient === 'strip'
 }
 
 /** The recorded classification for a name, or null if the manifest has none. */
 export function authorityEntryFor(name: string): AuthorityEntry | null {
   if (typeof name !== 'string') return null
-  return byLowerName.get(name.toLowerCase()) ?? null
+  return derived().byLowerName.get(name.toLowerCase()) ?? null
 }

@@ -11,14 +11,14 @@ import { detectClaudeUi } from './ui-detection'
 import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './statusline'
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
 import {
-  CLAUDE_AUTHORITY_ENV_VARIABLES, CLAUDE_MIN_MANAGED_CLI_VERSION,
+  claudeAuthorityEnvVariables, CLAUDE_MIN_MANAGED_CLI_VERSION,
   sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight,
 } from './managed-launch'
 
 // The managed-launch surface is re-exported so the composition root and the
 // conformance suite reach it through this entry point, never by deep import.
 export {
-  CLAUDE_AUTHORITY_VARIABLES, CLAUDE_AUTHORITY_ENV_VARIABLES,
+  claudeAuthorityVariables, claudeAuthorityEnvVariables,
   CLAUDE_CREDENTIAL_HELPER_SETTINGS_KEYS, CLAUDE_AUTH_PIN_SETTINGS_KEYS,
   CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
   isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys,
@@ -121,7 +121,9 @@ export const claudeCapabilities: ProviderCapabilities = {
  *  it read the right stored login. The full derived, classified list now lives
  *  in ./managed-launch, one entry per variable with its authority kind and
  *  whether it is documented, observed in the pinned binary, or both. */
-export const claudeAmbientAuthVariables: readonly string[] = CLAUDE_AUTHORITY_ENV_VARIABLES
+export function claudeAmbientAuthVariables(): readonly string[] {
+  return claudeAuthorityEnvVariables()
+}
 
 /** Variables the realm patch may set: the profile-home selector, HOME as its
  *  POSIX sibling (D1), and the Anthropic PROFILE STORE that outranks the home
@@ -157,15 +159,23 @@ export const claudeOwnedLaunchVariables: readonly string[] = [
   'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
 ]
 
-/** Created by the composition root; importing this entry point has no side effects. */
+/** Created by the composition root; importing this entry point has no side
+ *  effects -- and in particular it does not read the authority manifest.
+ *
+ *  The factory is where the manifest is first read: `claudeAmbientAuthVariables()`
+ *  throws for an unusable manifest, and the factory runs inside
+ *  `composeProviders()`, which `index.ts` calls inside its startup error
+ *  boundary. A malformed manifest therefore reaches the user as the "cannot
+ *  start" dialog rather than as a main process that died while loading. */
 export function createClaudePackage(): ProviderPackage {
+  const ambientAuthVariables = claudeAmbientAuthVariables()
   const session = new ClaudeProvider()
   return {
     id: session.id,
     displayName: session.displayName,
     session,
     capabilities: claudeCapabilities,
-    ambientAuthVariables: claudeAmbientAuthVariables,
+    ambientAuthVariables,
     ownedLaunchVariables: claudeOwnedLaunchVariables,
     managedLaunch: {
       minimumCliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,

@@ -46,23 +46,43 @@ function withSynthetic(over: Partial<Row>, extra: Row[] = []): typeof ledger {
  *  cannot see this: a retain row needs only evidence text naming a WP1 item,
  *  and src/renderer/providers/core/descriptor.ts slipped through as retain
  *  with "baseline suite green at 6bafcc33" as its proof. */
-const headTree = new Set(
-  execFileSync('git', ['-C', ROOT, 'ls-tree', '-r', '--name-only', ledger.manifestHead], { encoding: 'utf8', maxBuffer: 1 << 28 })
-    .split('\n').map((s: string) => s.trim()).filter(Boolean),
-)
+/*
+ *  The bound commit has to be IN THE OBJECT STORE, and CI's checkout is depth
+ *  1: it holds the merge commit and nothing else, so this list used to be read
+ *  at import, failed with "not a tree object", and took the whole suite down
+ *  with it on both CI platforms (exact-head review). The workflow now fetches
+ *  exactly this one commit before the tests (ci.yml, "Fetch the WP1 ledger's
+ *  bound commit"), and the list is read lazily here, so a checkout without the
+ *  commit fails ONE case with the command that fixes it rather than every
+ *  case with a git error. */
+let boundTreeMemo: Set<string> | null = null
+function headTree(): Set<string> {
+  if (boundTreeMemo) return boundTreeMemo
+  const sha = String(ledger.manifestHead)
+  try {
+    execFileSync('git', ['-C', ROOT, 'cat-file', '-e', `${sha}^{tree}`], { stdio: 'ignore' })
+  } catch {
+    throw new Error(`the ledger is bound to ${sha}, which is not in this checkout (a shallow clone?). Fetch that one commit and re-run: git fetch --no-tags --depth=1 origin ${sha}`)
+  }
+  boundTreeMemo = new Set(
+    execFileSync('git', ['-C', ROOT, 'ls-tree', '-r', '--name-only', sha], { encoding: 'utf8', maxBuffer: 1 << 28 })
+      .split('\n').map((s: string) => s.trim()).filter(Boolean),
+  )
+  return boundTreeMemo
+}
 const newFileProblems = (rows: Row[]): string[] =>
-  rows.filter((e) => !e.resolved && !headTree.has(e.path) && e.disposition !== 'added')
+  rows.filter((e) => !e.resolved && !headTree().has(e.path) && e.disposition !== 'added')
     .map((e) => `NEW FILE NOT MARKED added: ${e.path} is absent from ${ledger.manifestHead.slice(0, 8)} but dispositioned ${e.disposition}`)
 
 describe('WP1 legacy Codex manifest gate', () => {
   it('a matched path the bound commit does not contain is dispositioned added, never retained against the baseline', () => {
-    expect(headTree.size).toBeGreaterThan(1000)
+    expect(headTree().size).toBeGreaterThan(1000)
     const problems = newFileProblems(ledger.entries as Row[])
     expect(problems, problems.join('\n')).toEqual([])
     // Verify the verifier, in both directions.
     expect(newFileProblems([{ path: 'src/wp1-invented.ts', predicates: [], disposition: 'retain', evidence: GOOD }])[0]).toMatch(/^NEW FILE NOT MARKED added/)
     expect(newFileProblems([{ path: 'src/wp1-invented.ts', predicates: [], disposition: 'added', evidence: GOOD }])).toEqual([])
-    expect(newFileProblems([{ path: [...headTree][0], predicates: [], disposition: 'retain', evidence: GOOD }])).toEqual([])
+    expect(newFileProblems([{ path: [...headTree()][0], predicates: [], disposition: 'retain', evidence: GOOD }])).toEqual([])
   })
   it(`every matched path has a decided disposition with evidence; nothing stale, drifted or unscoped (phase ${phase}: ${reason})`, () => {
     const problems = checkLedger(manifest, ledger, { phase })
