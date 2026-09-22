@@ -103,8 +103,10 @@ export interface ManagedLaunchPreflightInput {
  *  were all cached as a clean verdict):
  *   - `unreadable`             a settings file exists and could not be read in
  *                              full (permission, not a regular file, an I/O
- *                              error, or it changed while it was being read);
- *   - `over-cap`               larger than the 2 MiB the CLI itself reads;
+ *                              error, or it changed while it was being read),
+ *                              or a git pointer file naming the repository
+ *                              root changed while it was being read;
+ *   - `over-cap`              larger than the 2 MiB the CLI itself reads;
  *   - `classifier-unavailable` no registered Claude package could classify it,
  *                              or classifying it failed;
  *   - `scan-failed`            the check itself failed unexpectedly. */

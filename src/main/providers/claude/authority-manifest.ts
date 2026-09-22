@@ -278,8 +278,10 @@ const loaded: ReturnType<typeof validateAuthorityManifest> = (() => {
 
 /**
  * A manifest that fails validation must not silently degrade into a shorter strip
- * list -- that is the exact failure this work exists to remove. Managed launches
- * refuse (the caller fails closed); ordinary shells are unaffected, per D15.
+ * list -- that is the exact failure this work exists to remove. The Claude
+ * package reads the derived data first thing in its factory, so an unusable
+ * manifest stops startup inside `composeProviders`' error boundary (the error
+ * dialog, then exit), and any later caller that reaches it fails closed.
  */
 export const AUTHORITY_MANIFEST_ERROR: string | null = loaded.ok ? null : loaded.error
 

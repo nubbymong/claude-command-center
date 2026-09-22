@@ -236,8 +236,8 @@ const PROJECT_SCAN_SKIP_DETAIL: Record<ProjectScanSkipReason, string> = {
   'network-path': 'The working directory is on a network path, which AI Code Conductor never reads on the launch path because a slow share was measured freezing the app.',
   'thread-ceiling': 'Earlier project checks never returned (a wedged mount holds each one), so this session\'s check could not be started in time.',
   'timed-out': 'The project settings check did not answer within its deadline.',
-  'unreadable': 'A project settings file exists but could not be read in full, so what it carries is unknown.',
-  'over-cap': 'A project settings file is larger than the 2 MiB Claude Code reads, so it was not checked.',
+  'unreadable': 'A project settings file, or the git file that says which repository root Claude Code reads settings from, could not be read in full, so what applies is unknown.',
+  'over-cap': 'A project settings file is larger than the 2 MiB Claude Code reads, so it was not checked. The pinned Claude Code skips a file that size too; another version may not.',
   'classifier-unavailable': 'The project settings could not be classified for this account.',
   'scan-failed': 'The project settings check failed before it could answer.',
 }
@@ -514,7 +514,7 @@ export function claudeManagedLaunchPreflight(input: ManagedLaunchPreflightInput)
       id: 'project-settings-not-scanned',
       severity: 'warning',
       title: 'This session started without its project settings files being checked',
-      detail: `${PROJECT_SCAN_SKIP_DETAIL[input.projectScanSkipped]} If that directory's .claude/settings.json or settings.local.json carries a credential helper, an account pin, a provider switch or an endpoint redirect, this session is using it.`,
+      detail: `${PROJECT_SCAN_SKIP_DETAIL[input.projectScanSkipped]} If that directory's .claude/settings.json or settings.local.json carries a credential helper, an account pin, a provider switch or an endpoint redirect, this session may be using it.`,
       action: 'Check those two files yourself, or start the session from a local directory.',
     })
   }

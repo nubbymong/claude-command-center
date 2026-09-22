@@ -98,13 +98,13 @@ const PROJECT_SETTINGS_FILES = ['settings.json', 'settings.local.json'] as const
 /** The largest settings file the gate reads, and it is the CLI's OWN cap:
  *  Claude Code 2.1.278 reads a settings file through a `maxBytes` of
  *  2,097,152 and reports one over it as unreadable, applying nothing. The two
- *  must match exactly, because a byte past THIS cap is a SKIP -- a file the
- *  gate does not read is a file it reports as clean -- so a gate cap below the
- *  CLI's was a window (128 KiB to 2 MiB) in which a repository's settings file
- *  was too big for the gate and small enough for the CLI (adversarial review,
- *  MAJOR). Over the CLI's own cap the skip is faithful: the CLI skips it too.
- *  The fixed-buffer read stays, so the cost is bounded by the cap, not by what
- *  the file is at the moment of reading. */
+ *  must match exactly: a gate cap below the CLI's was a window (128 KiB to
+ *  2 MiB) in which a repository's settings file was too big for the gate and
+ *  small enough for the CLI (adversarial review, MAJOR). A file over the cap
+ *  is `not-scanned` with reason `over-cap`, never clean (exact-head review):
+ *  the pinned CLI skips it too, but that is a fact about one CLI version, and
+ *  the gate did not read the file. The fixed-buffer read stays, so the cost is
+ *  bounded by the cap, not by what the file is at the moment of reading. */
 const MAX_PROJECT_SETTINGS_BYTES = 2 * 1024 * 1024
 
 // At most MAX_REPORTED_NAMES key names reach the panel; the rest become a
@@ -246,7 +246,10 @@ const MAX_GIT_POINTER_BYTES = 4096
  * authority setting (exact-head review, BLOCKER). The loop keeps the fixed
  * allocation: the buffer is still the bound, so a file that grows mid-read
  * stops at `buf.length`, and the caller sizes it at cap + 1 to see the growth.
- * Every iteration advances by at least one byte or ends the loop.
+ * Every iteration advances by at least one byte or ends the loop, so a
+ * filesystem that returns one byte per read costs up to cap + 1 reads: bounded,
+ * and the launch never waits on it past the gate's deadline, but the scan holds
+ * its thread-ceiling slot until it settles (code-quality review, noted).
  */
 async function readFully(handle: fs.promises.FileHandle, buf: Buffer): Promise<number> {
   let total = 0
@@ -258,11 +261,21 @@ async function readFully(handle: fs.promises.FileHandle, buf: Buffer): Promise<n
   return total
 }
 
+/** A git pointer file that changed while it was being read. Not a miss: a miss
+ *  leaves the root at the worktree, and the root the CLI reads may be the main
+ *  checkout, so a scan that meets this reports `unreadable` instead of reading
+ *  one root and calling the other clean. */
+class GitPointerChangedError extends Error {}
+
 /** The text of a small pointer file, or null when it is absent, a symlink,
- *  not a regular file, or larger than a pointer file can be. Bounded exactly
- *  as the settings read is: a fixed buffer, read to end of file (a short read
- *  would hand the worktree rule a truncated path, and the root the CLI uses
- *  would go unread), and a byte over the cap is a miss. */
+ *  not a regular file, or larger than a pointer file can be. Bounded as the
+ *  settings read is: a fixed buffer, read to end of file (a short read would
+ *  hand the worktree rule a truncated path, and the root the CLI uses would go
+ *  unread), and a byte count that differs from the measured size -- the file
+ *  changed mid-read, grown past the cap or not -- throws
+ *  `GitPointerChangedError` rather than returning a spliced path or a miss
+ *  (independent review of the exact-head fix: this read had the loop but not
+ *  the settings read's size check). */
 async function readGitPointer(file: string, followSymlink = false): Promise<string | null> {
   let handle: fs.promises.FileHandle | null = null
   try {
@@ -272,9 +285,10 @@ async function readGitPointer(file: string, followSymlink = false): Promise<stri
     if (!stat.isFile() || stat.size > MAX_GIT_POINTER_BYTES) return null
     const buf = Buffer.allocUnsafe(MAX_GIT_POINTER_BYTES + 1)
     const bytesRead = await readFully(handle, buf)
-    if (bytesRead > MAX_GIT_POINTER_BYTES) return null
+    if (bytesRead !== stat.size) throw new GitPointerChangedError(`${describePath(file)} changed while it was being read`)
     return buf.toString('utf8', 0, bytesRead)
-  } catch {
+  } catch (err) {
+    if (err instanceof GitPointerChangedError) throw err
     return null
   } finally {
     await handle?.close().catch(() => {})
@@ -453,7 +467,9 @@ export const _isGitRootEntryForTest = isGitRootEntry
  * the repository with a clean verdict -- and this repo's own session model
  * puts every session in a linked worktree (adversarial re-attack, BLOCKER).
  * Any pointer that does not validate leaves the root as it was, exactly as
- * the CLI does; neither pointer file may be a symlink.
+ * the CLI does; neither pointer file may be a symlink. A pointer that changed
+ * while it was read is neither valid nor invalid: `GitPointerChangedError`
+ * propagates, and the scan reports it as uncertainty.
  */
 async function canonicalGitRootOf(root: string): Promise<string> {
   const entry = path.join(root, '.git')
@@ -599,7 +615,15 @@ async function projectAuthoritySettingsKeys(cwd: string | null): Promise<Project
     else if (scan.kind === 'uncertain') uncertain ??= scan.reason
   }
   for (const name of PROJECT_SETTINGS_FILES) take(name, await authorityKeysOfSettingsFile(path.join(cwd, '.claude', name)))
-  const root = await posixCanonicalLocalSettingsRoot(cwd)
+  let root: string | null = null
+  try {
+    root = await posixCanonicalLocalSettingsRoot(cwd)
+  } catch (err) {
+    // Which root the CLI reads is unknown, so its local settings are too. The
+    // working directory's own files still count: a key found there refuses.
+    if (!(err instanceof GitPointerChangedError)) throw err
+    uncertain ??= 'unreadable'
+  }
   if (root !== null) take('settings.local.json (repository root)', await authorityKeysOfSettingsFile(path.join(root, '.claude', 'settings.local.json')))
   return { keys: boundNames(found), uncertain }
 }
@@ -897,9 +921,14 @@ export async function gateManagedLaunch(cwd: string): Promise<ProjectGateResult>
           // directory (code-quality review, MINOR). A scan that settles after
           // every waiter gave up still leaves its verdict for the next caller:
           // the verdict is true whoever waited for it. Only a clean or a
-          // refused verdict is ever cached; an uncertain one is asked afresh.
+          // refused verdict is ever cached; an uncertain one is asked afresh,
+          // and it also EVICTS the one before it: a clean verdict from the last
+          // scan is not the answer once a newer scan could not be certain, and
+          // `peekGateVerdict` would otherwise hand it out for the rest of its
+          // reuse window (independent review of the exact-head fix).
           const verdict = verdictOfScan(outcome)
           if (verdict.status !== 'not-scanned') recentVerdicts.set(key, { verdict, at: Date.now() })
+          else recentVerdicts.delete(key)
           if (verdict.status === 'refused') {
             // The directory is named HERE, in the log, where the launch's own
             // refusal text (file and key only) cannot say which of several

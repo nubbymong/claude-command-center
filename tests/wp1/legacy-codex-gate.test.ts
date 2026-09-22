@@ -50,11 +50,11 @@ function withSynthetic(over: Partial<Row>, extra: Row[] = []): typeof ledger {
  *  The bound commit has to be IN THE OBJECT STORE, and CI's checkout is depth
  *  1: it holds the merge commit and nothing else, so this list used to be read
  *  at import, failed with "not a tree object", and took the whole suite down
- *  with it on both CI platforms (exact-head review). The workflow now fetches
- *  exactly this one commit before the tests (ci.yml, "Fetch the WP1 ledger's
- *  bound commit"), and the list is read lazily here, so a checkout without the
- *  commit fails ONE case with the command that fixes it rather than every
- *  case with a git error. */
+ *  with it on both CI platforms (exact-head review). Every workflow that runs
+ *  the suite now fetches exactly this one commit first
+ *  (scripts/wp1/fetch-ledger-commit.mjs, from ci.yml and release.yml), and the
+ *  list is read lazily here, so a checkout without the commit fails ONE case
+ *  with the command that fixes it rather than every case with a git error. */
 let boundTreeMemo: Set<string> | null = null
 function headTree(): Set<string> {
   if (boundTreeMemo) return boundTreeMemo
@@ -62,7 +62,7 @@ function headTree(): Set<string> {
   try {
     execFileSync('git', ['-C', ROOT, 'cat-file', '-e', `${sha}^{tree}`], { stdio: 'ignore' })
   } catch {
-    throw new Error(`the ledger is bound to ${sha}, which is not in this checkout (a shallow clone?). Fetch that one commit and re-run: git fetch --no-tags --depth=1 origin ${sha}`)
+    throw new Error(`the ledger is bound to ${sha}, which is not in this checkout (a shallow clone?). Fetch that one commit and re-run: node scripts/wp1/fetch-ledger-commit.mjs`)
   }
   boundTreeMemo = new Set(
     execFileSync('git', ['-C', ROOT, 'ls-tree', '-r', '--name-only', sha], { encoding: 'utf8', maxBuffer: 1 << 28 })
