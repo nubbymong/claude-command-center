@@ -1,3 +1,4 @@
+import { writeSessionInput } from '../components/terminal/tmuxWheelScroll'
 /**
  * Image transfer helper — gets a host-saved image into a Claude session.
  *
@@ -74,7 +75,7 @@ export function sendImageToSession(
     ? composeLocalPathPrompt(hostFilePath, userContext)
     : composeFetchHostScreenshotPrompt(basename(hostFilePath), userContext)
   // Trailing \r submits the prompt to Claude
-  window.electronAPI.pty.write(sessionId, prompt + '\r')
+  writeSessionInput(sessionId, prompt + '\r')
 }
 
 /**
@@ -106,10 +107,10 @@ export function sendStoryboardToSession(
   let idx = 0
   const writeNext = () => {
     if (idx >= lines.length) {
-      window.electronAPI.pty.write(sessionId, '\r')
+      writeSessionInput(sessionId, '\r')
       return
     }
-    window.electronAPI.pty.write(sessionId, lines[idx] + '\n')
+    writeSessionInput(sessionId, lines[idx] + '\n')
     idx++
     setTimeout(writeNext, 80)
   }

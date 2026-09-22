@@ -39,6 +39,7 @@ import { useBandFolding, type FoldBand } from './command-bar/useBandFolding'
 import NotesTool, { type NotesToolHandle } from './command-bar/NotesTool'
 import { CommandIcon } from './command-icons'
 import { DEFAULT_COMMAND_COLOR } from '../lib/command-swatches'
+import { writeSessionInput } from './terminal/tmuxWheelScroll'
 
 // User-picked section colours are Mocha pastels tuned for dark surfaces;
 // rendered as bare text on the light theme they wash out. Darken them toward
@@ -279,7 +280,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const target = cmd.target || 'claude'
     const webViewUrl = cmd.webView?.enabled ? cmd.webView.url : null
     const writeTo = (ptyId: string) => {
-      window.electronAPI.pty.write(ptyId, fullCommand + '\r')
+      writeSessionInput(ptyId, fullCommand + '\r')
       if (expectBleed) scheduleBleedRepaints(ptyId)
       if (webViewUrl) startWebviewPolling(webViewUrl)
       else if (webviewUrls.length > 0) void probeWebviewUrls(webviewKey, webviewUrls)

@@ -15,7 +15,8 @@
 // are deleted along with their tests -- there is no longer a wire-reported
 // path reaching this sink for either tier to validate.
 import { describe, it, expect } from 'vitest'
-import { buildTmuxLaunchCommand, buildSshClaudeFlags, shouldAddContinueFlag, ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR } from '../../src/main/ssh-tmux'
+import { buildTmuxLaunchCommand, buildSshClaudeFlags, shouldAddContinueFlag, buildTmuxWheelBindings, TMUX_LAUNCH_LINE_BUDGET, ON_PATH_TMUX_BIN_EXPR, STAGED_TMUX_BIN_EXPR } from '../../src/main/ssh-tmux'
+import { TMUX_WHEEL_UP_KEYNAME, TMUX_WHEEL_DOWN_KEYNAME, TMUX_WHEEL_EXIT_KEYNAME, TMUX_WHEEL_LINES_PER_NOTCH, TMUX_WHEEL_NOOP_COMMAND } from '../../src/shared/tmux-wheel'
 
 const base = {
   sessionId: 'sid-1',
@@ -39,14 +40,21 @@ function optsTargeted(t: string, sid: string): string {
   return (
     `${t} set-option -t =ccc-${sid} mouse off 2>/dev/null; ` +
     `${t} set-option -t =ccc-${sid} status off 2>/dev/null; ` +
-    `${t} set-option -t =ccc-${sid} status-interval 0 2>/dev/null`
+    `${t} set-option -t =ccc-${sid} status-interval 0 2>/dev/null; ` +
+    `${t} set-option -t =ccc-${sid} key-table root 2>/dev/null; ` +
+    `${t} set-option -w -t =ccc-${sid}: mode-keys emacs 2>/dev/null; ` +
+    buildTmuxWheelBindings(t) + `; ` +
+    `${t} send-keys -t =ccc-${sid}: -X cancel 2>/dev/null`
   )
 }
 function optsPane(t: string): string {
   return (
     `${t} set-option mouse off 2>/dev/null; ` +
     `${t} set-option status off 2>/dev/null; ` +
-    `${t} set-option status-interval 0 2>/dev/null`
+    `${t} set-option status-interval 0 2>/dev/null; ` +
+    `${t} set-option key-table root 2>/dev/null; ` +
+    `${t} set-option -w mode-keys emacs 2>/dev/null; ` +
+    buildTmuxWheelBindings(t)
   )
 }
 
@@ -110,7 +118,8 @@ describe('buildTmuxLaunchCommand', () => {
     expect(creates.length).toBe(2)
     // #546 + watchdog: the fresh pane runs `<session-opts>; <claude> --continue`,
     // so --continue still rides the fresh branch (never the live attach) — now
-    // after the TARGETLESS session-options prefix inside the quoted arg.
+    // after the TARGETLESS session-options prefix, inside the ONE quoted arg
+    // that both create sites expand (#85).
     const paneOpts = optsPane(ON_PATH_TMUX_BIN_EXPR)
     for (const c of creates) expect(c.startsWith(`'${paneOpts}; ${base.innerCmd} --continue'`)).toBe(true)
   })
@@ -136,7 +145,11 @@ describe('buildTmuxLaunchCommand', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, sessionId: 'a' })
     const targets = [...cmd.matchAll(/-t (\S+)/g)].map((m) => m[1])
     expect(targets.length).toBeGreaterThan(0)
-    for (const t of targets) expect(t).toBe('=ccc-a')
+    // Two shapes, both `=`-exact: the SESSION target every verb here has always
+    // used, and (#85) the WINDOW target `mode-keys` needs — the same session,
+    // `:`-suffixed to name its current window. `set-option -w -t =ccc-a` is not
+    // a window target and fails with "no such window".
+    for (const t of targets) expect(['=ccc-a', '=ccc-a:']).toContain(t)
     // The pre-fix, prefix-matching form is gone from every target verb.
     expect(cmd).not.toMatch(/(has-session|attach|set-option) -t ccc-a\b/)
   })
@@ -368,7 +381,9 @@ describe('launch-token literals are alias/function-proof (fail-posture follow-up
     expect(cmd.startsWith('if command tmux has-session -t =ccc-sid-1 ')).toBe(true)
     // #546 + watchdog: the three session options (same literal token, TARGETED)
     // precede attach on this branch.
-    expect(cmd).toContain('then command tmux set-option -t =ccc-sid-1 mouse off 2>/dev/null; command tmux set-option -t =ccc-sid-1 status off 2>/dev/null; command tmux set-option -t =ccc-sid-1 status-interval 0 2>/dev/null; command tmux attach -t =ccc-sid-1 || command tmux new-session -s ccc-sid-1 ')
+    // (#85 appends mode-keys + the wheel bindings to the same run of options,
+    // asserted in their own block below; this one still owns the literal token.)
+    expect(cmd).toContain(`then ${optsTargeted('command tmux', 'sid-1')}; command tmux attach -t =ccc-sid-1 || command tmux new-session -s ccc-sid-1 `)
     expect(cmd).toContain('else command tmux new-session -s ccc-sid-1 ')
     // The alias-expandable substitution form must never come back, anywhere
     // in the command.
@@ -412,5 +427,190 @@ describe('buildSshClaudeFlags / shouldAddContinueFlag (#242 tier 5)', () => {
     expect(shouldAddContinueFlag({ reconnect: false, tmuxInPlay: false })).toBe(false)
     expect(shouldAddContinueFlag({ reconnect: false, tmuxInPlay: true })).toBe(false)
     expect(buildSshClaudeFlags({ reconnect: false, tmuxInPlay: false })).toBe('')
+  })
+})
+
+// #85 — the wheel bindings that give an SSH/tmux session real scrollback.
+//
+// The behaviour these assert is NOT provable in a unit test: whether tmux
+// parses `ESC [ 24 ; 7 ~` as C-M-F12, whether `send -X -N 3 scroll-up` moves
+// three lines, whether a `;` reaching tmux unescaped splits the bind. All three
+// were verified end-to-end against tmux 3.4 on 2026-09-20 by driving this exact
+// generated command through a real pty client (copy-mode entered, scroll_position
+// 3 -> 9 -> 6, keystrokes leaving copy-mode with no escape bytes reaching the
+// pane). What these tests pin is the SHAPE that verification was done against,
+// so it cannot drift silently.
+describe('buildTmuxWheelBindings (#85)', () => {
+  it('binds all ten commands in ONE tmux invocation, separated by escaped semicolons', () => {
+    const cmd = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+    // One invocation: the token appears exactly once, at the front.
+    expect(cmd.startsWith(`${ON_PATH_TMUX_BIN_EXPR} bind `)).toBe(true)
+    expect(cmd.split(ON_PATH_TMUX_BIN_EXPR)).toHaveLength(2)
+    expect(cmd.split(' \\; ')).toHaveLength(10)
+    // A BARE `;` would end the bind-key command and run the rest immediately
+    // (observed: `not in a mode`), so every separator must carry its backslash.
+    expect(/[^\\]; /.test(cmd.replace(' 2>/dev/null', ''))).toBe(false)
+  })
+
+  it('enters copy-mode from the root table and scrolls from BOTH copy-mode tables', () => {
+    const cmd = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+    expect(cmd).toContain(`bind -T root ${TMUX_WHEEL_UP_KEYNAME} copy-mode -e`)
+    // copy-mode-vi is covered too: `mode-keys emacs` is set with an
+    // error-swallowed `set-option -w`, and it silently did NOT land on the
+    // attach branch until the window target was corrected (2026-09-20). A miss
+    // there routes copy-mode keys to the vi table, where an uncovered leave key
+    // strands the user with their typing disappearing.
+    for (const table of ['copy-mode', 'copy-mode-vi']) {
+      expect(cmd).toContain(`bind -T ${table} ${TMUX_WHEEL_UP_KEYNAME} send -X -N ${TMUX_WHEEL_LINES_PER_NOTCH} scroll-up`)
+      expect(cmd).toContain(`bind -T ${table} ${TMUX_WHEEL_DOWN_KEYNAME} send -X -N ${TMUX_WHEEL_LINES_PER_NOTCH} scroll-down`)
+      expect(cmd).toContain(`bind -T ${table} ${TMUX_WHEEL_EXIT_KEYNAME} send -X cancel`)
+    }
+  })
+
+  it('is safe at EVERY prefix: nothing can leak, and no entry key outlives its exit key', () => {
+    // tmux runs a `\;` list until the first failure and KEEPS what already ran
+    // -- an old tmux rejecting one command leaves a PARTIAL binding set, and
+    // `2>/dev/null` hides which. Two partial states were reproduced on 3.4:
+    // nothing bound (tmux forwards the keys to the pane, i.e. raw escape bytes
+    // typed at claude) and root-bound-but-copy-mode-not (the user enters the
+    // scrollback view with no way out, status line off, typing vanishing).
+    // Ordering is the whole defense, so it is asserted directly.
+    const commands = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+      .replace(`${ON_PATH_TMUX_BIN_EXPR} `, '')
+      .replace(' 2>/dev/null', '')
+      .split(' \\; ')
+    const at = (needle: string): number => commands.findIndex((c) => c.includes(needle))
+    // Every key is silenced in the root table before anything else happens.
+    for (const key of [TMUX_WHEEL_EXIT_KEYNAME, TMUX_WHEEL_DOWN_KEYNAME, TMUX_WHEEL_UP_KEYNAME]) {
+      expect(at(`bind -T root ${key} ${TMUX_WHEEL_NOOP_COMMAND}`)).toBeLessThan(3)
+    }
+    // Each copy-mode table can be left before it can be scrolled.
+    for (const table of ['copy-mode', 'copy-mode-vi']) {
+      expect(at(`bind -T ${table} ${TMUX_WHEEL_EXIT_KEYNAME}`)).toBeLessThan(at(`bind -T ${table} ${TMUX_WHEEL_UP_KEYNAME}`))
+    }
+    // And the one command that can OPEN copy-mode runs dead last.
+    expect(at(`bind -T root ${TMUX_WHEEL_UP_KEYNAME} copy-mode -e`)).toBe(commands.length - 1)
+  })
+
+  it('binds the down/leave keys to a silent no-op in the root table', () => {
+    // An UNBOUND key is forwarded to the pane -- i.e. raw escape bytes typed at
+    // claude, which is the #85 bug in a different costume. The renderer only
+    // sends these two out of copy-mode when its belief went stale (tmux's `-e`
+    // auto-exit at the bottom, which the renderer cannot observe).
+    const cmd = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+    expect(cmd).toContain(`bind -T root ${TMUX_WHEEL_DOWN_KEYNAME} ${TMUX_WHEEL_NOOP_COMMAND}`)
+    expect(cmd).toContain(`bind -T root ${TMUX_WHEEL_EXIT_KEYNAME} ${TMUX_WHEEL_NOOP_COMMAND}`)
+  })
+
+  it('swallows errors so an old tmux that rejects a binding still launches claude', () => {
+    expect(buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR).endsWith(' 2>/dev/null')).toBe(true)
+  })
+
+  it('carries no wire-reported operand: every token is compile-time literal (#242 sink posture)', () => {
+    const staged = buildTmuxWheelBindings(STAGED_TMUX_BIN_EXPR)
+    expect(staged.startsWith(`${STAGED_TMUX_BIN_EXPR} `)).toBe(true)
+    // Nothing session-derived: no session id, no target, no `-t`.
+    expect(staged).not.toContain('-t ')
+    expect(staged).not.toContain('ccc-sid')
+  })
+
+  it('rides BOTH launch branches, because bindings made with no session do not survive', () => {
+    // A tmux server with no sessions exits with its last client, taking any
+    // hoisted binding with it (verified 2026-09-20). So the bindings have to
+    // run where a session exists: before the attach, and inside the fresh pane.
+    const cmd = buildTmuxLaunchCommand(base)
+    const bindings = buildTmuxWheelBindings(ON_PATH_TMUX_BIN_EXPR)
+    // Attach branch (once) + fresh pane (twice: the attach fall-through and the else).
+    expect(cmd.split(bindings)).toHaveLength(4)
+    // ...and always AFTER `mouse off`, which is what keeps #546's drag-select.
+    expect(cmd.indexOf('mouse off')).toBeLessThan(cmd.indexOf(bindings))
+  })
+
+  it('forces mode-keys emacs so the copy-mode bindings are the table actually consulted', () => {
+    // A remote ~/.tmux.conf with `set -g mode-keys vi` would route copy-mode
+    // keys to `copy-mode-vi` instead and the wheel would stop scrolling there.
+    const cmd = buildTmuxLaunchCommand(base)
+    expect(cmd).toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -w -t =ccc-sid-1: mode-keys emacs 2>/dev/null`)
+    expect(cmd).toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -w mode-keys emacs 2>/dev/null`)
+  })
+})
+
+// #85 — the launch line is typed into the remote shell through a PTY, and a tty
+// in CANONICAL mode truncates past 4096 bytes silently. An interactive bash
+// with readline survives; `/bin/sh` (dash) and a non-readline bash do not, and
+// `sh` is a first-class container-runtime choice (an Alpine image has no bash
+// at all). A truncation lands mid-line, plausibly inside the single-quoted
+// inner command, leaving the remote shell at a `> ` continuation prompt
+// forever — and neither tmux-launch-failure regex in pty-manager matches a `> `
+// prompt, so nothing recovers it. Measured pre-#85 worst case: 2837 bytes.
+// Measured with the bindings on all three copies: 4473.
+describe('buildTmuxLaunchCommand stays under the remote tty line limit (#85)', () => {
+  const longInner =
+    'CLAUDE_CODE_DISABLE_MOUSE=1 CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 ' +
+    'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --settings "$HOME"/.claude/settings-1a2b3c4d5e6f7890.json ' +
+    '--mcp-config "$HOME"/.claude/mcp-1a2b3c4d5e6f7890.json --model opus --permission-mode acceptEdits'
+
+  it('keeps the wheel bindings for an ordinary launch', () => {
+    const cmd = buildTmuxLaunchCommand({ sessionId: '1a2b3c4d5e6f7890', innerCmd: longInner, staged: false, reconnect: true })
+    expect(cmd).toContain(TMUX_WHEEL_UP_KEYNAME)
+    expect(cmd.length).toBeLessThanOrEqual(TMUX_LAUNCH_LINE_BUDGET)
+  })
+
+  it('drops the wheel bindings rather than the session when the line would run long', () => {
+    // --extra-args at its enforced 512-char maximum is the reachable worst case.
+    const cmd = buildTmuxLaunchCommand({
+      sessionId: '1a2b3c4d5e6f7890',
+      innerCmd: `${longInner} ${'x'.repeat(512)}`,
+      staged: true,
+      reconnect: true,
+    })
+    expect(cmd).not.toContain(TMUX_WHEEL_UP_KEYNAME)
+    expect(cmd.length).toBeLessThanOrEqual(TMUX_LAUNCH_LINE_BUDGET)
+    // Degraded, not broken: everything #546 and the watchdog rely on is still
+    // there, and claude still launches on both branches.
+    expect(cmd).toContain('mouse off')
+    expect(cmd).toContain('status-interval 0')
+    expect(cmd.split('new-session -s ccc-1a2b3c4d5e6f7890 ').length - 1).toBe(2)
+  })
+
+  it('leaves a real margin under the 4096-byte canonical-mode ceiling', () => {
+    expect(TMUX_LAUNCH_LINE_BUDGET).toBeLessThan(4096)
+    expect(4096 - TMUX_LAUNCH_LINE_BUDGET).toBeGreaterThanOrEqual(256)
+  })
+})
+
+// #85 — a remote `~/.tmux.conf` that builds a modal setup with
+// `set -g key-table <custom>` means tmux never consults the `root` table, so
+// every wheel key would be forwarded to the pane as raw escape bytes: the #85
+// bug restored, on exactly the hosts whose owner customised tmux most
+// (reproduced on tmux 3.4, adversarial review 2026-09-20).
+describe('buildTmuxLaunchCommand pins the key table the bindings live in (#85)', () => {
+  it('forces key-table root on CCC’s own session, both branches', () => {
+    const cmd = buildTmuxLaunchCommand(base)
+    const t = ON_PATH_TMUX_BIN_EXPR
+    expect(cmd).toContain(`${t} set-option -t =ccc-sid-1 key-table root 2>/dev/null`)
+    expect(cmd).toContain(`${t} set-option key-table root 2>/dev/null`)
+    // Session-scoped (no `-g`): the user's other sessions keep their own table.
+    expect(cmd).not.toContain('set-option -g key-table')
+  })
+})
+
+// #85 — copy-mode is PANE state, not client state: it survives a dropped
+// connection, an app restart and the detach, while the renderer's belief starts
+// false in a new process. Reproduced on tmux 3.4 — scroll up, drop the link,
+// reattach, and every keystroke goes to the scrollback viewer with the status
+// line off and nothing on screen to say why.
+describe('buildTmuxLaunchCommand leaves copy-mode before reattaching (#85)', () => {
+  it('cancels any copy-mode on the attach branch, before the attach', () => {
+    const cmd = buildTmuxLaunchCommand(base)
+    const t = ON_PATH_TMUX_BIN_EXPR
+    const cancel = `${t} send-keys -t =ccc-sid-1: -X cancel 2>/dev/null`
+    expect(cmd).toContain(cancel)
+    expect(cmd.indexOf(cancel)).toBeLessThan(cmd.indexOf(`${t} attach -t =ccc-sid-1`))
+  })
+
+  it('does not run it on the fresh branch, where the pane is new', () => {
+    const cmd = buildTmuxLaunchCommand(base)
+    expect(cmd.split('-X cancel 2>/dev/null').length - 1).toBe(1)
   })
 })

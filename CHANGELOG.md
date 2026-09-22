@@ -11,13 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.1.1-beta.1] - 2026-09-16
 
-> A maintenance release: the runtime and its dependencies refreshed, and the largest source files split into focused modules with no change in behaviour.
+> The mouse wheel scrolls a remote session the way it scrolls a local one, instead of typing arrow keys at Claude. Otherwise a maintenance release: the runtime and its dependencies refreshed, and the largest source files split into focused modules with no change in behaviour.
 
 ### Changed
 - Electron moves to 43.7.1, with the terminal backend (node-pty), zod, marked and the transcript database typings refreshed. Two development-only dependencies with published advisories (vitest, js-yaml) and the MCP server library (hono) are on their patched versions.
 - Internal: the four largest source files were split into focused modules as pure moves, each verified against its origin and pinned by new regression tests. No change in behaviour.
 
 ### Fixed
+- The mouse wheel scrolls the history of an SSH Persistent session, the same as a local one. It used to send arrow-key presses to Claude instead -- so a remote session could not be scrolled back at all, and every notch typed an arrow key at whatever was running, which in a full-screen program could move the cursor or change what was selected. Claude runs inside tmux on an SSH Persistent session and the terminal has no scrollback of its own there, so the wheel now drives tmux’s own scrollback instead. Selecting text with the mouse is unchanged. Scrolling up opens the scrollback view and the first key you type closes it and returns you to the live bottom, so you can scroll back to read something and just start replying.
 - When no login shell is set in the environment, the check for the Claude CLI and the session launch now agree on the shell instead of assuming zsh for one and bash for the other: zsh on macOS, the platform default, and elsewhere the first of bash, zsh and /bin/sh that is installed. A Linux machine without zsh is no longer told the CLI is missing when it is installed, and one without bash can still launch a session.
 
 ## [2.1.0] - 2026-09-14
