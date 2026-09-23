@@ -99,6 +99,11 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
       versionHome: () => ({ home: versionHome, dispose: () => { disposed = true } }),
       now: () => 1,
     })
+    if (r.state !== 'found') {
+      // Say WHY: the same operation run directly, with its exit code and output.
+      const direct = await op('version', 'version-diagnostic')
+      throw new Error(`discovery: ${JSON.stringify(r)}\ndirect --version: ${JSON.stringify(direct)}`)
+    }
     expect(r).toMatchObject({ state: 'found', version: '0.155.1', compatibility: 'supported' })
     expect(disposed).toBe(true)
   })

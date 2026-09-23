@@ -155,6 +155,13 @@ export function profileHomeEnvOffenders(files: ReadonlyArray<{ path: string; tex
     ['src/main/providers/claude/index.ts', new Set([
       "'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',",
     ])],
+    // WP2: the Codex setup/sign-in env ALLOWLIST forwards the parent's own
+    // HOME/USERPROFILE unchanged (a Codex realm is selected by CODEX_HOME, set
+    // last); it names them as strings and never composes a profile home.
+    ['src/main/providers/codex/cli-env.ts', new Set([
+      "'COMMONPROGRAMFILES', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'USERNAME',",
+      "'HOME', 'USER', 'LOGNAME',",
+    ])],
   ])
   // CASE-INSENSITIVE, because the property being policed is. Windows resolves
   // `UserProfile` and `USERPROFILE` to one variable, so `{ ...env, UserProfile:
