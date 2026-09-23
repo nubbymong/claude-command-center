@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "36c4065d73944184ca8d89dd4f579114dae194cd9bf51b09ed771627742d5c8e",
-  "manifestHead": "f1541eb35c3678bc9c3afa465f99676d55fa7eca",
+  "manifestPathDigest": "b1463abd0d4ae4ae30e58fee88465a0d895e1ab0925360571e1ee07d03058312",
+  "manifestHead": "e837076f8b691114fd1020217d27ee8b7b09213e",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -615,6 +615,29 @@
       "note": "created by WP2"
     },
     {
+      "path": "src/main/providers/codex/cli-runner.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 Codex CLI runner: constant argv per operation, allowlisted env, Windows shim through absolute cmd.exe, tree kill; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.62)",
+      "note": "created by WP2; replaces the legacy runCodexProcess/runCodexStreaming in auth.ts once the auth slice lands"
+    },
+    {
+      "path": "src/main/providers/codex/discovery.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new WP2 Codex discovery: resolve, canonicalise, prove the version, record the executable identity and re-verify it; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.49)",
+      "note": "created by WP2"
+    },
+    {
       "path": "src/main/providers/codex/index.ts",
       "predicates": [
         "P01",
@@ -675,6 +698,17 @@
       "disposition": "retain",
       "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/providers/codex/pricing.test.ts",
       "note": "later work package"
+    },
+    {
+      "path": "src/main/providers/codex/process-env.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new WP2 Codex helper: the login-shell PATH on macOS/Linux so an npm-installed CLI finds node under the allowlisted env; covered by tests/wp1/fake-cli.test.ts (WP1.17)",
+      "note": "created by WP2"
     },
     {
       "path": "src/main/providers/codex/realm-paths.ts",

@@ -213,6 +213,19 @@ obligations fall on later slices:
   refuse it when it shares a FILE IDENTITY (device + inode) with the managed
   root or any managed realm: no string comparison sees 8.3 short names,
   `\\localhost\C$` or links.
+- **Launch handoff (from slice 3b's pass):** a managed Codex launch runs the
+  canonical path `verifyCodexExecutable` returns -- never a second
+  resolution -- with the runner's hardening (shim folder as cwd, absolute
+  cmd.exe, `NoDefaultCurrentDirectoryInExePath`). Persist the executable
+  identity as recorded (whole-millisecond times). The identity binds the
+  file PATH resolves (for npm, the shim), not the vendored binary behind it:
+  same-user replacement of the package is outside the threat model. Flip
+  `cli.discovery` / `install.recipes` to `supported` only when the setup
+  surface and the recipe runner land (recipes need `npm`/`brew` resolved to
+  absolute paths, and Windows `npm.cmd` through the same cmd.exe route).
+- **Auth slice (from 3b):** the CLI loads `CODEX_HOME/.env`, which can carry
+  `OPENAI_API_KEY` past the env allowlist; a managed realm is app-created
+  and must stay free of one (refuse or warn on a `.env` at sign-in).
 - **Known, accepted:** deleting the very last Claude profile does not archive
   its account (indistinguishable from a failed read); emoji ZWJ sequences
   store with spaces (stripSpoofableText); reconcile is quadratic in profile

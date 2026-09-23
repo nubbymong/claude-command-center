@@ -10,9 +10,22 @@ import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
 import { deployCodexResumePickerScript } from './resume-picker'
 import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION } from './cli-contract'
+import { codexInstallRecipes } from './install-recipes'
+import { codexOperationBaseEnv } from './process-env'
+import { runCodexCli, defaultCodexRunDeps } from './cli-runner'
+import { discoverCodex } from './discovery'
+import type { CodexDiscoveryDeps } from './discovery'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 // WP2 Codex adapter: the CLI contract, install recipes, the allowlisted
-// subprocess environment and realm paths. Pure; wired by the adapter slices.
+// subprocess environment, realm paths, the CLI runner and discovery.
+export { codexCommandLine, runCodexCli, defaultCodexRunDeps, makeCodexKillTree } from './cli-runner'
+export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps } from './cli-runner'
+export { discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
+export type { CodexDiscovery, CodexDiscoveryDeps, CodexExecutableIdentity, CodexExecutableCheck, CodexFileStat } from './discovery'
+export { codexLoginShellPath, codexOperationBaseEnv, extractMarkedPath, absolutePathEntries } from './process-env'
 export {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
   parseCodexVersion, classifyCodexVersion, parseCodexLoginStatus,
@@ -79,8 +92,8 @@ export class CodexProvider implements SessionProvider {
 export const CODEX_PINNED_VERSION = CODEX_PINNED_CLI_VERSION
 export const CODEX_MINIMUM_VERSION_CANDIDATE = CODEX_MIN_SUPPORTED_VERSION
 export const codexCapabilities: ProviderCapabilities = {
-  'cli.discovery': { state: 'unknown', note: 'wired in the Codex adapter slice' },
-  'install.recipes': { state: 'unknown', note: 'npm package @openai/codex, shown and copied, never scraped; wired in the Codex adapter slice' },
+  'cli.discovery': { state: 'unknown', note: 'discovery is wired on the package (setup.discover); declared supported once the setup surface calls it' },
+  'install.recipes': { state: 'unknown', note: 'recipes are code-defined (npm everywhere, Homebrew on macOS; install scripts shown only); declared supported once the recipe runner lands' },
   'auth.browser': { state: 'unknown', note: 'codex login (ChatGPT); wired in the Codex adapter slice' },
   'auth.device': { state: 'unknown', note: 'codex login --device-auth, labelled beta by the provider; wired in the Codex adapter slice' },
   'auth.apiKey': { state: 'unknown', note: 'codex login --with-api-key over a one-shot non-TTY stdin pipe, never an argument; wired in the Codex adapter slice' },
@@ -148,5 +161,35 @@ export function createCodexPackage(): ProviderPackage {
     // No `managedLaunch`: the app writes no Codex settings file today, so it
     // has nothing to sanitise, and no CLI floor has been established. Both
     // land with the Codex adapter slice.
+    setup: {
+      discover: async () => discoverCodex(await realDiscoveryDeps()),
+      installRecipes: codexInstallRecipes,
+    },
+  }
+}
+
+/** The real ports behind discovery: the session resolver, the filesystem,
+ *  and the runner. Built per call, so the environment is read fresh. */
+async function realDiscoveryDeps(): Promise<CodexDiscoveryDeps> {
+  const platform = process.platform
+  const runDeps = defaultCodexRunDeps(platform)
+  return {
+    resolve: () => resolveCodexBinary()?.cmd ?? null,
+    realpath: (p) => fs.realpathSync.native(p),
+    stat: (p) => {
+      // bigint: NTFS file ids exceed 2^53; times come back in whole ms.
+      const s = fs.statSync(p, { bigint: true })
+      return { size: Number(s.size), mtimeMs: Number(s.mtimeMs), ctimeMs: Number(s.ctimeMs), dev: String(s.dev), ino: String(s.ino), isFile: s.isFile() }
+    },
+    run: (cmd, env) => runCodexCli(cmd, { env, timeoutMs: 10_000 }, runDeps),
+    env: await codexOperationBaseEnv(process.env, platform),
+    platform,
+    // The CLI prepares its home before it parses `--version`: give it a
+    // fresh, empty one and remove it, never the user's own ~/.codex.
+    versionHome: () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-version-'))
+      return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
+    },
+    now: () => Date.now(),
   }
 }

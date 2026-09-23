@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-23T15:13:46.403Z",
-  "head": "f1541eb35c3678bc9c3afa465f99676d55fa7eca",
-  "tree": "960a29ca7fafa7e49bdb4dafbe68b0e4da9fc7a8",
+  "generatedAt": "2026-09-23T15:48:48.570Z",
+  "head": "e837076f8b691114fd1020217d27ee8b7b09213e",
+  "tree": "1e161f25f656ecab6a195feba9480dc13ec91786",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2180,
+  "trackedFileCount": 2183,
   "excludedFileCount": 353,
-  "scannedFileCount": 1827,
+  "scannedFileCount": 1830,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 297,
-  "pathDigest": "36c4065d73944184ca8d89dd4f579114dae194cd9bf51b09ed771627742d5c8e",
+  "matchedPathCount": 300,
+  "pathDigest": "b1463abd0d4ae4ae30e58fee88465a0d895e1ab0925360571e1ee07d03058312",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -175,7 +175,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 45
+      "lineCount": 48
     },
     {
       "path": "package.json",
@@ -549,6 +549,23 @@
       "lineCount": 12
     },
     {
+      "path": "src/main/providers/codex/cli-runner.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 26
+    },
+    {
+      "path": "src/main/providers/codex/discovery.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "lineCount": 45
+    },
+    {
       "path": "src/main/providers/codex/index.ts",
       "predicates": [
         "P01",
@@ -557,7 +574,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 74
+      "lineCount": 93
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -591,6 +608,14 @@
         "P14"
       ],
       "lineCount": 5
+    },
+    {
+      "path": "src/main/providers/codex/process-env.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 8
     },
     {
       "path": "src/main/providers/codex/realm-paths.ts",
