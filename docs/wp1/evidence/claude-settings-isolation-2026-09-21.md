@@ -2200,3 +2200,168 @@ picker helpers (SSH sessions are not managed launches, see "SSH / remote
 sessions" above) and a log line before the branch; the gate's deferral lives
 in the local branch. No sentinel parser, statusline routing or SSH-shim code
 changed.
+
+## VM gates on WINDOWS_1, and the defect they found (2026-09-23)
+
+The two packaged-app gates (PR gates 1 and 2), run on the Hyper-V guest
+WINDOWS_1 (Windows 11 22621, hostname WinDev2407Eval) against the INSTALLED
+app, never in the owner's session.
+
+**Setup.** Installer built at `c9c908a5` (`AI-Code-Conductor-2.1.1-beta.1.exe`,
+sha256 `1c54ee4e…ea52`, the same hash on the VM), installed silently (product
+2.1.1.0). Claude Code **2.1.280**, npm-installed, so the CLI on the PATH is the
+shim `%APPDATA%\npm\claude.cmd` (above the 2.1.278 floor). One managed account
+(`profile-mtoyn2mk-6990df`). Fixtures under `C:\Users\User\wp1-vm`: `gate1-proj`
+(its own `.claude/settings.json` carries `apiKeyHelper` with a marker value),
+`repo` (a git repository) and two linked worktrees of it, `wtA` and `wtB`.
+
+**Driver.** A script attaches to the installed app over CDP
+(`--remote-debugging-port`) and drives the renderer's own `electronAPI` -- the
+same IPC the UI uses (`pty.spawn/kill/write/onData`,
+`accountProfiles.managedLaunchReports`) -- so every check runs through the real
+main process. Restart is driven exactly as the Restart control does it
+(`useRestartSession`: kill, then an IMMEDIATE same-id spawn with the resume
+picker requested). Outputs (terminal text, raw PTY streams, reports, app-log
+lines, screenshots) were kept in the session scratchpad.
+
+| Gate | Result | What was observed |
+| --- | --- | --- |
+| 1 -- refusal on a real project | **PASS** (01:06Z) | Terminal: `[profiles] refusing a managed Claude launch: the project's own settings could redirect this account -- settings.json: apiKeyHelper ...`; PTY exit -1; Claude never started; the marker value in no terminal output, report or panel text. Report finding `repository-settings-refused` (blocked). Settings > Accounts shows `isolation-finding-repository-settings-refused` (screenshot). app.log `[managed-launch] project settings in ...gate1-proj refuse a managed launch: settings.json: apiKeyHelper`. |
+| 2a -- Restart resumes the exact conversation in ITS worktree | **PASS** (01:35Z, run `313007`) | A conversation started in `wtA` (transcript `8c0bb599-…` under `C--Users-User-wp1-vm-wtA`). Restart from the configured main checkout (`repo`): app.log `T8b captured resume target … cwd=…\wtA`, then `T8b exact resume for wp1-g2a-…: uuid=8c0bb599-… cwd=C:\Users\User\wp1-vm\wtA (was C:\Users\User\wp1-vm\repo)`; the launch line is `Set-Location '…\wtA'; & '…\npm\claude.cmd' --resume 8c0bb599-…`; the resumed view shows the first prompt; the second prompt lands in the SAME transcript with `cwd=…\wtA`. The gate reported "checking the project settings in …\repo and …\wtA and every worktree the resume picker may open" before the launch. |
+| 2b -- a poisoned sibling worktree, via the picker | **PASS** (01:10Z) | `wtB/.claude/settings.local.json` carrying `apiKeyHelper`: the picker launch from `repo` is refused BEFORE the picker runs -- `… ~\wp1-vm\wtB: settings.local.json: apiKeyHelper …`, exit -1, no Claude, no value leak, finding `repository-settings-refused`. (The picker's own per-selection `exit 1` branch is reachable only for a worktree added in the milliseconds between main's and the picker's `git worktree list`; it stays covered by the unit tests.) This is the conservative #98 policy, kept as is; the alternative stays aicc_planning#98. |
+| 2c -- the picker from the main checkout offers and resumes the worktree conversation | **PASS** (01:36Z, run `313007`) | With the siblings clean, the picker launched from `repo` listed the conversation tagged `⑂ wtA` (chosen by this run's own marker, not by position); choosing it resumed `8c0bb599-…` in `wtA` (binder `exact bind committed sid=wp1-g2c-… path=…wtA\8c0bb599-….jsonl`); the third prompt is in the same transcript, `cwd=…\wtA`. |
+
+**Scope, stated rather than implied.**
+
+- **Model replies were not exercised.** The VM's only managed account is signed
+  out: its stored OAuth record has empty access and refresh tokens and a
+  refresh expiry of 2026-09-16 (read as shape and dates only, never a value).
+  Every assistant line in the transcript is the CLI's own `Login expired ·
+  Please run /login` API-error record. The transcripts themselves are real and
+  CLI-written, and the resume mechanism -- which conversation, which
+  directory -- does not depend on a reply. A signed-in re-run would add model
+  round-trips, not resume coverage.
+- **Account switch was not exercised**: one account on the VM. A switch is the
+  same Restart path (`useSwitchAccount` → `restart`).
+- The first 2a/2c attempts failed on the DRIVER, not the app, and each cause was
+  fixed in the driver before the counted run: CLI 2.1.280's new trust dialog
+  preselects "No, exit" (answered with Down then Enter, and only once per
+  appearance); the CLI paints spaces as cursor-forward escapes; its idle footer
+  no longer says "for shortcuts"; the profile's `projects` folder is a junction
+  the walker did not follow; and the Restart simulation must not pause between
+  kill and spawn.
+
+### The defect the VM found: a Windows npm install never had its CLI version verified
+
+Every managed launch on the VM carried `cli-version-unverified`, and app.log
+showed why: `[claude-version] probe threw: spawn EINVAL` on every probe (12 in
+35 minutes). `src/main/claude-cli-version.ts` (new in this PR) ran
+`execFile(<resolved>, ['--version'])`; for an npm install the resolved CLI is
+the batch shim `claude.cmd`, and since the CVE-2024-27980 fix Node refuses to
+spawn a batch file without a shell. So the version stayed unknown for good, and
+every managed launch for an npm-installed Windows user carried a
+blocked-severity "Claude Code version not yet verified" finding (preflight
+`ok: false`, shown in Settings > Accounts) for a current CLI, with a doomed
+re-probe every 60 s. Launches were not blocked. The gate-1 note written
+earlier ("the probe had not answered yet") was wrong.
+
+**Fix (`f2332e39`).**
+
+- A `.cmd`/`.bat` shim is run through cmd.exe the way Node runs `shell: true`:
+  `cmd /d /v:off /s /c ""<path>" --version"`, verbatim arguments.
+- A shim path carrying `" % & ^` or a control character is refused, and the
+  version stays unknown. npm's shim re-reads its own folder unquoted
+  (`SET dp0=%~dp0`).
+- The shim runs in its own folder with `NoDefaultCurrentDirectoryInExePath=1`.
+- cmd.exe is `ComSpec` only when that is an absolute `…\cmd.exe`, otherwise
+  `%SystemRoot%\System32\cmd.exe`.
+- Every other path runs directly, as before.
+- On Windows the CLI is found by an **in-process, async PATH walk**
+  (`findClaudeOnWindowsPath`), in the order the launch asks `where` for it, and
+  no longer through `where`, which answers in the OEM code page and mangled
+  every non-ASCII profile path. The walk skips relative, drive-relative,
+  unexpanded and device-namespace entries, and never asks an unreachable folder
+  twice.
+- A probe that does not answer is **settled at its deadline**, whatever still
+  holds its streams. Its tree is killed with the absolute `taskkill /T /F`
+  BEFORE cmd.exe, and nothing is killed once the child has exited.
+- The unknown-version finding no longer says "not probed yet". It says the
+  check may not have been able to run the CLI and points to the
+  `[claude-version]` log lines.
+- **Legacy pins.** The same round found that a managed launch pinned to a
+  legacy CLI had its floor checked against the INSTALLED CLI's version: a 2.0.x
+  pin read as "2.1.280 is at or above 2.1.278". The launch now tells the
+  preflight about the pin (`pinnedCli: { version, installed }`), and the Claude
+  provider decides which version to check (`claudeManagedCliVersionToCheck`):
+  - An installed pin is what runs, so it is what gets checked.
+  - A pin the cloud agent installs AFTER the record counts only when it is below
+    the floor, so a failed install can only make the record louder, never a
+    false "supported". This corner was first listed as a follow-up; the fix
+    that made the code comment true closes it.
+  - A below-floor pin is remedied by the pin, not by "update Claude Code".
+  - The interactive launch passes the pin only when it is installed and the pane
+    is not shell-only.
+
+### ADR-009 pass over the fix
+
+**Bound, stated before dispatch:** one attacker round, scoped to the probe's
+process command-line construction through cmd.exe, two lenses, both Opus 5.5:
+L1 injection/evasion, L2 blast radius + platform parity + design/coverage.
+Round 1 found no way to make cmd.exe run a second command or redirect.
+Characters tested in folder names: `& ^ ( ) ! ; , = ' `` ` `` @ ~ $ #`, fullwidth
+and RTL forms, U+2028, NEL, BOM and NBSP. Registry cases: HKCU
+`DelayedExpansion=1` and `AutoRun` (`/v:off` and `/d` both hold). Round 1
+widened the fix with its MAJORs (non-ASCII `where`, the legacy pin) and MINORs.
+
+Round 2, the re-attack of those fixes, found two MAJOR regressions the fixes
+had introduced. First, a timed-out probe never settled when a descendant held
+stdout: taskkill ran after cmd.exe was already dead. Second, the synchronous
+PATH walk froze the main thread for 21 s on a dead network entry. Both were
+fixed. Round 3 and a final confirmation of the post-review delta: **PASS on
+both lenses, nothing open at BLOCKER or MAJOR.** Every guard is pinned by a
+test that goes red under its mutant (below). A final Fable ADR review:
+**HOLDS**. Seven theses were each tied to a named test that asserts it (no second command from a folder name; no planted node or cmd.exe from the working directory; a hung probe always settles and kills nothing after exit; the walk never blocks and never searches the current directory; no false "supported" across the pin, install and version matrix; the launch path still cannot throw; the startup import boundary is unchanged). The MQ-q equivalence (below) was confirmed. Two nits, neither required: a synchronous taskkill throw would skip the stream destroys, and a ComSpec path with spaces goes on the command line unquoted, as in Node's own shell:true.
+
+**Double review (Opus, independent).** The spec review confirmed that every
+fix item is implemented and nothing out of scope was added (the one scope
+change is noted under Legacy pins). The quality review found no blocker. Their
+MINORs were fixed and re-reviewed:
+- flaky real-process cleanup;
+- the `%` entry test and the pin-predicate tests;
+- the finding-text assertions;
+- the absolute taskkill;
+- a POSIX timeout case;
+- an exact-floor pin case;
+- a `SystemRoot`-less timeout case;
+- one `isWindowsAbsolute` helper;
+- the doc-comment placement.
+
+**Mutants** (each restored after its run; baseline checked green first):
+**39 of 40 red**. The survivor, MQ-q, narrows the device-prefix test's leading `[\\/]{2}` to backslashes only. It is EQUIVALENT: it differs only for `//`-prefixed input, which the drive/UNC clause already rejects (confirmed by the Fable review). The mixed-slash case itself is pinned by MQ-n and MQ-v. One incident is recorded: a mutant run killed by a tool time limit
+left one inserted line in the source, and a second run then measured against
+it. That was caught (a baseline test went red), removed, and a checked-green
+baseline plus an on-disk journal were added to the runner before the counted
+run.
+
+**Routed, not fixed here** (private planning repo, premise-reviewed):
+- **aicc_planning#101.** The launch's own `resolveClaudeBinary` still uses
+  `where` (non-ASCII paths). The resume picker ignores a legacy pin (it runs the
+  installed CLI, while the report names the pin). The probe and the headless and
+  cloud spawns can pick different installs.
+- **aicc_planning#102.** An overall deadline around the PATH walk, a PATH set
+  only by a PowerShell profile, a taskkill image filter, and output already
+  printed before the deadline.
+
+**Verification.** At `f2332e39`:
+- typecheck clean;
+- full `npx vitest run` under Git Bash: 915 files passed / 2 skipped, 11,588 tests passed / 24 skipped / 2 todo;
+- the seven affected files: 271 passed / 4 skipped.
+
+An earlier full run timed out unrelated suites: another session on this host was deliberately saturating the CPU (24 busy loops). The counted run was made after that load stopped.
+
+**VM re-check of the fix.** The installer was rebuilt at `f2332e39` (sha256 `54060fce…84bf`, the same on the VM; the asar carries the new strings) and installed over the gate build. On a clean managed launch in `wtA`:
+- At boot, app.log shows `[claude-version] installed Claude Code 2.1.280 (C:\Users\User\AppData\Roaming\npm\claude.cmd)`. Every earlier probe on this VM had logged `spawn EINVAL`.
+- The launch report's compatibility is `supported`, found `2.1.280`, with no findings and `ok: true`.
+- Settings > Accounts no longer shows "Claude Code version not yet verified" (screenshot kept out of the repo because it shows the account email).
+
+Gates 1 and 2b were not re-run (owner instruction). The fix does not touch the project gate, and this check exercised the managed launch itself on the new build.

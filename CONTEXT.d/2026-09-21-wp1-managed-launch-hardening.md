@@ -127,3 +127,18 @@ toggle in the same panel.
 (15), `tests/unit/renderer/account-isolation-notice.test.tsx` (8). Each guard
 proven red under a mutant of the production code: **21 mutants, 21 detected**.
 Full suite 907 files / 11332 tests, typecheck clean.
+
+## 2026-09-23 -- the packaged-app VM gates, and what they found
+
+Gates 1 and 2 (refusal on a real project; Restart and the picker resuming a
+real worktree conversation in its own directory; a poisoned sibling refused)
+PASS on WINDOWS_1 against the installed build. The VM also showed that the CLI
+version probe added in this work could never run an npm-installed CLI on
+Windows (`claude.cmd`, Node's EINVAL for a batch file without a shell), so
+every managed launch there carried a permanent "version not yet verified"
+finding. Fixed in `f2332e39`, together with the two things its ADR-009 pass
+found beside it: `where`'s code page mangling non-ASCII paths, and a legacy
+pin checked against the installed CLI's version. Re-checked on the VM: the
+probe reports 2.1.280 and the finding is gone. Details and scope limits (the
+VM account is signed out; one account, so no switch) in the evidence doc,
+"VM gates on WINDOWS_1"; follow-ups aicc_planning#101, #102.
