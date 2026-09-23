@@ -2005,6 +2005,16 @@ describe('the launch paths', () => {
       }
       diag._resetProjectScanStateForTest()
       expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+      // A dotted component that a `..` removes is NOT a rewritten spelling:
+      // Node and CreateProcess both resolve it away, the gate reads the folder
+      // the CLI runs in, and it must still REFUSE, not warn (final ADR-009
+      // confirmation pass: the raw spelling downgraded this refusal).
+      for (const ghost of [path.join(path.dirname(cwd), 'ghost.') + path.sep + '..' + path.sep + path.basename(cwd),
+        path.join(path.dirname(cwd), 'ghost ') + path.sep + '..' + path.sep + path.basename(cwd)]) {
+        diag._resetProjectScanStateForTest()
+        expect(ranIn(ghost).toLowerCase(), `the CLI would not run in the folder for ${JSON.stringify(ghost)}`).toBe(cwd.toLowerCase())
+        expect(await diag.gateManagedLaunch(ghost), JSON.stringify(ghost)).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+      }
     })
 
     it('a newer UNCERTAIN scan EVICTS the clean verdict before it: peek never hands out a clean the latest scan could not confirm (independent review)', async () => {

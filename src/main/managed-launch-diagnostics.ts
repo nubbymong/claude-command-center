@@ -613,8 +613,12 @@ async function projectAuthoritySettingsKeys(cwd: string | null): Promise<Project
   // CreateProcess does. A working directory spelled `C:\proj.` was ENOENT here
   // -- both files "absent", a clean verdict -- while a CLI spawned with that
   // cwd ran in `C:\proj` and applied its settings (adversarial round 8, MAJOR,
-  // through a cloud agent's raw project path).
-  if (process.platform === 'win32' && hasWin32RewrittenComponent(cwd)) return { keys: [], uncertain: 'path-spelling' }
+  // through a cloud agent's raw project path). Asked of the RESOLVED path: a
+  // `..` after a dotted component (`C:\ghost.\..\proj`) is removed lexically
+  // by both Node and CreateProcess, the gate reads the same folder the CLI
+  // runs in, and the raw spelling turned that REFUSAL into a warning (final
+  // ADR-009 confirmation pass, MAJOR).
+  if (process.platform === 'win32' && hasWin32RewrittenComponent(path.resolve(cwd))) return { keys: [], uncertain: 'path-spelling' }
   const found: string[] = []
   let uncertain: ProjectScanSkipReason | null = null
   const take = (label: string, scan: SettingsFileScan): void => {
