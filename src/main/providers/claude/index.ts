@@ -27,6 +27,9 @@ export {
 } from './managed-launch'
 export type { AuthorityKind, AuthorityEntry } from './managed-launch'
 
+// profiles.json as the neutral account registry sees it (WP2, design 6.2).
+export { claudeLegacySnapshot, claudeProfilePathRef } from './legacy-accounts'
+
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
   readonly displayName = 'Claude Code'
