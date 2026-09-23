@@ -55,8 +55,42 @@ export interface InstallRecipe {
 /** An opaque realm reference resolved inside the main process. */
 export interface RealmRef { authRealmId: string }
 
+/** Why an auth operation did not succeed, for a caller that acts on it
+ *  (design 13) rather than on the message's wording. */
+export type AuthFailureCode =
+  | 'realm-unavailable'      // not resolvable, missing, or not at its canonical path
+  | 'cli-unavailable'        // not proven by setup, an unusable version, or changed since
+  | 'realm-env-file'         // a managed realm holds a .env
+  | 'busy'                   // another sign-in or sign-out holds this realm
+  | 'browser-busy'           // another browser sign-in is running (its callback port is machine-wide)
+  | 'already-signed-in'
+  | 'external-realm'         // no sign-in into another client's home
+  | 'external-ack-required'  // an external logout needs the user's acknowledgement
+  | 'method-unsupported'
+  | 'secret-unavailable'     // the handle expired or was already used: enter it again
+  | 'secret-channel-unavailable' // no secret-entry channel here: choose another method
+  | 'secret-invalid'
+  | 'cancelled'
+  | 'timed-out'
+  | 'not-started'            // the CLI could not be run
+  | 'provider-refused'       // the CLI ran and failed
+  | 'not-confirmed'          // the realm's status afterwards does not agree
+  | 'status-unrecognised'
+  | 'still-signed-in'        // a logout left the realm signed in
+
+/** How a signed-in realm is signed in, when the provider says: a provider
+ *  account sign-in or an API key. Never the credential itself. */
+export type AuthCredentialKind = 'account' | 'api-key' | 'unknown'
+
 export interface AuthOperationResult {
   ok: boolean
+  /** Set when `ok` is false. */
+  code?: AuthFailureCode
+  /** The realm's sign-in state as last observed, when the operation read it
+   *  (also after a failure: a cancelled sign-in may have completed anyway). */
+  state?: KnownAuthState
+  /** Set with `state: 'signed-in'` when the provider says how. */
+  credential?: AuthCredentialKind
   /** Redacted, user-safe message. Never contains tokens or full login URLs. */
   message?: string
   /** Provider-supplied stable subject + authority when observable (5.3). */
@@ -71,13 +105,28 @@ export interface ProviderSetupOperations {
   installRecipes(platform: CapabilityPlatform): readonly InstallRecipe[]
 }
 
+export interface AuthLoginInput {
+  /** API key: a main-issued single-use handle, never the secret itself. */
+  secretHandle?: string
+  /** The sign-in process's output as it arrives, redacted and display-only. */
+  onOutput?: (text: string) => void
+  /** Cancels this sign-in, and nothing else. */
+  signal?: AbortSignal
+}
+
+export interface AuthLogoutOptions {
+  /** An external realm is shared with other local clients: logging it out
+   *  needs the user's explicit acknowledgement of that wider effect (5.4). */
+  acknowledgeExternalRealm?: boolean
+}
+
 export interface ProviderAuthOperations {
   status(realm: RealmRef): Promise<{ state: KnownAuthState } & AuthOperationResult>
-  logout(realm: RealmRef): Promise<AuthOperationResult>
+  logout(realm: RealmRef, opts?: AuthLogoutOptions): Promise<AuthOperationResult>
   /** Browser/device flows run the genuine CLI in a Conductor surface; the
    *  api-key flow takes a one-shot non-TTY stdin pipe (9.2). Inputs are
    *  opaque handles, never the secret itself. */
-  login(realm: RealmRef, method: AuthMethod, input?: { secretHandle?: string }): Promise<AuthOperationResult>
+  login(realm: RealmRef, method: AuthMethod, input?: AuthLoginInput): Promise<AuthOperationResult>
 }
 
 export interface ProviderRealmOperations {

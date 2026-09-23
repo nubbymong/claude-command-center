@@ -14,15 +14,21 @@ import { codexInstallRecipes } from './install-recipes'
 import { codexOperationBaseEnv } from './process-env'
 import { runCodexCli, defaultCodexRunDeps } from './cli-runner'
 import { discoverCodex } from './discovery'
-import type { CodexDiscoveryDeps } from './discovery'
+import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
+import { createCodexAuthOperations } from './auth-operations'
+import type { CodexAuthDeps } from './auth-operations'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
 // WP2 Codex adapter: the CLI contract, install recipes, the allowlisted
 // subprocess environment, realm paths, the CLI runner and discovery.
-export { codexCommandLine, runCodexCli, defaultCodexRunDeps, makeCodexKillTree } from './cli-runner'
-export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps } from './cli-runner'
+export {
+  codexCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, makeCodexKillTree, makeCodexProcessLister,
+  codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, WINDOWS_PROCESS_QUERY,
+  CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS,
+} from './cli-runner'
+export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry } from './cli-runner'
 export { discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
 export type { CodexDiscovery, CodexDiscoveryDeps, CodexExecutableIdentity, CodexExecutableCheck, CodexFileStat } from './discovery'
 export { codexLoginShellPath, codexOperationBaseEnv, extractMarkedPath, absolutePathEntries } from './process-env'
@@ -32,6 +38,8 @@ export {
 } from './cli-contract'
 export type { CodexLoginStatus, CodexLoginVia } from './cli-contract'
 export { codexInstallRecipes, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from './install-recipes'
+export { createCodexAuthOperations, createCodexOutputRedactor } from './auth-operations'
+export type { CodexAuthDeps, CodexRealmLookup, CodexRealmIdentity, CodexOutputRedactor } from './auth-operations'
 export { codexCliEnv, codexCliEnvAllowlist } from './cli-env'
 export {
   codexRealmHome, codexExternalDefaultHome, codexManagedRealmsRoot, codexHomesOverlap, isFullyQualifiedPath, CODEX_REALMS_DIRNAME,
@@ -148,9 +156,34 @@ export const codexAmbientAuthVariables: readonly string[] = [
  *  now required -- the ambient list is no longer implicitly settable. */
 export const codexOwnedLaunchVariables: readonly string[] = ['CODEX_HOME']
 
+/** What the composition root hands the package: the ports it does not own. */
+export interface CodexPackageDeps {
+  /** The realm lookup (from the registry) and the single-use secret store.
+   *  Until the composition root supplies them the package exposes no auth
+   *  operations, and its auth capabilities stay `unknown`. */
+  auth?: Pick<CodexAuthDeps, 'lookupRealm' | 'takeSecret'>
+  /** The discovery ports; the real ones unless a test supplies its own. */
+  discoveryDeps?: () => Promise<CodexDiscoveryDeps>
+  /** Replaces real auth ports, for a test. `proven` is not replaceable: it is
+   *  always this package's own last discovery. */
+  authPorts?: Partial<Omit<CodexAuthDeps, 'proven' | 'lookupRealm' | 'takeSecret'>>
+}
+
 /** Created by the composition root; importing this entry point has no side effects. */
-export function createCodexPackage(): ProviderPackage {
+export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage {
   const session = new CodexProvider()
+  // The CLI setup last proved. Sign-in re-verifies it and runs exactly it. A
+  // re-check clears it while it runs, and a failed check leaves it clear, so
+  // nothing ever runs on stale proof; overlapping checks keep the newest.
+  let proven: CodexDiscovery | null = null
+  let generation = 0
+  const discover = async (): Promise<CodexDiscovery> => {
+    const mine = ++generation
+    proven = null
+    const r = await discoverCodex(await (deps.discoveryDeps ?? realDiscoveryDeps)())
+    if (mine === generation) proven = r.state === 'found' ? r : null
+    return r
+  }
   return {
     id: session.id,
     displayName: session.displayName,
@@ -162,8 +195,67 @@ export function createCodexPackage(): ProviderPackage {
     // has nothing to sanitise, and no CLI floor has been established. Both
     // land with the Codex adapter slice.
     setup: {
-      discover: async () => discoverCodex(await realDiscoveryDeps()),
+      discover,
       installRecipes: codexInstallRecipes,
+    },
+    ...(deps.auth ? { auth: createCodexAuthOperations({ ...realAuthDeps(deps.auth), ...testAuthPorts(deps.authPorts), proven: () => proven }) } : {}),
+  }
+}
+
+/** Only the ports a test may replace -- never `proven`, the realm lookup or
+ *  the secret store, whatever else the object carries. */
+function testAuthPorts(ports: CodexPackageDeps['authPorts']): Partial<CodexAuthDeps> {
+  if (!ports) return {}
+  const out: Partial<CodexAuthDeps> = {}
+  if (ports.realmIdentity) out.realmIdentity = ports.realmIdentity
+  if (ports.executablePorts) out.executablePorts = ports.executablePorts
+  if (ports.baseEnv) out.baseEnv = ports.baseEnv
+  if (ports.run) out.run = ports.run
+  if (ports.envFilePresent) out.envFilePresent = ports.envFilePresent
+  return out
+}
+
+/** Re-resolving and re-reading the executable: the session resolver and the
+ *  filesystem, shared by discovery and the pre-use re-verification. */
+function realExecutablePorts(platform: NodeJS.Platform): Pick<CodexDiscoveryDeps, 'resolve' | 'realpath' | 'stat' | 'platform'> {
+  return {
+    resolve: () => resolveCodexBinary()?.cmd ?? null,
+    realpath: (p) => fs.realpathSync.native(p),
+    stat: (p) => {
+      // bigint: NTFS file ids exceed 2^53; times come back in whole ms.
+      const s = fs.statSync(p, { bigint: true })
+      return { size: Number(s.size), mtimeMs: Number(s.mtimeMs), ctimeMs: Number(s.ctimeMs), dev: String(s.dev), ino: String(s.ino), isFile: s.isFile() }
+    },
+    platform,
+  }
+}
+
+/** The real ports behind the auth operations. */
+function realAuthDeps(injected: NonNullable<CodexPackageDeps['auth']>): Omit<CodexAuthDeps, 'proven'> {
+  const platform = process.platform
+  const runDeps = defaultCodexRunDeps(platform)
+  const takeSecret = injected.takeSecret
+  return {
+    lookupRealm: (realm) => injected.lookupRealm(realm),
+    realmIdentity: (home) => {
+      const canonical = fs.realpathSync.native(home)
+      // bigint: NTFS file ids exceed 2^53.
+      const s = fs.statSync(canonical, { bigint: true })
+      return { canonical, dev: String(s.dev), ino: String(s.ino), isDirectory: s.isDirectory() }
+    },
+    ...(takeSecret ? { takeSecret: (handle: string) => takeSecret(handle) } : {}),
+    executablePorts: realExecutablePorts(platform),
+    baseEnv: () => codexOperationBaseEnv(process.env, platform),
+    run: (cmd, opts) => runCodexCli(cmd, opts, runDeps),
+    // Anything there -- a file, a link, a folder -- or an answer other than
+    // "does not exist" counts as present.
+    envFilePresent: (home) => {
+      try {
+        fs.lstatSync(path.join(home, '.env'))
+        return true
+      } catch (e) {
+        return (e as NodeJS.ErrnoException)?.code !== 'ENOENT'
+      }
     },
   }
 }
@@ -174,16 +266,9 @@ async function realDiscoveryDeps(): Promise<CodexDiscoveryDeps> {
   const platform = process.platform
   const runDeps = defaultCodexRunDeps(platform)
   return {
-    resolve: () => resolveCodexBinary()?.cmd ?? null,
-    realpath: (p) => fs.realpathSync.native(p),
-    stat: (p) => {
-      // bigint: NTFS file ids exceed 2^53; times come back in whole ms.
-      const s = fs.statSync(p, { bigint: true })
-      return { size: Number(s.size), mtimeMs: Number(s.mtimeMs), ctimeMs: Number(s.ctimeMs), dev: String(s.dev), ino: String(s.ino), isFile: s.isFile() }
-    },
+    ...realExecutablePorts(platform),
     run: (cmd, env) => runCodexCli(cmd, { env, timeoutMs: 10_000 }, runDeps),
     env: await codexOperationBaseEnv(process.env, platform),
-    platform,
     // The CLI prepares its home before it parses `--version`: give it a
     // fresh, empty one and remove it, never the user's own ~/.codex.
     versionHome: () => {

@@ -14,12 +14,17 @@
 // folder unquoted, where `&` and `^` are syntax again.
 //
 // A run settles on close, on a spawn error, at its deadline or on cancel --
-// whichever is first. At the deadline or on cancel the whole process tree is
-// killed (cmd.exe -> node -> codex would otherwise outlive a cancelled
-// sign-in), but only while its root is still running: a pid is not killed
-// once it may have been reused. See runCodexCli.
+// whichever is first. At the deadline or on cancel the run's OWN processes are
+// killed -- the root and, below it, only the launcher and CLI images (cmd.exe
+// -> node -> codex would otherwise outlive a cancelled sign-in) -- and never
+// what the CLI started beyond them: a browser a sign-in opened is the user's.
+// A stopped run settles only once that kill has landed (bounded), so a caller
+// that holds a realm for the run does not let go while it still runs. Nothing
+// is killed once the root has exited: its pid may have been reused. See
+// runCodexCli and makeCodexKillTree.
 import path from 'node:path'
-import { spawn as nodeSpawn } from 'node:child_process'
+import fs from 'node:fs'
+import { spawn as nodeSpawn, execFile } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 
 export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key'
@@ -43,6 +48,31 @@ export interface CodexCommand {
 }
 
 const isWindowsAbsolute = (p: string | undefined): p is string => !!p && /^([A-Za-z]:[\\/]|[\\/]{2}[^\\/?.])/.test(p)
+
+/** ComSpec and SystemRoot from an environment COPY, for codexCommandLine.
+ *  process.env looks names up case-insensitively on Windows; a plain-object
+ *  copy of it does not, and a parent may spell them SYSTEMROOT and COMSPEC (a
+ *  CI runner does). So on Windows they are matched the way Windows matches
+ *  them -- ASCII names only (a long s upper-cases onto S) -- and two
+ *  spellings that disagree are refused (absent), never guessed between. */
+export function codexShellEnv(env: Readonly<Record<string, string | undefined>>, platform: NodeJS.Platform): { ComSpec?: string; SystemRoot?: string } {
+  const win = platform === 'win32'
+  const pick = (name: string): string | undefined => {
+    const values = new Set<string>()
+    for (const k of Object.keys(env)) {
+      const v = env[k]
+      if (typeof v !== 'string' || v === '') continue
+      if (win ? /^[A-Za-z]+$/.test(k) && k.toUpperCase() === name.toUpperCase() : k === name) values.add(v)
+    }
+    return values.size === 1 ? [...values][0] : undefined
+  }
+  const out: { ComSpec?: string; SystemRoot?: string } = {}
+  const comSpec = pick('ComSpec')
+  const systemRoot = pick('SystemRoot')
+  if (comSpec !== undefined) out.ComSpec = comSpec
+  if (systemRoot !== undefined) out.SystemRoot = systemRoot
+  return out
+}
 
 /** How to run one operation against one resolved executable, or why not. */
 export function codexCommandLine(
@@ -85,6 +115,10 @@ export interface CodexRunResult {
   timedOut: boolean
   /** Output beyond the cap was dropped. */
   truncated: boolean
+  /** The run was stopped (cancel or deadline) -- also when its root had
+   *  already exited and it settled with the root's own exit code: a
+   *  descendant may have been cut off mid-line. */
+  stopped?: 'cancel' | 'deadline'
   /** The process could not be started (the message is the spawn error's). */
   spawnError?: string
 }
@@ -103,48 +137,214 @@ export interface CodexRunOptions {
 export interface CodexRunDeps {
   spawn: (file: string, args: readonly string[], opts: SpawnOptions) => ChildProcess
   platform: NodeJS.Platform
-  /** Kill a process and everything it started. */
-  killTree: (child: ChildProcess) => void
+  /** Kill the run's own processes (see makeCodexKillTree); the runner waits
+   *  for the returned promise, bounded, before a stopped run settles. */
+  killTree: (child: ChildProcess) => Promise<void> | void
 }
 
-/** Exported for the test: the tree kill with its guards. */
-export function makeCodexKillTree(platform: NodeJS.Platform, spawn: CodexRunDeps['spawn'], systemRoot: string | undefined): (child: ChildProcess) => void {
-  return (child) => {
+/** One row of the process table. `created` is in milliseconds, when known. */
+export interface CodexProcessEntry { pid: number; ppid: number; name: string; created?: number }
+
+/** The images a run's own chain is made of: cmd.exe (the shim route), the
+ *  JavaScript launchers a global install runs codex.js with (node, bun, deno)
+ *  and codex and its own helpers. */
+const CHAIN_IMAGE = /^(cmd\.exe|node|node\.exe|bun|bun\.exe|deno|deno\.exe|codex(?:[-._][a-z0-9._-]*)?)$/
+
+/** The processes a run owns: its root and, below it, only chain images. A
+ *  process of any other image -- a browser the sign-in opened -- is not the
+ *  run's, and nor is anything below it. A child that says it started before
+ *  its parent is a stale parent id on a reused pid (Windows keeps the parent
+ *  id of a process whose parent has exited), not a child. Leaves first.
+ *  Exported for the test. */
+export function codexChainPids(rootPid: number, table: readonly CodexProcessEntry[]): number[] {
+  const byPid = new Map<number, CodexProcessEntry>()
+  const children = new Map<number, CodexProcessEntry[]>()
+  for (const e of table) {
+    if (!e || !Number.isSafeInteger(e.pid) || !Number.isSafeInteger(e.ppid) || e.pid <= 0 || e.pid === e.ppid || typeof e.name !== 'string') continue
+    byPid.set(e.pid, e)
+    const list = children.get(e.ppid)
+    if (list) list.push(e)
+    else children.set(e.ppid, [e])
+  }
+  const out = [rootPid]
+  const seen = new Set(out)
+  for (let i = 0; i < out.length; i++) {
+    const parent = byPid.get(out[i])
+    for (const c of children.get(out[i]) ?? []) {
+      if (seen.has(c.pid)) continue
+      const image = (c.name.split(/[\\/]/).pop() ?? '').trim().toLowerCase()
+      if (!CHAIN_IMAGE.test(image)) continue
+      // Where the table knows start times, a child with none, or one before
+      // its parent's, is not provably a child.
+      if (parent?.created !== undefined && (c.created === undefined || c.created < parent.created)) continue
+      seen.add(c.pid)
+      out.push(c.pid)
+    }
+  }
+  return out.reverse()
+}
+
+/** `pid,ppid,created,name` lines (created: a Windows FILETIME). Exported for the test. */
+export function parseWindowsProcessTable(text: string): CodexProcessEntry[] {
+  const out: CodexProcessEntry[] = []
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = /^(\d+),(\d+),(\d+),(.+)$/.exec(line.trim())
+    if (!m) continue
+    // FILETIME counts 100 ns steps: whole milliseconds fit a double exactly.
+    const created = m[3] === '0' ? undefined : Number(BigInt(m[3]) / 10000n)
+    out.push({ pid: Number(m[1]), ppid: Number(m[2]), name: m[4], ...(created !== undefined ? { created } : {}) })
+  }
+  return out
+}
+
+/** One `/proc/<pid>/stat` line: `pid (comm) state ppid ... starttime ...`.
+ *  The name is between the FIRST `(` and the LAST `)` -- it may itself hold
+ *  spaces and parentheses. `created` is the start time in clock ticks, which
+ *  orders processes like any other time. Exported for the test. */
+export function parseLinuxStat(text: string): CodexProcessEntry | null {
+  const open = text.indexOf('(')
+  const close = text.lastIndexOf(')')
+  if (open < 1 || close < open) return null
+  const pid = Number(text.slice(0, open).trim())
+  const rest = text.slice(close + 1).trim().split(/\s+/)
+  const ppid = Number(rest[1])
+  const created = Number(rest[19])
+  if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(ppid)) return null
+  return { pid, ppid, name: text.slice(open + 1, close), ...(Number.isFinite(created) ? { created } : {}) }
+}
+
+/** `ps -o pid= -o ppid= -o comm=` lines; macOS prints the image path, which
+ *  may hold spaces. Exported for the test. */
+export function parsePosixProcessTable(text: string): CodexProcessEntry[] {
+  const out: CodexProcessEntry[] = []
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
+    if (m) out.push({ pid: Number(m[1]), ppid: Number(m[2]), name: m[3] })
+  }
+  return out
+}
+
+/** A constant query with no double quote in it: passed as plain -Command
+ *  text (an encoded command is what endpoint protection flags). */
+export const WINDOWS_PROCESS_QUERY = "Get-CimInstance Win32_Process | ForEach-Object { $c = 0; if ($_.CreationDate) { $c = $_.CreationDate.ToFileTimeUtc() }; '{0},{1},{2},{3}' -f $_.ProcessId, $_.ParentProcessId, $c, $_.Name }"
+/** How long reading the process table may take. */
+export const CODEX_PROCESS_TABLE_TIMEOUT_MS = 8000
+/** How long taskkill may take. */
+export const CODEX_TASKKILL_TIMEOUT_MS = 5000
+
+type ExecFileLike = (file: string, args: string[], opts: Record<string, unknown>, cb: (err: Error | null, stdout: string) => void) => unknown
+
+/** How the real process table is read: PowerShell's CIM query from the
+ *  absolute System32 path on Windows; `/proc` on Linux (no `ps` needed);
+ *  `ps -ww` (never cut at a terminal width) from an absolute path elsewhere,
+ *  with no inherited COLUMNS. Null when none is available (the kill then
+ *  falls back to the root). The ports are for the test. */
+export function makeCodexProcessLister(
+  platform: NodeJS.Platform,
+  systemRoot: string | undefined,
+  ports: { execFile?: ExecFileLike; readProc?: () => CodexProcessEntry[]; exists?: (f: string) => boolean } = {},
+): (() => Promise<CodexProcessEntry[]>) | null {
+  const exec = ports.execFile ?? (execFile as unknown as ExecFileLike)
+  const exists = ports.exists ?? ((f: string) => { try { return fs.statSync(f).isFile() } catch { return false } })
+  const read = (file: string, args: string[], opts: Record<string, unknown>, parse: (t: string) => CodexProcessEntry[]) => () =>
+    new Promise<CodexProcessEntry[]>((resolve, reject) => {
+      exec(file, args, { encoding: 'utf8', timeout: CODEX_PROCESS_TABLE_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...opts }, (err, stdout) => {
+        if (err) reject(err)
+        else resolve(parse(String(stdout)))
+      })
+    })
+  if (platform === 'win32') {
+    if (!systemRoot || !isWindowsAbsolute(systemRoot)) return null
+    const ps = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    return read(ps, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PROCESS_QUERY], { cwd: systemRoot }, parseWindowsProcessTable)
+  }
+  if (platform === 'linux') {
+    const readProc = ports.readProc ?? (() => {
+      const out: CodexProcessEntry[] = []
+      for (const name of fs.readdirSync('/proc')) {
+        if (!/^\d+$/.test(name)) continue
+        try {
+          const e = parseLinuxStat(fs.readFileSync(`/proc/${name}/stat`, 'utf8'))
+          if (e) out.push(e)
+        } catch { /* exited meanwhile */ }
+      }
+      return out
+    })
+    return async () => readProc()
+  }
+  const ps = ['/bin/ps', '/usr/bin/ps'].find(exists)
+  return ps ? read(ps, ['-ww', '-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'comm='], { cwd: '/', env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' } }, parsePosixProcessTable) : null
+}
+
+/** Exported for the test: the kill with its guards. It reads the process
+ *  table, kills the run's own chain (codexChainPids) and resolves when that is
+ *  done. When the table cannot be read it kills the root alone -- never the
+ *  whole tree, which may hold the user's browser. */
+export function makeCodexKillTree(
+  platform: NodeJS.Platform,
+  spawn: CodexRunDeps['spawn'],
+  systemRoot: string | undefined,
+  listProcesses: (() => Promise<CodexProcessEntry[]>) | null,
+): (child: ChildProcess) => Promise<void> {
+  const running = (child: ChildProcess) => !!child.pid && child.exitCode === null && child.signalCode === null
+  const killRoot = (child: ChildProcess) => { try { if (running(child)) child.kill('SIGKILL') } catch { /* already gone */ } }
+  return async (child) => {
     const pid = child.pid
     // Only a process that is still running: once the root has exited its pid
-    // can be reused, and a tree kill by pid would hit a stranger.
-    if (!pid || child.exitCode !== null || child.signalCode !== null) return
-    try {
-      if (platform === 'win32') {
-        // taskkill only from an absolute Windows root, run there, bounded; no
-        // search of the current directory or PATH for a bare name.
-        if (!systemRoot || !isWindowsAbsolute(systemRoot)) { child.kill(); return }
-        const taskkill = path.win32.join(systemRoot, 'System32', 'taskkill.exe')
-        const k = spawn(taskkill, ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, cwd: systemRoot, timeout: 5000 })
-        k.on('error', () => { try { child.kill() } catch { /* gone */ } })
-      } else {
-        // The child leads its own process group (detached below).
-        process.kill(-pid, 'SIGKILL')
-      }
-    } catch {
-      try { child.kill('SIGKILL') } catch { /* already gone */ }
+    // can be reused, and a kill by pid would hit a stranger.
+    if (!pid || !running(child)) return
+    let pids = [pid]
+    if (listProcesses) {
+      try { pids = codexChainPids(pid, await listProcesses()) } catch { pids = [pid] }
+    }
+    // The table took time to read. A root that exited meanwhile means its
+    // chain has almost certainly exited before it (cmd.exe waits for node,
+    // node for codex), so those pids may already belong to strangers: kill
+    // nothing by pid.
+    if (!running(child)) return
+    if (platform === 'win32') {
+      // taskkill only from an absolute Windows root, run there, bounded; no
+      // search of the current directory or PATH for a bare name. No /T: the
+      // chain is exactly the pids named.
+      if (!systemRoot || !isWindowsAbsolute(systemRoot)) { killRoot(child); return }
+      const taskkill = path.win32.join(systemRoot, 'System32', 'taskkill.exe')
+      await new Promise<void>((resolve) => {
+        let k: ChildProcess
+        try {
+          k = spawn(taskkill, ['/F', ...pids.flatMap((p) => ['/PID', String(p)])], { stdio: 'ignore', windowsHide: true, cwd: systemRoot, timeout: CODEX_TASKKILL_TIMEOUT_MS })
+        } catch {
+          killRoot(child)
+          resolve()
+          return
+        }
+        k.on('error', () => { killRoot(child); resolve() })
+        // Non-zero: some pid was not killed (perhaps already gone) -- make sure of the root.
+        k.on('exit', (code) => { if (code !== 0) killRoot(child); resolve() })
+      })
+    } else {
+      for (const p of pids) { try { process.kill(p, 'SIGKILL') } catch { /* already gone */ } }
     }
   }
 }
 
 export function defaultCodexRunDeps(platform: NodeJS.Platform = process.platform, systemRoot = process.env.SystemRoot): CodexRunDeps {
-  return { spawn: nodeSpawn, platform, killTree: makeCodexKillTree(platform, nodeSpawn, systemRoot) }
+  return { spawn: nodeSpawn, platform, killTree: makeCodexKillTree(platform, nodeSpawn, systemRoot, makeCodexProcessLister(platform, systemRoot)) }
 }
 
 const MAX_TIMEOUT_MS = 2_147_483_647
+/** How long a stopped run waits for its kill to land before it settles
+ *  anyway: longer than reading the process table plus taskkill, so a slow
+ *  table does not settle a run whose kill has not been issued yet. */
+export const CODEX_KILL_SETTLE_MS = 15_000
 
 /** Run one prepared command. Never rejects.
  *
- *  Settles on `close`; at the deadline or on cancel it settles at once. A
- *  process tree is killed only while its root is still running -- if the root
- *  has exited but a descendant holds its output open (a browser a sign-in
- *  opened), the run settles with the root's exit code and the streams are
- *  destroyed instead. Nothing is reported after the run has settled. */
+ *  Settles on `close`. At the deadline or on cancel it kills the run's own
+ *  chain and settles once the kill has landed and the root has exited, or
+ *  after CODEX_KILL_SETTLE_MS, whichever is first. Nothing is killed once the
+ *  root has exited -- if a descendant holds its output open (a browser a
+ *  sign-in opened), the run settles with the root's exit code and the streams
+ *  are destroyed instead. Nothing is reported once a stop has begun. */
 export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: CodexRunDeps = defaultCodexRunDeps()): Promise<CodexRunResult> {
   const cap = opts.maxOutput ?? 64 * 1024
   return new Promise((resolve) => {
@@ -155,6 +355,7 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     let timer: ReturnType<typeof setTimeout> | null = null
     let child: ChildProcess | null = null
     let exited: number | null | undefined
+    let stopping = false
     const finish = (r: Omit<CodexRunResult, 'stdout' | 'stderr' | 'truncated'>) => {
       if (settled) return
       settled = true
@@ -168,16 +369,29 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       try { child?.stdin?.destroy() } catch { /* already closed */ }
     }
     const stop = (why: 'deadline' | 'cancel') => {
-      if (settled || !child) return
+      if (settled || stopping || !child) return
       if (exited !== undefined) {
         // The root is gone; only its output pipes remain. Do not kill by pid.
         release()
-        finish({ exitCode: exited, timedOut: false })
+        finish({ exitCode: exited, timedOut: false, stopped: why === 'deadline' ? 'deadline' : 'cancel' })
         return
       }
-      try { deps.killTree(child) } catch { /* best effort */ }
-      release()
-      finish(why === 'deadline' ? { exitCode: null, timedOut: true } : { exitCode: null, timedOut: false, spawnError: 'cancelled' })
+      stopping = true
+      if (timer) { clearTimeout(timer); timer = null }
+      const c = child
+      const outcome = why === 'deadline'
+        ? { exitCode: null, timedOut: true, stopped: 'deadline' as const }
+        : { exitCode: null, timedOut: false, spawnError: 'cancelled', stopped: 'cancel' as const }
+      let killed: Promise<unknown>
+      try { killed = Promise.resolve(deps.killTree(c)) } catch { killed = Promise.resolve() }
+      const rootGone = new Promise<void>((res) => { if (exited !== undefined) res(); else c.once('exit', () => res()) })
+      let bound: ReturnType<typeof setTimeout> | null = null
+      const bounded = new Promise<void>((res) => { bound = setTimeout(res, CODEX_KILL_SETTLE_MS) })
+      void Promise.race([Promise.all([killed.catch(() => undefined), rootGone]), bounded]).then(() => {
+        if (bound) clearTimeout(bound)
+        release()
+        finish(outcome)
+      })
     }
     const onAbort = () => stop('cancel')
 
@@ -209,7 +423,7 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       return
     }
     const collect = (stream: 'stdout' | 'stderr') => (chunk: Buffer | string) => {
-      if (settled) return
+      if (settled || stopping) return
       const text = chunk.toString()
       const have = stream === 'stdout' ? stdout.length : stderr.length
       const room = Math.max(0, cap - have)
@@ -224,8 +438,10 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     child.stdout?.on('data', collect('stdout'))
     child.stderr?.on('data', collect('stderr'))
     child.on('exit', (code) => { exited = typeof code === 'number' ? code : null })
-    child.on('error', (e) => finish({ exitCode: null, timedOut: false, spawnError: e.message }))
-    child.on('close', (code) => finish({ exitCode: typeof code === 'number' ? code : null, timedOut: false }))
+    // While a stop is under way it alone settles the run: a close or an error
+    // caused by the kill is not the run's own result.
+    child.on('error', (e) => { if (!stopping) finish({ exitCode: null, timedOut: false, spawnError: e.message }) })
+    child.on('close', (code) => { if (!stopping) finish({ exitCode: typeof code === 'number' ? code : null, timedOut: false }) })
     timer = setTimeout(() => stop('deadline'), opts.timeoutMs)
     opts.signal?.addEventListener('abort', onAbort, { once: true })
     if (opts.stdin !== undefined && child.stdin) {

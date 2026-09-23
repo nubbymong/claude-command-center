@@ -226,6 +226,29 @@ obligations fall on later slices:
 - **Auth slice (from 3b):** the CLI loads `CODEX_HOME/.env`, which can carry
   `OPENAI_API_KEY` past the env allowlist; a managed realm is app-created
   and must stay free of one (refuse or warn on a `.env` at sign-in).
+- **Realm creation (from slice 3c's pass):** the auth operations require a
+  realm home that EXISTS and equals its own `realpath`, and lock it by file
+  identity. Slice 3d must therefore create the folder before any sign-in and
+  canonicalise `roots.resourcesDir` the same way (`realpathSync.native`): on
+  a mapped network drive or a SUBST drive realpath returns the UNC or the
+  underlying path, and an uncanonicalised root would make every realm
+  `realm-unavailable`.
+- **Accounts service and IPC (from slice 3c's pass):** the IPC schema must
+  require the secret handle to be a string (a non-string handle is refused
+  but cannot be consumed); the external-realm drift check before a logout or
+  launch (design 5.5) uses the `credential` the status operation now reports;
+  act on `AuthOperationResult.code`, never on message text; a failed or
+  cancelled sign-in reports the realm's observed `state`, and `signed-in`
+  there means the user finished anyway.
+- **Known, accepted (slice 3c):** a stopped run kills its own chain by pid
+  from a process-table snapshot, so a chain process that exits in the
+  moment between the snapshot and the kill could in principle have its pid
+  reused (a root that exits in that window is never killed by pid); when the
+  table cannot be read at all (PowerShell blocked, no `/proc`/`ps`), only the
+  root is killed and a cancelled sign-in may still complete -- the result
+  then reports the observed state. A launcher other than node, bun or deno
+  between the root and the codex binary is not recognised as part of the
+  chain.
 - **Known, accepted:** deleting the very last Claude profile does not archive
   its account (indistinguishable from a failed read); emoji ZWJ sequences
   store with spaces (stripSpoofableText); reconcile is quadratic in profile

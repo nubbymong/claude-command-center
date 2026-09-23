@@ -19,7 +19,7 @@
 import type { DiscoveryResult } from '../core'
 import type { Compatibility } from '../../../shared/providers'
 import { parseCodexVersion, classifyCodexVersion } from './cli-contract'
-import { codexCommandLine } from './cli-runner'
+import { codexCommandLine, codexShellEnv } from './cli-runner'
 import type { CodexCommand, CodexRunResult } from './cli-runner'
 import { codexCliEnv } from './cli-env'
 
@@ -89,7 +89,7 @@ export async function discoverCodex(deps: CodexDiscoveryDeps): Promise<CodexDisc
   }
   if (!st.isFile) return { ...base, state: 'invalid', detail: 'the Codex CLI on PATH is not a file' }
   const identity = identityOf(canonical, st)
-  const cmd = codexCommandLine(canonical, 'version', deps.platform, { ComSpec: deps.env.ComSpec, SystemRoot: deps.env.SystemRoot })
+  const cmd = codexCommandLine(canonical, 'version', deps.platform, codexShellEnv(deps.env, deps.platform))
   if ('refused' in cmd) return { ...base, state: 'invalid', executable: canonical, identity, detail: cmd.refused }
   let run: CodexRunResult
   let scratch: { home: string; dispose(): void } | null = null

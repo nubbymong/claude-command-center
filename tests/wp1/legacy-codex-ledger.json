@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "b1463abd0d4ae4ae30e58fee88465a0d895e1ab0925360571e1ee07d03058312",
-  "manifestHead": "e837076f8b691114fd1020217d27ee8b7b09213e",
+  "manifestPathDigest": "576929b39c3c37d62b83b98e3bd186fd4165bbe350be13648f10405399d91345",
+  "manifestHead": "b9a1b5fcec4310b4338464828a5e71895012eb0b",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -573,6 +573,19 @@
       "note": ""
     },
     {
+      "path": "src/main/providers/codex/auth-operations.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 Codex sign-in, status and logout operations: the realm record looked up by an injected port and its home derived by the package, which must exist at its canonical path and is locked by file identity; the proven executable re-verified before every run; sign-in refused over an existing sign-in or into an external realm, one browser sign-in at a time, a managed .env refused; the API key taken single-use, validated and written only to stdin; machine-readable result codes; output redacted per stream; covered by tests/wp1/codex-auth-adapter.test.ts and tests/wp1/fake-cli.test.ts (WP1.20, WP1.22, WP1.49, WP1.62)",
+      "note": "created by WP2; replaces the legacy codexLoginWithApiKey/codexLoginChatgpt/codexLoginDeviceAuth/codexLogout/codexTestConnection in auth.ts once the accounts service and renderer slices retire those callers"
+    },
+    {
       "path": "src/main/providers/codex/auth.ts",
       "predicates": [
         "P01",
@@ -622,7 +635,7 @@
       ],
       "category": "AUTH",
       "disposition": "added",
-      "evidence": "new WP2 Codex CLI runner: constant argv per operation, allowlisted env, Windows shim through absolute cmd.exe, tree kill; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.62)",
+      "evidence": "new WP2 Codex CLI runner: constant argv per operation, allowlisted env, Windows shim through absolute cmd.exe, a kill limited to the run's own cmd/node/codex chain that settles once it lands; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.62)",
       "note": "created by WP2; replaces the legacy runCodexProcess/runCodexStreaming in auth.ts once the auth slice lands"
     },
     {

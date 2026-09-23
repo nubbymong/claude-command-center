@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-23T15:48:48.570Z",
-  "head": "e837076f8b691114fd1020217d27ee8b7b09213e",
-  "tree": "1e161f25f656ecab6a195feba9480dc13ec91786",
+  "generatedAt": "2026-09-23T17:47:44.291Z",
+  "head": "b9a1b5fcec4310b4338464828a5e71895012eb0b",
+  "tree": "8e5e3b8d0cc78eea99bf1a77645943ebaf1caf38",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2183,
-  "excludedFileCount": 353,
-  "scannedFileCount": 1830,
+  "trackedFileCount": 2185,
+  "excludedFileCount": 354,
+  "scannedFileCount": 1831,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 300,
-  "pathDigest": "b1463abd0d4ae4ae30e58fee88465a0d895e1ab0925360571e1ee07d03058312",
+  "matchedPathCount": 301,
+  "pathDigest": "576929b39c3c37d62b83b98e3bd186fd4165bbe350be13648f10405399d91345",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -175,7 +175,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 48
+      "lineCount": 49
     },
     {
       "path": "package.json",
@@ -520,6 +520,16 @@
       "lineCount": 1
     },
     {
+      "path": "src/main/providers/codex/auth-operations.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P14"
+      ],
+      "lineCount": 64
+    },
+    {
       "path": "src/main/providers/codex/auth.ts",
       "predicates": [
         "P01",
@@ -554,7 +564,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 26
+      "lineCount": 59
     },
     {
       "path": "src/main/providers/codex/discovery.ts",
@@ -574,7 +584,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 93
+      "lineCount": 113
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",

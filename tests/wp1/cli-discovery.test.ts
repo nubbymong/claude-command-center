@@ -9,8 +9,9 @@ import {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
 } from '../../src/main/providers/codex'
 import { EventEmitter } from 'node:events'
-import { codexCommandLine, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath } from '../../src/main/providers/codex'
-import type { CodexDiscoveryDeps, CodexRunResult, CodexRunDeps } from '../../src/main/providers/codex'
+import { codexCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath } from '../../src/main/providers/codex'
+import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
+import type { CodexDiscoveryDeps, CodexRunResult, CodexRunDeps, CodexProcessEntry } from '../../src/main/providers/codex'
 
 describe('codex --version', () => {
   it('reads the semver from the CLI banner, and nothing else', () => {
@@ -103,7 +104,8 @@ function fakeDeps() {
       spawned.push({ file, args, opts, child })
       return child
     }) as never,
-    killTree: (c) => { killed.push(c as unknown as FakeChild) },
+    // The kill lands: the root exits.
+    killTree: (c) => { killed.push(c as unknown as FakeChild); queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) },
   }
   return { deps, spawned, killed }
 }
@@ -187,7 +189,8 @@ describe('the runner: settling, the tree kill and the environment (adversarial r
       spawned[0].child.emit('exit', 0)
       await vi.advanceTimersByTimeAsync(60)
       expect(killed).toEqual([])
-      expect(await p).toMatchObject({ exitCode: 0, timedOut: false })
+      // ...marked as stopped: a descendant holding the pipe may have been cut off mid-line.
+      expect(await p).toMatchObject({ exitCode: 0, timedOut: false, stopped: 'deadline' })
     } finally { vi.useRealTimers() }
   })
 
@@ -219,21 +222,63 @@ describe('the runner: settling, the tree kill and the environment (adversarial r
     expect({ ...env }).toEqual({ PATH: 'p' })
   })
 
-  it('taskkill runs only from an absolute Windows root, there, bounded; otherwise the root alone is killed', () => {
-    const calls: Array<{ file: string; opts: Record<string, unknown> }> = []
-    const spawn = ((file: string, _a: readonly string[], opts: Record<string, unknown>) => { calls.push({ file, opts }); return new EventEmitter() }) as never
+  it('taskkill runs only from an absolute Windows root, there, bounded; otherwise the root alone is killed', async () => {
+    const calls: Array<{ file: string; args: readonly string[]; opts: Record<string, unknown> }> = []
+    const spawn = ((file: string, args: readonly string[], opts: Record<string, unknown>) => {
+      calls.push({ file, args, opts })
+      const k = new EventEmitter()
+      queueMicrotask(() => k.emit('exit', 0))
+      return k
+    }) as never
     const child = () => Object.assign(new EventEmitter(), { pid: 7, exitCode: null, signalCode: null, kill: vi.fn() })
-    makeCodexKillTree('win32', spawn, 'C:\\Windows')(child() as never)
-    expect(calls[0]).toMatchObject({ file: 'C:\\Windows\\System32\\taskkill.exe', opts: { cwd: 'C:\\Windows', timeout: 5000 } })
+    await makeCodexKillTree('win32', spawn, 'C:\\Windows', null)(child() as never)
+    expect(calls[0]).toMatchObject({ file: 'C:\\Windows\\System32\\taskkill.exe', args: ['/F', '/PID', '7'], opts: { cwd: 'C:\\Windows', timeout: 5000 } })
     for (const root of [undefined, '', 'Windows', '\\Windows']) {
       const c = child()
-      makeCodexKillTree('win32', spawn, root)(c as never)
+      await makeCodexKillTree('win32', spawn, root, null)(c as never)
       expect(c.kill, String(root)).toHaveBeenCalled()
     }
     expect(calls).toHaveLength(1)
     const exited = Object.assign(child(), { exitCode: 0 })
-    makeCodexKillTree('win32', spawn, 'C:\\Windows')(exited as never)
+    await makeCodexKillTree('win32', spawn, 'C:\\Windows', null)(exited as never)
     expect(calls).toHaveLength(1)
+  })
+
+  it('a stopped run settles only once its root has exited -- a close the kill causes is not its result -- and never reports output meanwhile', async () => {
+    vi.useFakeTimers()
+    try {
+      const seen: string[] = []
+      const killed: FakeChild[] = []
+      const { deps, spawned } = fakeDeps()
+      const slow: CodexRunDeps = { ...deps, killTree: (c) => { killed.push(c as unknown as FakeChild) } }
+      let settled = false
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 50, onOutput: (t) => seen.push(t) }, slow).then((r) => { settled = true; return r })
+      await vi.advanceTimersByTimeAsync(60)
+      expect(killed).toHaveLength(1)
+      spawned[0].child.stdout.emit('data', 'late output\n')
+      spawned[0].child.emit('close', 1)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(settled, 'settled before the root exited').toBe(false)
+      spawned[0].child.emit('exit', null, 'SIGKILL')
+      expect(await p).toMatchObject({ exitCode: null, timedOut: true })
+      expect(seen).toEqual([])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('a root that never exits still settles, after the bound', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps } = fakeDeps()
+      const stuck: CodexRunDeps = { ...deps, killTree: () => new Promise(() => {}) }
+      let settled = false
+      const ac = new AbortController()
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 60_000, signal: ac.signal }, stuck).then((r) => { settled = true; return r })
+      ac.abort()
+      await vi.advanceTimersByTimeAsync(CODEX_KILL_SETTLE_MS - 10)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(20)
+      expect(await p).toMatchObject({ spawnError: 'cancelled' })
+    } finally { vi.useRealTimers() }
   })
 
   it('refuses Windows executable spellings that are not anchored, and names ending in a dot or a space', () => {
@@ -241,6 +286,146 @@ describe('the runner: settling, the tree kill and the environment (adversarial r
       expect(codexCommandLine(p, 'status', 'win32', { SystemRoot: 'C:\\Windows' }), p).toHaveProperty('refused')
     }
     expect(codexCommandLine('\\\\srv\\share\\npm\\codex.exe', 'status', 'win32', {})).toMatchObject({ file: '\\\\srv\\share\\npm\\codex.exe' })
+  })
+})
+
+describe('the kill reaches only the run\'s own chain (a browser a sign-in opened is the user\'s)', () => {
+  // cmd.exe (root 10) -> node (11) -> codex (12) -> chrome (13) -> chrome renderer (14)
+  //                                              -> codex helper (15)
+  const table: CodexProcessEntry[] = [
+    { pid: 10, ppid: 1, name: 'cmd.exe', created: 100 },
+    { pid: 11, ppid: 10, name: 'node.exe', created: 101 },
+    { pid: 12, ppid: 11, name: 'codex-x86_64-pc-windows-msvc.exe', created: 102 },
+    { pid: 13, ppid: 12, name: 'chrome.exe', created: 103 },
+    { pid: 14, ppid: 13, name: 'node.exe', created: 104 },
+    { pid: 15, ppid: 12, name: 'codex-command-runner.exe', created: 105 },
+    { pid: 16, ppid: 10, name: 'conhost.exe', created: 101 },
+    // A stale parent id: this node started long before pid 10 was reused for our cmd.exe.
+    { pid: 17, ppid: 10, name: 'node.exe', created: 5 },
+    { pid: 18, ppid: 99, name: 'codex.exe', created: 106 },
+  ]
+
+  it('takes the root and, below it, only cmd/node/codex images, stopping at anything else; leaves first', () => {
+    const pids = codexChainPids(10, table)
+    expect(new Set(pids)).toEqual(new Set([10, 11, 12, 15]))
+    expect(pids[pids.length - 1]).toBe(10)
+    expect(pids.indexOf(12)).toBeLessThan(pids.indexOf(11))
+  })
+
+  it('POSIX names, macOS image paths, a cycle and malformed rows are handled', () => {
+    const posix: CodexProcessEntry[] = [
+      { pid: 20, ppid: 1, name: 'node' },
+      { pid: 21, ppid: 20, name: '/opt/homebrew/lib/node_modules/@openai/codex/vendor/aarch64-apple-darwin/codex/codex' },
+      { pid: 22, ppid: 21, name: 'xdg-open' },
+      { pid: 23, ppid: 22, name: 'firefox' },
+      { pid: 20, ppid: 21, name: 'node' },
+      { pid: NaN, ppid: 20, name: 'node' },
+      { pid: 24, ppid: 24, name: 'codex' },
+      null as never,
+    ]
+    expect(new Set(codexChainPids(20, posix))).toEqual(new Set([20, 21]))
+    expect(codexChainPids(5, [])).toEqual([5])
+  })
+
+  it('parses the Windows CIM rows and the ps rows', () => {
+    expect(parseWindowsProcessTable('10,1,133000000000000000,cmd.exe\r\n11,10,0,node.exe\r\nbad row\r\n12,11,133000000000010000,Program, With Comma.exe\n')).toEqual([
+      { pid: 10, ppid: 1, name: 'cmd.exe', created: 13300000000000 },
+      { pid: 11, ppid: 10, name: 'node.exe' },
+      { pid: 12, ppid: 11, name: 'Program, With Comma.exe', created: 13300000000001 },
+    ])
+    expect(parsePosixProcessTable('   20     1 node\n   21    20 /Applications/My App.app/Contents/MacOS/codex  \nnonsense\n')).toEqual([
+      { pid: 20, ppid: 1, name: 'node' },
+      { pid: 21, ppid: 20, name: '/Applications/My App.app/Contents/MacOS/codex' },
+    ])
+  })
+
+  const child = (pid = 10) => Object.assign(new EventEmitter(), { pid, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
+  const taskkills = (exitCode = 0) => {
+    const calls: Array<readonly string[]> = []
+    const spawn = ((_f: string, args: readonly string[]) => { calls.push(args); const k = new EventEmitter(); queueMicrotask(() => k.emit('exit', exitCode)); return k }) as never
+    return { calls, spawn }
+  }
+
+  it('Windows: one taskkill naming exactly the chain, no /T', async () => {
+    const { calls, spawn } = taskkills()
+    await makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => table)(child() as never)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).not.toContain('/T')
+    expect(calls[0][0]).toBe('/F')
+    const named = calls[0].filter((_a, i) => calls[0][i - 1] === '/PID').map(Number)
+    expect(new Set(named)).toEqual(new Set([10, 11, 12, 15]))
+  })
+
+  it('an unreadable process table kills the root alone, never the whole tree', async () => {
+    const { calls, spawn } = taskkills()
+    await makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { throw new Error('no powershell') })(child() as never)
+    expect(calls).toEqual([['/F', '/PID', '10']])
+  })
+
+  it('a taskkill that fails makes sure of the root; a root that exited while the table was read is not killed by pid', async () => {
+    const failing = taskkills(128)
+    const c = child()
+    await makeCodexKillTree('win32', failing.spawn, 'C:\\Windows', async () => table)(c as never)
+    expect(c.kill).toHaveBeenCalled()
+    const late = taskkills()
+    const d = child()
+    await makeCodexKillTree('win32', late.spawn, 'C:\\Windows', async () => { d.exitCode = 0; return table })(d as never)
+    // Its chain exited before it (cmd.exe waits for node, node for codex): those pids may be strangers' now.
+    expect(late.calls).toEqual([])
+  })
+
+  it('launchers a global install may use (bun, deno) are part of the chain; a child with no start time under a parent with one is not', () => {
+    expect(new Set(codexChainPids(30, [
+      { pid: 30, ppid: 1, name: 'cmd.exe', created: 10 },
+      { pid: 31, ppid: 30, name: 'bun.exe', created: 11 },
+      { pid: 32, ppid: 31, name: 'codex.exe', created: 12 },
+      { pid: 33, ppid: 32, name: 'chrome.exe', created: 13 },
+      { pid: 34, ppid: 30, name: 'node.exe' },
+    ]))).toEqual(new Set([30, 31, 32]))
+    expect(new Set(codexChainPids(40, [{ pid: 40, ppid: 1, name: 'deno' }, { pid: 41, ppid: 40, name: 'codex' }]))).toEqual(new Set([40, 41]))
+  })
+
+  it('the settle bound outlasts reading the table plus taskkill', () => {
+    expect(CODEX_KILL_SETTLE_MS).toBeGreaterThan(CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS)
+  })
+
+  it('reads the table: PowerShell -Command (never an encoded command) from System32 on Windows, /proc on Linux, ps -ww with no inherited width elsewhere', async () => {
+    const calls: Array<{ file: string; args: string[]; opts: Record<string, unknown> }> = []
+    const execFile = (file: string, args: string[], opts: Record<string, unknown>, cb: (e: Error | null, out: string) => void) => { calls.push({ file, args, opts }); cb(null, '10,1,0,cmd.exe\n') }
+    expect(await makeCodexProcessLister('win32', 'C:\\Windows', { execFile })!()).toEqual([{ pid: 10, ppid: 1, name: 'cmd.exe' }])
+    expect(calls[0].file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    expect(calls[0].args).toEqual(['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PROCESS_QUERY])
+    expect(WINDOWS_PROCESS_QUERY).not.toContain('"')
+    expect(calls[0].opts).toMatchObject({ cwd: 'C:\\Windows', timeout: CODEX_PROCESS_TABLE_TIMEOUT_MS })
+    expect(makeCodexProcessLister('win32', 'Windows', { execFile })).toBeNull()
+    const mac = makeCodexProcessLister('darwin', undefined, { execFile: (f, a, o, cb) => { calls.push({ file: f, args: a, opts: o }); cb(null, ' 5 1 /usr/bin/x\n') }, exists: (f) => f === '/bin/ps' })!
+    expect(await mac()).toEqual([{ pid: 5, ppid: 1, name: '/usr/bin/x' }])
+    expect(calls[1].file).toBe('/bin/ps')
+    expect(calls[1].args[0]).toBe('-ww')
+    expect(Object.keys(calls[1].opts.env as object).sort()).toEqual(['LC_ALL', 'PATH'])
+    expect(makeCodexProcessLister('darwin', undefined, { execFile, exists: () => false })).toBeNull()
+    const linux = makeCodexProcessLister('linux', undefined, { readProc: () => [{ pid: 7, ppid: 1, name: 'node' }] })!
+    expect(await linux()).toEqual([{ pid: 7, ppid: 1, name: 'node' }])
+  })
+
+  it('parses /proc stat lines, a name with spaces and parentheses included', () => {
+    const tail = 'S 100 7 7 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 424242 1 2 3'
+    expect(parseLinuxStat(`123 (codex) ${tail}`)).toEqual({ pid: 123, ppid: 100, name: 'codex', created: 424242 })
+    expect(parseLinuxStat(`124 (a) (b c) ${tail}`)).toMatchObject({ pid: 124, ppid: 100, name: 'a) (b c' })
+    expect(parseLinuxStat('garbage')).toBeNull()
+    expect(parseLinuxStat('x (y) S z')).toBeNull()
+  })
+
+  it('POSIX: each chain pid is killed on its own -- not the process group, which may hold a browser', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      await makeCodexKillTree('linux', (() => { throw new Error('no spawn') }) as never, undefined, async () => [
+        { pid: 20, ppid: 1, name: 'node' }, { pid: 21, ppid: 20, name: 'codex' }, { pid: 22, ppid: 21, name: 'firefox' },
+      ])(child(20) as never)
+      const targets = killSpy.mock.calls.map((a) => a[0])
+      expect(new Set(targets)).toEqual(new Set([20, 21]))
+      expect(targets.every((t) => Number(t) > 0)).toBe(true)
+    } finally { killSpy.mockRestore() }
   })
 })
 
@@ -301,6 +486,28 @@ describe('discovery', () => {
     expect(await discoverCodex(discoveryDeps({}, { stdout: '', stderr: 'codex-cli 0.155.1' }).deps)).toMatchObject({ state: 'invalid' })
     expect(['supported', 'too-new'].map((c) => codexCompatibilityAllowsUse(c as never))).toEqual([true, true])
     expect(['too-old', 'unknown', 'unsupported'].map((c) => codexCompatibilityAllowsUse(c as never))).toEqual([false, false, false])
+  })
+
+  it('finds cmd.exe however the environment copy spells ComSpec and SystemRoot (Windows names are case-insensitive)', async () => {
+    // A plain-object copy of process.env keeps the parent's spelling; a CI
+    // runner hands over SYSTEMROOT, and discovery read `env.SystemRoot`.
+    const upper = discoveryDeps({ env: { PATH: 'C:\\npm', SYSTEMROOT: 'C:\\Windows' } })
+    expect(await discoverCodex(upper.deps)).toMatchObject({ state: 'found' })
+    expect(upper.runs[0].cmd).toMatchObject({ file: 'C:\\Windows\\System32\\cmd.exe' })
+    const spec = discoveryDeps({ env: { PATH: 'C:\\npm', COMSPEC: 'D:\\Win\\System32\\cmd.exe', systemroot: 'C:\\Windows' } })
+    await discoverCodex(spec.deps)
+    expect(spec.runs[0].cmd).toMatchObject({ file: 'D:\\Win\\System32\\cmd.exe' })
+  })
+
+  it('reads ComSpec and SystemRoot case-insensitively on Windows only, ASCII names only, and refuses two spellings that disagree', () => {
+    expect(codexShellEnv({ SYSTEMROOT: 'C:\\Windows', comspec: 'C:\\Windows\\System32\\cmd.exe' }, 'win32')).toEqual({ SystemRoot: 'C:\\Windows', ComSpec: 'C:\\Windows\\System32\\cmd.exe' })
+    expect(codexShellEnv({ SystemRoot: 'C:\\Windows', SYSTEMROOT: 'C:\\Windows' }, 'win32')).toEqual({ SystemRoot: 'C:\\Windows' })
+    expect(codexShellEnv({ SystemRoot: 'C:\\Windows', SYSTEMROOT: 'D:\\Elsewhere' }, 'win32')).toEqual({})
+    expect(codexShellEnv({ SystemRoot: '' }, 'win32')).toEqual({})
+    // A long s upper-cases onto an ASCII S: not a name Windows would match.
+    expect(codexShellEnv({ [`${String.fromCharCode(0x17f)}ystemRoot`]: 'D:\\Elsewhere' }, 'win32')).toEqual({})
+    expect(codexShellEnv({ SYSTEMROOT: 'C:\\Windows', SystemRoot: undefined }, 'linux')).toEqual({})
+    expect(codexShellEnv({ SystemRoot: '/x' }, 'linux')).toEqual({ SystemRoot: '/x' })
   })
 
   it('reports missing, unreadable, not-a-file, refused, unstartable and silent CLIs without guessing', async () => {

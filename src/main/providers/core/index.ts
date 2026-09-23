@@ -3,7 +3,7 @@
 export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
   ProviderManagedLaunchOperations,
-  DiscoveryResult, InstallRecipe, RealmRef, AuthOperationResult,
+  DiscoveryResult, InstallRecipe, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthFailureCode, AuthCredentialKind,
 } from './package'
 export {
   registerProvider, getProvider, tryGetProvider,
