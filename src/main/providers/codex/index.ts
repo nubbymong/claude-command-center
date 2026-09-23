@@ -162,6 +162,10 @@ export const codexAmbientAuthVariables: readonly string[] = [
  *  now required -- the ambient list is no longer implicitly settable. */
 export const codexOwnedLaunchVariables: readonly string[] = ['CODEX_HOME']
 
+/** The external default home as an account: its private identity's name
+ *  says nobody has verified who is signed in there (design 5.5). */
+export const CODEX_EXTERNAL_DEFAULT_REALM = Object.freeze({ kind: 'codex-home' as const, identityLabel: 'External Codex sign-in (account unverified)' })
+
 /** The registry's side of a realm, supplied by the composition root: the
  *  record behind an opaque reference, and the resources directory as the app
  *  has it configured. The package canonicalises that directory and the
@@ -187,6 +191,8 @@ export interface CodexPackageDeps {
   authPorts?: Partial<Omit<CodexAuthDeps, 'proven' | 'lookupRealm' | 'takeSecret' | 'locks'>>
   /** Replaces the real folder filesystem, for a test. */
   realmFs?: CodexRealmFsPort
+  /** Replaces the inherited CODEX_HOME and the home directory, for a test. */
+  hostHome?: { env: Readonly<Record<string, string | undefined>>; homeDir: string }
 }
 
 /** The CODEX_HOME the app inherited, in every spelling, captured once when
@@ -214,10 +220,10 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
   // One lock set for sign-in, sign-out and folder removal.
   const locks = createCodexRealmLocks()
   const source = deps.realms
-  const inherited = inheritedCodexHome(process.env)
+  const inherited = deps.hostHome ? inheritedCodexHome(deps.hostHome.env as NodeJS.ProcessEnv) : inheritedCodexHome(process.env)
   let homeDir = ''
   // No home at all (POSIX without HOME or a passwd entry): no ~/.codex.
-  try { homeDir = os.homedir() } catch { homeDir = '' }
+  try { homeDir = deps.hostHome ? deps.hostHome.homeDir : os.homedir() } catch { homeDir = '' }
   const realmFs = source ? (deps.realmFs ?? realRealmFsPort(process.platform, (dir) => source.mkdirSecure(dir))) : null
   /** The registry's record with canonical roots, resolved afresh each time. */
   const lookupRealm = async (ref: RealmRef): Promise<CodexFolderLookup> => {
@@ -244,6 +250,9 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     ...(source && realmFs ? {
       auth: createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven }),
       realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks }),
+      // The user's own ~/.codex (or inherited CODEX_HOME), adopted once on
+      // upgrade when signed in: realm-only, never vouched for (design 6.3).
+      externalDefaultRealm: CODEX_EXTERNAL_DEFAULT_REALM,
     } : {}),
   }
 }

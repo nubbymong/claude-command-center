@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-23T21:01:15.774Z",
-  "head": "60d967550f8a092acf8ac24f3d37268ade738ecd",
-  "tree": "8b5f8d194118502dc3579a3ed92b927351014f9f",
+  "generatedAt": "2026-09-23T21:31:40.448Z",
+  "head": "065d23d2f8152fdb99ad6bcc45071d4f21317295",
+  "tree": "5e8a6206a98d7c97a039b8a6aa8d2852ba12018c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2188,
-  "excludedFileCount": 356,
-  "scannedFileCount": 1832,
+  "trackedFileCount": 2190,
+  "excludedFileCount": 357,
+  "scannedFileCount": 1833,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 302,
-  "pathDigest": "ae18ac21028348caa47c05eebc62b881fd422d21a8646ed3a87e74091092b756",
+  "matchedPathCount": 303,
+  "pathDigest": "7a3591daf825ae97ad6522d2660149d39bad538ee1071ab1b10565c9fc009da4",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -175,7 +175,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 49
+      "lineCount": 56
     },
     {
       "path": "package.json",
@@ -584,7 +584,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 137
+      "lineCount": 143
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -693,12 +693,20 @@
       "lineCount": 3
     },
     {
+      "path": "src/main/providers/core/external-default-migration.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "lineCount": 2
+    },
+    {
       "path": "src/main/providers/core/package.ts",
       "predicates": [
         "P04",
         "P14"
       ],
-      "lineCount": 3
+      "lineCount": 5
     },
     {
       "path": "src/main/providers/host-color-scheme.ts",

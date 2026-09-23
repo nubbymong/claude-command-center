@@ -26,7 +26,10 @@ import type {
 /** Bump on ANY new field, record or list. The parser drops what it does not
  *  know and the next write persists that loss, so an older build must see a
  *  newer document as `newer-schema` (recovery), never as its own. */
-export const REGISTRY_SCHEMA_VERSION = 1 as const
+export const REGISTRY_SCHEMA_VERSION = 2 as const
+/** Schema 1 (the first WP2 builds, never released) had no `migrations`: it
+ *  reads as schema 2 with none recorded yet, and is written back as 2. */
+const UPGRADABLE_SCHEMA_VERSION = 1
 
 /** The last values Conductor and a legacy store agreed on, per field. A
  *  reconcile compares the legacy store and the registry against it to tell
@@ -75,6 +78,29 @@ export interface IdentityConflict {
   detectedAt: number
 }
 
+/** A one-time provider migration that ran to an answer (design 6.3, 6.4: an
+ *  append-only completion marker). Present means it never runs again on its
+ *  own. Only a failed registry write, an undecided preference or a setup of
+ *  the same home in progress leaves none, and the next start runs again. */
+export type ProviderMigrationStep = 'external-default'
+/** Why a migration was not checked, so the Accounts surface can say so and
+ *  offer the explicit action: switched off; no CLI; a CLI this app cannot
+ *  use; the home is missing, or overlaps the app's own; the CLI answered
+ *  but not recognisably; or it could not answer then (timed out, did not
+ *  start, busy, or the CLI was being checked again or had just changed) --
+ *  worth checking again. */
+export type ProviderMigrationSkipReason = 'off' | 'no-cli' | 'cli-unsupported' | 'home-missing' | 'overlap' | 'no-answer' | 'unavailable'
+export interface ProviderMigrationMarker {
+  providerId: ProviderId
+  step: ProviderMigrationStep
+  /** An account was registered; there was nothing to register (signed
+   *  out); or it was not checked and is left to the user's explicit choice. */
+  outcome: 'registered' | 'none' | 'skipped'
+  /** Present exactly when the outcome is `skipped`. */
+  reason?: ProviderMigrationSkipReason
+  at: number
+}
+
 export interface ProviderRegistryDoc {
   schemaVersion: typeof REGISTRY_SCHEMA_VERSION
   identities: ConductorIdentity[]
@@ -84,6 +110,7 @@ export interface ProviderRegistryDoc {
   journals: SetupJournal[]
   legacyLinks: LegacyLink[]
   conflicts: IdentityConflict[]
+  migrations: ProviderMigrationMarker[]
 }
 
 export type RegistryErrorCode =
@@ -98,7 +125,7 @@ const fail = (code: RegistryErrorCode, message: string): RegistryResult => ({ ok
 const done = (doc: ProviderRegistryDoc): RegistryResult => ({ ok: true, doc })
 
 export function emptyRegistry(): ProviderRegistryDoc {
-  return { schemaVersion: REGISTRY_SCHEMA_VERSION, identities: [], groups: [], accounts: [], realms: [], journals: [], legacyLinks: [], conflicts: [] }
+  return { schemaVersion: REGISTRY_SCHEMA_VERSION, identities: [], groups: [], accounts: [], realms: [], journals: [], legacyLinks: [], conflicts: [], migrations: [] }
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +206,11 @@ function isPathRef(v: unknown): v is string {
 
 /** Which provider may own a realm of each kind. */
 const REALM_KIND_PROVIDER: Readonly<Record<RealmKind, ProviderId>> = { 'claude-config-home': 'claude', 'codex-home': 'codex' }
+
+/** A realm kind, and one that provider owns. */
+export function isRealmKindOf(kind: unknown, providerId: ProviderId): kind is RealmKind {
+  return oneOf(REALM_KINDS, kind) && REALM_KIND_PROVIDER[kind as RealmKind] === providerId
+}
 
 export const EXTERNAL_DEFAULT_PATH_REF = 'external-default'
 export const MANAGED_PATH_REF_PREFIX = 'managed:'
@@ -503,6 +535,40 @@ export function abandonAccountSetup(doc: ProviderRegistryDoc, accountId: string)
 }
 
 // ---------------------------------------------------------------------------
+// One-time provider migrations (design 6.3, 6.4)
+// ---------------------------------------------------------------------------
+
+const MIGRATION_STEPS: readonly ProviderMigrationStep[] = ['external-default']
+const MIGRATION_OUTCOMES: readonly ProviderMigrationMarker['outcome'][] = ['registered', 'none', 'skipped']
+const MIGRATION_SKIP_REASONS: readonly ProviderMigrationSkipReason[] = ['off', 'no-cli', 'cli-unsupported', 'home-missing', 'overlap', 'no-answer', 'unavailable']
+
+/** A reason exactly when skipped, and a known one. */
+function migrationReasonFits(outcome: ProviderMigrationMarker['outcome'], reason: unknown): boolean {
+  return outcome === 'skipped' ? oneOf(MIGRATION_SKIP_REASONS, reason) : reason === undefined
+}
+
+export function hasProviderMigration(doc: ProviderRegistryDoc, providerId: ProviderId, step: ProviderMigrationStep): boolean {
+  return doc.migrations.some((m) => m.providerId === providerId && m.step === step)
+}
+
+/** Record that a migration ran to an answer. Append-only: a marker already
+ *  there is kept as it is, never rewritten. */
+export function recordProviderMigration(
+  doc: ProviderRegistryDoc,
+  input: { providerId: ProviderId; step: ProviderMigrationStep; outcome: ProviderMigrationMarker['outcome']; reason?: ProviderMigrationSkipReason },
+  now: number,
+): RegistryResult {
+  if (!isProviderId(input.providerId)) return fail('invalid-value', 'unknown provider')
+  if (!oneOf(MIGRATION_STEPS, input.step)) return fail('invalid-value', 'unknown migration step')
+  if (!oneOf(MIGRATION_OUTCOMES, input.outcome)) return fail('invalid-value', 'unknown migration outcome')
+  if (!migrationReasonFits(input.outcome, input.reason)) return fail('invalid-value', 'a skipped migration needs a known reason, and only a skipped one')
+  if (hasProviderMigration(doc, input.providerId, input.step)) return done(doc)
+  const marker: ProviderMigrationMarker = { providerId: input.providerId, step: input.step, outcome: input.outcome, at: now }
+  if (input.reason !== undefined) marker.reason = input.reason
+  return done({ ...doc, migrations: [...doc.migrations, marker] })
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle and defaults (design 5.3, 11)
 // ---------------------------------------------------------------------------
 
@@ -692,6 +758,7 @@ export function checkRegistryInvariants(doc: ProviderRegistryDoc): string[] {
   dupes('group', doc.groups.map((g) => g.id))
   dupes('account', [...doc.accounts.map((a) => a.id), ...doc.journals.map((j) => j.accountId)])
   dupes('realm', doc.realms.map((r) => r.id))
+  dupes('migration marker', doc.migrations.map((m) => `${m.providerId}:${m.step}`))
 
   const groups = new Set(doc.groups.map((g) => g.id))
   for (const i of doc.identities) if (i.groupId !== undefined && !groups.has(i.groupId)) problems.push(`identity ${i.id} names missing group ${i.groupId}`)
@@ -929,6 +996,17 @@ function parseLegacyLink(o: unknown): Parsed<LegacyLink> {
   })
 }
 
+function parseMigration(o: unknown): Parsed<ProviderMigrationMarker> {
+  if (!isObj(o)) return X('migration marker is not an object')
+  if (!isProviderId(o.providerId)) return X('migration marker names an unknown provider')
+  if (!oneOf(MIGRATION_STEPS, o.step) || !oneOf(MIGRATION_OUTCOMES, o.outcome)) return X('migration marker is invalid')
+  if (!migrationReasonFits(o.outcome, o.reason)) return X('migration marker reason is invalid')
+  if (!isTime(o.at)) return X('migration marker timestamp is invalid')
+  const marker: ProviderMigrationMarker = { providerId: o.providerId, step: o.step, outcome: o.outcome, at: o.at }
+  if (o.reason !== undefined) marker.reason = o.reason as ProviderMigrationSkipReason
+  return P(marker)
+}
+
 function parseConflict(o: unknown): Parsed<IdentityConflict> {
   if (!isObj(o)) return X('conflict is not an object')
   if (!isOpaqueId(o.identityId, 'identity')) return X('conflict identity id is invalid')
@@ -958,7 +1036,7 @@ export function parseRegistryDoc(raw: unknown): RegistryParseResult {
   const v = raw.schemaVersion
   if (typeof v !== 'number' || !Number.isInteger(v)) return { ok: false, reason: 'invalid', problems: ['schemaVersion is missing'] }
   if (v > REGISTRY_SCHEMA_VERSION) return { ok: false, reason: 'newer-schema', problems: [`schema ${v} is newer than ${REGISTRY_SCHEMA_VERSION}`] }
-  if (v !== REGISTRY_SCHEMA_VERSION) return { ok: false, reason: 'invalid', problems: [`unknown schema ${v}`] }
+  if (v !== REGISTRY_SCHEMA_VERSION && v !== UPGRADABLE_SCHEMA_VERSION) return { ok: false, reason: 'invalid', problems: [`unknown schema ${v}`] }
   const problems: string[] = []
   const src: Record<string, unknown> = raw
   function list<T>(key: string, parse: (o: unknown) => Parsed<T>): T[] {
@@ -983,6 +1061,8 @@ export function parseRegistryDoc(raw: unknown): RegistryParseResult {
     journals: list('journals', parseJournal),
     legacyLinks: list('legacyLinks', parseLegacyLink),
     conflicts: list('conflicts', parseConflict),
+    // Required from schema 2, like every other list; schema 1 predates it.
+    migrations: v === UPGRADABLE_SCHEMA_VERSION ? [] : list('migrations', parseMigration),
   }
   if (problems.length) return { ok: false, reason: 'invalid', problems }
   const broken = checkRegistryInvariants(doc)

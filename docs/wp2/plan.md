@@ -251,6 +251,33 @@ obligations fall on later slices:
   registry lock is not re-entrant. Wire it in `compose.ts` (`store.current()`
   plus the configured resources directory, and `mkdirSecure`). Build exactly
   one Codex package: the realm locks live in it.
+- **Accounts service and renderer (from slice 3e's pass):** call
+  `migrateExternalDefaultRealm` once at start, after the registry load and
+  the legacy reconcile and outside `store.exclusive`, with a THREE-WAY
+  preference read from settings (`codexEnabled` true = on, false = off,
+  absent = undecided -- not the renderer's usual `!== false`). On
+  `needs-confirmation` onboarding or Settings asks the user (design 6.3
+  step 5, 8.2) and calls it again. A `skipped` or `none` marker leaves
+  adoption to an explicit Accounts action ("use my existing Codex sign-in",
+  design 9.3); the automatic run never repeats. A `skipped` marker carries
+  its reason: the Accounts surface says why, and for `unavailable` (timed
+  out, did not start, busy, or the CLI was being re-checked) and
+  `no-answer` it offers "check again" rather than leaving a signed-in user
+  silently unadopted. "Check again" IS the explicit adoption (status, then
+  register); the migration itself never re-runs once a marker exists. The renderer offers
+  re-authentication into a managed account (6.3 step 6) and shows
+  "unverified" from `identityAssurance`, never from the identity's name or
+  colour. Offer the explicit external adoption only once the start-up run
+  has settled: until then a pending external setup blocks it. The run is
+  bounded by the CLI runner's own timeouts (discovery and status). A caller
+  with the same store joins it; one with another store object waits for it
+  and then runs its own, so at most twice that bound. Pass the one store
+  itself, not a wrapper, and do not add a second wait around it.
+- **Pinned-CLI evidence (from slice 3e's pass):** check whether 0.155.1
+  `codex login status` counts a key kept in `CODEX_HOME/.env` as signed in.
+  If it does, an adopted external home is signed in by the user's own dotenv
+  key: say so in app-knowledge (the key stays in that home; the app stores
+  nothing).
 - **Launch handoff (from slice 3d's pass):** the realm lock covers sign-in,
   sign-out, status and folder removal, not a running session; a managed
   launch's consumer lease must also block removal. Flip `realm.isolated` to

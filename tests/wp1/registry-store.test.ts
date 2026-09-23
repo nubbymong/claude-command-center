@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { AccountRegistryStore, deterministicOpaqueId, REGISTRY_BACKUPS_KEPT } from '../../src/main/providers/core'
 import type { RegistryFsPort, LegacyAccountsPort } from '../../src/main/providers/core'
-import { emptyRegistry, createIdentity, isOpaqueId, parseRegistryDoc, updateIdentity, findIdentity } from '../../src/shared/providers'
+import { emptyRegistry, createIdentity, isOpaqueId, parseRegistryDoc, updateIdentity, findIdentity, REGISTRY_SCHEMA_VERSION } from '../../src/shared/providers'
 import type { LegacyAccountSnapshot, LegacyWrite, ProviderRegistryDoc } from '../../src/shared/providers'
 
 class MemoryPort implements RegistryFsPort {
@@ -80,7 +80,7 @@ describe('loading (design 14: recovery mode)', () => {
     ['unreadable', (p: MemoryPort) => { p.failRead = 'EACCES' }, 'unreadable'],
     ['not JSON', (p: MemoryPort) => { p.file = '{ nope' }, 'invalid'],
     ['inconsistent', (p: MemoryPort) => { p.file = JSON.stringify({ ...emptyRegistry(), accounts: [{ id: 'x' }] }) }, 'invalid'],
-    ['newer schema', (p: MemoryPort) => { p.file = JSON.stringify({ ...emptyRegistry(), schemaVersion: 2 }) }, 'newer-schema'],
+    ['newer schema', (p: MemoryPort) => { p.file = JSON.stringify({ ...emptyRegistry(), schemaVersion: REGISTRY_SCHEMA_VERSION + 1 }) }, 'newer-schema'],
   ])('%s: recovery mode, nothing usable, every change refused, the file untouched', async (_n, setup, reason) => {
     const port = new MemoryPort()
     setup(port)

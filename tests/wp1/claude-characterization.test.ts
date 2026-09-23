@@ -240,7 +240,13 @@ describe('C8: AccountProfile.colourKey is never written by the main process on t
     // colour, never a profile write) are exempt from the OBJECT-LITERAL
     // family only, by file path; an assignment there still counts.
     const literalExempt = new Set(['src/shared/account-types.ts', 'src/main/claude-account-identity.ts', 'src/main/account-color.ts'])
-    const writes = [...new Set([...literal.filter((l) => !literalExempt.has(pathOf(l))), ...other.filter((l) => !sanctioned.includes(l))])]
+    // A provider-registry identity, not a profile record: the one-time
+    // adoption of the external Codex home (WP2 slice 3e) names its private
+    // identity with a fixed colour. Exempt from the OBJECT-LITERAL family
+    // only, and pinned by its exact text like the sanctioned write above.
+    const REGISTRY_IDENTITY = { path: 'src/main/providers/core/external-default-migration.ts', text: '(x) => createIdentity(x, { id: identityId, friendlyName: spec.identityLabel, colourKey: EXTERNAL_IDENTITY_COLOUR }, t),' }
+    const registryIdentity = (l: string) => pathOf(l) === REGISTRY_IDENTITY.path && l.slice(at(l).length).trim() === REGISTRY_IDENTITY.text
+    const writes = [...new Set([...literal.filter((l) => !literalExempt.has(pathOf(l)) && !registryIdentity(l)), ...other.filter((l) => !sanctioned.includes(l))])]
     expect(writes, writes.join('\n')).toEqual([])
   })
 })

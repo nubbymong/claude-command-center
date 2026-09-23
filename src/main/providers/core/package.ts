@@ -12,7 +12,7 @@
 import type { ProviderId } from '../../../shared/providers'
 import type {
   ProviderCapabilities, CapabilityPlatform, RealmEnvPatch, AuthMethod, KnownAuthState, DiscoveryState, Compatibility,
-  SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight,
+  SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight, RealmKind,
 } from '../../../shared/providers'
 import type { SessionProvider } from '../types'
 import type { LegacyAccountsPort } from './account-registry-store'
@@ -232,6 +232,18 @@ export interface ProviderPackage {
    *  mirror (Claude's profiles.json during 2.1.1). Creating it does no I/O;
    *  only the registry store calls it. */
   readonly legacyAccounts?: LegacyAccountsPort
+  /** Present when the provider has a default sign-in location of its own that
+   *  other local clients share (Codex's ~/.codex), which an upgrade registers
+   *  once, when it is signed in, as a realm-only external account (design
+   *  6.3). Absent: nothing to adopt (Claude's accounts come from its legacy
+   *  store). */
+  readonly externalDefaultRealm?: ExternalDefaultRealmSpec
+}
+
+export interface ExternalDefaultRealmSpec {
+  readonly kind: RealmKind
+  /** The private identity's name: says the account is unverified. */
+  readonly identityLabel: string
 }
 
 /** Packages are created by the composition root, never at module load, so

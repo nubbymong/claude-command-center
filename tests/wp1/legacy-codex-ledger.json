@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "ae18ac21028348caa47c05eebc62b881fd422d21a8646ed3a87e74091092b756",
-  "manifestHead": "60d967550f8a092acf8ac24f3d37268ade738ecd",
+  "manifestPathDigest": "7a3591daf825ae97ad6522d2660149d39bad538ee1071ab1b10565c9fc009da4",
+  "manifestHead": "065d23d2f8152fdb99ad6bcc45071d4f21317295",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -814,6 +814,17 @@
       "disposition": "added",
       "evidence": "main composition root; tests/wp1/dependency-boundaries.test.ts R3 (WP1.66), tests/wp1/provider-conformance.test.ts",
       "note": "the only main module importing both concrete packages"
+    },
+    {
+      "path": "src/main/providers/core/external-default-migration.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 provider-neutral adoption, at most once per provider, of a provider own default sign-in (Codex ~/.codex): its own interrupted reservation (deterministic ids no legacy profile can own) is dropped first and by every marker write; an undecided preference asks first and runs nothing; off, no usable CLI or no answer records skipped with a reason; otherwise journal then status in that realm; signed in -> a realm-only external account with an unverified private identity and the marker in one transaction; signed out -> reservation dropped and marker none together; single-flight per provider; covered by tests/wp1/migration-codex.test.ts (WP1.43)",
+      "note": "created by WP2; replaces the legacy global Codex account model for existing users once the accounts service calls it at start"
     },
     {
       "path": "src/main/providers/core/package.ts",

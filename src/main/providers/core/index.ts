@@ -2,7 +2,7 @@
 // dependency-boundary test fails this package on any concrete-provider import.
 export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
-  ProviderManagedLaunchOperations, ProviderRealmFolderOperations, RealmFolderResult, RealmFolderFailureCode,
+  ProviderManagedLaunchOperations, ProviderRealmFolderOperations, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec,
   DiscoveryResult, InstallRecipe, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthFailureCode, AuthCredentialKind,
 } from './package'
 export {
@@ -18,3 +18,7 @@ export { AccountRegistryStore, deterministicOpaqueId, REGISTRY_BACKUPS_KEPT } fr
 export type {
   RegistryFsPort, LegacyAccountsPort, RegistryStatus, StoreResult, StoreFailureCode, LegacyReconcileOutcome, AccountRegistryStoreOptions,
 } from './account-registry-store'
+
+// WP2: adopting a provider's own default sign-in once, on upgrade (design 6.3).
+export { migrateExternalDefaultRealm } from './external-default-migration'
+export type { ExternalDefaultMigrationOutcome, ExternalDefaultMigrationDeps, ProviderPreference } from './external-default-migration'

@@ -10,7 +10,7 @@ import type {
 } from '../../../shared/providers'
 import {
   PROVIDER_IDS, isProviderId, isCapabilityPlatform, resolveCapability, missingCapabilityKeys, applyRealmEnvPatch,
-  CAPABILITY_KEYS, CAPABILITY_OPERATION, isNeverOwnedLaunchVariable,
+  CAPABILITY_KEYS, CAPABILITY_OPERATION, isNeverOwnedLaunchVariable, isRealmKindOf,
 } from '../../../shared/providers'
 import type { CapabilityKey, CapabilityPlatform, CapabilityResolution, ScopedCapabilityKey } from '../../../shared/providers'
 import type { SessionProvider } from '../types'
@@ -73,6 +73,14 @@ export function packageRegistrationProblem(pkg: ProviderPackage): string | null 
     for (const fn of ['prepare', 'remove'] as const) {
       if (typeof rf[fn] !== 'function') return `realmFolders.${fn}() must be a function`
     }
+  }
+  const ext = pkg.externalDefaultRealm
+  if (ext !== undefined) {
+    if (typeof ext !== 'object' || ext === null) return 'externalDefaultRealm must be an object when present'
+    if (!isRealmKindOf(ext.kind, pkg.id)) return `externalDefaultRealm.kind is not a realm kind of ${pkg.id}`
+    if (typeof ext.identityLabel !== 'string' || !ext.identityLabel.trim()) return 'externalDefaultRealm.identityLabel must be declared'
+    // Adopting a shared home needs the operations that check it first.
+    if (!pkg.setup || !pkg.auth) return 'externalDefaultRealm needs the setup and auth operations'
   }
   for (const key of CAPABILITY_KEYS) {
     const d = pkg.capabilities[key]
