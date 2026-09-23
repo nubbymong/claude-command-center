@@ -9,7 +9,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { createReadFailureLatch, loadConfigLatched, saveConfigLatched, mergeById } from './persist-latch'
 import { logInfo, logWarn, logError } from './debug-logger'
-import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
+import { resolveVersionBinary, isVersionInstalled, installVersion, legacyCliPin } from './legacy-version-manager'
 import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
@@ -47,7 +47,7 @@ export interface CloudAgentData {
  * the bare global login when multi-account is active; returns the bare env
  * (behaviour unchanged) for single-account users with no profiles.
  */
-function resolveAgentEnv(profileId: string | undefined, projectPath: string, projectGate: ProjectGateResult): {
+function resolveAgentEnv(profileId: string | undefined, projectPath: string, projectGate: ProjectGateResult, pinnedCli?: { version: string; installed: boolean }): {
   env: Record<string, string>
   resolvedProfileId: string | null
   accountEmail?: string
@@ -74,7 +74,7 @@ function resolveAgentEnv(profileId: string | undefined, projectPath: string, pro
   try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[cloud-agent] home refresh failed for ${resolvedProfileId}: ${e}`) }
   const home = getProfileConfigDir(resolvedProfileId)
   const accountEmail = listProfiles().find(p => p.id === resolvedProfileId)?.accountEmail || undefined
-  return { env: withProfileHome(baseEnv, home, { launchId: 'cloud-agent', cwd: projectPath, probe: false, projectGate }), resolvedProfileId, accountEmail }
+  return { env: withProfileHome(baseEnv, home, { launchId: 'cloud-agent', cwd: projectPath, probe: false, projectGate, ...(pinnedCli ? { pinnedCli } : {}) }), resolvedProfileId, accountEmail }
 }
 
 const MAX_OUTPUT_BYTES = 512 * 1024 // 500KB cap per agent
@@ -179,7 +179,14 @@ export async function dispatchAgent(params: {
   // Resolve the per-account isolated environment up front so the agent record
   // is stamped with the account it actually ran under (drives the card label,
   // the account filter, and a consistent retry).
-  const { env: spawnEnvVars, resolvedProfileId, accountEmail } = resolveAgentEnv(params.profileId, params.projectPath, projectGate)
+  //
+  // A valid legacy pin is what the agent runs (below), so the preflight is told
+  // about it -- installed or not: it is recorded BEFORE the pin's auto-install,
+  // and the provider decides which version to check (a not-yet-installed pin
+  // counts only when it is below the floor, so a failed install that falls
+  // back to the installed CLI can only err loud, never a false "supported").
+  const pinnedCli = params.legacyVersion?.enabled ? legacyCliPin(params.legacyVersion) : undefined
+  const { env: spawnEnvVars, resolvedProfileId, accountEmail } = resolveAgentEnv(params.profileId, params.projectPath, projectGate, pinnedCli)
 
   const agent: CloudAgentData = {
     id: generateId(),

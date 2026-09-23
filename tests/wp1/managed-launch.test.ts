@@ -2830,6 +2830,63 @@ describe('the launch paths', () => {
       }
     })
 
+    it('checks the CLI floor against a PINNED legacy CLI, not the system one', () => {
+      // A managed session pinned to 2.0.x runs 2.0.x, and used to be reported
+      // as the system CLI's version "at or above the verified version" -- a
+      // false statement on the one surface whose job is that floor (adversarial
+      // re-attack of the VM-gate fix, MAJOR).
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 'pinned', pinnedCli: { version: '2.0.76', installed: true } })
+      const pinned = diag.listManagedLaunchReports('p1')[0].preflight
+      expect(pinned.compatibility.found).toBe('2.0.76')
+      expect(pinned.compatibility.state).toBe('too-old')
+      // ...and the remedy is the pin: updating the installed CLI changes nothing for it.
+      const below = pinned.findings.find((f) => f.id === 'cli-below-floor')!
+      expect(below.action).toMatch(/legacy Claude Code version/)
+      expect(below.action).not.toMatch(/^Update Claude Code/)
+      expect(below.detail).toMatch(/pinned to Claude Code 2\.0\.76/)
+      // No pin: the installed CLI's version, as before.
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 'system' })
+      expect(diag.listManagedLaunchReports('p1')[0].preflight.compatibility.found).toBe(CLAUDE_MIN_MANAGED_CLI_VERSION)
+      // The spawn's own late refusal record carries the pin too.
+      const late = diag.recordManagedLaunchPreflight('late', 'p1', HOME, { PATH: '/x' }, null, 'launch', { launchDirectoryUnverified: '/x', pinnedCli: { version: '2.0.76', installed: true } })
+      expect(late?.compatibility.found).toBe('2.0.76')
+    })
+
+    it('a pin that is NOT installed yet counts only below the floor, so a failed install can only err loud', async () => {
+      // A cloud agent records before it installs its pin; if the install fails it
+      // runs the installed CLI. A not-yet-installed pin AT or above the floor
+      // must not be reported (a false "supported" if the fallback is old); one
+      // below the floor is (the loud side either way).
+      const { claudeManagedCliVersionToCheck } = await import('../../src/main/providers/claude/managed-launch')
+      expect(claudeManagedCliVersionToCheck({ cliVersion: '2.1.100', pinnedCli: { version: '2.1.290', installed: false } })).toEqual({ version: '2.1.100', pinned: false })
+      // Exactly AT the floor is "not below": counting it would read as supported
+      // while a failed install ran the older installed CLI.
+      expect(claudeManagedCliVersionToCheck({ cliVersion: '2.1.100', pinnedCli: { version: CLAUDE_MIN_MANAGED_CLI_VERSION, installed: false } })).toEqual({ version: '2.1.100', pinned: false })
+      expect(claudeManagedCliVersionToCheck({ cliVersion: '2.1.290', pinnedCli: { version: '2.0.76', installed: false } })).toEqual({ version: '2.0.76', pinned: true })
+      expect(claudeManagedCliVersionToCheck({ cliVersion: '2.1.100', pinnedCli: { version: '2.1.290', installed: true } })).toEqual({ version: '2.1.290', pinned: true })
+      expect(claudeManagedCliVersionToCheck({ cliVersion: null })).toEqual({ version: null, pinned: false })
+      withProfileHome({ PATH: '/x' }, HOME, { launchId: 'cloud-agent', pinnedCli: { version: '2.1.290', installed: false } })
+      expect(diag.listManagedLaunchReports('p1')[0].preflight.compatibility.found).toBe(CLAUDE_MIN_MANAGED_CLI_VERSION)
+    })
+
+    it('every launch path that can run a pinned legacy CLI tells the preflight so', () => {
+      const src = productionSourceFiles()
+      const byFile = (p: string) => src.find((f) => f.path === p)?.text ?? ''
+      // The interactive session: the pin when resolveClaudeForPty will run it (it
+      // is installed) -- and never for a shell-only pane, which runs no Claude of
+      // its own.
+      const pty = byFile('src/main/pty-manager.ts')
+      expect(pty).toMatch(/const pin = !options\?\.shellOnly && options\?\.legacyVersion\?\.enabled \? legacyCliPin\(options\.legacyVersion\) : undefined/)
+      expect(pty).toMatch(/const pinnedCli = pin\?\.installed \? pin : undefined/)
+      expect(/withProfileHome\([^;]*?\)/s.exec(pty)?.[0] ?? '').toMatch(/pinnedCli/)
+      expect(/recordManagedLaunchPreflight\([^;]*launchDirectoryUnverified[^;]*\)/s.exec(pty)?.[0] ?? '').toMatch(/pinnedCli/)
+      // The cloud agent: the valid pin it is about to install and run, installed or not.
+      const cloud = byFile('src/main/cloud-agent-manager.ts')
+      expect(/withProfileHome\([^;]*?\)/s.exec(cloud)?.[0] ?? '').toMatch(/pinnedCli/)
+      expect(cloud).toMatch(/const pinnedCli = params\.legacyVersion\?\.enabled \? legacyCliPin\(params\.legacyVersion\) : undefined/)
+      expect(cloud).toMatch(/resolveAgentEnv\(params\.profileId, params\.projectPath, projectGate, pinnedCli\)/)
+    })
+
     it('says a launch did not evaluate the settings copy, instead of reporting it clean', () => {
       // A headless or probe launch does not build the profile home, so there is
       // no sanitise result for it. Reporting nothing read as "checked, all
@@ -3291,6 +3348,18 @@ describe('the managed-launch preflight', () => {
     const p = claudeManagedLaunchPreflight({ env: good, cliVersion: null })
     expect(p.findings.map((f) => f.id)).toContain('cli-version-unverified')
     expect(p.compatibility.state).toBe('unknown')
+  })
+
+  it('says an unknown version may be a check that could not run the CLI, and where to look', () => {
+    // On a Windows npm install the check could never run the CLI (EINVAL) and
+    // the text said "has not been probed yet" forever: a user who confirmed the
+    // version in a terminal was left with nothing to act on (VM gate).
+    const f = claudeManagedLaunchPreflight({ env: good, cliVersion: null }).findings.find((x) => x.id === 'cli-version-unverified')!
+    expect(f.detail).not.toMatch(/probed yet/)
+    expect(f.detail).toMatch(/could not run the CLI/)
+    expect(f.action).toMatch(/\[claude-version\]/)
+    expect(f.action).toMatch(/on your PATH/)
+    expect(f.action).not.toMatch(/PATH your login shell uses/)
   })
 
   it('BLOCKS on project/local settings that could redirect the account, because nothing suppresses them', () => {

@@ -56,8 +56,15 @@ export interface PreflightFinding {
 export interface ManagedLaunchPreflightInput {
   /** The FINAL composed launch environment, exactly as it will be spawned. */
   env: Readonly<Record<string, string | undefined>>
-  /** The observed CLI version, or null when no probe has answered. */
+  /** The observed version of the INSTALLED CLI, or null when no probe has
+   *  answered. */
   cliVersion?: string | null
+  /** The launch runs a PINNED (legacy) CLI of this version instead of the
+   *  installed one -- already installed, or to be installed on demand after
+   *  this record. The provider decides which version its floor is checked
+   *  against, and a pin below the floor is remedied by the pin, not by
+   *  updating the installed CLI. */
+  pinnedCli?: { version: string; installed: boolean }
   /** What the sanitiser removed from the app-owned settings copy.
    *
    *  `'not-evaluated'` is a THIRD state, and it is not the same as omitting the

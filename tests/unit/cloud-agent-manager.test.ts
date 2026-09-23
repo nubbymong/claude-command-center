@@ -37,6 +37,7 @@ vi.mock('../../src/main/legacy-version-manager', () => ({
   resolveVersionBinary: vi.fn(() => null),
   isVersionInstalled: vi.fn(() => false),
   installVersion: vi.fn(async () => ({ ok: false, error: 'mock' })),
+  legacyCliPin: vi.fn(() => undefined),
 }))
 
 // Mock account-profiles so dispatch NEVER touches the real profiles on disk

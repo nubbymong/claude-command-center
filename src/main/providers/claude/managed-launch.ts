@@ -356,8 +356,9 @@ export const CLAUDE_MIN_MANAGED_CLI_VERSION = '2.1.278'
  *
  *  An UNPARSEABLE version is `too-old`, not `unknown`: we have an answer and it
  *  is not a version we can vouch for, so it gets the upgrade requirement rather
- *  than the softer "not probed yet" state. `unknown` means exactly one thing --
- *  no probe has returned. */
+ *  than the softer "not confirmed" state. `unknown` means exactly one thing --
+ *  no probe has returned a version (none has answered yet, or none could run
+ *  the CLI). */
 export function claudeManagedCliCompatibility(found: string | null | undefined): ManagedCliCompatibility {
   const required = CLAUDE_MIN_MANAGED_CLI_VERSION
   if (found === null || found === undefined || found.trim() === '') {
@@ -365,7 +366,7 @@ export function claudeManagedCliCompatibility(found: string | null | undefined):
       state: 'unknown',
       required,
       found: null,
-      message: `Claude Code's version has not been probed yet, so multi-account isolation cannot be confirmed. AI Code Conductor requires ${required} or newer for managed multi-account sessions.`,
+      message: `Claude Code's version has not been confirmed (the version check has not answered yet, or could not run the CLI), so multi-account isolation cannot be confirmed. AI Code Conductor requires ${required} or newer for managed multi-account sessions.`,
     }
   }
   const version = found.trim()
@@ -380,6 +381,21 @@ export function claudeManagedCliCompatibility(found: string | null | undefined):
     found: version,
     message: `Claude Code ${version} is older than ${required}, the oldest version managed multi-account launches have been verified on. Update Claude Code (\`claude update\`, or re-run the native installer) before relying on multiple accounts in AI Code Conductor.`,
   }
+}
+
+/** Which CLI version the floor is checked against, and whether it is a pin.
+ *
+ *  An INSTALLED pin is what runs. A pin the launch installs on demand after
+ *  this record runs only if that install succeeds -- otherwise the installed
+ *  CLI does -- so it counts only when it is BELOW the floor. Every way that
+ *  guess can be wrong then errs LOUD (a below-floor finding the fallback did
+ *  not deserve), never into a false "supported". Exported for the test. */
+export function claudeManagedCliVersionToCheck(input: Pick<ManagedLaunchPreflightInput, 'cliVersion' | 'pinnedCli'>): { version: string | null; pinned: boolean } {
+  const pin = input.pinnedCli
+  if (pin?.version && (pin.installed || compareVersions(pin.version, CLAUDE_MIN_MANAGED_CLI_VERSION) < 0)) {
+    return { version: pin.version, pinned: true }
+  }
+  return { version: input.cliVersion ?? null, pinned: false }
 }
 
 // ---------------------------------------------------------------------------
@@ -399,14 +415,19 @@ export function claudeManagedLaunchPreflight(input: ManagedLaunchPreflightInput)
   const findings: PreflightFinding[] = []
 
   // 1. Is the CLI a version this launch model was measured on?
-  const compatibility = claudeManagedCliCompatibility(input.cliVersion ?? null)
+  const checked = claudeManagedCliVersionToCheck(input)
+  const compatibility = claudeManagedCliCompatibility(checked.version)
   if (compatibility.state === 'too-old') {
     findings.push({
       id: 'cli-below-floor',
       severity: 'blocked',
       title: `Claude Code ${compatibility.found} is below the verified floor`,
-      detail: compatibility.message,
-      action: `Update Claude Code to ${compatibility.required} or newer.`,
+      detail: checked.pinned
+        ? `This launch is pinned to Claude Code ${compatibility.found} (a legacy version), which is older than ${compatibility.required}, the oldest version managed multi-account launches have been verified on.`
+        : compatibility.message,
+      action: checked.pinned
+        ? `Change or turn off the legacy Claude Code version this launch is pinned to. Updating the installed CLI does not change a pinned launch.`
+        : `Update Claude Code to ${compatibility.required} or newer.`,
     })
   } else if (compatibility.state === 'unknown') {
     findings.push({
@@ -414,7 +435,7 @@ export function claudeManagedLaunchPreflight(input: ManagedLaunchPreflightInput)
       severity: 'blocked',
       title: 'Claude Code version not yet verified',
       detail: compatibility.message,
-      action: `Run \`claude --version\` in a terminal and confirm it reports ${compatibility.required} or newer. If AI Code Conductor cannot find the CLI at all, check that \`claude\` is on the PATH your login shell uses.`,
+      action: `Run \`claude --version\` in a terminal and confirm it reports ${compatibility.required} or newer. If it does and this stays, the app log lines marked [claude-version] say why the check could not run it. If AI Code Conductor cannot find the CLI at all, check that \`claude\` is on your PATH (on macOS and Linux, the PATH your login shell sets).`,
     })
   }
 

@@ -2214,6 +2214,12 @@ export interface ManagedLaunchContext {
    *  is a real managed launch and gets the full hardening; it is flagged so the
    *  panel cannot mistake it for the newest thing the user ran. */
   probe?: boolean
+  /** A PINNED legacy CLI this launch runs instead of the installed one, and
+   *  whether it is installed yet (a cloud agent installs its pin after this
+   *  record). The preflight checks the CLI floor against it: a session pinned
+   *  to 2.0.x must not be reported as the installed CLI's 2.1.280 "at or above
+   *  the verified version". Absent = the launch runs the installed CLI. */
+  pinnedCli?: { version: string; installed: boolean }
 }
 
 /**
@@ -2420,6 +2426,7 @@ export function withProfileHome(
           context.launchId, profileId, home, hardened,
           context.projectGate ?? null,
           context.probe ? 'probe' : 'launch',
+          context.pinnedCli ? { pinnedCli: context.pinnedCli } : {},
         )
       } else {
         logWarn(`[managed-launch] ${context.launchId}: no profile id resolves from this launch home, so no preflight was recorded`)

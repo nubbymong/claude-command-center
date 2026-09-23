@@ -31,6 +31,7 @@ vi.mock('../../src/main/legacy-version-manager', () => ({
   resolveVersionBinary: vi.fn(() => null),
   isVersionInstalled: vi.fn(() => false),
   installVersion: vi.fn(async () => ({ ok: false, error: 'mock' })),
+  legacyCliPin: vi.fn(() => undefined),
 }))
 
 // A REAL directory stands in for the profile home, so the resolver's existsSync

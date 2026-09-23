@@ -1088,7 +1088,12 @@ export function recordManagedLaunchPreflight(
   /** A refusal decided AFTER the gate, by the spawn itself: the directory it
    *  would use is not one the verdict covers (see pty-manager's
    *  assertGatedDirectory). Recorded here so the panel shows it. */
-  extra: { launchDirectoryUnverified?: string } = {},
+  extra: {
+    launchDirectoryUnverified?: string
+    /** The launch runs a pinned legacy CLI instead of the installed one
+     *  (ManagedLaunchContext); the provider decides which version it checks. */
+    pinnedCli?: { version: string; installed: boolean }
+  } = {},
 ): ManagedLaunchPreflight | null {
   try {
     // If the boot probe never answered (the CLI was installed after launch, or
@@ -1098,6 +1103,7 @@ export function recordManagedLaunchPreflight(
     const input: ManagedLaunchPreflightInput = {
       env,
       cliVersion: peekClaudeCliVersion(),
+      ...(extra.pinnedCli?.version ? { pinnedCli: extra.pinnedCli } : {}),
       // `'not-evaluated'`, never `undefined`: a launch that did not build the
       // profile home has no sanitise result, and saying nothing read as clean.
       sanitizedSettings: lastSettingsSanitiseFor(home) ?? 'not-evaluated',

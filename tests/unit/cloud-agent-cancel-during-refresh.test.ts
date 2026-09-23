@@ -28,6 +28,7 @@ vi.mock('../../src/main/legacy-version-manager', () => ({
   resolveVersionBinary: () => null,
   isVersionInstalled: () => legacy.installed,
   installVersion: () => new Promise<{ ok: boolean }>((resolve) => { legacy.install = () => resolve({ ok: false }) }),
+  legacyCliPin: (l?: { enabled: boolean; version: string }) => (l?.enabled ? { version: l.version, installed: legacy.installed } : undefined),
 }))
 const state = vi.hoisted(() => ({ home: '' }))
 vi.mock('../../src/main/account-profiles', async (original) => ({

@@ -42,6 +42,7 @@ import { getConductorMcpPort } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
 import { getRemoteMcpPort } from './ssh-remote-port'
 import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
+import { legacyCliPin } from './legacy-version-manager'
 import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
@@ -4159,11 +4160,17 @@ function spawnPtyResolved(
     // the other four (adversarial review, MAJOR 9). `cwd` is passed so the
     // report can name project-owned settings the host control is suppressing;
     // the files themselves are never read for anything else and never modified.
+    // A session pinned to a legacy CLI runs THAT binary when it is installed
+    // (resolveClaudeForPty below; otherwise the installed CLI), so the
+    // preflight checks the floor against the pin. A shell-only pane runs no
+    // Claude of its own: a `claude` typed into it is the installed one.
+    const pin = !options?.shellOnly && options?.legacyVersion?.enabled ? legacyCliPin(options.legacyVersion) : undefined
+    const pinnedCli = pin?.installed ? pin : undefined
     const recordUnverifiedDirectory = (directory: string): void => {
-      if (home && resolvedProfileId) recordManagedLaunchPreflight(sessionId, resolvedProfileId, home, spawnEnv, options?.projectGate ?? null, 'launch', { launchDirectoryUnverified: directory })
+      if (home && resolvedProfileId) recordManagedLaunchPreflight(sessionId, resolvedProfileId, home, spawnEnv, options?.projectGate ?? null, 'launch', { launchDirectoryUnverified: directory, ...(pinnedCli ? { pinnedCli } : {}) })
     }
     assertGatedDirectory(options, resolvedCwd, 'working directory', recordUnverifiedDirectory)
-    const finalSpawnEnv = withProfileHome(spawnEnv, home, { launchId: sessionId, cwd: resolvedCwd, probe: false, projectGate: options?.projectGate ?? null })
+    const finalSpawnEnv = withProfileHome(spawnEnv, home, { launchId: sessionId, cwd: resolvedCwd, probe: false, projectGate: options?.projectGate ?? null, ...(pinnedCli ? { pinnedCli } : {}) })
     // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).
