@@ -2074,3 +2074,89 @@ commit that contains it.
   `claudeAuthorityEnvVariables()`, `claudeSettingsEnvStrip()`,
   `claudeAmbientStrip()`, `claudeAmbientAuthVariables()`,
   `authorityEntries()`.
+
+## Round 8b -- the ADR-009 attacker pass over the round-8 changes, and gate 7 (2026-09-23)
+
+**Bound, stated before the first attacker ran:** one attacker round, scoped to
+the round-8 changes (`d3d585df..b88d8a2d`), three lenses, all Opus 5.5
+(owner instruction: Opus for implementation, attack and review): L1 bypass /
+fail-open on the project gate, L2 blast radius of the startup boundary, L3
+design, coverage and the CI supply chain. A second round only if round 1
+found a BLOCKER or MAJOR in scope; the final confirmation pass is the owner's
+"final ADR review". In parallel, gate 7: an independent spec-compliance and a
+code-quality review (both Opus) of `5ba627b4` + `a0eace5d` at the exact head.
+Owner instruction for anything non-blocking: a follow-up ticket on the
+private planning repo, not a change here.
+
+### Attacker findings
+
+| # | lens | severity | finding | disposition |
+|---|---|---|---|---|
+| A8-1 | L1 | MAJOR (in this PR, pre-dating round 8) | a working directory spelled with a trailing dot or space is ENOENT to Node's fs (it prefixes `\\?\`), so both settings files read as absent and the verdict is CLEAN, while CreateProcess strips the dot or space and the CLI runs in the real folder and applies its settings. Reachable through a cloud agent's raw `projectPath` from a user config (not repository-chosen); the PTY, headless, probe and Insights paths resolve the directory first | FIXED: `hasWin32RewrittenComponent` -- on win32 a path with a component ending in a dot or a space is `not-scanned` / `path-spelling`, never clean. Measured on Windows 11 first: CreateProcess drops trailing dots from every component and a trailing space from the last (a middle component ending in a space fails to spawn), so the rule is a superset. A blanket "the directory must exist" rule was rejected: `git worktree list` keeps stale worktrees, and it would have put a warning on every picker launch in such a repo |
+| A8-2 | L3 | MAJOR (pre-dating round 8; the round-8 re-bind kept it) | the gate's new-file check listed the tree of the ledger's `manifestHead`, which moves with every re-skeleton; once that commit contained the files WP1 created, flipping every real `added` row to `retain` left the check green. Its verify-the-verifier row used an invented path in no tree, so it passed for the wrong reason | FIXED: the check lists the fixed pre-WP1 baseline (`inventory.head`, `6bafcc33`, on beta); the test now flips every live `added` row to `retain` and requires each to be caught; `fetch-ledger-commit.mjs` fetches the baseline, so nothing depends on GitHub serving a branch commit after the squash merge |
+| A8-3 | L3 | MINOR (round 8) | the fetch script, run in a full clone missing the object, would have made the repository shallow (`--depth=1`) | FIXED with A8-2: an object already present is not fetched; `--depth=1` only in an already-shallow checkout |
+| A8-4 | L1 | MINOR | an over-size git pointer is a miss, not uncertainty | follow-up aicc_planning#95 |
+| A8-5 | L1 | MINOR (latent, round 8) | a non-pointer error from the root lookup would be rethrown and discard keys already found (no call throws today) | follow-up aicc_planning#95 |
+| A8-6 | L1 | MINOR | `scanKeyFor` does not fold case, so an uncertain scan under one spelling does not evict a clean one cached under another within 5 s | follow-up aicc_planning#95 |
+| A8-7 | L2 | MINOR (widened by round 8) | the loaded manifest and the derived entries are not frozen, and the registry accepts an empty ambient strip list: code already in the main process could empty it before `composeProviders()` | follow-up aicc_planning#96 |
+| A8-8 | L3 | MINOR | the EOL rule and its test cover `.mjs` under `scripts/` only; a CRLF hashbang `.js` imported through ESM fails the same way, and a pre-rule Windows clone is not renormalised | follow-up aicc_planning#97 |
+
+Held, with the probes run: T1 (a corrupt manifest makes `composeProviders()`
+throw and leaves nothing registered; everything downstream fails closed), T2
+(a walker over static, re-export, dynamic `import()` and `require` edges from
+all four main entries and preload found one route to the manifest, the one the
+boundary test pins; a sensitivity probe that derives at load in a sibling
+module turns that test red), T3 (every accessor throws twice for a bad
+manifest; nothing is cached after a throw), T4 to T7 and T9 on reading, and
+T10: the fetch script, run against hostile ledgers (`--upload-pack=...`, a
+trailing newline, `__proto__`, upper-case hex, a BOM, an unreachable SHA),
+failed closed every time and wrote nothing. No finding needed private routing.
+L1 was interrupted by a classifier before its POSIX and junction probes; those
+surfaces were covered by rounds 5 to 7.
+
+### Gate 7 -- independent reviews of `5ba627b4` + `a0eace5d` at the head
+
+Spec compliance: 13 rows PASS and R6-5 PARTIAL -- no BLOCKER or MAJOR. Code
+quality: no BLOCKER; one MAJOR on the sibling-worktree policy -- one poisoned
+sibling refuses every managed picker launch in the repository (over-refusal,
+by the round-5 design and asserted by its test), and a `not-scanned` sibling
+still joins `CCC_GATED_DIRS`. Neither half yields a clean verdict (a
+not-scanned sibling makes the whole launch not-scanned, with the warning), so
+it is consistent with the owner's gate policy and is recorded as a design
+follow-up needing an owner decision, aicc_planning#98, with the other picker
+items (case folding, `CCC_GATED_DIRS` not cleared for unmanaged launches, a
+malformed value read as unmanaged, de-duplication by spelling, no abort on
+cancel, snapshot age). Test gaps and nits: aicc_planning#99.
+
+### Mutants for this pass (restored from memory after each)
+
+| mutant | guard removed | Windows |
+|---|---|---|
+| R10-a | the `path-spelling` check | RED |
+| R10-b | only the last path component checked (a dot on a middle component) | RED |
+| R10-c | the new-file check bound back to `manifestHead` | RED |
+
+The `path-spelling` test is Windows-only by construction (the rewrite is a
+Win32 rule); it runs on the windows-2025 CI leg and pins the measured
+normalisation before it asserts the verdict.
+
+### Corrections to the text above
+
+- **R6-5** claimed 12 vectors. The test covers ESC/CSI, OSC with ST (0x9d /
+  0x9c), U+202E, U+2028, a TAG character, the 500-code-point cut and a
+  passthrough. C1 CSI (0x9b), U+2029, U+200B-200D, NUL and DEL are handled by
+  the same regex as `src/shared/safe-text.ts` but no test would fail if they
+  were dropped (aicc_planning#99).
+- **macOS.** "Nothing ran on macOS" (Rounds 5 to 7) is out of date: since
+  `a0eace5d` the POSIX gate cases run on the macos-latest CI leg (181 tests,
+  the 2 skipped are the Windows-only pair). One exception: APFS refuses the
+  non-UTF-8 link name, so on macOS the refused-link fixtures take the `$5`
+  branch and the CLI's UTF-8 rule (`lCt`) has no CI coverage on any leg; only
+  local Linux runs exercise it (aicc_planning#99).
+- **Where the R6-3 and R7-1 mutants were red:** on Linux (WSL Ubuntu 24.04).
+  Those cases sit in one test that returns early on win32, so Windows counts
+  them as passed rather than skipped (aicc_planning#99).
+- **Round 8, CI4:** the fetch now targets the pre-WP1 baseline, not
+  `manifestHead` (A8-2); "The ledger's bound commit (`4f8afcc8`) is a branch
+  commit" no longer matters to any workflow, because only the ledger's own
+  binding test reads `manifestHead`.
