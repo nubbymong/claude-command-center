@@ -202,13 +202,45 @@ describe('C8: AccountProfile.colourKey is never written by the main process on t
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
-  it('no main-process source assigns colourKey on a profile record', () => {
-    let hits: string[] = []
-    try {
-      hits = execFileSync('git', ['-C', ROOT, 'grep', '-n', '-E', 'colourKey\\s*:', '--', 'src/main', 'src/shared/account-types.ts'], { encoding: 'utf8' }).trim().split('\n')
-    } catch (e: any) { if (e.status !== 1) throw e }
-    // Only the type declaration and identity push payloads (email-derived colour), never a profile write.
-    const writes = hits.filter((l) => !/account-types\.ts/.test(l) && !/claude-account-identity\.ts|account-identity\.ts|account-color\.ts/.test(l))
+  // WP2 CHANGE (scheduled, like C7's inversion): the account registry's write-
+  // through now sets colourKey on a profile that has NO email -- only after an
+  // explicit colour edit, since such a profile has no email-keyed override to
+  // carry it (src/main/providers/claude/legacy-store.ts, tests/wp1/claude-
+  // legacy-store.test.ts). That module is the one sanctioned writer. The
+  // pattern is POSIX ERE ([[:space:]], not \s): macOS git's regex has no \s,
+  // so the earlier `colourKey\s*:` matched nothing there and passed vacuously.
+  it('no main-process source writes colourKey on a profile record, except the WP2 write-through for email-less profiles', () => {
+    const grep = (re: string) => {
+      try {
+        return execFileSync('git', ['-C', ROOT, 'grep', '-n', '-E', re, '--', 'src/main', 'src/shared/account-types.ts'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
+      } catch (e: any) { if (e.status !== 1) throw e; return [] }
+    }
+    // Every write form: an object-literal key, quoted or not (`{ colourKey: `,
+    // `, 'colourKey': `), a shorthand/spread key (`{ ...p, colourKey }`), an
+    // assignment incl. compound ones (`.colourKey =`, `??=`, `||=`), a
+    // bracket write (`['colourKey'] =`), and Object.assign/defineProperty/
+    // Reflect.set naming the field.
+    const Q = "[\"'`]"
+    const literal = grep(`(^|[{,[])[[:space:]]*${Q}?colourKey${Q}?[[:space:]]*\\]?[[:space:]]*:`)
+    const other = [
+      ...grep('[{,][[:space:]]*colourKey[[:space:]]*[,}]'),
+      ...grep('\\.[[:space:]]*colourKey[[:space:]]*(/\\*.*\\*/[[:space:]]*)?([?|&]{2})?=([^=]|$)'),
+      ...grep(`\\[[[:space:]]*${Q}colourKey${Q}[[:space:]]*\\][[:space:]]*([?|&]{2})?=([^=]|$)`),
+      ...grep('(assign|defineProperty|Reflect\\.set)[^;]*colourKey'),
+    ]
+    const at = (l: string) => l.slice(0, l.indexOf(':', l.indexOf(':') + 1) + 1) // "path:line:"
+    const pathOf = (l: string) => l.slice(0, l.indexOf(':'))
+    // The one sanctioned write, pinned by its exact text, not by its file.
+    const SANCTIONED = 'if (p.colourKey !== w.value) { p.colourKey = w.value as IdentityColorKey; changed = true }'
+    const sanctioned = other.filter((l) => pathOf(l) === 'src/main/providers/claude/legacy-store.ts' && l.slice(at(l).length).trim() === SANCTIONED)
+    // Both pattern families can see a hit on this platform (verify the verifier).
+    expect(sanctioned, 'the assignment pattern did not find the sanctioned write -- is it matching on this platform?').toHaveLength(1)
+    expect(literal.some((l) => pathOf(l) === 'src/main/claude-account-identity.ts'), 'the object-literal pattern found nothing -- is it matching on this platform?').toBe(true)
+    // The type declaration and the identity push payloads (email-derived
+    // colour, never a profile write) are exempt from the OBJECT-LITERAL
+    // family only, by file path; an assignment there still counts.
+    const literalExempt = new Set(['src/shared/account-types.ts', 'src/main/claude-account-identity.ts', 'src/main/account-color.ts'])
+    const writes = [...new Set([...literal.filter((l) => !literalExempt.has(pathOf(l))), ...other.filter((l) => !sanctioned.includes(l))])]
     expect(writes, writes.join('\n')).toEqual([])
   })
 })

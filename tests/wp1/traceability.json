@@ -993,7 +993,8 @@
         "tests/wp1/traceability.test.ts"
       ],
       "evidence": [
-        "tests/wp1/traceability.json"
+        "tests/wp1/traceability.json",
+        "docs/wp2/plan.md"
       ],
       "status": "planned",
       "currentTests": [],

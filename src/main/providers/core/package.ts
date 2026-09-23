@@ -31,16 +31,25 @@ export interface DiscoveryResult {
 export interface InstallRecipe {
   id: string
   providerId: ProviderId
+  /** A first install, or an update of an existing one. */
+  purpose: 'install' | 'update'
   platform: CapabilityPlatform
   publisher: string
   sourceUrl: string
-  /** Structured argv; never a shell string, never interpolated with user data. */
-  command: readonly string[]
+  /** Structured argv, never interpolated with user data, run without a
+   *  shell. Null for a recipe the app only shows (`autoRunAllowed` false):
+   *  there is then nothing a careless caller could execute. */
+  command: readonly string[] | null
+  /** Exactly what the user is shown and may copy, character for character
+   *  the provider's documented command. */
+  displayCommand: string
   method: 'package-manager' | 'installer' | 'script'
   needsNetwork: boolean
   mayElevate: boolean
   /** A remote pipe-to-shell recipe is displayed/copied, never auto-run (8.4). */
   autoRunAllowed: boolean
+  /** Non-secret caveat shown beside the command. */
+  note?: string
 }
 
 /** An opaque realm reference resolved inside the main process. */

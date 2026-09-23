@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-22T22:21:15.728Z",
-  "head": "4f8afcc896c5817a4a098d2c8bc4094abfbe4c03",
-  "tree": "415aadfcc74f58a893ca163ab37b6c86cc9ca7ea",
+  "generatedAt": "2026-09-23T15:13:46.403Z",
+  "head": "f1541eb35c3678bc9c3afa465f99676d55fa7eca",
+  "tree": "960a29ca7fafa7e49bdb4dafbe68b0e4da9fc7a8",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2155,
-  "excludedFileCount": 340,
-  "scannedFileCount": 1815,
+  "trackedFileCount": 2180,
+  "excludedFileCount": 353,
+  "scannedFileCount": 1827,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 290,
-  "pathDigest": "bde1e9bb23f99efb172ed6dcc5e221796e63d251f41a8a7e61e68a24a641ffa7",
+  "matchedPathCount": 297,
+  "pathDigest": "36c4065d73944184ca8d89dd4f579114dae194cd9bf51b09ed771627742d5c8e",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -169,6 +169,13 @@
         "P12"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "docs/wp2/plan.md",
+      "predicates": [
+        "P12"
+      ],
+      "lineCount": 45
     },
     {
       "path": "package.json",
@@ -482,6 +489,13 @@
       "predicates": [
         "P14"
       ],
+      "lineCount": 2
+    },
+    {
+      "path": "src/main/providers/claude/legacy-store.ts",
+      "predicates": [
+        "P05"
+      ],
       "lineCount": 1
     },
     {
@@ -518,6 +532,23 @@
       "lineCount": 66
     },
     {
+      "path": "src/main/providers/codex/cli-contract.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 15
+    },
+    {
+      "path": "src/main/providers/codex/cli-env.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "lineCount": 12
+    },
+    {
       "path": "src/main/providers/codex/index.ts",
       "predicates": [
         "P01",
@@ -526,7 +557,15 @@
         "P09",
         "P14"
       ],
-      "lineCount": 65
+      "lineCount": 74
+    },
+    {
+      "path": "src/main/providers/codex/install-recipes.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 18
     },
     {
       "path": "src/main/providers/codex/mcp-config.ts",
@@ -552,6 +591,16 @@
         "P14"
       ],
       "lineCount": 5
+    },
+    {
+      "path": "src/main/providers/codex/realm-paths.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P14"
+      ],
+      "lineCount": 35
     },
     {
       "path": "src/main/providers/codex/resume-picker.ts",
@@ -1361,6 +1410,13 @@
         "P14"
       ],
       "lineCount": 4
+    },
+    {
+      "path": "src/shared/providers/registry.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 3
     },
     {
       "path": "src/shared/types.ts",

@@ -9,6 +9,21 @@ import { resolveCodexBinary, buildCodexSpawn } from './spawn'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
 import { deployCodexResumePickerScript } from './resume-picker'
+import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION } from './cli-contract'
+
+// WP2 Codex adapter: the CLI contract, install recipes, the allowlisted
+// subprocess environment and realm paths. Pure; wired by the adapter slices.
+export {
+  CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
+  parseCodexVersion, classifyCodexVersion, parseCodexLoginStatus,
+} from './cli-contract'
+export type { CodexLoginStatus, CodexLoginVia } from './cli-contract'
+export { codexInstallRecipes, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from './install-recipes'
+export { codexCliEnv, codexCliEnvAllowlist } from './cli-env'
+export {
+  codexRealmHome, codexExternalDefaultHome, codexManagedRealmsRoot, codexHomesOverlap, isFullyQualifiedPath, CODEX_REALMS_DIRNAME,
+} from './realm-paths'
+export type { CodexRealmRoots, CodexRealmHome } from './realm-paths'
 
 export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const
@@ -61,8 +76,8 @@ export class CodexProvider implements SessionProvider {
  *  record what the provider itself offers. Version constants: pinned
  *  reference 0.155.1; 0.153.4 is the minimum only if the D7 conformance,
  *  realm-isolation and real-binary evidence passes. */
-export const CODEX_PINNED_VERSION = '0.155.1'
-export const CODEX_MINIMUM_VERSION_CANDIDATE = '0.153.4'
+export const CODEX_PINNED_VERSION = CODEX_PINNED_CLI_VERSION
+export const CODEX_MINIMUM_VERSION_CANDIDATE = CODEX_MIN_SUPPORTED_VERSION
 export const codexCapabilities: ProviderCapabilities = {
   'cli.discovery': { state: 'unknown', note: 'wired in the Codex adapter slice' },
   'install.recipes': { state: 'unknown', note: 'npm package @openai/codex, shown and copied, never scraped; wired in the Codex adapter slice' },

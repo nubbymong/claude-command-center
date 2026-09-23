@@ -2,7 +2,7 @@
 
 PR 2 of at most four for 2.1.1. Base: `beta` after PR #619 (WP1) merged.
 The spec is the approved design
-`F:/AICC_PLANNING/work/codex-parity-2.1.1-work-package/WORK-PACKAGE-1-PROVIDER-IDENTITY-SETUP-DESIGN.md`
+`WORK-PACKAGE-1-PROVIDER-IDENTITY-SETUP-DESIGN.md` in the private planning repository
 (candidate digest `e4d5b99a…83140`), the owner decisions
 `docs/wp1/owner-decisions-2026-09-20.md`, and the owner's WP2 instruction of
 2026-09-23 (below). Gate 0 is not repeated: the baseline, the legacy Codex
@@ -205,6 +205,14 @@ obligations fall on later slices:
   directory change (the file port captures the directory at init). The lock
   is not re-entrant: a holder must never await work that only a queued caller
   can finish.
+- **Codex runner and realms (from slice 3a's pass):** start npm's `codex.cmd`
+  from its own folder (the env already sets
+  `NoDefaultCurrentDirectoryInExePath=1`), resolve `npm`/`brew` to absolute
+  paths before running a recipe, and block a CLI whose version is `unknown`
+  as well as `too-old`. Canonicalise the external home with `realpath` and
+  refuse it when it shares a FILE IDENTITY (device + inode) with the managed
+  root or any managed realm: no string comparison sees 8.3 short names,
+  `\\localhost\C$` or links.
 - **Known, accepted:** deleting the very last Claude profile does not archive
   its account (indistinguishable from a failed read); emoji ZWJ sequences
   store with spaces (stripSpoofableText); reconcile is quadratic in profile
