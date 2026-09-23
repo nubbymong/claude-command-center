@@ -2651,9 +2651,13 @@ describe('the launch paths', () => {
       const poisoned = makeProject({ 'settings.local.json': { forceLoginMethod: 'console' } })
       expect(await diag.gateManagedLaunchDirs([clean, clean])).toEqual({ status: 'clean' })
       expect(await diag.gateManagedLaunchDirs([poisoned])).toEqual({ status: 'refused', keys: ['settings.local.json: forceLoginMethod'] })
-      expect(await diag.gateManagedLaunchDirs([clean, poisoned])).toEqual({ status: 'refused', keys: [`${poisoned}: settings.local.json: forceLoginMethod`] })
+      // The prefix is the directory as the panel shows it (displayPath): a temp
+      // fixture under the home arrives `~`-relative, and whether os.tmpdir() is
+      // under the home depends on the machine running the suite (Codex review).
+      const poisonedKey = `${diag.displayPath(poisoned)}: settings.local.json: forceLoginMethod`
+      expect(await diag.gateManagedLaunchDirs([clean, poisoned])).toEqual({ status: 'refused', keys: [poisonedKey] })
       expect(await diag.gateManagedLaunchDirs([clean, '\\\\10.255.255.1\\share\\proj'])).toEqual({ status: 'not-scanned', reason: 'network-path' })
-      expect(await diag.gateManagedLaunchDirs(['\\\\10.255.255.1\\share\\proj', poisoned]), 'a refusal must outrank a warning').toEqual({ status: 'refused', keys: [`${poisoned}: settings.local.json: forceLoginMethod`] })
+      expect(await diag.gateManagedLaunchDirs(['\\\\10.255.255.1\\share\\proj', poisoned]), 'a refusal must outrank a warning').toEqual({ status: 'refused', keys: [poisonedKey] })
       expect(await diag.gateManagedLaunchDirs([])).toEqual({ status: 'clean' })
       // The pure merge, on its own.
       expect(diag.mergeProjectGateResults([
