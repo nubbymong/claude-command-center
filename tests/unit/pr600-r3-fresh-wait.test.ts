@@ -47,7 +47,7 @@ const profiles = await import('../../src/main/account-profiles')
 const consumers = await import('../../src/main/profile-consumers')
 const identity = await import('../../src/main/claude-account-identity')
 const { spawnPty, killPty, isSessionWritable } = await import('../../src/main/pty-manager')
-const { _resetProjectScanStateForTest } = await import('../../src/main/managed-launch-diagnostics')
+const { _resetProjectScanStateForTest, displayPath } = await import('../../src/main/managed-launch-diagnostics')
 const { registerFakeClaudePackage } = await import('../helpers/claude-package')
 const messages: string[] = []
 // Payloads too, not just channel names: what the renderer is TOLD is now part
@@ -237,7 +237,10 @@ describe('the project-settings gate refuses a managed PTY before it spawns', () 
     await until(() => messages.includes('pty:exit:gate-resume'), 'the resume-target refusal to report')
     expect(state.attempts, 'a PTY was spawned although the resume directory refused').toBe(0)
     const line = String(payloads.find(([channel]) => channel === 'pty:data:gate-resume')![1])
-    expect(line).toContain(`${path.resolve(resumeDir)}: settings.json: apiKeyHelper`)
+    // The refusal names the directory as the terminal shows it (displayPath):
+    // a temp fixture under the home arrives `~`-relative, and whether
+    // os.tmpdir() is under the home depends on the machine running the suite.
+    expect(line).toContain(`${displayPath(path.resolve(resumeDir))}: settings.json: apiKeyHelper`)
     expect(line).not.toContain('evil.example')
     expect(consumers.profileConsumerCount(profileId)).toBe(0)
   })
