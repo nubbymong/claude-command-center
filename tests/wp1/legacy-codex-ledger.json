@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "576929b39c3c37d62b83b98e3bd186fd4165bbe350be13648f10405399d91345",
-  "manifestHead": "b9a1b5fcec4310b4338464828a5e71895012eb0b",
+  "manifestPathDigest": "ae18ac21028348caa47c05eebc62b881fd422d21a8646ed3a87e74091092b756",
+  "manifestHead": "60d967550f8a092acf8ac24f3d37268ade738ecd",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -735,6 +735,19 @@
       "disposition": "added",
       "evidence": "new WP2 Codex adapter module: realm home from the registry grammar only; covered by tests/wp1/realm-paths.test.ts (WP1.28)",
       "note": "created by WP2"
+    },
+    {
+      "path": "src/main/providers/codex/realm-folders.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 managed Codex account folders: the resources directory and the external home canonicalised; the external home refused on any overlap with the managed tree by canonical path and file identity, and whenever it cannot be checked; a pending setup's home created before sign-in as a real owner-only (POSIX) folder with links and reparse points refused; an abandoned setup's home removed only after proving it is inside the managed root, holds no stored sign-in and only plain files and folders on one volume, under the realm lock sign-in, sign-out and status share; covered by tests/wp1/codex-realm-folders.test.ts and tests/wp1/codex-realm-isolation.test.ts (WP1.28, WP1.30, WP1.45; the fake-CLI half of WP1.10)",
+      "note": "created by WP2; Windows ACL hardening deferred with the registry (aicc_planning #103)"
     },
     {
       "path": "src/main/providers/codex/resume-picker.ts",

@@ -59,6 +59,7 @@ export interface RealmRef { authRealmId: string }
  *  (design 13) rather than on the message's wording. */
 export type AuthFailureCode =
   | 'realm-unavailable'      // not resolvable, missing, or not at its canonical path
+  | 'external-overlap'       // the external home overlaps (or cannot be shown not to overlap) the managed homes
   | 'cli-unavailable'        // not proven by setup, an unusable version, or changed since
   | 'realm-env-file'         // a managed realm holds a .env
   | 'busy'                   // another sign-in or sign-out holds this realm
@@ -129,6 +130,52 @@ export interface ProviderAuthOperations {
   login(realm: RealmRef, method: AuthMethod, input?: AuthLoginInput): Promise<AuthOperationResult>
 }
 
+/** Why a realm folder operation did not succeed (design 13: a realm
+ *  permission or path failure, an orphaned app-managed realm). */
+export type RealmFolderFailureCode =
+  | 'realm-unavailable'      // not resolvable in the registry
+  | 'not-managed'            // an external home: the app never creates or removes it
+  | 'lifecycle'              // not in a state that allows it (only a pending setup's folder)
+  | 'resources-unavailable'  // the app's data folder cannot be resolved
+  | 'overlaps-external'      // the external home overlaps (or cannot be shown not to overlap) the managed folders
+  | 'unsafe-path'            // a link, junction or reparse point, or not where the app put it
+  | 'permissions'            // it could not be made owner-only
+  | 'busy'                   // a sign-in or sign-out holds the realm
+  | 'credentials-present'    // a removal found a stored sign-in: sign out through the provider first
+  | 'not-empty'              // an empty-only removal found something inside
+  | 'unsafe-contents'        // a removal found a link, another volume or too much: nothing removed
+  | 'changed'                // the folder changed while in use, and the operation stopped
+  | 'io-failed'
+
+export interface RealmFolderResult {
+  ok: boolean
+  code?: RealmFolderFailureCode
+  /** User-safe; never a path. */
+  message?: string
+  /** prepare: the folder was made by this call (false: an earlier attempt's, re-verified). */
+  created?: boolean
+  /** remove: something was removed (false: it was already gone). */
+  removed?: boolean
+}
+
+/** The app-managed folder behind a realm, for providers whose managed
+ *  accounts each get one (design 5.4, 9.3). Main-process only; realms are
+ *  named by opaque reference, never by path. */
+export interface ProviderRealmFolderOperations {
+  /** Create a pending setup's folder before any sign-in, or re-verify the one
+   *  an earlier attempt left. */
+  prepare(realm: RealmRef): Promise<RealmFolderResult>
+  /** Remove a pending (abandoned) setup's folder: `empty-only` only when
+   *  nothing is inside, `all` after proving the whole tree is plain files and
+   *  folders inside the managed root. `all` proves the tree's SHAPE, not who
+   *  wrote it. The caller signs the realm out through the provider first (a
+   *  stored sign-in is refused, never deleted; one kept in an OS keyring is
+   *  invisible here), and removes the folder BEFORE it abandons the setup,
+   *  keeping the journal when this fails: the folder is only ever found
+   *  through its realm record. `removed: false` means nothing was there. */
+  remove(realm: RealmRef, opts: { contents: 'empty-only' | 'all' }): Promise<RealmFolderResult>
+}
+
 export interface ProviderRealmOperations {
   /** The exact environment patch for a bound realm (D1): Claude = the existing
    *  profile-home mechanism; Codex = CODEX_HOME. */
@@ -178,6 +225,9 @@ export interface ProviderPackage {
   readonly setup?: ProviderSetupOperations
   readonly auth?: ProviderAuthOperations
   readonly realms?: ProviderRealmOperations
+  /** Present when the provider's managed accounts each get an app-managed
+   *  folder (Codex); absent for providers that keep their own (Claude). */
+  readonly realmFolders?: ProviderRealmFolderOperations
   /** Present when the provider keeps its own account store the registry must
    *  mirror (Claude's profiles.json during 2.1.1). Creating it does no I/O;
    *  only the registry store calls it. */

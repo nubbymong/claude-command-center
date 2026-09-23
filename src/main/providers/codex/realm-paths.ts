@@ -23,6 +23,10 @@ export interface CodexRealmRoots {
   resourcesDir: string
   /** The canonical external default home, or null when it cannot be used. */
   externalDefaultHome: string | null
+  /** The external home overlaps the managed tree (main's check on canonical
+   *  paths and file identity): every Codex realm is unavailable until the
+   *  user moves it, managed ones included. */
+  externalConflict?: boolean
 }
 
 export type CodexRealmHome = { ok: true; home: string } | { ok: false; message: string }
@@ -74,6 +78,38 @@ export function codexExternalDefaultHome(env: Readonly<Record<string, string | u
   return isFullyQualifiedPath(homeDir, pathApi) ? pathApi.join(homeDir, '.codex') : null
 }
 
+/** The external home setting, for main's overlap check (slice 3d): none (no
+ *  CODEX_HOME and no usable home directory), the path exactly as the CLI is
+ *  given it -- NOT normalised, because `..` after a link is the kernel's to
+ *  resolve, and a Windows verbatim or device path (`\\?\`, `\\.\`) is
+ *  literal -- or `unusable`: a CODEX_HOME that is set but relative, drive-
+ *  or root-relative, or ambiguous (two spellings), or -- on Windows, outside
+ *  a `\\?\` or `\\.\` path -- with a name ending in a dot or a space: Win32
+ *  path normalisation (which the CLI's file calls go through) drops those,
+ *  while Node looks the name up as written, so the two would see different
+ *  folders. The app cannot show an unusable one does not overlap its managed
+ *  homes, so main treats it as if it did: an overlap check that errs refuses. */
+export type CodexExternalCandidate = { kind: 'none' } | { kind: 'path'; path: string } | { kind: 'unusable' }
+
+export function codexExternalHomeCandidate(env: Readonly<Record<string, string | undefined>>, homeDir: string, pathApi: typeof path = path): CodexExternalCandidate {
+  const win = isWin(pathApi)
+  const literal = (p: string) => win && /^[\\/]{2}[.?][\\/]/.test(p)
+  const checked = (p: string): CodexExternalCandidate =>
+    win && !literal(p) && p.split(/[\\/]/).slice(1).some((seg) => /[. ]$/.test(seg)) ? { kind: 'unusable' } : { kind: 'path', path: p }
+  const set = Object.keys(env).filter((k) => (win ? k.toUpperCase() === 'CODEX_HOME' : k === 'CODEX_HOME'))
+  if (set.length > 1) return { kind: 'unusable' }
+  if (set.length === 1) {
+    const v = env[set[0]]
+    if (typeof v === 'string' && v !== '') {
+      // \\.\C:\..., \\?\UNC\..., \\?\Volume{...}\...: absolute; realpath decides.
+      if (isFullyQualifiedPath(v, pathApi) || (literal(v) && /^[\\/]{2}[.?][\\/]./.test(v))) return checked(v)
+      return { kind: 'unusable' }
+    }
+  }
+  // Joined by hand, not normalised: `..` in HOME is the kernel's to resolve.
+  return isFullyQualifiedPath(homeDir, pathApi) ? checked(`${homeDir.replace(/[\\/]+$/, '')}${pathApi.sep}.codex`) : { kind: 'none' }
+}
+
 /** The managed realms root under a resources directory. */
 export function codexManagedRealmsRoot(resourcesDir: string, pathApi: typeof path = path): string {
   return pathApi.join(pathApi.resolve(resourcesDir), CODEX_REALMS_DIRNAME)
@@ -96,6 +132,7 @@ export function codexRealmHome(
   const shape = realmShapeProblem(realm)
   if (shape) return { ok: false, message: shape }
   if (!isFullyQualifiedPath(roots.resourcesDir, pathApi)) return { ok: false, message: 'the resources directory is not available' }
+  if (roots.externalConflict === true) return { ok: false, message: "the external Codex home overlaps the app's managed Codex homes" }
   if (realm.ownership === 'external-default') {
     if (realm.pathRef !== EXTERNAL_DEFAULT_PATH_REF) return { ok: false, message: 'not the external default home' }
     const home = roots.externalDefaultHome

@@ -240,6 +240,37 @@ obligations fall on later slices:
   act on `AuthOperationResult.code`, never on message text; a failed or
   cancelled sign-in reports the realm's observed `state`, and `signed-in`
   there means the user finished anyway.
+- **Accounts service (from slice 3d's pass):** remove an abandoned setup's
+  folder BEFORE `abandonAccountSetup` (the folder is only found through its
+  realm record) and keep the journal when removal fails; sign the realm out
+  through the CLI first (a stored `auth.json` is refused as
+  `credentials-present`, never deleted; a credential kept in an OS keyring is
+  invisible to the folder layer); `all` proves the tree's shape, not who
+  wrote it. The composition root's realm source reads a registry SNAPSHOT
+  and takes no lock: removal awaits it while holding the realm lock, and the
+  registry lock is not re-entrant. Wire it in `compose.ts` (`store.current()`
+  plus the configured resources directory, and `mkdirSecure`). Build exactly
+  one Codex package: the realm locks live in it.
+- **Launch handoff (from slice 3d's pass):** the realm lock covers sign-in,
+  sign-out, status and folder removal, not a running session; a managed
+  launch's consumer lease must also block removal. Flip `realm.isolated` to
+  `supported` only then.
+- **Docs slice (from slice 3d's pass):** an app-knowledge known-issues entry:
+  a CODEX_HOME the app cannot check (relative, ambiguous, a name ending in a
+  dot or space on Windows, unresolvable) or one that overlaps the app's data
+  folder makes every Codex account unavailable until it is changed or unset.
+- **Known, accepted (slice 3d):** a resources directory on a network share
+  whose SERVER follows links presents such a link as a plain folder, which
+  the removal cannot tell apart (same user or server administrator: outside
+  the threat model). Windows ACL hardening of the managed folders is
+  deferred with the registry's (aicc_planning #103); on POSIX owner-only is
+  enforced, so a disk that ignores permissions refuses managed folders. The
+  CLI's helper folders under `CODEX_HOME/tmp` may keep links after a killed
+  run; if the pinned CLI does that, such a folder refuses `all` removal and
+  is kept (to be checked against the pinned binary). Three belt-and-braces
+  checks are covered by a second check each and are proven only as pairs
+  (the folder kind beside its canonical path, the entry kind beside its
+  canonical path; an explicit emptiness check beside `rmdir`'s own).
 - **Known, accepted (slice 3c):** a stopped run kills its own chain by pid
   from a process-table snapshot, so a chain process that exits in the
   moment between the snapshot and the kill could in principle have its pid

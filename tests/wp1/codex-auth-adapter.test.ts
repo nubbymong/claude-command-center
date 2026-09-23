@@ -8,8 +8,8 @@
 // injected ports (no process is started, no file is read). The real-process
 // counterpart is tests/wp1/fake-cli.test.ts (CI/VM).
 import { describe, it, expect } from 'vitest'
-import { parseCodexLoginStatus, createCodexAuthOperations, createCodexOutputRedactor, createCodexPackage } from '../../src/main/providers/codex'
-import type { CodexAuthDeps, CodexDiscovery, CodexDiscoveryDeps, CodexCommand, CodexRunOptions, CodexRunResult } from '../../src/main/providers/codex'
+import { parseCodexLoginStatus, createCodexAuthOperations, createCodexOutputRedactor, createCodexPackage, createCodexRealmLocks } from '../../src/main/providers/codex'
+import type { CodexAuthDeps, CodexDiscovery, CodexDiscoveryDeps, CodexCommand, CodexRunOptions, CodexRunResult, CodexRealmFsPort } from '../../src/main/providers/codex'
 
 describe('codex login status', () => {
   it('classifies the pinned CLI outputs, on either stream', () => {
@@ -524,6 +524,71 @@ describe('Codex API-key sign-in (WP1.22)', () => {
   })
 })
 
+describe('the realm lock around sign-in, sign-out and status (slice 3d)', () => {
+  const tick = () => new Promise((r) => setTimeout(r, 0))
+
+  it('a sign-in refused because its folder changed under it releases the lock it took, whatever the port answered', async () => {
+    const locks = createCodexRealmLocks()
+    for (const second of ['changed', 'throws', 'not-a-folder'] as const) {
+      let n = 0
+      const w = world({
+        locks,
+        realmIdentity: (home) => {
+          n++
+          if (n === 1) return { canonical: home, dev: '9', ino: '11', isDirectory: true }
+          if (second === 'throws') return new Proxy({}, { get() { throw new Error('boom') } }) as never
+          return second === 'changed' ? { canonical: home, dev: '9', ino: '99', isDirectory: true } : { canonical: home, dev: '9', ino: '11', isDirectory: false }
+        },
+      })
+      expect(await w.ops.login(MANAGED, 'device'), second).toMatchObject({ ok: false, code: 'realm-unavailable' })
+      expect(w.runs, second).toEqual([])
+      const again = locks.hold('id:9:11')
+      expect(again, second).not.toBeNull()
+      again!()
+    }
+  })
+
+  it('a sign-out is refused the same way when its folder changed under it', async () => {
+    let n = 0
+    const w = world({ realmIdentity: (home) => ({ canonical: home, dev: '9', ino: ++n === 1 ? '11' : '12', isDirectory: true }) })
+    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'realm-unavailable' })
+    expect(w.runs).toEqual([])
+  })
+
+  it('status is a reader: refused during a folder removal, and a removal is refused while it runs', async () => {
+    const locks = createCodexRealmLocks()
+    const removal = locks.holdRemoval('id:9:11')!
+    const w = world({ locks })
+    expect(await w.ops.status(MANAGED)).toMatchObject({ ok: false, state: 'error', code: 'busy' })
+    expect(w.runs).toEqual([])
+    removal()
+    let open: () => void = () => {}
+    const gate = new Promise<void>((res) => { open = res })
+    const v = world({ locks }, { 'login status': async () => { await gate; return { exitCode: 1, stderr: 'Not logged in\n' } } })
+    const s = v.ops.status(MANAGED)
+    await tick()
+    expect(locks.holdRemoval('id:9:11')).toBeNull()
+    // Beside a sign-in: status does not take the sign-in's lock.
+    const signIn = locks.hold('id:9:11')
+    expect(signIn).not.toBeNull()
+    signIn!()
+    open()
+    expect(await s).toMatchObject({ ok: true, state: 'signed-out' })
+    const after = locks.holdRemoval('id:9:11')
+    expect(after).not.toBeNull()
+    after!()
+  })
+
+  it('a status whose folder changed under it is refused and holds nothing', async () => {
+    const locks = createCodexRealmLocks()
+    let n = 0
+    const w = world({ locks, realmIdentity: (home) => ({ canonical: home, dev: '9', ino: ++n === 1 ? '11' : '12', isDirectory: true }) })
+    expect(await w.ops.status(MANAGED)).toMatchObject({ ok: false, state: 'error', code: 'realm-unavailable' })
+    const r = locks.holdRemoval('id:9:11')
+    expect(r).not.toBeNull()
+  })
+})
+
 describe('Codex logout (WP1.23, WP1.24)', () => {
   it('runs `logout` in the selected realm only and confirms the realm now reads signed out', async () => {
     const w = world()
@@ -567,31 +632,72 @@ describe('the package keeps its own proof and exposes auth only when wired (T13,
       now: () => 1,
     })
   }
+  /** A filesystem where every path is its own canonical folder (the folder
+   *  layer has its own suite, tests/wp1/codex-realm-folders.test.ts). */
+  const flatFs = (canonical: (p: string) => string = (p) => p): CodexRealmFsPort => ({
+    platform: 'win32',
+    realpath: canonical,
+    lstat: (p) => ({ kind: 'dir', dev: '9', ino: String([...canonical(p).toLowerCase()].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)), mode: 0o700 }),
+    mkdirSecure: () => {}, mkdir: () => {}, chmod: () => {}, readdir: () => [], unlink: () => {}, rmdir: () => {},
+  })
   const authPorts = () => {
     const w = world()
     const { lookupRealm: _l, takeSecret: _t, proven: _p, ...ports } = w.deps
-    return { lookup: w.deps.lookupRealm, ports }
+    // The registry's side: the record and the resources directory as configured.
+    const source = {
+      lookup: async (r: { authRealmId: string }) => {
+        const f = await w.deps.lookupRealm(r)
+        return f.ok ? { ok: true as const, realm: { ...f.realm, lifecycle: 'active' as const }, resourcesDir: f.roots.resourcesDir } : { ok: false as const }
+      },
+      mkdirSecure: () => {},
+    }
+    return { source, ports, w }
   }
 
-  it('without injected auth deps there is no auth, and the auth capabilities stay unknown', () => {
+  it('without the registry source there is no auth, and the auth capabilities stay unknown', () => {
     const pkg = createCodexPackage()
     expect(pkg.auth).toBeUndefined()
     for (const k of ['auth.browser', 'auth.device', 'auth.apiKey', 'auth.status', 'auth.logout'] as const) expect(pkg.capabilities[k].state).toBe('unknown')
-    const { lookup } = authPorts()
-    expect(createCodexPackage({ auth: { lookupRealm: lookup } }).auth).toBeDefined()
+    const { source } = authPorts()
+    expect(createCodexPackage({ realms: source, realmFs: flatFs() }).auth).toBeDefined()
+    expect(createCodexPackage({ auth: { takeSecret: () => KEY } }).auth).toBeUndefined()
   })
 
-  it('a test port can never replace the proof, the realm lookup or the secret store', async () => {
-    const { lookup, ports } = authPorts()
+  it('a test port can never replace the proof, the realm lookup, the secret store or the realm locks', async () => {
+    const { source, ports } = authPorts()
     let rogue = 0
     let real = 0
     const pkg = createCodexPackage({
-      auth: { lookupRealm: async (r) => { real++; return lookup(r) } },
-      authPorts: { ...ports, lookupRealm: async () => { rogue++; return { ok: false } }, proven: () => PROVEN, takeSecret: () => KEY } as never,
+      realms: { ...source, lookup: async (r) => { real++; return source.lookup(r) } },
+      realmFs: flatFs(),
+      authPorts: {
+        ...ports,
+        lookupRealm: async () => { rogue++; return { ok: false } },
+        proven: () => PROVEN,
+        takeSecret: () => KEY,
+        locks: { hold: () => { rogue++; return () => {} } },
+      } as never,
+      discoveryDeps: discoveryDeps([async () => ({ stdout: 'codex-cli 0.155.1\n' })]),
     })
     expect(await pkg.auth!.status(MANAGED)).toMatchObject({ code: 'cli-unavailable' })
     expect(await pkg.auth!.login(MANAGED, 'apiKey', { secretHandle: 'h' })).toMatchObject({ code: 'secret-channel-unavailable' })
-    expect([real, rogue]).toEqual([1, 0])
+    // A sign-out takes the realm lock: the package's own, never the port's.
+    expect(await pkg.setup!.discover()).toMatchObject({ state: 'found' })
+    expect(await pkg.auth!.logout(MANAGED)).toMatchObject({ ok: true, state: 'signed-out' })
+    expect([real, rogue]).toEqual([2, 0])
+  })
+
+  it('the package canonicalises the resources directory before it derives a CODEX_HOME (a SUBST or mapped drive)', async () => {
+    const { source, ports, w } = authPorts()
+    const pkg = createCodexPackage({
+      realms: { ...source, lookup: async (r) => { const f = await source.lookup(r); return f.ok ? { ...f, resourcesDir: 'S:\\res' } : f } },
+      realmFs: flatFs((p) => p.replace(/^S:\\res/i, 'C:\\res')),
+      authPorts: ports,
+      discoveryDeps: discoveryDeps([async () => ({ stdout: 'codex-cli 0.155.1\n' })]),
+    })
+    expect(await pkg.setup!.discover()).toMatchObject({ state: 'found' })
+    expect(await pkg.auth!.status(MANAGED)).toEqual({ ok: true, state: 'signed-out' })
+    expect(w.runs[w.runs.length - 1].env.CODEX_HOME).toBe(HOME_A)
   })
 
   it('a sign-in never runs on stale proof: a re-check clears it while it runs, a failed check leaves it clear, overlapping checks keep the newest', async () => {
@@ -600,9 +706,10 @@ describe('the package keeps its own proof and exposes auth only when wired (T13,
     const first = new Promise<Partial<CodexRunResult>>((res) => { releaseFirst = () => res({ stdout: 'codex-cli 0.155.1\n' }) })
     let releaseFourth: () => void = () => {}
     const fourth = new Promise<Partial<CodexRunResult>>((res) => { releaseFourth = () => res({ stdout: 'codex-cli 0.155.1\n' }) })
-    const { lookup, ports } = authPorts()
+    const { source, ports } = authPorts()
     const pkg = createCodexPackage({
-      auth: { lookupRealm: lookup },
+      realms: source,
+      realmFs: flatFs(),
       authPorts: ports,
       discoveryDeps: discoveryDeps([() => first, async () => ({ stdout: 'nonsense' }), version, () => fourth]),
     })
@@ -625,8 +732,8 @@ describe('the package keeps its own proof and exposes auth only when wired (T13,
   })
 
   it('a check that throws leaves no proof and rejects to its caller', async () => {
-    const { lookup, ports } = authPorts()
-    const pkg = createCodexPackage({ auth: { lookupRealm: lookup }, authPorts: ports, discoveryDeps: async () => { throw new Error('no shell') } })
+    const { source, ports } = authPorts()
+    const pkg = createCodexPackage({ realms: source, realmFs: flatFs(), authPorts: ports, discoveryDeps: async () => { throw new Error('no shell') } })
     await expect(pkg.setup!.discover()).rejects.toThrow()
     expect(await pkg.auth!.status(MANAGED)).toMatchObject({ code: 'cli-unavailable' })
   })

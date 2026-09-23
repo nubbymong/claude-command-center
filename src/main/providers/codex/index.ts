@@ -3,8 +3,8 @@
 // ratchets the remaining deep imports down to zero.
 import type { SessionProvider, SpawnOptions, TelemetrySource, HistorySession } from '../types'
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
-import type { ProviderCapabilities } from '../../../shared/providers'
-import type { ProviderPackage } from '../core'
+import type { ProviderCapabilities, AuthRealm } from '../../../shared/providers'
+import type { ProviderPackage, RealmRef } from '../core'
 import { resolveCodexBinary, buildCodexSpawn } from './spawn'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
@@ -17,6 +17,8 @@ import { discoverCodex } from './discovery'
 import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
 import { createCodexAuthOperations } from './auth-operations'
 import type { CodexAuthDeps } from './auth-operations'
+import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
+import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort } from './realm-folders'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -42,9 +44,13 @@ export { createCodexAuthOperations, createCodexOutputRedactor } from './auth-ope
 export type { CodexAuthDeps, CodexRealmLookup, CodexRealmIdentity, CodexOutputRedactor } from './auth-operations'
 export { codexCliEnv, codexCliEnvAllowlist } from './cli-env'
 export {
-  codexRealmHome, codexExternalDefaultHome, codexManagedRealmsRoot, codexHomesOverlap, isFullyQualifiedPath, CODEX_REALMS_DIRNAME,
+  codexRealmHome, codexExternalDefaultHome, codexExternalHomeCandidate, codexManagedRealmsRoot, codexHomesOverlap, isFullyQualifiedPath, CODEX_REALMS_DIRNAME,
 } from './realm-paths'
-export type { CodexRealmRoots, CodexRealmHome } from './realm-paths'
+export type { CodexRealmRoots, CodexRealmHome, CodexExternalCandidate } from './realm-paths'
+export {
+  createCodexRealmFolders, createCodexRealmLocks, codexRealmLockKey, resolveCodexRealmRoots, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS,
+} from './realm-folders'
+export type { CodexRealmFsPort, CodexFsEntry, CodexRealmLocks, CodexFolderLookup, CodexRealmFolderDeps, CodexRootsResult } from './realm-folders'
 
 export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const
@@ -156,17 +162,38 @@ export const codexAmbientAuthVariables: readonly string[] = [
  *  now required -- the ambient list is no longer implicitly settable. */
 export const codexOwnedLaunchVariables: readonly string[] = ['CODEX_HOME']
 
+/** The registry's side of a realm, supplied by the composition root: the
+ *  record behind an opaque reference, and the resources directory as the app
+ *  has it configured. The package canonicalises that directory and the
+ *  external home itself before it derives any CODEX_HOME. */
+export interface CodexRealmSource {
+  lookup(realm: RealmRef): Promise<{ ok: true; realm: Pick<AuthRealm, 'id' | 'providerId' | 'kind' | 'ownership' | 'pathRef' | 'lifecycle'>; resourcesDir: string } | { ok: false }>
+  /** `mkdir -p` refusing a pre-planted link: the app's mkdirSecure. */
+  mkdirSecure(dir: string): void
+}
+
 /** What the composition root hands the package: the ports it does not own. */
 export interface CodexPackageDeps {
-  /** The realm lookup (from the registry) and the single-use secret store.
-   *  Until the composition root supplies them the package exposes no auth
-   *  operations, and its auth capabilities stay `unknown`. */
-  auth?: Pick<CodexAuthDeps, 'lookupRealm' | 'takeSecret'>
+  /** The registry's realms. Until the composition root supplies them the
+   *  package exposes no auth or folder operations, and the capabilities that
+   *  need them stay `unknown`. */
+  realms?: CodexRealmSource
+  /** The single-use secret store behind API-key sign-in. */
+  auth?: Pick<CodexAuthDeps, 'takeSecret'>
   /** The discovery ports; the real ones unless a test supplies its own. */
   discoveryDeps?: () => Promise<CodexDiscoveryDeps>
   /** Replaces real auth ports, for a test. `proven` is not replaceable: it is
    *  always this package's own last discovery. */
-  authPorts?: Partial<Omit<CodexAuthDeps, 'proven' | 'lookupRealm' | 'takeSecret'>>
+  authPorts?: Partial<Omit<CodexAuthDeps, 'proven' | 'lookupRealm' | 'takeSecret' | 'locks'>>
+  /** Replaces the real folder filesystem, for a test. */
+  realmFs?: CodexRealmFsPort
+}
+
+/** The CODEX_HOME the app inherited, in every spelling, captured once when
+ *  the package is created: the external default home is the one the user's
+ *  own Codex would use, whatever the process environment later becomes. */
+function inheritedCodexHome(env: NodeJS.ProcessEnv): Readonly<Record<string, string | undefined>> {
+  return Object.freeze(Object.fromEntries(Object.entries(env).filter(([k]) => k.toUpperCase() === 'CODEX_HOME')))
 }
 
 /** Created by the composition root; importing this entry point has no side effects. */
@@ -184,6 +211,22 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     if (mine === generation) proven = r.state === 'found' ? r : null
     return r
   }
+  // One lock set for sign-in, sign-out and folder removal.
+  const locks = createCodexRealmLocks()
+  const source = deps.realms
+  const inherited = inheritedCodexHome(process.env)
+  let homeDir = ''
+  // No home at all (POSIX without HOME or a passwd entry): no ~/.codex.
+  try { homeDir = os.homedir() } catch { homeDir = '' }
+  const realmFs = source ? (deps.realmFs ?? realRealmFsPort(process.platform, (dir) => source.mkdirSecure(dir))) : null
+  /** The registry's record with canonical roots, resolved afresh each time. */
+  const lookupRealm = async (ref: RealmRef): Promise<CodexFolderLookup> => {
+    if (!source || !realmFs) return { ok: false }
+    const found = await source.lookup({ authRealmId: ref.authRealmId })
+    if (!found || found.ok !== true || !found.realm || typeof found.resourcesDir !== 'string') return { ok: false }
+    const r = resolveCodexRealmRoots({ resourcesDir: found.resourcesDir, env: inherited, homeDir }, realmFs)
+    return r.ok ? { ok: true, realm: found.realm, roots: r.roots } : { ok: false }
+  }
   return {
     id: session.id,
     displayName: session.displayName,
@@ -198,7 +241,32 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
       discover,
       installRecipes: codexInstallRecipes,
     },
-    ...(deps.auth ? { auth: createCodexAuthOperations({ ...realAuthDeps(deps.auth), ...testAuthPorts(deps.authPorts), proven: () => proven }) } : {}),
+    ...(source && realmFs ? {
+      auth: createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven }),
+      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks }),
+    } : {}),
+  }
+}
+
+/** The real filesystem behind the managed folders. */
+function realRealmFsPort(platform: NodeJS.Platform, mkdirSecure: (dir: string) => void): CodexRealmFsPort {
+  const entry = (s: fs.BigIntStats): CodexFsEntry => ({
+    kind: s.isSymbolicLink() ? 'link' : s.isDirectory() ? 'dir' : s.isFile() ? 'file' : 'other',
+    // bigint: NTFS file ids exceed 2^53.
+    dev: String(s.dev),
+    ino: String(s.ino),
+    mode: Number(s.mode & 0o7777n),
+  })
+  return {
+    platform,
+    realpath: (p) => fs.realpathSync.native(p),
+    lstat: (p) => entry(fs.lstatSync(p, { bigint: true })),
+    mkdirSecure,
+    mkdir: (dir, mode) => { fs.mkdirSync(dir, { mode }) },
+    chmod: (p, mode) => fs.chmodSync(p, mode),
+    readdir: (dir) => fs.readdirSync(dir),
+    unlink: (p) => fs.unlinkSync(p),
+    rmdir: (p) => fs.rmdirSync(p),
   }
 }
 
@@ -231,17 +299,18 @@ function realExecutablePorts(platform: NodeJS.Platform): Pick<CodexDiscoveryDeps
 }
 
 /** The real ports behind the auth operations. */
-function realAuthDeps(injected: NonNullable<CodexPackageDeps['auth']>): Omit<CodexAuthDeps, 'proven'> {
+function realAuthDeps(injected: Pick<CodexAuthDeps, 'lookupRealm' | 'takeSecret'>, realmFs: CodexRealmFsPort): Omit<CodexAuthDeps, 'proven'> {
   const platform = process.platform
   const runDeps = defaultCodexRunDeps(platform)
   const takeSecret = injected.takeSecret
   return {
     lookupRealm: (realm) => injected.lookupRealm(realm),
+    // Through the folder port, so sign-in and folder removal key the realm
+    // lock on the same reading of the same folder.
     realmIdentity: (home) => {
-      const canonical = fs.realpathSync.native(home)
-      // bigint: NTFS file ids exceed 2^53.
-      const s = fs.statSync(canonical, { bigint: true })
-      return { canonical, dev: String(s.dev), ino: String(s.ino), isDirectory: s.isDirectory() }
+      const canonical = realmFs.realpath(home)
+      const e = realmFs.lstat(canonical)
+      return { canonical, dev: e.dev, ino: e.ino, isDirectory: e.kind === 'dir' }
     },
     ...(takeSecret ? { takeSecret: (handle: string) => takeSecret(handle) } : {}),
     executablePorts: realExecutablePorts(platform),

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-23T17:47:44.291Z",
-  "head": "b9a1b5fcec4310b4338464828a5e71895012eb0b",
-  "tree": "8e5e3b8d0cc78eea99bf1a77645943ebaf1caf38",
+  "generatedAt": "2026-09-23T21:01:15.774Z",
+  "head": "60d967550f8a092acf8ac24f3d37268ade738ecd",
+  "tree": "8b5f8d194118502dc3579a3ed92b927351014f9f",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2185,
-  "excludedFileCount": 354,
-  "scannedFileCount": 1831,
+  "trackedFileCount": 2188,
+  "excludedFileCount": 356,
+  "scannedFileCount": 1832,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 301,
-  "pathDigest": "576929b39c3c37d62b83b98e3bd186fd4165bbe350be13648f10405399d91345",
+  "matchedPathCount": 302,
+  "pathDigest": "ae18ac21028348caa47c05eebc62b881fd422d21a8646ed3a87e74091092b756",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -527,7 +527,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 64
+      "lineCount": 72
     },
     {
       "path": "src/main/providers/codex/auth.ts",
@@ -584,7 +584,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 113
+      "lineCount": 137
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -628,6 +628,16 @@
       "lineCount": 8
     },
     {
+      "path": "src/main/providers/codex/realm-folders.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P14"
+      ],
+      "lineCount": 87
+    },
+    {
       "path": "src/main/providers/codex/realm-paths.ts",
       "predicates": [
         "P01",
@@ -635,7 +645,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 35
+      "lineCount": 48
     },
     {
       "path": "src/main/providers/codex/resume-picker.ts",
@@ -688,7 +698,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 3
     },
     {
       "path": "src/main/providers/host-color-scheme.ts",

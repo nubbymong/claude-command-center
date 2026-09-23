@@ -67,6 +67,13 @@ export function packageRegistrationProblem(pkg: ProviderPackage): string | null 
       if (typeof ml[fn] !== 'function') return `managedLaunch.${fn}() must be a function`
     }
   }
+  const rf = pkg.realmFolders
+  if (rf !== undefined) {
+    if (typeof rf !== 'object' || rf === null) return 'realmFolders must be an object when present'
+    for (const fn of ['prepare', 'remove'] as const) {
+      if (typeof rf[fn] !== 'function') return `realmFolders.${fn}() must be a function`
+    }
+  }
   for (const key of CAPABILITY_KEYS) {
     const d = pkg.capabilities[key]
     // Platform overrides are declarations too: a key that is `unknown` by

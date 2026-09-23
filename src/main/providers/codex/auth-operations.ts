@@ -17,7 +17,10 @@
 // - the realm home must exist at its canonical path (the CLI canonicalises
 //   CODEX_HOME, and the lock and the .env check must see the folder it uses);
 //   the realm lock is keyed on the folder's file identity, so no two
-//   spellings of one folder run at once;
+//   spellings of one folder run at once, and the identity is read again the
+//   moment the lock is taken; the lock is shared with folder removal;
+// - while the external home overlaps the managed homes, every realm refuses
+//   with its own code;
 // - a sign-in never runs over an existing one (the pinned CLI clears the
 //   realm's credentials before it tries the new login), and never into an
 //   external realm (another client's home);
@@ -55,6 +58,8 @@ import { codexCliEnv } from './cli-env'
 import { verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
 import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
 import { codexRealmHome } from './realm-paths'
+import { createCodexRealmLocks, codexRealmLockKey } from './realm-folders'
+import type { CodexRealmLocks } from './realm-folders'
 import type { CodexRealmRoots } from './realm-paths'
 
 export type CodexRealmLookup =
@@ -86,6 +91,9 @@ export interface CodexAuthDeps {
   /** Single use: the API key a main-issued handle stands for, then forgotten.
    *  Absent: API-key sign-in is unavailable. */
   takeSecret?(handle: string): string | null
+  /** The realm locks, shared with folder removal so a folder is never removed
+   *  under a running sign-in. Absent: this instance keeps its own. */
+  locks?: CodexRealmLocks
 }
 
 const STATUS_TIMEOUT_MS = 30_000
@@ -109,9 +117,10 @@ function loginSpec(method: unknown): { op: CodexCliOperation; expect: CodexLogin
 
 const MSG: Readonly<Record<AuthFailureCode, string>> = {
   'realm-unavailable': 'The Codex account folder is missing or could not be used.',
+  'external-overlap': "Your own Codex folder setting (CODEX_HOME, else ~/.codex) overlaps the app's Codex account folders, or cannot be checked. Set CODEX_HOME to a full path outside the app's data folder, or unset it, then try again.",
   'cli-unavailable': 'Check the Codex CLI in setup first.',
   'realm-env-file': 'This managed Codex account folder contains a .env file, which could override its sign-in. Remove it, then try again.',
-  'busy': 'A sign-in or sign-out is already running for this Codex account.',
+  'busy': 'A sign-in, sign-out or folder change is already running for this Codex account.',
   'browser-busy': 'Another browser sign-in is already running. Finish or cancel it first.',
   'already-signed-in': 'This Codex account is already signed in. Sign out first to sign in again.',
   'external-realm': 'Sign in with a new managed Codex account; this app does not sign in to the external Codex home.',
@@ -159,7 +168,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
     const norm = (p: string) => { const s = p.replace(/[\\/]+$/, ''); return caseless ? s.toLowerCase() : s }
     return norm(a) === norm(b)
   }
-  const busy = new Set<string>()
+  const locks = deps.locks ?? createCodexRealmLocks()
   let browserRunning = false
 
   /** The executable setup proved, re-verified now; the path to run. */
@@ -187,6 +196,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
       if (!found || found.ok !== true || !found.realm || found.realm.id !== id || !found.roots) return refuse('realm-unavailable')
       const ownership = found.realm.ownership
       if (ownership !== 'conductor-managed' && ownership !== 'external-default') return refuse('realm-unavailable')
+      if (found.roots.externalConflict === true) return refuse('external-overlap')
       const where = codexRealmHome(found.realm, found.roots, pathApi)
       return where.ok ? { ok: true, home: where.home, ownership } : refuse('realm-unavailable')
     } catch {
@@ -211,9 +221,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
     let base: Env
     try { base = await deps.baseEnv() } catch { return refuse('not-started') }
     if (!base || typeof base !== 'object') return refuse('not-started')
-    const known = typeof fsid.ino === 'string' && fsid.ino !== '' && fsid.ino !== '0' && typeof fsid.dev === 'string'
-    const lock = known ? `id:${fsid.dev}:${fsid.ino}` : `path:${fsid.canonical.replace(/[\\/]+$/, '').toLowerCase()}`
-    return { ok: true, home: where.home, ownership, lock, base }
+    return { ok: true, home: where.home, ownership, lock: codexRealmLockKey(fsid.canonical, fsid.dev, fsid.ino), base }
   }
 
   /** One run, from the executable re-verified for THIS run. */
@@ -242,10 +250,27 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
   }
 
   /** Hold the realm for one sign-in or sign-out; null when it is taken. */
-  function hold(lock: string): (() => void) | null {
-    if (busy.has(lock)) return null
-    busy.add(lock)
-    return () => { busy.delete(lock) }
+  /** Take the realm's lock, then prove it is still the folder the lock is
+   *  keyed on: prepare() awaited (the environment -- a login shell) after it
+   *  read the folder's identity, and a folder removed and re-made in that gap
+   *  would otherwise run under a dead key, beside a removal or a second
+   *  sign-in. Nothing awaits between the hold and the re-read. */
+  function holdRealm(r: Ready, mode: 'exclusive' | 'reader' = 'exclusive'): (() => void) | Refusal {
+    const release = mode === 'reader' ? locks.holdReader(r.lock) : locks.hold(r.lock)
+    if (!release) return refuse('busy')
+    let same = false
+    try {
+      const now = deps.realmIdentity(r.home)
+      same = !!now && now.isDirectory === true && typeof now.canonical === 'string' && samePath(now.canonical, r.home)
+        && codexRealmLockKey(now.canonical, now.dev, now.ino) === r.lock
+    } catch {
+      same = false
+    }
+    if (!same) {
+      release()
+      return refuse('realm-unavailable')
+    }
+    return release
   }
 
   /** Nothing escapes as a rejection: an unexpected throw is a refusal. */
@@ -258,9 +283,16 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
       return guard(async () => {
         const r = await prepare(realm, 'status')
         if (isRefusal(r)) return { ...r, state: 'error' as KnownAuthState }
-        const s = await readStatus(r)
-        if (s.state === 'error') return s
-        return s.state === 'signed-in' ? { ok: true, state: s.state, credential: credentialOf(s.via) } : { ok: true, state: s.state }
+        // A reader: beside a sign-in, never during a folder removal.
+        const release = holdRealm(r, 'reader')
+        if (isRefusal(release)) return { ...release, state: 'error' as KnownAuthState }
+        try {
+          const s = await readStatus(r)
+          if (s.state === 'error') return s
+          return s.state === 'signed-in' ? { ok: true, state: s.state, credential: credentialOf(s.via) } : { ok: true, state: s.state }
+        } finally {
+          release()
+        }
       }, { state: 'error' as KnownAuthState }) as Promise<{ state: KnownAuthState } & AuthOperationResult>
     },
 
@@ -269,8 +301,8 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
         const r = await prepare(realm, 'logout')
         if (isRefusal(r)) return r
         if (r.ownership !== 'conductor-managed' && opts?.acknowledgeExternalRealm !== true) return refuse('external-ack-required')
-        const release = hold(r.lock)
-        if (!release) return refuse('busy')
+        const release = holdRealm(r)
+        if (isRefusal(release)) return release
         try {
           const out = await run(r, 'logout', { timeoutMs: LOGOUT_TIMEOUT_MS })
           if (isRefusal(out)) return out
@@ -317,8 +349,8 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
         if (r.ownership !== 'conductor-managed') return refuse('external-realm')
         const browser = spec.op === 'login-browser'
         if (browser && browserRunning) return refuse('browser-busy')
-        const release = hold(r.lock)
-        if (!release) return refuse('busy')
+        const release = holdRealm(r)
+        if (isRefusal(release)) return release
         if (browser) browserRunning = true
         const show = (t: string) => { try { input?.onOutput?.(t) } catch { /* the display never breaks the sign-in */ } }
         const secrets = key !== null ? [key] : []

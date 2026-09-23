@@ -394,7 +394,9 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/realm-paths.test.ts",
-        "tests/wp1/provider-core.test.ts"
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/codex-realm-folders.test.ts",
+        "tests/wp1/codex-realm-isolation.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -422,13 +424,15 @@
       "title": "Windows ACL and Unix mode tests prove owner-only realm protection",
       "kind": "ci",
       "tests": [
-        "tests/wp1/realm-paths.test.ts"
+        "tests/wp1/realm-paths.test.ts",
+        "tests/wp1/codex-realm-folders.test.ts",
+        "tests/wp1/codex-realm-isolation.test.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/ci-matrix.md"
       ],
       "status": "planned",
-      "reason": "ACL/mode semantics are platform-native; the tests are automated but must execute on each OS runner, so the evidence is the CI matrix run",
+      "reason": "ACL/mode semantics are platform-native; the tests are automated but must execute on each OS runner, so the evidence is the CI matrix run WP2 slice 3d: the managed Codex folders prove the Unix half (owner-only 0700, refused where it cannot be set); the Windows half is deliberately deferred while the shared ACL primitive is investigated (aicc_planning #103), and those tests assert that no permission change is made on Windows.",
       "currentTests": [
         "tests/unit/harden-dir-acl-windows.test.ts",
         "tests/unit/credential-file-mode-hardening.test.ts"
@@ -648,7 +652,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/account-registry-uniqueness.test.ts",
-        "tests/wp1/launch-handoff.test.ts"
+        "tests/wp1/launch-handoff.test.ts",
+        "tests/wp1/codex-realm-folders.test.ts"
       ],
       "evidence": [],
       "status": "planned",
