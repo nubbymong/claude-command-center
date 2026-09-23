@@ -557,3 +557,52 @@ describe('adversarial round 2: restore, borrowed homes and pinned branches', () 
     expect(normaliseLabel(`${'a'.repeat(119)}${String.fromCodePoint(0x1f600)}`, FRIENDLY_NAME_MAX)).toBe('a'.repeat(119))
   })
 })
+
+describe('adversarial round 1, slice 2: each profile keeps its own identity and one stays active', () => {
+  const two = () => claudeLegacySnapshot([P('profile-a1', { isPrimary: true }), P('profile-b2')], undefined)
+
+  it('two profiles of one list cannot share an identity (an edit to one would rewrite the other)', () => {
+    const { doc } = rec(emptyRegistry(), two())
+    expect(linkAccountIdentity(doc, doc.accounts[1].id, doc.accounts[0].identityId, 150)).toMatchObject({ ok: false, code: 'legacy-owned' })
+    const edited = JSON.parse(JSON.stringify(doc)) as ProviderRegistryDoc
+    edited.accounts[1].identityId = edited.accounts[0].identityId
+    expect(checkRegistryInvariants(edited).join('\n')).toMatch(/share identity/)
+  })
+
+  it('an account of another provider may still share a profile identity', () => {
+    const { doc } = rec(emptyRegistry(), two())
+    const codex = 'acct-' + 'e'.repeat(24)
+    let d = beginAccountSetup(doc, { accountId: codex, realmId: 'realm-' + 'e'.repeat(24), providerId: 'codex', method: 'browser', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: 'managed:realm-' + 'e'.repeat(24) }, 150)
+    if (!d.ok) throw new Error(d.message)
+    d = commitAccountSetup(d.doc, codex, { identityId: doc.accounts[0].identityId, authMethod: 'browser', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted' }, 151)
+    expect(d.ok).toBe(true)
+    if (d.ok) expect(checkRegistryInvariants(d.doc)).toEqual([])
+  })
+
+  it('the last active profile cannot be deactivated here, and a deactivation legacy could not take is imported, not kept pending', () => {
+    const none = () => claudeLegacySnapshot([P('profile-a1'), P('profile-b2')], undefined)
+    const { doc } = rec(emptyRegistry(), none())
+    const off = setAccountLifecycle(doc, doc.accounts[1].id, 'inactive', { consumers: 0 }, 150)
+    if (!off.ok) throw new Error(off.message)
+    expect(setAccountLifecycle(off.doc, off.doc.accounts[0].id, 'inactive', { consumers: 0 }, 151)).toMatchObject({ ok: false, code: 'legacy-owned' })
+    // Before the pending write landed, the user deactivated a1 in Claude:
+    // b2 is now the only account Claude would keep active.
+    const r = rec(off.doc, claudeLegacySnapshot([P('profile-a1', { active: false }), P('profile-b2')], undefined), 160)
+    expect(r.writes).toEqual([])
+    expect(r.doc.accounts.map((a) => a.lifecycle)).toEqual(['inactive', 'active'])
+    expect(checkRegistryInvariants(r.doc)).toEqual([])
+  })
+})
+
+describe('adversarial confirmation, slice 2: an archived profile is still a profile', () => {
+  it('an archived profile and a live one cannot be linked to one identity in either direction (the archived one may come back)', () => {
+    const two = () => claudeLegacySnapshot([P('profile-a1', { isPrimary: true }), P('profile-b2')], undefined)
+    let { doc } = rec(emptyRegistry(), two())
+    doc = rec(doc, claudeLegacySnapshot([P('profile-a1', { isPrimary: true })], undefined), 150).doc
+    expect(doc.accounts[1].lifecycle).toBe('archived')
+    expect(linkAccountIdentity(doc, doc.accounts[1].id, doc.accounts[0].identityId, 160)).toMatchObject({ ok: false, code: 'legacy-owned' })
+    expect(linkAccountIdentity(doc, doc.accounts[0].id, doc.accounts[1].identityId, 160)).toMatchObject({ ok: false, code: 'legacy-owned' })
+    // So the profile coming back never freezes the mirror.
+    expect(rec(doc, two(), 170).restored).toBe(1)
+  })
+})

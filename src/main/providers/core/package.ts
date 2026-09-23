@@ -15,6 +15,7 @@ import type {
   SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight,
 } from '../../../shared/providers'
 import type { SessionProvider } from '../types'
+import type { LegacyAccountsPort } from './account-registry-store'
 
 export interface DiscoveryResult {
   state: DiscoveryState
@@ -119,6 +120,10 @@ export interface ProviderPackage {
   readonly setup?: ProviderSetupOperations
   readonly auth?: ProviderAuthOperations
   readonly realms?: ProviderRealmOperations
+  /** Present when the provider keeps its own account store the registry must
+   *  mirror (Claude's profiles.json during 2.1.1). Creating it does no I/O;
+   *  only the registry store calls it. */
+  readonly legacyAccounts?: LegacyAccountsPort
 }
 
 /** Packages are created by the composition root, never at module load, so

@@ -8,12 +8,25 @@ import { PROVIDER_IDS } from '../../shared/providers'
 import type { ProviderPackageFactory } from './core'
 import { registerProviderPackage, listProviderPackages, tryGetProviderPackage } from './core'
 import { createClaudePackage } from './claude'
+import type { ClaudeLegacyAccountsIo } from './claude'
 import { createCodexPackage } from './codex'
+import { readProfilesStrict, updateProfilesStrict } from '../account-profiles'
+import { readConfigChecked } from '../config-manager'
+
+/** Claude's profiles.json and settings, handed to the Claude package so the
+ *  registry can mirror its accounts (WP2). Injected here, at the root, so the
+ *  package imports no shared main module. Settings are read without
+ *  quarantine: the package only observes a renderer-owned file. */
+const claudeLegacyAccountsIo: ClaudeLegacyAccountsIo = {
+  readProfiles: readProfilesStrict,
+  updateProfiles: updateProfilesStrict,
+  readSettings: () => readConfigChecked('settings', { quarantineUnparseable: false }),
+}
 
 /** Keyed by `ProviderId`, so a provider added to the union but not composed
  *  here is a compile error rather than one that silently never registers. */
 const PACKAGE_FACTORIES: Readonly<Record<ProviderId, ProviderPackageFactory>> = {
-  claude: createClaudePackage,
+  claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo }),
   codex: createCodexPackage,
 }
 

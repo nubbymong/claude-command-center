@@ -23,6 +23,9 @@ import type {
   OperationalState, IdentityAssurance, RealmKind, RealmOwnership, RealmLifecycle, CredentialStoreMode, SessionBinding,
 } from './model'
 
+/** Bump on ANY new field, record or list. The parser drops what it does not
+ *  know and the next write persists that loss, so an older build must see a
+ *  newer document as `newer-schema` (recovery), never as its own. */
 export const REGISTRY_SCHEMA_VERSION = 1 as const
 
 /** The last values Conductor and a legacy store agreed on, per field. A
@@ -247,6 +250,12 @@ export function isLegacyLinked(doc: ProviderRegistryDoc, accountId: string): boo
   return doc.legacyLinks.some((l) => l.accountId === accountId)
 }
 
+/** A legacy record live or archived: linked now, or on a home only a legacy
+ *  record can own (an archived one keeps its realm and may be restored). */
+function isLegacyRecord(doc: ProviderRegistryDoc, account: ProviderAccount): boolean {
+  return isLegacyLinked(doc, account.id) || (findRealm(doc, account.authRealmId)?.pathRef.startsWith(CLAUDE_PROFILE_PATH_REF_PREFIX) ?? false)
+}
+
 /** An account whose realm is the external default home, or that nobody has
  *  vouched for: its attribution is a guess, so it is never linked and every
  *  launch needs a per-launch acknowledgement. Derived from the realm, not only
@@ -347,6 +356,12 @@ export function linkAccountIdentity(doc: ProviderRegistryDoc, accountId: string,
   if (!account) return fail('not-found', `account ${accountId} does not exist`)
   if (!findIdentity(doc, identityId)) return fail('not-found', `identity ${identityId} does not exist`)
   if (isRealmOnly(account, findRealm(doc, account.authRealmId))) return fail('not-linkable', 'an unverified external sign-in cannot be linked to an identity')
+  if (isLegacyRecord(doc, account) && doc.accounts.some((a) => a.id !== accountId && a.identityId === identityId && a.providerId === account.providerId && isLegacyRecord(doc, a))) {
+    // Two records of one legacy store on one identity would write each
+    // other's name and colour: an edit to one profile would rewrite the other.
+    // An archived record counts too: its profile may come back.
+    return fail('legacy-owned', 'two accounts from the same provider list cannot share one identity')
+  }
   return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? { ...a, identityId, updatedAt: now } : a)) })
 }
 
@@ -519,6 +534,11 @@ export function setAccountLifecycle(
     // done where the account was created) and its default is always active.
     if (next === 'archived') return fail('legacy-owned', 'remove this account where it was created')
     if (next === 'inactive' && account.isProviderDefault) return fail('legacy-owned', "the provider's primary account is always active")
+    // The legacy store keeps one account active; a write it would refuse is
+    // refused here rather than left pending.
+    if (next === 'inactive' && !doc.accounts.some((a) => a.id !== accountId && a.providerId === account.providerId && a.lifecycle === 'active' && isLegacyLinked(doc, a.id))) {
+      return fail('legacy-owned', 'at least one of these accounts must stay active')
+    }
   }
 
   let accounts = doc.accounts
@@ -762,6 +782,15 @@ export function checkRegistryInvariants(doc: ProviderRegistryDoc): string[] {
     const key = `${c.identityId}\u0000${c.field}\u0000${c.providerId}\u0000${c.legacyId}`
     if (conflictKeys.has(key)) problems.push(`two open conflicts on ${c.field} of ${c.identityId} from ${c.legacyId}`)
     conflictKeys.add(key)
+  }
+  const legacyIdentities = new Map<string, string>()
+  for (const l of doc.legacyLinks) {
+    const a = accounts.get(l.accountId)
+    if (!a) continue
+    const key = `${l.providerId}|${a.identityId}`
+    const other = legacyIdentities.get(key)
+    if (other) problems.push(`legacy records ${other} and ${l.legacyId} share identity ${a.identityId}`)
+    legacyIdentities.set(key, l.legacyId)
   }
   return problems
 }
@@ -1192,8 +1221,11 @@ export function reconcileLegacyAccounts(
     const legacyL = s.lifecycle
     if (legacyL === shadow.lifecycle) {
       if (lifecycle !== shadow.lifecycle) {
-        // The legacy default cannot be inactive there, so it is not here.
-        if (s.isDefault) { lifecycle = 'active'; imported++ } else writes.push({ providerId, legacyId: s.legacyId, field: 'lifecycle', value: lifecycle })
+        // The legacy default cannot be inactive there, and neither can its
+        // last active record, so neither is here: import rather than leave a
+        // write pending that would land at some unrelated later start.
+        const lastActive = lifecycle === 'inactive' && !records.some((o) => o.legacyId !== s.legacyId && o.lifecycle === 'active')
+        if (s.isDefault || lastActive) { lifecycle = 'active'; imported++ } else writes.push({ providerId, legacyId: s.legacyId, field: 'lifecycle', value: lifecycle })
       }
     } else if (legacyL === 'inactive' && lifecycle === 'active' && held(existing.id)) {
       warnings.push(`legacy record ${s.legacyId} was made inactive while in use; deferred`)

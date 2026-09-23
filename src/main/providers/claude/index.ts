@@ -14,6 +14,8 @@ import {
   claudeAuthorityEnvVariables, CLAUDE_MIN_MANAGED_CLI_VERSION,
   sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight,
 } from './managed-launch'
+import { createClaudeLegacyAccountsPort } from './legacy-store'
+import type { ClaudeLegacyAccountsIo } from './legacy-store'
 
 // The managed-launch surface is re-exported so the composition root and the
 // conformance suite reach it through this entry point, never by deep import.
@@ -29,6 +31,15 @@ export type { AuthorityKind, AuthorityEntry } from './managed-launch'
 
 // profiles.json as the neutral account registry sees it (WP2, design 6.2).
 export { claudeLegacySnapshot, claudeProfilePathRef } from './legacy-accounts'
+export type { ClaudeLegacyAccountsIo } from './legacy-store'
+
+/** What the composition root injects: the main-process stores the package
+ *  reads and writes without importing them (a shared main module imported
+ *  here would reach the Codex package: rule R2). Absent where only the
+ *  session surface is needed. */
+export interface ClaudePackageDeps {
+  legacyAccountsIo?: ClaudeLegacyAccountsIo
+}
 
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
@@ -170,7 +181,7 @@ export const claudeOwnedLaunchVariables: readonly string[] = [
  *  `composeProviders()`, which `index.ts` calls inside its startup error
  *  boundary. A malformed manifest therefore reaches the user as the "cannot
  *  start" dialog rather than as a main process that died while loading. */
-export function createClaudePackage(): ProviderPackage {
+export function createClaudePackage(deps: ClaudePackageDeps = {}): ProviderPackage {
   const ambientAuthVariables = claudeAmbientAuthVariables()
   const session = new ClaudeProvider()
   return {
@@ -186,5 +197,6 @@ export function createClaudePackage(): ProviderPackage {
       authoritySettingsKeys: claudeAuthoritySettingsKeys,
       preflight: claudeManagedLaunchPreflight,
     },
+    ...(deps.legacyAccountsIo ? { legacyAccounts: createClaudeLegacyAccountsPort(deps.legacyAccountsIo) } : {}),
   }
 }

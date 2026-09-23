@@ -800,6 +800,41 @@ export function deleteProfileMeta(id: string): void {
   saveProfiles(listProfiles().filter((x) => x.id !== id))
 }
 
+/** profiles.json read strictly, for the provider account registry (WP2): no
+ *  file is an empty list, and ANY other failure -- unreadable, not JSON, no
+ *  profiles array -- is null. Never the `[]` listProfiles returns, which the
+ *  registry would read as "every account was removed". */
+export function readProfilesStrict(): AccountProfile[] | null {
+  let raw: string
+  try { raw = fs.readFileSync(profilesMetaFile(), 'utf8') } catch (e) {
+    return (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? [] : null
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<AccountProfilesConfig> | null
+    return Array.isArray(parsed?.profiles) ? parsed.profiles : null
+  } catch { return null }
+}
+
+/** Edit profiles.json in place, and only when it read completely. `edit`
+ *  gets copies of the profile OBJECTS and returns whether it changed any;
+ *  anything else in the list, and every other key of the file, is written
+ *  back exactly as it was. Returns false when the file could not be read
+ *  (nothing is written then). */
+export function updateProfilesStrict(edit: (profiles: AccountProfile[]) => boolean): boolean {
+  const file = profilesMetaFile()
+  let top: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray((parsed as { profiles?: unknown }).profiles)) return false
+    top = parsed as Record<string, unknown>
+  } catch { return false }
+  const isRecord = (v: unknown): v is AccountProfile => !!v && typeof v === 'object' && !Array.isArray(v)
+  const entries = (top.profiles as unknown[]).map((v) => (isRecord(v) ? { ...v } : v))
+  if (!edit(entries.filter(isRecord))) return true
+  atomicWriteSecure(file, JSON.stringify({ ...top, profiles: entries }, null, 2))
+  return true
+}
+
 /** The captured-global "primary" account, or null if none is marked yet. */
 export function getPrimaryProfileId(): string | null {
   return listProfiles().find((p) => p.isPrimary)?.id ?? null

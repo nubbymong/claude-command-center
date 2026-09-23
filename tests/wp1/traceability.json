@@ -55,7 +55,9 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/migration-claude.test.ts",
-        "tests/wp1/claude-characterization.test.ts"
+        "tests/wp1/claude-characterization.test.ts",
+        "tests/wp1/claude-legacy-store.test.ts",
+        "tests/wp1/registry-fs-port.test.ts"
       ],
       "evidence": [
         "docs/wp1/baseline-2026-09-19.md"
@@ -378,7 +380,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/migration-interruption.test.ts",
-        "tests/wp1/registry-store.test.ts"
+        "tests/wp1/registry-store.test.ts",
+        "tests/wp1/registry-fs-port.test.ts"
       ],
       "evidence": [],
       "status": "planned",

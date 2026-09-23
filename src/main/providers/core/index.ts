@@ -12,3 +12,9 @@ export {
   ambientAuthVariablesForProvider,
   sanitizeManagedSettingsFor, authoritySettingsKeysFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
 } from './registry'
+
+// WP2: the account registry store (persistence behind an injected port).
+export { AccountRegistryStore, deterministicOpaqueId, REGISTRY_BACKUPS_KEPT } from './account-registry-store'
+export type {
+  RegistryFsPort, LegacyAccountsPort, RegistryStatus, StoreResult, StoreFailureCode, LegacyReconcileOutcome, AccountRegistryStoreOptions,
+} from './account-registry-store'

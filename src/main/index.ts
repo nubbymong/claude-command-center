@@ -25,6 +25,7 @@ import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, 
 import { recordLiveUsageForSession } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders } from './providers/compose'
+import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
 import { probeClaudeCliVersion } from './claude-cli-version'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
@@ -500,6 +501,19 @@ if (!gotTheLock) {
       dialog.showErrorBox('AI Code Conductor cannot start', `Provider registration failed:\n\n${String(err)}`)
       app.exit(1)
       return
+    }
+
+    // WP2: the provider account registry. Best-effort and after providers are
+    // composed: a registry problem leaves it in recovery mode and never blocks
+    // start-up; Claude keeps launching from profiles.json either way (A12).
+    try {
+      const rd = getResourcesDirectory()
+      if (rd) {
+        initAccountRegistry(rd)
+        void reconcileLegacyAccountStores()
+      }
+    } catch (err) {
+      logError('[main] account registry start failed:', err)
     }
 
     // Probe the Claude CLI version once, in the background. The managed-launch

@@ -199,6 +199,12 @@ obligations fall on later slices:
   `attention` and needs a fresh status check. `resolveIdentityConflict` backs
   the conflict UI. The Claude default is read-only in the neutral UI
   (`legacy-owned`).
+- **Lease slice (from slice 2's pass):** pass `consumers` to the store (today
+  the "deferred while in use" rule never fires because reconcile runs only
+  at start). Before any mid-run reconcile, re-create the store on a resources
+  directory change (the file port captures the directory at init). The lock
+  is not re-entrant: a holder must never await work that only a queued caller
+  can finish.
 - **Known, accepted:** deleting the very last Claude profile does not archive
   its account (indistinguishable from a failed read); emoji ZWJ sequences
   store with spaces (stripSpoofableText); reconcile is quadratic in profile
