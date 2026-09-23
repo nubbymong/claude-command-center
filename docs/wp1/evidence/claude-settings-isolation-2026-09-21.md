@@ -2160,3 +2160,43 @@ normalisation before it asserts the verdict.
   `manifestHead` (A8-2); "The ledger's bound commit (`4f8afcc8`) is a branch
   commit" no longer matters to any workflow, because only the ledger's own
   binding test reads `manifestHead`.
+
+### The final ADR-009 review (Fable, owner instruction)
+
+A fresh attacker, never the author, confirming the round-8b fixes and
+hunting for gaps they introduced. Bound: two rounds at most.
+
+- **Round 1 (head `ccee5f18`).** A8-1 and A8-2 CONFIRMED-FIXED: 45 working
+  directory spellings compared across Node's fs, a spawned `node`, a
+  `cmd /c` child (the cloud agent spawns with `shell: true`) and the real
+  gate; the fetch script's failure paths run in scratch clones (not a repo,
+  git off PATH, no origin, an origin without the object, shallow and full
+  clones); every workflow step that runs the suite is preceded by the fetch.
+  One new MAJOR, introduced by the A8-1 fix: the rule was asked of the RAW
+  path, so `C:\ghost.\..\proj` -- whose `..` Node and CreateProcess both
+  resolve away, so the gate reads the folder the CLI runs in and used to
+  REFUSE -- became `not-scanned`. Fixed in `3ac11f3d` (asked of
+  `path.resolve(cwd)`); the Windows test adds both ghost spellings with an
+  expected refusal; mutant R10-d (raw cwd) is RED. One latent MINOR (a WP1
+  file deleted and re-created at a baseline path would escape the new-file
+  check; no live instance) -> aicc_planning#99.
+- **Round 2 (head `3ac11f3d`).** CONFIRMED-FIXED over 49 spellings through
+  the real gate, with two invariants asserted: everything Node can open is
+  still REFUSED, and no spelling is CLEAN while the CLI reads the file (CLEAN
+  only where the spawn itself fails). `path.resolve` introduced no gap:
+  relative, root-relative and drive-relative spellings resolve to the same
+  folder CreateProcess uses. One MINOR residual with no exposure: a
+  `\\.\`-prefixed spelling ending in a dot is now `not-scanned` where it was
+  refused, and cmd.exe cannot start in such a folder -> aicc_planning#95.
+  **VERDICT: HOLDS.**
+
+### SSH live-matrix gate: not triggered
+
+`src/main/pty-manager.ts` is in the SSH blast-radius list, so this was
+checked rather than assumed: the SSH branch of `spawnPtyResolved` is the
+`if (options?.ssh)` block, and none of this PR's hunks fall inside it. The
+only SSH-related lines are the `!options.ssh` exclusions in the new gate and
+picker helpers (SSH sessions are not managed launches, see "SSH / remote
+sessions" above) and a log line before the branch; the gate's deferral lives
+in the local branch. No sentinel parser, statusline routing or SSH-shim code
+changed.
