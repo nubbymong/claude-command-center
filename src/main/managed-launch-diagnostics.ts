@@ -608,6 +608,13 @@ export const _posixCanonicalLocalSettingsRootForTest = posixCanonicalLocalSettin
  */
 async function projectAuthoritySettingsKeys(cwd: string | null): Promise<ProjectScan> {
   if (!cwd) return { keys: [], uncertain: null }
+  // The directory the gate reads must be the directory the CLI will run in.
+  // Node's fs does not apply Win32 path normalisation (it prefixes `\\?\`);
+  // CreateProcess does. A working directory spelled `C:\proj.` was ENOENT here
+  // -- both files "absent", a clean verdict -- while a CLI spawned with that
+  // cwd ran in `C:\proj` and applied its settings (adversarial round 8, MAJOR,
+  // through a cloud agent's raw project path).
+  if (process.platform === 'win32' && hasWin32RewrittenComponent(cwd)) return { keys: [], uncertain: 'path-spelling' }
   const found: string[] = []
   let uncertain: ProjectScanSkipReason | null = null
   const take = (label: string, scan: SettingsFileScan): void => {
@@ -626,6 +633,15 @@ async function projectAuthoritySettingsKeys(cwd: string | null): Promise<Project
   }
   if (root !== null) take('settings.local.json (repository root)', await authorityKeysOfSettingsFile(path.join(root, '.claude', 'settings.local.json')))
   return { keys: boundNames(found), uncertain }
+}
+
+/** A path with a component CreateProcess rewrites before it starts a program:
+ *  measured on Windows 11, it drops trailing dots from EVERY component and a
+ *  trailing space from the last (a middle component ending in a space fails to
+ *  spawn at all), so a component ending in either is a spelling whose folder is
+ *  not the one Node's fs opens. */
+function hasWin32RewrittenComponent(p: string): boolean {
+  return p.split(/[\\/]/).some((c) => c !== '' && c !== '.' && c !== '..' && /[. ]$/.test(c))
 }
 
 /** What a directory's scan found: every authority key it could name, and the

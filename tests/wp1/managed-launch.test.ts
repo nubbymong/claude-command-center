@@ -1988,6 +1988,25 @@ describe('the launch paths', () => {
       }
     })
 
+    it.runIf(process.platform === 'win32')('a working directory spelled with a trailing dot or space is NOT SCANNED on Windows, never clean (adversarial round 8)', async () => {
+      // Node's fs opens the spelling literally (ENOENT: both files "absent");
+      // CreateProcess strips the dot or space and runs the CLI in the real
+      // folder, which carries the helper. Pin the platform behaviour the rule
+      // rests on, then the verdict.
+      const cwd = makeProject({ 'settings.json': JSON.stringify({ apiKeyHelper: 'curl evil' }) })
+      const ranIn = (spelling: string) => execFileSync(process.execPath, ['-p', 'process.cwd()'], { cwd: spelling, encoding: 'utf8' }).trim()
+      // ...a dot on a MIDDLE component too: Windows drops it from every component.
+      const middle = path.dirname(cwd) + '.' + path.sep + path.basename(cwd)
+      for (const spelling of [cwd + '.', cwd + ' ', cwd + '. .', middle]) {
+        diag._resetProjectScanStateForTest()
+        expect(fs.existsSync(path.join(spelling, '.claude', 'settings.json')), `node opened ${JSON.stringify(spelling)}`).toBe(false)
+        expect(ranIn(spelling).toLowerCase(), `CreateProcess did not normalise ${JSON.stringify(spelling)}`).toBe(cwd.toLowerCase())
+        expect(await diag.gateManagedLaunch(spelling), JSON.stringify(spelling)).toEqual({ status: 'not-scanned', reason: 'path-spelling' })
+      }
+      diag._resetProjectScanStateForTest()
+      expect(await diag.gateManagedLaunch(cwd)).toEqual({ status: 'refused', keys: ['settings.json: apiKeyHelper'] })
+    })
+
     it('a newer UNCERTAIN scan EVICTS the clean verdict before it: peek never hands out a clean the latest scan could not confirm (independent review)', async () => {
       // Only clean and refused verdicts are cached, but an uncertain one used
       // to leave the previous clean in place, and the headless and probe paths

@@ -40,29 +40,33 @@ function withSynthetic(over: Partial<Row>, extra: Row[] = []): typeof ledger {
   return clone
 }
 
-/** Paths present in the commit the ledger is bound to. A matched path absent
- *  from it was CREATED after that commit -- i.e. by WP1 -- so it cannot carry
- *  a disposition whose evidence is the pre-WP1 baseline. The ledger checker
+/** Paths present in the PRE-WP1 BASELINE (the inventory's head, 6bafcc33). A
+ *  matched path absent from it was CREATED by WP1, so it cannot carry a
+ *  disposition whose evidence is the pre-WP1 baseline. The ledger checker
  *  cannot see this: a retain row needs only evidence text naming a WP1 item,
  *  and src/renderer/providers/core/descriptor.ts slipped through as retain
- *  with "baseline suite green at 6bafcc33" as its proof. */
-/*
- *  The bound commit has to be IN THE OBJECT STORE, and CI's checkout is depth
- *  1: it holds the merge commit and nothing else, so this list used to be read
- *  at import, failed with "not a tree object", and took the whole suite down
- *  with it on both CI platforms (exact-head review). Every workflow that runs
- *  the suite now fetches exactly this one commit first
+ *  with "baseline suite green at 6bafcc33" as its proof.
+ *
+ *  It used to list the ledger's `manifestHead` -- the commit the ledger was
+ *  last re-skeletoned against -- which moves with every re-skeleton. Once that
+ *  commit itself contained the files WP1 created, no real row could be caught:
+ *  flipping every `added` row to `retain` left this check green (adversarial
+ *  round 8, MAJOR). The baseline does not move, and it is on beta.
+ *
+ *  The commit has to be IN THE OBJECT STORE, and CI's checkout is depth 1, so
+ *  every workflow that runs the suite fetches it first
  *  (scripts/wp1/fetch-ledger-commit.mjs, from ci.yml and release.yml), and the
- *  list is read lazily here, so a checkout without the commit fails ONE case
- *  with the command that fixes it rather than every case with a git error. */
+ *  list is read lazily here, so a checkout without it fails ONE case with the
+ *  command that fixes it rather than every case with a git error. */
+const BASELINE = String(inventory.head)
 let boundTreeMemo: Set<string> | null = null
 function headTree(): Set<string> {
   if (boundTreeMemo) return boundTreeMemo
-  const sha = String(ledger.manifestHead)
+  const sha = BASELINE
   try {
     execFileSync('git', ['-C', ROOT, 'cat-file', '-e', `${sha}^{tree}`], { stdio: 'ignore' })
   } catch {
-    throw new Error(`the ledger is bound to ${sha}, which is not in this checkout (a shallow clone?). Fetch that one commit and re-run: node scripts/wp1/fetch-ledger-commit.mjs`)
+    throw new Error(`the WP1 baseline ${sha} is not in this checkout (a shallow clone?). Fetch that one commit and re-run: node scripts/wp1/fetch-ledger-commit.mjs`)
   }
   boundTreeMemo = new Set(
     execFileSync('git', ['-C', ROOT, 'ls-tree', '-r', '--name-only', sha], { encoding: 'utf8', maxBuffer: 1 << 28 })
@@ -72,13 +76,20 @@ function headTree(): Set<string> {
 }
 const newFileProblems = (rows: Row[]): string[] =>
   rows.filter((e) => !e.resolved && !headTree().has(e.path) && e.disposition !== 'added')
-    .map((e) => `NEW FILE NOT MARKED added: ${e.path} is absent from ${ledger.manifestHead.slice(0, 8)} but dispositioned ${e.disposition}`)
+    .map((e) => `NEW FILE NOT MARKED added: ${e.path} is absent from the baseline ${BASELINE.slice(0, 8)} but dispositioned ${e.disposition}`)
 
 describe('WP1 legacy Codex manifest gate', () => {
-  it('a matched path the bound commit does not contain is dispositioned added, never retained against the baseline', () => {
+  it('a matched path the baseline does not contain is dispositioned added, never retained against the baseline', () => {
     expect(headTree().size).toBeGreaterThan(1000)
     const problems = newFileProblems(ledger.entries as Row[])
     expect(problems, problems.join('\n')).toEqual([])
+    // Verify the verifier on the LIVE ledger, not only on an invented path: every
+    // real `added` row flipped to `retain` must be caught. An invented path is in
+    // no tree at all, so it went red even while the check could catch nothing.
+    const added = (ledger.entries as Row[]).filter((e) => e.disposition === 'added' && !e.resolved)
+    expect(added.length, 'the live ledger has no added row to verify the check against').toBeGreaterThan(0)
+    const flipped = newFileProblems(added.map((e) => ({ ...e, disposition: 'retain' })))
+    expect(flipped, 'a real WP1-created file retained against the baseline was not caught').toHaveLength(added.length)
     // Verify the verifier, in both directions.
     expect(newFileProblems([{ path: 'src/wp1-invented.ts', predicates: [], disposition: 'retain', evidence: GOOD }])[0]).toMatch(/^NEW FILE NOT MARKED added/)
     expect(newFileProblems([{ path: 'src/wp1-invented.ts', predicates: [], disposition: 'added', evidence: GOOD }])).toEqual([])

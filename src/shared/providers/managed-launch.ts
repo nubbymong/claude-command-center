@@ -109,10 +109,16 @@ export interface ManagedLaunchPreflightInput {
  *   - `over-cap`               larger than the 2 MiB the CLI itself reads;
  *   - `classifier-unavailable` no registered Claude package could classify it,
  *                              or classifying it failed;
- *   - `scan-failed`            the check itself failed unexpectedly. */
+ *   - `scan-failed`            the check itself failed unexpectedly;
+ *   - `path-spelling`          (Windows) the working directory is spelled with a
+ *                              component ending in a dot or a space, which
+ *                              Windows rewrites when it starts a program, so
+ *                              the folder the session runs in is not the one
+ *                              the gate could open. */
 export type ProjectScanSkipReason =
   | 'network-path' | 'thread-ceiling' | 'timed-out'
   | 'unreadable' | 'over-cap' | 'classifier-unavailable' | 'scan-failed'
+  | 'path-spelling'
 
 /** What the project-settings gate decided for one launch directory. */
 export type ProjectGateResult =

@@ -240,6 +240,7 @@ const PROJECT_SCAN_SKIP_DETAIL: Record<ProjectScanSkipReason, string> = {
   'over-cap': 'A project settings file is larger than the 2 MiB Claude Code reads, so it was not checked. The pinned Claude Code skips a file that size too; another version may not.',
   'classifier-unavailable': 'The project settings could not be classified for this account.',
   'scan-failed': 'The project settings check failed before it could answer.',
+  'path-spelling': 'The working directory is spelled with a folder name ending in a dot or a space, which Windows removes when it starts a program, so the folder the session runs in could not be checked under that spelling.',
 }
 
 export function sanitizeClaudeManagedSettings(raw: string): SanitizedManagedSettings {
