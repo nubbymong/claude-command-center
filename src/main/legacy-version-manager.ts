@@ -125,6 +125,17 @@ export function resolveVersionBinary(version: string): string | null {
 }
 
 /**
+ * The legacy pin a launch asks for, for the managed-launch preflight: its
+ * version and whether its binary is installed now (resolveClaudeBinary runs it
+ * exactly then; a cloud agent installs it on demand after the record). Absent
+ * when there is no valid, enabled pin -- the launch runs the installed CLI.
+ */
+export function legacyCliPin(legacy?: { enabled: boolean; version: string } | null): { version: string; installed: boolean } | undefined {
+  if (!legacy?.enabled || !legacy.version || !isValidLegacyVersion(legacy.version)) return undefined
+  return { version: legacy.version, installed: resolveVersionBinary(legacy.version) !== null }
+}
+
+/**
  * Install a specific version of Claude CLI.
  * Sends progress events to the renderer via IPC.
  */

@@ -15,6 +15,7 @@ import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveClaudeForPty, withProfileHome } from './pty-manager'
+import { gateManagedLaunch } from './managed-launch-diagnostics'
 import { spawnClaudeHeadless } from './claude-headless'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
@@ -231,10 +232,14 @@ function findTrustedCwd(): string {
  * Spawn Claude interactively via node-pty, type /insights, wait for report.html to update, then /exit.
  * This is needed because /insights is a TUI slash command, not a CLI argument.
  */
-function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{ code: number; output: string }> {
+async function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{ code: number; output: string }> {
+  const { cmd } = resolveClaudeForPty()
+  const cwd = findTrustedCwd()
+  // The project gate, before the PTY exists: the run happens in `cwd`, whose
+  // own settings files are gated like any other launch's. A refusal throws
+  // from withProfileHome below and rejects this promise.
+  const projectGate = home ? await gateManagedLaunch(cwd) : null
   return new Promise((resolve) => {
-    const { cmd } = resolveClaudeForPty()
-    const cwd = findTrustedCwd()
     const reportPath = claudeReportPath(home)
     logInfo(`[insights] Spawning Claude PTY for /insights: ${cmd} in ${cwd} (home=${home ?? 'default'})`)
 
@@ -243,7 +248,7 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
       cols: 120,
       rows: 30,
       cwd,
-      env: withProfileHome(process.env as Record<string, string>, home)
+      env: withProfileHome(process.env as Record<string, string>, home, { launchId: 'insights', cwd, probe: false, projectGate })
     })
 
     let output = ''

@@ -1,0 +1,8 @@
+{
+  "schema": "wp1-package-orphans-allowlist/1",
+  "note": "WP1.55 ratchet: files that sit inside a provider package directory but are not reachable from that package's index.ts through in-package imports (legacy modules consumed only from outside the package). Both entries are base modules the ledger already dispositions (`move`: the Codex config.toml heal becomes realm-explicit; the Claude statusline stanza builder is a runtime-package surface). The list may only shrink; tests/wp1/dependency-boundaries.test.ts R7 fails on a new orphan (a consumer moved into the directory to dodge the deep-import ratchet) and on a stale entry.",
+  "entries": [
+    "src/main/providers/claude/statusline-command.ts",
+    "src/main/providers/codex/mcp-config.ts"
+  ]
+}

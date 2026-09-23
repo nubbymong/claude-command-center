@@ -163,6 +163,42 @@ export interface ResolveResumeLaunchDeps {
 }
 
 /**
+ * A resume target's cwd as the launch would use it: a leading `~` expanded
+ * against `home` (the OS does not expand it on Windows), anything else made
+ * absolute. NOT `resolveCwd()`, which collapses a missing path to the home
+ * directory -- the exact retargeting the resume gate exists to prevent.
+ *
+ * One function, three callers: `resolveResumeLaunch`, `recoverOrphanResumeLaunch`
+ * and the project-settings gate in pty-manager, which must gate the directory
+ * an exact resume will actually run in and so has to spell it the same way.
+ */
+/**
+ * The worktree paths in `git worktree list --porcelain` output, in order.
+ * Mirrors the parser in scripts/resume-picker.js, which builds the picker's
+ * candidate list from the same command: the directories the picker may
+ * relaunch the CLI in are exactly these, and the project-settings gate must
+ * gate every one of them before a managed picker launch (adversarial final
+ * pass, MAJOR). Tolerant of CRLF and of a missing trailing blank line.
+ */
+export function parseWorktreePaths(porcelainText: string): string[] {
+  const out: string[] = []
+  for (const rawLine of String(porcelainText ?? '').split('\n')) {
+    const line = rawLine.replace(/\r$/, '')
+    if (line.startsWith('worktree ')) {
+      const p = line.slice('worktree '.length).trim()
+      if (p) out.push(p)
+    }
+  }
+  return out
+}
+
+export function expandResumeTargetCwd(cwd: string, home: string): string {
+  if (cwd === '~') return home
+  if (cwd.startsWith('~/') || cwd.startsWith('~\\')) return nodePath.join(home, cwd.slice(2))
+  return nodePath.resolve(cwd)
+}
+
+/**
  * Decide whether to launch `claude --resume <uuid>` with an overridden cwd.
  *
  * Encapsulates the path/cwd existence gate (extracted from the old inline block
@@ -202,19 +238,10 @@ export function resolveResumeLaunch(
     // "caller validated" invariant and the fail-open rule even if it didn't.
     if (!UUID_RE.test(target.uuid)) return null
 
-    const home = deps.homedir()
-
     // Expand a leading `~` ourselves (the OS does not on Windows). We do NOT
     // use resolveCwd(): it silently collapses a missing path to homedir, which
     // is exactly the bug this gate prevents.
-    let expanded: string
-    if (target.cwd === '~') {
-      expanded = home
-    } else if (target.cwd.startsWith('~/') || target.cwd.startsWith('~\\')) {
-      expanded = nodePath.join(home, target.cwd.slice(2))
-    } else {
-      expanded = nodePath.resolve(target.cwd)
-    }
+    const expanded = expandResumeTargetCwd(target.cwd, deps.homedir())
 
     // Stat the RAW (expanded) cwd directly — the regression guard. A deleted
     // worktree misses here and we fall back; we never silently retarget homedir.
@@ -318,13 +345,8 @@ export function recoverOrphanResumeLaunch(
     if (!UUID_RE.test(target.uuid)) return null
     if (!survivingCwd) return null
 
-    const home = deps.homedir()
-
     // Expand a leading `~` in the target cwd the same way resolveResumeLaunch does.
-    let rawTargetCwd: string
-    if (target.cwd === '~') rawTargetCwd = home
-    else if (target.cwd.startsWith('~/') || target.cwd.startsWith('~\\')) rawTargetCwd = nodePath.join(home, target.cwd.slice(2))
-    else rawTargetCwd = nodePath.resolve(target.cwd)
+    const rawTargetCwd = expandResumeTargetCwd(target.cwd, deps.homedir())
 
     // ORPHAN GATE: recovery applies ONLY when the original cwd is gone. If it
     // still exists, resolveResumeLaunch failed for another reason (e.g. the

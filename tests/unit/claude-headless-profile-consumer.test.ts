@@ -9,6 +9,9 @@ import path from 'node:path'
 import os from 'node:os'
 
 const spawnCalls: Array<{ executable: string; args: string[]; opts: any }> = []
+/** Set by a test: the stubbed choke point REFUSES the launch, exactly as the
+ *  real one throws on a refused project gate. */
+const gate = vi.hoisted(() => ({ refuse: false }))
 /** One fake child per spawn, in spawn order, so a test with two runs settles each on its own. */
 const children: Array<ReturnType<typeof makeChild>> = []
 
@@ -20,10 +23,21 @@ vi.mock('child_process', () => ({
     return child
   },
   execSync: vi.fn(),
+  // Reached at import by the provider packages this suite now composes.
+  execFile: vi.fn(),
 }))
 // withProfileHome pulls in the heavy pty-manager graph (reaches electron); stub it.
-vi.mock('../../src/main/pty-manager', () => ({ withProfileHome: (env: any) => env }))
-vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
+vi.mock('../../src/main/pty-manager', () => ({
+  withProfileHome: (env: any) => {
+    if (gate.refuse) throw new Error('[profiles] refusing a managed Claude launch: the project\'s own settings could redirect this account -- settings.json: apiKeyHelper. Remove those keys.')
+    return env
+  },
+}))
+// `logWarn` belongs in this mock's surface too: the project gate below logs
+// through it, and a mock that omits a function the code under test calls turns
+// a log line into a TypeError inside the scan's own catch -- which then looks
+// exactly like a directory that carries nothing.
+vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 
 const { spawnClaudeHeadless, HEADLESS_CONSUMER_GRACE_MS } = await import('../../src/main/claude-headless')
 const {
@@ -32,6 +46,21 @@ const {
   noteProfileRefreshInFlight,
   _resetProfileConsumersForTest,
 } = await import('../../src/main/profile-consumers')
+// The project-settings gate (2026-09-22). A headless run inherits this
+// process's working directory, and that directory's own settings files are
+// gated like any other launch's. The spawn stays SYNCHRONOUS on a cache hit
+// (`peekGateVerdict`), which is what lets overlapping runs for one profile
+// share a single subprocess; only a MISS defers it.
+const { gateManagedLaunch, peekGateVerdict, _resetProjectScanStateForTest } =
+  await import('../../src/main/managed-launch-diagnostics')
+// The gate classifies a settings file through the REGISTERED Claude package,
+// and with none registered it answers NOT SCANNED -- never clean (exact-head
+// review, BLOCKER 3). This suite used to warm the gate with no package
+// composed and got a clean verdict for this process's directory, which
+// carries a .claude/settings.json: the fail-open, relied on. Compose the
+// providers as the app does at startup, so the warm verdict is a real one.
+const { composeProviders } = await import('../../src/main/providers/compose')
+composeProviders()
 
 /** A child whose 'close' / 'error' the test fires by hand. */
 function makeChild() {
@@ -54,16 +83,26 @@ const PROFILE = 'profile-a1b2-ff'
 const HOME = path.join(os.tmpdir(), 'account-profiles', PROFILE)
 const tick = async (n = 3) => { for (let i = 0; i < n; i++) await Promise.resolve() }
 
-beforeEach(() => {
+beforeEach(async () => {
   spawnCalls.length = 0
   children.length = 0
+  gate.refuse = false
   _resetProfileConsumersForTest()
+  _resetProjectScanStateForTest()
+  // WARM the gate for this process's directory, so the cases below drive the
+  // synchronous path they are about (the hold, the release, the timeout clock)
+  // rather than whichever earlier test happened to leave a verdict cached --
+  // the reuse window is five seconds, so a slow run would otherwise flip them.
+  // The one case that is ABOUT the miss resets this itself.
+  await gateManagedLaunch(process.cwd())
 })
 
 describe('spawnClaudeHeadless — the run is a profile consumer (#48)', () => {
   it('holds the profile from spawn until the child closes', async () => {
     const p = spawnClaudeHeadless(['-p'], 10_000, 'prompt', HOME)
-    expect(spawnCalls).toHaveLength(1) // spawn is still synchronous when nothing is rotating
+    // Still synchronous: nothing is rotating and the gate verdict for this
+    // directory is cached (see beforeEach).
+    expect(spawnCalls).toHaveLength(1)
     expect(hasTransientProfileConsumer(PROFILE)).toBe(true)
     children[0].handlers.close(0)
     await p
@@ -146,6 +185,30 @@ describe('spawnClaudeHeadless — starting mid-rotation waits for the refresh (#
     await p
   })
 
+  it('the FIRST run for a directory defers behind the project gate, and holds the profile across it', async () => {
+    // The cache miss. `peekGateVerdict` answers synchronously only once a scan
+    // has run for that directory, so the first headless run of the process --
+    // and one after the five-second reuse window -- awaits the gate before it
+    // spawns. The hold must be taken BEFORE that wait, for the same reason it
+    // is taken before the refresh wait: it is what stops a new rotation
+    // starting in the gap, and the run is about to read the credential file.
+    _resetProjectScanStateForTest()
+    expect(peekGateVerdict(process.cwd()), 'the gate was still warm').toBeUndefined()
+
+    const p = spawnClaudeHeadless(['-p'], 10_000, undefined, HOME)
+    expect(spawnCalls, 'the first run spawned before the gate answered').toHaveLength(0)
+    expect(hasTransientProfileConsumer(PROFILE), 'the hold was taken only after the gate').toBe(true)
+
+    for (let i = 0; i < 400 && spawnCalls.length === 0; i++) await new Promise((r) => setTimeout(r, 5))
+    expect(spawnCalls, 'the run never spawned after the gate answered').toHaveLength(1)
+    expect(hasTransientProfileConsumer(PROFILE)).toBe(true)
+    // ...and the verdict is now cached, so the NEXT run is synchronous again.
+    expect(peekGateVerdict(process.cwd())).toEqual({ status: 'clean' })
+    children[0].handlers.close(0)
+    await p
+    expect(hasTransientProfileConsumer(PROFILE)).toBe(false)
+  })
+
   it('a refresh that FAILS still releases the run to spawn (a failed refresh leaves the file untouched)', async () => {
     let fail!: (e: unknown) => void
     const refresh = new Promise((_r, reject) => { fail = reject })
@@ -157,5 +220,34 @@ describe('spawnClaudeHeadless — starting mid-rotation waits for the refresh (#
     expect(spawnCalls).toHaveLength(1)
     children[0].handlers.close(0)
     await p
+  })
+})
+
+describe('spawnClaudeHeadless -- a REFUSED managed launch settles like every other failure', () => {
+  it('RESOLVES { code: 1 } with the refusal on stderr, spawns nothing, and releases the hold', async () => {
+    // withProfileHome throws to refuse, and it used to throw INSIDE the
+    // promise executor: this promise then REJECTED -- the one failure shape no
+    // other exit here has -- and neither insights caller catches a rejection,
+    // so a refused KPI extraction took a finished run to 'failed' instead of
+    // 'report ready, KPIs unavailable' (adversarial review, MAJOR). Same shape
+    // as a timeout, an abort or a spawn error: resolve, code 1, reason on
+    // stderr, file and key named.
+    gate.refuse = true
+    const res = await spawnClaudeHeadless(['-p'], 10_000, 'prompt', HOME)
+    expect(res.code).toBe(1)
+    expect(res.stderr).toContain('refusing a managed Claude launch')
+    expect(res.stderr).toContain('settings.json: apiKeyHelper')
+    expect(spawnCalls, 'a refused launch still spawned the CLI').toHaveLength(0)
+    expect(hasTransientProfileConsumer(PROFILE), 'the profile hold leaked past the refusal').toBe(false)
+  })
+
+  it('...on the DEFERRED path too (a gate miss awaits the gate before the same spawn)', async () => {
+    gate.refuse = true
+    _resetProjectScanStateForTest()   // the MISS: the gate is awaited, then spawnNow refuses
+    const res = await spawnClaudeHeadless(['-p'], 10_000, 'prompt', HOME)
+    expect(res.code).toBe(1)
+    expect(res.stderr).toContain('refusing a managed Claude launch')
+    expect(spawnCalls).toHaveLength(0)
+    expect(hasTransientProfileConsumer(PROFILE)).toBe(false)
   })
 })

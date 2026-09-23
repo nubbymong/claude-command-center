@@ -9,10 +9,22 @@
  * Drives the REAL spawnPty shell-only branch with node-pty mocked to a fake PTY
  * whose exit the test fires by hand, and the profiles root sandboxed to a temp
  * dir so no real ~/.claude is touched.
+ *
+ * Since 2026-09-22 a MANAGED spawn -- one that resolves a profile -- is deferred
+ * once behind the project-settings gate and re-enters `spawnPty` asynchronously
+ * with the verdict. The hold is taken BEFORE that wait, so the profile reads as
+ * in use from the moment `spawnPty` returns, PTY or no PTY; the PTY itself lands
+ * a turn of the event loop later. An UNMANAGED spawn (no profile) is untouched
+ * and still synchronous, which is what the bare-shell case below holds it to.
+ *
+ * Every spawn runs in the SANDBOX rather than the real home. The gate reads the
+ * working directory's own `.claude/settings.json`, so pointing these at
+ * `homedir()` would make them depend on whatever the developer running them
+ * keeps in their own settings -- green here, red on the next machine.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'fs'
-import { tmpdir, homedir } from 'os'
+import { tmpdir } from 'os'
 import { join } from 'path'
 
 class FakePty {
@@ -52,7 +64,7 @@ vi.mock('node-pty', () => ({
 
 const { _setRootsForTest, getProfileConfigDir } = await import('../../src/main/account-profiles')
 const { spawnPty } = await import('../../src/main/pty-manager')
-const { registerProvider } = await import('../../src/main/providers')
+const { registerFakeClaudePackage } = await import('../helpers/claude-package')
 const { isProfileInUseByLiveSession, _resetClaudeAccounts } = await import('../../src/main/claude-account-identity')
 const { _resetProfileConsumersForTest } = await import('../../src/main/profile-consumers')
 type SessionProvider = import('../../src/main/providers/types').SessionProvider
@@ -84,7 +96,7 @@ beforeEach(() => {
   _setRootsForTest({ resourcesDir: sandbox, sharedRoot: join(sandbox, '.claude') })
   mkdirSync(getProfileConfigDir(PROFILE), { recursive: true })
   ptys.length = 0
-  registerProvider(fakeProvider)
+  registerFakeClaudePackage(fakeProvider)
   _resetClaudeAccounts()
   _resetProfileConsumersForTest()
 })
@@ -97,31 +109,55 @@ afterEach(() => {
 })
 
 const exitLatest = () => ptys[ptys.length - 1].exitCb!({ exitCode: 0 })
+/** Wait for a condition the project-settings gate has to answer first. It does
+ *  real file I/O, so the deferred re-entry lands on a MACROTASK and no
+ *  microtask drain brings it forward. Bounded past the gate's own 3000 ms
+ *  deadline, so a spawn that never lands fails the assertion instead of
+ *  hanging the suite. */
+const until = async (cond: () => boolean, why: string) => {
+  const deadline = Date.now() + 5000
+  while (!cond() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+  if (!cond()) throw new Error(`timed out waiting for ${why}`)
+}
+const untilSpawned = (n: number) => until(() => ptys.length === n, `${n} PTY(s) to start after the gate`)
+/** Start a MANAGED shell in the sandbox and wait for its deferred PTY. */
+const shell = async (sid: string, n: number) => {
+  spawnPty(fakeWin, sid, { shellOnly: true, profileId: PROFILE, cwd: sandbox })
+  await untilSpawned(n)
+}
 
 describe('shell-only sessions hold their profile (#48)', () => {
-  it('a profile-pinned shell reads as in use until its PTY exits', () => {
+  it('a profile-pinned shell reads as in use from the moment it is asked for, until its PTY exits', async () => {
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)
-    spawnPty(fakeWin, 'sidshellhold1', { shellOnly: true, profileId: PROFILE, cwd: homedir() })
-    expect(ptys).toHaveLength(1)
+    spawnPty(fakeWin, 'sidshellhold1', { shellOnly: true, profileId: PROFILE, cwd: sandbox })
+    // The gate defers the spawn, and the hold is taken BEFORE that wait -- which
+    // is the whole point of #48 here: the window in which the usage page could
+    // rotate the token, or the account be deleted, now INCLUDES the wait.
+    expect(ptys, 'the managed spawn was not deferred behind the gate').toHaveLength(0)
+    expect(isProfileInUseByLiveSession(PROFILE), 'the deferred shell held nothing').toBe(true)
+    await untilSpawned(1)
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(true)
     exitLatest()
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)
   })
 
-  it('a bare shell (no profile) holds nothing', () => {
-    spawnPty(fakeWin, 'sidshellhold2', { shellOnly: true, cwd: homedir() })
+  it('a bare shell (no profile) holds nothing, and is still SYNCHRONOUS', () => {
+    // The unmanaged control. No profile resolves, so there is no account to
+    // redirect and nothing to gate: the PTY exists the moment spawnPty returns,
+    // exactly as it always did.
+    spawnPty(fakeWin, 'sidshellhold2', { shellOnly: true, cwd: sandbox })
     expect(ptys).toHaveLength(1)
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)
     exitLatest()
   })
 
-  it('a restart re-establishes the hold: the stale exit of the OLD pty does not drop the NEW shell\'s hold', () => {
-    spawnPty(fakeWin, 'sidshellhold3', { shellOnly: true, profileId: PROFILE, cwd: homedir() })
+  it('a restart re-establishes the hold: the stale exit of the OLD pty does not drop the NEW shell\'s hold', async () => {
+    await shell('sidshellhold3', 1)
     const first = ptys[0]
     // The renderer's restart: same session id, new PTY. spawnPty kills the old
     // one first (killPty -> cleanupSessionResources releases the old hold) and
     // the new spawn holds again.
-    spawnPty(fakeWin, 'sidshellhold3', { shellOnly: true, profileId: PROFILE, cwd: homedir() })
+    await shell('sidshellhold3', 2)
     expect(ptys).toHaveLength(2)
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(true)
     // node-pty's exit callback is async, so the OLD pty's exit lands after the
@@ -132,9 +168,9 @@ describe('shell-only sessions hold their profile (#48)', () => {
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)
   })
 
-  it('two shells on one profile: in use until the LAST one exits', () => {
-    spawnPty(fakeWin, 'sidshellhold4a', { shellOnly: true, profileId: PROFILE, cwd: homedir() })
-    spawnPty(fakeWin, 'sidshellhold4b', { shellOnly: true, profileId: PROFILE, cwd: homedir() })
+  it('two shells on one profile: in use until the LAST one exits', async () => {
+    await shell('sidshellhold4a', 1)
+    await shell('sidshellhold4b', 2)
     ptys[0].exitCb!({ exitCode: 0 })
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(true)
     ptys[1].exitCb!({ exitCode: 0 })
@@ -144,12 +180,19 @@ describe('shell-only sessions hold their profile (#48)', () => {
   // Adversarial pass on #598: the hold is taken only AFTER pty.spawn succeeded. A
   // spawn that throws must leave no ref behind -- nothing would ever release it,
   // and the profile would read as in use (undeletable, never refreshed) forever.
-  it('a spawn that THROWS leaves no hold behind, and the next spawn on the id holds and releases cleanly', () => {
+  //
+  // The gate moved WHERE that throw lands without changing the rule. node-pty now
+  // refuses on the deferred RE-ENTRY, so nothing is thrown to the IPC caller and
+  // the ref that has to come back is the one the WAIT took -- released by
+  // deferSpawnUntil's own finally rather than by the synchronous catch.
+  it('a spawn that THROWS on the deferred re-entry leaves no hold behind, and the next spawn on the id holds and releases cleanly', async () => {
     ptyMocks.throwNext = true
-    try { spawnPty(fakeWin, 'sidshellhold5', { shellOnly: true, profileId: PROFILE, cwd: homedir() }) } catch { /* the throw is the point */ }
-    expect(ptys).toHaveLength(0)
-    expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)
-    spawnPty(fakeWin, 'sidshellhold5', { shellOnly: true, profileId: PROFILE, cwd: homedir() })
+    expect(() => spawnPty(fakeWin, 'sidshellhold5', { shellOnly: true, profileId: PROFILE, cwd: sandbox }))
+      .not.toThrow()   // deferred: the refusal has not happened yet
+    expect(isProfileInUseByLiveSession(PROFILE), 'the wait took no hold').toBe(true)
+    await until(() => !isProfileInUseByLiveSession(PROFILE), 'the failed re-entry to release the hold')
+    expect(ptys, 'a PTY survived a refused spawn').toHaveLength(0)
+    await shell('sidshellhold5', 1)
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(true)
     exitLatest()
     expect(isProfileInUseByLiveSession(PROFILE)).toBe(false)

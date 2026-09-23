@@ -120,6 +120,11 @@ jobs:
       # install would fail at random with "not valid XML" / unresolved dependency.
       # macOS/Linux keep their from-source rebuild (they never touched Chocolatey).
 
+      # A WP1 gate test needs the ledger's bound commit, which a depth-1
+      # checkout does not carry (same step as ci.yml).
+      - name: Fetch the WP1 ledger's bound commit
+        run: node scripts/wp1/fetch-ledger-commit.mjs
+
       - name: Run tests
         run: npx vitest run
 
@@ -466,6 +471,9 @@ jobs:
       # files (better-sqlite3 under Electron-as-Node) are excluded by
       # vitest.config; the native rebuild above is what proves node-pty /
       # better-sqlite3 link on linux-x64.
+      - name: Fetch the WP1 ledger's bound commit
+        run: node scripts/wp1/fetch-ledger-commit.mjs
+
       - name: Run tests
         run: npx vitest run
 

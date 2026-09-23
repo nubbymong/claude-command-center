@@ -1,10 +1,31 @@
+// Claude provider package: public entry point (WP1, design 7.1). Everything
+// outside this directory imports from here; the dependency-boundary test
+// ratchets the remaining deep imports down to zero.
 import type { SshCapableProvider, SpawnOptions, TelemetrySource, HistorySession } from '../types'
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
+import type { ProviderCapabilities } from '../../../shared/providers'
+import type { ProviderPackage } from '../core'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
 import { getRemoteSetupCommand, remoteSessionSettingsPath, remoteSessionMcpConfigPath } from './ssh-shim'
 import { detectClaudeUi } from './ui-detection'
 import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './statusline'
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
+import {
+  claudeAuthorityEnvVariables, CLAUDE_MIN_MANAGED_CLI_VERSION,
+  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight,
+} from './managed-launch'
+
+// The managed-launch surface is re-exported so the composition root and the
+// conformance suite reach it through this entry point, never by deep import.
+export {
+  claudeAuthorityVariables, claudeAuthorityEnvVariables,
+  CLAUDE_CREDENTIAL_HELPER_SETTINGS_KEYS, CLAUDE_AUTH_PIN_SETTINGS_KEYS,
+  CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
+  isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys,
+  claudeAuthorityFamilyRules,
+  claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
+} from './managed-launch'
+export type { AuthorityKind, AuthorityEntry } from './managed-launch'
 
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
@@ -62,5 +83,105 @@ export class ClaudeProvider implements SshCapableProvider {
   }
   async deployResumePickerScript(resourcesDir: string): Promise<void> {
     return deployClaudeResumePickerScript(resourcesDir)
+  }
+}
+
+/** What Claude Code supports through this app, stated honestly (design 7.3).
+ *  A key is `supported` only once this package exposes the operation behind
+ *  it (registration enforces that), so the setup/auth/realm keys stay
+ *  `unknown` until the Claude adapter slice wires them. Account isolation is
+ *  the existing profile-home mechanism (owner decision D1); it is not
+ *  available on macOS, where the login keychain is located through $HOME
+ *  (D2, WP1 only). No tested CLI version range is declared yet: the range is
+ *  established by the D7 conformance evidence (dev host: Claude Code 2.1.278). */
+export const claudeCapabilities: ProviderCapabilities = {
+  'cli.discovery': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'install.recipes': { state: 'unknown', note: 'the official native installer, shown and copied, never scraped; wired in the Claude adapter slice' },
+  'auth.browser': { state: 'unknown', note: 'the genuine CLI login in a Conductor terminal; wired in the Claude adapter slice' },
+  'auth.device': { state: 'unsupported', note: 'Claude Code has no device-code sign-in' },
+  'auth.apiKey': { state: 'unsupported', note: 'managed accounts use the CLI sign-in; an API key is never collected' },
+  'auth.status': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'auth.logout': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2); wired in the Claude adapter slice' },
+  'account.labelFields': { state: 'unknown', note: 'email read from the profile identity file; wired in the Claude adapter slice' },
+  'account.usage': { state: 'unknown', note: 'the per-account usage fetch lives in src/main/usage, not on this package; wired in a later slice' },
+  'session.launch': { state: 'supported' },
+  'session.history': { state: 'supported', note: 'resume picker and history listing' },
+  'session.cloud': { state: 'unknown', note: 'cloud agents run through cloud-agent-manager, not through the provider package; wired in a later slice' },
+  'session.ssh': { state: 'supported' },
+}
+
+/** Ambient variables that could override a bound Claude realm (D3).
+ *
+ *  Slice 1 carried four names and left an open question beside them: do the
+ *  authority/cloud switches (`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`,
+ *  ...) belong here, given they redirect where a credential GOES rather than
+ *  which realm is read? The owner's ruling of 2026-09-21 answers it -- yes:
+ *  a session pointed at an attacker's endpoint is not isolated merely because
+ *  it read the right stored login. The full derived, classified list now lives
+ *  in ./managed-launch, one entry per variable with its authority kind and
+ *  whether it is documented, observed in the pinned binary, or both. */
+export function claudeAmbientAuthVariables(): readonly string[] {
+  return claudeAuthorityEnvVariables()
+}
+
+/** Variables the realm patch may set: the profile-home selector, HOME as its
+ *  POSIX sibling (D1), and the Anthropic PROFILE STORE that outranks the home
+ *  selector in the bundled SDK's own resolution order. Nothing else.
+ *
+ *  ANTHROPIC_CONFIG_DIR is here because the SDK checks it FIRST and returns
+ *  immediately; %APPDATA%\Anthropic and then
+ *  %USERPROFILE%\AppData\Roaming\Anthropic come after it. Until this entry
+ *  nothing set any of the three, so APPDATA decided which stored identity was
+ *  read and the home redirect never got a vote (adversarial round 4).
+ *
+ *  APPDATA and XDG_CONFIG_HOME are deliberately NOT owned. They would isolate
+ *  the store too, and they are also where `gh` keeps its OAuth tokens, npm its
+ *  cache and global prefix, and git its XDG-style config -- the developer
+ *  configuration D3 says a managed session inherits. Owning the first key costs
+ *  none of that. See profileRealmConfigRoot.
+ *
+ *  Three things withProfileHome also sets are deliberately NOT here, for one
+ *  reason: a realm patch can only REPLACE a variable wholesale, and none of
+ *  them is a realm selector.
+ *  - PATH: withProfileHome APPENDS <home>/.local/bin to the inherited PATH, so
+ *    a system binary still wins. Owning it would hand the package the child's
+ *    whole executable search order -- the PATH hijack this contract forbids.
+ *  - GIT_CONFIG_GLOBAL and npm_config_userconfig: withProfileHome points these
+ *    at the REAL home ("keep git/npm reading the real shared config",
+ *    src/main/account-profiles.ts), i.e. deliberately OUTSIDE the realm. They
+ *    take an arbitrary absolute path, and a git config file executes commands
+ *    (core.pager, core.sshCommand, alias.*, filter.*), so owning them would be
+ *    the PATH hijack one indirection later.
+ *  All three stay in the launch path, where withProfileHome already composes
+ *  them. Registration refuses them (NEVER_OWNED_LAUNCH_VARIABLES). */
+export const claudeOwnedLaunchVariables: readonly string[] = [
+  'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+]
+
+/** Created by the composition root; importing this entry point has no side
+ *  effects -- and in particular it does not read the authority manifest.
+ *
+ *  The factory is where the manifest is first read: `claudeAmbientAuthVariables()`
+ *  throws for an unusable manifest, and the factory runs inside
+ *  `composeProviders()`, which `index.ts` calls inside its startup error
+ *  boundary. A malformed manifest therefore reaches the user as the "cannot
+ *  start" dialog rather than as a main process that died while loading. */
+export function createClaudePackage(): ProviderPackage {
+  const ambientAuthVariables = claudeAmbientAuthVariables()
+  const session = new ClaudeProvider()
+  return {
+    id: session.id,
+    displayName: session.displayName,
+    session,
+    capabilities: claudeCapabilities,
+    ambientAuthVariables,
+    ownedLaunchVariables: claudeOwnedLaunchVariables,
+    managedLaunch: {
+      minimumCliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
+      sanitizeManagedSettings: sanitizeClaudeManagedSettings,
+      authoritySettingsKeys: claudeAuthoritySettingsKeys,
+      preflight: claudeManagedLaunchPreflight,
+    },
   }
 }

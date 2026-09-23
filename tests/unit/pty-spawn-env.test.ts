@@ -1,7 +1,16 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import os from 'node:os'
 import path from 'node:path'
 import { withProfileHome } from '../../src/main/pty-manager'
+import { composeProviders } from '../../src/main/providers/compose'
+
+// withProfileHome takes the Claude package's OWN policy -- the ambient
+// authority list and the host control -- from the registry, so a launch path
+// cannot compose a managed environment that opts out of either. In the app,
+// boot composes before anything spawns; a test that exercises the launch path
+// has to do the same. Deliberately NOT done in the global setup: the
+// registry's own suite asserts what an EMPTY registry does.
+beforeAll(() => { composeProviders() })
 
 // Platform-native fake home. A hardcoded Windows drive path breaks on POSIX
 // CI: its `:` collides with the POSIX PATH delimiter, so the PATH-dedup split

@@ -28,8 +28,9 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { logError, logInfo } from '../debug-logger'
-import { getProfileConfigDir, getProfilesRoot } from '../account-profiles'
+import { logError, logInfo, logWarn } from '../debug-logger'
+import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
+import { getProfileConfigDir, getProfilesRoot, withProfileHome, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
 import { acquireProfileConsumer, pendingProfileRefresh } from '../profile-consumers'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
@@ -162,13 +163,20 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
   //    can start), then wait for the in-flight one to land, then spawn. The
   //    other order left a microtask between the wait settling and the acquire
   //    in which a fresh rotation could begin (adversarial pass on #598).
-  //    Awaited ONLY when a rotation is actually in flight: the common path
-  //    stays synchronous up to the spawn, which is what lets overlapping probes
-  //    for one profile share a single subprocess.
+  //    Awaited ONLY when a rotation is actually in flight, or when the project
+  //    gate has no recent verdict for this process's directory (the first
+  //    probe, and once per reuse window after): the common path stays
+  //    synchronous up to the spawn, which is what lets overlapping probes for
+  //    one profile share a single subprocess.
   const release = acquireProfileConsumer(profileId)
   try {
     const rotation = pendingProfileRefresh(profileId)
     if (rotation) await rotation
+    // The project gate for the directory this probe inherits. A recent verdict
+    // is read synchronously so the common path stays synchronous up to the
+    // spawn (see above); only a miss awaits the gate.
+    const probeCwd = process.cwd()
+    const projectGate = peekGateVerdict(probeCwd) ?? await gateManagedLaunch(probeCwd)
     const home = join(getProfilesRoot(), profileId)
     if (existsSync(home)) {
       const { stdout } = await execFileAsync('claude', ['auth', 'status'], {
@@ -176,13 +184,39 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
         timeout: 10_000,
         windowsHide: true,
         shell: true,          // resolves claude.cmd on Windows, as elsewhere in the app
-        env: { ...process.env, USERPROFILE: home, HOME: home },
+        // `claude auth status` is an AUTH path, so it is a managed launch and
+        // gets the same hardening as a session: ambient authority variables
+        // removed, the host control applied last. It used to hand-build
+        // `{ ...process.env, USERPROFILE, HOME }`, which is the shape
+        // withProfileHome exists to own -- and being the one launch path that
+        // built its own env is exactly how it would have kept inheriting an
+        // ambient ANTHROPIC_API_KEY and reported the wrong account as signed
+        // in. HOME is set unconditionally here (withProfileHome sets it on
+        // Linux only, for the macOS keychain reason documented there), so it
+        // is re-applied after -- by MUTATING the returned object rather than
+        // spreading it into a literal, which would re-attach Object.prototype
+        // to an env the realm patch deliberately built with a null prototype
+        // (see src/shared/providers/realm-env.ts).
+        env: Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate }), { HOME: home }),
       })
       const parsed = parseAuthStatus(stdout)
       if (parsed) return parsed
     }
-  } catch {
+  } catch (e) {
     // CLI absent, slow, or erroring — fall through to the file.
+    //
+    // But a managed-launch REFUSAL is not that. `withProfileHome` throws when
+    // the host control could not be applied, and this bare catch swallowed it
+    // with no log line at all; the probe then fell back to reading the
+    // credential file and answered as if nothing had happened. This call site
+    // records no preflight either, so a regressed control here left ZERO trace
+    // anywhere (adversarial review, MAJOR 7). The fallback is still correct --
+    // it reads a file rather than launching the CLI, so it cannot act as the
+    // wrong account -- but the silence was not.
+    const message = (e as Error)?.message ?? String(e)
+    if (message.includes(MANAGED_LAUNCH_REFUSAL)) {
+      logWarn(`[account-web] profile ${profileId}: the CLI auth probe was refused -- ${message}. Falling back to the credential file; this is an isolation fault, not a missing CLI.`)
+    }
   } finally {
     release()
   }

@@ -3,6 +3,8 @@
 import { spawn, execSync } from 'child_process'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
+import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics'
+import type { ProjectGateResult } from '../shared/providers'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { profileIdFromHome } from './profile-id'
 
@@ -116,12 +118,20 @@ export function spawnClaudeHeadless(
   // one settled left a microtask in which a fresh refresh could begin and
   // rotate the token this run is about to read. The wait itself is bounded by
   // the refresh's own socket timeout, well inside the ref's grace.
+  //
+  // The project gate rides the same rule. The run inherits this process's
+  // working directory, whose own settings files are gated like any other; a
+  // recent verdict is read synchronously, and only a miss (the first run, or
+  // one after the reuse window) defers the spawn behind the gate -- the same
+  // deferral shape as the refresh wait, for the same single-subprocess reason.
   const profileId = profileIdFromHome(home)
+  const cwd = process.cwd()
   const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
   const pending = profileId ? pendingProfileRefresh(profileId) : null
-  const p = pending
-    ? pending.then(() => spawnNow(args, timeoutMs, stdinData, home, signal))
-    : spawnNow(args, timeoutMs, stdinData, home, signal)
+  const cachedGate = profileId ? peekGateVerdict(cwd) : null
+  const p = pending || (profileId && cachedGate === undefined)
+    ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate))
+    : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null)
   if (release) p.then(release, release)
   return p
 }
@@ -131,15 +141,38 @@ function spawnNow(
   timeoutMs: number,
   stdinData: string | undefined,
   home: string | null,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  cwd: string,
+  projectGate: ProjectGateResult | null,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  // The environment is composed OUTSIDE the promise executor. withProfileHome
+  // THROWS to refuse a managed launch (the project gate found an authority key
+  // in this directory's own settings), and a throw inside the executor
+  // rejected this promise -- the one failure shape every other exit here
+  // (timeout, abort, spawn error, non-zero exit) does not have. Neither of the
+  // callers that await this catch a rejection: a refused KPI extraction took a
+  // finished insights run to `failed` instead of "report ready, KPIs
+  // unavailable" (adversarial review, MAJOR). The refusal is a `{ code: 1 }`
+  // like the rest, with the refusal text -- file and key, never a value -- on
+  // stderr where the caller's own reporting already looks.
+  let env: Record<string, string>
+  try {
+    // `headless` is the launch id the Accounts panel shows beside a finding:
+    // these runs have no PTY session to name, and a report with no launch on
+    // it is a report nobody can place.
+    env = withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', cwd, probe: true, projectGate })
+  } catch (e) {
+    const message = (e as Error)?.message ?? String(e)
+    logError(`[claude-headless] Not spawning: ${message}`)
+    return Promise.resolve({ code: 1, stdout: '', stderr: message })
+  }
   return new Promise((resolve) => {
     logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
 
     const proc = spawn('claude', args, {
       shell: true,
       windowsHide: true,
-      env: withProfileHome({ ...process.env } as Record<string, string>, home)
+      env,
     })
 
     // Pipe prompt via stdin if provided

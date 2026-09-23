@@ -669,6 +669,22 @@ function launchClaude(resumeId, sourceCwd) {
   const args = resumeId ? ['--resume', resumeId, ...forwarded] : [...forwarded]
   const cmd = resolveClaudeCmd()
 
+  // The retarget decision comes FIRST, before anything touches the disk for
+  // the chosen directory: a refusal used to be reached only after the
+  // companion directory below had been created under the unscanned
+  // worktree's project key, a durable side effect keyed on a directory the
+  // gate never checked (adversarial confirmation pass, MINOR).
+  // Only override cwd for an actual resume into a different directory. Be
+  // FAIL-SAFE: an unresolvable/missing sourceCwd silently falls back to inherit.
+  const retarget = resolveRetargetCwd(resumeId, sourceCwd, process.cwd(), process.env, fs.existsSync)
+  if (retarget.refused) {
+    // Refused, visibly, and NOT started in the configured directory instead:
+    // a `--resume` there would fall through to a fresh session in silence.
+    // The directory is untrusted text on its way to the terminal: stripped.
+    console.error(`\n  Not resuming in ${displayPath(retarget.refused)}: AI Code Conductor did not check that folder's project settings for this account before the session started. Start the session again and pick it then.\n`)
+    process.exit(1)
+  }
+
   // Ensure the chosen conversation's companion dir exists so a direct-work
   // conversation (no subagent/workflow → no companion dir from the CLI) can be
   // resumed. Best-effort: any failure must NOT block the launch.
@@ -682,22 +698,13 @@ function launchClaude(resumeId, sourceCwd) {
     } catch { /* best-effort */ }
   }
 
-
-  // Only override cwd for an actual resume into a different directory. Be
-  // FAIL-SAFE: an unresolvable/missing sourceCwd silently falls back to inherit.
   const spawnOpts = {
     stdio: 'inherit',
     // NEVER shell:true here -- see buildSpawnTarget.
     shell: false,
     windowsHide: false,
   }
-  if (resumeId && sourceCwd) {
-    try {
-      if (sourceCwd !== process.cwd() && fs.existsSync(sourceCwd)) {
-        spawnOpts.cwd = sourceCwd
-      }
-    } catch { /* leave cwd inherited */ }
-  }
+  if (retarget.cwd) spawnOpts.cwd = retarget.cwd
 
   const target = buildSpawnTarget(cmd, args)
   const result = spawnSync(target.file, target.argv, spawnOpts)
@@ -721,9 +728,75 @@ function launchClaude(resumeId, sourceCwd) {
   process.exit(result.status || 0)
 }
 
+// The gated directory set a MANAGED launch hands the picker (see pty-manager's
+// pickerCandidateDirs). Absent or unparseable means "not a managed launch":
+// nothing to enforce. A directory is compared resolved, and case-folded on
+// Windows, where git and the app may spell one directory in two cases.
+function gatedDirsFromEnv(env) {
+  const raw = env && env.CCC_GATED_DIRS
+  if (typeof raw !== 'string' || raw === '') return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((d) => typeof d === 'string' && d !== '') : null
+  } catch {
+    return null
+  }
+}
+
+function isGatedDir(dir, gated) {
+  const norm = (p) => {
+    const r = path.resolve(p)
+    return process.platform === 'win32' ? r.toLowerCase() : r
+  }
+  const target = norm(dir)
+  return gated.some((d) => norm(d) === target)
+}
+
+// Where a resume relaunches the CLI: `{ cwd }` to retarget into the
+// conversation's worktree, `{ cwd: null }` to inherit the current directory
+// (no resume, same directory, or a directory that is gone -- fail-safe, as
+// before), or `{ refused }` when this is a MANAGED launch (an AI Code
+// Conductor account, which arrives with the directories its project-settings
+// gate checked in CCC_GATED_DIRS) and the worktree is not one of them: the CLI
+// must not be relaunched anywhere the gate did not scan, because a worktree's
+// own settings files can redirect the account. The set covers every worktree
+// git listed when the session started, so this refuses only a worktree that
+// appeared since. Pure, so the decision has a test; the caller exits on
+// `refused` and says why.
+// A directory name on its way to the terminal as PROSE. The same class the
+// app strips everywhere else (src/shared/safe-text.ts, which this script
+// cannot import): C0 and C1 controls, the bidi overrides, marks and isolates,
+// the zero-width and invisible formatters, the line and paragraph separators
+// and the TAG block, each replaced by a space; cut at 500 code points, never
+// inside a surrogate pair. A worktree name may carry ESC on Linux and macOS,
+// and the refusal message is read at the moment something has gone wrong.
+const SPOOFABLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/gu
+function displayPath(raw, max = 500) {
+  const clean = String(raw).replace(SPOOFABLE, ' ')
+  if (clean.length <= max) return clean
+  const points = Array.from(clean)
+  return points.length <= max ? clean : points.slice(0, max).join('')
+}
+
+function resolveRetargetCwd(resumeId, sourceCwd, currentCwd, env, existsSync) {
+  if (!resumeId || !sourceCwd) return { cwd: null }
+  try {
+    if (sourceCwd === currentCwd || !existsSync(sourceCwd)) return { cwd: null }
+  } catch {
+    return { cwd: null }
+  }
+  const gated = gatedDirsFromEnv(env)
+  if (gated && !isGatedDir(sourceCwd, gated)) return { cwd: null, refused: sourceCwd }
+  return { cwd: sourceCwd }
+}
+
 // Pure-logic exports for unit testing. Guarded so `require()` from the test (or
 // a sanity `node -e "require('./scripts/resume-picker.js')"`) does NOT run main.
 module.exports = {
+  gatedDirsFromEnv,
+  isGatedDir,
+  resolveRetargetCwd,
+  displayPath,
   buildSpawnTarget,
   encodeProjectPath,
   resolveProjectDir,

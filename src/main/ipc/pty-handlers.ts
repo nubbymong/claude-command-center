@@ -105,6 +105,14 @@ const sshSchema = z.object({
   }).optional(),
 }).optional()
 
+/** Spawn-option fields that only MAIN may set -- the deferred re-entry of a
+ *  managed spawn (`refreshAwaited`) and the project-settings verdict it carries
+ *  (`projectGate`). The Zod schema does not declare them and its parse result
+ *  is discarded, so they are removed from the renderer's object BY NAME before
+ *  it reaches spawnPty; this list is exported so the test that proves the
+ *  strip cannot drift from the strip itself. */
+export const MAIN_INTERNAL_SPAWN_FIELDS = ['refreshAwaited', 'projectGate', 'projectGateDirs'] as const
+
 export const spawnOptionsSchema = z.object({
   cwd: z.string().optional(),
   cols: z.number().int().positive().optional(),
@@ -547,8 +555,16 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // renderer. Only the keychain lookup below may set it.
     // rc.15 review R3: refreshAwaited is main-internal (the deferred re-entry
     // after a profile refresh wait) -- a renderer that set it would skip the wait.
+    // The same for projectGate, the project-settings verdict the deferred
+    // re-entry carries: a renderer that sent `projectGate: { status: 'clean' }`
+    // reached spawnPty with the gate already "answered" and the launch went
+    // ahead in a directory nobody had scanned (adversarial review, BLOCKER).
+    // Every main-internal re-entry field is deleted here, by name, because the
+    // parse result is discarded and the raw object is what spawnPty receives.
     let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
-    if (resolvedOptions) delete (resolvedOptions as Record<string, unknown>).refreshAwaited
+    if (resolvedOptions) {
+      for (const mainInternal of MAIN_INTERNAL_SPAWN_FIELDS) delete (resolvedOptions as Record<string, unknown>)[mainInternal]
+    }
     // An SSH block is bound to the config it names, ON DISK: the request must be
     // that config's own (host/port/username/remotePath/postCommand) or the spawn
     // is refused. Main trusting the renderer to pair a config's stored password

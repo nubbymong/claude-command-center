@@ -146,6 +146,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # A WP1 gate test lists the tree of the commit its ledger is bound to, and
+      # the checkout above is depth 1: fetch exactly that one commit. Shared with
+      # release.yml's test steps (see the script's header).
+      - name: Fetch the WP1 ledger's bound commit
+        run: node scripts/wp1/fetch-ledger-commit.mjs
+
       - name: Unit tests
         run: npx vitest run
 

@@ -15,7 +15,7 @@ vi.mock('../../src/main/ipc/setup-handlers', () => {
 })
 
 const { getResourcesDirectory } = await import('../../src/main/ipc/setup-handlers')
-const { removeVersion, resolveVersionBinary, isVersionInstalled, installVersion, listInstalledVersions } =
+const { removeVersion, resolveVersionBinary, isVersionInstalled, installVersion, listInstalledVersions, legacyCliPin } =
   await import('../../src/main/legacy-version-manager')
 
 const resourcesDir = getResourcesDirectory()
@@ -84,5 +84,20 @@ describe('legacy-version-manager path traversal (P0.3)', () => {
 
     expect(removeVersion('1.2.3')).toBe(true)
     expect(fs.existsSync(path.join(versionsDir, '1.2.3'))).toBe(false)
+  })
+})
+
+// The managed-launch preflight checks the CLI floor against the version a
+// pinned launch runs: the pin (enabled and valid), and whether its binary is
+// installed now -- exactly when resolveClaudeBinary would run it.
+describe('legacyCliPin', () => {
+  it('is the enabled, valid pin, with whether it is installed', () => {
+    makeInstalledVersion('2.0.76')
+    expect(legacyCliPin({ enabled: true, version: '2.0.76' })).toEqual({ version: '2.0.76', installed: true })
+    expect(legacyCliPin({ enabled: true, version: '2.0.77' })).toEqual({ version: '2.0.77', installed: false })
+    expect(legacyCliPin({ enabled: false, version: '2.0.76' })).toBeUndefined()
+    expect(legacyCliPin({ enabled: true, version: '../../../etc' })).toBeUndefined()
+    expect(legacyCliPin({ enabled: true, version: '' })).toBeUndefined()
+    expect(legacyCliPin(undefined)).toBeUndefined()
   })
 })

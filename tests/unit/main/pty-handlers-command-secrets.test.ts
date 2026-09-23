@@ -31,7 +31,7 @@ vi.mock('../../../src/main/config-manager', () => ({
 const vault: Record<string, string> = {}
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => vault[k] ?? null }))
 
-const { registerPtyHandlers } = await import('../../../src/main/ipc/pty-handlers')
+const { registerPtyHandlers, MAIN_INTERNAL_SPAWN_FIELDS } = await import('../../../src/main/ipc/pty-handlers')
 registerPtyHandlers(() => ({} as never))
 const spawn = handlers.get('pty:spawn')!
 const SID = 'a1b2c3d4e5f6a1b2c3d4e5f6'
@@ -54,6 +54,26 @@ describe('pty:spawn and command secrets', () => {
     await spawn({}, SID, { cwd: 'C:/w', shellOnly: true, configId: 'cfg1', refreshAwaited: true })
     expect(spawnPty).toHaveBeenCalledTimes(1)
     expect(spawnPty.mock.calls[0][2].refreshAwaited).toBeUndefined()
+  })
+
+  it('STRIPS projectGate: a renderer cannot hand the spawn a "clean" project-settings verdict and skip the gate', async () => {
+    // The deferred re-entry carries the gate's verdict in `projectGate`, and
+    // spawnPty runs the gate only when that field is undefined. refreshAwaited
+    // was deleted here and projectGate was not, so a renderer that sent
+    // `projectGate: { status: 'clean' }` launched a managed session in a
+    // directory nobody had scanned (adversarial review, BLOCKER).
+    await spawn({}, SID, { cwd: 'C:/w', shellOnly: true, configId: 'cfg1', profileId: 'p1', projectGate: { status: 'clean' }, projectGateDirs: ['C:/w'] })
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    expect(spawnPty.mock.calls[0][2].projectGate).toBeUndefined()
+    expect(spawnPty.mock.calls[0][2].projectGateDirs, 'the gated-directory set is main-internal too').toBeUndefined()
+    expect(spawnPty.mock.calls[0][2].profileId, 'the strip removed more than the main-internal fields').toBe('p1')
+  })
+
+  it('...and EVERY main-internal field the manager reads is on the strip list, by name', () => {
+    // The list is what the handler deletes; this pins its contents so a new
+    // re-entry field added to SpawnPtyOptions without an entry here is a test
+    // failure rather than a silent bypass.
+    expect([...MAIN_INTERNAL_SPAWN_FIELDS].sort()).toEqual(['projectGate', 'projectGateDirs', 'refreshAwaited'])
   })
 
   it('rebuilds them from the commands file on disk and the keychain, for a SHELL spawn with a config', async () => {

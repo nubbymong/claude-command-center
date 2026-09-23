@@ -30,7 +30,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag } from './spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
@@ -42,6 +42,7 @@ import { getConductorMcpPort } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
 import { getRemoteMcpPort } from './ssh-remote-port'
 import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
+import { legacyCliPin } from './legacy-version-manager'
 import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
@@ -67,8 +68,11 @@ import { designatedWorktreeDir } from './canvas/canvas-worktree'
 import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 export { withProfileHome } from './account-profiles'
+import { gateManagedLaunchDirs, recordManagedLaunchPreflight, displayPath } from './managed-launch-diagnostics'
+import { stripSpoofableText } from '../shared/safe-text'
+import type { ProjectGateResult } from '../shared/providers'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
@@ -845,6 +849,263 @@ type SpawnPtyOptions = NonNullable<Parameters<typeof spawnPtyResolved>[2]>
  * else would end the session the carried teardown was for, so it runs here,
  * once, before the error goes on to the caller.
  */
+/**
+ * Tell the renderer, readably, that a DEFERRED spawn failed.
+ *
+ * The synchronous path rejects the `pty:spawn` invoke and the renderer renders
+ * an error. A deferred spawn's invoke has already resolved, so its only signal
+ * was `pty:exit -1`, which renders as a generic grey "[Process exited with code
+ * -1]". The same fault -- including a refused account-isolation control --
+ * therefore surfaced at two different severities depending only on whether a
+ * credential refresh happened to be in flight (adversarial review, MAJOR 7).
+ *
+ * Writing the reason to the terminal first is what makes the two paths match:
+ * the message is the error's own text, and for the refusal it names the host
+ * control that was not applied. Exported so it has a test without standing up a
+ * real PTY.
+ */
+export function emitDeferredSpawnFailure(
+  win: Pick<BrowserWindow, 'isDestroyed'> & { webContents: Pick<BrowserWindow['webContents'], 'send'> },
+  sessionId: string,
+  err: unknown,
+): void {
+  if (win.isDestroyed()) return
+  // CONTROL CHARACTERS OUT. On the refusal path the text is this app's own; on
+  // the deferred path `err` is whatever the spawn threw, and a node-pty error
+  // embeds argv and cwd -- so a directory name containing ESC would write raw
+  // escape sequences into a terminal the user is reading as program output, and
+  // into the session transcript with it (adversarial round 4). The message is
+  // prose either way, so nothing legitimate is lost.
+  //
+  // C1 AS WELL AS C0. The first version of this stripped 0x00-0x1F and DEL and
+  // stopped there, which closes the 7-bit door and leaves the 8-bit one open:
+  // U+009B is CSI, U+009D is OSC and U+009C is ST as single code points, NTFS
+  // permits all three in a file name, and xterm parses them. A directory named
+  // with an OSC 8 sequence would have rendered a clickable link of the
+  // attacker's choosing in the terminal and the transcript (adversarial round 5).
+  //
+  // ...and the Unicode characters that are not controls at all but spoof just
+  // as well: the bidi overrides and isolates (U+202A-202E, U+2066-2069), which
+  // make the text DISPLAY in a different order from its content, and the line
+  // and paragraph separators (U+2028/2029), which let a path fake a second,
+  // separate message on its own line. Cosmetic rather than control-sequence
+  // injection, so a smaller blast radius -- and the same one-line fix.
+  const raw = (err as Error)?.message ?? String(err)
+  const why = stripSpoofableText(raw, 500)
+  // Red, and bracketed so it cannot be mistaken for program output.
+  win.webContents.send(`pty:data:${sessionId}`, `\r\n\x1b[31m${why}\x1b[0m\r\n`)
+  win.webContents.send(`pty:exit:${sessionId}`, -1)
+}
+
+/** A user-chosen path as it may go into a log line: the same strip as the
+ *  terminal message above, for the same reason (see ../shared/safe-text.ts). */
+const describePathForLog = (p: string): string => stripSpoofableText(p, 300)
+
+/**
+ * The directories a managed spawn of `sessionId` may end up running in, for
+ * the project gate: the configured one, plus -- for an interactive Claude
+ * session with a resume target -- the target's own directory, which the exact
+ * resume in the Claude branch relaunches the CLI in. The target is only PEEKED
+ * here (the branch consumes it later, once), and its cwd is expanded exactly
+ * as `resolveResumeLaunch` will expand it, so the gate and the launch spell
+ * the same directory. Mirrors the branch's own conditions: a Claude provider,
+ * not a plain shell, and a target that either was persisted or has a
+ * transcript binder to have come from.
+ */
+function managedLaunchGateDirs(sessionId: string, resolvedCwd: string, options: SpawnPtyOptions | undefined): string[] {
+  const dirs = [resolvedCwd]
+  if (options?.shellOnly || options?.ssh || (options?.provider ?? 'claude') !== 'claude') return dirs
+  const target = options?.resume ?? getLastResumeTarget(sessionId)
+  if (!target?.cwd) return dirs
+  if (!options?.resume && !getTranscriptBinder()) return dirs
+  const resumeCwd = expandResumeTargetCwd(target.cwd, os.homedir())
+  if (resumeCwd !== resolvedCwd) dirs.push(resumeCwd)
+  return dirs
+}
+
+/** A managed launch that will run the resume PICKER in the terminal. */
+function managedPickerLaunch(options: SpawnPtyOptions | undefined): boolean {
+  return !!options?.useResumePicker && !options.shellOnly && !options.ssh && (options.provider ?? 'claude') === 'claude'
+}
+
+/**
+ * The directories the resume PICKER may relaunch the CLI in: every worktree of
+ * the repository at `cwd`, as `git worktree list --porcelain` reports them
+ * from that directory -- which is the list scripts/resume-picker.js builds its
+ * candidates from, and where it `spawnSync`s the CLI with `cwd` set to the
+ * chosen conversation's worktree. The two in-process directory asserts fire
+ * before the PTY exists and cannot see a retarget made by a grandchild, so a
+ * managed picker launch gated only the configured directory while the CLI
+ * could run in any sibling worktree, reading that worktree's own settings
+ * files (adversarial final pass, MAJOR). Every candidate is gated up front,
+ * and the gated set travels to the picker in CCC_GATED_DIRS, which refuses a
+ * retarget outside it -- so a worktree that appears between the two
+ * enumerations is refused rather than run unchecked. Fail-safe like the
+ * picker's own enumeration: no git, no repository, or a timeout yields no
+ * extra directories, and the picker then degrades to its single-candidate
+ * behaviour in the configured directory, which is gated.
+ */
+function pickerCandidateDirs(cwd: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    try {
+      execFile('git', ['worktree', 'list', '--porcelain'], { cwd, timeout: 5000, windowsHide: true, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout) => {
+        if (err || !stdout) { resolve([]); return }
+        resolve(parseWorktreePaths(String(stdout)).map((p) => path.resolve(p)))
+      })
+    } catch {
+      resolve([])
+    }
+  })
+}
+
+/**
+ * The verdict a managed spawn carries is a verdict FOR the directories the
+ * gate scanned -- and nothing else. The deferred re-entry recomputes its
+ * working directory from disk (`resolveCwd` collapses a missing path to the
+ * home directory), and the Claude branch may relaunch in the resume target's
+ * directory; a directory that appeared or vanished between the gate and the
+ * spawn therefore ran under a verdict formed for a different one, with the
+ * choke point's own "named a directory but no verdict" guard satisfied
+ * because a verdict WAS present (adversarial re-attack, MAJOR). So the
+ * directory actually used, at both points, must be one of the gated set, or
+ * the launch is refused in the same words as any other refusal.
+ */
+function assertGatedDirectory(
+  options: SpawnPtyOptions | undefined,
+  actual: string,
+  what: string,
+  /** Records the refusal as a preflight finding before it is thrown, so the
+   *  Accounts panel shows it as it shows every other refusal (spec review). */
+  record: (directory: string) => void,
+): void {
+  if (options?.projectGate === undefined) return
+  const gated = options.projectGateDirs ?? []
+  const same = (a: string, b: string): boolean => path.resolve(a) === path.resolve(b)
+  if (gated.some((d) => same(d, actual))) return
+  const shown = displayPath(actual)
+  try { record(shown) } catch { /* a diagnostic never decides a launch */ }
+  throw new Error(`${MANAGED_LAUNCH_REFUSAL}: the ${what} (${shown}) is not a directory the project-settings gate checked for this launch -- it changed while the launch was being checked; start the session again`)
+}
+
+/**
+ * Hold a managed spawn until `pending` settles, then re-enter `spawnPty` with
+ * the options `next` builds from the settled value.
+ *
+ * Two waits use this: the profile-refresh wait (rc.15 review R3) and the
+ * project-settings gate (2026-09-22). Both hold the profile first, so no token
+ * rotation can begin while the spawn is deferred; both carry the teardown of
+ * the PTY this spawn replaced; both surface a failed re-entry in the terminal
+ * rather than as a bare exit code (adversarial review, MAJOR 7). When two waits
+ * chain, the second takes its hold synchronously inside the first's re-entry,
+ * before the first's `finally` releases -- so the profile is held across both.
+ */
+function deferSpawnUntil<T>(
+  win: BrowserWindow,
+  sessionId: string,
+  profileId: string,
+  inheritedTeardown: (() => void) | undefined,
+  pending: Promise<T>,
+  why: string,
+  next: (settled: T) => SpawnPtyOptions,
+): void {
+  const release = acquireProfileConsumer(profileId, { maxAgeMs: Infinity })
+  let cancelled = false
+  // The self-captured resume target is read off the transcript binder at the
+  // top of EVERY entry and stored after that entry's killPty. The re-entry is
+  // an entry: its killPty clears the target the first pass stored, and its own
+  // capture finds nothing because the first pass's kill has ended the old run
+  // by then -- so a deferred managed relaunch silently lost its exact resume,
+  // on every Restart and every account switch (adversarial re-attack, MAJOR).
+  // The target the first pass captured -- and gated -- is carried here and
+  // re-entered as the persisted target, which wins by the branch's own rule.
+  const carriedResume = getLastResumeTarget(sessionId)
+  refreshWaitSpawns.set(sessionId, {
+    cancel: () => { cancelled = true; refreshWaitSpawns.delete(sessionId); release() },
+    // Carried over from the wait this spawn superseded (see spawnPty).
+    abandonedTeardown: inheritedTeardown,
+    win,
+  })
+  logInfo(`[profiles] session ${sessionId}: ${why}`)
+  // A failed re-entry, or a wait that itself failed, with no PTY registered:
+  // end the session the replaced PTY's exit was told to leave alone, or tell
+  // a fresh session's renderer that the start ended. Only when the failed
+  // spawn registered no PTY (quality round 3, M2): a throw AFTER registration
+  // leaves a live PTY that killPty ends later, exactly as a synchronous spawn
+  // that throws there does, and the teardown would delete that PTY's entry and
+  // report an exit the renderer would act on.
+  const failWithoutPty = (wait: { abandonedTeardown?: () => void } | undefined, err: unknown): void => {
+    if (ptySessions.has(sessionId)) return
+    if (wait?.abandonedTeardown) {
+      wait.abandonedTeardown()
+    } else if (!win.isDestroyed()) {
+      // ADR-009 round 3 (Codex finding 3): a FRESH deferred spawn has no
+      // predecessor teardown. Its pty:spawn IPC already resolved, so without
+      // a notification the renderer is left with a blank terminal treated as
+      // spawned (no error/exit handler fires). Tell it the start ended and
+      // drop the canvas stamp the spawn handler wrote before spawnPty ran.
+      logError(`[profiles] session ${sessionId}: fresh deferred spawn failed with no PTY -- notifying the renderer the start ended`)
+      forgetSessionForCanvas(sessionId)
+      // Say WHY, in the terminal, before the exit code. On the synchronous
+      // path a spawn failure rejects the pty:spawn invoke and the renderer
+      // shows a readable error; here the invoke has already resolved, so
+      // the same failure would arrive as a bare `pty:exit -1` (adversarial
+      // review, MAJOR 7). The text is the error's own, which on the
+      // refusal path names the settings file and key that refused the
+      // launch -- never a value.
+      emitDeferredSpawnFailure(win, sessionId, err)
+    }
+  }
+  void pending.then((settled) => {
+    if (cancelled) return
+    const wait = refreshWaitSpawns.get(sessionId)
+    refreshWaitSpawns.delete(sessionId)
+    // ADR-009 (Lens C, U13): the window can be destroyed while the wait holds
+    // (app quit, a renderer crash) -- never spawn a PTY into a gone window. End
+    // the session its predecessor's exit deferred, release the hold, and stop.
+    if (win.isDestroyed()) {
+      logInfo(`[profiles] session ${sessionId}: window destroyed during the wait -- not spawning`)
+      wait?.abandonedTeardown?.()
+      release()
+      return
+    }
+    try {
+      // Re-enter through spawnPtyResolved with the teardown this wait carries,
+      // NOT through spawnPty: the map entry that spawnPty would read it from
+      // was deleted three lines up, so a re-entry that is deferred AGAIN (a
+      // refresh wait followed by the project gate) would start its second
+      // wait with no teardown, and a final spawn that then failed without a
+      // PTY would tell the renderer the session exited while never ending the
+      // session it replaced -- 697d3448 reopened by the second wait (found by
+      // the test rework of 2026-09-22).
+      const nextOptions = next(settled)
+      spawnPtyResolved(win, sessionId, carriedResume && !nextOptions.resume ? { ...nextOptions, resume: carriedResume } : nextOptions, wait?.abandonedTeardown)
+    } catch (err) {
+      logError(`[profiles] session ${sessionId}: the spawn after the wait failed: ${(err as Error)?.message ?? err}`)
+      failWithoutPty(wait, err)
+    } finally {
+      release()
+    }
+  }, (err) => {
+    // The WAIT rejected. Neither wait can today -- the gate returns and never
+    // throws, the refresh wait settles either way -- but a hold with no
+    // rejection path is a hold that leaks the moment one of them learns to:
+    // the profile stays held for ever, the replaced session is never ended and
+    // the renderer sits on a blank terminal it believes is spawned
+    // (adversarial review, MINOR). Same exit as a failed re-entry: release,
+    // tear down or notify, and say why.
+    if (cancelled) return
+    const wait = refreshWaitSpawns.get(sessionId)
+    refreshWaitSpawns.delete(sessionId)
+    logError(`[profiles] session ${sessionId}: the wait before the spawn failed: ${(err as Error)?.message ?? err}`)
+    try {
+      if (win.isDestroyed()) wait?.abandonedTeardown?.()
+      else failWithoutPty(wait, err)
+    } finally {
+      release()
+    }
+  })
+}
+
 export function spawnPty(win: BrowserWindow, sessionId: string, options?: SpawnPtyOptions): void {
   const supersededWait = refreshWaitSpawns.get(sessionId)
   const inheritedTeardown = supersededWait?.abandonedTeardown
@@ -917,6 +1178,17 @@ function spawnPtyResolved(
      *  profile refresh wait. Never accepted from the renderer -- pty:spawn builds
      *  its options object field by field and does not copy this one. */
     refreshAwaited?: boolean
+    /** MAIN-INTERNAL (2026-09-22): the project-settings gate's verdict for the
+     *  working directory, set by the deferred re-entry after the gate answers.
+     *  `undefined` means "not gated yet"; never accepted from the renderer. */
+    projectGate?: ProjectGateResult
+    /** MAIN-INTERNAL: the directories `projectGate` is a verdict FOR, as the
+     *  gate spelled them. The re-entry re-derives its working directory from
+     *  disk, and a directory that appeared, vanished or was re-pointed during
+     *  the deferral would otherwise run under a verdict formed for another
+     *  one (adversarial re-attack, MAJOR): the spawn refuses any directory
+     *  not in this set. Never accepted from the renderer. */
+    projectGateDirs?: string[]
     /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
     enableCodexReview?: boolean
     /**
@@ -939,7 +1211,7 @@ function spawnPtyResolved(
    *  once its PTY is registered. */
   inheritedTeardown?: () => void,
 ): void {
-  logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
+  logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd ? describePathForLog(options.cwd) : 'default'})`)
 
   // T8b (bug #5): in-session Restart / Switch-account REUSE this sessionId and
   // call spawnPty synchronously after killing the old PTY. The old run's
@@ -983,7 +1255,7 @@ function spawnPtyResolved(
 
   if (capturedResumeTarget) {
     lastResumeTarget.set(sessionId, capturedResumeTarget)
-    logInfo(`[pty] T8b captured resume target for ${sessionId}: uuid=${capturedResumeTarget.uuid} cwd=${capturedResumeTarget.cwd}`)
+    logInfo(`[pty] T8b captured resume target for ${sessionId}: uuid=${capturedResumeTarget.uuid} cwd=${describePathForLog(capturedResumeTarget.cwd)}`)
   }
 
   const cols = options?.cols || 120
@@ -3708,7 +3980,7 @@ function spawnPtyResolved(
           nativeTheme.shouldUseDarkColors,
         ),
       })
-      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${describePathForLog(resolvedCwd)}`)
       // Codex sessions never designate a canvas worktree; drop any inherited hint.
       delete (spawnEnv as Record<string, string>).CCC_SESSION_WORKTREE
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
@@ -3823,61 +4095,47 @@ function spawnPtyResolved(
     if (resolvedProfileId && !options?.refreshAwaited) {
       const pending = pendingProfileRefresh(resolvedProfileId)
       if (pending) {
-        const waitedProfile = resolvedProfileId
-        const release = acquireProfileConsumer(waitedProfile, { maxAgeMs: Infinity })
-        let cancelled = false
-        refreshWaitSpawns.set(sessionId, {
-          cancel: () => { cancelled = true; refreshWaitSpawns.delete(sessionId); release() },
-          // Carried over from the wait this spawn superseded (see spawnPty).
-          abandonedTeardown: inheritedTeardown,
-          win,
-        })
-        logInfo(`[profiles] session ${sessionId}: profile ${waitedProfile} is mid-refresh -- holding the spawn until it settles`)
-        void pending.then(() => {
-          if (cancelled) return
-          const wait = refreshWaitSpawns.get(sessionId)
-          refreshWaitSpawns.delete(sessionId)
-          // ADR-009 (Lens C, U13): the window can be destroyed while the wait
-          // holds (app quit, a renderer crash) -- never spawn a PTY into a gone
-          // window. End the session its predecessor's exit deferred, release the
-          // hold, and stop.
-          if (win.isDestroyed()) {
-            logInfo(`[profiles] session ${sessionId}: window destroyed during the refresh wait -- not spawning`)
-            wait?.abandonedTeardown?.()
-            release()
-            return
-          }
-          try {
-            spawnPty(win, sessionId, { ...options, refreshAwaited: true })
-          } catch (err) {
-            logError(`[profiles] session ${sessionId}: the spawn after the refresh wait failed: ${(err as Error)?.message ?? err}`)
-            // No successor: end the session the replaced PTY's exit was told to
-            // leave alone. Only when the failed spawn registered no PTY (quality
-            // round 3, M2): a throw AFTER registration leaves a live PTY that
-            // killPty ends later, exactly as a synchronous spawn that throws
-            // there does, and the teardown would delete that PTY's entry and
-            // report an exit the renderer would act on.
-            if (!ptySessions.has(sessionId)) {
-              if (wait?.abandonedTeardown) {
-                wait.abandonedTeardown()
-              } else if (!win.isDestroyed()) {
-                // ADR-009 round 3 (Codex finding 3): a FRESH deferred spawn has no
-                // predecessor teardown. Its pty:spawn IPC already resolved, so
-                // without a notification the renderer is left with a blank
-                // terminal treated as spawned (no error/exit handler fires). Tell
-                // it the start ended and drop the canvas stamp the spawn handler
-                // wrote before spawnPty ran.
-                logError(`[profiles] session ${sessionId}: fresh deferred spawn failed with no PTY -- notifying the renderer the start ended`)
-                forgetSessionForCanvas(sessionId)
-                win.webContents.send(`pty:exit:${sessionId}`, -1)
-              }
-            }
-          } finally {
-            release()
-          }
-        })
+        deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
+          `profile ${resolvedProfileId} is mid-refresh -- holding the spawn until it settles`,
+          () => ({ ...options, refreshAwaited: true }))
         return
       }
+    }
+    // THE PROJECT GATE (managed launches, layer 3). Before a session runs in a
+    // managed account's realm, its working directory's own settings files are
+    // checked for a credential helper, an account pin, a provider switch or an
+    // endpoint redirect. The check is asynchronous and bounded (it must never
+    // block the main thread on a dead share -- see managed-launch-diagnostics),
+    // so the spawn is DEFERRED exactly as it is for a refresh wait, and re-enters
+    // with the verdict. withProfileHome then enforces it: a refusal throws, and
+    // on this deferred path the throw is what emitDeferredSpawnFailure prints
+    // in red in the terminal, file and key named, before the exit code. The
+    // verdict is main-internal: pty:spawn never copies it from the renderer.
+    //
+    // EVERY directory the spawn can land in is gated, not just the configured
+    // one. The Claude branch below relaunches an exact resume in the
+    // conversation's OWN directory -- the persisted `options.resume.cwd` or the
+    // self-captured transcript target -- which for a session that ran in its
+    // designated worktree differs from `resolvedCwd` every time. Gating only
+    // `resolvedCwd` therefore checked a directory the resumed CLI did not run
+    // in and left the one it did unchecked (adversarial review, BLOCKER). The
+    // resume decision itself stays where it is: it consumes the captured
+    // target and may relocate a transcript, so it cannot run twice across a
+    // deferral. The candidate is PEEKED here, not consumed, and spelled the way
+    // the launch will spell it; the two verdicts merge into one.
+    if (resolvedProfileId && options?.projectGate === undefined) {
+      const gateDirs = managedLaunchGateDirs(sessionId, resolvedCwd, options)
+      // The picker's candidates join the set (see pickerCandidateDirs); the
+      // verdict and the FULL set it was formed for travel together.
+      const pending = (managedPickerLaunch(options) ? pickerCandidateDirs(resolvedCwd) : Promise.resolve<string[]>([]))
+        .then(async (candidates) => {
+          const dirs = [...new Set([...gateDirs, ...candidates])]
+          return { verdict: await gateManagedLaunchDirs(dirs), dirs }
+        })
+      deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
+        `checking the project settings in ${gateDirs.map(describePathForLog).join(' and ')}${managedPickerLaunch(options) ? ' and every worktree the resume picker may open' : ''} before the managed launch`,
+        ({ verdict, dirs }) => ({ ...options, refreshAwaited: true, projectGate: verdict, projectGateDirs: dirs }))
+      return
     }
     // Home selection (Bug 2): EVERY session of an account -- shell-only (plain
     // shells + the add-account login flow) AND interactive Claude -- runs in the
@@ -3896,11 +4154,32 @@ function spawnPtyResolved(
       try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
       home = getProfileConfigDir(resolvedProfileId)
     }
-    const finalSpawnEnv = withProfileHome(spawnEnv, home)
+    // Layer 4 (the preflight report on this launch) is recorded by
+    // withProfileHome itself, from the launch CONTEXT passed here. It used to be
+    // a separate call on this line -- which reported the PTY path and none of
+    // the other four (adversarial review, MAJOR 9). `cwd` is passed so the
+    // report can name project-owned settings the host control is suppressing;
+    // the files themselves are never read for anything else and never modified.
+    // A session pinned to a legacy CLI runs THAT binary when it is installed
+    // (resolveClaudeForPty below; otherwise the installed CLI), so the
+    // preflight checks the floor against the pin. A shell-only pane runs no
+    // Claude of its own: a `claude` typed into it is the installed one.
+    const pin = !options?.shellOnly && options?.legacyVersion?.enabled ? legacyCliPin(options.legacyVersion) : undefined
+    const pinnedCli = pin?.installed ? pin : undefined
+    const recordUnverifiedDirectory = (directory: string): void => {
+      if (home && resolvedProfileId) recordManagedLaunchPreflight(sessionId, resolvedProfileId, home, spawnEnv, options?.projectGate ?? null, 'launch', { launchDirectoryUnverified: directory, ...(pinnedCli ? { pinnedCli } : {}) })
+    }
+    assertGatedDirectory(options, resolvedCwd, 'working directory', recordUnverifiedDirectory)
+    const finalSpawnEnv = withProfileHome(spawnEnv, home, { launchId: sessionId, cwd: resolvedCwd, probe: false, projectGate: options?.projectGate ?? null, ...(pinnedCli ? { pinnedCli } : {}) })
     // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).
     try { finalSpawnEnv.CCC_CONFIG_DIR = getConfigDir() } catch { /* best-effort */ }
+    // The directories this launch's verdict covers, for the resume picker: it
+    // relaunches the CLI in the chosen conversation's worktree and must not
+    // step outside the gated set (see pickerCandidateDirs). Only a managed
+    // launch carries one; an unmanaged picker is not gated and gets nothing.
+    if (options?.projectGateDirs) finalSpawnEnv.CCC_GATED_DIRS = JSON.stringify(options.projectGateDirs)
     // Session isolation + Agent Canvas (ADR-016): CCC DESIGNATES where this
     // session's guard worktree lives — `<worktree base>/<ccc-session-short>`,
     // derived from the CONFIGURED project directory and CCC's own session id,
@@ -3928,7 +4207,7 @@ function spawnPtyResolved(
     // and shell-only sessions (no Claude) never capture.
 
     if (shellOnly) {
-      logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${options?.elevated ? ' (elevated)' : ''}`)
+      logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${describePathForLog(resolvedCwd)}${options?.elevated ? ' (elevated)' : ''}`)
 
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
@@ -4065,7 +4344,7 @@ function spawnPtyResolved(
           // site can bind the exact transcript IMMEDIATELY (deterministic
           // resume-bind), independent of the hooks/statusline/heuristic race.
           resumeUuidForBind = launch.resumeUuid
-          logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${claudeCwd} (was ${resolvedCwd})`)
+          logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${describePathForLog(claudeCwd)} (was ${describePathForLog(resolvedCwd)})`)
         } else {
           // #535: the exact gate failed. When the ONLY reason is a deleted
           // worktree cwd, the conversation transcript still exists under the
@@ -4091,14 +4370,16 @@ function spawnPtyResolved(
             claudeCwd = recovered.claudeCwd
             effectiveLaunchCwd = claudeCwd
             resumeUuidForBind = recovered.resumeUuid
-            logInfo(`[pty] T8b ORPHAN-RECOVERED resume for ${sessionId}: uuid=${resumeUuid} relocated to cwd=${claudeCwd} (dead worktree was ${effectiveTarget.cwd})`)
+            logInfo(`[pty] T8b ORPHAN-RECOVERED resume for ${sessionId}: uuid=${resumeUuid} relocated to cwd=${describePathForLog(claudeCwd)} (dead worktree was ${describePathForLog(effectiveTarget.cwd)})`)
           } else {
-            logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check; no orphan recovery) — uuid=${effectiveTarget.uuid} cwd=${effectiveTarget.cwd}`)
+            logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check; no orphan recovery) — uuid=${effectiveTarget.uuid} cwd=${describePathForLog(effectiveTarget.cwd)}`)
           }
         }
       }
 
-      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${claudeCwd} (resumePicker=${!!options?.useResumePicker}, resume=${resumeUuid ?? 'none'})`)
+      // The directory the CLI will actually run in, after the resume decision.
+      assertGatedDirectory(options, claudeCwd, 'resume directory', recordUnverifiedDirectory)
+      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${describePathForLog(claudeCwd)} (resumePicker=${!!options?.useResumePicker}, resume=${resumeUuid ?? 'none'})`)
 
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',

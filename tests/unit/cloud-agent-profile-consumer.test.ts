@@ -3,7 +3,8 @@
 // usage page's auto-refresh could rotate the token under it and strand the
 // account, and an agent could start mid-rotation and read the old file. The
 // manager now holds the profile for the child's life and waits out a rotation.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+import { composeProviders } from '../../src/main/providers/compose'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -30,6 +31,7 @@ vi.mock('../../src/main/legacy-version-manager', () => ({
   resolveVersionBinary: vi.fn(() => null),
   isVersionInstalled: vi.fn(() => false),
   installVersion: vi.fn(async () => ({ ok: false, error: 'mock' })),
+  legacyCliPin: vi.fn(() => undefined),
 }))
 
 // A REAL directory stands in for the profile home, so the resolver's existsSync
@@ -71,6 +73,23 @@ const PROFILE = 'profile-agent-01'
 const tmpDirs: string[] = []
 let child: ReturnType<typeof makeChild>
 const tick = async (n = 3) => { for (let i = 0; i < n; i++) await Promise.resolve() }
+/** Wait for a condition that the project-settings GATE has to answer first.
+ *  `dispatchAgent` awaits `gateManagedLaunch(params.projectPath)` before it
+ *  creates the record or takes the hold, and that gate does real file I/O --
+ *  so the record lands on a MACROTASK and no microtask drain brings it
+ *  forward. Bounded past the gate's own 3000 ms deadline, so a dispatch that
+ *  never gets there fails the assertion instead of hanging the suite. */
+const until = async (cond: () => boolean, why: string) => {
+  const deadline = Date.now() + 5000
+  while (!cond() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+  if (!cond()) throw new Error(`timed out waiting for ${why}`)
+}
+
+// The cloud agent runs the CLI under a managed profile home, so its environment
+// goes through withProfileHome, which takes the Claude package's own ambient-strip
+// list and host control from the registry and fails closed when nothing is
+// registered. Boot composes before anything dispatches; so must this.
+beforeAll(() => { composeProviders() })
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -148,7 +167,11 @@ describe('cloud agent — starting mid-rotation waits for the refresh (#49)', ()
     noteProfileRefreshInFlight(PROFILE, new Promise((resolve) => { settle = resolve }))
 
     const p = dispatch()
-    await tick()
+    // The record exists once the project gate has answered -- which is the
+    // point the dispatch reaches the refresh wait, and the earliest point at
+    // which "it has not spawned" is a statement about the wait rather than
+    // about the gate.
+    await until(() => listAgents().length === 1, 'the dispatch to pass the project gate')
     expect(mockSpawn).not.toHaveBeenCalled()
     // Held BEFORE the wait (adversarial pass on #598): no NEW rotation can start
     // in the gap between this one settling and the spawn.

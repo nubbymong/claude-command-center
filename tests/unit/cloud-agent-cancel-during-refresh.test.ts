@@ -10,7 +10,8 @@
 // refused and Remove hiding the row. Dispatch now re-reads the record after
 // EVERY pre-spawn await and, if it was cancelled or removed, releases the hold,
 // deletes the prompt file, broadcasts and returns without spawning.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { composeProviders } from '../../src/main/providers/compose'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -27,6 +28,7 @@ vi.mock('../../src/main/legacy-version-manager', () => ({
   resolveVersionBinary: () => null,
   isVersionInstalled: () => legacy.installed,
   installVersion: () => new Promise<{ ok: boolean }>((resolve) => { legacy.install = () => resolve({ ok: false }) }),
+  legacyCliPin: (l?: { enabled: boolean; version: string }) => (l?.enabled ? { version: l.version, installed: legacy.installed } : undefined),
 }))
 const state = vi.hoisted(() => ({ home: '' }))
 vi.mock('../../src/main/account-profiles', async (original) => ({
@@ -38,9 +40,33 @@ vi.mock('../../src/main/account-profiles', async (original) => ({
 import { initCloudAgentManager, dispatchAgent, listAgents, cancelAgent, removeAgent, _resetCloudAgentLatchForTest } from '../../src/main/cloud-agent-manager'
 import { noteProfileRefreshInFlight, _resetProfileConsumersForTest, hasTransientProfileConsumer } from '../../src/main/profile-consumers'
 
+// The cloud agent runs the CLI under a managed profile home, so its env goes
+// through withProfileHome -- which takes the Claude package's own ambient-strip
+// list and host control from the registry and fails closed when nothing is
+// registered. Boot composes before anything dispatches; so must this.
+beforeAll(() => { composeProviders() })
+
+
 const handlers: Record<string, (...args: any[]) => void> = {}
 const promptFile = (id: string) => path.join(os.tmpdir(), `ccc-agent-${id}.txt`)
-const tick = async (n = 6) => { for (let i = 0; i < n; i++) await Promise.resolve() }
+/** Wait for a condition the project-settings GATE has to answer first.
+ *  `dispatchAgent` awaits `gateManagedLaunch(params.projectPath)` before it
+ *  publishes the record -- real file I/O, so the record lands on a MACROTASK
+ *  and no microtask drain brings it forward. Bounded past the gate's own
+ *  3000 ms deadline so a dispatch that never arrives fails the assertion
+ *  rather than hanging the suite. */
+const until = async (cond: () => boolean, why: string) => {
+  const deadline = Date.now() + 5000
+  while (!cond() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+  if (!cond()) throw new Error(`timed out waiting for ${why}`)
+}
+/** The published record of the one dispatch under test, once the gate has let
+ *  it through. Every case below parks the dispatch on an await AFTER this
+ *  point, so this is where "it is waiting" becomes observable. */
+const waitingAgent = async () => {
+  await until(() => listAgents().length === 1, 'the dispatch to pass the project gate')
+  return listAgents()[0]
+}
 
 beforeEach(() => {
   state.home = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-vitest-cloud-cancel-'))
@@ -68,8 +94,7 @@ describe('cancel while dispatch is waiting (Codex R5, flipped)', () => {
     let settle!: () => void
     noteProfileRefreshInFlight('profile-review', new Promise<void>((resolve) => { settle = resolve }))
     const dispatch = dispatchAgent({ ...params, projectPath: state.home })
-    await tick()
-    const waiting = listAgents()[0]
+    const waiting = await waitingAgent()
     expect(mockSpawn).not.toHaveBeenCalled()
     expect(fs.existsSync(promptFile(waiting.id))).toBe(true)
     expect(cancelAgent(waiting.id)).toBe(true)
@@ -87,8 +112,7 @@ describe('cancel while dispatch is waiting (Codex R5, flipped)', () => {
     let settle!: () => void
     noteProfileRefreshInFlight('profile-review', new Promise<void>((resolve) => { settle = resolve }))
     const dispatch = dispatchAgent({ ...params, projectPath: state.home })
-    await tick()
-    const waiting = listAgents()[0]
+    const waiting = await waitingAgent()
     expect(removeAgent(waiting.id)).toEqual({ ok: true, removed: true })
     expect(listAgents()).toHaveLength(0)
     settle()
@@ -102,7 +126,7 @@ describe('cancel while dispatch is waiting (Codex R5, flipped)', () => {
 
   it('cancelling during the legacy CLI install (the older await of the same shape) -> nothing spawns', async () => {
     const dispatch = dispatchAgent({ ...params, projectPath: state.home, legacyVersion: { enabled: true, version: '1.0.0' } })
-    await tick()
+    await until(() => legacy.install !== null, 'the dispatch to reach the legacy CLI install')
     expect(legacy.install).not.toBeNull()
     const waiting = listAgents()[0]
     expect(cancelAgent(waiting.id)).toBe(true)
@@ -117,7 +141,7 @@ describe('cancel while dispatch is waiting (Codex R5, flipped)', () => {
     let settle!: () => void
     noteProfileRefreshInFlight('profile-review', new Promise<void>((resolve) => { settle = resolve }))
     const dispatch = dispatchAgent({ ...params, projectPath: state.home })
-    await tick()
+    await waitingAgent()
     expect(mockSpawn).not.toHaveBeenCalled()
     settle()
     const agent = await dispatch

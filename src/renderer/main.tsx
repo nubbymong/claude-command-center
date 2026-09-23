@@ -2,6 +2,10 @@
 // in by App's static import graph) evaluates and bakes its font URLs. Must stay
 // above `import App`. See the module for why it can't live in this file's body.
 import './excalidraw-asset-path'
+// WP1: the renderer composition root registers the concrete provider
+// descriptors at module load. Must stay above `import App` (same reason as
+// the excalidraw path above): App's import graph may look descriptors up.
+import './providers/compose-at-load'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'

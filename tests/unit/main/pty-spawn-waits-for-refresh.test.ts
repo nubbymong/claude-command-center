@@ -12,6 +12,16 @@
 // the wait releases the hold and spawns nothing, and writes during the wait are
 // dropped, never queued.
 //
+// Since 2026-09-22 there is a SECOND deferral on the same path, and the two
+// chain: after the refresh wait settles, the re-entering spawn is deferred again
+// behind the project-settings GATE, which reads the working directory's own
+// `.claude` settings files before an environment is composed. So a managed spawn
+// is ALWAYS asynchronous now -- `settle()` below waits out both -- and the hold
+// spans both waits, which is the property these cases are really about. An
+// UNMANAGED spawn (no profile) is untouched and still synchronous; the positive
+// control that used to make that claim about a managed spawn now makes it about
+// an unmanaged one, and asserts the new ordering for the managed case.
+//
 // Real fetchAccountUsage held at a mocked POST; real spawnPty with node-pty mocked.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
@@ -73,7 +83,7 @@ vi.mock('https', () => {
 
 const profiles = await import('../../../src/main/account-profiles')
 const { spawnPty, killPty, writePty, isSessionWritable, killAllPty, gracefulExitAllPty } = await import('../../../src/main/pty-manager')
-const { registerProvider } = await import('../../../src/main/providers')
+const { registerFakeClaudePackage } = await import('../../helpers/claude-package')
 const identity = await import('../../../src/main/claude-account-identity')
 const consumers = await import('../../../src/main/profile-consumers')
 const { fetchAccountUsage, _resetLiveUsageForTest, _resetSnapshotsForTest } = await import('../../../src/main/usage/account-usage')
@@ -92,6 +102,21 @@ let sandbox = ''
 let profileId = ''
 const sids: string[] = []
 const tick = async (n = 6) => { for (let i = 0; i < n; i++) await Promise.resolve() }
+/** Wait for a condition the project-settings gate has to answer first. Bounded
+ *  past the gate's own 3000 ms deadline, so a spawn that never lands fails the
+ *  assertion instead of hanging the suite. */
+const until = async (cond: () => boolean, why: string) => {
+  const deadline = Date.now() + 5000
+  while (!cond() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+  if (!cond()) throw new Error(`timed out waiting for ${why}`)
+}
+const untilSpawned = (n: number) => until(() => ptys.length === n, `${n} PTY(s) to start after the gate`)
+/** Let the project GATE answer when there is nothing to poll FOR -- the cases
+ *  whose point is that nothing lands. The gate does real file I/O, so the
+ *  deferred re-entry arrives on a MACROTASK and no microtask drain brings it
+ *  forward; two ENOENT opens of a local temp directory cost orders of magnitude
+ *  less than this window. */
+const gateSettled = async () => { for (let i = 0; i < 30; i++) await new Promise((resolve) => setTimeout(resolve, 5)) }
 
 /** Start the usage refresh and park it at its POST. (Returned inside an object:
  *  an async function returning the promise itself would adopt it and deadlock.) */
@@ -106,6 +131,10 @@ async function settle(fetching: Promise<unknown>): Promise<void> {
   held.answer!()
   await fetching
   await tick()
+  // ...and then the PROJECT GATE, which the re-entering spawn defers on a
+  // second time. Both waits have to be out of the way before a case can say
+  // whether a PTY started.
+  await gateSettled()
 }
 
 beforeEach(() => {
@@ -118,7 +147,7 @@ beforeEach(() => {
   const file = path.join(profiles.getProfileConfigDir(profileId), '.claude', '.credentials.json')
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: 'synthetic-expired', refreshToken: 'synthetic-refresh', expiresAt: 1 } }))
-  registerProvider(fakeProvider)
+  registerFakeClaudePackage(fakeProvider)
   identity._resetClaudeAccounts()
   consumers._resetProfileConsumersForTest()
   _resetLiveUsageForTest()
@@ -223,6 +252,7 @@ describe('a local spawn waits out an in-flight refresh of its profile (Codex R3,
     fs.writeFileSync(qFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x', refreshToken: 'y', expiresAt: 1 } }))
     sids.push('rc15switch')
     spawnPty(win, 'rc15switch', { shellOnly: true, profileId, cwd: sandbox })
+    await untilSpawned(1)   // deferred by the project gate, as every managed spawn is
     const old = ptys[0]
     const fetching = fetchAccountUsage(q.id)
     for (let i = 0; i < 100 && !held.answer; i++) await new Promise((resolve) => setTimeout(resolve, 5))
@@ -245,7 +275,10 @@ describe('a local spawn waits out an in-flight refresh of its profile (Codex R3,
     fs.mkdirSync(path.dirname(qFile), { recursive: true })
     fs.writeFileSync(qFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x', refreshToken: 'y', expiresAt: 1 } }))
     spawnPty(win, 'rc15abandon', { shellOnly: false, profileId, cwd: sandbox }) // interactive: watched on P
+    // The hold spans the gate wait, so the profile reads as in use immediately;
+    // the SESSION is live only once the PTY behind the gate lands.
     expect(identity.isProfileInUseByLiveSession(profileId)).toBe(true)
+    await untilSpawned(1)
     expect(isPtySessionLive('rc15abandon')).toBe(true)
     const old = ptys[0]
     const fetching = fetchAccountUsage(q.id)
@@ -263,11 +296,35 @@ describe('a local spawn waits out an in-flight refresh of its profile (Codex R3,
     expect(sent.filter(([ch]) => ch === 'pty:exit:rc15abandon')).toHaveLength(1) // and nothing torn down twice
   })
 
-  it('positive control: with no refresh in flight the spawn is synchronous, exactly as before', () => {
+  it('with no refresh in flight a MANAGED spawn is deferred by the project gate ALONE, and the hold still spans it', async () => {
+    // This case used to assert the spawn was synchronous. For a managed spawn
+    // that is no longer true and must not be asserted: the project gate defers
+    // it once, unconditionally -- pty-manager deliberately does not reuse a
+    // cached verdict, because a session runs for hours and is worth a fresh
+    // read of the directory it starts in. What has NOT changed is the ordering
+    // this file exists to protect: the hold is taken before the wait and the PTY
+    // exists only after it, so there is no window in which the profile is being
+    // launched and reads as idle. The synchronous claim moved to the unmanaged
+    // control below, which is the shape it is still true of.
     sids.push('rc15refreshnone')
     spawnPty(win, 'rc15refreshnone', { shellOnly: true, profileId, cwd: sandbox })
-    expect(ptys).toHaveLength(1)
+    expect(ptys, 'the managed spawn was not deferred behind the gate').toHaveLength(0)
+    expect(consumers.hasTransientProfileConsumer(profileId)).toBe(true)
     expect(identity.isProfileInUseByLiveSession(profileId)).toBe(true)
+    await untilSpawned(1)
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(true)
+    // The gate wait's hold was handed over: the shell's own is the one left.
+    expect(consumers.profileConsumerCount(profileId)).toBe(1)
+  })
+
+  it('positive control: an UNMANAGED spawn is not gated at all and is still synchronous', () => {
+    // No profileId on a shell-only session resolves no profile, so there is no
+    // account to redirect: nothing to gate, nothing to hold, and the PTY exists
+    // the moment spawnPty returns -- exactly as it always did.
+    sids.push('rc15refreshunmanaged')
+    spawnPty(win, 'rc15refreshunmanaged', { shellOnly: true, cwd: sandbox })
+    expect(ptys).toHaveLength(1)
+    expect(identity.isProfileInUseByLiveSession(profileId)).toBe(false)
   })
 
   it('positive control: a refresh of ANOTHER profile does not delay this spawn', async () => {
@@ -281,7 +338,10 @@ describe('a local spawn waits out an in-flight refresh of its profile (Codex R3,
     expect(consumers.pendingProfileRefresh(other.id)).not.toBeNull()
     sids.push('rc15refreshother')
     spawnPty(win, 'rc15refreshother', { shellOnly: true, profileId, cwd: sandbox })
-    expect(ptys).toHaveLength(1)
+    // Not delayed by the OTHER profile's refresh: it lands after its own project
+    // gate and nothing else, while that refresh is still parked at its POST.
+    await untilSpawned(1)
+    expect(held.answer, 'the other profile\'s refresh settled after all').not.toBeNull()
     await settle(fetching)
   })
 })
@@ -300,6 +360,7 @@ function makeIdleProfile(name: string): string {
  *  stale, its teardown handed to the wait). Returns Q's parked refresh. */
 async function switchedOntoMidRefresh(sid: string, q: string): Promise<{ fetching: Promise<unknown> }> {
   spawnPty(win, sid, { shellOnly: false, profileId, cwd: sandbox })
+  await untilSpawned(1)   // deferred by the project gate, as every managed spawn is
   expect(isPtySessionLive(sid)).toBe(true)
   const old = ptys[0]
   const fetching = fetchAccountUsage(q)
@@ -340,7 +401,9 @@ describe('quality round 3: a superseding spawn carries the handed-over teardown;
     const q = makeIdleProfile('M1b')
     const { fetching } = await switchedOntoMidRefresh('rc16landing', q)
     canvasLink.noteSessionSpawnForCanvas('rc16landing', { cwd: sandbox })
-    spawnPty(win, 'rc16landing', { shellOnly: false, profileId, cwd: sandbox }) // back onto P: no refresh pending -> synchronous
+    spawnPty(win, 'rc16landing', { shellOnly: false, profileId, cwd: sandbox }) // back onto P: no refresh pending -> lands after the gate alone
+    expect(consumers.hasTransientProfileConsumer(q), 'the superseded wait kept its hold').toBe(false)
+    await untilSpawned(2)
     expect(ptys).toHaveLength(2)
     expect(exits('rc16landing')).toHaveLength(0)
     expect(canvasLink.canvasCwdForSession('rc16landing')).toBe(sandbox)
@@ -359,7 +422,12 @@ describe('quality round 3: a superseding spawn carries the handed-over teardown;
     const q = makeIdleProfile('M1c')
     const { fetching } = await switchedOntoMidRefresh('rc16superfail', q)
     inject.spawnThrows = true
-    expect(() => spawnPty(win, 'rc16superfail', { shellOnly: false, profileId, cwd: sandbox })).toThrow(/injected/) // back onto P: synchronous, and it fails
+    // Back onto P: the gate defers it, so node-pty's refusal lands on the
+    // RE-ENTRY and never reaches the IPC caller as a throw. The carried teardown
+    // has to travel with the NEW wait or the session never ends -- which is the
+    // same M1 defect, arriving by the asynchronous door.
+    expect(() => spawnPty(win, 'rc16superfail', { shellOnly: false, profileId, cwd: sandbox })).not.toThrow()
+    await until(() => exits('rc16superfail').length === 1, 'the refused re-entry to end the session once')
     expect(ptys).toHaveLength(1)
     expect(exits('rc16superfail')).toHaveLength(1) // 697d3448: dropped with the spawn -> the session never ended
     expect(isPtySessionLive('rc16superfail')).toBe(false)
@@ -370,6 +438,29 @@ describe('quality round 3: a superseding spawn carries the handed-over teardown;
     expect(exits('rc16superfail')).toHaveLength(1)
   })
 
+  // CURRENTLY RED, and deliberately left so: it is a regression test catching a
+  // live defect in src/main/pty-manager.ts, not a test that needs updating.
+  //
+  // The teardown HANDOVER does not survive two chained waits. `deferSpawnUntil`
+  // deletes its `refreshWaitSpawns` entry (pty-manager.ts:930) before re-entering
+  // `spawnPty` (:941), and `spawnPty`'s prologue reads the teardown out of that
+  // very map (:978-979) -- so when the refresh wait re-enters and the spawn is
+  // deferred a SECOND time on the project gate, the new wait is created with
+  // `inheritedTeardown === undefined`. If that final spawn then fails without
+  // registering a PTY, `wait?.abandonedTeardown` is absent, the catch falls
+  // through to `emitDeferredSpawnFailure`, and the renderer is told the session
+  // exited while the session is never torn down: `isPtySessionLive` stays true
+  // for the life of the process, the identity watch on the REPLACED profile is
+  // never stopped, and the registry keeps a dead session live. The `pty:exit`
+  // this asserts still arrives -- from emitDeferredSpawnFailure, not from the
+  // teardown -- which is why the exit count passes and the liveness does not.
+  //
+  // That is defect 697d3448/f737d411 reopened by the second wait. The single-wait
+  // path is unaffected (M1c below still passes, because its superseding spawn is
+  // synchronous and the map entry is still there to inherit from). The fix is a
+  // src change -- carry the teardown into the re-entry explicitly rather than
+  // through a map the re-entry has already been removed from -- and is out of
+  // scope for a test rework.
   it('M2 control: a re-entry that throws BEFORE registering a PTY ends the session once (no successor: exit reported, not live, both profiles released)', async () => {
     const q = makeIdleProfile('M2a')
     const { fetching } = await switchedOntoMidRefresh('rc16nopty', q)

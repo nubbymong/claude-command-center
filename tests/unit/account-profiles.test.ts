@@ -1,5 +1,5 @@
 // tests/unit/account-profiles.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -7,6 +7,14 @@ import {
   _setRootsForTest, listProfiles, upsertProfile, deleteProfileMeta, getProfileConfigDir,
   setupProfileLinks, safeTeardownProfile, isValidProfileId, createProfile,
 } from '../../src/main/account-profiles'
+import { composeProviders } from '../../src/main/providers/compose'
+
+// The profile-home builder sanitises the settings copy through the REGISTERED
+// Claude package and fails CLOSED when none is registered: an unsanitised copy
+// into a managed realm is the hole this slice closes, so "no package, no copy"
+// is the correct production behaviour, and a test that builds profile homes has
+// to compose the way boot does.
+beforeAll(() => { composeProviders() })
 
 let tmp: string
 beforeEach(() => {

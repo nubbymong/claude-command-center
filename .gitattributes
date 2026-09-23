@@ -9,9 +9,14 @@ CHANGELOG.md text eol=lf
 # execution.
 .husky/commit-msg text eol=lf
 
-# Node ESM scripts. A `.mjs` that a test imports must be LF: Vite strips a leading
-# shebang by rewriting the first line, and under CRLF that leaves a stray \r, so the
+# Node ESM scripts. A `.mjs` that a test imports must be LF: Vite finds a leading
+# shebang with /^#!.*\n/, which does not match a CRLF first line (`.` stops at \r),
+# so it inserts its own code AHEAD of the `#!`, which is then not first, and the
 # module fails to parse with "SyntaxError: Invalid or unexpected token". Reproduced
 # on #207 — LF parses, CRLF does not, independent of file content. Pinning the whole
-# directory means the next script to grow a test cannot rediscover this.
-scripts/*.mjs text eol=lf
+# directory means the next script to grow a test cannot rediscover this -- and
+# its SUBDIRECTORIES: the first glob here was `scripts/*.mjs`, which does not
+# cross a slash, so the WP1 ledger script under scripts/wp1/ was checked out CRLF on
+# the Windows runner and its ledger gate failed to load there only (PR #619).
+# tests/unit/scripts/mjs-eol.test.ts holds the rule on every platform.
+scripts/**/*.mjs text eol=lf

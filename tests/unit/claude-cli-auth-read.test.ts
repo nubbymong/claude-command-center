@@ -8,10 +8,11 @@
 // These tests use a REAL temp dir (real fs) and mock only the profile-root
 // resolvers and the CLI subprocess, so the path the code actually joins is under
 // test — revert the `.claude` fix and the credential-file case goes RED.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'
+import { composeProviders } from '../../src/main/providers/compose'
 
 let root: string
 
@@ -25,14 +26,43 @@ let execFileImpl: (cmd: string, args: string[], opts: unknown, cb: ExecCb) => vo
 vi.mock('node:child_process', () => ({
   execFile: (cmd: string, args: string[], opts: unknown, cb: ExecCb) => execFileImpl(cmd, args, opts, cb),
 }))
-vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
-vi.mock('../../src/main/account-profiles', () => ({
+// `logWarn` belongs in this mock's surface, not as an afterthought: the managed
+// launch path warns, and a mock that omits a function the code under test calls
+// turns a log line into a TypeError -- which the probe's own catch then reports
+// as "the CLI did not answer", i.e. exactly the silent fallback these tests
+// exist to catch.
+vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
+// The gate is REAL except for one seam: a flag under which the directory the
+// probe inherits (process.cwd(), which a worker thread cannot chdir away from)
+// answers REFUSED. The refusal itself -- withProfileHome throwing, the probe
+// not spawning, the warn line, the file fallback -- is all the real code.
+const gateSeam = vi.hoisted(() => ({ refuse: false }))
+vi.mock('../../src/main/managed-launch-diagnostics', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/main/managed-launch-diagnostics')>()
+  return {
+    ...real,
+    peekGateVerdict: (cwd: string) => (gateSeam.refuse ? undefined : real.peekGateVerdict(cwd)),
+    gateManagedLaunch: async (cwd: string) => (gateSeam.refuse
+      ? { status: 'refused' as const, keys: ['settings.local.json: apiKeyHelper'] }
+      : real.gateManagedLaunch(cwd)),
+  }
+})
+// Only the two profile-root resolvers are faked. `withProfileHome` is the REAL
+// one on purpose: it is what applies the managed-launch hardening to this auth
+// probe, so stubbing it would leave the assertion below testing a stub.
+vi.mock('../../src/main/account-profiles', async () => ({
+  ...(await vi.importActual<typeof import('../../src/main/account-profiles')>('../../src/main/account-profiles')),
   getProfilesRoot: () => root,
   getProfileConfigDir: (id: string) => join(root, id),
 }))
 
 const { readClaudeCliAuth } = await import('../../src/main/account-web/claude-cli-auth')
 const { hasTransientProfileConsumer, noteProfileRefreshInFlight, _resetProfileConsumersForTest } = await import('../../src/main/profile-consumers')
+// The probe's own project gate. `peekGateVerdict` is how the test proves the
+// probe RAN the gate for the directory it inherits: withProfileHome refuses a
+// launch that names a cwd and carries no verdict, so a probe that reached
+// execFile must have passed one -- and this says WHICH directory it gated.
+const { gateManagedLaunch, peekGateVerdict, _resetProjectScanStateForTest } = await import('../../src/main/managed-launch-diagnostics')
 
 const ID = 'profile-abc-123'
 const NOW = 1_700_000_000_000
@@ -46,13 +76,55 @@ function writeCredFile(id: string, relDir: string) {
   )
 }
 
-beforeEach(() => {
+// `claude auth status` is a managed launch: its environment now comes from
+// withProfileHome, which takes the Claude package's ambient-strip list and the
+// realm variables it owns from the registry. Compose the way boot does, or every
+// CLI probe throws before it spawns and silently falls through to the file path
+// -- which is precisely the failure these tests exist to catch.
+beforeAll(() => { composeProviders() })
+
+beforeEach(async () => {
   root = fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-auth-'))
   execFileImpl = (_cmd, _args, _opts, cb) => cb(new Error('no cli'))
+  gateSeam.refuse = false
   _resetProfileConsumersForTest()
+  _resetProjectScanStateForTest()
+  // The probe stays SYNCHRONOUS up to its spawn only while a recent project-gate
+  // verdict for its own directory exists (peekGateVerdict); on a miss it awaits
+  // the gate. Warm it here rather than depending on whichever earlier test left
+  // one cached, so the coalescing and mid-rotation cases below measure the
+  // probe's own ordering and not a cache that expires after five seconds.
+  await gateManagedLaunch(process.cwd())
 })
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+describe('readClaudeCliAuth -- a REFUSED project gate never launches the CLI', () => {
+  it('does not spawn the probe, says so, and falls back to the credential file', async () => {
+    // T14 (design lens): the probe's refusal path had no test at all -- only
+    // the clean verdict was ever driven, so a probe that spawned the CLI
+    // regardless of the verdict, or swallowed the refusal in silence, left
+    // every test green. The refusal is an isolation fault, not a missing CLI,
+    // and the probe must say so; the file fallback is still the right answer,
+    // because reading a file cannot act as the wrong account.
+    writeCredFile(ID, '.claude')
+    gateSeam.refuse = true
+    let spawned = false
+    execFileImpl = (_c, _a, _o, cb) => { spawned = true; cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' }) }
+    const logger = await import('../../src/main/debug-logger')
+    const warn = vi.mocked(logger.logWarn)
+    warn.mockClear()
+    const r = await readClaudeCliAuth(ID)
+    expect(spawned, 'the CLI was launched in a directory the gate refused').toBe(false)
+    expect(r.source).toBe('credential-file')
+    expect(r.authenticated).toBe(true)
+    const said = warn.mock.calls.map((c) => c.map(String).join(' ')).join('\n')
+    expect(said).toContain('refused')
+    expect(said).toContain('settings.local.json: apiKeyHelper')
+    expect(said).toContain('isolation fault')
+    expect(hasTransientProfileConsumer(ID), 'the hold leaked past the refusal').toBe(false)
+  })
 })
 
 describe('readClaudeCliAuth — credential-file fallback path', () => {
@@ -95,6 +167,59 @@ describe('readClaudeCliAuth — CLI probe preferred, and registered as a consume
     expect(r.authenticated).toBe(true)
     expect(r.email).toBe('a@example.com')
     expect(r.source).toBe('cli-status')
+  })
+
+  it('is a MANAGED launch: ambient authority is stripped and NO host-managed flag is set', async () => {
+    // WP1.38. This path used to hand-build `{ ...process.env, USERPROFILE }`,
+    // so it was the one managed launch with no hardening on it: an ambient
+    // ANTHROPIC_API_KEY would have decided which account `claude auth status`
+    // reported, under the profile home of a different one.
+    //
+    // The flag is asserted ABSENT (owner correction, 2026-09-22). Slice 2 first
+    // set CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 on every managed launch; gate A1
+    // then measured that the CLI reads NO stored login under it, so re-adding it
+    // here would make `claude auth status` report every managed account as signed
+    // out -- which is the single loudest regression this file can catch.
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    process.env.ANTHROPIC_API_KEY = 'sk-ambient-poison'
+    process.env.CLAUDE_CONFIG_DIR = '/elsewhere'
+    let seen: Record<string, string> | undefined
+    try {
+      execFileImpl = (_c, _a, o, cb) => {
+        seen = (o as { env: Record<string, string> }).env
+        cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' })
+      }
+      await readClaudeCliAuth(ID)
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY
+      delete process.env.CLAUDE_CONFIG_DIR
+    }
+    expect(seen?.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBeUndefined()
+    expect(seen?.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(seen?.CLAUDE_CONFIG_DIR).toBeUndefined()
+    // The realm it was pointed at is unchanged.
+    expect(seen?.USERPROFILE).toBe(join(root, ID))
+    expect(seen?.HOME).toBe(join(root, ID))
+  })
+
+  it('runs the project-settings gate for the directory it inherits, and passes the verdict in', async () => {
+    // withProfileHome REFUSES a launch that names a working directory and
+    // carries no gate verdict, so a probe that reached execFile at all must
+    // have run the gate -- and the recorded verdict says which directory. A
+    // probe that skipped the gate would fall through to the credential file
+    // with the refusal swallowed, which is the silence this asserts against.
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    _resetProjectScanStateForTest()   // undo the warm-up above: this case is the MISS
+    expect(peekGateVerdict(process.cwd()), 'a verdict existed before the probe ran').toBeUndefined()
+    let spawned = false
+    execFileImpl = (_c, _a, _o, cb) => {
+      spawned = true
+      cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' })
+    }
+    const r = await readClaudeCliAuth(ID)
+    expect(spawned, 'the probe never reached the CLI, so it was refused').toBe(true)
+    expect(r.source).toBe('cli-status')
+    expect(peekGateVerdict(process.cwd()), 'the probe did not gate its own directory').toEqual({ status: 'clean' })
   })
 
   it('marks the profile in-use FOR THE DURATION of the probe, then releases it', async () => {

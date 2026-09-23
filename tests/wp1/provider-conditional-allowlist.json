@@ -1,0 +1,5 @@
+{
+  "schema": "wp1-provider-conditional-allowlist/1",
+  "note": "WP1.55: provider-name conditionals permitted inside provider core or a composition root, one `path:line text` per entry, each reviewed. Empty by design.",
+  "entries": []
+}

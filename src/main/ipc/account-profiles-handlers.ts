@@ -16,9 +16,30 @@ import { clearWebSession } from '../account-web/sign-in'
 import { removeWebSession } from '../account-web/session-store'
 import { closeArtifacts } from '../account-web/artifacts'
 import { closeAccountPanesForProfile } from '../account-web/account-pane'
+import { listManagedLaunchReports } from '../managed-launch-diagnostics'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
+
+  // Managed-launch preflight reports. This channel is what makes layer 4 of the
+  // account-isolation hardening VISIBLE. Without it the preflight is
+  // write-only: a session that started WITHOUT its isolation control looks
+  // exactly like one that started with it, unless somebody opens app.log.
+  // Read-only, and non-secret by construction -- a finding names the variables
+  // and settings KEYS that were removed, never their values.
+  // SCOPED TO ONE PROFILE. The buffer is process-wide and holds every account
+  // that has launched, so handing all of it to a renderer leaked one account's
+  // stripped settings keys and ambient variable names -- and its absolute
+  // profile path, and therefore the OS username -- to another (MAJOR 5).
+  ipcMain.handle(IPC.ACCOUNT_MANAGED_LAUNCH_REPORTS, (_e, profileId: unknown) => {
+    try {
+      if (typeof profileId !== 'string' || profileId.length === 0) return []
+      return listManagedLaunchReports(profileId)
+    } catch (err) {
+      logError('[account-profiles] managedLaunchReports failed:', err)
+      return []
+    }
+  })
 
   // Credential state per profile: days until a forced login, plus the identity
   // cross-check. Pure file reads, so it is safe to call on every panel open.

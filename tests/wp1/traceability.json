@@ -1,0 +1,1044 @@
+{
+  "schema": "wp1-traceability/1",
+  "phase": "gate0",
+  "boundHead": null,
+  "note": "Gate 0 plan: every WP1.* item maps to the tests/evidence that will prove it and to the CURRENT base tests that protect the behaviour today. `status` flips to `evidenced` (with digest-bound evidenceRecords for docs/wp1/evidence artifacts) when the artifact exists; ./phase.ts derives the candidate phase and traceability.test.ts enforces completeness there. Non-automated items carry the reason automation is not safe or possible (design 16.1).",
+  "items": [
+    {
+      "id": "WP1.1",
+      "title": "Fresh Claude-only setup reaches a usable app without Codex installed",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/mode-matrix.test.ts",
+        "tests/e2e/onboarding-provider-select.spec.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/mode-matrix.md"
+      ],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.2",
+      "title": "Fresh Codex-only setup launches a real Codex session on the selected account's exact realm without Claude",
+      "kind": "real-cli",
+      "tests": [
+        "tests/wp1/mode-matrix.test.ts",
+        "tests/wp1/launch-handoff.test.ts",
+        "tests/wp1/tokenomics-realm-discovery.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/real-cli-matrix.md"
+      ],
+      "status": "planned",
+      "reason": "launching a genuine Codex session needs the real CLI and a disposable signed-in realm; fakes prove the contract, the real run is a recorded release-qualification gate",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.3",
+      "title": "Fresh dual-provider setup verifies both providers independently",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/mode-matrix.test.ts",
+        "tests/wp1/fault-isolation.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.4",
+      "title": "Existing Claude-only upgrade preserves all profiles and ordinary Claude operation",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/migration-claude.test.ts",
+        "tests/wp1/claude-characterization.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/baseline-2026-09-19.md"
+      ],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/account-profiles.test.ts",
+        "tests/unit/account-profiles-primary.test.ts",
+        "tests/unit/pty-spawn-env.test.ts",
+        "tests/wp1/claude-characterization.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.5",
+      "title": "Existing light-Codex upgrade preserves enablement and imports or reports default Codex state",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/migration-codex.test.ts",
+        "tests/wp1/tokenomics-realm-discovery.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.6",
+      "title": "Settings can add the previously unselected provider later",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/settings-providers.test.tsx"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.7",
+      "title": "Settings refuses to disable the last enabled provider",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/settings-providers.test.tsx",
+        "tests/wp1/provider-installation-state.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.8",
+      "title": "One Claude account maps to one identity with the same name, colour, primary and active meaning",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/migration-claude.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/account-profiles-primary.test.ts",
+        "tests/unit/main/account-profiles-set-active.test.ts",
+        "tests/wp1/claude-characterization.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.9",
+      "title": "Multiple Claude accounts migrate without merging equal emails or duplicating on rerun",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/migration-claude.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/account-profiles-identity.test.ts",
+        "tests/unit/account-profiles-heal-names.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.10",
+      "title": "Two Codex accounts authenticate into distinct homes; status/logout stay isolated",
+      "kind": "real-cli",
+      "tests": [
+        "tests/wp1/codex-realm-isolation.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/real-cli-matrix.md"
+      ],
+      "status": "planned",
+      "reason": "two genuine logins into distinct homes need real provider credentials; automated with disposable identities where CI can hold them, otherwise a controlled manual gate with evidence",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.11",
+      "title": "Keyring-backed Codex auth stays isolated by CODEX_HOME on the pinned CLI",
+      "kind": "real-cli",
+      "tests": [
+        "tests/wp1/codex-pinned-source-contract.test.ts",
+        "tests/wp1/fake-keyring.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/keyring-smoke.md"
+      ],
+      "status": "planned",
+      "reason": "OS keyring behaviour is native and per-runner identity; the pinned-source contract test is automated, the native smoke runs on an ephemeral identity",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.12",
+      "title": "Same email across Claude and Codex stays separate until explicitly linked",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/identity-registry.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.13",
+      "title": "Explicit linking shares only friendly name/colour/group",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/identity-registry.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.14",
+      "title": "Unlinking does not alter auth or history",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/identity-registry.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.15",
+      "title": "Inactive/archived accounts stay historically resolvable but absent from new-work choices",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/account-lifecycle.test.ts",
+        "tests/wp1/accounts-surface.test.tsx"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/main/account-profiles-set-active.test.ts",
+        "tests/unit/renderer/accounts-panel.test.tsx"
+      ]
+    },
+    {
+      "id": "WP1.16",
+      "title": "Running consumers block inactivation/archive/logout/provider disable and the UI names the blocker",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/account-lifecycle.test.ts",
+        "tests/wp1/consumer-leases.test.ts",
+        "tests/wp1/accounts-surface.test.tsx"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/profile-consumers.test.ts",
+        "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
+        "tests/wp1/claude-characterization.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.17",
+      "title": "Detection proves executable path and version using the environment future PTYs use",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/cli-discovery.test.ts",
+        "tests/wp1/provider-conformance.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/main/claude-cli-probe.test.ts",
+        "tests/unit/main/login-shell.test.ts",
+        "tests/unit/providers/claude/login-shell-fallback.test.ts",
+        "tests/unit/providers/codex/spawn.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.18",
+      "title": "Missing-CLI assistance shows source and exact command before user-authorised execution",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/install-recipes.test.ts",
+        "tests/wp1/setup-surface.test.tsx"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.19",
+      "title": "Cancel, non-zero exit, zero-exit-with-no-binary and incompatible-version outcomes are distinct",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/install-recipes.test.ts",
+        "tests/wp1/fake-cli.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/renderer/setup-cli-hard-stop.test.tsx"
+      ]
+    },
+    {
+      "id": "WP1.20",
+      "title": "Codex browser login succeeds in the selected realm without credential parsing",
+      "kind": "real-cli",
+      "tests": [
+        "tests/wp1/codex-auth-adapter.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/real-cli-matrix.md"
+      ],
+      "status": "planned",
+      "reason": "browser sign-in requires an interactive provider web flow; controlled manual gate with disposable identity and recorded non-secret result",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.21",
+      "title": "Codex device flow is capability-gated and labelled with provider maturity",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/codex-auth-adapter.test.ts",
+        "tests/wp1/capability-registry.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.22",
+      "title": "Codex API-key login uses a non-retained secret-entry control and a non-TTY one-shot stdin pipe; key never in state/IPC/argv/logs",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/codex-auth-adapter.test.ts",
+        "tests/wp1/secret-entry.test.tsx",
+        "tests/wp1/secret-scan.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/providers/codex/auth-login.test.ts",
+        "tests/wp1/codex-characterization.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.23",
+      "title": "Logout affects only the selected managed realm",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/codex-realm-isolation.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.24",
+      "title": "External-default logout displays and requires acknowledgement of its wider local effect",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/account-lifecycle.test.ts",
+        "tests/wp1/accounts-surface.test.tsx"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.25",
+      "title": "Provider-auth restrictions and expired credentials become actionable account states",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/codex-auth-adapter.test.ts",
+        "tests/wp1/account-state-machine.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.26",
+      "title": "Migration is atomic and idempotent at every injected interruption point",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/migration-interruption.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.27",
+      "title": "Corrupt source or destination metadata fails closed without credential loss",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/migration-interruption.test.ts",
+        "tests/wp1/registry-store.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.28",
+      "title": "App-managed realm path traversal, invalid IDs and unsafe links are rejected",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/realm-paths.test.ts",
+        "tests/wp1/provider-core.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/main/profile-id.test.ts",
+        "tests/unit/profile-id-path-guard.test.ts",
+        "tests/unit/credential-dir-hardening.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.29",
+      "title": "Secret scanning of logs, IPC captures and test artifacts finds no seeded secret",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/secret-scan.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/providers/codex/auth-login.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.30",
+      "title": "Windows ACL and Unix mode tests prove owner-only realm protection",
+      "kind": "ci",
+      "tests": [
+        "tests/wp1/realm-paths.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/ci-matrix.md"
+      ],
+      "status": "planned",
+      "reason": "ACL/mode semantics are platform-native; the tests are automated but must execute on each OS runner, so the evidence is the CI matrix run",
+      "currentTests": [
+        "tests/unit/harden-dir-acl-windows.test.ts",
+        "tests/unit/credential-file-mode-hardening.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.31",
+      "title": "Rollback to the pre-WP1 beta preserves existing Claude account usability",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/rollback-reupgrade.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/rollback.md"
+      ],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.32",
+      "title": "Installer and auth recipes tested with fakes plus one opt-in real-CLI smoke per supported OS",
+      "kind": "real-cli",
+      "tests": [
+        "tests/wp1/install-recipes.test.ts",
+        "tests/wp1/fake-cli.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/real-cli-matrix.md"
+      ],
+      "status": "planned",
+      "reason": "real installer execution touches the machine PATH and provider publisher endpoints; one opt-in real smoke per OS is recorded, fakes cover the rest",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.33",
+      "title": "Existing account/onboarding/setup/provider suites stay green or are deliberately replaced",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/legacy-codex-gate.test.ts"
+      ],
+      "evidence": [
+        "tests/wp1/legacy-codex-ledger.json",
+        "docs/wp1/baseline-2026-09-19.md"
+      ],
+      "status": "planned",
+      "currentTests": [
+        "tests/wp1/legacy-codex-gate.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.34",
+      "title": "Onboarding registry/version-gate tests prove fresh-install and upgrade steps appear exactly once",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/onboarding-provider-steps.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/renderer/onboarding-registry.test.ts",
+        "tests/unit/renderer/onboarding-gate.test.ts",
+        "tests/unit/renderer/whats-new-exactly-once.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.35",
+      "title": "README, feature guide and troubleshooting stop claiming unsupported Codex account/history behaviour",
+      "kind": "document",
+      "tests": [],
+      "evidence": [
+        "README.md",
+        "src/shared/app-knowledge.ts",
+        "docs/USER_GUIDE.md",
+        "PRIVACY.md",
+        "src/renderer/tips-library.ts"
+      ],
+      "status": "planned",
+      "reason": "documentation content is reviewed, not executed; evidence is the reviewed diff",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.36",
+      "title": "User documentation explains provider selection, account vs identity, managed vs external Codex homes and recovery",
+      "kind": "document",
+      "tests": [],
+      "evidence": [
+        "docs/USER_GUIDE.md",
+        "src/shared/app-knowledge.ts",
+        "PRIVACY.md"
+      ],
+      "status": "planned",
+      "reason": "documentation content is reviewed, not executed; evidence is the reviewed diff",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.37",
+      "title": "Release evidence records tested commit, CLI versions, OS runners, commands, real-smoke scope and known limitations",
+      "kind": "document",
+      "tests": [],
+      "evidence": [
+        "docs/wp1/evidence/release-qualification.md"
+      ],
+      "status": "planned",
+      "reason": "the release evidence is a compiled record of runs, not a test",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.38",
+      "title": "Selected/default binding is validated and converted to the exact realm env on every launch; ambient poisoning cannot override it",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/launch-handoff.test.ts",
+        "tests/wp1/env-allowlist.test.ts",
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/managed-launch.test.ts",
+        "tests/wp1/authority-manifest.test.ts",
+        "tests/wp1/startup-manifest-boundary.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/claude-settings-isolation-2026-09-21.md"
+      ],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/pty-spawn-env.test.ts",
+        "tests/wp1/claude-characterization.test.ts",
+        "tests/wp1/codex-characterization.test.ts",
+        "tests/unit/claude-cli-auth-read.test.ts",
+        "tests/unit/account-profiles.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.39",
+      "title": "Accounts is one provider-neutral surface; global identity fields are not duplicated as provider settings",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/accounts-surface.test.tsx"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.40",
+      "title": "Identity create/rename/recolour/group/link/unlink updates every linked account presentation without touching auth, lifecycle or history",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/identity-registry.test.ts",
+        "tests/wp1/accounts-surface.test.tsx"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.41",
+      "title": "Setup and Accounts consume the typed capability registry; experimental/unknown stay off unless owner-enabled and labelled",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/capability-registry.test.ts",
+        "tests/wp1/setup-surface.test.tsx",
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/provider-conformance.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.42",
+      "title": "A mismatched providerId/providerAccountId/authRealmId/identityId binding is rejected before lease or spawn",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/launch-handoff.test.ts",
+        "tests/wp1/provider-core.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.43",
+      "title": "Current-Codex migration covers signed-in/signed-out default home, ambient key, durable/absent preference, interruption and rerun",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/migration-codex.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.44",
+      "title": "Outdated or replaced CLI gets update/recovery assistance and is re-detected before authentication",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/cli-discovery.test.ts",
+        "tests/wp1/install-recipes.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.45",
+      "title": "Duplicate subjects, path aliases, unsafe links and external-home subject switching cannot create two live accounts or silently rewrite one; external home needs per-launch realm-only acknowledgement",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/account-registry-uniqueness.test.ts",
+        "tests/wp1/launch-handoff.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.46",
+      "title": "Concurrent launch vs deactivate/archive/disable proves atomic leases; crash recovery clears only stale leases",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/consumer-leases.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/profile-consumers.test.ts",
+        "tests/unit/main/pty-spawn-waits-for-refresh.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.47",
+      "title": "Auth interruption after credentials are written is recovered from the setup journal",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/setup-journal-recovery.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.48",
+      "title": "Downgrade, legacy Claude metadata modification and re-upgrade reconcile without losing neutral links or silently choosing a conflicting value",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/rollback-reupgrade.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.49",
+      "title": "PATH shadowing and post-setup executable replacement are detected before login or launch",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/cli-discovery.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.50",
+      "title": "Managed archive yields a credential-free tombstone; external archive requires a credentials-remain warning",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/account-lifecycle.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.51",
+      "title": "Seeded secret tests inspect every retained capture surface; the child-process test proves API-key stdin is non-TTY",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/secret-scan.test.ts",
+        "tests/wp1/codex-auth-adapter.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.52",
+      "title": "Managed re-authentication: subject match, mismatch-to-separate-account, unverifiable confirmation, old-realm retirement and recovery; in-place external re-auth rules",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/reauth-staging.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.53",
+      "title": "Reliable subject deduplication includes authority scope; absent authority disables automatic deduplication",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/account-registry-uniqueness.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.54",
+      "title": "Digest-bound pre-change characterization run recorded before production refactoring",
+      "kind": "document",
+      "tests": [
+        "tests/wp1/claude-characterization.test.ts",
+        "tests/wp1/codex-characterization.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/baseline-2026-09-19.md"
+      ],
+      "status": "planned",
+      "reason": "the baseline record is a digest-bound document plus the characterization tests it lists",
+      "currentTests": [
+        "tests/wp1/claude-characterization.test.ts",
+        "tests/wp1/codex-characterization.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.55",
+      "title": "Dependency-graph/AST/lint tests prove package boundaries, entry points and enumerated provider conditionals",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/dependency-boundaries.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.56",
+      "title": "Claude and Codex pass the same provider-contract conformance suite and declare every optional capability",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/provider-conformance.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.57",
+      "title": "Retired Codex singleton paths have zero production imports, zero reachable IPC handlers and zero implicit-global-home managed launches",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/legacy-codex-gate.test.ts",
+        "tests/wp1/dependency-boundaries.test.ts"
+      ],
+      "evidence": [
+        "tests/wp1/legacy-codex-ledger.json"
+      ],
+      "status": "planned",
+      "currentTests": [
+        "tests/wp1/codex-characterization.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.58",
+      "title": "The Codex disposition ledger accounts for every touched legacy file and maps every deleted/replaced test",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/legacy-codex-gate.test.ts"
+      ],
+      "evidence": [
+        "tests/wp1/legacy-codex-ledger.json"
+      ],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.59",
+      "title": "Fault-isolation: Codex failures do not mutate Claude state and the inverse",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/fault-isolation.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.60",
+      "title": "Full mode matrix passes fresh install, upgrade, restart, enable/disable and minimum launch smoke",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/mode-matrix.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/mode-matrix.md"
+      ],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.61",
+      "title": "Core state machines, migration and lifecycle locking have transition-table, interruption and property/fault-injection coverage",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/account-state-machine.test.ts",
+        "tests/wp1/migration-interruption.test.ts",
+        "tests/wp1/consumer-leases.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.62",
+      "title": "Deterministic fake-CLI integration covers version/status/login/logout/stdin/exit/error/path-replacement without developer credentials",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/fake-cli.test.ts",
+        "tests/wp1/codex-auth-adapter.test.ts",
+        "tests/wp1/cli-discovery.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.63",
+      "title": "Installed/package smoke outside the source checkout on Windows, macOS and Linux proves discovery and realm propagation",
+      "kind": "packaged",
+      "tests": [],
+      "evidence": [
+        "docs/wp1/evidence/packaged-smoke.md"
+      ],
+      "status": "planned",
+      "reason": "packaged-app smoke must run the installed artifact outside the checkout on each OS; not reproducible inside the unit runner",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.64",
+      "title": "Release qualification executes real Claude/Codex smoke and disposable credential-bearing flows per provider/OS",
+      "kind": "real-cli",
+      "tests": [],
+      "evidence": [
+        "docs/wp1/evidence/real-cli-matrix.md"
+      ],
+      "status": "planned",
+      "reason": "credential-bearing login/status/logout needs disposable provider identities and revocation after the run; controlled gate with recorded evidence",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.65",
+      "title": "No unexplained failing, skipped, quarantined or flaky test",
+      "kind": "document",
+      "tests": [],
+      "evidence": [
+        "docs/wp1/evidence/skip-ledger.md"
+      ],
+      "status": "planned",
+      "reason": "the skip/flaky ledger is a reviewed record derived from the candidate run",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.66",
+      "title": "Main and renderer each have explicit Claude/Codex entry points and a single composition root; shared components receive only neutral view models",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/dependency-boundaries.test.ts",
+        "tests/wp1/provider-conformance.test.ts"
+      ],
+      "evidence": [],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.67",
+      "title": "Repository-wide legacy Codex manifest with predicates, ordered path digest and dispositions; zero unmatched at the merge gate",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/legacy-codex-gate.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/legacy-codex-manifest.json",
+        "tests/wp1/legacy-codex-ledger.json"
+      ],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.68",
+      "title": "PTY flags, per-spawn MCP, rollout telemetry, resume picker and TUI detection each have a recorded outcome plus regression evidence",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/codex-characterization.test.ts",
+        "tests/unit/providers/codex/telemetry.test.ts",
+        "tests/unit/providers/codex/ui-detection.test.ts",
+        "tests/unit/providers/codex/permissions.test.ts",
+        "tests/unit/providers/codex/resume-picker-deploy.test.ts"
+      ],
+      "evidence": [
+        "tests/wp1/legacy-codex-ledger.json"
+      ],
+      "status": "planned",
+      "currentTests": [
+        "tests/unit/providers/codex/spawn.test.ts",
+        "tests/unit/providers/codex/telemetry.test.ts",
+        "tests/unit/providers/codex/ui-detection.test.ts",
+        "tests/unit/providers/codex/permissions.test.ts",
+        "tests/unit/providers/codex/resume-picker-deploy.test.ts",
+        "tests/wp1/codex-characterization.test.ts"
+      ]
+    },
+    {
+      "id": "WP1.69",
+      "title": "The fake CLI has a versioned oracle manifest from pinned docs/source and sanitised real observations; self-tests compare real/fake",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/fake-cli.test.ts"
+      ],
+      "evidence": [
+        "tests/wp1/fake-cli/oracle.json"
+      ],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.70",
+      "title": "Every test/evidence record is bound to the exact candidate commit and traceability is machine-checked both ways",
+      "kind": "automated",
+      "tests": [
+        "tests/wp1/traceability.test.ts"
+      ],
+      "evidence": [
+        "tests/wp1/traceability.json"
+      ],
+      "status": "planned",
+      "currentTests": [],
+      "baseCoverage": "new capability, none on base"
+    },
+    {
+      "id": "WP1.71",
+      "title": "Non-secret conformance smoke executes against the minimum, pinned and release-candidate CLI versions on every applicable OS",
+      "kind": "real-cli",
+      "tests": [],
+      "evidence": [
+        "docs/wp1/evidence/real-cli-matrix.md"
+      ],
+      "status": "planned",
+      "reason": "executing three CLI versions per OS needs the binaries installed on each runner; recorded per-OS run",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.72",
+      "title": "Keyring tests inject a fake keyring; native keyring smoke uses an ephemeral identity with verified cleanup and residue check",
+      "kind": "real-cli",
+      "tests": [
+        "tests/wp1/fake-keyring.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/keyring-smoke.md"
+      ],
+      "status": "planned",
+      "reason": "native keyring smoke needs an ephemeral runner identity and a residue check that cannot run against a developer keyring",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    },
+    {
+      "id": "WP1.73",
+      "title": "All acceptance items block merge; real-CLI qualification is not deferred",
+      "kind": "document",
+      "tests": [
+        "tests/wp1/traceability.test.ts"
+      ],
+      "evidence": [
+        "docs/wp1/evidence/release-qualification.md"
+      ],
+      "status": "planned",
+      "reason": "a merge-policy statement enforced by the traceability test at the candidate phase",
+      "currentTests": [],
+      "baseCoverage": "evidence record, no base test"
+    }
+  ],
+  "designDigest": "e4d5b99a562952694be034ed8e71db6da379d8cb15bb24df6c2ca3f02cd83140"
+}

@@ -1,0 +1,3246 @@
+{
+  "schema": "wp1-legacy-codex-ledger/2",
+  "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
+  "manifestPathDigest": "bde1e9bb23f99efb172ed6dcc5e221796e63d251f41a8a7e61e68a24a641ffa7",
+  "manifestHead": "4f8afcc896c5817a4a098d2c8bc4094abfbe4c03",
+  "dispositions": {
+    "retain": "unchanged observable behaviour, characterization proof",
+    "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
+    "replace": "contract rebuilt, replacement coverage recorded",
+    "delete": "removed with proof it is unreachable / replaced; must be absent at the candidate",
+    "defer": "explicitly left to a later work package with an owner decision and a documented limitation",
+    "added": "file created by WP1 that matches the predicates (candidate phase only)"
+  },
+  "claudeTestChanges": [
+    {
+      "path": "tests/unit/renderer/accounts-panel.test.tsx",
+      "disposition": "replace",
+      "evidence": "WP1.39/WP1.58: Accounts panel becomes the neutral surface; cases move to tests/wp1/accounts-surface.test.tsx"
+    },
+    {
+      "path": "tests/unit/renderer/account-profiles-store.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.58: store adapted to the neutral identity/account model; cases carried into tests/wp1/provider-store.test.ts"
+    },
+    {
+      "path": "tests/unit/renderer/account-profiles-store-create.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.58: as account-profiles-store.test.ts; tests/wp1/provider-store.test.ts"
+    },
+    {
+      "path": "tests/unit/renderer/setup-cli-hard-stop.test.tsx",
+      "disposition": "replace",
+      "evidence": "WP1.58/WP1.19: setup hard-stop becomes per-provider; cases in tests/wp1/setup-surface.test.tsx"
+    },
+    {
+      "path": "tests/unit/main/account-profiles-set-active.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.58/WP1.15: lifecycle moves to the neutral account lifecycle; cases in tests/wp1/account-lifecycle.test.ts"
+    }
+  ],
+  "entries": [
+    {
+      "path": "AGENTS.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": "names Codex as a tool that reads the brief"
+    },
+    {
+      "path": "PRIVACY.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "replace",
+      "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md",
+      "note": "describe managed Codex homes under the app data root"
+    },
+    {
+      "path": "README.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "replace",
+      "evidence": "WP1.35 documentation sweep recorded in docs/wp1/evidence/release-qualification.md",
+      "note": "stop claiming unsupported Codex account behaviour; describe provider selection"
+    },
+    {
+      "path": "docs/USER_GUIDE.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "replace",
+      "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md",
+      "note": "provider selection, account vs identity, managed vs external Codex homes, recovery"
+    },
+    {
+      "path": "package.json",
+      "predicates": [
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "resources/codex-pricing.json",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "resources/model-registry.json",
+      "predicates": [
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "scripts/capture-training-screenshots.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); screenshot-staging script, not shipped",
+      "note": "seeds fake Codex history under the default home for README captures"
+    },
+    {
+      "path": "scripts/codex-resume-picker.js",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "category": "RESUME-PICKER",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 resume picker UNCHANGED; tests/unit/scripts/codex-resume-picker.test.ts",
+      "note": "runs inside the PTY and reads CODEX_HOME from its env, so a managed realm is honoured without change"
+    },
+    {
+      "path": "scripts/lib/codex-resume-picker-lib.js",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "RESUME-PICKER",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 resume picker UNCHANGED; tests/unit/scripts/codex-resume-picker.test.ts",
+      "note": "rollout parsing library behind the picker"
+    },
+    {
+      "path": "scripts/readme-shots/stage/content.js",
+      "predicates": [
+        "P07",
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); screenshot-staging fake, not part of the test harness",
+      "note": ""
+    },
+    {
+      "path": "scripts/readme-shots/stage/fake-codex.js",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "scripts/readme-shots/stage/seed.js",
+      "predicates": [
+        "P04",
+        "P05",
+        "P07",
+        "P10",
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); screenshot-staging seed, not part of the test harness",
+      "note": ""
+    },
+    {
+      "path": "scripts/release-gate.mjs",
+      "predicates": [
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "scripts/release.js",
+      "predicates": [
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "scripts/resume-picker.js",
+      "predicates": [
+        "P14"
+      ],
+      "category": "SCRIPTS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/account-identity.ts",
+      "predicates": [
+        "P04",
+        "P06",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "replace",
+      "evidence": "tests/unit/main/account-identity.test.ts adapted: Claude cases retained, Codex auth.json cases removed with the decoder (WP1.57)",
+      "note": "readCodexAccountEmail deleted (decodes tokens from auth.json, prohibited by design 9.2); readClaudeAccountEmail unchanged",
+      "adaptsTests": [
+        "tests/unit/main/account-identity.test.ts"
+      ]
+    },
+    {
+      "path": "src/main/account-web/claude-cli-auth.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": "Claude-only; mentions Codex in a comment"
+    },
+    {
+      "path": "src/main/atomic-write.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/attention-source.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/canvas-mcp-tool.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/canvas/canvas-completion.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/canvas/canvas-plugin.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/canvas/canvas-store.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/channel-emitters.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/channel-rules-store.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/channel-rules.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/claude-account-identity.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/codex-review-mcp-tool.ts",
+      "predicates": [
+        "P01",
+        "P06",
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "move",
+      "evidence": "tests/unit/main/codex-review-mcp-tool.test.ts adapted (install/auth gate resolves the provider-default Codex realm); exec/ACL cases retained (WP1.57)",
+      "note": "the install/auth gate and codex exec env resolve the Codex provider-default account realm through the package entry point instead of readCodexAuthStatus() on the global home; review logic unchanged",
+      "adaptsTests": [
+        "tests/unit/main/codex-review-mcp-tool.test.ts"
+      ]
+    },
+    {
+      "path": "src/main/codex-review-usage.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/main/codex-review-usage.test.ts",
+      "note": ""
+    },
+    {
+      "path": "src/main/codex-spawn-identity.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P06",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "delete",
+      "evidence": "unreachability pinned by tests/wp1/codex-characterization.test.ts C9 (no production reader of getCodexSpawnIdentityMap on the base); binding capture covered by tests/wp1/launch-handoff.test.ts (WP1.38, WP1.57)",
+      "note": "write-only spawn identity map fed by the deleted auth.json decoder",
+      "adaptsTests": [
+        "tests/unit/main/codex-spawn-identity.test.ts"
+      ]
+    },
+    {
+      "path": "src/main/conductor-mcp-server.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P07",
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); conductor-mcp-server suites in docs/wp1/baseline-test-inventory.json",
+      "note": "source gating is runtime-package scope; the config.toml heal call passes the external-default realm path (call-site only)"
+    },
+    {
+      "path": "src/main/config-manager.ts",
+      "predicates": [
+        "P05",
+        "P07",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/config-manager-migration.test.ts",
+      "note": "config migration strips legacy fields per provider; not account state"
+    },
+    {
+      "path": "src/main/hooks/per-session-settings.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/index.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33)",
+      "note": "concrete provider registration and handler registration move to the single main composition root; index.ts calls it"
+    },
+    {
+      "path": "src/main/install-secret.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/internal-events.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/ipc/codex-handlers.ts",
+      "predicates": [
+        "P01",
+        "P02",
+        "P06",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "delete",
+      "evidence": "WP1.57: zero production imports and zero reachable CODEX_* handlers at the candidate (tests/wp1/legacy-codex-gate.test.ts, tests/wp1/dependency-boundaries.test.ts); base dispatch pinned by tests/wp1/codex-characterization.test.ts C4 so the retirement is deliberate; replacement = provider-neutral setup/account IPC (tests/wp1/provider-ipc.test.ts)",
+      "note": "singleton Codex auth IPC retired"
+    },
+    {
+      "path": "src/main/ipc/codex-review-handlers.ts",
+      "predicates": [
+        "P01",
+        "P02",
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": "codex_review usage channels are not WP1 scope"
+    },
+    {
+      "path": "src/main/ipc/pty-handlers.ts",
+      "predicates": [
+        "P05",
+        "P07",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "tests/wp1/launch-handoff.test.ts asserts the binding fields at the IPC boundary (WP1.38, WP1.42); existing codexOptions superRefine cases retained",
+      "note": "pty:spawn schema gains the provider-neutral binding (providerAccountId/authRealmId/identityId); codexOptions validation unchanged"
+    },
+    {
+      "path": "src/main/logging/should-register-run.ts",
+      "predicates": [
+        "P05",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": "runtime work package logs scope"
+    },
+    {
+      "path": "src/main/model-registry-service.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/path-utils.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/providers/claude/index.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/providers/claude/spawn.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/providers/claude/ssh-shim.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/providers/claude/statusline.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/providers/codex/auth.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P06",
+        "P07",
+        "P09",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "replace",
+      "evidence": "WP1.57 legacy-retirement gate (zero production imports of getCodexHome/readCodexAuthStatus/parseChatgptPlanFromJwt at the candidate); replacement covered by tests/wp1/codex-auth-adapter.test.ts (WP1.20-WP1.25, WP1.62)",
+      "note": "realm-explicit login/status/logout/test-connection rebuilt inside the Codex package; runCodexProcess/runCodexStreaming retained package-internal (key-via-stdin + redaction assertions carried over from auth-login.test.ts) and take an explicit allowlisted env; getCodexHome, readCodexAuthStatus and parseChatgptPlanFromJwt deleted (auth.json/token parsing prohibited, design 9.2)",
+      "adaptsTests": [
+        "tests/unit/providers/codex/auth.test.ts",
+        "tests/unit/providers/codex/auth-login.test.ts"
+      ]
+    },
+    {
+      "path": "src/main/providers/codex/index.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P09",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "move",
+      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66)",
+      "note": "becomes the Codex package public entry point; CodexProvider (session parity surface) retained for the runtime work package; auth/setup/realm operations exported alongside"
+    },
+    {
+      "path": "src/main/providers/codex/mcp-config.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P14"
+      ],
+      "category": "GLOBAL-HOME",
+      "disposition": "move",
+      "evidence": "tests/unit/providers/codex/mcp-config.test.ts adapted: explicit realm-path argument replaces the private getCodexHome (WP1.57, WP1.68)",
+      "note": "private duplicate getCodexHome() replaced by an explicit realm-path parameter; the config.toml heal runs only against the external-default realm",
+      "adaptsTests": [
+        "tests/unit/providers/codex/mcp-config.test.ts"
+      ]
+    },
+    {
+      "path": "src/main/providers/codex/permissions.ts",
+      "predicates": [
+        "P01"
+      ],
+      "category": "LAUNCH",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 PTY launch flags UNCHANGED; tests/unit/providers/codex/permissions.test.ts",
+      "note": "runtime work package launch flags"
+    },
+    {
+      "path": "src/main/providers/codex/pricing.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "MODELS-PRICING",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/providers/codex/pricing.test.ts",
+      "note": "later work package"
+    },
+    {
+      "path": "src/main/providers/codex/resume-picker.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P14"
+      ],
+      "category": "RESUME-PICKER",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 resume picker UNCHANGED; tests/unit/providers/codex/resume-picker-deploy.test.ts",
+      "note": "deploys the picker script; the picker reads CODEX_HOME from the PTY env, so a managed realm works unchanged"
+    },
+    {
+      "path": "src/main/providers/codex/spawn.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "move",
+      "evidence": "WP1.68 outcomes: PTY launch flags UNCHANGED and authenticated per-spawn MCP UNCHANGED (pinned by tests/wp1/codex-characterization.test.ts C3 and tests/unit/providers/codex/spawn.test.ts); realm env ADAPTED (tests/wp1/launch-handoff.test.ts, WP1.38, WP1.2); executable identity WP1.17/WP1.49 (tests/wp1/cli-discovery.test.ts)",
+      "note": "resolveCodexBinary retained behind the package entry point, probe aligned with src/main/login-shell.ts (one login-shell rule for probes and launch, as #617 did for Claude) and bound to the executable identity record; buildCodexSpawn takes the validated realm from the launch binding (CODEX_HOME set last, known provider credential vars stripped per decision D3) instead of an implicit global home; CONDUCTOR_MCP_TOKEN is kept by the launch env policy",
+      "adaptsTests": [
+        "tests/unit/providers/codex/spawn.test.ts"
+      ]
+    },
+    {
+      "path": "src/main/providers/codex/telemetry.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P14"
+      ],
+      "category": "TELEMETRY",
+      "disposition": "move",
+      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case",
+      "note": "watchAndClaimRollout takes the sessions directory of the launch binding realm instead of getCodexHome(); parsing and claim logic unchanged",
+      "adaptsTests": [
+        "tests/unit/providers/codex/telemetry.test.ts"
+      ]
+    },
+    {
+      "path": "src/main/providers/codex/ui-detection.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P14"
+      ],
+      "category": "TUI-DETECT",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 TUI detection UNCHANGED; tests/unit/providers/codex/ui-detection.test.ts",
+      "note": ""
+    },
+    {
+      "path": "src/main/providers/compose.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "main composition root; tests/wp1/dependency-boundaries.test.ts R3 (WP1.66), tests/wp1/provider-conformance.test.ts",
+      "note": "the only main module importing both concrete packages"
+    },
+    {
+      "path": "src/main/providers/core/package.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "provider package contract; tests/wp1/provider-core.test.ts, tests/wp1/dependency-boundaries.test.ts R1 (WP1.55)",
+      "note": "names both providers in a comment only"
+    },
+    {
+      "path": "src/main/providers/host-color-scheme.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": "shared COLORFGBG helper"
+    },
+    {
+      "path": "src/main/providers/index.ts",
+      "predicates": [],
+      "category": "LAUNCH",
+      "disposition": "move",
+      "evidence": "tests/wp1/dependency-boundaries.test.ts (WP1.55) proves the registry imports no concrete provider",
+      "note": "session-provider registry adapted in place (ProviderId type, no concrete imports); a newPath is added only if the file is physically renamed",
+      "resolved": true,
+      "resolvedEvidence": "WP1.66 slice 1, adapted in place: the registry implementation now lives in src/main/providers/core/registry.ts and this file re-exports the core entry point, naming no provider; kept in the core scope of tests/wp1/dependency-boundaries.test.ts R1"
+    },
+    {
+      "path": "src/main/providers/types.ts",
+      "predicates": [
+        "P05",
+        "P07",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "type-level change exercised by tests/wp1/launch-handoff.test.ts (WP1.38)",
+      "note": "SpawnOptions gains the provider-neutral binding fields"
+    },
+    {
+      "path": "src/main/pty-manager.ts",
+      "predicates": [
+        "P05",
+        "P06",
+        "P07",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "Claude env shape pinned by tests/wp1/claude-characterization.test.ts C1 and tests/unit/pty-spawn-env.test.ts (both retained as protection, WP1.54); binding/lease behaviour by tests/wp1/launch-handoff.test.ts and tests/wp1/consumer-leases.test.ts (WP1.38, WP1.42, WP1.46)",
+      "note": "both local branches resolve the selected/provider-default account binding, validate it, acquire a lease and hand the exact realm env to the provider spawn; Claude keeps withProfileHome; the Codex branch sets CODEX_HOME from the realm; Codex identity capture removed"
+    },
+    {
+      "path": "src/main/sanitize-restored-spawn-options.ts",
+      "predicates": [
+        "P05",
+        "P07",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); sanitize-restored-spawn-options suites",
+      "note": ""
+    },
+    {
+      "path": "src/main/session-resume-enrich.ts",
+      "predicates": [
+        "P05",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); skips non-Claude sessions (runtime work package scope)",
+      "note": ""
+    },
+    {
+      "path": "src/main/tokenomics/tk-db.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/tokenomics/tk-parse.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/tokenomics/tk-pricing.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/tokenomics/tk-supervisor.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/tokenomics/tk-types.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/tokenomics/tk-worker-transport.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/main/tokenomics/tokenomics-service.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "replace",
+      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): tests/wp1/tokenomics-realm-discovery.test.ts proves sessions are discovered from every active managed Codex realm and the external-default realm (WP1.2, WP1.5)",
+      "note": "narrow change: the indexer receives the sessions directories of the active managed Codex realms plus the external-default realm instead of one hard-coded ~/.codex/sessions; no other Tokenomics redesign"
+    },
+    {
+      "path": "src/main/tokenomics/tokenomics-worker.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "replace",
+      "evidence": "as tokenomics-service.ts: tests/wp1/tokenomics-realm-discovery.test.ts (owner decision D10, WP1.2, WP1.5)",
+      "note": "walks the list of sessions directories it is handed; parsing unchanged"
+    },
+    {
+      "path": "src/main/watchdog/watchdog-manager.ts",
+      "predicates": [
+        "P05",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); Codex sessions are watchdog-ineligible by design (later work package)",
+      "note": ""
+    },
+    {
+      "path": "src/preload/index.ts",
+      "predicates": [
+        "P02",
+        "P07",
+        "P08",
+        "P09",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "replace",
+      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green",
+      "note": "codex block replaced by the provider-neutral providers/accounts API; codexReview block retained"
+    },
+    {
+      "path": "src/renderer/App.tsx",
+      "predicates": [
+        "P03",
+        "P07",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "replace",
+      "evidence": "boot refresh covered by tests/wp1/provider-store.test.ts (WP1.57)",
+      "note": "boot refresh goes through the provider-neutral store instead of codexAccountStore"
+    },
+    {
+      "path": "src/renderer/codex-models.ts",
+      "predicates": [
+        "P01",
+        "P11"
+      ],
+      "category": "MODELS-PRICING",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/renderer/codex-models.test.ts",
+      "note": "model catalogue is a later work package"
+    },
+    {
+      "path": "src/renderer/components/AiUsagePopover.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/CanvasCompleteButton.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/CommandBar.tsx",
+      "predicates": [
+        "P05",
+        "P07",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/ConductorMcpPage.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/FeatureGuidePage.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/GuidedTour.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/InsightsPage.tsx",
+      "predicates": [
+        "P04",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/LogsButton.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/LogsPane.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/MemoryPage.tsx",
+      "predicates": [
+        "P04",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/MultiAccountStatusline.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/MultiSpawnStartupPage.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads config.provider for a label kind through the compatibility shadow",
+      "note": "session surface (runtime work package)"
+    },
+    {
+      "path": "src/renderer/components/SessionDialog.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P07",
+        "P11"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "tests/unit/renderer/session-dialog-tokens.test.tsx adapted + account-selection cases in tests/wp1/launch-handoff.test.ts (WP1.38)",
+      "note": "Codex sessions choose a provider account from the neutral store; enablement read from the neutral registry; codexOptions form unchanged",
+      "adaptsTests": [
+        "tests/unit/renderer/session-dialog-tokens.test.tsx"
+      ]
+    },
+    {
+      "path": "src/renderer/components/SessionDialog/CodexFormFields.tsx",
+      "predicates": [
+        "P01",
+        "P03",
+        "P07",
+        "P11"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "tests/unit/renderer/session-dialog-tokens.test.tsx adapted (WP1.41)",
+      "note": "install/auth warnings come from the Codex renderer descriptor view model instead of codexAccountStore"
+    },
+    {
+      "path": "src/renderer/components/SessionDialog/ProviderSegmentedControl.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/SessionHeader.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/SessionStatusStrip.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/SettingsPage.tsx",
+      "predicates": [
+        "P05",
+        "P10",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "tests/wp1/settings-providers.test.tsx in all three provider modes (WP1.6, WP1.7, WP1.60)",
+      "note": "the codex tab becomes the provider setup/enablement surface driven by descriptors"
+    },
+    {
+      "path": "src/renderer/components/Sidebar.tsx",
+      "predicates": [
+        "P05"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/StageEmptyState.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/TerminalView.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P07",
+        "P11"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "tests/unit/renderer/session-launch.test.ts adapted (WP1.38)",
+      "note": "account-choice gate becomes provider-neutral so a Codex launch can pick among active Codex accounts",
+      "adaptsTests": [
+        "tests/unit/renderer/session-launch.test.ts"
+      ]
+    },
+    {
+      "path": "src/renderer/components/codex/CodexSettingsTab.tsx",
+      "predicates": [
+        "P01",
+        "P03",
+        "P04",
+        "P05",
+        "P09",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "delete",
+      "evidence": "replaced by descriptor-driven provider setup inside Settings + the neutral Accounts surface: tests/wp1/settings-providers.test.tsx, tests/wp1/accounts-surface.test.tsx (WP1.39, WP1.66); tests/e2e/codex-settings-section.spec.ts adapted",
+      "note": "its API-key modal is replaced by the non-retained secret-entry control (WP1.22)",
+      "adaptsTests": [
+        "tests/e2e/codex-settings-section.spec.ts"
+      ]
+    },
+    {
+      "path": "src/renderer/components/command-bar/chips.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/conductor-mcp/AgentCanvasSubTool.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/conductor-mcp/CodexReviewSubTool.tsx",
+      "predicates": [
+        "P01",
+        "P11"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); tests/unit/renderer/codex-review-sub-tool.test.ts",
+      "note": "static informational card"
+    },
+    {
+      "path": "src/renderer/components/logs/LogEmptyState.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/sidebar/Badges.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/sidebar/ConfigRow.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/sidebar/MultiSpawnControl.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/sidebar/QuickStartPanel.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/sidebar/RemoteResumableSection.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/components/sidebar/SessionRow.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/tokenomics/modelColors.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/model-colors-refactor.test.ts",
+      "note": "model-family colour mapping"
+    },
+    {
+      "path": "src/renderer/hooks/useCodexReviewUsage.ts",
+      "predicates": [
+        "P01",
+        "P08",
+        "P11"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": "codex_review usage subscription; channels retained"
+    },
+    {
+      "path": "src/renderer/hooks/useLaunchConfig.ts",
+      "predicates": [
+        "P05",
+        "P07",
+        "P11"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "tests/unit/renderer/use-launch-config.test.tsx adapted (WP1.38)",
+      "note": "launch-blocked reads neutral provider enablement; binding attached at launch",
+      "adaptsTests": [
+        "tests/unit/renderer/use-launch-config.test.tsx"
+      ]
+    },
+    {
+      "path": "src/renderer/hooks/useSwitchAccount.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/lib/askConductor.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/lib/claude-web-targets.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/lib/command-upgrade.ts",
+      "predicates": [
+        "P05"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/lib/session-capabilities.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/onboarding/BuiltinToolsStep.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/onboarding/CodexSignInStep.tsx",
+      "predicates": [
+        "P01",
+        "P03",
+        "P10",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "delete",
+      "evidence": "replaced by the descriptor-driven authentication step: tests/wp1/onboarding-provider-steps.test.ts, tests/wp1/codex-auth-adapter.test.ts (WP1.20-WP1.22)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/CodexStep.tsx",
+      "predicates": [
+        "P01",
+        "P03",
+        "P05",
+        "P10",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "delete",
+      "evidence": "replaced by the provider-selection step + per-provider setup states: tests/wp1/onboarding-provider-steps.test.ts (WP1.1-WP1.3, WP1.34)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/CommandBarStep.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/OnboardingHarness.tsx",
+      "predicates": [
+        "P05",
+        "P10",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "tests/unit/renderer/onboarding-gate.test.ts adapted; tests/wp1/onboarding-provider-steps.test.ts (WP1.34)",
+      "note": "provider-selection + provider setup pages; upgrade step stamped with the actual release version",
+      "adaptsTests": [
+        "tests/unit/renderer/onboarding-gate.test.ts"
+      ]
+    },
+    {
+      "path": "src/renderer/onboarding/RenamePage.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/TransparencyStep.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/onboarding/WelcomeStep.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/WhatsNewV2Step.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/onboarding.css",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/settle.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/showcase-pages.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/steps.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "tests/unit/renderer/onboarding-registry.test.ts updated deliberately (WP1.34)",
+      "note": "codex/codexSignIn steps replaced by providerSelect + per-provider setup steps",
+      "adaptsTests": [
+        "tests/unit/renderer/onboarding-registry.test.ts"
+      ]
+    },
+    {
+      "path": "src/renderer/providers/codex/index.ts",
+      "predicates": [
+        "P01",
+        "P10",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "Codex renderer descriptor entry point; tests/wp1/provider-conformance.test.ts (WP1.56, WP1.66)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/providers/core/descriptor.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "renderer provider descriptor contract and defaultProviderActions; tests/wp1/provider-core.test.ts and tests/wp1/provider-conformance.test.ts (WP1.41, WP1.56)",
+      "note": "names codex only in the scoped-experimental-key example in a comment"
+    },
+    {
+      "path": "src/renderer/providers/index.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "renderer composition root; tests/wp1/dependency-boundaries.test.ts R3 (WP1.66)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/session-persistence.ts",
+      "predicates": [
+        "P05",
+        "P07",
+        "P11"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "tests/unit/renderer/session-persistence-codex-review.test.ts adapted + binding restore case in tests/wp1/launch-handoff.test.ts (WP1.38)",
+      "note": "saved sessions carry the provider-account binding so restore resolves an exact realm",
+      "adaptsTests": [
+        "tests/unit/renderer/session-persistence-codex-review.test.ts"
+      ]
+    },
+    {
+      "path": "src/renderer/stores/codexAccountStore.ts",
+      "predicates": [
+        "P01",
+        "P03",
+        "P04",
+        "P08",
+        "P09",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "delete",
+      "evidence": "WP1.57: zero production imports at the candidate (tests/wp1/dependency-boundaries.test.ts); replaced by provider-neutral identity/account stores + the Codex renderer adapter (tests/wp1/provider-store.test.ts)",
+      "note": "singleton Codex account store retired",
+      "adaptsTests": [
+        "tests/unit/stores/codexAccountStore.test.ts"
+      ]
+    },
+    {
+      "path": "src/renderer/stores/configStore.ts",
+      "predicates": [
+        "P07",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/stores/sessionStore.ts",
+      "predicates": [
+        "P07",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/stores/settingsStore.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "note": "codexEnabled stays as the durable preference and compatibility shadow, mirrored from the provider registry"
+    },
+    {
+      "path": "src/renderer/stores/tipsStore.ts",
+      "predicates": [
+        "P04",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/styles.css",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": "chart colour token for the Codex model family"
+    },
+    {
+      "path": "src/renderer/tips-library.ts",
+      "predicates": [
+        "P04",
+        "P11",
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "replace",
+      "evidence": "WP1.35 sweep; tips suites in docs/wp1/baseline-test-inventory.json",
+      "note": "tips for the provider setup surface"
+    },
+    {
+      "path": "src/renderer/training-steps.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "retain",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/types/electron.d.ts",
+      "predicates": [
+        "P07",
+        "P08",
+        "P09",
+        "P11"
+      ],
+      "category": "AUTH",
+      "disposition": "replace",
+      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57)",
+      "note": "codex API typing replaced by the provider-neutral API typing"
+    },
+    {
+      "path": "src/renderer/utils/sessionLaunch.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "tests/unit/renderer/session-launch.test.ts adapted (WP1.38)",
+      "note": "shouldGateAccountChoice/canSwitchAccountForSession no longer exclude Codex",
+      "adaptsTests": [
+        "tests/unit/renderer/session-launch.test.ts"
+      ]
+    },
+    {
+      "path": "src/shared/app-knowledge.ts",
+      "predicates": [
+        "P10",
+        "P12",
+        "P14"
+      ],
+      "category": "DOCS",
+      "disposition": "replace",
+      "evidence": "WP1.35/WP1.36 documentation sweep; app-knowledge suites in docs/wp1/baseline-test-inventory.json",
+      "note": "feature guide + Ask Conductor knowledge for provider setup, identity vs account, managed vs external Codex homes; known-issues entry for D10"
+    },
+    {
+      "path": "src/shared/canvas.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/channel-types.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/container-command.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/ipc-channels.ts",
+      "predicates": [
+        "P02",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "replace",
+      "evidence": "tests/wp1/legacy-codex-gate.test.ts (WP1.57): CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION absent at the candidate",
+      "note": "Codex auth channels retired; provider-neutral channels added; codex-review channels retained"
+    },
+    {
+      "path": "src/shared/model-registry.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "retain",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/providers/capabilities.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "capability contract; tests/wp1/provider-core.test.ts (WP1.41)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/providers/ids.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "provider/opaque ids and the binding shape check; tests/wp1/provider-core.test.ts (WP1.28, WP1.42)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/providers/model.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "provider-neutral data contracts (design 5); realm kind codex-home; tests/wp1/provider-conformance.test.ts (WP1.56)",
+      "note": ""
+    },
+    {
+      "path": "src/shared/providers/realm-env.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "realm environment patch contract (D1/D3); poisoned-environment negatives in tests/wp1/provider-core.test.ts (WP1.38), shipped-package assertions in tests/wp1/provider-conformance.test.ts (WP1.56)",
+      "note": "names CODEX_HOME as the worked example of a variable declared both ambient and owned"
+    },
+    {
+      "path": "src/shared/types.ts",
+      "predicates": [
+        "P07",
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "replace",
+      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42)",
+      "note": "binding/identity types added; CodexOptions retained"
+    },
+    {
+      "path": "tests/e2e/codex-session-creation.spec.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: adapted to account binding; part of the e2e gate (WP1.2, docs/wp1/evidence/mode-matrix.md)",
+      "note": ""
+    },
+    {
+      "path": "tests/e2e/codex-settings-section.spec.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: adapted to the provider setup surface; part of the e2e gate (docs/wp1/evidence/mode-matrix.md)",
+      "note": ""
+    },
+    {
+      "path": "tests/e2e/session-dialog-permutations.spec.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/e2e/session-restore.spec.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex-rollouts/malformed.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; resume-picker fixture for tests/unit/scripts/codex-resume-picker.test.ts (WP1.68)",
+      "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex-rollouts/matching-cwd.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; resume-picker fixture for tests/unit/scripts/codex-resume-picker.test.ts (WP1.68)",
+      "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex-rollouts/non-matching-cwd.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; resume-picker fixture for tests/unit/scripts/codex-resume-picker.test.ts (WP1.68)",
+      "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex-rollouts/response-item-format.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; resume-picker fixture for tests/unit/scripts/codex-resume-picker.test.ts (WP1.68)",
+      "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex/auth-api-key.json",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "delete",
+      "evidence": "WP1.58: no test references this fixture on the base (git grep at 6bafcc33); auth.json is never parsed after WP1 (docs/wp1/baseline-2026-09-19.md)",
+      "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex/auth-chatgpt.json",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "delete",
+      "evidence": "WP1.58: no test references this fixture on the base (git grep at 6bafcc33); auth.json is never parsed after WP1 (docs/wp1/baseline-2026-09-19.md)",
+      "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex/rollout-sample.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; rollout fixture for tests/unit/providers/codex/telemetry.test.ts and pricing.test.ts (WP1.68)",
+      "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex/tui-trace.txt",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; TUI trace fixture for tests/unit/providers/codex/ui-detection.test.ts (WP1.68)",
+      "note": ""
+    },
+    {
+      "path": "tests/integration/codex-cli-compat.test.ts",
+      "predicates": [
+        "P01",
+        "P06",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/channel-rules-store.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/claude-cli-options-registry.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/cloud-agent-cancel-during-refresh.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/conductor-secret-rotation.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/config-manager-migration.test.ts",
+      "predicates": [
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/container-command.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/internal-emit-sites.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/logging/should-register-run.test.ts",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/account-identity.test.ts",
+      "predicates": [
+        "P04",
+        "P06",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: Claude cases retained; Codex auth.json cases removed with the decoder; adapted in place: tests/unit/main/account-identity.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/canvas-mcp-tool.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/canvas-plan-mode.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/canvas-resume-debt-r10.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/canvas-root-provenance.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/canvas-worktree-spawn.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/claude-account-identity-only-restore-r4.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/claude-account-rotation-r2.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/codex-review-mcp-tool.test.ts",
+      "predicates": [
+        "P01",
+        "P06",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: install/auth gate cases adapted to realm resolution; exec/ACL cases retained; adapted in place: tests/unit/main/codex-review-mcp-tool.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/codex-review-usage.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/codex-spawn-identity.test.ts",
+      "predicates": [
+        "P01",
+        "P06",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "delete",
+      "evidence": "WP1.58 mapping: module deleted; spawn-time binding capture asserted by tests/wp1/launch-handoff.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-auth.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-server-source-filter.test.ts",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-session-binding.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/container-entry-shell-compat.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/path-utils-home.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP1 harness for the managed Claude launch: the project-gate deferral carries the launch, and the resume picker candidate set (WP1.38); docs/wp1/evidence/claude-settings-isolation-2026-09-21.md Part 10",
+      "note": "Codex appears only as a key of the mocked pty-manager deps object (registerCodexReviewSession); no Codex code path"
+    },
+    {
+      "path": "tests/unit/main/pty-session-liveness.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/sanitize-restored-spawn-options.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/session-resume-enrich.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/ssh-end-remote-password.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/ssh-liveness-r8.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/watchdog/watchdog-manager.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/window-all-closed-r6.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/model-colors-refactor.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/model-coverage-parity.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/model-picker-rows.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/model-registry-resolve.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/native/tokenomics-reindex-307.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/native/tokenomics-worker-hardening.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/native/tokenomics-worker-ingest.native.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/pr600-r1-lifetime.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/pr600-r10-force-ui.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/pr600-r3-fresh-wait.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/claude/statusline-deploy.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/auth-login.test.ts",
+      "predicates": [
+        "P01",
+        "P06",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58 mapping: key-via-stdin-not-argv and stderr redaction carried into tests/wp1/codex-auth-adapter.test.ts (WP1.22, WP1.51)",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/auth.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P06",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "delete",
+      "evidence": "WP1.58 mapping: getCodexHome/JWT/readCodexAuthStatus removed; installed/version/authMode reporting re-asserted by tests/wp1/codex-auth-adapter.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/mcp-config.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58/WP1.68: explicit realm-path argument; heal cases retained; adapted in place: tests/unit/providers/codex/mcp-config.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/permissions.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/pricing.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/resume-picker-deploy.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/spawn.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: cases retained; realm-env cases added (tests/wp1/launch-handoff.test.ts)",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58/WP1.68: getCodexHome mock replaced by an explicit sessions-dir argument; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/ui-detection.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/host-color-scheme.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/pty-manager-ssh-container-entry.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/pty-manager-watchdog-teardown.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/pty-stale-data-generation-r9.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/SessionRow.effort.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/active-indicator.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/agentpicker-codex-gate.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/app-lifecycle-wiring.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/codex-mini-icon.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/codex-models.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/codex-review-sub-tool.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/command-bar-layout.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/command-dialog-capabilities.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/commandbar-codex-toolbar.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/commandbar-one-row.test.tsx",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/commandbar-quickactions.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/conductor-mcp-canvas-card.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/conductor-mcp-page.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/config-row-running.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/insights-codex-empty.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/insights-no-iframe.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/launch-always-new.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/logs-pane.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/logs/log-empty-state.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/memory-codex-coverage-banner.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/model-colors.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/multi-spawn-launch.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/multi-spawn-sidebar.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/multi-spawn-surfaces.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-gate.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58/WP1.34: gate cases for the provider steps; adapted in place: tests/unit/renderer/onboarding-gate.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-registry.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58/WP1.34: frozen step table updated deliberately for providerSelect + per-provider setup steps; adapted in place: tests/unit/renderer/onboarding-registry.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-transparency-recap.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/quick-start-panel.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/ratelimitbar-codex-compat.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/remote-resumable-section.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-auth-pending.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-capabilities.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-credentials.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-effort.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-logging-toggle.test.tsx",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-terminal-options.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-tokens.test.tsx",
+      "predicates": [
+        "P03",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: codexAccountStore mock replaced by the descriptor view model; adapted in place: tests/unit/renderer/session-dialog-tokens.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-launch.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: Codex exclusion cases inverted (Codex launches gate on account choice, WP1.38); adapted in place: tests/unit/renderer/session-launch.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-lifecycle-rc15.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-persistence-codex-review.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: restore cases carry the provider-account binding (WP1.38); adapted in place: tests/unit/renderer/session-persistence-codex-review.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-persistence-resume.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-status-strip-labelless-model.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-status-strip-surface.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-status-strip.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-statusstrip-copilot.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/sessionrow-card.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/sidebar-config-edit-guard-entry-points.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/sidebar-ungrouped-configs-header.test.ts",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/sleep-indicator.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/statusline-banner-codex.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/token-contrast.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/tokenomicspage-formatting.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/use-launch-config.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: enablement read from the neutral registry (WP1.38); adapted in place: tests/unit/renderer/use-launch-config.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/use-switch-account.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/whatsnew-showcase.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/scripts/codex-resume-picker.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/scripts/release-gate.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/sentinel-models.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/setup.ts",
+      "predicates": [
+        "P08",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: electronAPI fake gains providers/accounts blocks, codex block removed (tests/wp1/provider-store.test.ts)",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/status-ingest.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/stores/codexAccountStore.test.ts",
+      "predicates": [
+        "P01",
+        "P03",
+        "P04",
+        "P08",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "delete",
+      "evidence": "WP1.58 mapping: tests/wp1/provider-store.test.ts covers status refresh and login/logout round-trips",
+      "note": "store deleted"
+    },
+    {
+      "path": "tests/unit/tokenomics/tk-parse.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/tokenomics/tk-pricing.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/tokenomics/tk-supervisor.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/tokenomics/tk-worker-transport.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    }
+  ]
+}
