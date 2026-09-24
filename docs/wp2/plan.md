@@ -191,6 +191,9 @@ suite and the final exact-head reviews are for the end-to-end candidate.
   experience. It explains Codex accounts, launching and resuming sessions,
   code review, and the key differences from Claude. Mockups go on the Agent
   Canvas for the owner's review BEFORE the renderer slice implements it.
+  Spec: `docs/wp2/hello-codex-spec.md` (2026-09-24, for owner review); its
+  acceptance criteria are pending cases in
+  `tests/unit/renderer/hello-codex.acceptance.test.ts`.
 - **Bidirectional provider review through MCP.** A Claude session gets
   `codex_review`; a Codex session gets `claude_review`.
   - Each review is an isolated reviewer invocation: a fresh,
@@ -601,6 +604,56 @@ obligations fall on later slices:
   confirmation by the same attackers. Mutation proofs for every new guard.
 - **Remaining for commit 5:** `claude_review` for Codex sessions (5b), and
   offering each session only the other provider's tool.
+
+## Commit 5b (claude_review): design and owner decisions (2026-09-24)
+
+Not built yet. 5a laid the groundwork: the `ProviderPackage.review` seam,
+the one-review-per-session registry, and cancel on session end.
+
+**What exists.** A Codex session connects on `/mcp`, where the server forces
+the source to `codex` and binds the session id. Tools are registered per
+connection. `claude_review` is therefore gated on `source === 'codex'`,
+beside `codex_review`'s `source !== 'codex'`, and each session is offered
+only the other provider's tool.
+
+**What is missing.**
+
+1. A registry of Codex sessions for review: an opt-in and a project folder,
+   like `registerCodexReviewSession`. Today the Codex spawn branch registers
+   nothing. Unregistering is already shared.
+2. The Claude reviewer's account and environment. `prepareLaunch` answers
+   `unsupported` for Claude, because the Claude package has no `launch`.
+   Claude accounts launch through their profile homes (A12).
+3. A Claude invocation built like the Codex reviewer's: no shell, a proved
+   executable, the whole chain killed. The existing headless runner predates
+   the account launch path and is not reused.
+4. The change under review. The Claude reviewer gets no shell, so it cannot
+   run git itself.
+
+**Proposal (recommended).**
+
+- **A Claude `launch` for reviews only.** It composes the profile-home
+  environment (what `withProfileHome` does) through `realmEnvForProvider`,
+  with the executable version-proved as Codex's is. Claude sessions stay on
+  A12.
+- **The reviewer invocation.** `claude -p` with `--strict-mcp-config`,
+  `--output-format json`, and read-only tools only (Read, Grep, Glob). The
+  request goes on stdin. It runs through the CLI runner, in the project.
+  Each flag is checked against the pinned CLI before use.
+- **The diff.** The main process produces it with a hardened git: an
+  absolute executable, no external diff, textconv, fsmonitor or pager, and
+  bounded output that is refused past the limit. It goes into the prompt.
+  Mode `paths` needs no diff.
+
+**Owner decisions.**
+
+1. **The Claude reviewer account.** Registry-based, through a review-only
+   Claude launch (recommended, the approved architecture), or the primary
+   Claude profile until Claude joins the accounts service?
+2. **The diff source.** Produced by main and sent in the prompt
+   (recommended), or reviews from Codex sessions limited to `paths`?
+3. **When to offer `claude_review`.** Only while Claude is enabled and a
+   Claude account can run reviews (recommended)?
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

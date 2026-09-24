@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "98fb9b19be6b1e20d6100b9eeeb783a5291c78b0bc312fb7b923c68d86d4b548",
-  "manifestHead": "60ea77be256dc27835bfe13d45346ee2f1d9cf26",
+  "manifestPathDigest": "7d2dd193bb1b1ab06ea1dbad665784e8619b14ec31052ce0da76ad84dacf87b9",
+  "manifestHead": "d03b8247ebaf0606f7ecf3e65a84e1507d7c3190",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -78,6 +78,16 @@
       "disposition": "replace",
       "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md",
       "note": "provider selection, account vs identity, managed vs external Codex homes, recovery"
+    },
+    {
+      "path": "docs/wp2/hello-codex-spec.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "added",
+      "evidence": "WP2 Hello Codex UX spec for owner review; its acceptance criteria are pending cases in tests/unit/renderer/hello-codex.acceptance.test.ts; no Codex code path (WP1.70)",
+      "note": "spec text, not a user-facing claim"
     },
     {
       "path": "docs/wp2/plan.md",
@@ -2908,6 +2918,17 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 pending acceptance criteria for the Hello Codex page (tests/unit/renderer/hello-codex.acceptance.test.ts; docs/wp2/hello-codex-spec.md), turned into real tests by the commit 6 renderer slice (WP1.38)",
+      "note": "created with the Hello Codex spec (2026-09-24)"
     },
     {
       "path": "tests/unit/renderer/insights-codex-empty.test.ts",
