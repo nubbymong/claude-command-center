@@ -355,6 +355,13 @@ obligations fall on later slices:
   If it does, an adopted external home is signed in by the user's own dotenv
   key: say so in app-knowledge (the key stays in that home; the app stores
   nothing).
+  **Answered (2026-09-24, 0.155.1 source: `cli/src/login.rs`
+  `run_login_status`, `login/src/auth/manager.rs` `load_auth`): it does not.**
+  Status comes from the home's stored sign-in (auth.json or the keyring) or
+  workload identity. `OPENAI_API_KEY` is never read there, the
+  `CODEX_API_KEY` path is turned off for status, and the dotenv loader drops
+  `CODEX_*` names. A home whose only key is in its `.env` reads "Not logged
+  in", and the app says so; nothing needs adding to app-knowledge.
 - **Launch handoff and review (from commit 3):** take every launch lease
   through `acquireLaunchLease`, and release it on exit through
   `releaseLaunch` with the same kind and owner id. Before an external-home
@@ -526,10 +533,12 @@ obligations fall on later slices:
 - **Known limit:** main counts running and starting Claude sessions when
   Claude is switched off. It does not check the switch before a Claude
   spawn; the renderer gates that, and A12 keeps Claude's launch path.
-- **To verify against the pinned CLI (before commit 6):** whether a
-  project-level Codex configuration in the working directory can change the
-  model provider or its endpoint for a realm session. If it can, a Codex
-  launch needs a project gate like Claude's.
+- **Verified against the pinned CLI (2026-09-24, 0.155.1 source,
+  `codex-rs/config/src/loader/mod.rs` `PROJECT_LOCAL_CONFIG_DENYLIST`):** a
+  project-level Codex configuration cannot change the model provider or its
+  endpoints for a realm session. `model_provider(s)`, `openai_base_url`,
+  `chatgpt_base_url`, `profile(s)`, `notify` and `otel` are removed from a
+  project layer. So no project gate like Claude's is needed for that.
 
 ## Commit 5a (codex_review on a prepared review launch): decisions, what remains (2026-09-24)
 
@@ -599,6 +608,13 @@ obligations fall on later slices:
   own Codex configuration (a change in review behaviour, on Windows in
   particular), and the reviewer's environment beyond the Conductor
   variables. Details are with the owner.
+- **Real-process proof (2026-09-24, Windows VM; CI runs it on all three
+  platforms):** `tests/wp1/fake-cli.test.ts` sends a review through the real
+  runner, npm shim and cmd.exe. The request arrives on stdin byte for byte
+  (`%VAR%`, `!VAR!`, `&`, `^`, `|` and quotes intact), in the project, with no
+  Conductor variable. A `node` in the project is never run, even with a
+  relative PATH entry first. Removing the PATH rule, both current-folder
+  guards, or the variable strip turns the case red on the VM (3/3).
 - **ADR-009 (5a):** one round of three Opus lenses (injection and platform;
   accounts, leases and depth; correctness and coverage), fixes, then a
   confirmation by the same attackers. Mutation proofs for every new guard.

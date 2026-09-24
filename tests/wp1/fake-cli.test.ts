@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { codexCommandLine, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS } from '../../src/main/providers/codex'
+import { codexCommandLine, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, createCodexReviewOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS } from '../../src/main/providers/codex'
 import type { CodexCliOperation, CodexDiscovery, CodexAuthDeps } from '../../src/main/providers/codex'
 
 const IS_WIN = process.platform === 'win32'
@@ -61,6 +61,18 @@ if (a === 'login' || a === 'login --device-auth') {
   process.stdout.write('Successfully logged in\\n'); process.exit(0)
 }
 if (a === 'logout') { try { fs.unlinkSync(auth) } catch {} process.stdout.write('Successfully logged out\\n'); process.exit(0) }
+if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m gpt-5.5 -') {
+  // A review (WP2 5a): reports what reached it -- the request from stdin, its
+  // working folder, any Conductor variable -- as the pinned JSONL events.
+  let d = ''
+  process.stdin.on('data', (c) => { d += c })
+  process.stdin.on('end', () => {
+    const seen = { prompt: d, cwd: process.cwd(), conductorVars: Object.keys(process.env).filter((k) => /^(CCC_|CONDUCTOR_|CLAUDE_MULTI_)/i.test(k)) }
+    const events = [{ type: 'thread.started', thread_id: 't' }, { type: 'turn.started' }, { type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: JSON.stringify(seen) } }, { type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 3 } }]
+    process.stdout.write(events.map((e) => JSON.stringify(e)).join('\\n') + '\\n'); process.exit(0)
+  })
+  return
+}
 if (a === 'login --with-api-key') {
   if (process.stdin.isTTY) { process.stderr.write('refuses a TTY\\n'); process.exit(2) }
   let d = ''
@@ -209,6 +221,31 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
     const deadline = Date.now() + 8000
     while (alive() && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100))
     expect(alive(), `the sleeping fake (pid ${pid}) outlived a kill whose table read failed`).toBe(false)
+  }, 60_000)
+})
+
+// WP2 5a: the Codex reviewer over the real runner and, on Windows, the real
+// npm shim and cmd.exe -- the request reaches Codex byte for byte on stdin.
+describe('the Codex reviewer against the fake Codex CLI (real processes)', () => {
+  it('the request arrives intact on stdin, in the project, with no Conductor variable; relative PATH entries and a node in the project are never used', async () => {
+    const project = path.join(dir, 'project')
+    fs.mkdirSync(project, { recursive: true })
+    const marker = path.join(dir, 'PROJECT-NODE-RAN')
+    if (IS_WIN) fs.writeFileSync(path.join(project, 'node.cmd'), `@echo planted> "${marker}"\r\n`)
+    const env: Record<string, string> = { ...codexCliEnv(poisoned, home('review')) }
+    for (const k of Object.keys(env)) if (k.toUpperCase() === 'PATH') delete env[k]
+    // A relative entry first: without the reviewer's PATH rule, cmd.exe would
+    // resolve the shim's bare `node` to the project's node.cmd through it.
+    env.PATH = `.${path.delimiter}${withNode}`
+    Object.assign(env, { CCC_STATUS_URL: 'http://127.0.0.1:1/s?t=x', CONDUCTOR_MCP_TOKEN: 't', CLAUDE_MULTI_SESSION_ID: 's' })
+    const prompt = 'Review this.\nFocus area: race %OPENAI_API_KEY% & calc ^ "quoted" !PATH! | more'
+    const r = await createCodexReviewOperations().run({ executable: exe, env, cwd: project, prompt, timeoutMs: 20_000 })
+    expect(r, JSON.stringify(r)).toMatchObject({ ok: true, usage: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 3 } })
+    const seen = JSON.parse(r.ok ? r.text : '{}') as { prompt: string; cwd: string; conductorVars: string[] }
+    expect(seen.prompt).toBe(prompt)
+    expect(fs.realpathSync.native(seen.cwd)).toBe(fs.realpathSync.native(project))
+    expect(seen.conductorVars).toEqual([])
+    expect(fs.existsSync(marker)).toBe(false)
   }, 60_000)
 })
 
