@@ -17,7 +17,7 @@ import { runCodexCli, defaultCodexRunDeps } from './cli-runner'
 import { discoverCodex } from './discovery'
 import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
 import { createCodexAuthOperations } from './auth-operations'
-import type { CodexAuthDeps } from './auth-operations'
+import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
 import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
 import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort } from './realm-folders'
 import fs from 'node:fs'
@@ -61,7 +61,7 @@ export class CodexProvider implements SessionProvider {
     return resolveCodexBinary()
   }
 
-  buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string> } {
+  buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string } {
     return buildCodexSpawn(opts)
   }
 
@@ -71,10 +71,13 @@ export class CodexProvider implements SessionProvider {
 
   ingestSessionTelemetry(
     sessionId: string,
-    opts: { cwd: string; spawnTimestamp: number },
+    opts: { cwd: string; spawnTimestamp: number; sessionsDir?: string },
     onUpdate: (data: StatuslineData) => void,
   ): TelemetrySource {
-    return watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate)
+    // Only the session's own realm (WP2): with none there is nothing to watch,
+    // and the ambient home would claim another account's transcript.
+    if (!opts.sessionsDir) return { stop() {} }
+    return watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, opts.sessionsDir)
   }
 
   async listHistorySessions(): Promise<HistorySession[]> {
@@ -264,13 +267,19 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
       installRecipes: codexInstallRecipes,
     },
     ...(source && realmFs ? {
-      auth: createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven }),
+      ...withLaunch(createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven })),
       realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted once on
       // upgrade when signed in: realm-only, never vouched for (design 6.3).
       externalDefaultRealm: CODEX_EXTERNAL_DEFAULT_REALM,
     } : {}),
   }
+}
+
+/** The auth operations, and the launch preparation that shares their realm
+ *  and executable checks: one package, one proof. */
+function withLaunch(ops: CodexAuthOperations): Pick<ProviderPackage, 'auth' | 'launch'> {
+  return { auth: ops, launch: { prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.sessionsDir(realm) } }
 }
 
 /** The real filesystem behind the managed folders. */

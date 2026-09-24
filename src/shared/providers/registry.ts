@@ -813,6 +813,21 @@ export function setReviewerDefault(doc: ProviderRegistryDoc, providerId: Provide
   return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? { ...a, isReviewerDefault: true as const, updatedAt: now } : clear(a))) })
 }
 
+/** The account a new session runs under (design 5.7): the one the request
+ *  names, else the provider's default account. Only the CHOICE: the launch
+ *  binding then validates it, so a named or default account that cannot run
+ *  fails visibly rather than falling back to another one. */
+export function chooseSessionAccount(
+  doc: ProviderRegistryDoc,
+  providerId: ProviderId,
+  explicitAccountId?: string,
+): { ok: true; accountId: string; source: 'explicit' | 'provider-default' } | { ok: false; code: 'not-found'; message: string } {
+  if (explicitAccountId !== undefined) return { ok: true, accountId: explicitAccountId, source: 'explicit' }
+  const def = providerDefaultAccount(doc, providerId)
+  if (def) return { ok: true, accountId: def.id, source: 'provider-default' }
+  return { ok: false, code: 'not-found', message: 'no account of this provider is set up: add one in Accounts' }
+}
+
 export type ReviewerChoice = 'explicit' | 'reviewer-default' | 'provider-default'
 
 /** The account a reviewer invocation runs under: the one the request names,

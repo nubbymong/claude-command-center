@@ -2,7 +2,7 @@
 // dependency-boundary test fails this package on any concrete-provider import.
 export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
-  ProviderManagedLaunchOperations, ProviderRealmFolderOperations, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
+  ProviderManagedLaunchOperations, ProviderRealmFolderOperations, ProviderLaunchOperations, LaunchPreparation, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
   DiscoveryResult, InstallRecipe, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthFailureCode, AuthCredentialKind,
 } from './package'
 export {
@@ -29,4 +29,4 @@ export { ConsumerLeaseRegistry, LAUNCH_LEASE_KINDS } from './consumer-leases'
 export type { LeaseKind, LaunchLeaseKind, LeaseOwner, AccountLease, LeaseAddResult } from './consumer-leases'
 export { SecretHandleStore, SECRET_HANDLE_TTL_MS, SECRET_HANDLES_PER_RENDERER } from './secret-handles'
 export { AccountsService } from './accounts-service'
-export type { AccountsServiceDeps, LaunchLeaseResult } from './accounts-service'
+export type { AccountsServiceDeps, LaunchLeaseResult, PreparedLaunchResult } from './accounts-service'

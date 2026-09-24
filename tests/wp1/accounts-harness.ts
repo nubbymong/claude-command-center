@@ -7,7 +7,7 @@
 import { createCodexPackage } from '../../src/main/providers/codex'
 import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry } from '../../src/main/providers/codex'
 import { createClaudePackage } from '../../src/main/providers/claude'
-import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore } from '../../src/main/providers/core'
+import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore, registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
 import type { RegistryFsPort, ProviderPackage, LegacyAccountsPort } from '../../src/main/providers/core'
 import { findRealm } from '../../src/shared/providers'
 import type { LegacyAccountSnapshot, ProviderId, ProviderPreference, ScopedCapabilityKey, ProviderRegistryDoc, ProviderCapabilities } from '../../src/shared/providers'
@@ -95,6 +95,10 @@ export interface HarnessOpts {
   claude?: LegacyAccountSnapshot[]
   port?: MemoryPort
   cli?: boolean
+  /** The folder tree of an earlier start (a restart keeps the disk). */
+  folders?: ReturnType<typeof memoryFs>
+  /** Running sessions that hold no account lease, per provider (Claude's). */
+  unleasedSessions?: (providerId: ProviderId) => number
 }
 
 export const claudeSnapshot = (legacyId: string, over: Partial<LegacyAccountSnapshot> = {}): LegacyAccountSnapshot => ({
@@ -114,12 +118,14 @@ export async function harness(o: HarnessOpts = {}) {
   const leases = new ConsumerLeaseRegistry()
   const store = new AccountRegistryStore({ fs: port, now, consumers: (id) => leases.count(id) })
   store.load()
-  const folders = memoryFs()
+  const folders = o.folders ?? memoryFs()
   const signedIn = new Map<string, Via>()
   const runs: CliRun[] = []
   const logs: string[] = []
   let discoveries = 0
-  const state = { cli: o.cli !== false }
+  // `envFile`: homes holding a `.env`; `exeStat`: the executable as re-read
+  // now (a different one = replaced after setup proved it).
+  const state = { cli: o.cli !== false, envFile: new Set<string>(), exeStat: STAT }
   const status = (home: string): Partial<CodexRunResult> => {
     const v = signedIn.get(home.toLowerCase())
     if (v === 'chatgpt') return { exitCode: 0, stderr: 'Logged in using ChatGPT\n' }
@@ -171,9 +177,9 @@ export async function harness(o: HarnessOpts = {}) {
       }
     },
     authPorts: {
-      executablePorts: { resolve: () => EXE, realpath: (p) => p, stat: () => STAT, platform: 'win32' },
+      executablePorts: { resolve: () => EXE, realpath: (p) => p, stat: () => state.exeStat, platform: 'win32' },
       baseEnv: async () => ({ PATH: 'C:\\Tools', SystemRoot: 'C:\\Windows', OPENAI_API_KEY: 'sk-ambient-0000000000000000' }),
-      envFilePresent: () => false,
+      envFilePresent: (home) => state.envFile.has(home.toLowerCase()),
       run: async (cmd: CodexCommand, opts: CodexRunOptions): Promise<CodexRunResult> => {
         const r: CliRun = { args: cmd.args.join(' '), home: opts.env.CODEX_HOME ?? '', env: { ...opts.env }, opts }
         runs.push(r)
@@ -184,6 +190,12 @@ export async function harness(o: HarnessOpts = {}) {
     },
   })
   const claude = createClaudePackage()
+  // The launch environment is applied through the registry (the one removal
+  // site, realmEnvForProvider): register this harness's packages there, as
+  // boot does. Vitest isolates each test file's module registry.
+  _resetProviderRegistryForTest()
+  registerProviderPackage(claude)
+  registerProviderPackage(codex)
   let claudeRecords = o.claude ?? []
   // What the registry asked Claude's own list to change (write-through).
   const legacyWrites: unknown[] = []
@@ -215,6 +227,7 @@ export async function harness(o: HarnessOpts = {}) {
     platform: 'win32',
     randomHex: nextHex,
     reconcileLegacy: async () => { await store.reconcileLegacy(claudeLegacy) },
+    ...(o.unleasedSessions ? { unleasedSessions: o.unleasedSessions } : {}),
     log: (m) => logs.push(m),
   })
   return {

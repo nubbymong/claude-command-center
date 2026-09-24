@@ -5,7 +5,7 @@
 // write-only spawn identity map is provably deliberate. They describe what the
 // base does; they do not endorse it. Two assertions below are scheduled to be
 // INVERTED by WP1 and are marked as such (see the baseline record): C3's
-// "CODEX_HOME is never set" (inverted by WP1.38) and C4's "the API key
+// "CODEX_HOME is never set" (inverted by WP1.38 -- done in WP2 commit 4) and C4's "the API key
 // travels as an ordinary IPC payload field" (inverted by WP1.22). The file is
 // retired with the code it characterizes (ledger, WP1.57 / WP1.58).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -53,11 +53,22 @@ const codexOptions = { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsP
 // The launch FLAGS (-m, model_reasoning_effort, --sandbox, --ask-for-approval)
 // are pinned by tests/unit/providers/codex/spawn.test.ts; C3 pins the
 // environment and the per-spawn MCP wiring only.
-describe('C3: Codex spawn environment on the base', () => {
+//
+// INVERTED by WP1.38 (WP2 commit 4): the base spread the parent environment
+// and never set CODEX_HOME. A Codex spawn now runs only from its prepared
+// realm launch: the realm's environment (ambient credentials removed,
+// CODEX_HOME set by the launch) and the executable setup proved.
+const realmLaunch = {
+  executable: '/proven/bin/codex',
+  env: { PATH: '/usr/bin', HOME: '/home/u', CODEX_HOME: '/res/codex-realms/r1' },
+  sessionsDir: '/res/codex-realms/r1/sessions',
+}
+describe('C3: Codex spawn environment (inverted by WP1.38)', () => {
   let savedHome: string | undefined
   beforeEach(() => {
     savedHome = process.env.CODEX_HOME
     vi.mocked(osMod.platform).mockReturnValue('linux' as NodeJS.Platform)
+    vi.mocked(execSync).mockClear()
     vi.mocked(execSync).mockReturnValue('/mock/path/codex\n' as any)
     ;(globalThis as any).__wp1McpPort = 0
   })
@@ -65,43 +76,54 @@ describe('C3: Codex spawn environment on the base', () => {
     if (savedHome === undefined) delete process.env.CODEX_HOME
     else process.env.CODEX_HOME = savedHome
     delete process.env.WP1_SENTINEL
+    delete process.env.OPENAI_API_KEY
   })
 
-  it('spreads the parent process environment and stamps CLAUDE_MULTI_SESSION_ID', () => {
+  it('refuses a spawn with no prepared realm launch: there is no other way to start Codex', () => {
+    expect(() => buildCodexSpawn({ sessionId: 's0', codexOptions })).toThrow(/needs its account/)
+  })
+
+  it('[inverted by WP1.38] starts from the realm environment, never the parent: an ambient CODEX_HOME or key does not pass', () => {
     process.env.WP1_SENTINEL = 'inherited'
-    const out = buildCodexSpawn({ sessionId: 's1', codexOptions })
-    expect(out.env.WP1_SENTINEL).toBe('inherited')
+    process.env.CODEX_HOME = '/inherited/home'
+    process.env.OPENAI_API_KEY = 'sk-ambient'
+    const out = buildCodexSpawn({ sessionId: 's1', codexOptions, realmLaunch })
+    expect(out.env.CODEX_HOME).toBe('/res/codex-realms/r1')
+    expect(out.env.WP1_SENTINEL).toBeUndefined()
+    expect(out.env.OPENAI_API_KEY).toBeUndefined()
     expect(out.env.CLAUDE_MULTI_SESSION_ID).toBe('s1')
+    expect(out.env.PATH).toBe('/usr/bin')
   })
 
-  it('[to be inverted by WP1.38] never sets CODEX_HOME itself: absent stays absent, an inherited value passes through unchanged', () => {
-    delete process.env.CODEX_HOME
-    expect(buildCodexSpawn({ sessionId: 's1', codexOptions }).env.CODEX_HOME).toBeUndefined()
-    process.env.CODEX_HOME = '/inherited/home'
-    expect(buildCodexSpawn({ sessionId: 's1', codexOptions }).env.CODEX_HOME).toBe('/inherited/home')
+  it('runs the executable setup proved, never a second resolution', () => {
+    const out = buildCodexSpawn({ sessionId: 's1', codexOptions, realmLaunch })
+    expect(out.cmd).toBe('/proven/bin/codex')
+    expect(vi.mocked(execSync)).not.toHaveBeenCalled()
   })
 
   it('adds the conductor MCP flags and bearer token only when the MCP port is bound (WP1.68 per-spawn MCP)', () => {
-    const off = buildCodexSpawn({ sessionId: 's2', codexOptions })
+    const off = buildCodexSpawn({ sessionId: 's2', codexOptions, realmLaunch })
     expect(off.args.join(' ')).not.toContain('mcp_servers.conductor')
     expect(off.env.CONDUCTOR_MCP_TOKEN).toBeUndefined()
     ;(globalThis as any).__wp1McpPort = 4321
-    const on = buildCodexSpawn({ sessionId: 's2', codexOptions })
+    const on = buildCodexSpawn({ sessionId: 's2', codexOptions, realmLaunch })
     expect(on.args).toContain('mcp_servers.conductor.url=http://localhost:4321/mcp?cccSessionId=s2')
     expect(on.args).toContain('mcp_servers.conductor.enabled=true')
     expect(on.args).toContain('mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN')
     expect(on.env.CONDUCTOR_MCP_TOKEN).toBe('tok-s2')
   })
 
-  it('routes a Windows .cmd shim through cmd.exe /c', () => {
-    vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
-    vi.mocked(execSync).mockReturnValue('C:\\shims\\codex.cmd\r\n' as any)
+  it('routes a Windows .cmd shim through cmd.exe named by absolute path, AutoRun and delayed expansion off, in the /s form, and never searches the project folder', () => {
     const saved = Object.getOwnPropertyDescriptor(process, 'platform')!
     Object.defineProperty(process, 'platform', { value: 'win32' })
     try {
-      const out = buildCodexSpawn({ sessionId: 's3', codexOptions })
-      expect(out.cmd).toBe('cmd.exe')
-      expect(out.args.slice(0, 2)).toEqual(['/c', 'C:\\shims\\codex.cmd'])
+      const winLaunch = { executable: 'C:\\shims\\codex.cmd', env: { SystemRoot: 'C:\\Windows', CODEX_HOME: 'C:\\res\\codex-realms\\r1' }, sessionsDir: 'C:\\res\\codex-realms\\r1\\sessions' }
+      const out = buildCodexSpawn({ sessionId: 's3', codexOptions, realmLaunch: winLaunch })
+      expect(out.cmd).toBe('C:\\Windows\\System32\\cmd.exe')
+      expect(out.commandLine?.startsWith('/d /v:off /s /c ""C:\\shims\\codex.cmd" ')).toBe(true)
+      expect(out.env.NoDefaultCurrentDirectoryInExePath).toBe('1')
+      // A value cmd.exe would reinterpret is refused, not quoted.
+      expect(() => buildCodexSpawn({ sessionId: 's3', codexOptions, realmLaunch: { ...winLaunch, executable: 'C:\\a%PATH%\\codex.cmd' } })).toThrow(/cmd.exe/)
     } finally {
       Object.defineProperty(process, 'platform', saved)
     }

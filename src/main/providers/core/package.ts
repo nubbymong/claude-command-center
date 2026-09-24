@@ -176,6 +176,36 @@ export interface ProviderRealmFolderOperations {
   remove(realm: RealmRef, opts: { contents: 'empty-only' | 'all' }): Promise<RealmFolderResult>
 }
 
+/** What a launch in a bound realm needs, proven at launch time (plan A10):
+ *  main-process only, never sent to a renderer. */
+export interface LaunchPreparation {
+  ok: true
+  /** The realm's home, canonical. */
+  home: string
+  /** The executable setup proved, re-verified now: the only path a launch
+   *  may run -- never a second resolution. */
+  executable: string
+  /** The environment the launch starts from (the provider's operation base).
+   *  The caller applies `realmEnv` through the package's own policy, which
+   *  removes the ambient authority variables first. */
+  baseEnv: Readonly<Record<string, string | undefined>>
+  /** The realm selector, set last. */
+  realmEnv: RealmEnvPatch
+  /** Where the provider writes this realm's session transcripts. */
+  sessionsDir: string
+}
+
+/** Launching sessions and reviewer invocations in a bound realm. The account
+ *  lease the caller holds keeps the realm from being removed meanwhile, so
+ *  this takes no realm lock and runs no CLI. */
+export interface ProviderLaunchOperations {
+  prepare(realm: RealmRef): Promise<LaunchPreparation | { ok: false; code: AuthFailureCode; message?: string }>
+  /** Where a realm writes its session transcripts (plan A13: what the usage
+   *  index reads), or null when the realm cannot be located now. A path
+   *  only: no CLI, no executable check. */
+  sessionsDir(realm: RealmRef): Promise<string | null>
+}
+
 export interface ProviderRealmOperations {
   /** The exact environment patch for a bound realm (D1): Claude = the existing
    *  profile-home mechanism; Codex = CODEX_HOME. */
@@ -224,6 +254,9 @@ export interface ProviderPackage {
   readonly managedLaunch?: ProviderManagedLaunchOperations
   readonly setup?: ProviderSetupOperations
   readonly auth?: ProviderAuthOperations
+  /** Present when the provider's managed accounts launch in their own realm
+   *  (Codex); absent for providers that keep their own launch path (Claude). */
+  readonly launch?: ProviderLaunchOperations
   readonly realms?: ProviderRealmOperations
   /** Present when the provider's managed accounts each get an app-managed
    *  folder (Codex); absent for providers that keep their own (Claude). */

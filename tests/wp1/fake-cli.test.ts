@@ -95,9 +95,19 @@ beforeAll(() => {
     fs.writeFileSync(exe, `#!${process.execPath}\nrequire(${JSON.stringify(path.join(dir, 'fake-codex.js'))})\n`, { mode: 0o755 })
   }
 })
-// Retried: on Windows a killed process (and the console host of a killed
-// cmd.exe) releases its working folder a moment after it is reported gone.
-afterAll(() => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }) })
+// On Windows the folder can stay busy after every test has passed: a killed
+// process releases its working folder a moment after it is reported gone,
+// and real-time scanning holds files the suite has just written for longer
+// (Windows CI showed EBUSY beyond 5 s of retries). Retried for up to 30 s;
+// a folder that still cannot go is left in the runner's temp with a warning
+// -- cleanup of a disposable folder is not a test result.
+afterAll(() => {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 60, retryDelay: 500 })
+  } catch (err) {
+    process.stderr.write(`fake-cli: left ${dir} behind (${(err as NodeJS.ErrnoException).code ?? err})\n`)
+  }
+}, 60_000)
 
 // The real node must be findable on PATH (the shim's bare `node`), first.
 const withNode = `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? process.env.Path ?? ''}`

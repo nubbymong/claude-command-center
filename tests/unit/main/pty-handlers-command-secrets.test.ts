@@ -16,6 +16,11 @@ vi.mock('electron', () => ({
 const spawnPty = vi.fn()
 vi.mock('../../../src/main/pty-manager', () => ({
   spawnPty, writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: vi.fn(), endSshRemote: vi.fn(),
+  // WP2: a spawn that awaits work in main registers for the wait; here it
+  // always stays current and hands straight to spawnPty.
+  beginSpawnPreparation: (win: unknown, sid: string) => ({ current: true, spawn: (o: unknown) => spawnPty(win, sid, o), abandon: vi.fn() }),
+  holdsCodexLaunchLease: () => false,
+  codexLaunchLeaseTaken: () => false,
 }))
 vi.mock('../../../src/main/debug-capture', () => ({ logUserInput: vi.fn(), isDebugModeEnabled: () => false }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
@@ -30,6 +35,9 @@ vi.mock('../../../src/main/config-manager', () => ({
 }))
 const vault: Record<string, string> = {}
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => vault[k] ?? null }))
+// WP2: the accounts service a Codex spawn is prepared by; none unless a test sets one.
+const acct = vi.hoisted(() => ({ service: null as null | Record<string, unknown> }))
+vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () => acct.service }))
 
 const { registerPtyHandlers, MAIN_INTERNAL_SPAWN_FIELDS } = await import('../../../src/main/ipc/pty-handlers')
 registerPtyHandlers(() => ({} as never))
@@ -38,6 +46,7 @@ const SID = 'a1b2c3d4e5f6a1b2c3d4e5f6'
 
 beforeEach(() => {
   spawnPty.mockClear()
+  acct.service = null
   commandsOnDisk = null
   configsOnDisk = null
   for (const k of Object.keys(vault)) delete vault[k]
@@ -73,7 +82,30 @@ describe('pty:spawn and command secrets', () => {
     // The list is what the handler deletes; this pins its contents so a new
     // re-entry field added to SpawnPtyOptions without an entry here is a test
     // failure rather than a silent bypass.
-    expect([...MAIN_INTERNAL_SPAWN_FIELDS].sort()).toEqual(['projectGate', 'projectGateDirs', 'refreshAwaited'])
+    expect([...MAIN_INTERNAL_SPAWN_FIELDS].sort()).toEqual(['codexLaunch', 'projectGate', 'projectGateDirs', 'refreshAwaited'])
+  })
+
+  it('STRIPS codexLaunch (WP2): a renderer cannot hand a spawn its own executable, environment or account lease', async () => {
+    const forged = { lease: { release: vi.fn() }, executable: 'C:/evil/codex.exe', env: { CODEX_HOME: 'C:/elsewhere' }, sessionsDir: 'C:/elsewhere/sessions' }
+    await spawn({}, SID, { cwd: 'C:/w', shellOnly: true, configId: 'cfg1', codexLaunch: forged })
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    expect(spawnPty.mock.calls[0][2].codexLaunch).toBeUndefined()
+    // A Codex session builds its launch only from the accounts service: with
+    // none ready it is refused, whatever launch the request carried.
+    await expect(spawn({}, SID, {
+      cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' }, codexLaunch: forged,
+    })).rejects.toThrow(/Codex session refused/)
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    expect(forged.lease.release).not.toHaveBeenCalled()
+    // ...and with one ready, the launch the service prepared is the one that
+    // reaches the spawn, never the one the request carried.
+    const lease = { release: vi.fn() }
+    acct.service = {
+      prepareLaunch: async () => ({ ok: true, lease, binding: {}, realmOnly: false, home: 'C:/res/r1', executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions' }),
+    }
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' }, codexLaunch: forged })
+    expect(spawnPty).toHaveBeenCalledTimes(2)
+    expect(spawnPty.mock.calls[1][2].codexLaunch).toEqual({ lease, executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions' })
   })
 
   it('rebuilds them from the commands file on disk and the keychain, for a SHELL spawn with a config', async () => {

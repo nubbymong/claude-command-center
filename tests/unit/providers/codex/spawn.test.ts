@@ -31,10 +31,33 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
 
+vi.mock('../../../../src/main/providers/codex/telemetry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../src/main/providers/codex/telemetry')>()
+  return { ...actual, watchAndClaimRollout: vi.fn(() => ({ stop: () => {} })) }
+})
+
 import * as osMod from 'os'
 import { execSync } from 'child_process'
+import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
 import { CodexProvider } from '../../../../src/main/providers/codex'
-import { resolveCodexBinary, resolveNodeExe, __resetNodeExeCache } from '../../../../src/main/providers/codex/spawn'
+import { resolveCodexBinary, resolveNodeExe, __resetNodeExeCache, codexCmdExeTarget } from '../../../../src/main/providers/codex/spawn'
+
+// WP2 (plan A10): a Codex spawn runs only from its prepared realm launch -- the
+// executable setup proved and the realm's environment. Main builds it; these
+// tests hand one in.
+const launch = { executable: '/mock/path/codex', env: { PATH: '/usr/bin', CODEX_HOME: '/res/codex-realms/r1' }, sessionsDir: '/res/codex-realms/r1/sessions' }
+const winEnv = { SystemRoot: 'C:\\Windows', CODEX_HOME: 'C:\\res\\codex-realms\\r1' }
+
+function withWin32<T>(fn: () => T): T {
+  const origPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  try {
+    return fn()
+  } finally {
+    if (origPlatform) Object.defineProperty(process, 'platform', origPlatform)
+    else delete (process as any).platform
+  }
+}
 
 describe('CodexProvider', () => {
   let originalCodexHome: string | undefined
@@ -70,17 +93,26 @@ describe('CodexProvider', () => {
     expect(r).toBeNull()
   })
 
-  it('buildSpawnCommand throws when codex not found', () => {
-    vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
+  it('buildSpawnCommand refuses a spawn with no prepared realm launch (WP2): no second resolution, no ambient home', () => {
     expect(() => new CodexProvider().buildSpawnCommand({
       sessionId: 'sid',
       codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
-    })).toThrow(/Codex CLI not found/)
+    })).toThrow(/needs its account/)
+    expect(vi.mocked(execSync)).not.toHaveBeenCalled()
+  })
+
+  it('buildSpawnCommand runs the executable the launch names, never re-resolving it', () => {
+    vi.mocked(execSync).mockImplementation(() => { throw new Error('must not be consulted') })
+    const out = new CodexProvider().buildSpawnCommand({
+      sessionId: 'sid', realmLaunch: launch,
+      codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+    })
+    expect(out.cmd).toBe('/mock/path/codex')
   })
 
   it('buildSpawnCommand maps standard preset to workspace-write + on-request', () => {
     const out = new CodexProvider().buildSpawnCommand({
-      sessionId: 'sid',
+      sessionId: 'sid', realmLaunch: launch,
       codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
     })
     expect(out.args).toContain('--sandbox')
@@ -93,24 +125,24 @@ describe('CodexProvider', () => {
 
   it('reasoningEffort=none suppresses the -c flag', () => {
     const out = new CodexProvider().buildSpawnCommand({
-      sessionId: 'sid',
+      sessionId: 'sid', realmLaunch: launch,
       codexOptions: { model: 'gpt-5.5', reasoningEffort: 'none', permissionsPreset: 'standard' },
     })
     expect(out.args.find(a => a.startsWith('model_reasoning_effort='))).toBeUndefined()
   })
 
-  it('passes CODEX_HOME through env when set externally', () => {
+  it('CODEX_HOME is the realm\'s, whatever the parent process carries (WP1.38)', () => {
     process.env.CODEX_HOME = '/tmp/codex-test'
     const out = new CodexProvider().buildSpawnCommand({
-      sessionId: 'sid',
+      sessionId: 'sid', realmLaunch: launch,
       codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
     })
-    expect(out.env.CODEX_HOME).toBe('/tmp/codex-test')
+    expect(out.env.CODEX_HOME).toBe('/res/codex-realms/r1')
   })
 
   it('CLAUDE_MULTI_SESSION_ID is set in env for telemetry hooks', () => {
     const out = new CodexProvider().buildSpawnCommand({
-      sessionId: 'session-xyz',
+      sessionId: 'session-xyz', realmLaunch: launch,
       codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
     })
     expect(out.env.CLAUDE_MULTI_SESSION_ID).toBe('session-xyz')
@@ -119,7 +151,7 @@ describe('CodexProvider', () => {
   // Book item 34: the host's light/dark scheme reached only the local Claude
   // spawn; Codex sessions never got COLORFGBG.
   describe('COLORFGBG (host light/dark scheme)', () => {
-    const base = { sessionId: 'sid', codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' as const } }
+    const base = { sessionId: 'sid', realmLaunch: launch, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' as const } }
     beforeEach(() => { delete process.env.COLORFGBG })
     afterEach(() => { delete process.env.COLORFGBG })
     it('stamps the light value when the host is light', () => {
@@ -142,7 +174,7 @@ describe('CodexProvider', () => {
     ;(globalThis as any).__mockMcpPort = 19333
     try {
       const out = new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid',
+        sessionId: 'sid', realmLaunch: launch,
         codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
       })
       // GHSA-q83v: cccSessionId is the sole query param; source=codex is inferred
@@ -165,7 +197,7 @@ describe('CodexProvider', () => {
     ;(globalThis as any).__mockMcpPort = 0
     try {
       const out = new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid',
+        sessionId: 'sid', realmLaunch: launch,
         codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
       })
       expect(out.args.find((a) => a.startsWith('mcp_servers.conductor'))).toBeUndefined()
@@ -175,43 +207,122 @@ describe('CodexProvider', () => {
     }
   })
 
-  it('wraps .cmd binary in cmd.exe /c on win32 for node-pty', () => {
-    // Simulate win32: where finds codex.cmd
-    vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
-    vi.mocked(execSync).mockReturnValue('C:\\npm\\codex.cmd\n' as any)
-    // process.platform check in buildCodexSpawn; stub it for this test
-    const origPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-    try {
+  it('wraps a .cmd shim in cmd.exe named by absolute path -- AutoRun and delayed expansion off, the /s form, one verbatim line -- and stops cmd.exe searching the project folder', () => {
+    withWin32(() => {
       const out = new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid',
+        sessionId: 'sid', realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd', env: winEnv },
         codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
       })
-      expect(out.cmd).toBe('cmd.exe')
-      expect(out.args[0]).toBe('/c')
-      expect(out.args[1]).toBe('C:\\npm\\codex.cmd')
-    } finally {
-      if (origPlatform) Object.defineProperty(process, 'platform', origPlatform)
-      else delete (process as any).platform
-    }
+      expect(out.cmd).toBe('C:\\Windows\\System32\\cmd.exe')
+      expect(out.args).toEqual([])
+      expect(out.commandLine).toBe('/d /v:off /s /c ""C:\\npm\\codex.cmd" -m gpt-5.5 --sandbox workspace-write --ask-for-approval on-request"')
+      expect(out.env.NoDefaultCurrentDirectoryInExePath).toBe('1')
+    })
   })
 
-  it('does not wrap .exe binary in cmd.exe on win32', () => {
-    vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
-    vi.mocked(execSync).mockReturnValue('C:\\path\\codex.exe\n' as any)
-    const origPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-    try {
+  it('does not wrap an .exe in cmd.exe on win32', () => {
+    withWin32(() => {
       const out = new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid',
+        sessionId: 'sid', realmLaunch: { ...launch, executable: 'C:\\path\\codex.exe', env: winEnv },
         codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
       })
       expect(out.cmd).toBe('C:\\path\\codex.exe')
-      expect(out.args[0]).not.toBe('/c')
+      expect(out.commandLine).toBeUndefined()
+      expect(out.args[0]).toBe('-m')
+    })
+  })
+
+  it('a variable main sets wins over every other spelling the parent passed (Windows names are case-insensitive)', () => {
+    ;(globalThis as any).__mockMcpPort = 4321
+    try {
+      withWin32(() => {
+        const env = { ...winEnv, conductor_mcp_token: 'ambient', claude_multi_session_id: 'other', ccc_codex_executable: 'C:\\evil\\codex.exe', nodefaultcurrentdirectoryinexepath: '0' }
+        const out = new CodexProvider().buildSpawnCommand({
+          sessionId: 'sid', realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd', env },
+          codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+        })
+        const spellings = (name: string) => Object.keys(out.env).filter((k) => k.toUpperCase() === name.toUpperCase())
+        for (const name of ['CONDUCTOR_MCP_TOKEN', 'CLAUDE_MULTI_SESSION_ID', 'NoDefaultCurrentDirectoryInExePath']) expect(spellings(name), name).toEqual([name])
+        expect(out.env.CONDUCTOR_MCP_TOKEN).toBe('tok-sid')
+        expect(out.env.CLAUDE_MULTI_SESSION_ID).toBe('sid')
+      })
     } finally {
-      if (origPlatform) Object.defineProperty(process, 'platform', origPlatform)
-      else delete (process as any).platform
+      delete (globalThis as any).__mockMcpPort
     }
+  })
+
+  it('on the picker route too: the executable handed over and the colour scheme exist in main\'s spelling only', () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = require('fs') as typeof import('fs')
+    const { tmpdir } = require('os') as typeof import('os')
+    const { join } = require('path') as typeof import('path')
+    const dir = mkdtempSync(join(tmpdir(), 'ccc-spawn-owned-'))
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    writeFileSync(join(dir, 'scripts', 'codex-resume-picker.js'), '// stub')
+    ;(globalThis as any).__mockResourcesDir = dir
+    __resetNodeExeCache()
+    vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
+    vi.mocked(execSync).mockImplementation(() => 'C:\\nodejs\\node.exe\n' as any)
+    try {
+      withWin32(() => {
+        const env = { ...winEnv, ccc_codex_executable: 'C:\\evil\\codex.exe', colorfgbg: '15;0' }
+        const out = new CodexProvider().buildSpawnCommand({
+          sessionId: 'sid', useResumePicker: true, hostColorScheme: 'light',
+          realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd', env },
+          codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+        })
+        const spellings = (name: string) => Object.keys(out.env).filter((k) => k.toUpperCase() === name.toUpperCase())
+        expect(spellings('CCC_CODEX_EXECUTABLE')).toEqual(['CCC_CODEX_EXECUTABLE'])
+        expect(out.env.CCC_CODEX_EXECUTABLE).toBe('C:\\npm\\codex.cmd')
+        expect(spellings('COLORFGBG')).toEqual(['COLORFGBG'])
+        expect(out.env.COLORFGBG).toBe('0;15')
+      })
+    } finally {
+      delete (globalThis as any).__mockResourcesDir
+      __resetNodeExeCache()
+    }
+  })
+
+  describe('codexCmdExeTarget (the cmd.exe route)', () => {
+    it('builds the /s line cli-runner builds for discovery, with the parent\'s own spelling of SystemRoot or ComSpec', () => {
+      const line = '/d /v:off /s /c ""C:\\a\\codex.cmd" -m gpt-5.5"'
+      expect(codexCmdExeTarget('C:\\a\\codex.cmd', ['-m', 'gpt-5.5'], winEnv)).toEqual({ cmd: 'C:\\Windows\\System32\\cmd.exe', commandLine: line })
+      // Launched from Git Bash the parent spells them in capitals.
+      expect(codexCmdExeTarget('C:\\a\\codex.cmd', ['-m', 'gpt-5.5'], { SYSTEMROOT: 'C:\\WINDOWS' }).cmd).toBe('C:\\WINDOWS\\System32\\cmd.exe')
+      expect(codexCmdExeTarget('C:\\a\\codex.cmd', [], { COMSPEC: 'C:\\WINDOWS\\system32\\cmd.exe', SystemRoot: 'C:\\Windows' }).cmd).toBe('C:\\WINDOWS\\system32\\cmd.exe')
+    })
+
+    it('keeps a shim path with spaces and parentheses intact (the /s form strips only the outer pair of quotes)', () => {
+      expect(codexCmdExeTarget('C:\\Program Files (x86)\\nodejs\\codex.cmd', ['--sandbox', 'read-only'], winEnv).commandLine)
+        .toBe('/d /v:off /s /c ""C:\\Program Files (x86)\\nodejs\\codex.cmd" --sandbox read-only"')
+      expect(codexCmdExeTarget('C:\\Users\\a@b c\\npm\\codex.cmd', [], winEnv).commandLine).toBe('/d /v:off /s /c ""C:\\Users\\a@b c\\npm\\codex.cmd""')
+    })
+
+    it('refuses a shim path or an argument cmd.exe or the shim would reinterpret, and a cmd.exe it cannot name absolutely', () => {
+      for (const bad of ['"', '%', '&', '^', '|', '<', '>', '!', '(', ')', ' ', '\t', '\n']) {
+        expect(() => codexCmdExeTarget('C:\\a\\codex.cmd', ['-m', `x${bad}y`], winEnv), JSON.stringify(bad)).toThrow(/cmd.exe/)
+      }
+      expect(() => codexCmdExeTarget('C:\\a\\codex.cmd', [''], winEnv)).toThrow(/cmd.exe/)
+      for (const bad of ['"', '%', '&', '^', '\n']) {
+        expect(() => codexCmdExeTarget(`C:\\a${bad}b\\codex.cmd`, [], winEnv), JSON.stringify(bad)).toThrow(/cmd.exe/)
+      }
+      for (const shim of ['codex.cmd', 'a\\codex.cmd', '\\a\\codex.cmd', 'C:a\\codex.cmd', 'C:\\a\\codex.cmd.', 'C:\\a\\codex.cmd ']) {
+        expect(() => codexCmdExeTarget(shim, [], winEnv), shim).toThrow(/cmd.exe/)
+      }
+      for (const root of [undefined, '', 'Windows', 'C:Windows']) {
+        expect(() => codexCmdExeTarget('C:\\a\\codex.cmd', [], { SystemRoot: root }), String(root)).toThrow(/SystemRoot/)
+      }
+      // Two spellings that disagree name no cmd.exe at all.
+      expect(() => codexCmdExeTarget('C:\\a\\codex.cmd', [], { SystemRoot: 'C:\\Windows', SYSTEMROOT: 'D:\\Other' })).toThrow(/SystemRoot/)
+    })
+
+    it('a model id that passed the spawn schema can always pass cmd.exe (the schema is the tighter charset)', async () => {
+      const { CODEX_MODEL_RE } = await import('../../../../src/main/sanitize-restored-spawn-options')
+      for (const m of ['gpt-5.5', 'gpt-oss:20b', 'openai/gpt-5-codex', 'o4-mini']) {
+        expect(CODEX_MODEL_RE.test(m), m).toBe(true)
+        expect(() => codexCmdExeTarget('C:\\a\\codex.cmd', ['-m', m], winEnv), m).not.toThrow()
+      }
+      for (const m of ['-c', 'a&b', 'a b', 'x%y', '(x)', '']) expect(CODEX_MODEL_RE.test(m), m).toBe(false)
+    })
   })
 
   describe('useResumePicker', () => {
@@ -233,7 +344,7 @@ describe('CodexProvider', () => {
       __resetNodeExeCache()
     })
 
-    it('swaps cmd to node + picker when useResumePicker=true and script is deployed', () => {
+    it('swaps cmd to node + picker when useResumePicker=true and script is deployed, handing it the proven executable', () => {
       const { mkdtempSync, mkdirSync, writeFileSync } = require('fs') as typeof import('fs')
       const { tmpdir } = require('os') as typeof import('os')
       const { join } = require('path') as typeof import('path')
@@ -247,12 +358,11 @@ describe('CodexProvider', () => {
       vi.mocked(execSync).mockImplementation((cmd: any) => {
         const s = String(cmd)
         if (s.includes('which node')) return '/usr/local/bin/node\n' as any
-        if (s.includes('which codex')) return '/mock/path/codex\n' as any
         throw new Error(`unexpected: ${s}`)
       })
 
       const out = new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid-resume',
+        sessionId: 'sid-resume', realmLaunch: launch,
         useResumePicker: true,
         codexOptions: { model: 'gpt-5.5', reasoningEffort: 'xhigh', permissionsPreset: 'standard' },
       })
@@ -267,6 +377,9 @@ describe('CodexProvider', () => {
       expect(out.args).toContain('workspace-write')
       expect(out.args).toContain('--ask-for-approval')
       expect(out.args).toContain('on-request')
+      // The picker starts THIS executable, in THIS realm.
+      expect(out.env.CCC_CODEX_EXECUTABLE).toBe('/mock/path/codex')
+      expect(out.env.CODEX_HOME).toBe('/res/codex-realms/r1')
     })
 
     it('falls back to direct codex spawn when useResumePicker=true but picker script is missing', () => {
@@ -278,14 +391,13 @@ describe('CodexProvider', () => {
       setMockResourcesDir(dir)
 
       const out = new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid-fallback',
+        sessionId: 'sid-fallback', realmLaunch: launch,
         useResumePicker: true,
         codexOptions: { model: 'gpt-5.5', reasoningEffort: 'xhigh', permissionsPreset: 'standard' },
       })
 
       // cmd is the codex binary path (not 'node'), and the first arg is NOT the picker script
-      expect(out.cmd).not.toBe('node')
-      expect(out.cmd).toMatch(/codex/i)
+      expect(out.cmd).toBe('/mock/path/codex')
       expect(out.args).toContain('-m')
       expect(out.args).toContain('gpt-5.5')
       // CLAUDE_MULTI_SESSION_ID env must survive the fallback path so downstream
@@ -296,12 +408,12 @@ describe('CodexProvider', () => {
     it('useResumePicker=false leaves cmd as direct codex spawn', () => {
       setMockResourcesDir('')
       const out = new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid-no-picker',
+        sessionId: 'sid-no-picker', realmLaunch: launch,
         useResumePicker: false,
         codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
       })
-      expect(out.cmd).not.toBe('node')
-      expect(out.cmd).toMatch(/codex/i)
+      expect(out.cmd).toBe('/mock/path/codex')
+      expect(out.env.CCC_CODEX_EXECUTABLE).toBeUndefined()
     })
 
     // Regression for #347: node-pty/ConPTY on Windows does NOT consult PATH
@@ -310,7 +422,7 @@ describe('CodexProvider', () => {
     // xterm to a dead PTY (blank-terminal symptom). Fix is to resolve node
     // via `where node` and pass the full path. Non-win32 stays bare 'node'
     // because execvp does PATH lookup.
-    it('win32 picker spawn resolves node to a full .exe path (not bare "node")', () => {
+    it('win32 picker spawn resolves node to a full .exe path (not bare "node"), and never looks codex up', () => {
       const { mkdtempSync, mkdirSync, writeFileSync } = require('fs') as typeof import('fs')
       const { tmpdir } = require('os') as typeof import('os')
       const { join } = require('path') as typeof import('path')
@@ -319,26 +431,38 @@ describe('CodexProvider', () => {
       writeFileSync(join(dir, 'scripts', 'codex-resume-picker.js'), '// noop')
       setMockResourcesDir(dir)
 
-      // Simulate win32 + where finding codex.cmd + node.exe at specific paths.
-      // execSync is consulted twice (once for codex, once for node); return
-      // different paths per call.
       vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
       vi.mocked(execSync).mockImplementation((cmd: any) => {
         const s = String(cmd)
         if (s.includes('where node')) return 'C:\\Program Files\\nodejs\\node.exe\n' as any
-        if (s.includes('where codex')) return 'C:\\npm\\codex.cmd\n' as any
         throw new Error(`unexpected: ${s}`)
       })
 
-      const out = new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid-win32-picker',
+      const out = withWin32(() => new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid-win32-picker', realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd', env: winEnv },
         useResumePicker: true,
         codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
-      })
+      }))
 
       expect(out.cmd).toBe('C:\\Program Files\\nodejs\\node.exe')
       expect(out.cmd).not.toBe('node')
       expect(out.args[0]).toBe(join(dir, 'scripts', 'codex-resume-picker.js'))
+      expect(out.env.CCC_CODEX_EXECUTABLE).toBe('C:\\npm\\codex.cmd')
+    })
+
+    it('the picker route refuses what the cmd.exe route would (a .cmd shim with an unsafe path)', () => {
+      const { mkdtempSync, mkdirSync, writeFileSync } = require('fs') as typeof import('fs')
+      const { tmpdir } = require('os') as typeof import('os')
+      const { join } = require('path') as typeof import('path')
+      const dir = mkdtempSync(join(tmpdir(), 'ccc-spawn-win32-picker-bad-'))
+      mkdirSync(join(dir, 'scripts'), { recursive: true })
+      writeFileSync(join(dir, 'scripts', 'codex-resume-picker.js'), '// noop')
+      setMockResourcesDir(dir)
+      expect(() => withWin32(() => new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid-bad', realmLaunch: { ...launch, executable: 'C:\\a%b\\codex.cmd', env: winEnv },
+        useResumePicker: true,
+        codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+      }))).toThrow(/cmd.exe/)
     })
 
     it('resolveNodeExe falls back to bare "node" on win32 if `where node` fails', () => {
@@ -362,5 +486,17 @@ describe('CodexProvider', () => {
       vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
       expect(resolveNodeExe()).toBe('node')
     })
+  })
+})
+
+describe('CodexProvider telemetry (WP2 plan A13)', () => {
+  it('watches the session\'s own realm folder, and nothing without one: the ambient home would claim another account\'s transcript', () => {
+    vi.mocked(watchAndClaimRollout).mockClear()
+    const none = new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 1 }, () => {})
+    expect(() => none.stop()).not.toThrow()
+    expect(vi.mocked(watchAndClaimRollout)).not.toHaveBeenCalled()
+    const cb = () => {}
+    new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/res/codex-realms/r1/sessions' }, cb)
+    expect(vi.mocked(watchAndClaimRollout)).toHaveBeenCalledWith('sid', '/w', 7, cb, '/res/codex-realms/r1/sessions')
   })
 })

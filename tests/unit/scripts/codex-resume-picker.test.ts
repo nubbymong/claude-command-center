@@ -11,6 +11,8 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   buildResumeArgs: (uuid: string | null, flags: string[]) => string[]
   shouldFallback: (resumeUuid: string | null, exitStatus: number | null | undefined) => boolean
   shouldUseShell: (cmd: string, platform: string) => boolean
+  launchTarget: (cmd: string, args: string[], platform: string, env: Record<string, string | undefined>) => null | { file: string; args: string[] }
+  isResumeId: (id: unknown) => boolean
 }
 
 const FIXTURES = join(__dirname, '..', '..', 'fixtures', 'codex-rollouts')
@@ -145,11 +147,12 @@ describe('codex-resume-picker walkRollouts', () => {
 })
 
 describe('codex-resume-picker buildResumeArgs', () => {
+  const UUID = '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b'
   it('prepends `resume <uuid>` then forwards flags when uuid is given', () => {
     const flags = ['-m', 'gpt-5.5', '-c', 'model_reasoning_effort=xhigh', '--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
-    const out = lib.buildResumeArgs('uuid-abc', flags)
+    const out = lib.buildResumeArgs(UUID, flags)
     expect(out[0]).toBe('resume')
-    expect(out[1]).toBe('uuid-abc')
+    expect(out[1]).toBe(UUID)
     expect(out.slice(2)).toEqual(flags)
   })
 
@@ -157,6 +160,13 @@ describe('codex-resume-picker buildResumeArgs', () => {
     const flags = ['-m', 'gpt-5.5']
     const out = lib.buildResumeArgs(null, flags)
     expect(out).toEqual(flags)
+  })
+
+  it('an id that is not a UUID -- read from a transcript, so anything -- starts a fresh session, never an argument', () => {
+    const flags = ['-m', 'gpt-5.5']
+    for (const bad of ['uuid-abc', '--dangerously-bypass-approvals-and-sandbox', '-c', 'x & calc', UUID + 'x']) {
+      expect(lib.buildResumeArgs(bad, flags), bad).toEqual(flags)
+    }
   })
 })
 
@@ -207,5 +217,49 @@ describe('codex-resume-picker shouldUseShell', () => {
 
   it('returns true on win32 when cmd ends with .bat', () => {
     expect(lib.shouldUseShell('C:\\path\\codex.bat', 'win32')).toBe(true)
+  })
+})
+
+// WP2: the picker starts the executable the app proved, never through a
+// shell option, and resumes only a conversation id that is a UUID.
+describe('codex-resume-picker launchTarget', () => {
+  const env = { SystemRoot: 'C:\\Windows' }
+  it('runs an executable directly, with its arguments untouched', () => {
+    expect(lib.launchTarget('/usr/bin/codex', ['resume', 'x'], 'linux', env)).toEqual({ file: '/usr/bin/codex', args: ['resume', 'x'], verbatim: false })
+    expect(lib.launchTarget('C:\\a\\codex.exe', ['-m', 'gpt-5.5'], 'win32', env)).toEqual({ file: 'C:\\a\\codex.exe', args: ['-m', 'gpt-5.5'], verbatim: false })
+  })
+
+  it('runs a .cmd shim through cmd.exe named by absolute path, in the /s form, as one verbatim line', () => {
+    expect(lib.launchTarget('C:\\npm\\codex.cmd', ['-m', 'gpt-5.5'], 'win32', env)).toEqual({
+      file: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/v:off', '/s', '/c', '""C:\\npm\\codex.cmd" -m gpt-5.5"'],
+      verbatim: true,
+    })
+    // Spaces and parentheses in the shim's folder survive the /s form.
+    expect(lib.launchTarget('C:\\Program Files (x86)\\nodejs\\codex.cmd', [], 'win32', env)?.args[4]).toBe('""C:\\Program Files (x86)\\nodejs\\codex.cmd""')
+    // The parent's own spelling (Git Bash exports SYSTEMROOT).
+    expect(lib.launchTarget('C:\\npm\\codex.cmd', [], 'win32', { SYSTEMROOT: 'C:\\WINDOWS' })?.file).toBe('C:\\WINDOWS\\System32\\cmd.exe')
+  })
+
+  it('refuses what cmd.exe or the shim would reinterpret, and a cmd.exe it cannot name absolutely', () => {
+    for (const bad of ['"', '%', '&', '^', '|', '<', '>', '!', '(', ')', ' ', '\n']) {
+      expect(lib.launchTarget('C:\\npm\\codex.cmd', ['resume', `x${bad}y`], 'win32', env), JSON.stringify(bad)).toBeNull()
+    }
+    for (const bad of ['"', '%', '&', '^']) {
+      expect(lib.launchTarget(`C:\\a${bad}b\\codex.cmd`, [], 'win32', env), JSON.stringify(bad)).toBeNull()
+    }
+    expect(lib.launchTarget('codex.cmd', [], 'win32', env)).toBeNull()
+    for (const root of [undefined, '', 'Windows', 'C:Windows']) {
+      expect(lib.launchTarget('C:\\npm\\codex.cmd', [], 'win32', { SystemRoot: root }), String(root)).toBeNull()
+    }
+  })
+})
+
+describe('codex-resume-picker isResumeId', () => {
+  it('accepts a UUID and nothing else', () => {
+    expect(lib.isResumeId('0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b')).toBe(true)
+    for (const bad of ['uuid-abc', '', 'x & calc', '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b&x', null, undefined, 42]) {
+      expect(lib.isResumeId(bad), String(bad)).toBe(false)
+    }
   })
 })

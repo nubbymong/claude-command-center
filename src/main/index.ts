@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, countUnleasedAgentSessions } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -519,7 +519,7 @@ if (!gotTheLock) {
     // adoption of a provider's own default sign-in runs after the legacy
     // reconcile, outside the registry lock.
     try {
-      initProviderAccounts()
+      initProviderAccounts({ unleasedSessions: (id) => countUnleasedAgentSessions(id) })
       // A resources directory chosen after start (first-run setup) moves the
       // registry with it before anything reads or reconciles it.
       onResourcesDirectoryChanged((dir) => { void followResourcesDirectory(dir) })

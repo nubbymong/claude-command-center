@@ -46,7 +46,7 @@
 import path from 'node:path'
 import type { AuthMethod, AuthRealm, KnownAuthState, RealmOwnership } from '../../../shared/providers'
 import type {
-  ProviderAuthOperations, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthFailureCode, AuthCredentialKind,
+  ProviderAuthOperations, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthFailureCode, AuthCredentialKind, LaunchPreparation,
 } from '../core'
 import { redactSecrets } from '../../hooks/hook-payload-redactor'
 import { redactTokens } from '../../github/security/token-redactor'
@@ -160,7 +160,14 @@ function normaliseApiKey(raw: string): string | null {
   return v.length >= MIN_API_KEY_LENGTH && v.length <= MAX_API_KEY_LENGTH && /^[\x21-\x7e]+$/.test(v) ? v : null
 }
 
-export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOperations {
+/** The auth operations plus the launch preparation that shares their realm
+ *  and executable checks. */
+export type CodexAuthOperations = ProviderAuthOperations & {
+  prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal>
+  sessionsDir(realm: RealmRef): Promise<string | null>
+}
+
+export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperations {
   const platform = deps.executablePorts.platform
   const pathApi = platform === 'win32' ? path.win32 : path.posix
   const caseless = platform === 'win32' || platform === 'darwin'
@@ -204,7 +211,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
     }
   }
 
-  async function prepare(ref: RealmRef, purpose: 'status' | 'login' | 'logout'): Promise<Ready | Refusal> {
+  async function prepare(ref: RealmRef, purpose: 'status' | 'login' | 'logout' | 'launch'): Promise<Ready | Refusal> {
     const where = await locate(ref)
     if (isRefusal(where)) return where
     const ownership = where.ownership
@@ -279,6 +286,38 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): ProviderAuthOper
   }
 
   return {
+    /** What a session or reviewer launch in this realm needs, proven now
+     *  (plan A10): the canonical home, the executable setup proved and
+     *  re-verified, the base environment, and no `.env` in a managed realm.
+     *  Not a CLI run, so no realm lock: the caller's account lease keeps the
+     *  folder from being removed. */
+    async prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal> {
+      try {
+        const r = await prepare(realm, 'launch')
+        if (isRefusal(r)) return r
+        const exe = currentExecutable()
+        if (!exe.ok) return exe
+        return {
+          ok: true, home: r.home, executable: exe.executable, baseEnv: r.base,
+          realmEnv: { set: { CODEX_HOME: r.home } },
+          sessionsDir: pathApi.join(r.home, 'sessions'),
+        }
+      } catch {
+        return refuse('not-started')
+      }
+    },
+
+    /** The realm's transcript folder, for the usage index (plan A13): located
+     *  exactly as a launch locates it, and nothing else checked. */
+    async sessionsDir(realm: RealmRef): Promise<string | null> {
+      try {
+        const where = await locate(realm)
+        return isRefusal(where) ? null : pathApi.join(where.home, 'sessions')
+      } catch {
+        return null
+      }
+    },
+
     status(realm) {
       return guard(async () => {
         const r = await prepare(realm, 'status')

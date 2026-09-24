@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "22e405255c4c260499bcfe10fc11bf16c39e4ec07b56857f9ee938ce49e56e10",
-  "manifestHead": "660452b31cdd00ba68743abf548a14af32cf0fd0",
+  "manifestPathDigest": "8fd27d33c91f1e4c0152a04df6901765d1dd98d5cb49c8b08f15cd325a0432d4",
+  "manifestHead": "e7d976118fa75d1275f5f464e935a539e7270aa2",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -140,9 +140,9 @@
         "P14"
       ],
       "category": "RESUME-PICKER",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 resume picker UNCHANGED; tests/unit/scripts/codex-resume-picker.test.ts",
-      "note": "runs inside the PTY and reads CODEX_HOME from its env, so a managed realm is honoured without change"
+      "disposition": "replace",
+      "evidence": "WP1.68 resume picker ADAPTED in WP2 commit 4: it runs only the executable the launch proved (CCC_CODEX_EXECUTABLE, never a PATH lookup), never through a shell option, resumes only a UUID read from a transcript, and prints transcript text without control characters; tests/unit/scripts/codex-resume-picker.test.ts (lib), tests/unit/providers/codex/spawn.test.ts (the executable handed over), WP1.38",
+      "note": "re-dispositioned in WP2 commit 4 (was retain); still reads CODEX_HOME from its env, so the realm is honoured"
     },
     {
       "path": "scripts/lib/codex-resume-picker-lib.js",
@@ -151,9 +151,9 @@
         "P14"
       ],
       "category": "RESUME-PICKER",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 resume picker UNCHANGED; tests/unit/scripts/codex-resume-picker.test.ts",
-      "note": "rollout parsing library behind the picker"
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: launchTarget (the cmd.exe /s route, as spawn.ts codexCmdExeTarget) and isResumeId added; buildResumeArgs resumes only a UUID; parsing unchanged; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68, WP1.38)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "scripts/readme-shots/stage/content.js",
@@ -489,7 +489,7 @@
       "category": "LAUNCH",
       "disposition": "replace",
       "evidence": "tests/wp1/launch-handoff.test.ts asserts the binding fields at the IPC boundary (WP1.38, WP1.42); existing codexOptions superRefine cases retained",
-      "note": "pty:spawn schema gains the provider-neutral binding (providerAccountId/authRealmId/identityId); codexOptions validation unchanged"
+      "note": "WP2 commit 4: pty:spawn takes the Codex account as providerAccountId (+ a per-launch acknowledgeRealmOnly), Codex only; the Codex model is bounded; codexLaunch is main-internal; a Codex SSH spawn is refused first; the launch is prepared by the accounts service and handed to pty-manager with its lease, the wait registered with pty-manager (beginSpawnPreparation). authRealmId/identityId are resolved by the service, never sent"
     },
     {
       "path": "src/main/logging/should-register-run.ts",
@@ -882,6 +882,7 @@
     {
       "path": "src/main/providers/types.ts",
       "predicates": [
+        "P04",
         "P05",
         "P07",
         "P14"
@@ -889,11 +890,12 @@
       "category": "LAUNCH",
       "disposition": "replace",
       "evidence": "type-level change exercised by tests/wp1/launch-handoff.test.ts (WP1.38)",
-      "note": "SpawnOptions gains the provider-neutral binding fields"
+      "note": "WP2 commit 4: SpawnOptions gains realmLaunch (the Codex session's prepared launch: executable, realm env, sessions folder), telemetry opts gain sessionsDir, buildSpawnCommand may return a verbatim commandLine (the cmd.exe /s route)"
     },
     {
       "path": "src/main/pty-manager.ts",
       "predicates": [
+        "P04",
         "P05",
         "P06",
         "P07",
@@ -902,7 +904,7 @@
       "category": "LAUNCH",
       "disposition": "replace",
       "evidence": "Claude env shape pinned by tests/wp1/claude-characterization.test.ts C1 and tests/unit/pty-spawn-env.test.ts (both retained as protection, WP1.54); binding/lease behaviour by tests/wp1/launch-handoff.test.ts and tests/wp1/consumer-leases.test.ts (WP1.38, WP1.42, WP1.46)",
-      "note": "both local branches resolve the selected/provider-default account binding, validate it, acquire a lease and hand the exact realm env to the provider spawn; Claude keeps withProfileHome; the Codex branch sets CODEX_HOME from the realm; Codex identity capture removed"
+      "note": "WP2 commit 4: the Codex branch runs only from the prepared launch (executable, realm env with CODEX_HOME, sessions folder) and holds its account lease until its process ends; the binding and lease are taken in pty:spawn through the accounts service. The Claude branch is unchanged (withProfileHome); running Claude sessions are counted for a Claude switch-off. Codex identity capture removed"
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -912,9 +914,9 @@
         "P14"
       ],
       "category": "LAUNCH",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); sanitize-restored-spawn-options suites",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: the Codex model bound (CODEX_MODEL_RE, shared with the pty:spawn schema) and its fail-open repair for a restored session of any provider; tests/unit/main/sanitize-restored-spawn-options.test.ts, tests/wp1/launch-handoff.test.ts (WP1.42)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "src/main/session-resume-enrich.ts",
@@ -963,9 +965,9 @@
         "P14"
       ],
       "category": "TOKENOMICS",
-      "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4 (plan A13): carries the Codex accounts' realm folders to the worker (open + set-codex-realm-dirs); tests/unit/tokenomics/tk-supervisor.test.ts, tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "src/main/tokenomics/tk-types.ts",
@@ -983,9 +985,9 @@
         "P14"
       ],
       "category": "TOKENOMICS",
-      "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4 (plan A13): the open message gains codexRealmSessionsDirs and a set-codex-realm-dirs message; tests/unit/tokenomics/tk-supervisor.test.ts, tests/unit/native/tokenomics-worker-ingest.native.test.ts (WP1.2)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "src/main/tokenomics/tokenomics-service.ts",
@@ -1006,7 +1008,7 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "as tokenomics-service.ts: tests/wp1/tokenomics-realm-discovery.test.ts (owner decision D10, WP1.2, WP1.5)",
+      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): the worker walks and watches ~/.codex/sessions plus every folder it is handed, reading each rollout once -- tests/unit/native/tokenomics-worker-ingest.native.test.ts (CI native suite); the folder list itself by tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2, WP1.5)",
       "note": "walks the list of sessions directories it is handed; parsing unchanged"
     },
     {
@@ -2359,6 +2361,18 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/pty-handlers-command-secrets.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "existing pty:spawn strip suite; WP2 commit 4 added the codexLaunch case: a renderer-sent launch is stripped and a Codex spawn with no accounts service is refused (WP1.38, WP1.42; tests/wp1/launch-handoff.test.ts, tests/wp1/launch-handoff-pty.test.ts)",
+      "note": "baseline pty:spawn strip suite; WP2 commit 4 added the codexLaunch case (re-dispositioned: it changed)"
+    },
+    {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
       "predicates": [
         "P13"
@@ -2395,9 +2409,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: existing cases retained, Codex model repair cases added; tests/unit/main/sanitize-restored-spawn-options.test.ts (WP1.42)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
@@ -2516,9 +2530,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: existing cases retained, the realm-folder case added (indexed beside ~/.codex, followed on change, each rollout read once); tests/unit/native/tokenomics-worker-ingest.native.test.ts (WP1.2; CI native suite)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "tests/unit/pr600-r1-lifetime.test.ts",
@@ -3310,9 +3324,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: existing cases retained (buildResumeArgs now given a UUID), launchTarget and isResumeId cases added; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "tests/unit/scripts/release-gate.test.ts",
@@ -3398,9 +3412,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: existing cases retained, the realm-folder hand-over case added; tests/unit/tokenomics/tk-supervisor.test.ts (WP1.2)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "tests/unit/tokenomics/tk-worker-transport.test.ts",

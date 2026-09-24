@@ -144,7 +144,9 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   let priceKeys: string[] = []
   let configs: TkConfigDim[] = deps.configs ?? []
   let claudeDir = ''
-  let codexDir = ''
+  /** The user's own Codex home's sessions folder, then (WP2, plan A13) those
+   *  of the app's Codex accounts: every realm a Codex session can write to. */
+  let codexDirs: string[] = []
   let sweeping = false
   /**
    * Did anything in THIS sweep leave work behind — a file not read to its end,
@@ -177,6 +179,8 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   let firstSweepDone = false
   let lastProgress = { filesDone: 0, filesTotal: 0, eventsIngested: 0 }
   const watchers: Array<{ close(): void }> = []
+  /** Watchers of the Codex accounts' folders, by folder: the set changes. */
+  const realmWatchers = new Map<string, { close(): void }>()
   let watchTimer: ReturnType<typeof setTimeout> | null = null
   let tailTimer: ReturnType<typeof setInterval> | null = null
 
@@ -228,8 +232,11 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         if (st.size > 0) out.push(full)
       }
     }
-    try { if (fs.existsSync(codexDir)) walk(codexDir, 0) } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
-    return out
+    for (const codexDir of codexDirs) {
+      try { if (fs.existsSync(codexDir)) walk(codexDir, 0) } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
+    }
+    // One rollout, one cursor: never the same path twice.
+    return [...new Set(out)]
   }
 
   function resolveConfigId(cwd: string): string | null {
@@ -625,20 +632,44 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     ;(watchTimer as unknown as { unref?: () => void }).unref?.()
   }
 
+  function watchDir(dir: string): { close(): void } | null {
+    try {
+      if (!fs.existsSync(dir)) return null
+      const wch = fs.watch(dir, { recursive: true }, () => scheduleIncremental())
+      // An FSWatcher 'error' with no listener throws -> uncaughtException -> the
+      // worker dies and burns a restart toward permanent degrade. Log + close the
+      // broken watcher; the 5s tailTimer sweep below keeps indexing alive.
+      ;(wch as { on?: (ev: string, cb: (e: unknown) => void) => void }).on?.('error', (err) => {
+        logw('warn', `fs.watch error for ${dir}; relying on periodic sweep: ${String(err)}`)
+        try { wch.close() } catch { /* already closed */ }
+      })
+      return wch
+    } catch (err) { logw('warn', `fs.watch failed for ${dir}: ${String(err)}`); return null }
+  }
+
+  /** The Codex accounts' folders now (plan A13): watch the new ones, stop
+   *  watching the gone ones. A folder that does not exist yet (an account
+   *  that has run no session) is picked up by the periodic sweep. */
+  function setCodexRealmDirs(dirs: readonly string[]): void {
+    const base = codexDirs[0]
+    const next = [...new Set(dirs.filter((d) => typeof d === 'string' && d.length > 0 && d !== base))]
+    codexDirs = base === undefined ? next : [base, ...next]
+    for (const [dir, wch] of realmWatchers) {
+      if (next.includes(dir)) continue
+      try { wch.close() } catch { /* ignore */ }
+      realmWatchers.delete(dir)
+    }
+    for (const dir of next) {
+      if (realmWatchers.has(dir)) continue
+      const wch = watchDir(dir)
+      if (wch) realmWatchers.set(dir, wch)
+    }
+  }
+
   function startWatching(): void {
-    for (const dir of [claudeDir, codexDir]) {
-      try {
-        if (!fs.existsSync(dir)) continue
-        const wch = fs.watch(dir, { recursive: true }, () => scheduleIncremental())
-        // An FSWatcher 'error' with no listener throws -> uncaughtException -> the
-        // worker dies and burns a restart toward permanent degrade. Log + close the
-        // broken watcher; the 5s tailTimer sweep below keeps indexing alive.
-        ;(wch as { on?: (ev: string, cb: (e: unknown) => void) => void }).on?.('error', (err) => {
-          logw('warn', `fs.watch error for ${dir}; relying on periodic sweep: ${String(err)}`)
-          try { wch.close() } catch { /* already closed */ }
-        })
-        watchers.push(wch)
-      } catch (err) { logw('warn', `fs.watch failed for ${dir}: ${String(err)}`) }
+    for (const dir of [claudeDir, codexDirs[0]]) {
+      const wch = dir ? watchDir(dir) : null
+      if (wch) watchers.push(wch)
     }
     // Safety tail: recursive watch can miss newly-created nested session files on
     // some platforms; a slow periodic incremental sweep guarantees eventual pickup.
@@ -652,7 +683,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     configs = msg.configs
     if (configs.length) db.upsertConfigs(configs)
     claudeDir = msg.claudeProjectsDir
-    codexDir = msg.codexSessionsDir
+    codexDirs = [msg.codexSessionsDir]
     firstSweepDone = db.getMeta('firstIndexComplete') === '1'
     // Ready BEFORE the sweep so queries work during indexing - and it carries
     // what the DB already knows, so an index completed on a previous run reads
@@ -661,6 +692,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     post({ type: 'ready', firstIndexComplete: firstSweepDone, eventsTotal: db.eventCount() })
     setTimeout(() => { void ingestAll('initial') }, 0)
     startWatching()
+    setCodexRealmDirs(msg.codexRealmSessionsDirs ?? [])
   }
 
   function handle(msg: ToTkWorker): void {
@@ -672,6 +704,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     switch (msg.type) {
       case 'set-pricing': setPricing(msg.pricing); return
       case 'set-configs': configs = msg.configs; db.upsertConfigs(configs); return
+      case 'set-codex-realm-dirs': setCodexRealmDirs(Array.isArray(msg.dirs) ? msg.dirs : []); scheduleIncremental(); return
       case 'reindex': void ingestAll('incremental'); return
       case 'query': handleQuery(msg.id, msg.kind, msg.args); return
       default: { const _x: never = msg; void _x }
@@ -694,6 +727,8 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   function stop(): void {
     for (const wch of watchers) { try { wch.close() } catch { /* ignore */ } }
     watchers.length = 0
+    for (const wch of realmWatchers.values()) { try { wch.close() } catch { /* ignore */ } }
+    realmWatchers.clear()
     if (watchTimer) { clearTimeout(watchTimer); watchTimer = null }
     if (tailTimer) { clearInterval(tailTimer); tailTimer = null }
     try { db?.close() } catch { /* ignore */ }

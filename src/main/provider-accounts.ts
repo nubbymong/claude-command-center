@@ -66,9 +66,12 @@ export function experimentalFromSettings(settings: Record<string, unknown> | nul
   })
 }
 
-/** Build the service once the registry has been loaded (or failed to). */
-export function initProviderAccounts(): AccountsService {
+/** Build the service once the registry has been loaded (or failed to).
+ *  `unleasedSessions` comes from the composition root (pty-manager), so this
+ *  module imports no PTY code. */
+export function initProviderAccounts(opts: { unleasedSessions?: (providerId: ProviderId) => number } = {}): AccountsService {
   service = new AccountsService({
+    ...(opts.unleasedSessions ? { unleasedSessions: opts.unleasedSessions } : {}),
     // Asked afresh each time: a resources-directory change re-creates it.
     store: () => getAccountRegistry(),
     leases: getConsumerLeases(),

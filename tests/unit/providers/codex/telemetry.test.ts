@@ -531,6 +531,50 @@ describe('watchAndClaimRollout', () => {
   })
 })
 
+describe('watchAndClaimRollout in a realm (WP2 plan A13)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+    _mockCodexHome = ''
+  })
+
+  it('claims only from the sessions folder it is given: a matching rollout in the ambient home is never read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false })
+    const ambient = mkdtempSync(join(tmpdir(), 'ccc-test-codex-ambient-'))
+    const realmSessions = join(mkdtempSync(join(tmpdir(), 'ccc-test-codex-realm-')), 'sessions')
+    _mockCodexHome = ambient
+    vi.mocked(getCodexHome).mockReturnValue(ambient)
+    const today = new Date()
+    const ymd = [String(today.getUTCFullYear()), String(today.getUTCMonth() + 1).padStart(2, '0'), String(today.getUTCDate()).padStart(2, '0')]
+    const spawnTs = Date.now()
+    const ts = new Date(spawnTs + 100).toISOString()
+    const rollout = (id: string, input: number) => [
+      JSON.stringify({ timestamp: ts, type: 'session_meta', payload: { id, timestamp: ts, cwd: '/realm/cwd', model: 'gpt-5.5', cli_version: '0.155.1' } }),
+      JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type: 'task_started', model_context_window: 200000 } }),
+      JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: input + 1 }, last_token_usage: null, model_context_window: 200000 }, rate_limits: null } }),
+    ].join('\n') + '\n'
+    // The ambient home holds a rollout that matches this session's cwd and window.
+    const ambientDay = join(ambient, 'sessions', ...ymd)
+    mkdirSync(ambientDay, { recursive: true })
+    writeFileSync(join(ambientDay, 'rollout-ambient.jsonl'), rollout('ambient-1', 9999), 'utf-8')
+
+    const updates: import('../../../../src/shared/types').StatuslineData[] = []
+    const src = watchAndClaimRollout('sess-realm', '/realm/cwd', spawnTs, (d) => updates.push(d), realmSessions)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(updates).toHaveLength(0)
+
+    const realmDay = join(realmSessions, ...ymd)
+    mkdirSync(realmDay, { recursive: true })
+    writeFileSync(join(realmDay, 'rollout-realm.jsonl'), rollout('realm-1', 1500), 'utf-8')
+    await vi.advanceTimersByTimeAsync(1200)
+    src.stop()
+
+    expect(updates.length).toBeGreaterThan(0)
+    expect(updates.map((u) => u.inputTokens)).not.toContain(9999)
+    expect(updates[updates.length - 1].inputTokens).toBe(1500)
+  })
+})
+
 describe('parseAndEmit truncation guard', () => {
   afterEach(() => {
     vi.restoreAllMocks()

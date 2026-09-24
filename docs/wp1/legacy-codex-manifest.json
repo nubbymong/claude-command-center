@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T01:03:31.560Z",
-  "head": "660452b31cdd00ba68743abf548a14af32cf0fd0",
-  "tree": "b01200a49c9216860bb980d039d48bf1d5ccbd90",
+  "generatedAt": "2026-09-24T03:05:13.603Z",
+  "head": "e7d976118fa75d1275f5f464e935a539e7270aa2",
+  "tree": "c8036154ba401cbb4eae0fba37fbf37a099f88f3",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,8 +116,8 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2205,
-  "excludedFileCount": 365,
+  "trackedFileCount": 2208,
+  "excludedFileCount": 368,
   "scannedFileCount": 1840,
   "unscopedFileCount": 15,
   "unscoped": [
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 305,
-  "pathDigest": "22e405255c4c260499bcfe10fc11bf16c39e4ec07b56857f9ee938ce49e56e10",
+  "matchedPathCount": 306,
+  "pathDigest": "8fd27d33c91f1e4c0152a04df6901765d1dd98d5cb49c8b08f15cd325a0432d4",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -175,7 +175,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 69
+      "lineCount": 78
     },
     {
       "path": "package.json",
@@ -215,7 +215,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 31
+      "lineCount": 33
     },
     {
       "path": "scripts/lib/codex-resume-picker-lib.js",
@@ -223,7 +223,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 11
+      "lineCount": 13
     },
     {
       "path": "scripts/readme-shots/stage/content.js",
@@ -460,7 +460,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 16
+      "lineCount": 57
     },
     {
       "path": "src/main/logging/should-register-run.ts",
@@ -534,7 +534,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 72
+      "lineCount": 75
     },
     {
       "path": "src/main/providers/codex/auth.ts",
@@ -680,7 +680,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 42
+      "lineCount": 57
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -722,7 +722,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 5
+      "lineCount": 6
     },
     {
       "path": "src/main/providers/host-color-scheme.ts",
@@ -734,21 +734,23 @@
     {
       "path": "src/main/providers/types.ts",
       "predicates": [
+        "P04",
         "P05",
         "P07",
         "P14"
       ],
-      "lineCount": 10
+      "lineCount": 14
     },
     {
       "path": "src/main/pty-manager.ts",
       "predicates": [
+        "P04",
         "P05",
         "P06",
         "P07",
         "P14"
       ],
-      "lineCount": 80
+      "lineCount": 116
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -757,7 +759,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 16
+      "lineCount": 40
     },
     {
       "path": "src/main/session-resume-enrich.ts",
@@ -793,7 +795,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 3
+      "lineCount": 7
     },
     {
       "path": "src/main/tokenomics/tk-types.ts",
@@ -807,7 +809,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 1
+      "lineCount": 5
     },
     {
       "path": "src/main/tokenomics/tokenomics-service.ts",
@@ -815,7 +817,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 10
     },
     {
       "path": "src/main/tokenomics/tokenomics-worker.ts",
@@ -823,7 +825,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 48
+      "lineCount": 58
     },
     {
       "path": "src/main/watchdog/watchdog-manager.ts",
@@ -1785,6 +1787,15 @@
       "lineCount": 11
     },
     {
+      "path": "tests/unit/main/pty-handlers-command-secrets.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 19
+    },
+    {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
       "predicates": [
         "P13"
@@ -1811,7 +1822,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 24
+      "lineCount": 48
     },
     {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
@@ -1896,7 +1907,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 21
+      "lineCount": 27
     },
     {
       "path": "tests/unit/pr600-r1-lifetime.test.ts",
@@ -1989,7 +2000,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 132
+      "lineCount": 196
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
@@ -1999,7 +2010,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 72
+      "lineCount": 80
     },
     {
       "path": "tests/unit/providers/codex/ui-detection.test.ts",
@@ -2468,7 +2479,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 18
+      "lineCount": 30
     },
     {
       "path": "tests/unit/scripts/release-gate.test.ts",
@@ -2532,7 +2543,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 1
+      "lineCount": 7
     },
     {
       "path": "tests/unit/tokenomics/tk-worker-transport.test.ts",

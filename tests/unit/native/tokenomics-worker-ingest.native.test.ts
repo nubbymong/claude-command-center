@@ -319,4 +319,39 @@ describe('codex rollouts are streamed, not slurped', () => {
     expect(ready.firstIndexComplete).toBe(true)
     expect(ready.eventsTotal).toBe(1)
   })
+  // WP2 plan A13: each Codex account writes its transcripts in its own realm.
+  it('indexes the Codex accounts\' realm folders beside ~/.codex, follows a change of them, and reads each rollout once', async () => {
+    const write = (dir: string, name: string, id: string, turns: number) => {
+      fs.mkdirSync(dir, { recursive: true })
+      const lines = [JSON.stringify({ type: 'session_meta', timestamp: '2026-08-01T00:00:00Z', payload: { id, cwd: 'F:\\proj', model: 'gpt-5.5' } })]
+      for (let i = 0; i < turns; i++) {
+        lines.push(JSON.stringify({ type: 'event_msg', timestamp: '2026-08-01T00:00:0' + i + 'Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 10 }, last_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10 } } } }))
+      }
+      fs.writeFileSync(path.join(dir, name), lines.join('\n') + '\n')
+    }
+    const base = path.join(tmp, 'codex')
+    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
+    const realmB = path.join(tmp, 'realms', 'b', 'sessions')
+    write(path.join(base, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-base.jsonl', 'cx-base', 2)
+    write(path.join(realmA, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-a.jsonl', 'cx-a', 3)
+    write(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 4)
+    const fake = new FakeTkWorkerTransport()
+    const msgs: FromTkWorker[] = []
+    fake.onMessage((m) => msgs.push(m))
+    track(createTokenomicsWorker(fake.asWorkerSide(), {}))
+    // A realm listed twice, and the base listed again as a realm: each read once.
+    fake.post({ type: 'open', dbPath: ':memory:', pricing: CODEX_PRICING, configs: [], claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: base, codexRealmSessionsDirs: [realmA, realmA, base] })
+    expect(await sweepUntilStable(fake, msgs)).toBe(2 + 3)
+    // An account added: its folder joins the index.
+    fake.post({ type: 'set-codex-realm-dirs', dirs: [realmA, realmB] })
+    const completions = () => (msgs.filter((m) => m.type === 'index-complete') as Array<{ eventsTotal: number }>)
+    let total = completions().at(-1)!.eventsTotal
+    for (let round = 0; round < 60 && total !== 2 + 3 + 4; round++) {
+      const seen = completions().length
+      fake.post({ type: 'reindex' })
+      for (let i = 0; i < 500 && completions().length <= seen; i++) await new Promise((r) => setTimeout(r, 10))
+      total = completions().at(-1)!.eventsTotal
+    }
+    expect(total).toBe(2 + 3 + 4)
+  })
 })

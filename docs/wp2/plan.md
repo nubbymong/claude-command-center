@@ -436,10 +436,75 @@ obligations fall on later slices:
   then reports the observed state. A launcher other than node, bun or deno
   between the root and the codex binary is not recognised as part of the
   chain.
+- **Must fix before this PR leaves draft (CI evidence, 2026-09-24):** the
+  "table cannot be read" case above is not only a blocked PowerShell. On a
+  slow Windows runner the kill took 8.1 s, which is the process-table
+  timeout (8 s, about twice a typical cold PowerShell start). A table read
+  that times out falls back to killing the root alone. On Windows the root
+  is cmd.exe, so the Codex CLI outlives a deadline or a cancel. Fix it:
+  either read the chain once the run is established and use that snapshot
+  when the kill-time read fails (the root still running proves the chain
+  is alive, as it does today after a slow read), or give the read a budget
+  a loaded machine meets. Needs its own ADR-009 pass and a real-process
+  test that forces the kill-time read to fail.
 - **Known, accepted:** deleting the very last Claude profile does not archive
   its account (indistinguishable from a failed read); emoji ZWJ sequences
   store with spaces (stripSpoofableText); reconcile is quadratic in profile
   count (fine below thousands).
+
+## Commit 4 (launch handoff): decisions, departures, what remains (2026-09-24)
+
+- **Done:** a Codex session runs only from a launch the accounts service
+  prepared (account named, else the provider default; per-launch
+  acknowledgement of an unverified sign-in; external-home drift check; lease;
+  executable re-verified; realm environment through `realmEnvForProvider`).
+  pty-manager holds the lease until the session's process has ended. The
+  `pty:spawn` wait is registered with pty-manager, so a close, a sweep or a
+  newer spawn supersedes it. Codex SSH spawns are refused first. The resume
+  picker and telemetry use the realm, and so does the usage index (A13). The
+  carried-forward Claude item is done: turning Claude off is refused while a
+  Claude session runs.
+- **Decision:** the acknowledgement names its account. `acknowledgeRealmOnly`
+  counts only together with the `providerAccountId` it acknowledges, so a
+  flag replayed from an earlier launch never consents to whatever the
+  default has since become.
+- **Departures:**
+  - The session's working directory stays the project, not the shim's
+    folder: Codex's workspace is its cwd. `NoDefaultCurrentDirectoryInExePath`
+    keeps cmd.exe from resolving programs from the project folder by itself,
+    and the `/s` cmd.exe line keeps the shim's path whole.
+  - Claude behaviour change (T18): a Claude spawn that waits for a legacy CLI
+    install is now registered with pty-manager for the wait, like a Codex
+    preparation. A tab closed during the install therefore starts no PTY;
+    before, one started for the closed tab. Keystrokes during the wait are
+    handled as before: buffered, then discarded when the spawn starts.
+  - A lease is released through its lease object rather than
+    `releaseLaunch(kind, ownerId)`. The effect is the same and both are
+    idempotent; `releaseLaunch` stays for callers that hold only the owner id.
+- **Deferred to commit 6 (with the setup surface):** A8's "a launch whose
+  resolved executable differs is blocked until the user re-checks" holds
+  within a run. It needs the proven identity persisted across restarts, plus
+  the user's re-check action that accepts a new one. Until then the first
+  launch after a start re-runs discovery. `realm.isolated` stays `unknown`
+  until the evidence pass.
+- **Known until commit 6:** the renderer sends no `providerAccountId` yet.
+  Codex sessions therefore run on the provider default, and an adopted
+  external account (realm-only) is refused until the session dialog asks for
+  the acknowledgement. `codex_review` still runs on the ambient home until
+  commit 5 moves it onto `prepareLaunch`.
+- **For commit 6 (renderer):** a Restart that lands while the replaced
+  spawn is still being prepared produces a synthetic `pty:exit` for the
+  cancelled preparation just before the new one starts. The same happens
+  today on a profile-refresh wait. If the remounted terminal is already
+  listening it can mark the live session exited. Fix it where the event is
+  consumed: exits tagged with a spawn generation the terminal checks.
+- **Known limit:** main counts running and starting Claude sessions when
+  Claude is switched off. It does not check the switch before a Claude
+  spawn; the renderer gates that, and A12 keeps Claude's launch path.
+- **To verify against the pinned CLI (before commit 6):** whether a
+  project-level Codex configuration in the working directory can change the
+  model provider or its endpoint for a realm session. If it can, a Codex
+  launch needs a project gate like Claude's.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

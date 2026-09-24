@@ -141,4 +141,19 @@ describe('TokenomicsSupervisor', () => {
     await expect(p).rejects.toThrow()
     expect(() => sup.shutdown()).not.toThrow()
   })
+
+  // WP2 plan A13: each Codex account writes its transcripts in its own realm.
+  it('hands the worker the Codex account folders at open, and every change after', () => {
+    const t = new FakeTkWorkerTransport()
+    const seen: any[] = []
+    t.onWorker((m) => {
+      seen.push(m)
+      if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 })
+    })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts(), codexRealmSessionsDirs: ['/r/a/sessions'] })
+    sup.start()
+    expect(seen.find((m) => m.type === 'open')).toMatchObject({ codexSessionsDir: '/x', codexRealmSessionsDirs: ['/r/a/sessions'] })
+    sup.setCodexRealmSessionsDirs(['/r/a/sessions', '/r/b/sessions'])
+    expect(seen.at(-1)).toEqual({ type: 'set-codex-realm-dirs', dirs: ['/r/a/sessions', '/r/b/sessions'] })
+  })
 })

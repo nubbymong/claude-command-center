@@ -27,7 +27,7 @@
 import {
   beginAccountSetup, abandonAccountSetup, commitAccountSetup, markSetupCredentialsWritten, createIdentity, updateIdentity,
   createGroup, renameGroup, deleteGroup, linkAccountIdentity, unlinkAccountIdentity, setAccountLifecycle, setProviderDefault,
-  recordAuthCheck, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount,
+  recordAuthCheck, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount, chooseSessionAccount,
   recordProviderMigration, resolveLaunchBinding, findAccount, findRealm, findIdentity, isLegacyLinked,
   resolveCapability, makeOpaqueId, providerRealmKind, isIdentityColourKey,
   MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY,
@@ -45,6 +45,7 @@ import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './con
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
 import type { SecretHandleStore } from './secret-handles'
 import { migrateExternalDefaultRealm } from './external-default-migration'
+import { realmEnvForProvider } from './registry'
 import type { ExternalDefaultMigrationOutcome } from './external-default-migration'
 
 export interface AccountsServiceDeps {
@@ -67,6 +68,10 @@ export interface AccountsServiceDeps {
   /** Push an identity edit to the legacy store that mirrors it (Claude's
    *  profiles.json) now, rather than at the next start. */
   reconcileLegacy?: (providerId: ProviderId) => Promise<void>
+  /** Running sessions of a provider that hold no account lease (Claude's,
+   *  until its launch path takes one): a switch-off refuses while any runs.
+   *  A throw counts as running (fail closed). */
+  unleasedSessions?: (providerId: ProviderId) => number
   log?: (message: string) => void
 }
 
@@ -74,6 +79,24 @@ export interface AccountsServiceDeps {
  *  reviewer invocation (commit 5), bound the same way. */
 export type LaunchLeaseResult =
   | { ok: true; lease: AccountLease; binding: SessionBinding; realmOnly: boolean; reviewer?: ReviewerChoice }
+  | AccountsFailure
+
+/** Everything a launch runs with, bound and held (plan A10): the lease the
+ *  launch's end releases, the binding, and the provider's preparation. The
+ *  environment already has the ambient authority variables removed and the
+ *  realm selector set last; a caller adds only its own session variables. */
+export type PreparedLaunchResult =
+  | {
+    ok: true
+    lease: AccountLease
+    binding: SessionBinding
+    realmOnly: boolean
+    reviewer?: ReviewerChoice
+    home: string
+    executable: string
+    env: Record<string, string>
+    sessionsDir: string
+  }
   | AccountsFailure
 
 /** The kind of credential a status reported, as the registry compares it. */
@@ -397,7 +420,9 @@ export class AccountsService {
         this.enabledOverride.set(providerId, { enabled: true, savedAtSet: this.savedPreference(providerId).pref })
         return { ok: true }
       }
-      const running = this.deps.leases.countForProvider(providerId)
+      let unleased = 0
+      try { unleased = this.deps.unleasedSessions?.(providerId) ?? 0 } catch { unleased = 1 }
+      const running = this.deps.leases.countForProvider(providerId) + (Number.isSafeInteger(unleased) && unleased > 0 ? unleased : 0)
       if (running > 0) return failure('consumers', undefined, { consumers: running })
       const others = this.deps.packages().some((q) => q.id !== providerId && this.isEnabled(q.id))
       if (!others) return failure('last-provider')
@@ -1130,6 +1155,116 @@ export class AccountsService {
       if (!added.ok) return added.code === 'held' ? failure('busy') : failure('invalid-request', 'That launch is already bound to another account.')
       return { ok: true, lease: added.lease, binding: b.binding, realmOnly: b.realmOnly, ...(reviewer ? { reviewer } : {}) }
     })
+  }
+
+  /** Why a session of this provider cannot run on another machine (an SSH
+   *  session), or null when it can: its `session.ssh` capability, never its
+   *  name. Asked before anything else is done for such a spawn. */
+  remoteLaunchRefusal(providerId: ProviderId): AccountsFailure | null {
+    const p = this.pkg(providerId)
+    if (!p) return failure('unsupported')
+    if (this.capability(p, 'session.ssh').enabled) return null
+    return failure('unsupported', `${p.displayName} runs on this computer only in this release; it is not available in SSH sessions.`)
+  }
+
+  /** The transcript folders of a provider's live realms (plan A13): what the
+   *  usage index reads beside the provider's own default folder. Paths only;
+   *  a realm that cannot be located now is left out. */
+  async sessionsDirs(providerId: ProviderId): Promise<string[]> {
+    const p = this.pkg(providerId)
+    const ready = this.ready()
+    if (!p?.launch || 'ok' in ready) return []
+    const out: string[] = []
+    for (const realm of ready.doc.realms) {
+      if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
+      let dir: string | null = null
+      try { dir = await p.launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
+      if (typeof dir === 'string' && dir && !out.includes(dir)) out.push(dir)
+    }
+    return out
+  }
+
+  /** Prepare a launch in its account's realm (plan A10; design 5.5, 5.7, 11),
+   *  one path for sessions and reviewer invocations:
+   *  1. the provider must launch in realms here, locally unless it supports
+   *     remote sessions, and be on;
+   *  2. the account: the one named, else (a session) the provider default or
+   *     (a review) the reviewer default, then the provider default;
+   *  3. an unverified sign-in needs this launch's acknowledgement, before
+   *     anything runs;
+   *  4. an external home is checked first: a sign-in that changed blocks it;
+   *  5. the lease, under the registry lock, on exactly that account;
+   *  6. the provider's preparation (the realm's home and the executable setup
+   *     proved, re-verified now), and the environment through the package's
+   *     own policy. Any refusal after the lease releases it. */
+  async prepareLaunch(input: {
+    kind: LaunchLeaseKind
+    providerId: ProviderId
+    providerAccountId?: string
+    ownerId: string
+    acknowledgeRealmOnly?: boolean
+    /** The launch would run on another machine (an SSH session). */
+    remote?: boolean
+  }): Promise<PreparedLaunchResult> {
+    if (!LAUNCH_LEASE_KINDS.includes(input.kind)) return failure('invalid-request')
+    const p = this.pkg(input.providerId)
+    if (!p?.launch) return failure('unsupported')
+    if (input.remote === true) {
+      const remote = this.remoteLaunchRefusal(p.id)
+      if (remote) return remote
+    }
+    if (!this.capability(p, 'session.launch').enabled) return failure('capability-disabled')
+    if (!this.isEnabled(p.id)) return failure('provider-disabled')
+    const ready = this.ready()
+    if ('ok' in ready) return ready
+    const chosen = input.kind === 'review' ? chooseReviewerAccount(ready.doc, p.id, input.providerAccountId) : chooseSessionAccount(ready.doc, p.id, input.providerAccountId)
+    if (!chosen.ok) return failure('not-found', chosen.message)
+    const a = findAccount(ready.doc, chosen.accountId)
+    const realm = a ? findRealm(ready.doc, a.authRealmId) : undefined
+    const external = realm?.ownership === 'external-default'
+    // The acknowledgement is for the account the request NAMES: one sent with
+    // no account acknowledges nothing, so a flag kept from an earlier launch
+    // can never consent to whatever the default has since become.
+    const acknowledged = input.acknowledgeRealmOnly === true && input.providerAccountId !== undefined && input.providerAccountId === chosen.accountId
+    if (a && (a.identityAssurance === 'realm-only' || external) && !acknowledged) {
+      return failure('acknowledgement-required', 'This sign-in is unverified: confirm that this launch may use it.')
+    }
+    // Design 5.5: before every launch on an external home, check it still
+    // holds the sign-in on record. (A blocked or inactive account is refused
+    // by the binding below without running anything.)
+    if (a && external && a.lifecycle === 'active' && a.operationalState !== 'blocked' && a.providerId === p.id) {
+      const changed = await this.externalStillMatches(ready.store, p, a.id, a.authRealmId, { unansweredBlocks: true })
+      if (changed) return changed
+    }
+    // The executable the launch runs is the one discovery proved: the first
+    // launch after a start proves it here rather than refusing.
+    await this.ensureDiscovered(p)
+    const leased = await this.acquireLaunchLease({
+      kind: input.kind, providerId: p.id, providerAccountId: chosen.accountId, ownerId: input.ownerId,
+      ...(acknowledged ? { acknowledgeRealmOnly: true } : {}),
+    })
+    if (!leased.ok) return leased
+    const release = (r: AccountsFailure): AccountsFailure => { leased.lease.release(); return r }
+    let prep: Awaited<ReturnType<NonNullable<ProviderPackage['launch']>['prepare']>>
+    try { prep = await p.launch.prepare({ authRealmId: leased.binding.authRealmId }) } catch { prep = { ok: false, code: 'not-started' } }
+    if (!prep || prep.ok !== true) return release(this.fromAuth(prep && prep.ok === false ? prep : { ok: false, code: 'not-started' }))
+    const text = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+    if (!text(prep.home) || !text(prep.executable) || !text(prep.sessionsDir) || !prep.baseEnv || typeof prep.baseEnv !== 'object' || !prep.realmEnv || typeof prep.realmEnv !== 'object') {
+      return release(failure('internal', 'The launch could not be prepared.'))
+    }
+    let env: Record<string, string>
+    try {
+      // The one place a realm patch is applied, with the registered package's
+      // own policy: its ambient authority variables out, the selector last.
+      env = realmEnvForProvider(p.id, prep.baseEnv, prep.realmEnv)
+    } catch {
+      return release(failure('internal', 'The launch environment could not be prepared.'))
+    }
+    return {
+      ok: true, lease: leased.lease, binding: leased.binding, realmOnly: leased.realmOnly,
+      ...(input.kind === 'review' ? { reviewer: chosen.source } : {}),
+      home: prep.home, executable: prep.executable, env, sessionsDir: prep.sessionsDir,
+    }
   }
 
   /** The launch ended: release its lease. Idempotent. */
