@@ -393,6 +393,13 @@ export class AccountsService {
     }
   }
 
+  /** The saved settings changed (the app's own settings save): a provider's
+   *  saved on/off may have, and it wins over an in-memory switch, so the
+   *  snapshot is published again with what the service now answers. */
+  settingsChanged(): void {
+    this.changed()
+  }
+
   private log(m: string): void {
     try { this.deps.log?.(`[accounts] ${m}`) } catch { /* never breaks the service */ }
   }

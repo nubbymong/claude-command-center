@@ -11,9 +11,11 @@ interface Props {
   label: string
   disabled?: boolean
   title?: string
+  /** ids of the elements that explain the switch (its state, why it is off). */
+  describedBy?: string
 }
 
-export default function ToggleSwitch({ state, onToggle, label, disabled, title }: Props) {
+export default function ToggleSwitch({ state, onToggle, label, disabled, title, describedBy }: Props) {
   const track =
     state === 'on' ? 'bg-blue' : state === 'mixed' ? 'bg-mauve' : 'bg-surface1'
   const knob =
@@ -28,6 +30,7 @@ export default function ToggleSwitch({ state, onToggle, label, disabled, title }
       role="switch"
       aria-checked={state === 'mixed' ? 'mixed' : state === 'on'}
       aria-label={label}
+      aria-describedby={describedBy}
       title={title}
       disabled={disabled}
       onClick={() => { if (!disabled) onToggle() }}

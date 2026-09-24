@@ -18,7 +18,8 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   const toggle = async () => {
     setBusy(true)
     setError(null)
-    const r = await providerAccountActions.setEnabled(p.providerId, !p.enabled)
+    // Main first (its refusals stand), then the saved setting.
+    const r = await providerAccountActions.switchProvider(p.providerId, !p.enabled)
     setBusy(false)
     if (r.ok) return
     if (r.code === 'last-provider') setError('At least one provider stays on.')

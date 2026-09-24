@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T16:55:01.478Z",
-  "head": "37876e4f0a076abb7764af85538df6776c84ced8",
-  "tree": "61ad57d97f7e67e86710b4c7bc0f2a0c277a4824",
+  "generatedAt": "2026-09-24T17:52:08.540Z",
+  "head": "f4e6d9405bc99f6f56e03d911655fc500292a03d",
+  "tree": "e7b48ded76397ed9d0ee9015c3b1feb3fc8473e3",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2244,
+  "trackedFileCount": 2250,
   "excludedFileCount": 372,
-  "scannedFileCount": 1872,
+  "scannedFileCount": 1878,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 332,
-  "pathDigest": "77dadaee0702f913a49e652c35beb59ce064c655de85889001094d0a85a9bc2b",
+  "matchedPathCount": 335,
+  "pathDigest": "20161341cd9878a858dc1faa3e16813303e2016ed0202c0e8c904475881c8ff1",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -1057,7 +1057,7 @@
         "P10",
         "P11"
       ],
-      "lineCount": 20
+      "lineCount": 12
     },
     {
       "path": "src/renderer/components/Sidebar.tsx",
@@ -1082,7 +1082,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 29
+      "lineCount": 30
     },
     {
       "path": "src/renderer/components/codex/CodexSettingsTab.tsx",
@@ -1127,6 +1127,15 @@
         "P11"
       ],
       "lineCount": 6
+    },
+    {
+      "path": "src/renderer/components/settings/CodeReviewTools.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "lineCount": 35
     },
     {
       "path": "src/renderer/components/settings/accounts/AccountsSurface.tsx",
@@ -1282,7 +1291,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 18
+      "lineCount": 24
     },
     {
       "path": "src/renderer/onboarding/CodexSignInStep.tsx",
@@ -1303,7 +1312,7 @@
         "P10",
         "P11"
       ],
-      "lineCount": 34
+      "lineCount": 33
     },
     {
       "path": "src/renderer/onboarding/CommandBarStep.tsx",
@@ -1334,7 +1343,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 5
+      "lineCount": 7
     },
     {
       "path": "src/renderer/onboarding/WelcomeStep.tsx",
@@ -1439,7 +1448,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 12
+      "lineCount": 18
     },
     {
       "path": "src/renderer/stores/sessionStore.ts",
@@ -1877,7 +1886,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 25
     },
     {
       "path": "tests/unit/main/conductor-mcp-server-source-filter.test.ts",
@@ -1885,7 +1894,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 17
+      "lineCount": 22
     },
     {
       "path": "tests/unit/main/conductor-mcp-session-binding.test.ts",
@@ -2201,7 +2210,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 93
+      "lineCount": 101
     },
     {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
@@ -2225,6 +2234,16 @@
         "P13"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "tests/unit/renderer/code-review-tools.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P08",
+        "P13"
+      ],
+      "lineCount": 69
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -2341,7 +2360,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 68
+      "lineCount": 71
     },
     {
       "path": "tests/unit/renderer/launch-always-new.test.tsx",
@@ -2424,6 +2443,16 @@
       "lineCount": 18
     },
     {
+      "path": "tests/unit/renderer/onboarding-review-tools.test.tsx",
+      "predicates": [
+        "P03",
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "lineCount": 41
+    },
+    {
       "path": "tests/unit/renderer/onboarding-transparency-recap.test.tsx",
       "predicates": [
         "P13"
@@ -2437,7 +2466,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 31
+      "lineCount": 40
     },
     {
       "path": "tests/unit/renderer/quick-start-panel.test.tsx",
@@ -2643,7 +2672,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 62
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",

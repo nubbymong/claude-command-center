@@ -18,6 +18,7 @@ import { createClaudeLegacyAccountsPort } from './legacy-store'
 import type { ClaudeLegacyAccountsIo } from './legacy-store'
 import { createClaudeReviewLaunch } from './review-launch'
 import type { ClaudeReviewPorts } from './review-launch'
+import { CLAUDE_ENABLEMENT } from './enablement'
 
 // The managed-launch surface is re-exported so the composition root and the
 // conformance suite reach it through this entry point, never by deep import.
@@ -206,7 +207,7 @@ export function createClaudePackage(deps: ClaudePackageDeps = {}): ProviderPacka
     ambientAuthVariables,
     ownedLaunchVariables: claudeOwnedLaunchVariables,
     // On unless the user turned it off (A4): Claude-only users change nothing.
-    enablement: { settingsKey: 'claudeEnabled', absent: 'on' },
+    enablement: CLAUDE_ENABLEMENT,
     managedLaunch: {
       minimumCliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
       sanitizeManagedSettings: sanitizeClaudeManagedSettings,

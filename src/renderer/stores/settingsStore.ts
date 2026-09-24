@@ -215,6 +215,9 @@ export interface AppSettings {
    *  answered (existing installs keep full behaviour); false disables Codex
    *  surfaces incl. the codex_review built-in tool. Codex support is Beta. */
   codexEnabled?: boolean
+  /** Claude Code on/off, saved (main reads it as the Claude package's
+   *  enablement key). Absent = on: Claude-only users change nothing. */
+  claudeEnabled?: boolean
   localMachineName: string
   /** Usage buckets the user has HIDDEN from the status line, by label (e.g.
    *  "Fable"). Denylist model so the set stays dynamic: a new bucket shows by

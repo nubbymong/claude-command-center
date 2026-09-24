@@ -662,7 +662,12 @@ if (!gotTheLock) {
     }
     registerConfigHandlers({
       // #266 MAJOR-2: unticking the watchdog must tear down RUNNING watchers.
-      onSettingsSaved: () => getWatchdogManager()?.applySettings(),
+      onSettingsSaved: () => {
+        getWatchdogManager()?.applySettings()
+        // WP2 6d: a provider's saved on/off may have changed (the Providers
+        // switch, onboarding, Settings): the accounts snapshot says so now.
+        getAccountsService()?.settingsChanged()
+      },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only

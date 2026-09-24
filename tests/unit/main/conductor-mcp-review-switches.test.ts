@@ -43,9 +43,11 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => {
   return { getResourcesDirectory: () => dir }
 })
 
-// A Claude review could run now: only the switch decides in these tests.
+// A review of either provider could run now, unless a test says otherwise:
+// the switches decide in these tests.
+const ready: { value: Record<string, boolean> } = { value: {} }
 vi.mock('../../../src/main/provider-accounts', () => ({
-  getAccountsService: () => ({ reviewReady: () => true }),
+  getAccountsService: () => ({ reviewReady: (p: string) => ready.value[p] !== false }),
 }))
 
 const server = await import('../../../src/main/conductor-mcp-server')
@@ -94,6 +96,14 @@ describe('each review direction follows its own switch', () => {
     // The other direction's switch does not decide it.
     settings.value = { codexEnabled: true, conductorTools: { claudeReview: false } }
     expect(await claudeSessionTools('rs-claude-3')).toContain('codex_review')
+    // No Codex account could review now: not offered, whatever the switch says.
+    settings.value = { codexEnabled: true }
+    ready.value = { codex: false }
+    try {
+      expect(await claudeSessionTools('rs-claude-4')).not.toContain('codex_review')
+    } finally {
+      ready.value = {}
+    }
   })
 
   it('Claude review: a Codex session is offered claude_review while it is on (absent means on), and not once it is off', async () => {

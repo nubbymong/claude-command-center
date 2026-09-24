@@ -88,7 +88,7 @@ export function CodexStep({ onNext, onBack }: { onNext: () => void; onBack: () =
               <div>
                 <b>Codex is off.</b>
                 <span>
-                  Enable it anytime in <b>Settings → Codex</b>.
+                  Enable it anytime in <b>Settings, Accounts</b>.
                 </span>
               </div>
             </div>

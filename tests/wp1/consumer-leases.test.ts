@@ -390,6 +390,21 @@ describe('ADR-009 round 1 regressions: sign-in runs, holds and the provider swit
     saved = 'off'
     expect(h.service.preferenceOf('codex')).toBe('off')
   })
+
+  it('a settings save publishes the snapshot again, so a switch-on over a saved "off" shows once the setting catches up (WP2 6d)', async () => {
+    let saved: ProviderPreference = 'off'
+    const h = await harness({ preference: { codex: () => saved } })
+    let pushes = 0
+    h.service.subscribe(() => { pushes++ })
+    expect((await h.service.setProviderEnabled('codex', true)).ok).toBe(true)
+    // The switch gives way to the saved "off" until the renderer saves "on".
+    expect(h.service.snapshot().providers.find((p) => p.providerId === 'codex')!.enabled).toBe(false)
+    const before = pushes
+    saved = 'on'
+    h.service.settingsChanged()
+    expect(pushes).toBe(before + 1)
+    expect(h.service.snapshot().providers.find((p) => p.providerId === 'codex')!.enabled).toBe(true)
+  })
 })
 
 describe('ADR-009 confirmation regressions: the switch fails closed, and exclusions hold under the lock', () => {

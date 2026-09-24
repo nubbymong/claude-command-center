@@ -52,12 +52,14 @@ describe('parseCccSessionIdFromUrl (P7.7.10)', () => {
 // provider's reviewer, and claude_review only while a Claude review could be
 // prepared now.
 describe('offeredReviewTool', () => {
-  const on = { toolsMaster: true, codexReviewOn: true, codexEnabled: true, claudeReviewOn: true, claudeReviewReady: () => true }
-  it('a Claude or unknown connection gets codex_review while its toggles allow; never claude_review', () => {
+  const on = { toolsMaster: true, codexReviewOn: true, codexEnabled: true, codexReviewReady: () => true, claudeReviewOn: true, claudeReviewReady: () => true }
+  it('a Claude or unknown connection gets codex_review while its toggles allow and a Codex review could run; never claude_review', () => {
     for (const source of ['claude', 'unknown'] as const) {
       expect(offeredReviewTool(source, on)).toBe('codex_review')
       expect(offeredReviewTool(source, { ...on, codexReviewOn: false })).toBeNull()
       expect(offeredReviewTool(source, { ...on, codexEnabled: false })).toBeNull()
+      // No Codex account could review now: not offered (WP2 commit 6).
+      expect(offeredReviewTool(source, { ...on, codexReviewReady: () => false })).toBeNull()
       // The Claude review switch does not decide it.
       expect(offeredReviewTool(source, { ...on, claudeReviewOn: false })).toBe('codex_review')
     }
@@ -71,10 +73,13 @@ describe('offeredReviewTool', () => {
     // The codex_review toggles do not decide it.
     expect(offeredReviewTool('codex', { ...on, codexReviewOn: false, codexEnabled: false })).toBe('claude_review')
   })
-  it('asks whether a Claude review is ready only for a Codex connection', () => {
+  it('asks whether a Claude review is ready only for a Codex connection, and a Codex review only for the others', () => {
     let asked = 0
     offeredReviewTool('claude', { ...on, claudeReviewReady: () => { asked++; return true } })
     expect(asked).toBe(0)
+    let askedCodex = 0
+    offeredReviewTool('codex', { ...on, codexReviewReady: () => { askedCodex++; return true } })
+    expect(askedCodex).toBe(0)
   })
 })
 

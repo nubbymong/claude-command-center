@@ -33,6 +33,10 @@ import type { AccountsSnapshot, AccountView, ProviderInstallationView, SignInOut
 import type { AccountProfile } from '../../../src/shared/account-types'
 import { useProviderAccountsStore, canOfferSignInAgain } from '../../../src/renderer/stores/providerAccountsStore'
 import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
+import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
+
+// The saved on/off the Providers switch writes after main agrees.
+const updateSettings = vi.fn(() => Promise.resolve())
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -246,6 +250,8 @@ beforeEach(() => {
   pa.signInAgain.mockReset()
   pa.issueSecretHandle.mockReset()
   signInOutput = null
+  updateSettings.mockClear()
+  useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, updateSettings } as never)
 })
 
 afterEach(() => { unmountNow() })
@@ -270,6 +276,23 @@ describe('Providers card', () => {
     await flush()
     expect(pa.setEnabled).toHaveBeenCalledWith('codex', false)
     expect(q('provider-error-codex')?.textContent).toBe('At least one provider stays on.')
+    // Refused by main: nothing is saved.
+    expect(updateSettings).not.toHaveBeenCalled()
+  })
+
+  it("saves the provider's on/off once main agrees, so a saved off cannot bounce it back", async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, codexEnabled: false } } as never)
+    const s = snapshot()
+    s.providers[1] = { ...s.providers[1], enabled: false }
+    render(s)
+    await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
+    await flush()
+    expect(pa.setEnabled).toHaveBeenCalledWith('codex', true)
+    expect(updateSettings).toHaveBeenCalledWith({ codexEnabled: true })
+    expect(pa.setEnabled.mock.invocationCallOrder[0]).toBeLessThan(updateSettings.mock.invocationCallOrder[0])
+    await act(async () => { (q('provider-row-claude')!.querySelector('[role="switch"]') as HTMLElement).click() })
+    await flush()
+    expect(updateSettings).toHaveBeenLastCalledWith({ claudeEnabled: false })
   })
 
   it('says the provider is in use, with the count, when something holds it', async () => {
@@ -969,8 +992,10 @@ describe('registry, conflicts, adoption and pending setups', () => {
     expect(q('confirm-uses-codex')?.textContent).toBe('Yes, I use Codex')
     await click('confirm-uses-codex')
     expect(pa.setEnabled).toHaveBeenCalledWith('codex', true)
+    expect(updateSettings).toHaveBeenCalledWith({ codexEnabled: true })
     expect(pa.runMigration).toHaveBeenCalledWith('codex')
     expect(pa.setEnabled.mock.invocationCallOrder[0]).toBeLessThan(pa.runMigration.mock.invocationCallOrder[0])
+    expect(updateSettings.mock.invocationCallOrder[0]).toBeLessThan(pa.runMigration.mock.invocationCallOrder[0])
     // What the check found arrives with the next snapshot.
     act(() => { useProviderAccountsStore.setState({ snapshot: snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: false, marker: { outcome: 'none', at: 2 } }] }) }) })
     expect(q('confirm-uses-codex')).toBeNull()

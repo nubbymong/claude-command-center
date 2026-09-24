@@ -12,7 +12,25 @@ import {
   selectProviderAccounts, accountDisplayName, reviewerLine, canOfferMakeReviewer, reviewerNotice, showsReviewerBadge,
   accountState, providerStatus, accountFailureText, accountForLegacyId, ACCOUNT_NAME_FALLBACK,
   signInAgainMethods, canOfferMakeInactive, canOfferMakeActive, canOfferArchive,
+  PROVIDER_ENABLED_SETTING, savedOff,
 } from '../../../src/renderer/stores/providerAccountsStore'
+// Main's own record of where Codex's on/off is saved (type-only imports: no
+// main-process code runs here).
+import { CODEX_ENABLEMENT } from '../../../src/main/providers/codex/enablement'
+import { CLAUDE_ENABLEMENT } from '../../../src/main/providers/claude/enablement'
+
+describe('saved on/off keys', () => {
+  it("writes each provider's on/off where main reads it", () => {
+    // Both keys come from main's own type-only modules.
+    expect(PROVIDER_ENABLED_SETTING.codex).toBe(CODEX_ENABLEMENT.settingsKey)
+    expect(PROVIDER_ENABLED_SETTING.claude).toBe(CLAUDE_ENABLEMENT.settingsKey)
+  })
+  it('reads a provider as saved off only on an explicit false', () => {
+    expect(savedOff({ codexEnabled: false }, 'codex')).toBe(true)
+    expect(savedOff({}, 'codex')).toBe(false)
+    expect(savedOff({ codexEnabled: true, claudeEnabled: false }, 'claude')).toBe(true)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Fixture

@@ -645,21 +645,23 @@ export function registerClaudeReviewSession(sessionId: string, cwd: string): voi
 /** Which review tool a connection is offered: each session only the OTHER
  *  provider's reviewer.
  *  - A Claude (or unknown) connection: codex_review, while the Conductor
- *    tools and its own toggle are on and Codex is enabled (P6.9: never to a
- *    Codex session, which would review itself).
+ *    tools and its own toggle are on, Codex is enabled, and a Codex review
+ *    could be prepared now (WP2 commit 6: the Settings card shows the switch
+ *    unavailable then, so the tool is not offered either). Never to a Codex
+ *    session, which would review itself (P6.9).
  *  - A Codex connection (the /mcp route forces the source): claude_review
  *    (WP2 commit 5b, owner decision 3), while the Conductor tools and its own
  *    toggle are on and a Claude review could be prepared now -- Claude on, and a Claude account
  *    that can review without a per-launch confirmation (on macOS the normal
  *    sign-in). Asked per connection, so turning Claude off or losing the
  *    reviewer account withdraws it from the next request.
- *  Pure, and `claudeReviewReady` is asked only for a Codex connection. */
+ *  Pure; each readiness is asked only for the connection it applies to. */
 export function offeredReviewTool(
   source: 'claude' | 'codex' | 'unknown',
-  gates: { toolsMaster: boolean; codexReviewOn: boolean; codexEnabled: boolean; claudeReviewOn: boolean; claudeReviewReady: () => boolean },
+  gates: { toolsMaster: boolean; codexReviewOn: boolean; codexEnabled: boolean; codexReviewReady: () => boolean; claudeReviewOn: boolean; claudeReviewReady: () => boolean },
 ): 'codex_review' | 'claude_review' | null {
   if (source === 'codex') return gates.toolsMaster && gates.claudeReviewOn && gates.claudeReviewReady() ? 'claude_review' : null
-  return gates.codexReviewOn && gates.codexEnabled ? 'codex_review' : null
+  return gates.codexReviewOn && gates.codexEnabled && gates.codexReviewReady() ? 'codex_review' : null
 }
 
 /** Every review a session is registered for (at most one, by the rule above),
@@ -1066,7 +1068,9 @@ export async function startMcpServer(
       codexReviewOn: toolOn('codexReview'),
       claudeReviewOn: toolOn('claudeReview'),
       codexEnabled: toolCfg?.codexEnabled !== false,
-      claudeReviewReady: () => getAccountsService()?.reviewReady('claude') === true,
+      // Never lets a readiness check take the other tools down with it.
+      codexReviewReady: () => { try { return getAccountsService()?.reviewReady('codex') === true } catch { return false } },
+      claudeReviewReady: () => { try { return getAccountsService()?.reviewReady('claude') === true } catch { return false } },
     })
     if (reviewTool === 'codex_review') {
       registerCodexReviewTool(

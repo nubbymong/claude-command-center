@@ -14,6 +14,7 @@ import type {
   SetReviewerDefaultRequest, KnownAuthState, SignInMethod, ExternalDefaultOutcome,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
+import { useSettingsStore } from './settingsStore'
 
 interface ProviderAccountsState {
   /** The latest snapshot the main process published; null until the first
@@ -71,8 +72,35 @@ async function call<T extends object>(run: () => Promise<AccountsResult<T>> | un
 
 const api = () => window.electronAPI.providerAccounts
 
+/** Where each provider's on/off is saved: the same keys main reads (each
+ *  package's `enablement.settingsKey`). Main's own switch is held only until
+ *  the saved setting says otherwise, so a choice made here is saved too. */
+export const PROVIDER_ENABLED_SETTING: Readonly<Record<ProviderId, 'claudeEnabled' | 'codexEnabled'>> = Object.freeze({
+  claude: 'claudeEnabled',
+  codex: 'codexEnabled',
+})
+
+/** The saved setting says the provider is off. */
+export function savedOff(settings: { claudeEnabled?: boolean; codexEnabled?: boolean }, providerId: ProviderId): boolean {
+  return settings[PROVIDER_ENABLED_SETTING[providerId]] === false
+}
+
 export const providerAccountActions = {
   setEnabled: (providerId: ProviderId, enabled: boolean) => call(() => api().setEnabled(providerId, enabled)),
+  /** Turn a provider on or off. Main decides first, so its refusals (in use,
+   *  the last provider on) come back unchanged and nothing is saved; once
+   *  it agrees, the saved setting is written so the choice outlives main's
+   *  in-memory switch and a restart. */
+  switchProvider: async (providerId: ProviderId, enabled: boolean): Promise<AccountsResult> => {
+    const r = await call(() => api().setEnabled(providerId, enabled))
+    if (!r.ok) return r
+    try {
+      await useSettingsStore.getState().updateSettings({ [PROVIDER_ENABLED_SETTING[providerId]]: enabled })
+    } catch {
+      return { ok: false, code: 'persist-failed', message: 'The change could not be saved.' }
+    }
+    return r
+  },
   beginSetup: (req: BeginSetupRequest) => call<{ accountId: string }>(() => api().beginSetup(req)),
   issueSecretHandle: (accountId: string) => call<{ handle: string }>(() => api().issueSecretHandle(accountId)),
   signIn: (req: SignInRequest) => call<{ state: KnownAuthState }>(() => api().signIn(req)),

@@ -228,7 +228,7 @@ function ExternalAdoptionBlock({ providerId, provider }: { providerId: ProviderI
   const confirmUse = async () => {
     setBusy(true)
     setError(null)
-    const on = await providerAccountActions.setEnabled(providerId, true)
+    const on = await providerAccountActions.switchProvider(providerId, true)
     if (!on.ok) { setBusy(false); setError(on.message); return }
     const r = await providerAccountActions.runMigration(providerId)
     setBusy(false)

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "77dadaee0702f913a49e652c35beb59ce064c655de85889001094d0a85a9bc2b",
-  "manifestHead": "37876e4f0a076abb7764af85538df6776c84ced8",
+  "manifestPathDigest": "20161341cd9878a858dc1faa3e16813303e2016ed0202c0e8c904475881c8ff1",
+  "manifestHead": "f4e6d9405bc99f6f56e03d911655fc500292a03d",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -3711,6 +3711,44 @@
       "disposition": "replace",
       "evidence": "WP1.58: adapted to the account binding, the saved session carries its Codex account through restore (WP1.42); tests/unit/renderer/session-persistence-restore.test.ts",
       "note": "existing test extended in WP2 6c; Codex appears as the provider of a fixture session"
+    },
+    {
+      "path": "src/renderer/components/settings/CodeReviewTools.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx",
+      "note": "Settings, Built-in tools: Codex review and Claude review rows; ~/.codex appears only in copy"
+    },
+    {
+      "path": "tests/unit/renderer/code-review-tools.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P08",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx",
+      "note": "fixture snapshots name Codex accounts and the preload surface"
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-review-tools.test.tsx",
+      "predicates": [
+        "P03",
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6d onboarding built-in tools and transparency list both review tools (WP1.68); tests/unit/renderer/onboarding-review-tools.test.tsx",
+      "note": "Codex appears as the provider a review tool needs"
     }
   ]
 }

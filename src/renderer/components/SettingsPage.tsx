@@ -24,6 +24,7 @@ import { Kbd } from './ui/Kbd'
 import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
 import { AccountsSurface } from './settings/accounts/AccountsSurface'
+import { CodeReviewTools } from './settings/CodeReviewTools'
 import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
 declare const __BUILD_TIME__: string
@@ -289,65 +290,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
 
               {/* Built-in tools (conductor MCP) -- the recovery surface for the
                   onboarding p6 master ("switch them on anytime in Settings"). */}
-              <Section title="Built-in Tools" icon={<path d="M8 2v4M8 10v4M2 8h4M10 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
-                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.conductorToolsEnabled !== false}
-                    onChange={(e) => save({ conductorToolsEnabled: e.target.checked })}
-                    className="mt-0.5 rounded border-surface1"
-                  />
-                  <span>
-                    Give sessions the built-in tools (conductor MCP)
-                    <span className="block text-[10px] text-overlay0">A local helper registered per session (Claude, Codex, local and SSH). Applies to new sessions.</span>
-                  </span>
-                </label>
-                <div
-                  inert={settings.conductorToolsEnabled === false}
-                  className={settings.conductorToolsEnabled !== false ? 'pl-6 space-y-1.5' : 'pl-6 space-y-1.5 opacity-40'}
-                >
-                  {([
-                    ['vision', 'Vision: see & drive a browser'],
-                    ['codexReview', 'Code review'],
-                    ['hostTransfer', 'Host screenshots (incl. over SSH)'],
-                    ['canvas', 'Agent Canvas: read the rendered page'],
-                  ] as const).map(([key, label]) => {
-                    // Code review runs the codex CLI: with the Codex master off
-                    // the MCP server never registers the tool, so a live
-                    // checkbox here would be a dead control (onboarding p6
-                    // blocks the same card). Stored preference is untouched.
-                    const codexBlocked = key === 'codexReview' && settings.codexEnabled === false
-                    return (
-                      <label
-                        key={key}
-                        className={
-                          codexBlocked
-                            ? 'flex items-center gap-2 text-sm text-subtext0 opacity-40 cursor-not-allowed'
-                            : 'flex items-center gap-2 text-sm text-subtext0 cursor-pointer'
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={codexBlocked}
-                          checked={!codexBlocked && (settings.conductorTools ?? DEFAULT_CONDUCTOR_TOOLS)[key] !== false}
-                          onChange={(e) =>
-                            save({
-                              conductorTools: {
-                                ...DEFAULT_CONDUCTOR_TOOLS,
-                                ...(settings.conductorTools || {}),
-                                [key]: e.target.checked,
-                              },
-                            })
-                          }
-                          className="rounded border-surface1"
-                        />
-                        {label}
-                        {codexBlocked && <span className="text-[10px] text-overlay0">(Codex is off)</span>}
-                      </label>
-                    )
-                  })}
-                </div>
-              </Section>
+              <BuiltinToolsSection settings={settings} save={save} onOpenAccounts={() => setActiveTab('accounts')} />
 
               <Section title="Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
@@ -1357,6 +1300,68 @@ function FontSizeTab({ settings, save }: {
         </Field>
       </Section>
     </>
+  )
+}
+
+/**
+ * Settings, General, Built-in tools: the conductor MCP master, the simple
+ * per-tool switches, and the Code review group (one switch per review
+ * direction, each live only while that review could run). The master off
+ * makes everything below it inert.
+ */
+export function BuiltinToolsSection({ settings, save, onOpenAccounts }: {
+  settings: AppSettings
+  save: (updates: Partial<AppSettings>) => void | Promise<void>
+  onOpenAccounts: () => void
+}) {
+  return (
+    <Section title="Built-in Tools" icon={<path d="M8 2v4M8 10v4M2 8h4M10 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
+      <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={settings.conductorToolsEnabled !== false}
+          onChange={(e) => save({ conductorToolsEnabled: e.target.checked })}
+          className="mt-0.5 rounded border-surface1"
+          data-testid="builtin-tools-master"
+        />
+        <span>
+          Give sessions the built-in tools (conductor MCP)
+          <span className="block text-[10px] text-overlay0">A local helper registered per session (Claude, Codex, local and SSH). Applies to new sessions.</span>
+        </span>
+      </label>
+      <div
+        inert={settings.conductorToolsEnabled === false}
+        className={settings.conductorToolsEnabled !== false ? 'pl-6 space-y-1.5' : 'pl-6 space-y-1.5 opacity-40'}
+        data-testid="builtin-tools-list"
+      >
+        {([
+          ['vision', 'Vision: see & drive a browser'],
+          ['hostTransfer', 'Host screenshots (incl. over SSH)'],
+          ['canvas', 'Agent Canvas: read the rendered page'],
+        ] as const).map(([key, label]) => (
+          <label key={key} className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(settings.conductorTools ?? DEFAULT_CONDUCTOR_TOOLS)[key] !== false}
+              onChange={(e) =>
+                save({
+                  conductorTools: {
+                    ...DEFAULT_CONDUCTOR_TOOLS,
+                    ...(settings.conductorTools || {}),
+                    [key]: e.target.checked,
+                  },
+                })
+              }
+              className="rounded border-surface1"
+            />
+            {label}
+          </label>
+        ))}
+        <div className="pt-2">
+          <CodeReviewTools onOpenAccounts={onOpenAccounts} />
+        </div>
+      </div>
+    </Section>
   )
 }
 
