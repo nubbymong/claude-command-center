@@ -110,7 +110,7 @@ describe('the account field for one selection', () => {
   it('says Codex is too old only when discovery judged it too old, and not to update in Accounts', () => {
     const at = (compatibility: 'too-old' | 'unknown' | 'unsupported') =>
       snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', version: '0.150.2', compatibility })] })
-    expect(providerTooOldText(at('too-old'), 'codex')).toBe('Codex 0.150.2 is too old for this app. Update Codex, then restart the app.')
+    expect(providerTooOldText(at('too-old'), 'codex')).toBe('Codex 0.150.2 is too old for this app. Update Codex, then Check again in Settings, Accounts.')
     expect(providerTooOldText(at('unknown'), 'codex')).toBeNull()
     expect(providerTooOldText(at('unsupported'), 'codex')).toBeNull()
     expect(providerTooOldText(snapshot(), 'codex')).toBeNull()
@@ -216,7 +216,7 @@ describe("a refused launch in plain words (main's sentences)", () => {
   it('a CLI main may not run: "too old" only when discovery said so; unknown says it could not check', () => {
     const why = 'This Codex CLI version cannot be used for sign-in. Update it, then check it again in setup.'
     expect(describeLaunchFailure(refused(why), { version: '0.150.2', compatibility: 'too-old' }))
-      .toBe('Codex did not start. Codex 0.150.2 is too old for this app. Update Codex, then restart the app.')
+      .toBe('Codex did not start. Codex 0.150.2 is too old for this app. Update Codex, then Check again in Settings, Accounts.')
     expect(describeLaunchFailure(refused(why), { compatibility: 'unknown' }))
       .toBe('Codex did not start. This app could not check Codex. Open Accounts.')
     expect(describeLaunchFailure(refused(why)))

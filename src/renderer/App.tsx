@@ -63,6 +63,7 @@ import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
+import { finishSetup, harnessRun, cliSetupAtStart } from './onboarding/setup-handoff'
 import { bootWhatsNewSurface, lastRunVersionOf } from './onboarding/upgrade-flow'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useProviderAccountsStore } from './stores/providerAccountsStore'
@@ -151,6 +152,15 @@ export default function App() {
    *  completed the flow, but has not seen the notes for the build now running.
    *  Armed once in postConfigInit, cleared when the harness completes. */
   const [whatsNewOnly, setWhatsNewOnly] = useState(false)
+  /** WP2: a setup screen in this run (the first-run or the version-change
+   *  one) ended with "Use Codex only". Upgraders (including a new computer
+   *  pointed at an existing resources folder, on the first-run screen) never
+   *  see the fresh-install assistants and Codex setup pages, so the harness
+   *  hands them the Codex setup page once, now: alone when nothing else is
+   *  due, or inside the run that is; a fresh install meets it in the full
+   *  flow anyway. In memory only, so a later start never shows it again.
+   *  Cleared when the harness completes. */
+  const [codexSetupHandOff, setCodexSetupHandOff] = useState(false)
   /** The Allow Multi Spawn startup page is due this launch. Decided ONCE in
    *  postConfigInit from meta read before anything stamps — by the time the
    *  release-notes harness has closed, a first install is indistinguishable
@@ -583,16 +593,16 @@ export default function App() {
       if (appMeta.setupVersion !== __APP_VERSION__) {
         const hasExistingConfig = useConfigStore.getState().configs.length > 0 ||
           useCommandStore.getState().commands.length > 0
-        if (hasExistingConfig) {
-          useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
-        } else {
-          const cliReady = await window.electronAPI.setup.isCliReady()
-          if (cliReady) {
-            useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
-          } else {
-            setNeedsCliSetup(true)
-          }
-        }
+        // Claude Code turned off (a Codex-only install, WP2): there is no
+        // Claude CLI whose folder trust this step would set up, so it would
+        // only show the "not installed" screen again on every new version.
+        const cliStep = await cliSetupAtStart({
+          hasExistingConfig,
+          settings: useSettingsStore.getState().settings,
+          isCliReady: () => window.electronAPI.setup.isCliReady(),
+        })
+        if (cliStep === 'stamp') useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
+        else setNeedsCliSetup(true)
       }
 
       // Resume opt-out: LOAD the saved state but do not auto-restore — the
@@ -1165,17 +1175,26 @@ export default function App() {
 
   // Show setup dialog on first run
   if (!setupComplete) {
-    return <SetupDialog onComplete={async () => {
-      await loadAndHydrateConfig()
-      useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
-      setSetupComplete(true)
-      setNeedsCliSetup(false)
-    }} />
+    // "Use Codex only" is saved once the stores hold the loaded config, and
+    // hands this run to the Codex setup page (setup-handoff.ts): a fresh
+    // install meets it in the full flow anyway; a new computer pointed at an
+    // existing resources folder is an upgrader, who never sees the
+    // assistants page.
+    return <SetupDialog onComplete={(outcome) => finishSetup(outcome, {
+      loadConfig: loadAndHydrateConfig,
+      handOffCodexSetup: () => setCodexSetupHandOff(true),
+      stampSetupVersion: () => useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }),
+      close: () => { setSetupComplete(true); setNeedsCliSetup(false) },
+    })} />
   }
 
   // Show setup dialog on version change — CLI not trusted
   if (needsCliSetup) {
-    return <SetupDialog initialStep={2} onComplete={() => { useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }); setNeedsCliSetup(false) }} />
+    return <SetupDialog initialStep={2} onComplete={(outcome) => finishSetup(outcome, {
+      handOffCodexSetup: () => setCodexSetupHandOff(true),
+      stampSetupVersion: () => useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }),
+      close: () => setNeedsCliSetup(false),
+    })} />
   }
 
   const handleTrainingClose = () => {
@@ -1192,11 +1211,15 @@ export default function App() {
   // Forced first-run harness gate. onboardingMeta is subscribed at the top of
   // the component (reactive) so the finish step's completion stamp
   // (settleOnboardingFinish) flips due->false and unmounts the harness on the
-  // next render. Settings view kept minimal — the codexSignIn when() only
-  // narrows the applicable set, never the due decision.
-  // `|| whatsNewOnly`: the harness is also the release-notes surface, so it is
-  // due when the notes are due even though no step is outstanding.
-  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due || whatsNewOnly
+  // next render. Settings view kept minimal — the provider-choice when()s
+  // only narrow the applicable set, never the due decision.
+  // harnessRun: due for the full flow; or for the release notes (the harness
+  // is also the notes surface), even though no step is outstanding; or for
+  // this run's "Use Codex only", which hands the user to the Codex setup
+  // page: on its own (codexSetupOnly) only when neither of the others is
+  // due, otherwise the page joins that run.
+  const harness = harnessRun({ fullFlowDue: deriveOnboarding(onboardingMeta, {}).due, whatsNewOnly, codexSetupHandOff })
+  const onboardingDue = harness.due
   const bootGate = pickBootGate({
     configLoaded,
     onboardingDue,
@@ -1223,12 +1246,15 @@ export default function App() {
         {bootGate === 'onboarding' && (
           <OnboardingHarness
             whatsNewOnly={whatsNewOnly}
+            codexSetupOnly={harness.codexSetupOnly}
             onComplete={(startTour) => {
               // The settle already stamped this run (the harness unmounts on
               // this render). Clear the notes-only arm explicitly: unlike the
               // full flow, nothing it writes is read back by deriveOnboarding,
               // so the gate would otherwise stay open on this state alone.
+              // The Codex setup hand-off is cleared the same way: shown once.
               setWhatsNewOnly(false)
+              setCodexSetupHandOff(false)
               // Launch the live-app tour if chosen.
               if (startTour) setTourActive(true)
             }}

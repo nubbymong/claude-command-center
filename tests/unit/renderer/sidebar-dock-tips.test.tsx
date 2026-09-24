@@ -236,6 +236,53 @@ describe('sidebar dock -- the Ask row copy (#372)', () => {
   })
 })
 
+describe('sidebar dock -- Ask with Claude Code switched off (WP2 commit 6e review fix)', () => {
+  const OFF = 'Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.'
+  const setClaude = (claudeEnabled: boolean | undefined) =>
+    useSettingsStore.setState({ settings: { ...useSettingsStore.getState().settings, claudeEnabled } } as any)
+  afterEach(() => { setClaude(undefined) })
+
+  it('the row says why and is marked disabled; a click opens nothing', () => {
+    const workspace = vi.fn(() => Promise.resolve('C:/res/help'))
+    ;(window as any).electronAPI = { ...(window as any).electronAPI, help: { workspace } }
+    const opened = vi.fn()
+    setClaude(false)
+    render({ onOpened: opened })
+    const ask = q('sidebar-ask-pill')!
+    expect(ask.getAttribute('aria-disabled')).toBe('true')
+    expect(ask.getAttribute('title')).toContain(OFF)
+    expect(q('sidebar-ask-off')!.textContent).toBe(OFF)
+    act(() => { (ask as HTMLButtonElement).click() })
+    expect(workspace).not.toHaveBeenCalled()
+    expect(opened).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('collapsed, the reason is the pill\'s name', () => {
+    setClaude(false)
+    render({ collapsed: true })
+    const rail = q('sidebar-ask-pill')!
+    expect(rail.getAttribute('aria-disabled')).toBe('true')
+    expect(rail.getAttribute('aria-label')).toContain(OFF)
+  })
+
+  it('the row can still be hidden from its right-click menu while off', () => {
+    setClaude(false)
+    render()
+    act(() => { q('sidebar-ask-pill')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })) })
+    expect(q('dock-row-menu-hide')).not.toBeNull()
+  })
+
+  it('turned back on, the note goes and the row is live again', () => {
+    setClaude(false)
+    render()
+    expect(q('sidebar-ask-off')).not.toBeNull()
+    act(() => { setClaude(true) })
+    expect(q('sidebar-ask-off')).toBeNull()
+    expect(q('sidebar-ask-pill')!.getAttribute('aria-disabled')).toBeNull()
+  })
+})
+
 describe('sidebar dock -- what the settings actually gate', () => {
   it('showTips:false removes the row', () => {
     armTip()

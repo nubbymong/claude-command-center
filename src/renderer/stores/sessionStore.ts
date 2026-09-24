@@ -37,6 +37,12 @@ export interface Session {
    *  cleared the moment the spawn is issued, and is NEVER persisted -- see the
    *  allowlist in session-persistence.ts. */
   askPrompt?: string
+  /** A tab the app opened for one job (commandTerminal: an install command
+   *  the user confirmed). Never saved or restored with the session set, and
+   *  its terminal-only command runs ONCE: consumed at the first spawn, so a
+   *  Restart opens a plain shell instead of running it again unasked. Set once
+   *  at creation; never changes. */
+  transient?: boolean
   label: string
   /** User-assigned "work name" for this session, editable while it's open and
    *  persisted by id across restarts (until the session is closed in CCC).

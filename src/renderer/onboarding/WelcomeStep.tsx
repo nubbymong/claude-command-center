@@ -77,7 +77,9 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
         </div>
       </div>
       <div className="foot">
-        <span className="hint">No account needed yet. We'll get to Claude next.</span>
+        {/* Not "we'll get to Claude next": a fresh install picks its
+            assistants first (WP2), and a Codex-only run never meets Claude. */}
+        <span className="hint">No account needed yet. You pick your assistants in a moment.</span>
         <button className="cta" onClick={onNext} type="button">
           Let's go →
         </button>

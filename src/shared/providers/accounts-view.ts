@@ -227,7 +227,8 @@ export type AccountsFailure = {
 export type AccountsResult<T extends object = object> = ({ ok: true } & T) | AccountsFailure
 
 /** An install or update recipe as the surface shows it: the documented
- *  command to show and copy, never an argv to run. */
+ *  command to show and copy, never an argv. A recipe main allows to run also
+ *  carries the one shell line to type for it (`runLine`). */
 export interface InstallRecipeView {
   id: string
   providerId: ProviderId
@@ -240,6 +241,13 @@ export interface InstallRecipeView {
   mayElevate: boolean
   autoRunAllowed: boolean
   note?: string
+  /** The exact line a Conductor terminal tab types to run this recipe, built
+   *  by main from the recipe's argv for this computer's terminal shell (on
+   *  Windows it names npm.cmd, which PowerShell's execution policy does not
+   *  block). Present only for a package-manager recipe main allows to run;
+   *  absent means show and copy only. Not what the user is shown: that is
+   *  `displayCommand`, verbatim. */
+  runLine?: string
 }
 
 /** Sign-in output, main -> the renderer that started it: the CLI's display

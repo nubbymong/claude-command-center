@@ -23,6 +23,7 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
 import { forgetSessionBrowserProfile } from '../stores/sshCloseStore'
 import { hasSpawned, markSpawned, clearSpawned, killSessionPty, isCurrentSpawn } from '../ptyTracker'
+import { spentCommand } from '../utils/commandTerminal'
 import { listenForSpawnEnd, reportSpawnEnd } from '../utils/spawnEndNotice'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
@@ -971,6 +972,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // set CCC_ASK_PROMPT and Codex ignores it.
             const askPrompt = !shellOnly ? session?.askPrompt : undefined
             if (askPrompt) updateSession(sessionId, { askPrompt: undefined })
+            // A transient tab's command (commandTerminal: an install the user
+            // confirmed) runs once. Consumed the same way, so a Restart, which
+            // re-runs this spawn from the store record, opens a plain shell.
+            // A saved terminal-only config keeps its command: that one is
+            // configuration, run on every launch by design.
+            if (session?.transient && terminalOptions?.command !== undefined) {
+              updateSession(sessionId, { terminalOptions: spentCommand(terminalOptions) })
+            }
             if (resume) {
               updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
               resumeNudgesLeft = 2

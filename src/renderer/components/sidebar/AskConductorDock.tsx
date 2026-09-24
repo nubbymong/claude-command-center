@@ -3,6 +3,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTipsStore, countUnseenTips } from '../../stores/tipsStore'
 import { launchAskConductor, useAskErrorStore, ASK_LABEL, askSessionIsLive } from '../../lib/askConductor'
+import { ASK_CLAUDE_OFF, useAskConductorBlocked } from '../../lib/askConductorGate'
 import { LightbulbMark } from '../ui/LightbulbMark'
 import askMarkUrl from '../../assets/aicc-code-conductor.svg'
 import DockRowMenu from './DockRowMenu'
@@ -45,7 +46,13 @@ interface Props {
 
 export default function AskConductorDock({ collapsed, onOpened, isActive, onShowTip }: Props) {
   const askSession = useSessionStore((s) => s.sessions.find((sess) => sess.kind === 'ask'))
-  const error = useAskErrorStore((s) => s.error)
+  // Ask is a Claude session: with Claude Code off it cannot open, and the row
+  // says so instead of doing nothing. Read live from the setting, so the
+  // launcher's own "off" error is not shown twice, nor left behind once the
+  // setting is back on.
+  const claudeOff = useAskConductorBlocked()
+  const storedError = useAskErrorStore((s) => s.error)
+  const error = storedError === ASK_CLAUDE_OFF ? null : storedError
   // Liveness, not existence: a session whose PTY has exited stays in the list,
   // so `!!askSession` painted the dot and promised "go to the open session"
   // for a tab showing nothing but [Process exited].
@@ -92,13 +99,19 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
   // where there is no room for a subtitle. Owner wording, #372: "about this
   // app" undersold it -- Ask also changes settings and features for you.
   const askSubtitle = 'Ask about and customise app functionality'
-  const askTitle = running
-    ? `${ASK_LABEL} -- go to the open session`
-    : `${ASK_LABEL} -- ${askSubtitle.toLowerCase()}`
+  const askTitle = claudeOff
+    ? `${ASK_LABEL} -- ${ASK_CLAUDE_OFF}`
+    : running
+      ? `${ASK_LABEL} -- go to the open session`
+      : `${ASK_LABEL} -- ${askSubtitle.toLowerCase()}`
 
   const open = () => {
+    if (claudeOff) return
     void launchAskConductor().then((id) => { if (id) onOpened() })
   }
+  // aria-disabled, not `disabled`: a disabled button gets no right-click, and
+  // the row's right-click menu (hide the feature) must still work while off.
+  const offStyle = claudeOff ? ' opacity-60 cursor-not-allowed' : ''
 
   // The tip row needs somewhere to send the click, tips switched on, a tip that
   // has actually been picked, and content that still resolves. `silenced` is the
@@ -166,7 +179,8 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
             onContextMenu={openMenu('ask')}
             title={askTitle}
             aria-label={askTitle}
-            className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors focus-ring relative"
+            aria-disabled={claudeOff || undefined}
+            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors focus-ring relative${offStyle}`}
             style={{
               background: `color-mix(in srgb, var(--brand) ${isActive ? 22 : 13}%, transparent)`,
               border: '1px solid color-mix(in srgb, var(--brand) 42%, transparent)',
@@ -228,7 +242,8 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
             onClick={open}
             onContextMenu={openMenu('ask')}
             title={askTitle}
-            className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors focus-ring"
+            aria-disabled={claudeOff || undefined}
+            className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors focus-ring${offStyle}`}
             style={{
               background: `color-mix(in srgb, var(--brand) ${isActive ? 22 : 13}%, transparent)`,
               border: '1px solid color-mix(in srgb, var(--brand) 42%, transparent)',
@@ -255,6 +270,11 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
           {/* `help:workspace` fails closed to null when the resources directory
               cannot be written. Every entry point routes through this one dock, so
               this is the single place a silent no-op becomes visible. */}
+          {claudeOff && (
+            <p data-ux-id="sidebar-ask-off" className="px-1 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+              {ASK_CLAUDE_OFF}
+            </p>
+          )}
           {error && (
             <p data-ux-id="sidebar-ask-error" className="px-1 text-[10px] leading-snug" style={{ color: 'var(--status-danger)' }}>
               {error}

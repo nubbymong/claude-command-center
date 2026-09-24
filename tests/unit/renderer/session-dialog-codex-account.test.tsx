@@ -251,7 +251,7 @@ describe('F9: what holds a new Codex config back', () => {
     useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', version: '0.150.2', compatibility: 'too-old' })] }), loaded: true })
     newCodexConfig()
     const box = container.querySelector('[data-testid="codex-too-old"]')!
-    expect(box.textContent).toBe('Codex 0.150.2 is too old for this app. Update Codex, then restart the app.')
+    expect(box.textContent).toBe('Codex 0.150.2 is too old for this app. Update Codex, then Check again in Settings, Accounts.')
     expect(box.querySelector('button')).toBeNull()
     expect(submitBtn().disabled).toBe(true)
   })

@@ -14,6 +14,7 @@ export function OnboardingShell({
   phase,
   isNew = false,
   showPhases = true,
+  hidden = false,
   children,
 }: {
   phase: number
@@ -24,10 +25,13 @@ export function OnboardingShell({
    *  flow that is not happening, and would light one phase the user can never
    *  navigate away from. */
   showPhases?: boolean
+  /** Stepped aside (a terminal the page opened is showing): kept mounted,
+   *  not shown. `display` itself, because .ob-root sets its own. */
+  hidden?: boolean
   children: ReactNode
 }) {
   return (
-    <div className="ob-root">
+    <div className="ob-root" style={hidden ? { display: 'none' } : undefined}>
       <div className="field-bg">
         <div className="glow" />
         <div className="ring r1" />

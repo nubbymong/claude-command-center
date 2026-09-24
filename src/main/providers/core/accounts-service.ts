@@ -46,6 +46,7 @@ import { LAUNCH_LEASE_KINDS } from './consumer-leases'
 import type { SecretHandleStore } from './secret-handles'
 import { migrateExternalDefaultRealm } from './external-default-migration'
 import { realmEnvForProvider } from './registry'
+import { recipeRunLine } from './recipe-run-line'
 import type { ExternalDefaultMigrationOutcome } from './external-default-migration'
 
 export interface AccountsServiceDeps {
@@ -477,16 +478,23 @@ export class AccountsService {
     return r
   }
 
-  /** What to show and copy; never an argv (running a recipe is main-side). */
+  /** What to show and copy, and, only for a recipe main allows to run, the
+   *  one shell line a terminal tab may type for it (`runLine`, decided and
+   *  built here from the argv for this platform's terminal shell). Never the
+   *  argv itself: the renderer neither decides what runs nor builds the line. */
   installRecipes(providerId: ProviderId): InstallRecipeView[] {
     const p = this.pkg(providerId)
     if (!p?.setup) return []
     let recipes: readonly InstallRecipe[] = []
     try { recipes = p.setup.installRecipes(this.deps.platform) } catch { return [] }
-    return recipes.map((r) => ({
-      id: r.id, providerId: r.providerId, purpose: r.purpose, publisher: r.publisher, sourceUrl: r.sourceUrl, displayCommand: r.displayCommand,
-      method: r.method, needsNetwork: r.needsNetwork, mayElevate: r.mayElevate, autoRunAllowed: r.autoRunAllowed, ...(r.note !== undefined ? { note: r.note } : {}),
-    }))
+    return recipes.map((r) => {
+      const runLine = recipeRunLine(r, this.deps.platform)
+      return {
+        id: r.id, providerId: r.providerId, purpose: r.purpose, publisher: r.publisher, sourceUrl: r.sourceUrl, displayCommand: r.displayCommand,
+        method: r.method, needsNetwork: r.needsNetwork, mayElevate: r.mayElevate, autoRunAllowed: r.autoRunAllowed, ...(r.note !== undefined ? { note: r.note } : {}),
+        ...(runLine !== undefined ? { runLine } : {}),
+      }
+    })
   }
 
   // -------------------------------------------------------------------------

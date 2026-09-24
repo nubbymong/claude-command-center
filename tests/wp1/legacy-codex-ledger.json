@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "20161341cd9878a858dc1faa3e16813303e2016ed0202c0e8c904475881c8ff1",
-  "manifestHead": "f4e6d9405bc99f6f56e03d911655fc500292a03d",
+  "manifestPathDigest": "2a09bed041ef8b319c74169d5bc9769cbe2c16697849a5ff9af1bbd69e31a7a1",
+  "manifestHead": "212629a6d3a537ab8d8fc3dbf5b6fc68a3fb37dc",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1108,7 +1108,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "replace",
-      "evidence": "boot refresh covered by tests/wp1/provider-store.test.ts (WP1.57)",
+      "evidence": "boot refresh covered by tests/wp1/provider-store.test.ts (WP1.57); WP2 commit 6e review fix: \"Use Codex only\" on either setup screen hands the run to the Codex setup page, through setup-handoff.ts (WP1.34); tests/unit/renderer/setup-codex-only.test.tsx",
       "note": "boot refresh goes through the provider-neutral store instead of codexAccountStore"
     },
     {
@@ -1171,8 +1171,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: the Ask card is disabled with the reason while Claude Code is off (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": ""
     },
     {
@@ -1192,8 +1192,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: every Run button is disabled with the reason while Claude Code is off, and the store refuses as well (WP1.2); tests/unit/renderer/claude-off-headless.test.tsx",
       "note": ""
     },
     {
@@ -1260,7 +1260,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-dialog-tokens.test.tsx adapted + account-selection cases in tests/wp1/launch-handoff.test.ts (WP1.38)",
+      "evidence": "tests/unit/renderer/session-dialog-tokens.test.tsx adapted + account-selection cases in tests/wp1/launch-handoff.test.ts (WP1.38); WP2 commit 6e review fix: the Claude Code choice is disabled with the reason while Claude Code is off, and a new config starts on a provider that is on (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": "Codex sessions choose a provider account from the neutral store; enablement read from the neutral registry; codexOptions form unchanged",
       "adaptsTests": [
         "tests/unit/renderer/session-dialog-tokens.test.tsx"
@@ -1340,9 +1340,11 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
-      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: the Codex-only launch gate is replaced by the one provider-neutral rule (isConfigLaunchBlocked): a config cannot launch while its own provider is off, Claude Code included, and the reason names that provider (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope",
+      "resolved": true,
+      "resolvedEvidence": "WP2 commit 6e review fix: the empty-state launch cards ask the provider-neutral rule and word the reason per provider, and the file no longer names Codex (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx"
     },
     {
       "path": "src/renderer/components/TerminalView.tsx",
@@ -1354,7 +1356,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-launch.test.ts adapted (WP1.38)",
+      "evidence": "tests/unit/renderer/session-launch.test.ts adapted (WP1.38); WP2 commit 6e: a transient install tab runs its command once; a Restart opens a plain shell (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
       "note": "account-choice gate becomes provider-neutral so a Codex launch can pick among active Codex accounts",
       "adaptsTests": [
         "tests/unit/renderer/session-launch.test.ts"
@@ -1440,8 +1442,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: the Codex-only launch gate is replaced by the one provider-neutral rule (isConfigLaunchBlocked): a config cannot launch while its own provider is off, Claude Code included, and the reason names that provider (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1461,8 +1463,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: the Codex-only launch gate is replaced by the one provider-neutral rule (isConfigLaunchBlocked): a config cannot launch while its own provider is off, Claude Code included, and the reason names that provider (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1518,7 +1520,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/use-launch-config.test.tsx adapted (WP1.38)",
+      "evidence": "tests/unit/renderer/use-launch-config.test.tsx adapted (WP1.38); WP2 commit 6e review fix: also blocks a Claude config while Claude Code is off, never a terminal-only one, and words the reason per provider (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": "launch-blocked reads neutral provider enablement; binding attached at launch",
       "adaptsTests": [
         "tests/unit/renderer/use-launch-config.test.tsx"
@@ -1541,8 +1543,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: Ask Conductor starts, revives and types into nothing while Claude Code is off, and every entry point shows it disabled with the reason (WP1.2); tests/unit/renderer/ask-conductor-launch.test.ts",
       "note": ""
     },
     {
@@ -1629,12 +1631,11 @@
       "path": "src/renderer/onboarding/OnboardingHarness.tsx",
       "predicates": [
         "P05",
-        "P10",
         "P11"
       ],
       "category": "SETUP",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/onboarding-gate.test.ts adapted; tests/wp1/onboarding-provider-steps.test.ts (WP1.34)",
+      "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6e review fix: an upgrader who chose \"Use Codex only\" on the version-change setup screen is handed the Codex setup page once, in that run (WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
       "note": "provider-selection + provider setup pages; upgrade step stamped with the actual release version",
       "adaptsTests": [
         "tests/unit/renderer/onboarding-gate.test.ts"
@@ -1668,7 +1669,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "evidence": "user-facing copy only, no account/auth/setup logic; WP2 commit 6e changed the hint from \"We'll get to Claude next\" to name the assistants choice that follows, since a Codex-only run never meets Claude (WP1.1, WP1.2)",
       "note": ""
     },
     {
@@ -1715,13 +1716,12 @@
       "path": "src/renderer/onboarding/steps.ts",
       "predicates": [
         "P05",
-        "P10",
         "P11"
       ],
       "category": "SETUP",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/onboarding-registry.test.ts updated deliberately (WP1.34)",
-      "note": "codex/codexSignIn steps replaced by providerSelect + per-provider setup steps",
+      "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "note": "codex/codexSignIn steps replaced by the assistants choice (assistants) and the Codex setup page (codexSetup); the Claude Code pages follow the choice",
       "adaptsTests": [
         "tests/unit/renderer/onboarding-registry.test.ts"
       ]
@@ -1767,7 +1767,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-persistence-codex-review.test.ts adapted + binding restore case in tests/wp1/launch-handoff.test.ts (WP1.38)",
+      "evidence": "tests/unit/renderer/session-persistence-codex-review.test.ts adapted + binding restore case in tests/wp1/launch-handoff.test.ts (WP1.38); WP2 commit 6e: a transient install tab is never saved, so a later start never runs it again (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
       "note": "saved sessions carry the provider-account binding so restore resolves an exact realm",
       "adaptsTests": [
         "tests/unit/renderer/session-persistence-codex-review.test.ts"
@@ -3081,12 +3081,11 @@
       "path": "tests/unit/renderer/onboarding-gate.test.ts",
       "predicates": [
         "P05",
-        "P10",
         "P13"
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.34: gate cases for the provider steps; adapted in place: tests/unit/renderer/onboarding-gate.test.ts",
+      "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
       "note": ""
     },
     {
@@ -3550,7 +3549,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 commit 6b add-account and sign-in-again dialogs for managed accounts (WP1.39, WP1.25: an expired sign-in is actionable); tests/unit/renderer/accounts-surface.test.tsx",
+      "evidence": "WP2 commit 6b add-account and sign-in-again dialogs for managed accounts (WP1.39, WP1.25: an expired sign-in is actionable); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6e: opened from onboarding's Codex setup page at the chosen method, above the page (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx",
       "note": "the API key goes only through the one-way secret channel; nothing keeps it"
     },
     {
@@ -3571,7 +3570,7 @@
       ],
       "category": "OTHER",
       "disposition": "added",
-      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6e: Check again for a provider whose CLI is missing, could not be checked or is too old (WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx",
       "note": "provider on/off and status; the Beta tag names Codex"
     },
     {
@@ -3594,7 +3593,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 commit 6b provider accounts store (WP1.39); tests/unit/renderer/provider-accounts-store.test.ts",
+      "evidence": "WP2 commit 6b provider accounts store (WP1.39); tests/unit/renderer/provider-accounts-store.test.ts; WP2 commit 6e: the discover (Check again) and installRecipes actions (WP1.18, WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx",
       "note": "the snapshot, action wrappers and pure selectors; ~/.codex appears only as display copy"
     },
     {
@@ -3639,7 +3638,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts; WP2 commit 6e: a too-old CLI points at Check again in Settings, Accounts, which refreshes the executable launches run (WP1.41); tests/unit/renderer/launch-account.test.ts",
       "note": "picker options, launch plan, refusal wording, the restart default per provider"
     },
     {
@@ -3749,6 +3748,169 @@
       "disposition": "added",
       "evidence": "WP2 commit 6d onboarding built-in tools and transparency list both review tools (WP1.68); tests/unit/renderer/onboarding-review-tools.test.tsx",
       "note": "Codex appears as the provider a review tool needs"
+    },
+    {
+      "path": "src/renderer/components/SetupDialog.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e: first-run setup lets a Codex-only user continue without Claude Code (WP1.2); tests/unit/renderer/setup-codex-only.test.tsx",
+      "note": "existing dialog adapted: \"Use Codex only\" when the Claude CLI is missing"
+    },
+    {
+      "path": "src/renderer/onboarding/gate.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e: fresh-install-only steps never reach upgraders (WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "note": "existing gate adapted; Codex named in a comment"
+    },
+    {
+      "path": "src/renderer/onboarding/AssistantsStep.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e provider selection page (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-assistants-step.test.tsx",
+      "note": "Which assistants will you use?"
+    },
+    {
+      "path": "src/renderer/onboarding/CodexSetupStep.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e Codex setup page: discovery, install recipes, sign-in, this computer's sign-in (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 commit 6e review fix: Run in a terminal only for a recipe main sent a line for, typing that line exactly, one install at a time (WP1.18); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 commit 6e review round 2: the page runs this computer's one-time sign-in check itself after the choice and maps each answer honestly: settled F2 d, Use this sign-in only for a sign-in found, otherwise the sign-in choices with the reason (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "note": "replaces the legacy Codex onboarding pages in the flow"
+    },
+    {
+      "path": "src/renderer/onboarding/provider-choice.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e provider choice rules (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "note": "pure"
+    },
+    {
+      "path": "src/renderer/onboarding/save-provider-choice.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e saves the provider choice through main and settings (WP1.6); tests/unit/renderer/onboarding-assistants-step.test.tsx; WP2 commit 6e review fix: only registry-unavailable counts as no answer; an internal failure is returned (WP1.6); tests/unit/renderer/onboarding-assistants-step.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-assistants-step.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e provider selection page (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-assistants-step.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e Codex setup page (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-flow-stubs.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e onboarding flow test helpers (WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "note": "helper, not a test"
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e page list per provider choice, upgraders never asked (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/providers-card-check-again.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e Providers card Check again (WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/setup-codex-only.test.tsx",
+      "predicates": [
+        "P01",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e first-run setup without Claude (WP1.2); tests/unit/renderer/setup-codex-only.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/transient-terminal.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e an install command runs once and is never restored (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/claude-off-launch.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e review fix: with Claude Code off no config launches Claude (a terminal-only one still does), the reason names the provider, and the New session dialog offers only a provider that is on (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/setup-handoff.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e App setup wiring: \"Use Codex only\" on either setup screen hands the run to the Codex setup page; the harness gate; the start-up Claude CLI step (WP1.2, WP1.34); tests/unit/renderer/setup-codex-only.test.tsx",
+      "note": "pure wiring App routes through"
     }
   ]
 }

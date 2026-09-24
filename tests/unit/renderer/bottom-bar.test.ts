@@ -146,3 +146,32 @@ describe('BottomBar -- slim runtime footer', () => {
     }
   })
 })
+
+// WP2 commit 6e review fix: with Claude Code switched off in Settings,
+// Accounts there is no Claude CLI to watch. The bar treats it as it treats any
+// feature not in use: absent, never a red "not found" every 30 s.
+describe('BottomBar with Claude Code switched off', () => {
+  it('shows no Claude CLI indicator and never asks for the CLI; with Claude Code on it does', async () => {
+    const cliCheck = vi.fn(() => Promise.resolve(false))
+    const api = (globalThis as any).window.electronAPI
+    const before = api.cli
+    api.cli = { check: cliCheck }
+    const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+    const st = (useSettingsStore as any).getState()
+    st.settings.claudeEnabled = false
+    try {
+      await render()
+      expect(container.querySelector('[data-testid="bottom-bar-cli"]')).toBeNull()
+      expect(cliCheck).not.toHaveBeenCalled()
+      st.settings.claudeEnabled = undefined
+      act(() => { root.unmount() })
+      root = createRoot(container)
+      await render()
+      expect(cliCheck).toHaveBeenCalled()
+      expect(container.querySelector('[data-testid="bottom-bar-cli"]')!.getAttribute('title')).toBe('Claude CLI not found -- click for help')
+    } finally {
+      st.settings.claudeEnabled = undefined
+      api.cli = before
+    }
+  })
+})

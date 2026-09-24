@@ -14,8 +14,12 @@
  *  3. ONE SESSION. The dock pill is a single affordance, not a session factory.
  *  4. `help:workspace` FAILS CLOSED to null. The old code returned silently
  *     there, so the button did nothing at all.
+ *
+ * And (WP2 commit 6e review fix) Ask is a Claude session: with Claude Code
+ * switched off it starts nothing, revives nothing and types into nothing,
+ * whichever entry point asked.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 const markSessionForResumePicker = vi.fn()
 const addConfig = vi.fn()
@@ -37,6 +41,8 @@ import {
   ASK_LABEL,
   _resetAskLaunchForTest,
 } from '../../../src/renderer/lib/askConductor'
+import { ASK_CLAUDE_OFF, isAskConductorBlocked } from '../../../src/renderer/lib/askConductorGate'
+import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
 
 const ptyWrite = vi.fn()
 function setApi(workspace: string | null | (() => Promise<never>)) {
@@ -259,6 +265,60 @@ describe('launchAskConductor', () => {
     const id = await launchAskConductor('q2')
     expect(id).toBeTruthy()
     expect(useSessionStore.getState().sessions).toHaveLength(1)
+  })
+})
+
+describe('launchAskConductor with Claude Code switched off', () => {
+  const workspace = vi.fn(() => Promise.resolve('C:/res/help'))
+  beforeEach(() => {
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    useAskErrorStore.setState({ error: null })
+    ptyWrite.mockClear()
+    workspace.mockClear()
+    _resetAskLaunchForTest()
+    ;(globalThis as any).window.electronAPI = { help: { workspace }, pty: { write: ptyWrite } }
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false } })
+  })
+  afterEach(() => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+  })
+
+  it('the gate reads the saved switch: off blocks, on or never set does not', () => {
+    expect(isAskConductorBlocked()).toBe(true)
+    expect(isAskConductorBlocked({ claudeEnabled: false })).toBe(true)
+    expect(isAskConductorBlocked({ claudeEnabled: true })).toBe(false)
+    expect(isAskConductorBlocked({})).toBe(false)
+  })
+
+  it('starts nothing, stages nothing, and says why', async () => {
+    const id = await launchAskConductor('How do I run two accounts at once?')
+    expect(id).toBe('')
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(workspace).not.toHaveBeenCalled()
+    expect(useAskErrorStore.getState().error).toBe(ASK_CLAUDE_OFF)
+    expect(ASK_CLAUDE_OFF).toBe('Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.')
+  })
+
+  it('neither types into a live Ask session nor revives an exited one', async () => {
+    const live = { id: 'ask-live', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'claude' } as any
+    useSessionStore.setState({ sessions: [live], activeSessionId: null })
+    expect(await launchAskConductor('typed?')).toBe('')
+    expect(ptyWrite).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().activeSessionId).toBeNull()
+
+    const dead = { ...live, id: 'ask-dead', ptyExited: true, createdAt: 5 }
+    useSessionStore.setState({ sessions: [dead], activeSessionId: null })
+    expect(await launchAskConductor('revive?')).toBe('')
+    expect(useSessionStore.getState().sessions).toEqual([dead])
+  })
+
+  it('launches again once Claude Code is back on', async () => {
+    expect(await launchAskConductor()).toBe('')
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: true } })
+    const id = await launchAskConductor()
+    expect(id).toBeTruthy()
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+    expect(useAskErrorStore.getState().error).toBeNull()
   })
 })
 

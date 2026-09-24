@@ -4,6 +4,7 @@ import { killSessionPty, clearSpawned } from '../ptyTracker'
 import { markSessionForResumePicker } from '../utils/resumePicker'
 import { restartPicksConversation } from '../utils/launchAccount'
 import { useAccountGateStore } from '../stores/accountGateStore'
+import { spentCommand } from '../utils/commandTerminal'
 
 // Shared restart/recover logic for SessionHeader and the v2 bottom bar.
 // Behaviour is identical to the inline functions that previously lived in
@@ -31,12 +32,15 @@ export function useRestartSession(
       // setting profileId -- survives the remove/re-add. `overrides` lets the
       // caller force specific fields (profileId) even if the store read raced.
       const live = store.getSession(session.id)
+      const merged = { ...session, ...live, ...overrides }
       store.removeSession(session.id)
       store.addSession({
-        ...session,
-        ...live,
-        ...overrides,
+        ...merged,
         id: session.id,
+        // A transient tab's command ran once and is not run again by a
+        // Restart. TerminalView consumes it at spawn; this is the second
+        // fence, for a captured record that still carries it.
+        ...(merged.transient ? { terminalOptions: spentCommand(merged.terminalOptions) } : {}),
         status,
         createdAt: Date.now(),
         // Clear stale metadata from previous run

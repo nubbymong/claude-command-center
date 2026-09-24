@@ -49,7 +49,9 @@ function lastMatch(lines: string[], re: RegExp): string | undefined {
   return undefined
 }
 
-function methodCopy(provider: ProviderInstallationView, method: SignInMethod): { title: string; sub: string } {
+/** A sign-in method as a choice names it ("Sign in with ChatGPT", "opens
+ *  your browser"). Onboarding's Codex setup page offers the same choices. */
+export function methodCopy(provider: Pick<ProviderInstallationView, 'providerId' | 'displayName'>, method: SignInMethod): { title: string; sub: string } {
   switch (method) {
     case 'browser': return { title: provider.providerId === 'codex' ? 'Sign in with ChatGPT' : 'Sign in with your browser', sub: 'opens your browser' }
     case 'device': return { title: 'Use a device code', sub: 'for a browser on another device' }
@@ -314,12 +316,17 @@ export interface AddProviderAccountDialogProps {
   provider: ProviderInstallationView
   /** Continue an interrupted setup instead of starting a new one. */
   resume?: PendingSetupView
+  /** Start straight away with this method, chosen on the page that opened
+   *  the dialog (onboarding's Codex setup). */
+  initialMethod?: SignInMethod
+  /** The overlay's stacking class, over a surface above the usual dialogs. */
+  overlayZ?: string
   onClose: () => void
 }
 
 type Step = 'method' | 'key' | 'signing-in' | 'failed' | 'name'
 
-export function AddProviderAccountDialog({ provider, resume, onClose }: AddProviderAccountDialogProps) {
+export function AddProviderAccountDialog({ provider, resume, initialMethod, overlayZ, onClose }: AddProviderAccountDialogProps) {
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const theme = useResolvedTheme()
   const resumeMethod = resume && isSignInMethod(resume.method) ? resume.method : null
@@ -429,8 +436,18 @@ export function AddProviderAccountDialog({ provider, resume, onClose }: AddProvi
 
   const methods = SIGN_IN_METHODS.filter((m) => provider.signInMethods[m]?.enabled)
 
+  // A method chosen on the page that opened the dialog starts at once (once:
+  // StrictMode runs effects twice in development). Only an enabled method.
+  const initialStartedRef = useRef(false)
+  useEffect(() => {
+    if (initialStartedRef.current || resume || !initialMethod) return
+    initialStartedRef.current = true
+    if (provider.signInMethods[initialMethod]?.enabled) void chooseMethod(initialMethod)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
-    <AccountsModal labelledBy="add-account-title" width="w-[520px]" testId="add-account-dialog" overlayTestId="add-account-overlay" focusKey={runner.leaving ? 'leaving' : step}>
+    <AccountsModal labelledBy="add-account-title" width="w-[520px]" testId="add-account-dialog" overlayTestId="add-account-overlay" focusKey={runner.leaving ? 'leaving' : step} z={overlayZ}>
       <DialogHeader title={`Add ${provider.displayName} account`} titleId="add-account-title" onClose={() => { void runner.exit() }} closeTestId="add-account-close" />
       <DialogBody>
         {runner.leaving ? (

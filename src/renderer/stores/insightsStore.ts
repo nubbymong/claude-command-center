@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { InsightsCatalogue, InsightsRun } from '../types/electron'
+import { CLAUDE_OFF, isClaudeOff } from '../lib/claudeOff'
 
 type InsightsStatus = 'idle' | 'running' | 'extracting_kpis' | 'complete' | 'failed'
 
@@ -47,6 +48,10 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
   batchRunId: null,
 
   startInsights: async (profileId?: string) => {
+    // The backstop behind every Run button: an insights run is a headless
+    // Claude Code run, and none starts while Claude Code is switched off. The
+    // status is left as it was (no red "failed" dot for a run never started).
+    if (isClaudeOff()) { set({ error: CLAUDE_OFF }); return }
     try {
       set({ status: 'running', error: null })
       const runId = await window.electronAPI.insights.run(profileId ? { profileId } : undefined)
@@ -57,6 +62,8 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
   },
 
   startCrossAccount: async (profileIds?: string[]) => {
+    // The same backstop: every account's run, and the synthesis, run Claude.
+    if (isClaudeOff()) { set({ error: CLAUDE_OFF }); return }
     try {
       set({
         status: 'running',

@@ -5,13 +5,13 @@ describe('onboarding registry', () => {
   it('has 13 steps in the locked order', () => {
     // github precedes statusline (user call 2026-07-01): the status-line
     // page's Copilot preview element only exists once the meter is enabled.
-    // codex precedes builtinTools (2026-07-02): the answer drives the Code
-    // review card's disabled state and the codex_review tool gate.
     // commandBar follows welcome (2026-08-22, #382): the one-row bar page,
     // new in 2.1.0-beta.17, sits with the other "what this is" pages.
+    // WP2 (2.1.1): assistants follows welcome; codexSetup follows the Claude
+    // account page and replaces the legacy codex and codexSignIn pages.
     expect(STEPS.map((s) => s.id)).toEqual([
-      'whatsNewV2', 'welcome', 'commandBar', 'findClaude', 'compatibility', 'accounts',
-      'github', 'statusline', 'codex', 'codexSignIn', 'builtinTools',
+      'whatsNewV2', 'welcome', 'assistants', 'commandBar', 'findClaude', 'compatibility', 'accounts',
+      'codexSetup', 'github', 'statusline', 'builtinTools',
       'transparency', 'finish',
     ])
   })
@@ -41,14 +41,14 @@ describe('onboarding registry', () => {
     expect(Object.fromEntries(STEPS.map((s) => [s.id, s.sinceVersion]))).toEqual({
       whatsNewV2: '2.0.0',
       welcome: '2.0.0',
+      assistants: '2.1.1',
       commandBar: '2.1.0-beta.17',
       findClaude: '2.0.0',
       compatibility: '2.0.0',
       accounts: '2.0.0',
+      codexSetup: '2.1.1',
       github: '2.0.0',
       statusline: '2.0.0',
-      codex: '2.0.0',
-      codexSignIn: '2.0.0',
       builtinTools: '2.0.0',
       transparency: '2.0.0',
       finish: '2.0.0',
@@ -59,14 +59,33 @@ describe('onboarding registry', () => {
     expect(STEPS.find((s) => s.id === 'finish')?.requiresSetup).toBe(false)
   })
 
-  it('only codexSignIn is conditional (has a when predicate)', () => {
-    expect(STEPS.filter((s) => s.when).map((s) => s.id)).toEqual(['codexSignIn'])
+  it('the conditional steps are Claude Code\'s own pages and Codex setup', () => {
+    expect(STEPS.filter((s) => s.when).map((s) => s.id)).toEqual(['findClaude', 'compatibility', 'accounts', 'codexSetup', 'statusline'])
   })
 
-  it('codexSignIn.when is true only when codexEnabled is true', () => {
-    const codexSignIn = STEPS.find((s) => s.id === 'codexSignIn')!
-    expect(codexSignIn.when!({ codexEnabled: true })).toBe(true)
-    expect(codexSignIn.when!({ codexEnabled: false })).toBe(false)
-    expect(codexSignIn.when!({})).toBe(false)
+  it('Claude Code\'s pages follow claudeEnabled (absent = on); codexSetup only when codexEnabled is true', () => {
+    for (const id of ['findClaude', 'compatibility', 'accounts', 'statusline']) {
+      const step = STEPS.find((s) => s.id === id)!
+      expect(step.when!({}), id).toBe(true)
+      expect(step.when!({ claudeEnabled: true }), id).toBe(true)
+      expect(step.when!({ claudeEnabled: false, codexEnabled: true }), id).toBe(false)
+    }
+    const codexSetup = STEPS.find((s) => s.id === 'codexSetup')!
+    expect(codexSetup.when!({ codexEnabled: true })).toBe(true)
+    expect(codexSetup.when!({ codexEnabled: false })).toBe(false)
+    expect(codexSetup.when!({})).toBe(false)
+  })
+
+  it('only the assistants choice and Codex setup are fresh-install only, and neither asks for setup', () => {
+    // requiresSetup false: a completed upgrader, who lacks both in
+    // completedSteps, must not be made due by them (deriveOnboarding).
+    expect(STEPS.filter((s) => s.freshInstallOnly).map((s) => s.id)).toEqual(['assistants', 'codexSetup'])
+    for (const s of STEPS.filter((x) => x.freshInstallOnly)) expect(s.requiresSetup, s.id).toBe(false)
+  })
+
+  it('the legacy Codex pages have left the flow', () => {
+    const ids = STEPS.map((s) => s.id)
+    expect(ids).not.toContain('codex')
+    expect(ids).not.toContain('codexSignIn')
   })
 })

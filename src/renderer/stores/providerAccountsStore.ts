@@ -11,7 +11,7 @@ import { create } from 'zustand'
 import type {
   AccountsSnapshot, AccountView, AccountsResult, AccountsFailure, ProviderInstallationView, ProviderId,
   BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
-  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, ExternalDefaultOutcome,
+  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, ExternalDefaultOutcome, InstallRecipeView,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import { useSettingsStore } from './settingsStore'
@@ -87,6 +87,19 @@ export function savedOff(settings: { claudeEnabled?: boolean; codexEnabled?: boo
 
 export const providerAccountActions = {
   setEnabled: (providerId: ProviderId, enabled: boolean) => call(() => api().setEnabled(providerId, enabled)),
+  /** Look for the provider's CLI again. Main keeps what it finds as the
+   *  executable its launches and sign-ins run, and pushes a new snapshot. */
+  discover: (providerId: ProviderId) => call<{ installation: ProviderInstallationView }>(() => api().discover(providerId)),
+  /** How the provider's CLI is installed or updated, to show; never run by
+   *  main. Null when main could not say. */
+  installRecipes: async (providerId: ProviderId): Promise<InstallRecipeView[] | null> => {
+    try {
+      const r = await api().installRecipes(providerId)
+      return Array.isArray(r) ? r : null
+    } catch {
+      return null
+    }
+  },
   /** Turn a provider on or off. Main decides first, so its refusals (in use,
    *  the last provider on) come back unchanged and nothing is saved; once
    *  it agrees, the saved setting is written so the choice outlives main's

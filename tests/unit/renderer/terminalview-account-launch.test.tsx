@@ -398,7 +398,7 @@ describe("main's refusals, in plain words at the terminal", () => {
     mount(codexSession({ providerAccountId: 'acc-work' }))
     await settle()
     await act(async () => { settles[0].reject(refused(why)) })
-    expect(termLines()).toContain('Codex 0.150.2 is too old for this app. Update Codex, then restart the app.')
+    expect(termLines()).toContain('Codex 0.150.2 is too old for this app. Update Codex, then Check again in Settings, Accounts.')
     useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', compatibility: 'unknown' })] }), loaded: true })
     await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'b')
     await act(async () => { settles[1].reject(refused(why)) })
@@ -615,5 +615,37 @@ describe('a live session is never left flagged exited', () => {
     expect(termLines()).toContain('Codex did not start. This account needs attention. Open Accounts.')
     expect(exitedMarks().length).toBeGreaterThan(0)
     expect(spawn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('WP2 6e: a transient tab (Run in a terminal) runs its command once', () => {
+  const CMD = 'npm install -g @openai/codex'
+  const tab = (over: Record<string, unknown> = {}) => ({
+    id: 's-1', label: 'Install Codex', workingDirectory: '', color: '#89b4fa', sessionType: 'local', provider: 'claude', model: '',
+    shellOnly: true, transient: true, terminalOptions: { command: CMD, elevated: false }, ...over,
+  })
+  const mountShell = (session: Record<string, unknown>) => {
+    H.sessionState.sessions = [session]
+    act(() => {
+      root.render(React.createElement(TerminalView as any, {
+        key: 'shell', sessionId: 's-1', cwd: '', isActive: true, shellOnly: true, provider: 'claude', terminalOptions: session.terminalOptions,
+      }))
+    })
+  }
+  const optionPatches = () => H.updates.filter((u) => 'terminalOptions' in u.patch)
+
+  it('the first spawn carries the command, and the session record loses it at once', async () => {
+    mountShell(tab())
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].terminalOptions).toEqual({ command: CMD, elevated: false })
+    expect(optionPatches()).toEqual([{ id: 's-1', patch: { terminalOptions: { elevated: false } } }])
+  })
+
+  it('a saved terminal-only config keeps its command (configuration, run on every launch)', async () => {
+    mountShell(tab({ transient: undefined, configId: 'cfg-1' }))
+    await settle()
+    expect(spawn.mock.calls[0][1].terminalOptions).toEqual({ command: CMD, elevated: false })
+    expect(optionPatches()).toEqual([])
   })
 })

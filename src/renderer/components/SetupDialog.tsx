@@ -14,9 +14,12 @@ import {
   DIALOG_LABEL_CLASS,
   DIALOG_LABEL_STYLE,
 } from './ui/Dialog'
+import { noteClaudeMissingAtSetup, type FirstRunOutcome } from '../onboarding/provider-choice'
 
 interface Props {
-  onComplete: () => void
+  /** `{ codexOnly: true }` when the user continued without Claude Code
+   *  ("Use Codex only"); App saves that once the config is loaded. */
+  onComplete: (outcome?: FirstRunOutcome) => void
   initialStep?: number
 }
 
@@ -223,6 +226,21 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     onComplete()
   }
 
+  // The way through for someone who only uses Codex. Nothing is written
+  // here: App saves Claude off and Codex on once the stores hold the loaded
+  // config (setup-handoff.ts), and hands this run to Codex setup. What comes
+  // next depends on the screen: on a fresh install (the first-run screen) the
+  // onboarding's assistants page offers Codex alone and says why, then the
+  // Codex setup page follows; on the version-change screen, an upgrader
+  // (who is never shown the assistants page) gets the Codex setup page once,
+  // in that run (alone, or after the release notes when they are due). So
+  // does the first-run screen of a new computer pointed at an existing
+  // resources folder, which is an upgrader too.
+  const handleCodexOnly = () => {
+    noteClaudeMissingAtSetup()
+    onComplete({ codexOnly: true })
+  }
+
   if (loading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center z-50" style={OPAQUE_BACKDROP}>
@@ -231,11 +249,12 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     )
   }
 
-  // Step 2, blocked: the Claude CLI is not installed on this machine. This is a
-  // FULL STOP -- no Skip, no Continue, no way past. Everything the app does
-  // needs that binary, so "carry on and hope" only produces a broken app the
-  // user has no way to diagnose. The only ways out are: install it and Retry,
-  // or go Back and quit.
+  // Step 2, blocked: the Claude CLI is not installed on this machine. A FULL
+  // STOP for Claude Code -- no Skip, no Continue into a Claude setup that
+  // cannot run, because "carry on and hope" only produces a broken app the
+  // user has no way to diagnose. The ways out are: install it and Retry, go
+  // Back and quit, or (WP2) "Use Codex only", which turns Claude Code off
+  // rather than pretending it is there.
   if (step === 2 && cliProbe && !cliProbe.installed) {
     return (
       <DialogOverlay style={OPAQUE_BACKDROP}>
@@ -245,19 +264,19 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
               titleId="setup-cli-missing-title"
               mark="!"
               title="Claude Code is not installed"
-              subtitle="AI Code Conductor runs the Claude Code CLI — it cannot set up, or run a single session, without it."
+              subtitle="AI Code Conductor runs the Claude Code CLI; it cannot set up, or run a Claude session, without it."
             />
 
             <DialogCallout
               tone="danger"
               role="alert"
-              title="Setup cannot continue"
+              title="Claude Code setup cannot continue"
               testId="setup-cli-missing"
             >
               <p>
                 The <code style={{ color: 'var(--text-primary)' }}>claude</code> command was not found on this
-                PC. Every session AI Code Conductor launches is a Claude Code process, so there is nothing to
-                configure until it is installed.
+                PC. Every Claude session AI Code Conductor launches is a Claude Code process, so there is nothing
+                to configure for it until it is installed.
               </p>
             </DialogCallout>
 
@@ -297,6 +316,19 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
             <p className="text-[11px]" style={{ color: 'var(--text-muted)' }} data-testid="setup-cli-probe-detail">
               Checked with <code>{cliProbe.probe}</code>.
             </p>
+
+            <div
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg border"
+              style={{ background: 'var(--surface-base)', borderColor: 'var(--border-subtle)' }}
+              data-testid="setup-codex-only"
+            >
+              <p className="flex-1 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                Only using Codex? Continue without Claude Code; you can add it later in Settings, Accounts.
+              </p>
+              <DialogButton variant="secondary" onClick={handleCodexOnly} className="shrink-0" testId="setup-codex-only-button">
+                Use Codex only
+              </DialogButton>
+            </div>
           </DialogBody>
 
           <DialogFooter

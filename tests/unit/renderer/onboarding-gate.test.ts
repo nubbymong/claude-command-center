@@ -9,10 +9,25 @@ const stampedExcept = (skip: string[] = []): Record<string, string> =>
   Object.fromEntries(ALL_IDS.filter((id) => !skip.includes(id)).map((id) => [id, '2.0.0']))
 
 describe('deriveOnboarding', () => {
-  it('fresh install -> full flow; codexSignIn excluded while codex is off', () => {
+  it('fresh install -> full flow; codexSetup excluded while codex is off', () => {
     const { due, steps } = deriveOnboarding({}, {})
     expect(due).toBe(true)
-    expect(steps.map((s) => s.id)).toEqual(ALL_IDS.filter((id) => id !== 'codexSignIn'))
+    expect(steps.map((s) => s.id)).toEqual(ALL_IDS.filter((id) => id !== 'codexSetup'))
+  })
+
+  it('Codex only (claudeEnabled false) -> no Claude Code pages; codexSetup included', () => {
+    const { steps } = deriveOnboarding({}, { claudeEnabled: false, codexEnabled: true })
+    expect(steps.map((s) => s.id)).toEqual(
+      ALL_IDS.filter((id) => !['findClaude', 'compatibility', 'accounts', 'statusline'].includes(id)),
+    )
+  })
+
+  it('WP2: a completed upgrader is not made due by the new fresh-install pages', () => {
+    // Their completedSteps predate assistants and codexSetup, so both are
+    // "undone"; neither requires setup, so the harness does not open for them.
+    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['assistants', 'codexSetup']) }
+    expect(deriveOnboarding(meta, {}).due).toBe(false)
+    expect(deriveOnboarding(meta, { codexEnabled: true }).due).toBe(false)
   })
 
   it('v1->v2 updater (populated legacy meta, no onboarding fields) -> full flow', () => {
@@ -24,9 +39,9 @@ describe('deriveOnboarding', () => {
     expect(steps.length).toBe(ALL_IDS.length - 1)
   })
 
-  it('codex ON -> codexSignIn is included', () => {
+  it('codex ON -> codexSetup is included', () => {
     const { steps } = deriveOnboarding({}, { codexEnabled: true })
-    expect(steps.map((s) => s.id)).toContain('codexSignIn')
+    expect(steps.map((s) => s.id)).toContain('codexSetup')
     expect(steps.length).toBe(ALL_IDS.length)
   })
 
@@ -35,7 +50,7 @@ describe('deriveOnboarding', () => {
     const { due, steps } = deriveOnboarding(meta, {})
     expect(due).toBe(true)
     expect(steps.map((s) => s.id)).toEqual(
-      ALL_IDS.filter((id) => !['whatsNewV2', 'welcome', 'findClaude', 'codexSignIn'].includes(id)),
+      ALL_IDS.filter((id) => !['whatsNewV2', 'welcome', 'findClaude', 'codexSetup'].includes(id)),
     )
   })
 
@@ -46,8 +61,8 @@ describe('deriveOnboarding', () => {
     expect(steps).toEqual([])
   })
 
-  it('BLOCKER FIX: codex off leaves codexSignIn undone but when-false -> NOT due, never a zero-step harness', () => {
-    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['codexSignIn']) }
+  it('BLOCKER FIX: codex off leaves codexSetup undone but when-false -> NOT due, never a zero-step harness', () => {
+    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['codexSetup']) }
     const { due, steps } = deriveOnboarding(meta, { codexEnabled: false })
     expect(due).toBe(false)
     expect(steps).toEqual([])
@@ -56,7 +71,7 @@ describe('deriveOnboarding', () => {
 
   it('v2.1 adds a requiresSetup step -> re-surfaces with just that step', () => {
     const extra: OnboardingStep = { id: 'newFeature', sinceVersion: '2.1.0', requiresSetup: true }
-    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['codexSignIn']) }
+    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['codexSetup']) }
     const { due, steps } = deriveOnboarding(meta, { codexEnabled: false }, [...STEPS, extra])
     expect(due).toBe(true)
     expect(steps.map((s) => s.id)).toEqual(['newFeature'])
@@ -64,13 +79,13 @@ describe('deriveOnboarding', () => {
 
   it('v2.1 adds only an info step -> not due (Whats-New handles it)', () => {
     const extra: OnboardingStep = { id: 'newInfo', sinceVersion: '2.1.0', requiresSetup: false }
-    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['codexSignIn']) }
+    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['codexSetup']) }
     const { due } = deriveOnboarding(meta, { codexEnabled: false }, [...STEPS, extra])
     expect(due).toBe(false)
   })
 
   it('plain patch / re-run after completion (no new steps) -> not due', () => {
-    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['codexSignIn']) }
+    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['codexSetup']) }
     expect(deriveOnboarding(meta, { codexEnabled: false }).due).toBe(false)
   })
 
@@ -80,8 +95,8 @@ describe('deriveOnboarding', () => {
       [{}, { codexEnabled: true }],                                             // fresh, codex on (due)
       [{ completedSteps: { whatsNewV2: '2.0.0' } }, {}],                        // crash-resume (due)
       [{ onboardingCompletedVersion: '2', completedSteps: stampedExcept([]) }, { codexEnabled: true }],            // completed, codex on (not due)
-      [{ onboardingCompletedVersion: '2', completedSteps: stampedExcept(['codexSignIn']) }, { codexEnabled: false }], // completed, codex off — the danger case (not due)
-      [{ onboardingCompletedVersion: '2', completedSteps: stampedExcept(['codexSignIn']) }, { codexEnabled: false },
+      [{ onboardingCompletedVersion: '2', completedSteps: stampedExcept(['codexSetup']) }, { codexEnabled: false }], // completed, codex off — the danger case (not due)
+      [{ onboardingCompletedVersion: '2', completedSteps: stampedExcept(['codexSetup']) }, { codexEnabled: false },
         [...STEPS, { id: 'newFeature', sinceVersion: '2.1.0', requiresSetup: true }]],                              // re-surface (due)
     ]
     for (const [meta, settings, steps] of scenarios) {
@@ -214,5 +229,25 @@ describe('stepsNewSince — the pages an upgrader is shown after the notes', () 
     expect(stepsNewSince('2.1.0-beta.15', {}).map((s) => s.id)).toEqual(['commandBar'])
     expect(stepsNewSince('2.1.0-beta.16', {}).map((s) => s.id)).toEqual(['commandBar'])
     expect(stepsNewSince('2.1.0-beta.17', {})).toEqual([])
+  })
+
+  it('WP2: never shows an upgrader the assistants choice or Codex setup, though both are new in 2.1.1', () => {
+    // Owner call: upgraders are not asked; they change providers in
+    // Settings, Accounts. Both steps are freshInstallOnly.
+    for (const from of ['2.0.4', '2.1.0', '2.1.1-beta.1']) {
+      for (const settings of [{}, { codexEnabled: true }, { claudeEnabled: false, codexEnabled: true }]) {
+        const ids = stepsNewSince(from, settings).map((s) => s.id)
+        expect(ids, `${from} ${JSON.stringify(settings)}`).not.toContain('assistants')
+        expect(ids, `${from} ${JSON.stringify(settings)}`).not.toContain('codexSetup')
+      }
+    }
+  })
+
+  it('freshInstallOnly is what keeps a step out, not its version', () => {
+    const REG: OnboardingStep[] = [
+      { id: 'a', sinceVersion: '2.2.0', requiresSetup: false },
+      { id: 'b', sinceVersion: '2.2.0', requiresSetup: false, freshInstallOnly: true },
+    ]
+    expect(stepsNewSince('2.1.0', {}, REG).map((s) => s.id)).toEqual(['a'])
   })
 })

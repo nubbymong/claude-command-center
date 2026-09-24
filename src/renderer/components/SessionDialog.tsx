@@ -15,6 +15,7 @@ import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, O
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { accountFieldState, defaultAccountId, providerTooOldText, accountEmail } from '../utils/launchAccount'
 import { ClaudeGlyph, CodexGlyph } from './sidebar/Badges'
+import { CLAUDE_OFF_LAUNCH_REASON } from '../hooks/useLaunchConfig'
 
 /** The one launch the dialog's ticked "launch with the sign-in already on
  *  this computer" covers: the caller grants it to the session it starts
@@ -127,11 +128,20 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   // Codex master ("Do you use Codex?"): with it off, Codex configs can't launch,
   // so the card renders disabled with a pointer to Settings → Codex.
   const codexDisabled = useSettingsStore((s) => s.settings.codexEnabled === false)
+  // Claude Code off (a Codex-only install, WP2): Claude configs can't launch
+  // (isConfigLaunchBlocked), so the Claude card renders disabled the same way,
+  // with the reason every launch surface gives. Terminal only stays: it runs
+  // no Claude.
+  const claudeDisabled = useSettingsStore((s) => s.settings.claudeEnabled === false)
 
   // ── The two driving choices. A NEW config starts with neither chosen and the
-  // dialog reveals itself as they're answered; EDIT opens fully revealed.
+  // dialog reveals itself as they're answered; EDIT opens fully revealed. A new
+  // config never starts on a provider that is off: with Claude Code off it
+  // starts on Codex, the assistant that is on (nothing, if Codex is off too).
   const [uiProvider, setUiProvider] = useState<UiProvider | null>(
-    initial ? (initial.shellOnly ? 'terminal' : (initial.provider ?? 'claude')) : null
+    initial
+      ? (initial.shellOnly ? 'terminal' : (initial.provider ?? 'claude'))
+      : (claudeDisabled && !codexDisabled ? 'codex' : null)
   )
   const [sessionType, setSessionType] = useState<SessionType | null>(initial ? (initial.sessionType ?? 'local') : null)
 
@@ -740,7 +750,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
             choices. Claude Code signs in with your Claude account; Codex needs its own OpenAI account.
           </Hint>
           <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Provider">
-            {providerCard('claude', 'Claude Code', "Anthropic's coding agent", false)}
+            {providerCard('claude', 'Claude Code', "Anthropic's coding agent", claudeDisabled)}
             {providerCard('codex', 'Codex', "OpenAI's coding agent", codexDisabled || sessionType === 'ssh')}
             {providerCard('terminal', 'Terminal only', 'A plain terminal — no AI', false)}
           </div>
@@ -749,6 +759,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
           )}
           {codexDisabled && sessionType !== 'ssh' && (
             <p className="text-[11px] text-[var(--text-muted)] mt-1.5">Codex is off — enable it in Settings → Codex to use it here.</p>
+          )}
+          {claudeDisabled && (
+            <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="claude-off-note">{CLAUDE_OFF_LAUNCH_REASON}</p>
           )}
           {uiProvider !== null && (
             <>

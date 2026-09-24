@@ -30,3 +30,5 @@ export type { LeaseKind, LaunchLeaseKind, LeaseOwner, AccountLease, LeaseAddResu
 export { SecretHandleStore, SECRET_HANDLE_TTL_MS, SECRET_HANDLES_PER_RENDERER } from './secret-handles'
 export { AccountsService } from './accounts-service'
 export type { AccountsServiceDeps, LaunchLeaseResult, PreparedLaunchResult } from './accounts-service'
+// WP2 commit 6e: the shell line a terminal tab types for a recipe main allows to run.
+export { recipeRunLine } from './recipe-run-line'

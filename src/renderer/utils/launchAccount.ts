@@ -133,12 +133,13 @@ export function accountFieldState(snapshot: AccountsSnapshot | null, providerId:
 }
 
 /** "Codex 0.150.2 is too old for this app..." for a CLI discovery found and
- *  judged too old. Main keeps the CLI it proved until it checks again (the
- *  app's next start, or turning Codex off and on), so updating alone does not
- *  reach a restarted session: the app has to restart. */
+ *  judged too old. Main keeps the CLI it proved until it checks again, so
+ *  updating alone does not reach a restarted session. "Check again" in
+ *  Settings, Accounts (the Providers card) is that check: main's discovery
+ *  replaces the executable its launches and sign-ins run. */
 export function tooOldText(p: { displayName: string; version?: string }): string {
   const named = p.version ? `${p.displayName} ${p.version}` : p.displayName
-  return `${named} is too old for this app. Update ${p.displayName}, then restart the app.`
+  return `${named} is too old for this app. Update ${p.displayName}, then Check again in Settings, Accounts.`
 }
 
 /** The too-old sentence when discovery found a too-old CLI; null otherwise.

@@ -122,13 +122,16 @@ export function ReviewerLineBlock({ providerId }: { providerId: ProviderId }) {
  * whenever `focusKey` changes (a dialog's step), focus goes to the element
  * marked `data-autofocus`, else to the first control.
  */
-export function AccountsModal({ labelledBy, testId, overlayTestId, width, role = 'dialog', focusKey, children }: {
+export function AccountsModal({ labelledBy, testId, overlayTestId, width, role = 'dialog', focusKey, z, children }: {
   labelledBy: string
   testId?: string
   overlayTestId?: string
   width?: string
   role?: 'dialog' | 'alertdialog'
   focusKey?: string
+  /** The overlay's stacking class, when it opens over a surface that sits
+   *  above the usual dialogs (the onboarding pages). */
+  z?: string
   children: React.ReactNode
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
@@ -137,7 +140,7 @@ export function AccountsModal({ labelledBy, testId, overlayTestId, width, role =
     panelRef.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus()
   }, [focusKey])
   return createPortal(
-    <DialogOverlay testId={overlayTestId}>
+    <DialogOverlay testId={overlayTestId} z={z}>
       <DialogPanel panelRef={panelRef} labelledBy={labelledBy} width={width} role={role} testId={testId}>
         {children}
       </DialogPanel>

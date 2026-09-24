@@ -22,7 +22,12 @@ import type { pingAllDetachedHosts } from './stores/hostReachability'
 // before invoking session-scoped IPC to keep the on-disk view in sync.
 export function buildSessionState(): SessionState {
   const state = useSessionStore.getState()
-  const sessions: SavedSession[] = state.sessions.map((s) => ({
+  // A transient tab (commandTerminal: a confirmed install command) is never
+  // saved: restoring it would run that command again at the next launch, with
+  // nobody asked. Nor is it saved as the active session.
+  const kept = state.sessions.filter((s) => !s.transient)
+  const activeKept = kept.some((s) => s.id === state.activeSessionId)
+  const sessions: SavedSession[] = kept.map((s) => ({
     id: s.id,
     configId: s.configId,
     kind: s.kind,
@@ -91,7 +96,7 @@ export function buildSessionState(): SessionState {
   }))
   return {
     sessions,
-    activeSessionId: state.activeSessionId,
+    activeSessionId: activeKept ? state.activeSessionId : (kept[kept.length - 1]?.id ?? null),
     savedAt: Date.now(),
     // SSH Persistent (Phase 1): fold the left-running registry into the same
     // persisted file so a detached remote survives an app restart. Main round-

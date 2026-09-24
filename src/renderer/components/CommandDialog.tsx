@@ -12,6 +12,7 @@ import { effectiveKind } from './command-bar/layout'
 import { IconColourPicker } from './command-bar/menus'
 import { CommandIcon } from './command-icons'
 import { ON_BRAND } from './ui/Dialog'
+import { ASK_CLAUDE_OFF, useAskConductorBlocked } from '../lib/askConductorGate'
 
 /**
  * What a command button DOES. This is the first question the dialog asks,
@@ -370,7 +371,12 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
     setReviewDismissed(true)
   }
 
+  // Ask runs on Claude Code: while that is off the button is disabled and says
+  // why. The gate is its own small module, so the launcher itself still loads
+  // only on click.
+  const askOff = useAskConductorBlocked()
   const askConductor = () => {
+    if (askOff) return
     // Loaded on click so the dialog has no import-time dependency on the help
     // session's module (it is never needed until someone asks).
     const q = kind
@@ -469,7 +475,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
               label="What should it do?"
               testId="command-field-kind"
               right={!caps.isAsk && (
-                <button type="button" onClick={askConductor} className="inline-flex items-center gap-1.5 h-6 px-2 rounded-full border text-[11px] font-semibold focus-ring" style={{ color: 'var(--brand)', borderColor: 'color-mix(in srgb, var(--brand) 45%, transparent)', background: 'color-mix(in srgb, var(--brand) 12%, transparent)' }} title="Open Ask Conductor with this question" data-testid="command-ask-conductor">
+                <button type="button" onClick={askConductor} disabled={askOff} className="inline-flex items-center gap-1.5 h-6 px-2 rounded-full border text-[11px] font-semibold focus-ring disabled:opacity-50 disabled:cursor-not-allowed" style={{ color: 'var(--brand)', borderColor: 'color-mix(in srgb, var(--brand) 45%, transparent)', background: 'color-mix(in srgb, var(--brand) 12%, transparent)' }} title={askOff ? ASK_CLAUDE_OFF : 'Open Ask Conductor with this question'} data-testid="command-ask-conductor">
                   <CommandIcon icon="chat" color="currentColor" label="Ask" size={11} />
                   Ask Conductor
                 </button>

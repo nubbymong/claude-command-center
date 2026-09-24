@@ -1,19 +1,39 @@
 // WP2 commit 6 (F4, top): one row per provider the main process knows,
 // with its machine status and the on/off switch. At least one provider
 // always stays on; the main process enforces that and this card says so
-// under the switch that tried.
+// under the switch that tried. A provider whose CLI was not found, could not
+// be checked, or is too old gets "Check again" (6e): a new discovery, which
+// is also the executable later launches and sign-ins run.
 import React, { useState } from 'react'
 import type { ProviderInstallationView } from '../../../../shared/providers'
 import { useProviderAccountsStore, providerAccountActions, providerStatus } from '../../../stores/providerAccountsStore'
 import { ProviderMark } from '../../sidebar/Badges'
 import ToggleSwitch from '../../github/config/ToggleSwitch'
 import { Section } from '../../SettingsPage'
-import { Pill, StatusText, ErrorLine } from './accounts-ui'
+import { Pill, StatusText, ErrorLine, RowButton } from './accounts-ui'
+
+/** The CLI is missing, could not be checked, or cannot be used as found:
+ *  worth checking again once the user has installed or updated it. */
+export function offersCheckAgain(p: ProviderInstallationView): boolean {
+  if (!p.enabled) return false
+  if (p.discoveryState === 'missing' || p.discoveryState === 'invalid' || p.discoveryState === 'error') return true
+  return p.discoveryState === 'found' && (p.compatibility === 'too-old' || p.compatibility === 'unsupported')
+}
 
 function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean }) {
   const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const status = providerStatus(p)
+
+  // The result arrives with the snapshot main pushes after the check.
+  const checkAgain = async () => {
+    setChecking(true)
+    setError(null)
+    const r = await providerAccountActions.discover(p.providerId)
+    setChecking(false)
+    if (!r.ok) setError(r.message)
+  }
 
   const toggle = async () => {
     setBusy(true)
@@ -39,6 +59,13 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
           {p.providerId === 'codex' && <Pill tone="beta" testId={`provider-beta-${p.providerId}`}>Beta</Pill>}
         </div>
         <StatusText tone={status.tone} testId={`provider-status-${p.providerId}`}>{status.text}</StatusText>
+        {offersCheckAgain(p) && (
+          <div className="mt-1">
+            <RowButton onClick={() => { void checkAgain() }} disabled={checking} testId={`provider-check-again-${p.providerId}`}>
+              {checking ? 'Checking...' : 'Check again'}
+            </RowButton>
+          </div>
+        )}
       </div>
       <div className="flex flex-col items-end gap-1 shrink-0">
         <div className="flex items-center gap-2">
