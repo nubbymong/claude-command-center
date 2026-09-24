@@ -679,8 +679,10 @@ only the other provider's tool.
     wait. Account leases do not cover these.
   - Session-only, and not for a reviewer: `CCC_*` variables and the
     primary-credential sync.
-  - On macOS a profile home does not isolate the sign-in, so a Claude review
-    is refused there.
+  - On macOS Claude has one account, the normal sign-in: multi-account is
+    off there (decision D2, WP1), because the Keychain token is shared. A
+    Claude review on macOS runs on that sign-in, with no reviewer choice;
+    it is not refused.
 - **No version proof exists for Claude.** `resolveClaudeForPty` resolves by
   name, and the 2.1.278 floor feeds only the preflight diagnostic. 5b adds
   `setup.discover` for Claude (resolve, version check, recorded identity),
@@ -704,13 +706,14 @@ only the other provider's tool.
 
 **Owner decisions.**
 
-1. **The Claude reviewer account.** Registry-based, through a review-only
-   Claude launch (recommended, the approved architecture), or the primary
-   Claude profile until Claude joins the accounts service?
-2. **The diff source.** Produced by main and sent in the prompt
-   (recommended), or reviews from Codex sessions limited to `paths`?
-3. **When to offer `claude_review`.** Only while Claude is enabled and a
-   Claude account can run reviews (recommended)?
+1. **The Claude reviewer account.** DECIDED (owner, 2026-09-24):
+   registry-based, through a review-only Claude launch (reviewer default,
+   else the provider default), as the approved architecture says.
+2. **The diff source.** DECIDED (owner, 2026-09-24): produced by main
+   with a hardened git and sent in the prompt; all three modes supported.
+3. **When to offer `claude_review`.** DECIDED (owner, 2026-09-24): only
+   while Claude is enabled and a Claude account can run reviews (the
+   reviewer or default account; on macOS the normal sign-in).
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 
