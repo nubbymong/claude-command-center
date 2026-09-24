@@ -20,6 +20,10 @@ describe('a reviewer launch in a profile home (WP2 5b)', () => {
   let profiles: typeof import('../../src/main/account-profiles')
   const realPlatform = process.platform
   const source = (bin: string): Record<string, string> => ({ PATH: bin, EDITOR: 'vim', ANTHROPIC_BASE_URL: 'http://example.invalid' })
+  /** The profile-home composition itself: on a macOS runner it is exercised
+   *  with Linux's rules, because macOS composes the normal sign-in instead
+   *  (the last case covers that on every runner). */
+  const profileHomeRules = () => { if (realPlatform === 'darwin') Object.defineProperty(process, 'platform', { value: 'linux' }) }
 
   beforeAll(async () => {
     composeProviders()
@@ -38,6 +42,7 @@ describe('a reviewer launch in a profile home (WP2 5b)', () => {
   })
 
   it('sets the profile home up; hardened, the reviewer\'s environment IS the session\'s', () => {
+    profileHomeRules()
     const p = profiles.createProfile('Reviewer')
     const home = profiles.getProfileConfigDir(p.id)
     fs.rmSync(home, { recursive: true, force: true })
@@ -52,6 +57,7 @@ describe('a reviewer launch in a profile home (WP2 5b)', () => {
   })
 
   it('records the ambient variables the hardening will remove, and the hardening removes them', () => {
+    profileHomeRules()
     const p = profiles.createProfile('Reviewer')
     const l = profiles.profileRealmLaunch(p.id, source(path.join(tmp, 'bin')))
     if ('refused' in l) throw new Error(l.refused)

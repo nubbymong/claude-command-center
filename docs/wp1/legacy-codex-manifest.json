@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T09:51:22.598Z",
-  "head": "a9ba9e1e1471b24166e3152195481b67102ff730",
-  "tree": "621d99e2afc63e4f591bfa4e281d536dc4fa4c48",
+  "generatedAt": "2026-09-24T10:04:50.082Z",
+  "head": "bb0b7ab988751f139e4b0acd8b84cc92921f5c72",
+  "tree": "71103a9e76bf885e03feebf5c5f139d9b0604e3d",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -140,7 +140,7 @@
   "unscopedMentions": [],
   "unreadable": [],
   "matchedPathCount": 314,
-  "pathDigest": "dce38c569eea63cf3b76fcf1083af0c04b3342037187e6f2bcc6acdbe5fe2c93",
+  "pathDigest": "32e89e25c10cc77e4a25adf08063f4ed6b9d74d8c774dd36a897702f288b4edc",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -762,16 +762,16 @@
       "lineCount": 6
     },
     {
-      "path": "src/main/providers/core/review-support.ts",
+      "path": "src/main/providers/host-color-scheme.ts",
       "predicates": [
-        "P09",
         "P14"
       ],
       "lineCount": 2
     },
     {
-      "path": "src/main/providers/host-color-scheme.ts",
+      "path": "src/main/providers/review-support.ts",
       "predicates": [
+        "P09",
         "P14"
       ],
       "lineCount": 2

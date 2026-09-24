@@ -14,7 +14,7 @@
 // message. The stream is read as it arrives (command output rides in item
 // events and can be large), so no output cap can cut the reply off.
 import type { ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewUsage } from '../core'
-import { reviewerEnv, finishReview, redactFailure as redact, redactHead, clip, WINDOW, MARGIN, MAX_MESSAGE, REVIEW_MAX_TEXT } from '../core'
+import { reviewerEnv, finishReview, redactFailure as redact, redactHead, clip, WINDOW, MARGIN, MAX_MESSAGE, REVIEW_MAX_TEXT } from '../review-support'
 import { codexCommandLine, codexShellEnv, runCodexCli } from './cli-runner'
 import type { CodexRunDeps } from './cli-runner'
 

@@ -10,7 +10,7 @@
 // profile home's variables), handed in by the composition root, because this
 // package imports no shared main module that reaches the Codex package (R2).
 import type { ProviderSetupOperations, ProviderLaunchOperations, ProviderReviewOperations, RealmRef, LaunchPreparation, AuthFailureCode } from '../core'
-import { reviewerEnv } from '../core'
+import { reviewerEnv } from '../review-support'
 import type { AuthRealm, RealmEnvPatch } from '../../../shared/providers'
 import { CLAUDE_PROFILE_PATH_REF_PREFIX } from '../../../shared/providers'
 import { isValidProfileId } from '../../../shared/profile-id'

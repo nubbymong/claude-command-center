@@ -2,9 +2,11 @@
 // through MCP), moved here from the Codex reviewer (commit 5a) unchanged so
 // the Claude reviewer applies exactly the same rules: the environment a
 // reviewer inherits, and what of its output goes back to the requesting
-// agent. Provider-neutral; imports no provider.
-import { redactSecrets } from '../../hooks/hook-payload-redactor'
-import { redactTokens } from '../../github/security/token-redactor'
+// agent. Provider-neutral; imports no provider. It lives beside provider
+// core, not in it: core imports only core, shared and Node built-ins, and
+// these rules need the app's redactors.
+import { redactSecrets } from '../hooks/hook-payload-redactor'
+import { redactTokens } from '../github/security/token-redactor'
 
 /** Credential shapes removed from the review itself. Case-sensitive and
  *  token-shaped (a digit, a length), so prose about "basic validation" or a

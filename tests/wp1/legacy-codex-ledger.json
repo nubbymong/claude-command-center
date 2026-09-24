@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "dce38c569eea63cf3b76fcf1083af0c04b3342037187e6f2bcc6acdbe5fe2c93",
-  "manifestHead": "a9ba9e1e1471b24166e3152195481b67102ff730",
+  "manifestPathDigest": "32e89e25c10cc77e4a25adf08063f4ed6b9d74d8c774dd36a897702f288b4edc",
+  "manifestHead": "bb0b7ab988751f139e4b0acd8b84cc92921f5c72",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -912,17 +912,6 @@
       "note": "names both providers in a comment only"
     },
     {
-      "path": "src/main/providers/core/review-support.ts",
-      "predicates": [
-        "P09",
-        "P14"
-      ],
-      "category": "AUTH",
-      "disposition": "added",
-      "evidence": "new WP2 commit 5b: the reviewer environment, redaction and reply bounding moved unchanged out of the Codex reviewer so both reviewers apply the same rules (tests/wp1/cli-discovery.test.ts \"the Codex reviewer (WP2 5a)\"; tests/wp1/claude-reviewer.test.ts) (WP1.38)",
-      "note": "created by WP2 commit 5b from src/main/providers/codex/review.ts"
-    },
-    {
       "path": "src/main/providers/host-color-scheme.ts",
       "predicates": [
         "P14"
@@ -941,6 +930,17 @@
       "note": "session-provider registry adapted in place (ProviderId type, no concrete imports); a newPath is added only if the file is physically renamed",
       "resolved": true,
       "resolvedEvidence": "WP1.66 slice 1, adapted in place: the registry implementation now lives in src/main/providers/core/registry.ts and this file re-exports the core entry point, naming no provider; kept in the core scope of tests/wp1/dependency-boundaries.test.ts R1"
+    },
+    {
+      "path": "src/main/providers/review-support.ts",
+      "predicates": [
+        "P09",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b: the reviewer environment, redaction and reply bounding moved unchanged out of the Codex reviewer so both reviewers apply the same rules (tests/wp1/cli-discovery.test.ts \"the Codex reviewer (WP2 5a)\"; tests/wp1/claude-reviewer.test.ts) (WP1.38)",
+      "note": "created by WP2 commit 5b from src/main/providers/codex/review.ts; beside provider core (core imports only core, shared and Node built-ins)"
     },
     {
       "path": "src/main/providers/types.ts",

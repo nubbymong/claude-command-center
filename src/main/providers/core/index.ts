@@ -30,9 +30,3 @@ export type { LeaseKind, LaunchLeaseKind, LeaseOwner, AccountLease, LeaseAddResu
 export { SecretHandleStore, SECRET_HANDLE_TTL_MS, SECRET_HANDLES_PER_RENDERER } from './secret-handles'
 export { AccountsService } from './accounts-service'
 export type { AccountsServiceDeps, LaunchLeaseResult, PreparedLaunchResult } from './accounts-service'
-
-// WP2 commit 5b: what every reviewer adapter shares (environment and output).
-export {
-  reviewerEnv, finishReview, redactReply, redactFailure, redactHead, redactTail, clip,
-  WINDOW, MARGIN, MAX_MESSAGE, REVIEW_MAX_TEXT, DEPTH_GUARD_PREFIXES,
-} from './review-support'

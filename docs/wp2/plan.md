@@ -771,7 +771,9 @@ only the other provider's tool.
     run settles, and let go at once when the review is cancelled during the
     wait. The launch preflight is recorded.
   - The environment rules, redaction and reply bounding are the Codex
-    reviewer's, moved unchanged into provider core (`review-support.ts`).
+    reviewer's, moved unchanged into `src/main/providers/review-support.ts`
+    (beside provider core, not in it: core imports only core, shared and
+    Node built-ins, and these rules need the app's redactors).
   - The pinned 2.1.278 result is read: the result line, or the array of
     messages when the user's own config turns `verbose` on (`--restricted`
     does not ignore that setting). Only `subtype: success` with `is_error:

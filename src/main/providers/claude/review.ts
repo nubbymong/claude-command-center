@@ -26,7 +26,7 @@
 // failure text when is_error), `errors` (on the error subtypes) and `usage`
 // (input, cache creation, cache read and output tokens).
 import type { ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewUsage, RealmRef } from '../core'
-import { reviewerEnv, finishReview, redactFailure, redactHead, clip, WINDOW, MARGIN, MAX_MESSAGE } from '../core'
+import { reviewerEnv, finishReview, redactFailure, redactHead, clip, WINDOW, MARGIN, MAX_MESSAGE } from '../review-support'
 
 /** The reviewer's argv: a constant, so no request text reaches a command
  *  line. Each switch is verified against the pinned CLI's --help. */
