@@ -1,6 +1,8 @@
 # Hello Codex: the Codex introduction (WP2, commit 6 renderer)
 
-Status: SPEC FOR OWNER REVIEW (2026-09-24). Owner scope: plan.md "Scope
+Status: MOCKUP APPROVED by the owner on the Agent Canvas (v1, 2026-09-24),
+as drawn: page 4 shows only the Claude-to-Codex review until claude_review
+ships. Open questions 1 and 3 below were not on the mockup and stay open. Owner scope: plan.md "Scope
 additions" (Hello Codex). The renderer slice builds nothing here until the
 mockup has been reviewed on the Agent Canvas
 (`.ccc-canvas/hello-codex.html`). Acceptance tests are pending cases in
@@ -177,8 +179,8 @@ Codex card selected, and writes the stamp.
 1. **The later-enable path.** Should it be a one-time takeover (recommended,
    so the page is seen when it is relevant), or only a Feature Guide link
    and a tip?
-2. **The review page before 5b ships.** Should it show one direction only
-   (recommended), or say "Claude reviews for Codex sessions are coming"?
+2. **The review page before 5b ships.** Settled by the approved mockup:
+   one direction only.
 3. **Replay.** Is the Feature Guide plus Settings, Codex enough, or should
    the tour list it too?
 
