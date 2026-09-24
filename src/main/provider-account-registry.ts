@@ -135,11 +135,13 @@ export function accountRegistryIsCurrent(): boolean {
 
 /** Two spellings of one folder: compared by the real path when both exist,
  *  else by the resolved path; case-insensitively on Windows and macOS (their
- *  default file systems ignore case). */
+ *  default file systems ignore case). The fallback resolves with `platform`'s
+ *  own path rules, not the host's. */
 export function sameDirectory(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  const pathFor = platform === 'win32' ? path.win32 : path.posix
   const canon = (p: string) => {
     let out: string
-    try { out = fs.realpathSync.native(p) } catch { out = path.resolve(p) }
+    try { out = fs.realpathSync.native(p) } catch { out = pathFor.resolve(p) }
     out = out.replace(/[\\/]+$/, '')
     return platform === 'win32' || platform === 'darwin' ? out.toLowerCase() : out
   }

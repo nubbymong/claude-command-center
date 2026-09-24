@@ -326,7 +326,6 @@ function realExecutablePorts(platform: NodeJS.Platform): Pick<CodexDiscoveryDeps
 /** The real ports behind the auth operations. */
 function realAuthDeps(injected: Pick<CodexAuthDeps, 'lookupRealm' | 'takeSecret'>, realmFs: CodexRealmFsPort): Omit<CodexAuthDeps, 'proven'> {
   const platform = process.platform
-  const runDeps = defaultCodexRunDeps(platform)
   const takeSecret = injected.takeSecret
   return {
     lookupRealm: (realm) => injected.lookupRealm(realm),
@@ -340,7 +339,9 @@ function realAuthDeps(injected: Pick<CodexAuthDeps, 'lookupRealm' | 'takeSecret'
     ...(takeSecret ? { takeSecret: (handle: string) => takeSecret(handle) } : {}),
     executablePorts: realExecutablePorts(platform),
     baseEnv: () => codexOperationBaseEnv(process.env, platform),
-    run: (cmd, opts) => runCodexCli(cmd, opts, runDeps),
+    // Built per run, never at compose time: composing the providers must not
+    // touch child_process (and the run reads SystemRoot fresh).
+    run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps(platform)),
     // Anything there -- a file, a link, a folder -- or an answer other than
     // "does not exist" counts as present.
     envFilePresent: (home) => {
