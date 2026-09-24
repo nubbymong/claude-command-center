@@ -327,7 +327,8 @@ describe('Codex browser and device sign-in (WP1.20)', () => {
     expect(await liar.ops.login(MANAGED, 'browser')).toMatchObject({ ok: false, code: 'not-confirmed', state: 'signed-out' })
     // Signed in, but with an API key: not what a browser sign-in produces.
     const wrong = world({}, { 'login': (r) => { wrong.signedIn.set(r.env.CODEX_HOME, 'api-key'); return { exitCode: 0 } } })
-    expect(await wrong.ops.login(MANAGED, 'browser')).toMatchObject({ ok: false, code: 'not-confirmed' })
+    // ...and says which kind it found, so the caller can record and compare it.
+    expect(await wrong.ops.login(MANAGED, 'browser')).toMatchObject({ ok: false, code: 'not-confirmed', state: 'signed-in', credential: 'api-key' })
   })
 
   it('a sign-in stopped just as the user finished it says the realm is signed in regardless', async () => {

@@ -418,8 +418,13 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
           const after = await readStatus(r)
           if (!failure) {
             if (after.state === 'signed-in' && after.via === spec.expect) return { ok: true, state: 'signed-in', credential: credentialOf(after.via) }
-            // A check that could not run says why; one that ran and disagrees says so.
-            return after.state === 'error' ? refuse(after.code, after.message) : { ...refuse('not-confirmed'), state: after.state }
+            // A check that could not run says why; one that ran and disagrees says so,
+            // and when the realm is signed in, how (another kind of sign-in than
+            // the one asked for is what the caller must record and compare).
+            if (after.state === 'error') return refuse(after.code, after.message)
+            return after.state === 'signed-in'
+              ? { ...refuse('not-confirmed'), state: 'signed-in', credential: credentialOf(after.via) }
+              : { ...refuse('not-confirmed'), state: after.state }
           }
           if (after.state === 'signed-in') return { ...failure, message: `${failure.message} ${SIGNED_IN_ANYWAY}`, state: 'signed-in', credential: credentialOf(after.via) }
           return after.state === 'signed-out' ? { ...failure, state: 'signed-out' } : failure

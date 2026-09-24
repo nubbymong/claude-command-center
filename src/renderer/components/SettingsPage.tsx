@@ -23,7 +23,7 @@ import { resolveResumeAccountMode } from '../utils/sessionLaunch'
 import { Kbd } from './ui/Kbd'
 import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
-import AccountsPanel from './AccountsPanel'
+import { AccountsSurface } from './settings/accounts/AccountsSurface'
 import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
 declare const __BUILD_TIME__: string
@@ -608,7 +608,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
           )}
 
           {activeTab === 'accounts' && (
-            <>
+            <AccountsSurface onAddClaudeAccount={handleAddAccount}>
               {/* #446: which account a RESUMED session (app-relaunch restore)
                   runs under. Only meaningful with 2+ accounts; default keeps
                   today's silent continue-under-last behaviour. */}
@@ -628,8 +628,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   Only matters when you have two or more accounts. Applies when the app restarts and restores your sessions.
                 </p>
               </Section>
-              <AccountsPanel onAdd={handleAddAccount} />
-            </>
+            </AccountsSurface>
           )}
 
           {activeTab === 'statusline' && (
@@ -1363,17 +1362,25 @@ function FontSizeTab({ settings, save }: {
 
 /* ── Shared section/field helpers ─────────────────────── */
 
-export function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+export function Section({ title, icon, mark, testId, children }: {
+  title: string
+  icon?: React.ReactNode
+  /** Drawn instead of `icon`: an element of its own (a provider's mark). */
+  mark?: React.ReactNode
+  testId?: string
+  children: React.ReactNode
+}) {
   return (
     <div
       className="settings-card overflow-hidden"
+      data-testid={testId}
     >
       <div className="px-4 py-2.5 flex items-center gap-2 border-b settings-divider">
-        {icon && (
+        {mark ?? (icon && (
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-secondary)' }}>
             {icon}
           </svg>
-        )}
+        ))}
         <SectionLabel>{title}</SectionLabel>
       </div>
       <div className="p-4 space-y-3">{children}</div>

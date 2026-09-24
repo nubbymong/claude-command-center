@@ -210,11 +210,51 @@ export function CodexBadge() {
         the 10px sidebar size where the rosette's detail would mush.)
         Mauve, not green: green is tmux's colour (canvas review 2026-08-19).
       */}
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
-        <path d="M12 2C9 2 6.5 4 6 7c-2.5 1-4 3.5-4 6.5C2 17 5 20 8.5 20c1.5 0 3-.5 4-1.5 1 1 2.5 1.5 4 1.5 3.5 0 6.5-3 6.5-6.5 0-3-1.5-5.5-4-6.5C18.5 4 15.5 2 12 2z" />
-        <path d="M12 8v8M8 12h8" />
-      </svg>
+      <CodexGlyph size={10} />
     </div>
+  )
+}
+
+/** The Codex glyph alone, at any size: the badge above and ProviderMark
+ *  draw the same mark, so a surface that needs it bigger never redraws it. */
+export function CodexGlyph({ size = 10 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+      <path d="M12 2C9 2 6.5 4 6 7c-2.5 1-4 3.5-4 6.5C2 17 5 20 8.5 20c1.5 0 3-.5 4-1.5 1 1 2.5 1.5 4 1.5 3.5 0 6.5-3 6.5-6.5 0-3-1.5-5.5-4-6.5C18.5 4 15.5 2 12 2z" />
+      <path d="M12 8v8M8 12h8" />
+    </svg>
+  )
+}
+
+/** The Claude Code glyph alone, at any size (see CodexGlyph). */
+export function ClaudeGlyph({ size = 10 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
+      <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
+    </svg>
+  )
+}
+
+/**
+ * A provider's mark at the size a surface needs: the session type badges'
+ * own tile and glyph (peach Claude, mauve Codex), sized up. Settings,
+ * Accounts and anything else that names a provider use this, so a provider
+ * looks the same wherever it appears.
+ */
+export function ProviderMark({ providerId, size = 16, title }: { providerId: 'claude' | 'codex'; size?: number; title?: string }) {
+  const glyph = Math.round(size * 0.625)
+  const radius = Math.max(4, Math.round(size * 0.25))
+  const tone = providerId === 'codex' ? 'bg-mauve/20 text-mauve' : 'bg-peach/20 text-peach'
+  return (
+    <span
+      className={`inline-flex items-center justify-center shrink-0 ${tone}`}
+      style={{ width: size, height: size, borderRadius: radius }}
+      title={title}
+      aria-hidden={title ? undefined : true}
+      data-testid={`provider-mark-${providerId}`}
+    >
+      {providerId === 'codex' ? <CodexGlyph size={glyph} /> : <ClaudeGlyph size={glyph} />}
+    </span>
   )
 }
 
@@ -244,9 +284,7 @@ export function ClaudeTypeBadge() {
       title="Claude Code"
       data-testid="type-badge-claude"
     >
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
-        <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
-      </svg>
+      <ClaudeGlyph size={10} />
     </div>
   )
 }

@@ -15,6 +15,9 @@ import ToggleSwitch from './github/config/ToggleSwitch'
 import { Section } from './SettingsPage'
 import { AccountWebSession } from './settings/AccountWebSession'
 import { AccountIsolationNotice } from './settings/AccountIsolationNotice'
+import { useProviderAccountsStore, providerAccountActions, accountForLegacyId, canOfferMakeReviewer, showsReviewerBadge, accountFailureText } from '../stores/providerAccountsStore'
+import { ProviderMark } from './sidebar/Badges'
+import { Pill, MutedLine, ErrorLine, RowButton, ReviewerLineBlock } from './settings/accounts/accounts-ui'
 
 // ---- props ------------------------------------------------------------------
 
@@ -118,6 +121,26 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  // WP2: this profile's account in the provider registry (it mirrors the
+  // profile id), for its reviewer state. Absent until the registry lists it.
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
+  const registryAccount = accountForLegacyId(snapshot, 'claude', profile.id)
+  const [reviewerBusy, setReviewerBusy] = useState(false)
+  const [reviewerError, setReviewerError] = useState<string | null>(null)
+  const makeReviewer = async () => {
+    if (!registryAccount) return
+    setReviewerBusy(true)
+    setReviewerError(null)
+    const r = await providerAccountActions.setReviewerDefault({ providerId: 'claude', accountId: registryAccount.id })
+    setReviewerBusy(false)
+    if (!r.ok) setReviewerError(accountFailureText(r))
+  }
+  const refusal = registryAccount?.reviewRefusal
+  const refusalText = !refusal ? null
+    : refusal.reason === 'platform'
+      ? (window.electronPlatform === 'darwin' ? "Can't run Claude reviews on macOS" : refusal.message)
+      : "Can't check whether this account can run reviews right now"
+
   // Active/inactive: an inactive account stays listed here but cannot be chosen
   // when switching a session's account. The primary account is always active.
   const active = isAccountActive(profile)
@@ -203,7 +226,15 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
               inactive
             </span>
           )}
+          {registryAccount && showsReviewerBadge(registryAccount) && (
+            <Pill tone="reviewer" testId={`claude-reviewer-badge-${profile.id}`}>Reviewer</Pill>
+          )}
         </div>
+        {registryAccount && canOfferMakeReviewer(snapshot, registryAccount) && (
+          <RowButton onClick={() => { void makeReviewer() }} disabled={reviewerBusy} testId={`claude-make-reviewer-${profile.id}`}>
+            Make reviewer
+          </RowButton>
+        )}
         {!profile.isPrimary && (
           <ToggleSwitch
             state={active ? 'on' : 'off'}
@@ -229,6 +260,8 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
         )}
       </div>
       <div className="ml-5">
+        {refusalText && <MutedLine className="mt-1" testId={`claude-review-refusal-${profile.id}`}>{refusalText}</MutedLine>}
+        {reviewerError && <ErrorLine testId={`claude-reviewer-error-${profile.id}`}>{reviewerError}</ErrorLine>}
         <NameField initialValue={profile.name} onCommit={commitName} />
         {hasEmail && (
           <ColourPicker
@@ -295,14 +328,14 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
 
   return (
     <Section
-      title="Accounts"
-      icon={
-        <>
-          <circle cx="8" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
-          <path d="M3.5 13c0-2.2 2-3.5 4.5-3.5s4.5 1.3 4.5 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none" />
-        </>
-      }
+      title="Claude"
+      mark={<ProviderMark providerId="claude" size={16} />}
+      testId="provider-accounts-claude"
     >
+      {/* WP2: which Claude account code reviews (asked for from the other
+          provider's sessions) use. Renders nothing until the registry says
+          Claude reviews here. */}
+      <ReviewerLineBlock providerId="claude" />
       <div className="space-y-1 divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
         {/* One ProfileRow per profile; primary shows badge and has no delete */}
         {profiles.map((profile) => (

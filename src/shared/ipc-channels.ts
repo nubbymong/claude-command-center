@@ -265,6 +265,7 @@ export const IPC = {
   PROVIDER_ACCOUNTS_SIGN_IN: 'providerAccounts:signIn',
   PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT: 'providerAccounts:signInOutput', // main -> the renderer that started it: SignInOutputEvent
   PROVIDER_ACCOUNTS_CANCEL_SIGN_IN: 'providerAccounts:cancelSignIn',
+  PROVIDER_ACCOUNTS_SIGN_IN_AGAIN: 'providerAccounts:signInAgain', // an existing managed account, in its own realm; output on SIGN_IN_OUTPUT
   PROVIDER_ACCOUNTS_COMPLETE_SETUP: 'providerAccounts:completeSetup',
   PROVIDER_ACCOUNTS_ABANDON_SETUP: 'providerAccounts:abandonSetup',
   PROVIDER_ACCOUNTS_REFRESH_STATUS: 'providerAccounts:refreshStatus',

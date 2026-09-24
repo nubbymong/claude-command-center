@@ -158,6 +158,12 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
       if (!sender.isDestroyed()) sender.send(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, { accountId: i.accountId, text })
     })
   })
+  handle(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, S.signIn, (i, svc, e) => {
+    const sender = e.sender
+    return svc.signInAgain(i, sender.id, (text) => {
+      if (!sender.isDestroyed()) sender.send(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, { accountId: i.accountId, text })
+    })
+  })
   handle(IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, S.account, (i, svc, e) => svc.cancelSignIn(i, e.sender.id))
   handle(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, S.completeSetup, (i, svc) => svc.completeSetup(i))
   handle(IPC.PROVIDER_ACCOUNTS_ABANDON_SETUP, S.account, (i, svc) => svc.abandonSetup(i))

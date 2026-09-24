@@ -187,6 +187,11 @@ export class AccountsService {
   /** Reviewer choices cleared at start-up because they can never run here
    *  (clearUnusableReviewerDefaults); shown once, removed by a new choice. */
   private readonly reviewerNotices = new Map<ProviderId, { message: string; store: AccountRegistryStore }>()
+  /** Accounts signed in again whose new sign-in could not be recorded: they
+   *  are refused for launches until a later check records (signInAgain,
+   *  refreshStatus, reconcileSignIn). In memory only: a restart forgets it,
+   *  and the record is then what it was before (a rare write failure). */
+  private readonly unrecordedSignIns = new Map<string, CredentialClass | undefined>()
   private opSeq = 0
   private subscribedStore: AccountRegistryStore | null = null
   private unsubscribeStore: (() => void) | null = null
@@ -297,6 +302,8 @@ export class AccountsService {
       if (a.planLabel !== undefined) view.planLabel = a.planLabel
       if (a.lastAuthenticatedAt !== undefined) view.lastAuthenticatedAt = a.lastAuthenticatedAt
       if (a.lastValidatedAt !== undefined) view.lastValidatedAt = a.lastValidatedAt
+      const legacyId = doc?.legacyLinks.find((l) => l.accountId === a.id)?.legacyId
+      if (legacyId !== undefined) view.legacyId = legacyId
       const refusal = doc ? this.reviewRefusalOf(doc, a, memo) : undefined
       if (refusal) view.reviewRefusal = refusal
       return view
@@ -516,14 +523,18 @@ export class AccountsService {
   issueSecretHandle(input: { accountId: string }, senderId: number): AccountsResult<{ handle: string }> {
     const ready = this.ready()
     if ('ok' in ready) return ready
+    // A pending setup's account, or (for "sign in again") an existing
+    // managed account that is not archived.
     const j = ready.doc.journals.find((x) => x.accountId === input.accountId)
-    if (!j) return failure('not-found')
-    const p = this.pkg(j.providerId)
+    const existing = j ? undefined : findAccount(ready.doc, input.accountId)
+    if (!j && !existing) return failure('not-found')
+    const p = this.pkg(j ? j.providerId : existing!.providerId)
     if (!p || !this.managesAccounts(p)) return failure('unsupported')
+    if (existing && (existing.lifecycle === 'archived' || findRealm(ready.doc, existing.authRealmId)?.ownership !== 'conductor-managed')) return failure('unsupported')
     if (!this.isEnabled(p.id)) return failure('provider-disabled')
     const refused = this.methodAllowed(p, 'apiKey')
     if (refused) return refused
-    const handle = this.deps.secrets.issue({ accountId: j.accountId, senderId })
+    const handle = this.deps.secrets.issue({ accountId: input.accountId, senderId })
     return handle ? { ok: true, handle } : failure('busy')
   }
 
@@ -614,6 +625,123 @@ export class AccountsService {
       if (!marked.ok) this.log(`could not mark a setup's credentials as written (${marked.code})`)
     }
     if (result.ok) return { ok: true, state: result.state ?? 'unknown' }
+    return this.fromAuth(result)
+  }
+
+  /** Sign an existing managed account in again, in its own realm (an
+   *  expired or signed-out sign-in). The provider's own login runs there,
+   *  then the realm is checked and recorded exactly as a status check
+   *  records it, so a different kind of sign-in blocks the account (design
+   *  5.5). Refused while anything uses the account, on an external home
+   *  (sign in there with the provider's own tools), and on a blocked account
+   *  (the user reconciles it first). */
+  async signInAgain(
+    input: { accountId: string; method: SignInMethod; secretHandle?: string },
+    senderId: number,
+    onOutput?: (text: string) => void,
+  ): Promise<AccountsResult<{ state: KnownAuthState }>> {
+    const handle = input.secretHandle
+    // Single-use, as for signIn: whatever this call decides, the handle does
+    // not stay parked, unless a run already in flight is using it.
+    const burn = () => { if (handle !== undefined) this.deps.secrets.discard(handle) }
+    const refuse = (r: AccountsFailure) => { burn(); return r }
+    const ctx = this.accountContext(input.accountId)
+    if ('ok' in ctx) return refuse(ctx)
+    const a = findAccount(ctx.doc, input.accountId)!
+    const notRunnable = this.runnable(ctx, a, ['auth.status'])
+    if (notRunnable) return refuse(notRunnable)
+    const p = ctx.p!
+    if (!this.managesAccounts(p) || ctx.external || findRealm(ctx.doc, a.authRealmId)?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
+    if (a.operationalState === 'blocked') return refuse(failure('sign-in-changed'))
+    const refusedMethod = this.methodAllowed(p, input.method)
+    if (refusedMethod) return refuse(refusedMethod)
+    const inFlight = this.signIns.get(a.id)
+    if (inFlight) {
+      if (handle === undefined || handle !== inFlight.handle) burn()
+      return failure('busy')
+    }
+    if (input.method === 'apiKey') {
+      if (!this.deps.secrets.isBoundTo(handle, a.id, senderId)) return refuse(failure('secret-unavailable'))
+    } else if (handle !== undefined) {
+      return refuse(failure('invalid-request'))
+    }
+    const run: SignInRun = { controller: new AbortController(), senderId, ...(handle !== undefined ? { handle } : {}) }
+    this.signIns.set(a.id, run)
+    this.changed()
+    let lease: AccountLease | null = null
+    let refusal: AccountsFailure | null = null
+    let result: AuthOperationResult = { ok: false, code: 'not-started' }
+    let recorded: StoreResult | null = null
+    let observedClass: CredentialClass | undefined
+    try {
+      const leased = await ctx.store.exclusive((): { refused: AccountsFailure } | { added: ReturnType<ConsumerLeaseRegistry['add']> } => {
+        if (!this.isEnabled(p.id)) return { refused: failure('provider-disabled') }
+        // Nothing may be using the account while its sign-in is replaced.
+        const using = this.deps.leases.count(a.id)
+        if (using > 0) return { refused: failure('consumers', undefined, { consumers: using }) }
+        return { added: this.deps.leases.add(a.id, a.providerId, { kind: 'sign-in', ownerId: a.id, webContentsId: senderId }) }
+      })
+      if ('refused' in leased) refusal = leased.refused
+      // Never release a lease this call did not create.
+      else if (!leased.added.ok || leased.added.existing) refusal = failure('busy')
+      else {
+        lease = leased.added.lease
+        if (run.controller.signal.aborted) result = { ok: false, code: 'cancelled' }
+        else {
+          await this.ensureDiscovered(p)
+          result = await p.auth!.login({ authRealmId: a.authRealmId }, input.method, {
+            ...(handle !== undefined ? { secretHandle: handle } : {}),
+            onOutput: (text) => { try { onOutput?.(text) } catch { /* display only */ } },
+            signal: run.controller.signal,
+          })
+          // Signed in, also after a "failure" (a cancelled login may have
+          // finished anyway): recorded from what the login itself observed,
+          // while this lease still holds the account, so nothing launches on
+          // it before the record says what its realm now holds (design 5.5).
+          if (result.state === 'signed-in') {
+            let observed: AuthOperationResult & { state: KnownAuthState } = { ...result, state: 'signed-in' }
+            // A login that did not say which kind of sign-in it left is
+            // checked again, still under this lease: the comparison must not
+            // depend on the login reporting it.
+            if (result.credential !== 'account' && result.credential !== 'api-key') {
+              const again = await p.auth!.status({ authRealmId: a.authRealmId }).catch(() => null)
+              if (again?.ok) observed = again
+            }
+            // Still unreadable, after a login this call ran: compare the kind
+            // of sign-in that login was for, so a change of kind still blocks.
+            if (observed.credential !== 'account' && observed.credential !== 'api-key' && result.code !== 'already-signed-in') {
+              observed = { ...observed, credential: input.method === 'apiKey' ? 'api-key' : 'account' }
+            }
+            const check = observed
+            observedClass = this.checkInput(check).observedCredential
+            recorded = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, this.checkInput(check), t))
+          }
+        }
+      }
+    } catch {
+      result = { ok: false, code: 'not-started' }
+    } finally {
+      burn()
+      if (this.signIns.get(a.id) === run) this.signIns.delete(a.id)
+      lease?.release()
+      this.changed()
+    }
+    if (refusal) return refusal
+    if (recorded) {
+      const bad = this.fromStore(recorded)
+      if (bad) {
+        // The realm changed but the record could not say so: nothing launches
+        // on the account until a later check is recorded.
+        this.unrecordedSignIns.set(a.id, observedClass)
+        this.changed()
+        return bad
+      }
+      this.unrecordedSignIns.delete(a.id)
+      // A different kind of sign-in than the record's: the account is now
+      // blocked until the user confirms it in Accounts.
+      if (recorded.ok && findAccount(recorded.doc, a.id)?.operationalState === 'blocked') return failure('sign-in-changed', undefined, { state: 'signed-in' })
+      return { ok: true, state: 'signed-in' }
+    }
     return this.fromAuth(result)
   }
 
@@ -788,9 +916,15 @@ export class AccountsService {
     }
     // A check that could not run is not evidence about the account.
     if (!status.ok) return this.fromAuth(status)
-    const recorded = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, this.checkInput(status), t))
+    // After a sign-in the record could not take, a status that names no kind
+    // is compared with the kind that sign-in left, not taken as clean.
+    const checked = this.checkInput(status)
+    const remembered = this.unrecordedSignIns.get(a.id)
+    if (status.state === 'signed-in' && checked.observedCredential === undefined && remembered !== undefined) checked.observedCredential = remembered
+    const recorded = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, checked, t))
     const bad = this.fromStore(recorded)
     if (bad) return bad
+    if (this.unrecordedSignIns.delete(a.id)) this.changed()
     return { ok: true, state: status.state }
   }
 
@@ -815,7 +949,10 @@ export class AccountsService {
     }
     if (!status.ok) return this.fromAuth(status)
     const r = await ctx.store.mutate((d, t) => reconcileAccountSignIn(d, a.id, this.checkInput(status), t))
-    return this.fromStore(r) ?? { ok: true, state: status.state }
+    const bad = this.fromStore(r)
+    if (bad) return bad
+    if (this.unrecordedSignIns.delete(a.id)) this.changed()
+    return { ok: true, state: status.state }
   }
 
   /** What a status reported, as the registry records and compares it. */
@@ -1260,6 +1397,14 @@ export class AccountsService {
       if (!b.ok) return failure(b.code === 'realm-unavailable' ? 'realm-unavailable' : b.code === 'not-active' ? 'lifecycle' : b.code === 'blocked' ? 'lifecycle' : b.code === 'provider-mismatch' ? 'invalid-request' : b.code, b.message)
       if (!this.isEnabled(input.providerId)) return failure('provider-disabled')
       if (b.realmOnly && input.acknowledgeRealmOnly !== true) return failure('acknowledgement-required', 'This sign-in is unverified: confirm that this launch may use it.')
+      // Nothing launches on an account whose sign-in is being replaced (a
+      // "sign in again" in flight): its realm changes underneath the launch.
+      if (this.signIns.has(b.binding.providerAccountId) || this.deps.leases.countKind(b.binding.providerAccountId, 'sign-in') > 0) {
+        return failure('busy', 'This account is signing in again; try again when that finishes.')
+      }
+      if (this.unrecordedSignIns.has(b.binding.providerAccountId)) {
+        return failure('sign-in-changed', 'This account signed in again, but the app could not record it. Check it in Accounts before using it.')
+      }
       const added = this.deps.leases.add(b.binding.providerAccountId, input.providerId, { kind: input.kind, ownerId: input.ownerId })
       if (!added.ok) return added.code === 'held' ? failure('busy') : failure('invalid-request', 'That launch is already bound to another account.')
       return { ok: true, lease: added.lease, binding: b.binding, realmOnly: b.realmOnly, ...(reviewer ? { reviewer } : {}) }
@@ -1298,6 +1443,9 @@ export class AccountsService {
     if (!a || a.identityAssurance === 'realm-only' || findRealm(ready.doc, a.authRealmId)?.ownership === 'external-default') return false
     // Never offered on an account this platform will not let review.
     if (this.reviewRefusalOf(ready.doc, a, memo)) return false
+    // Nor while its sign-in is being replaced or could not be recorded:
+    // prepareLaunch refuses both (acquireLaunchLease).
+    if (this.signIns.has(a.id) || this.deps.leases.countKind(a.id, 'sign-in') > 0 || this.unrecordedSignIns.has(a.id)) return false
     return resolveLaunchBinding(ready.doc, { providerId: p.id, providerAccountId: a.id }).ok
   }
 

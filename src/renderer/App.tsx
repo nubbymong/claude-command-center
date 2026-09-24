@@ -63,6 +63,7 @@ import { OnboardingHarness } from './onboarding/OnboardingHarness'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
 import { bootWhatsNewSurface, lastRunVersionOf } from './onboarding/upgrade-flow'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
+import { useProviderAccountsStore } from './stores/providerAccountsStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
@@ -632,6 +633,9 @@ export default function App() {
       useConductorMcpStore.getState().fetchStatus()
       useCodexAccountStore.getState().refresh()
       useAccountProfilesStore.getState().hydrate()
+      // WP2: the provider Accounts snapshot. Its change subscription is
+      // armed here once and lives for the renderer's lifetime.
+      useProviderAccountsStore.getState().hydrate().catch((err) => console.warn('[provider-accounts] hydrate failed:', err))
       useRegistryStore.getState().hydrate().catch((err) => console.warn('[registry] hydrate failed:', err))
       useSentinelStore.getState().hydrate().catch((err) => console.warn('[sentinel] hydrate failed:', err))
 

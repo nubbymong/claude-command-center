@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T13:29:30.484Z",
-  "head": "fe23694ceaf5e3af92ea0ec675e81591964208e2",
-  "tree": "9d49f34090d1bde467bdbb4221204962660b77ce",
+  "generatedAt": "2026-09-24T15:35:08.640Z",
+  "head": "ad0f6a16da728d560c097f9166c8224ec4ae99fa",
+  "tree": "96f4074fa3c8d2332061df583d71bcc21ae3cf8b",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2225,
+  "trackedFileCount": 2233,
   "excludedFileCount": 372,
-  "scannedFileCount": 1853,
+  "scannedFileCount": 1861,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 316,
-  "pathDigest": "771727c46b5c4159f9527f9cd50ba54691447f7774dfa53cbf9263756442c8ef",
+  "matchedPathCount": 324,
+  "pathDigest": "73a72a84403608e78607f458dc2ac6d5145367ae726ab8484d4325f16d9ab043",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -1122,12 +1122,50 @@
       "lineCount": 6
     },
     {
+      "path": "src/renderer/components/settings/accounts/AccountsSurface.tsx",
+      "predicates": [
+        "P05"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/AddProviderAccountDialog.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "lineCount": 2
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/ManagedAccountsSection.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/ProvidersCard.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "lineCount": 2
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/accounts-ui.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "lineCount": 2
+    },
+    {
       "path": "src/renderer/components/sidebar/Badges.tsx",
       "predicates": [
         "P05",
         "P11"
       ],
-      "lineCount": 9
+      "lineCount": 19
     },
     {
       "path": "src/renderer/components/sidebar/ConfigRow.tsx",
@@ -1386,6 +1424,15 @@
         "P11"
       ],
       "lineCount": 6
+    },
+    {
+      "path": "src/renderer/stores/providerAccountsStore.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "lineCount": 12
     },
     {
       "path": "src/renderer/stores/sessionStore.ts",
@@ -2125,6 +2172,15 @@
       "lineCount": 4
     },
     {
+      "path": "tests/unit/renderer/accounts-surface.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "lineCount": 93
+    },
+    {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
       "predicates": [
         "P13"
@@ -2341,6 +2397,15 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/renderer/provider-accounts-store.test.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "lineCount": 31
     },
     {
       "path": "tests/unit/renderer/quick-start-panel.test.tsx",

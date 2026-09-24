@@ -58,6 +58,7 @@ const CHANNELS: Array<[string, unknown]> = [
   [IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: 'codex', method: 'browser' }],
   [IPC.PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE, { accountId: ACC }],
   [IPC.PROVIDER_ACCOUNTS_SIGN_IN, { accountId: ACC, method: 'browser' }],
+  [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'device' }],
   [IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, { accountId: ACC }],
   [IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, { accountId: ACC, identity: { mode: 'link', identityId: IDN } }],
   [IPC.PROVIDER_ACCOUNTS_ABANDON_SETUP, { accountId: ACC }],
@@ -154,6 +155,9 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
       // A secret handle must be a handle; a key must never ride on a request.
       [IPC.PROVIDER_ACCOUNTS_SIGN_IN, { accountId: ACC, method: 'apiKey', secretHandle: KEY }],
       [IPC.PROVIDER_ACCOUNTS_SIGN_IN, { accountId: ACC, method: 'apiKey', apiKey: KEY }],
+      [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'apiKey', secretHandle: KEY }],
+      [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'apiKey', apiKey: KEY }],
+      [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'browser', home: 'C:/Users/victim/.codex' }],
       // A conflict names a legacy record by its own id rule, one of two fields, and one of two answers.
       [IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, { identityId: IDN, field: 'friendlyName', providerId: 'claude', legacyId: '..\\..\\x', keep: 'registry' }],
       [IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, { identityId: IDN, field: 'email', providerId: 'claude', legacyId: 'profile-a1', keep: 'registry' }],

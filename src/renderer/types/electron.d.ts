@@ -39,6 +39,11 @@ import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
 import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
+import type {
+  AccountsSnapshot as ProviderAccountsSnapshot, AccountsResult as ProviderAccountsResult, ProviderInstallationView, InstallRecipeView,
+  SignInOutputEvent, BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
+  SecretDeposit, KnownAuthState, ProviderId as ProviderAccountsProviderId, ExternalDefaultOutcome, ResolveConflictRequest, SetReviewerDefaultRequest,
+} from '../../shared/providers'
 import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
 export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
 import type {
@@ -868,6 +873,42 @@ export interface ElectronAPI {
     onLedgerEvent: (cb: (r: LedgerRecord) => void) => () => void
     rendererReady: () => Promise<unknown>
     onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
+  }
+  /** WP2: the provider-neutral Accounts surface (mirrors the preload's
+   *  typing). Opaque ids in, views out; an API key goes only through
+   *  sendSecret, one way, bound to a handle. */
+  providerAccounts: {
+    snapshot: () => Promise<ProviderAccountsSnapshot | null>
+    onChanged: (cb: (snapshot: ProviderAccountsSnapshot) => void) => () => void
+    discover: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ installation: ProviderInstallationView }>>
+    installRecipes: (providerId: ProviderAccountsProviderId) => Promise<InstallRecipeView[] | ProviderAccountsResult>
+    setEnabled: (providerId: ProviderAccountsProviderId, enabled: boolean) => Promise<ProviderAccountsResult>
+    beginSetup: (req: BeginSetupRequest) => Promise<ProviderAccountsResult<{ accountId: string }>>
+    issueSecretHandle: (accountId: string) => Promise<ProviderAccountsResult<{ handle: string }>>
+    sendSecret: (deposit: SecretDeposit) => void
+    signIn: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    /** Sign an existing managed account in again, in its own realm. */
+    signInAgain: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
+    cancelSignIn: (accountId: string) => Promise<ProviderAccountsResult>
+    completeSetup: (req: CompleteSetupRequest) => Promise<ProviderAccountsResult<{ accountId: string }>>
+    abandonSetup: (accountId: string) => Promise<ProviderAccountsResult>
+    refreshStatus: (accountId: string) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    logout: (req: LogoutRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    setLifecycle: (req: SetLifecycleRequest) => Promise<ProviderAccountsResult>
+    setDefault: (accountId: string) => Promise<ProviderAccountsResult>
+    updateIdentity: (req: UpdateIdentityRequest) => Promise<ProviderAccountsResult>
+    createGroup: (name: string) => Promise<ProviderAccountsResult<{ groupId: string }>>
+    renameGroup: (groupId: string, name: string) => Promise<ProviderAccountsResult>
+    deleteGroup: (groupId: string) => Promise<ProviderAccountsResult>
+    linkIdentity: (accountId: string, identityId: string) => Promise<ProviderAccountsResult>
+    unlinkIdentity: (accountId: string) => Promise<ProviderAccountsResult<{ identityId: string }>>
+    adoptExternal: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ accountId: string }>>
+    runMigration: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ outcome: ExternalDefaultOutcome }>>
+    /** "This is still my account": clears a blocked account after a fresh check. */
+    reconcileSignIn: (accountId: string) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    resolveConflict: (req: ResolveConflictRequest) => Promise<ProviderAccountsResult>
+    setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<ProviderAccountsResult>
   }
   codex: {
     status: () => Promise<{

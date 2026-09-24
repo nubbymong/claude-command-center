@@ -456,3 +456,156 @@ describe('ADR-009 coverage: guards the first tests did not reach', () => {
     }
   })
 })
+
+// WP2 commit 6b: "Sign in again" on an existing managed account (the Accounts
+// menu). The provider's own login runs in the account's OWN realm, then the
+// realm is recorded as a status check records it (design 5.5): a different
+// kind of sign-in blocks the account.
+describe('signing an existing account in again (WP2 6b)', () => {
+  const realmHome = (h: Awaited<ReturnType<typeof harness>>, accountId: string) =>
+    managedHome(findRealm(h.doc(), h.doc().accounts.find((x) => x.id === accountId)!.authRealmId)!.id).toLowerCase()
+
+  it('an expired sign-in comes back through its own realm, and the record says so', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    h.signedIn.delete(realmHome(h, a))
+    expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    const lines: string[] = []
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1, (t) => lines.push(t))).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.signedIn.get(realmHome(h, a))).toBe('chatgpt')
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lastKnownAuthState: 'signed-in', operationalState: 'ready' })
+    // It is still the same account, in the same realm: no new setup, no new account.
+    expect(h.doc().accounts.filter((x) => x.providerId === 'codex')).toHaveLength(1)
+    expect(h.doc().journals).toEqual([])
+    expect(h.service.consumersOf(a)).toEqual({ session: 0, review: 0, 'sign-in': 0, operation: 0 })
+  })
+
+  it('a different kind of sign-in blocks the account until the user reconciles it', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    // Signed out first: the provider never logs in over a realm that is signed in.
+    expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    const issued = h.service.issueSecretHandle({ accountId: a }, 1)
+    if (!issued.ok) throw new Error(issued.code)
+    h.service.depositSecret(issued.handle, 1, 'sk-proj-' + 'x'.repeat(40))
+    // Recorded from the login itself, and said so: not a success.
+    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed', state: 'signed-in' })
+    expect(h.doc().accounts.find((x) => x.id === a)!.operationalState).toBe('blocked')
+    // Blocked: reconcile first. Nothing runs on it at all -- a login here could
+    // overwrite the very sign-in the user is asked to confirm.
+    const runsBefore = h.runs.length
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
+    expect(h.runs.length).toBe(runsBefore)
+  })
+
+  it('is refused while anything uses the account, and says how many', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).ok).toBe(true)
+    const before = h.runs.length
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+    expect(h.runs.length).toBe(before)
+  })
+
+  it('never on an external home, an archived account, or a key that was not deposited for this account by this window', async () => {
+    const h = await harness()
+    const ext = await withExternal(h)
+    expect(await h.service.signInAgain({ accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    expect(h.service.issueSecretHandle({ accountId: ext }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    // A handle issued for B, or to another window, is refused and burned.
+    const forB = h.service.issueSecretHandle({ accountId: b }, 1)
+    if (!forB.ok) throw new Error(forB.code)
+    h.service.depositSecret(forB.handle, 1, 'sk-proj-' + 'y'.repeat(40))
+    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    expect(await h.service.signInAgain({ accountId: b, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    const forA = h.service.issueSecretHandle({ accountId: a }, 1)
+    if (!forA.ok) throw new Error(forA.code)
+    h.service.depositSecret(forA.handle, 1, 'sk-proj-' + 'z'.repeat(40))
+    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: forA.handle }, 2)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    // A browser sign-in carries no handle.
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser', secretHandle: forA.handle }, 1)).toMatchObject({ ok: false })
+    // Archived: nothing runs on it.
+    expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'inactive' })).ok).toBe(true)
+    expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'archived' })).ok).toBe(true)
+    expect(await h.service.signInAgain({ accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(h.service.issueSecretHandle({ accountId: b }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+  })
+
+  it('on a realm that is still signed in it runs no login and just records the check', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const before = h.runs.length
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.args().slice(before).filter((x) => x !== 'login status')).toEqual([])
+  })
+
+  it('nothing launches on the account while its sign-in is replaced, and the record is written before the hold ends (ADR-009 6b)', async () => {
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let armed = false
+    // The first login (the account's setup) is the ordinary one; once armed, the
+    // login is held open and leaves an API key behind.
+    const h = await harness({ script: { login: async (r) => {
+      if (armed) await held
+      h.signedIn.set(r.home.toLowerCase(), armed ? 'api-key' : 'chatgpt')
+      return { exitCode: 0, stdout: 'Successfully logged in' + String.fromCharCode(10) }
+    } } })
+    const a = await addCodexAccount(h, 'A', 'browser')
+    armed = true
+    expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    const running = h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's-during' })).toMatchObject({ ok: false, code: 'busy' })
+    expect(await h.service.prepareLaunch({ kind: 'review', providerId: 'codex', ownerId: 'r-during' })).toMatchObject({ ok: false })
+    release()
+    await running
+    // The login left an API key where a ChatGPT sign-in was recorded: blocked
+    // before anything could launch, and still refused afterwards.
+    expect(h.doc().accounts.find((x) => x.id === a)!.operationalState).toBe('blocked')
+    expect(await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's-after' })).toMatchObject({ ok: false })
+  })
+
+  it('a sign-in whose kind cannot be read is compared by the kind of login that ran (ADR-009 6b)', async () => {
+    let vague = false
+    // Once vague, the CLI says only that it is signed in, never how.
+    const h = await harness({ script: { 'login status': (r) => {
+      const v = h.signedIn.get(r.home.toLowerCase())
+      if (!v) return { exitCode: 1, stderr: 'Not logged in' + String.fromCharCode(10) }
+      return vague ? { exitCode: 0, stderr: 'Logged in' + String.fromCharCode(10) } : { exitCode: 0, stderr: (v === 'chatgpt' ? 'Logged in using ChatGPT' : 'Logged in using an API key - sk-proj-***7788') + String.fromCharCode(10) }
+    } } })
+    const a = await addCodexAccount(h, 'A', 'browser')
+    expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    vague = true
+    const issued = h.service.issueSecretHandle({ accountId: a }, 1)
+    if (!issued.ok) throw new Error(issued.code)
+    h.service.depositSecret(issued.handle, 1, 'sk-proj-' + 'v'.repeat(40))
+    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
+    expect(h.doc().accounts.find((x) => x.id === a)!.operationalState).toBe('blocked')
+  })
+
+  it('a new sign-in the record could not take refuses launches until a later check records (ADR-009 6b)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A', 'browser')
+    expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    h.port.failWrites = [h.port.writes + 1]
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
+    expect(await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).toMatchObject({ ok: false, code: 'sign-in-changed' })
+    // No review is offered on it meanwhile either.
+    await h.service.setReviewerDefault({ providerId: 'codex', accountId: a })
+    expect(h.service.reviewReady('codex')).toBe(false)
+    // A check that records clears it.
+    expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.service.reviewReady('codex')).toBe(true)
+    expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's2' })).ok).toBe(true)
+  })
+
+  it('a second click while one runs is refused as busy', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const first = h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'busy' })
+    expect((await first).ok).toBe(true)
+  })
+})

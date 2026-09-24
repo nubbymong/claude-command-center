@@ -586,6 +586,8 @@ export interface ElectronAPI {
     issueSecretHandle: (accountId: string) => Promise<AccountsResult<{ handle: string }>>
     sendSecret: (deposit: SecretDeposit) => void
     signIn: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    /** Sign an existing managed account in again, in its own realm. */
+    signInAgain: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
     onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
     cancelSignIn: (accountId: string) => Promise<AccountsResult>
     completeSetup: (req: CompleteSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
@@ -1298,6 +1300,9 @@ const electronAPI: ElectronAPI = {
     // and nothing here keeps or logs it.
     sendSecret: (deposit) => ipcRenderer.send(IPC.PROVIDER_ACCOUNTS_SECRET, { handle: deposit.handle, secret: deposit.secret }),
     signIn: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN, req.secretHandle !== undefined
+      ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
+      : { accountId: req.accountId, method: req.method }),
+    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, req.secretHandle !== undefined
       ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
       : { accountId: req.accountId, method: req.method }),
     onSignInOutput: (cb) => onChannel<SignInOutputEvent>(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, cb),

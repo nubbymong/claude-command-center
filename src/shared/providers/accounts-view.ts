@@ -98,6 +98,10 @@ export interface AccountView {
   unverified: boolean
   /** Mirrored from the provider's own account list (Claude's profiles). */
   legacyLinked: boolean
+  /** The provider's own id for this account when it is mirrored (Claude:
+   *  the profile id), so a surface that lists the provider's own accounts
+   *  can show each one's registry state. */
+  legacyId?: string
   /** Sessions running on this account now. */
   runningSessions: number
   /** Reviewer invocations running on this account now. */

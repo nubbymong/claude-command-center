@@ -390,6 +390,8 @@ describe('a Claude review launch (WP2 5b)', () => {
     const view = (id: string) => t.h.service.snapshot().accounts.find((x) => x.id === id)!
     expect(view(b).reviewRefusal).toEqual({ reason: 'platform', message: MAC_RULE })
     expect(view(a).reviewRefusal).toBeUndefined()
+    // Each mirrored account names its profile, so the profile list can show it.
+    expect([view(a).legacyId, view(b).legacyId]).toEqual(PROFILES)
     expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: b })).toEqual({ ok: false, code: 'review-unavailable', message: MAC_RULE })
     expect(t.h.doc().accounts.find((x) => x.id === b)!.isReviewerDefault).not.toBe(true)
     // The account that can review is still accepted, and a review is offered.

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "771727c46b5c4159f9527f9cd50ba54691447f7774dfa53cbf9263756442c8ef",
-  "manifestHead": "fe23694ceaf5e3af92ea0ec675e81591964208e2",
+  "manifestPathDigest": "73a72a84403608e78607f458dc2ac6d5145367ae726ab8484d4325f16d9ab043",
+  "manifestHead": "ad0f6a16da728d560c097f9166c8224ec4ae99fa",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -3531,6 +3531,95 @@
       "disposition": "added",
       "evidence": "WP2 commit 6 regression for the per-spawn MCP review tools (WP1.68): each review direction follows its own Settings switch over real SSE and streamable HTTP connections; tests/unit/main/conductor-mcp-review-switches.test.ts",
       "note": "codexEnabled and the Codex session appear as test settings and the provider a credential is issued to; no Codex code path"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/AccountsSurface.tsx",
+      "predicates": [
+        "P05"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "a provider-name comparison chooses which section a provider gets; no Codex code path"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/AddProviderAccountDialog.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b add-account and sign-in-again dialogs for managed accounts (WP1.39, WP1.25: an expired sign-in is actionable); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "the API key goes only through the one-way secret channel; nothing keeps it"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/ManagedAccountsSection.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "rows, menu and pending setups for managed (Codex) accounts"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/ProvidersCard.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "provider on/off and status; the Beta tag names Codex"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/accounts-ui.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "shared badges, status text, row menu and reviewer line"
+    },
+    {
+      "path": "src/renderer/stores/providerAccountsStore.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b provider accounts store (WP1.39); tests/unit/renderer/provider-accounts-store.test.ts",
+      "note": "the snapshot, action wrappers and pure selectors; ~/.codex appears only as display copy"
+    },
+    {
+      "path": "tests/unit/renderer/accounts-surface.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "fixture snapshots name Codex accounts"
+    },
+    {
+      "path": "tests/unit/renderer/provider-accounts-store.test.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b provider accounts store (WP1.39); tests/unit/renderer/provider-accounts-store.test.ts",
+      "note": "fixture snapshots name Codex accounts"
     }
   ]
 }
