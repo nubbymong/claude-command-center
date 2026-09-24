@@ -95,7 +95,9 @@ beforeAll(() => {
     fs.writeFileSync(exe, `#!${process.execPath}\nrequire(${JSON.stringify(path.join(dir, 'fake-codex.js'))})\n`, { mode: 0o755 })
   }
 })
-afterAll(() => { fs.rmSync(dir, { recursive: true, force: true }) })
+// Retried: on Windows a killed process (and the console host of a killed
+// cmd.exe) releases its working folder a moment after it is reported gone.
+afterAll(() => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }) })
 
 // The real node must be findable on PATH (the shim's bare `node`), first.
 const withNode = `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? process.env.Path ?? ''}`
@@ -260,6 +262,8 @@ describe('the auth operations against the fake Codex CLI (real processes)', () =
       expect(await ops.status({ authRealmId: id })).toEqual({ ok: true, state: 'signed-out' })
     } finally {
       try { process.kill(browserPid) } catch { /* already gone */ }
+      const gone = Date.now() + 5000
+      while (alive(browserPid) && Date.now() < gone) await new Promise((res) => setTimeout(res, 50))
     }
   }, 45_000)
 
