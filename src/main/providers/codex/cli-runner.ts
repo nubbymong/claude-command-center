@@ -27,7 +27,7 @@ import fs from 'node:fs'
 import { spawn as nodeSpawn, execFile } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 
-export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key'
+export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review'
 
 const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   'version': ['--version'],
@@ -37,6 +37,10 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   'login-device': ['login', '--device-auth'],
   // The key arrives on stdin, never here (the pinned CLI refuses a TTY stdin).
   'login-api-key': ['login', '--with-api-key'],
+  // A reviewer invocation (WP2 commit 5a): non-interactive, JSONL events on
+  // stdout, nothing persisted, read-only sandbox; the prompt arrives on stdin
+  // (`-`), never here. The caller runs it in the project folder.
+  'review': ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-'],
 }
 
 export interface CodexCommand {
@@ -131,6 +135,9 @@ export interface CodexRunOptions {
   /** Per stream; the rest is dropped (default 64 KiB). */
   maxOutput?: number
   onOutput?: (text: string, stream: 'stdout' | 'stderr') => void
+  /** Every chunk as it arrives, whether or not the cap keeps it: for a
+   *  consumer that reads a long stream as it goes and bounds its own memory. */
+  onChunk?: (text: string, stream: 'stdout' | 'stderr') => void
   signal?: AbortSignal
 }
 
@@ -525,6 +532,7 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     const collect = (stream: 'stdout' | 'stderr') => (chunk: Buffer | string) => {
       if (settled || stopping) return
       const text = chunk.toString()
+      if (opts.onChunk) { try { opts.onChunk(text, stream) } catch { /* a consumer never breaks the run */ } }
       const have = stream === 'stdout' ? stdout.length : stderr.length
       const room = Math.max(0, cap - have)
       if (text.length > room) truncated = true

@@ -3,7 +3,6 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { spawn } from 'child_process'
 import { resolveCodexBinary } from './spawn'
-import { logInfo } from '../../debug-logger'
 
 /**
  * P7.7.7: Quote a single argument for cmd.exe consumption.
@@ -111,85 +110,6 @@ export function runCodexProcess(
     const timer = setTimeout(() => proc.kill(), timeoutMs)
     proc.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? -1, stdout, stderr }) })
     proc.on('error', () => { clearTimeout(timer); resolve({ code: -1, stdout, stderr }) })
-  })
-}
-
-/** Streaming variant of runCodexProcess: emits each stdout LINE as it arrives,
- *  and resolves when the process exits. Does NOT buffer stdout in memory --
- *  callers (codex-review-mcp-tool) consume lines incrementally to extract
- *  token_count events without holding the full --json stream in RAM. */
-export function runCodexStreaming(
-  args: string[],
-  opts: {
-    timeoutMs: number
-    onStdoutLine?: (line: string) => void
-    cwd?: string
-  },
-): Promise<{ code: number; stderr: string; timedOut: boolean }> {
-  return new Promise((resolve) => {
-    const resolved = resolveCodexBinary()
-    const cmd = resolved?.cmd ?? 'codex'
-    const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)
-    // P7.7.7: pre-quote args + the cmd path under shell mode -- see
-    // quoteForCmdShell docstring. macOS path is unaffected (useShell=false).
-    const spawnCmd = useShell ? quoteForCmdShell(cmd) : cmd
-    const spawnArgs = useShell ? args.map(quoteForCmdShell) : args
-    // P7.7.8: `codex exec` reads stdin if it's piped and appends the content
-    // as a `<stdin>` block to the prompt. Node's default stdio gives the
-    // child a piped (open) stdin, so codex hangs forever waiting for EOF.
-    // 'ignore' attaches stdin to /dev/null (or NUL on Windows), guaranteeing
-    // immediate EOF -- codex falls back to argv prompt and proceeds.
-    const proc = spawn(spawnCmd, spawnArgs, {
-      shell: useShell,
-      cwd: opts.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    let stderr = ''
-    let stdoutBuffer = ''
-    let timedOut = false
-
-    proc.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString()
-      let nl = stdoutBuffer.indexOf('\n')
-      while (nl !== -1) {
-        const line = stdoutBuffer.slice(0, nl)
-        stdoutBuffer = stdoutBuffer.slice(nl + 1)
-        if (line.length > 0 && opts.onStdoutLine) {
-          try { opts.onStdoutLine(line) } catch { /* never let consumer errors kill the spawn */ }
-        }
-        nl = stdoutBuffer.indexOf('\n')
-      }
-    })
-    // P7.7.9: Mirror stderr to debug-logger AS IT ARRIVES. The full buffer is
-    // still retained for the resolve() return so error-mapping behaviour is
-    // unchanged; this only adds live visibility. Without it, a hung codex
-    // process (P7.7.8 symptom) silently swallows its progress chatter --
-    // line-streaming the stderr makes those hangs diagnosable in real time.
-    proc.stderr.on('data', (d: Buffer) => {
-      const text = d.toString()
-      stderr += text
-      const trimmed = text.trimEnd()
-      if (trimmed.length > 0) logInfo('[codex] stderr:', trimmed)
-    })
-
-    const timer = setTimeout(() => {
-      timedOut = true
-      proc.kill()
-    }, opts.timeoutMs)
-
-    proc.on('close', (code) => {
-      clearTimeout(timer)
-      // Flush any unterminated final line.
-      if (stdoutBuffer.length > 0 && opts.onStdoutLine) {
-        try { opts.onStdoutLine(stdoutBuffer) } catch { /* ignore */ }
-      }
-      resolve({ code: code ?? -1, stderr, timedOut })
-    })
-    proc.on('error', () => {
-      clearTimeout(timer)
-      resolve({ code: -1, stderr, timedOut })
-    })
   })
 }
 

@@ -1,16 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
-import { join, dirname } from 'path'
-
-// Mock auth: BOTH runCodexStreaming and readCodexAuthStatus from the same mock factory.
-// (The module under test imports both from './providers/codex/auth'.)
-const runCodexStreaming = vi.fn()
-const readCodexAuthStatus = vi.fn()
-vi.mock('../../../src/main/providers/codex/auth', () => ({
-  runCodexStreaming: (args: string[], opts: any) => runCodexStreaming(args, opts),
-  readCodexAuthStatus: () => readCodexAuthStatus(),
-}))
+import { join } from 'path'
 
 // Mock setup-handlers and usage module.
 let testResourcesDir: string
@@ -25,26 +16,38 @@ vi.mock('../../../src/main/codex-review-usage', () => ({
 // debug-logger is already mocked globally in tests/unit/setup.ts; no per-file
 // mock needed here. (Source under test calls logInfo through that module.)
 
-import { runCodexReview, registerCodexReviewTool } from '../../../src/main/codex-review-mcp-tool'
+import { runCodexReview, registerCodexReviewTool, abortCodexReviews, MAX_REVIEWS_PER_SESSION } from '../../../src/main/codex-review-mcp-tool'
+import type { CodexReviewDeps } from '../../../src/main/codex-review-mcp-tool'
 
 const optedIn = new Set<string>(['sess-allowed'])
+
+// WP2 commit 5a: a review runs on a launch the accounts service prepared
+// (kind `review`) and through the Codex package's reviewer adapter. Both are
+// injected here: the service's own rules are covered by tests/wp1 and the
+// adapter's by tests/wp1/cli-discovery.test.ts.
+interface Harness { deps: CodexReviewDeps; prepareLaunch: ReturnType<typeof vi.fn>; run: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> }
+function makeDeps(): Harness {
+  const release = vi.fn()
+  const prepareLaunch = vi.fn(async (_input: Record<string, unknown>): Promise<Record<string, unknown>> => ({
+    ok: true, lease: { release }, binding: { providerAccountId: 'acct-1', authRealmId: 'realm-1' }, realmOnly: false, reviewer: 'reviewer-default',
+    home: 'C:/res/codex-realms/r1', executable: 'C:/proven/codex.exe', env: { PATH: '/usr/bin', CODEX_HOME: 'C:/res/codex-realms/r1' }, sessionsDir: 'C:/res/codex-realms/r1/sessions',
+  }))
+  const run = vi.fn(async (_input: Record<string, unknown>): Promise<Record<string, unknown>> => ({ ok: true, text: '1. A finding.\n', usage: { inputTokens: 1200, cachedInputTokens: 200, outputTokens: 80 } }))
+  return { deps: { accounts: () => ({ prepareLaunch }) as never, reviewer: () => ({ run }) as never }, prepareLaunch, run, release }
+}
 
 describe('codex_review tool', () => {
   // gitCwd: real on-disk dir with a `.git` marker so the P7.7.9 git-repo
   // guard passes for tests that exercise mode 'working' or 'range'.
   let gitCwd: string
+  let h: Harness
 
   beforeEach(() => {
     testResourcesDir = mkdtempSync(join(tmpdir(), 'ccc-codex-review-tool-'))
     gitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-git-'))
     mkdirSync(join(gitCwd, '.git'))
-    runCodexStreaming.mockReset()
-    readCodexAuthStatus.mockReset()
     recordReview.mockReset()
-    readCodexAuthStatus.mockResolvedValue({
-      installed: true, version: '0.125.0', authMode: 'chatgpt',
-      planType: 'plus', hasOpenAiApiKeyEnv: false,
-    })
+    h = makeDeps()
   })
 
   afterEach(() => {
@@ -53,494 +56,328 @@ describe('codex_review tool', () => {
   })
 
   it('rejects when sessionId is not in opted-in set', async () => {
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-other', mode: 'working' },
-      optedIn, '/fake/cwd',
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('not enabled for')
-    expect(runCodexStreaming).not.toHaveBeenCalled()
-  })
-
-  it('rejects when codex CLI is not installed', async () => {
-    readCodexAuthStatus.mockResolvedValue({
-      installed: false, version: null, authMode: 'none', hasOpenAiApiKeyEnv: false,
-    })
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, '/fake/cwd',
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('Codex CLI not installed')
-  })
-
-  it('rejects when not logged in', async () => {
-    readCodexAuthStatus.mockResolvedValue({
-      installed: true, version: '0.125.0', authMode: 'none', hasOpenAiApiKeyEnv: false,
-    })
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, '/fake/cwd',
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('not logged into Codex')
+    const r = await runCodexReview({ cccSessionId: 'sess-other', mode: 'working' }, optedIn, gitCwd, h.deps)
+    expect(r.isError).toBe(true)
+    expect(r.text).toMatch(/not enabled/i)
+    expect(h.prepareLaunch).not.toHaveBeenCalled()
   })
 
   it('rejects mode "range" without range arg via zod', async () => {
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'range' } as any,
-      optedIn, '/fake/cwd',
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toMatch(/range required/i)
+    const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'range' }, optedIn, gitCwd, h.deps)
+    expect(r.isError).toBe(true)
+    expect(r.text).toMatch(/range/)
   })
 
   it('rejects mode "paths" with empty paths via zod', async () => {
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'paths', paths: [] },
-      optedIn, '/fake/cwd',
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toMatch(/paths required/i)
+    const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'paths', paths: [] }, optedIn, gitCwd, h.deps)
+    expect(r.isError).toBe(true)
   })
 
-  it('rejects mode "paths" with paths outside the cwd', async () => {
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'paths', paths: ['../../../etc/hosts'] },
-      optedIn, '/some/repo',
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('inside the session cwd')
-    expect(runCodexStreaming).not.toHaveBeenCalled()
-  })
-
-  it('rejects mode "paths" with absolute paths outside the cwd', async () => {
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'paths', paths: ['/etc/hosts'] },
-      optedIn, '/some/repo',
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('inside the session cwd')
-  })
-
-  it('accepts mode "paths" with paths inside the cwd', async () => {
-    runCodexStreaming.mockImplementation(async (args: string[], _opts: any) => {
-      const i = args.indexOf('--output-last-message')
-      writeFileSync(args[i + 1], 'fine', 'utf-8')
-      return { code: 0, stderr: '', timedOut: false }
-    })
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'paths', paths: ['src/foo.ts', 'src/bar.ts'] },
-      optedIn, '/some/repo',
-    )
-    expect(result.isError).toBe(false)
-  })
-
-  it('builds the expected argv for mode "working" and reads the tmpfile', async () => {
-    let capturedArgs: string[] = []
-    runCodexStreaming.mockImplementation(async (args: string[], opts: any) => {
-      capturedArgs = args
-      const i = args.indexOf('--output-last-message')
-      const tmpfile = args[i + 1]
-      writeFileSync(tmpfile, '## Review\n\nNo issues found.\n', 'utf-8')
-      opts.onStdoutLine(JSON.stringify({
-        type: 'event_msg',
-        payload: {
-          type: 'token_count',
-          total_token_usage: { input_tokens: 1500, output_tokens: 800 },
-          rate_limits: {
-            primary: { used_percent: 0.41, resets_at: 1714850000, window_minutes: 300 },
-            plan_type: 'plus',
-          },
-        },
-      }))
-      return { code: 0, stderr: '', timedOut: false }
-    })
-
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working', focus: 'race conditions' },
-      optedIn, gitCwd,
-    )
-
-    expect(result.isError).toBe(false)
-    expect(result.text).toContain('## Review')
-    expect(result.text).toContain('No issues found.')
-    expect(result.text).toContain('Codex review')
-    expect(result.text).toContain('1 message used')
-    expect(result.text).toContain('plus')
-
-    expect(capturedArgs).toContain('exec')
-    expect(capturedArgs).toContain('--json')
-    expect(capturedArgs).toContain('--ephemeral')
-    expect(capturedArgs).toContain('--sandbox')
-    expect(capturedArgs).toContain('read-only')
-    // P7.7.6: Codex CLI 0.128.0 removed --ask-for-approval from `codex exec`.
-    // The flag is no longer passed; pin its absence so a future revert is caught.
-    expect(capturedArgs).not.toContain('--ask-for-approval')
-    expect(capturedArgs).toContain('-m')
-    expect(capturedArgs).toContain('gpt-5.5')
-
-    expect(recordReview).toHaveBeenCalledWith('sess-allowed', expect.objectContaining({
-      inputTokens: 1500,
-      outputTokens: 800,
-      rateLimit: expect.objectContaining({ usedPercent: 0.41, planType: 'plus' }),
-    }))
-  })
-
-  it('passes range to codex argv for mode "range"', async () => {
-    let capturedArgs: string[] = []
-    runCodexStreaming.mockImplementation(async (args: string[], opts: any) => {
-      capturedArgs = args
-      const i = args.indexOf('--output-last-message')
-      writeFileSync(args[i + 1], 'fine', 'utf-8')
-      return { code: 0, stderr: '', timedOut: false }
-    })
-    await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'range', range: 'HEAD~1..HEAD' },
-      optedIn, gitCwd,
-    )
-    const flat = capturedArgs.join(' ')
-    expect(flat).toContain('HEAD~1..HEAD')
-  })
-
-  it('returns timeout error when stream exceeds limit', async () => {
-    runCodexStreaming.mockImplementation(async () => ({
-      code: -1, stderr: '', timedOut: true,
-    }))
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, gitCwd,
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('timed out')
-  })
-
-  // P7.7.15 -- timeoutSeconds caller override.
-  it('honours caller-supplied timeoutSeconds (passes timeoutMs = seconds * 1000)', async () => {
-    let capturedOpts: any = null
-    runCodexStreaming.mockImplementation(async (_args: string[], opts: any) => {
-      capturedOpts = opts
-      const i = _args.indexOf('--output-last-message')
-      writeFileSync(_args[i + 1], 'ok', 'utf-8')
-      return { code: 0, stderr: '', timedOut: false }
-    })
-    await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working', timeoutSeconds: 120 },
-      optedIn, gitCwd,
-    )
-    expect(capturedOpts?.timeoutMs).toBe(120000)
-  })
-
-  it('defaults to 5-minute timeoutMs when timeoutSeconds is unset', async () => {
-    let capturedOpts: any = null
-    runCodexStreaming.mockImplementation(async (_args: string[], opts: any) => {
-      capturedOpts = opts
-      const i = _args.indexOf('--output-last-message')
-      writeFileSync(_args[i + 1], 'ok', 'utf-8')
-      return { code: 0, stderr: '', timedOut: false }
-    })
-    await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, gitCwd,
-    )
-    expect(capturedOpts?.timeoutMs).toBe(5 * 60 * 1000)
-  })
-
-  it('timeout error message reflects the actual configured timeout', async () => {
-    runCodexStreaming.mockImplementation(async () => ({
-      code: -1, stderr: '', timedOut: true,
-    }))
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working', timeoutSeconds: 45 },
-      optedIn, gitCwd,
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('45 seconds')
-    expect(result.text).toContain('timeoutSeconds')
-  })
-
-  it('returns non-zero exit error with stderr excerpt', async () => {
-    runCodexStreaming.mockImplementation(async () => ({
-      code: 2, stderr: 'codex: rate-limit window exhausted; resets in 47 minutes\n', timedOut: false,
-    }))
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, gitCwd,
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('Codex review failed (exit 2)')
-    expect(result.text).toContain('rate-limit window exhausted')
-  })
-
-  // P7.7.9 -- git-repo guard. Modes 'working' and 'range' rely on git
-  // history; fail early with a clean message when the cwd isn't a repo
-  // rather than paying for a spawn + quota hit before codex catches it.
-  it('rejects mode "working" when cwd lacks a .git directory', async () => {
-    const nonGitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-nogit-'))
-    try {
-      const result = await runCodexReview(
-        { cccSessionId: 'sess-allowed', mode: 'working' },
-        optedIn, nonGitCwd,
-      )
-      expect(result.isError).toBe(true)
-      expect(result.text).toContain('requires a git repository')
-      expect(result.text).toContain(nonGitCwd)
-      expect(result.text).toContain("mode='paths'")
-      expect(runCodexStreaming).not.toHaveBeenCalled()
-    } finally {
-      rmSync(nonGitCwd, { recursive: true, force: true })
+  it('rejects mode "paths" with paths outside the cwd, relative or absolute', async () => {
+    for (const p of ['../../etc/passwd', '/etc/passwd']) {
+      const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'paths', paths: [p] }, optedIn, gitCwd, h.deps)
+      expect(r.isError, p).toBe(true)
+      expect(r.text).toMatch(/inside the session cwd/)
     }
+    expect(h.prepareLaunch).not.toHaveBeenCalled()
   })
 
-  it('rejects mode "range" when cwd lacks a .git directory', async () => {
-    const nonGitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-nogit-'))
+  it('rejects mode "working" / "range" when the cwd lacks a .git, before any account is used; "paths" works outside a repo', async () => {
+    const plain = mkdtempSync(join(tmpdir(), 'ccc-codex-review-plain-'))
     try {
-      const result = await runCodexReview(
-        { cccSessionId: 'sess-allowed', mode: 'range', range: 'HEAD~1..HEAD' },
-        optedIn, nonGitCwd,
-      )
-      expect(result.isError).toBe(true)
-      expect(result.text).toContain('requires a git repository')
-      expect(runCodexStreaming).not.toHaveBeenCalled()
+      for (const args of [{ mode: 'working' }, { mode: 'range', range: 'HEAD~1..HEAD' }]) {
+        const r = await runCodexReview({ cccSessionId: 'sess-allowed', ...args }, optedIn, plain, h.deps)
+        expect(r.isError).toBe(true)
+        expect(r.text).toMatch(/requires a git repository/)
+      }
+      expect(h.prepareLaunch).not.toHaveBeenCalled()
+      writeFileSync(join(plain, 'a.ts'), 'x')
+      const ok = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'paths', paths: ['a.ts'] }, optedIn, plain, h.deps)
+      expect(ok.isError).toBe(false)
     } finally {
-      rmSync(nonGitCwd, { recursive: true, force: true })
+      rmSync(plain, { recursive: true, force: true })
     }
   })
 
   it('accepts mode "working" when .git is a FILE (git worktree)', async () => {
-    // In a linked worktree, `.git` is a file containing `gitdir: <path>` --
-    // not a directory. existsSync returns true for both, so the guard must
-    // accept this shape without an extra stat check.
-    const worktreeCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-worktree-'))
-    writeFileSync(join(worktreeCwd, '.git'), 'gitdir: /tmp/main-repo/.git/worktrees/feature\n', 'utf-8')
-    runCodexStreaming.mockImplementation(async (args: string[], _opts: any) => {
-      const i = args.indexOf('--output-last-message')
-      writeFileSync(args[i + 1], 'fine', 'utf-8')
-      return { code: 0, stderr: '', timedOut: false }
-    })
+    const wt = mkdtempSync(join(tmpdir(), 'ccc-codex-review-wt-'))
     try {
-      const result = await runCodexReview(
-        { cccSessionId: 'sess-allowed', mode: 'working' },
-        optedIn, worktreeCwd,
-      )
-      expect(result.isError).toBe(false)
-      expect(runCodexStreaming).toHaveBeenCalled()
+      writeFileSync(join(wt, '.git'), 'gitdir: /elsewhere\n')
+      const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, wt, h.deps)
+      expect(r.isError).toBe(false)
     } finally {
-      rmSync(worktreeCwd, { recursive: true, force: true })
+      rmSync(wt, { recursive: true, force: true })
     }
   })
 
-  it('does NOT apply the git-repo guard to mode "paths" (works outside a repo)', async () => {
-    const nonGitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-nogit-'))
-    runCodexStreaming.mockImplementation(async (args: string[], _opts: any) => {
-      const i = args.indexOf('--output-last-message')
-      writeFileSync(args[i + 1], 'fine', 'utf-8')
-      return { code: 0, stderr: '', timedOut: false }
-    })
-    try {
-      const result = await runCodexReview(
-        { cccSessionId: 'sess-allowed', mode: 'paths', paths: ['file.ts'] },
-        optedIn, nonGitCwd,
-      )
-      expect(result.isError).toBe(false)
-      expect(runCodexStreaming).toHaveBeenCalled()
-    } finally {
-      rmSync(nonGitCwd, { recursive: true, force: true })
-    }
-  })
-
-  // SECURITY (adversarial review, #188): defence-in-depth against the
-  // home-directory review root. A config whose workingDirectory is '.', empty,
-  // or a stale/deleted path makes resolveCwd() fall back to os.homedir();
-  // registration already refuses that, and runCodexReview refuses it again so
-  // mode:'paths' can never reach ~/.ssh, ~/.claude, ~/.aws even if some future
-  // caller re-introduces a home-rooted session into the opted-in set.
   it('refuses when resolvedCwd is the home directory (no project dir)', async () => {
-    const home = require('os').homedir()
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'paths', paths: ['.ssh/id_rsa'] },
-      optedIn, home,
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toMatch(/home folder|no project directory/i)
-    expect(runCodexStreaming).not.toHaveBeenCalled()
+    const os = await import('os')
+    const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'paths', paths: ['x'] }, optedIn, os.homedir(), h.deps)
+    expect(r.isError).toBe(true)
+    expect(r.text).toMatch(/no project directory/)
+    expect(h.prepareLaunch).not.toHaveBeenCalled()
   })
 
-  // P7.7.10 -- cccSessionId is now optional in the zod schema (resolved
-  // server-side from the MCP transport URL). runCodexReview itself still
-  // requires it -- the tool wrapper is responsible for merging in the
-  // bound sid before calling the function. A direct call without sid
-  // surfaces a wiring bug rather than silently falling through.
   it('rejects when cccSessionId is missing (no transport binding, no arg)', async () => {
-    const result = await runCodexReview(
-      { mode: 'working' },
-      optedIn, gitCwd,
-    )
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('no Conductor session id bound')
-    expect(runCodexStreaming).not.toHaveBeenCalled()
+    const r = await runCodexReview({ mode: 'working' }, optedIn, gitCwd, h.deps)
+    expect(r.isError).toBe(true)
+    expect(r.text).toMatch(/no Conductor session id/)
   })
 
-  // Round-1 adversarial coverage gap (#487 audit): the per-review mkdtemp
-  // tmpDir must be removed on EVERY path, including a successful review --
-  // not just the error paths the original fix's tests happened to exercise.
-  // Capture the tmpDir the tool actually created (via the --output-last-message
-  // arg) and assert it is gone once runCodexReview resolves.
-  it('#487 round-1: cleans up the per-call tmpDir on a successful review', async () => {
-    let tmpDirCreated = ''
-    runCodexStreaming.mockImplementation(async (args: string[]) => {
-      const i = args.indexOf('--output-last-message')
-      const tmpfile = args[i + 1]
-      tmpDirCreated = dirname(tmpfile)
-      writeFileSync(tmpfile, 'fine', 'utf-8')
-      return { code: 0, stderr: '', timedOut: false }
+  describe('WP2 commit 5a: the reviewer runs on a prepared review launch', () => {
+    it('asks the accounts service for a LOCAL review launch on Codex, a fresh owner per call, naming no account (reviewer default, else provider default)', async () => {
+      await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)
+      await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)
+      const [a, b] = h.prepareLaunch.mock.calls.map((c) => c[0] as Record<string, unknown>)
+      expect(a).toMatchObject({ kind: 'review', providerId: 'codex', remote: false })
+      expect(a.providerAccountId).toBeUndefined()
+      expect(a.acknowledgeRealmOnly).toBeUndefined()
+      expect(a.ownerId).toMatch(/^review:sess-allowed:\d+$/)
+      expect(b.ownerId).not.toBe(a.ownerId)
     })
 
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, gitCwd,
-    )
-
-    expect(result.isError).toBe(false)
-    expect(tmpDirCreated).not.toBe('')
-    expect(existsSync(tmpDirCreated)).toBe(false)
-  })
-
-  // Companion case: an error-RETURN path (non-zero exit, not a throw) must
-  // clean up the tmpDir too -- the try/finally must not be scoped only to the
-  // happy path.
-  it('#487 round-1: cleans up the per-call tmpDir on an error-return path (non-zero exit)', async () => {
-    let tmpDirCreated = ''
-    runCodexStreaming.mockImplementation(async (args: string[]) => {
-      const i = args.indexOf('--output-last-message')
-      const tmpfile = args[i + 1]
-      tmpDirCreated = dirname(tmpfile)
-      return { code: 2, stderr: 'boom', timedOut: false }
+    it('runs the prepared executable in the prepared realm environment, in the project, with the request on stdin -- never argv', async () => {
+      await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'range', range: 'HEAD~1..HEAD', focus: 'race %OPENAI_API_KEY% & calc' }, optedIn, gitCwd, h.deps)
+      const input = h.run.mock.calls[0][0] as Record<string, unknown>
+      expect(input).toMatchObject({ executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/codex-realms/r1' }, cwd: gitCwd, timeoutMs: 5 * 60 * 1000 })
+      // The text a session supplies travels as the prompt, byte for byte.
+      expect(input.prompt).toContain('Scope: git revision range HEAD~1..HEAD.')
+      expect(input.prompt).toContain('Focus area: race %OPENAI_API_KEY% & calc')
     })
 
-    const result = await runCodexReview(
-      { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, gitCwd,
-    )
+    it('honours caller-supplied timeoutSeconds, and says so when it runs out', async () => {
+      h.run.mockResolvedValueOnce({ ok: false, code: 'timed-out', message: 'The review timed out.' })
+      const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working', timeoutSeconds: 45 }, optedIn, gitCwd, h.deps)
+      expect((h.run.mock.calls[0][0] as Record<string, unknown>).timeoutMs).toBe(45_000)
+      expect(r.isError).toBe(true)
+      expect(r.text).toContain('timed out after 45 seconds')
+    })
 
-    expect(result.isError).toBe(true)
-    expect(tmpDirCreated).not.toBe('')
-    expect(existsSync(tmpDirCreated)).toBe(false)
+    it('returns the review with a usage footer and records the usage', async () => {
+      const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)
+      expect(r.isError).toBe(false)
+      expect(r.text).toContain('1. A finding.')
+      expect(r.text).toContain('1200 input tokens (200 cached), 80 output tokens')
+      expect(recordReview).toHaveBeenCalledWith('sess-allowed', { inputTokens: 1200, outputTokens: 80, rateLimit: null })
+    })
+
+    it('a failed review says why and still records what it used', async () => {
+      h.run.mockResolvedValueOnce({ ok: false, code: 'failed', message: 'Codex exited with code 1: model overloaded.', usage: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 0 } })
+      const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)
+      expect(r.isError).toBe(true)
+      expect(r.text).toContain('model overloaded')
+      expect(recordReview).toHaveBeenCalledTimes(1)
+    })
+
+    it('the review lease is released once the run has ended -- after a result, a failure, and a throw', async () => {
+      await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)
+      expect(h.release).toHaveBeenCalledTimes(1)
+      h.run.mockResolvedValueOnce({ ok: false, code: 'failed', message: 'x' })
+      await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)
+      expect(h.release).toHaveBeenCalledTimes(2)
+      h.run.mockRejectedValueOnce(new Error('boom'))
+      await expect(runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)).rejects.toThrow('boom')
+      expect(h.release).toHaveBeenCalledTimes(3)
+    })
+
+    it('a refused launch runs nothing and says what to do: an unverified sign-in, no account, Codex off, accounts not ready', async () => {
+      for (const [code, expected] of [
+        ['acknowledgement-required', /Add a Codex account in Accounts/],
+        ['not-found', /needs a Codex account/],
+        ['provider-disabled', /turned off/],
+        ['cli-unavailable', /Codex review unavailable: The CLI moved/],
+      ] as const) {
+        h.prepareLaunch.mockResolvedValueOnce({ ok: false, code, message: code === 'cli-unavailable' ? 'The CLI moved.' : 'x' })
+        const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)
+        expect(r.isError, code).toBe(true)
+        expect(r.text, code).toMatch(expected)
+      }
+      expect(h.run).not.toHaveBeenCalled()
+      const noAccounts = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, { ...h.deps, accounts: () => null })
+      expect(noAccounts.text).toMatch(/not ready/)
+      const noReviewer = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, { ...h.deps, reviewer: () => undefined })
+      expect(noReviewer.text).toMatch(/not ready/)
+      expect(h.run).not.toHaveBeenCalled()
+    })
   })
 })
 
-describe('registerCodexReviewTool resolver (P7.7.10 transport binding)', () => {
-  // Capture the tool resolver lambda from a mock McpServer.
-  let resolver: ((rawArgs: any) => Promise<any>) | null = null
-  const mockServer = {
-    tool: vi.fn((_name: string, _desc: string, _schema: any, lambda: any) => {
-      resolver = lambda
-    }),
-  }
-  const mockZ = {
-    string: () => ({ describe: () => ({}), optional: () => ({ describe: () => ({}) }), max: () => ({ optional: () => ({ describe: () => ({}) }) }) }),
-    enum: () => ({ describe: () => ({}) }),
-    array: () => ({ optional: () => ({ describe: () => ({}) }) }),
-    // P7.7.15: timeoutSeconds schema -- number().int().min().max().optional().describe()
-    number: () => ({ int: () => ({ min: () => ({ max: () => ({ optional: () => ({ describe: () => ({}) }) }) }) }) }),
-  }
-  let optedInSet: Set<string>
-  let sessionCwds: Map<string, string>
+describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its session', () => {
+  let gitCwd: string
+  let h: Harness
+  const sets = new Set<string>(['sess-allowed', 'sess-other'])
+  // A run that ends only when it is stopped, as a real long review does.
+  const untilStopped = (input: Record<string, unknown>) => new Promise<Record<string, unknown>>((res) => {
+    const s = input.signal as AbortSignal
+    const done = () => res({ ok: false, code: 'cancelled', message: 'The review was cancelled.' })
+    if (s.aborted) done(); else s.addEventListener('abort', done)
+  })
+  beforeEach(() => {
+    testResourcesDir = mkdtempSync(join(tmpdir(), 'ccc-codex-review-tool-'))
+    gitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-git-'))
+    mkdirSync(join(gitCwd, '.git'))
+    h = makeDeps()
+  })
+  afterEach(() => {
+    abortCodexReviews('sess-allowed')
+    abortCodexReviews('sess-other')
+    rmSync(testResourcesDir, { recursive: true, force: true })
+    rmSync(gitCwd, { recursive: true, force: true })
+  })
+
+  it('the lease is held for the whole run, and released only once it has settled', async () => {
+    h.run.mockImplementationOnce(async () => {
+      expect(h.release).not.toHaveBeenCalled()
+      return { ok: true, text: 'fine' }
+    })
+    await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    expect(h.release).toHaveBeenCalledTimes(1)
+  })
+
+  it('the MCP request\'s cancel stops the reviewer; the lease goes and the agent is told', async () => {
+    h.run.mockImplementationOnce(untilStopped)
+    const ac = new AbortController()
+    const p = runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps, ac.signal)
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalled())
+    ac.abort()
+    expect(await p).toEqual({ isError: true, text: 'Codex review was cancelled.' })
+    expect((h.run.mock.calls[0][0].signal as AbortSignal).aborted).toBe(true)
+    expect(h.release).toHaveBeenCalledTimes(1)
+  })
+
+  it('a request cancelled before it starts prepares nothing; one cancelled while preparing releases what it took and runs nothing', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps, ac.signal)).toMatchObject({ isError: true, text: 'Codex review was cancelled.' })
+    expect(h.prepareLaunch).not.toHaveBeenCalled()
+    const ac2 = new AbortController()
+    const prep = h.prepareLaunch.getMockImplementation() as (i: Record<string, unknown>) => Promise<Record<string, unknown>>
+    h.prepareLaunch.mockImplementationOnce(async (i: Record<string, unknown>) => { const r = await prep(i); ac2.abort(); return r })
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps, ac2.signal)).toMatchObject({ text: 'Codex review was cancelled.' })
+    expect(h.run).not.toHaveBeenCalled()
+    expect(h.release).toHaveBeenCalledTimes(1)
+  })
+
+  it('closing the session stops its reviews (and only its own)', async () => {
+    h.run.mockImplementation(untilStopped)
+    const mine = runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    const theirs = runCodexReview({ cccSessionId: 'sess-other', mode: 'working' }, sets, gitCwd, h.deps)
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2))
+    abortCodexReviews('sess-allowed')
+    expect(await mine).toMatchObject({ text: 'Codex review was cancelled.' })
+    const signals = h.run.mock.calls.map((c) => c[0].signal as AbortSignal)
+    expect(signals.filter((s) => s.aborted)).toHaveLength(1)
+    abortCodexReviews('sess-other')
+    await theirs
+    expect(h.release).toHaveBeenCalledTimes(2)
+  })
+
+  it('a session respawned with the same id can ask again at once, while its stopped review is still settling (whose lease goes when it settles)', async () => {
+    let settle: (() => void) | null = null
+    h.run.mockImplementationOnce(() => new Promise((res) => { settle = () => res({ ok: false, code: 'cancelled', message: 'x' }) }))
+    const old = runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1))
+    abortCodexReviews('sess-allowed')
+    const again = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    expect(again).toMatchObject({ isError: false })
+    expect(h.release).toHaveBeenCalledTimes(1)
+    // A newer review starts before the stopped one settles; the stopped one's
+    // cleanup must not free the newer one's place.
+    h.run.mockImplementationOnce(untilStopped)
+    const newer = runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(3))
+    settle!()
+    await old
+    expect(h.release).toHaveBeenCalledTimes(2)
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toMatchObject({ text: expect.stringContaining('already running') })
+    abortCodexReviews('sess-allowed')
+    await newer
+  })
+
+  it('one review runs at a time for a session (a review cannot start another for it); a finished one frees its place', async () => {
+    expect(MAX_REVIEWS_PER_SESSION).toBe(1)
+    h.run.mockImplementation(untilStopped)
+    const first = runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    const second = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    expect(second).toMatchObject({ isError: true, text: expect.stringContaining('already running for this session') })
+    expect(h.prepareLaunch).toHaveBeenCalledTimes(1)
+    // Another session is not limited by this one.
+    const other = runCodexReview({ cccSessionId: 'sess-other', mode: 'working' }, sets, gitCwd, h.deps)
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2))
+    abortCodexReviews('sess-allowed')
+    await first
+    h.run.mockImplementation(async () => ({ ok: true, text: 'again' }))
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toMatchObject({ isError: false })
+    abortCodexReviews('sess-other')
+    await other
+  })
+
+  it('the registered tool passes the MCP request\'s cancel signal through', async () => {
+    let handler: ((args: unknown, extra?: { signal?: AbortSignal }) => Promise<any>) | null = null
+    const server = { tool: (_n: string, _d: string, _s: unknown, fn: typeof handler) => { handler = fn } }
+    const chain: any = new Proxy(function () { return chain }, { get: () => chain, apply: () => chain })
+    registerCodexReviewTool(server, chain, () => sets, () => gitCwd, () => 'sess-allowed', h.deps)
+    h.run.mockImplementationOnce(untilStopped)
+    const ac = new AbortController()
+    const p = handler!({ mode: 'working' }, { signal: ac.signal })
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalled())
+    ac.abort()
+    expect((await p).content[0].text).toBe('Codex review was cancelled.')
+  })
+})
+
+describe('registerCodexReviewTool: the session id comes only from the transport', () => {
+  let resolver: ((args: any) => Promise<any>) | null
+  const mockServer = { tool: (_n: string, _d: string, _s: unknown, fn: (args: any) => Promise<any>) => { resolver = fn } }
+  const chain: any = new Proxy(function () { return chain }, { get: () => chain, apply: () => chain })
+  const mockZ = chain
   let boundCwd: string
+  let otherCwd: string
+  const sessionCwds = new Map<string, string>()
+  const optedInSet = new Set<string>(['bound-sid', 'arg-sid'])
+  let h: Harness
 
   beforeEach(() => {
     resolver = null
-    mockServer.tool.mockClear()
-    runCodexStreaming.mockReset()
-    readCodexAuthStatus.mockReset()
-    readCodexAuthStatus.mockResolvedValue({
-      installed: true, version: '0.125.0', authMode: 'chatgpt',
-      planType: 'plus', hasOpenAiApiKeyEnv: false,
-    })
-    optedInSet = new Set<string>(['bound-sid', 'arg-sid'])
-    // A real temp dir so the resolver's `!cwd` guard passes and mode:'paths'
-    // containment resolves against a genuine directory (never os.homedir()).
     boundCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-bound-'))
-    sessionCwds = new Map<string, string>([['bound-sid', boundCwd], ['arg-sid', mkdtempSync(join(tmpdir(), 'ccc-codex-review-arg-'))]])
+    otherCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-other-'))
+    writeFileSync(join(boundCwd, 'x'), 'x')
+    writeFileSync(join(otherCwd, 'x'), 'x')
+    sessionCwds.clear()
+    sessionCwds.set('bound-sid', boundCwd)
+    sessionCwds.set('arg-sid', otherCwd)
+    h = makeDeps()
   })
-
   afterEach(() => {
     rmSync(boundCwd, { recursive: true, force: true })
+    rmSync(otherCwd, { recursive: true, force: true })
   })
 
-  // SECURITY (adversarial review, #188): the tool trusts ONLY the
-  // transport-bound session id. The LLM-supplied cccSessionId arg is ignored
-  // entirely — otherwise, now that every local session is opted-in, a
-  // prompt-injected session could pass another session's id, clear the ACL, and
-  // review that session's working tree (cross-session read).
   it('uses the transport-bound sessionId and its cwd, ignoring the LLM-supplied arg', async () => {
-    registerCodexReviewTool(
-      mockServer,
-      mockZ,
-      () => optedInSet,
-      (sid: string) => sessionCwds.get(sid) ?? null,
-      () => 'bound-sid',
-    )
+    registerCodexReviewTool(mockServer, mockZ, () => optedInSet, (sid: string) => sessionCwds.get(sid) ?? null, () => 'bound-sid', h.deps)
     expect(resolver).not.toBeNull()
-    let capturedCwd = ''
-    runCodexStreaming.mockImplementation(async (args: string[]) => {
-      const i = args.indexOf('--cd')
-      capturedCwd = args[i + 1]
-      return { code: -1, stderr: '', timedOut: true }  // bail after argv capture
-    })
-    // LLM passes a DIFFERENT opted-in sid -- it must be ignored; the bound sid's
-    // cwd is what codex runs against.
     const out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
-    expect(out.isError).toBe(true)
-    expect(out.content[0].text).toContain('timed out')  // got past ACL with bound-sid
-    expect(out.content[0].text).not.toContain('not enabled')
-    expect(capturedCwd).toBe(boundCwd)  // bound sid's cwd, NOT arg-sid's
+    expect(out.isError).toBe(false)
+    expect((h.run.mock.calls[0][0] as Record<string, unknown>).cwd).toBe(boundCwd)
+    expect((h.prepareLaunch.mock.calls[0][0] as Record<string, unknown>).ownerId).toMatch(/^review:bound-sid:/)
   })
 
-  it('REFUSES when no sessionId is bound (arg fallback removed)', async () => {
-    registerCodexReviewTool(
-      mockServer,
-      mockZ,
-      () => optedInSet,
-      (sid: string) => sessionCwds.get(sid) ?? null,
-      () => null,  // no transport binding -- legacy/in-flight connection
-    )
-    expect(resolver).not.toBeNull()
-    // Even though the LLM supplies a valid opted-in sid, an unbound connection
-    // is refused outright — the arg is never trusted.
-    const out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
+  it('REFUSES when no sessionId is bound (arg fallback removed), and when getBoundSessionId is omitted', async () => {
+    registerCodexReviewTool(mockServer, mockZ, () => optedInSet, (sid: string) => sessionCwds.get(sid) ?? null, () => null, h.deps)
+    let out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
     expect(out.isError).toBe(true)
     expect(out.content[0].text).toContain('no bound Conductor session')
-    expect(runCodexStreaming).not.toHaveBeenCalled()
-  })
-
-  it('REFUSES when getBoundSessionId is omitted (default null, back-compat)', async () => {
-    registerCodexReviewTool(
-      mockServer,
-      mockZ,
-      () => optedInSet,
-      (sid: string) => sessionCwds.get(sid) ?? null,
-      // getBoundSessionId omitted -- default returns null
-    )
-    expect(resolver).not.toBeNull()
-    const out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
-    expect(out.isError).toBe(true)
+    registerCodexReviewTool(mockServer, mockZ, () => optedInSet, (sid: string) => sessionCwds.get(sid) ?? null)
+    out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
     expect(out.content[0].text).toContain('no bound Conductor session')
-    expect(runCodexStreaming).not.toHaveBeenCalled()
+    expect(h.prepareLaunch).not.toHaveBeenCalled()
   })
 
   it('REFUSES a bound sid with no cwd mapping (never falls back to process.cwd)', async () => {
-    registerCodexReviewTool(
-      mockServer,
-      mockZ,
-      () => optedInSet,
-      () => null,  // sid resolves to no cwd (desynced/stale)
-      () => 'bound-sid',
-    )
-    expect(resolver).not.toBeNull()
+    registerCodexReviewTool(mockServer, mockZ, () => optedInSet, () => null, () => 'bound-sid', h.deps)
     const out = await resolver!({ mode: 'paths', paths: ['x'] })
     expect(out.isError).toBe(true)
     expect(out.content[0].text).toContain('not enabled')
-    expect(runCodexStreaming).not.toHaveBeenCalled()
+    expect(h.prepareLaunch).not.toHaveBeenCalled()
   })
 })

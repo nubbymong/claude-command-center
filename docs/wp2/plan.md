@@ -512,8 +512,8 @@ obligations fall on later slices:
 - **Known until commit 6:** the renderer sends no `providerAccountId` yet.
   Codex sessions therefore run on the provider default, and an adopted
   external account (realm-only) is refused until the session dialog asks for
-  the acknowledgement. `codex_review` still runs on the ambient home until
-  commit 5 moves it onto `prepareLaunch`.
+  the acknowledgement. (`codex_review` moved onto `prepareLaunch` in
+  commit 5a.)
 - **For commit 6 (renderer):** a Restart that lands while the replaced
   spawn is still being prepared produces a synthetic `pty:exit` for the
   cancelled preparation just before the new one starts. The same happens
@@ -527,6 +527,80 @@ obligations fall on later slices:
   project-level Codex configuration in the working directory can change the
   model provider or its endpoint for a realm session. If it can, a Codex
   launch needs a project gate like Claude's.
+
+## Commit 5a (codex_review on a prepared review launch): decisions, what remains (2026-09-24)
+
+- **Done:** `codex_review` runs on a launch the accounts service prepared
+  (kind `review`, local): the reviewer default, else the provider default,
+  bound and leased under the registry lock, with the realm environment built
+  by `realmEnvForProvider` and the executable setup proved. The lease owner
+  is unique per call (`review:<session>:<n>`) and the lease is released in
+  `finally`, once the run has settled (the runner settles only after the
+  whole process chain is killed on a deadline or a cancel).
+- **The review adapter is on the package contract.** `ProviderPackage.review`
+  (`ProviderReviewOperations.run`) is the provider-neutral seam; the Codex
+  package implements it in `src/main/providers/codex/review.ts`. The MCP
+  tool keeps the session checks (opt-in, project directory, path
+  containment, git guard) and knows nothing Codex-specific beyond the tool's
+  name. `claude_review` (5b) implements the same seam in the Claude package.
+- **One isolated invocation per review:** `codex exec --json --ephemeral
+  --skip-git-repo-check --sandbox read-only -m gpt-5.5 -` through the CLI
+  runner, in the project, with the request on stdin (argv is constant). A
+  Windows shim runs through the absolute cmd.exe with the same verbatim line
+  as a session, and `NoDefaultCurrentDirectoryInExePath=1` is set.
+- **Depth one:** the reviewer inherits no Conductor variable (every
+  `CCC_`, `CONDUCTOR_` and `CLAUDE_MULTI_` name, in any spelling on
+  Windows), no per-spawn MCP flags are passed to it, and a session runs one
+  review at a time: while it runs, a second request for that session is
+  refused.
+- **A review never outlives its request or its session:** the MCP request's
+  cancel stops the reviewer, and unregistering the session (its PTY ended
+  or was replaced) stops its reviews and frees its place at once (a
+  respawned session may ask again); either way the lease is released once
+  the run has settled. Known limit, as for sessions: a kill that never lands
+  releases the lease after the runner's 15 s bound.
+- **Pinned output contract (0.155.1, `exec_events.rs`):** the reply is the
+  last `item.completed` agent message; usage is summed over
+  `turn.completed`; `turn.failed` and `error` carry the failure. The old
+  reader looked for `event_msg`/`token_count`, which the pinned CLI does not
+  print, so the old footer always said usage was unavailable. The footer now
+  shows tokens (input, cached, output); usage is recorded even when the turn
+  fails. There is no rate-limit figure in `exec --json`, so none is shown.
+- **Reading and returning:** the JSONL stream is read as it arrives (one
+  event line is bounded; a longer one is skipped), so no output cap can cut
+  the reply off. Failure text is redacted whole, then bounded to 500
+  characters; stderr is reported from its real tail. The review itself has
+  token-shaped credentials redacted (case-sensitive, so prose about "basic
+  validation" is untouched). Redaction reads a bounded window, and the
+  margin next to a window cut is dropped, so a secret a cut splits never
+  shows. A deadline
+  that finds the root already exited is reported as a timeout. Only absolute
+  PATH entries reach the reviewer. An npm-installed Codex is refused for a
+  project on a network path (cmd.exe cannot start in one).
+- **Retired:** `runCodexStreaming` (the old review spawn) is deleted; the
+  tool no longer reads the global Codex home. The flag-drift integration
+  test now derives its assertions from the reviewer's argv.
+- **Defaults taken (owner may overturn):**
+  - An unverified realm-only sign-in as the reviewer is refused with a
+    message to add a Codex account. An agent cannot give the per-launch
+    acknowledgement a person must give.
+  - No reviewer-account argument on the tool. The owner's "explicit per
+    request" is read as the user's choice (the reviewer default in
+    Accounts, commit 6), not the agent's: letting an agent pick among the
+    user's accounts would let it route project text to another account's
+    organisation. Held for the owner.
+  - The review stays bound to the session's project directory, as before.
+  - Codex's read-only sandbox restricts writes and network, not reads; this
+    is unchanged from the shipped tool and stays a known limit.
+- **Held for the owner:** how far a reviewer is isolated from its realm's
+  own Codex configuration (a change in review behaviour, on Windows in
+  particular), and the reviewer's environment beyond the Conductor
+  variables. Details are with the owner.
+- **ADR-009 (5a):** one round of three Opus lenses (injection and platform;
+  accounts, leases and depth; correctness and coverage), fixes, then a
+  confirmation by the same attackers. Mutation proofs for every new guard.
+- **Remaining for commit 5:** `claude_review` for Codex sessions (5b), and
+  offering each session only the other provider's tool.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

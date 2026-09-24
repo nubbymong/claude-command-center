@@ -206,6 +206,36 @@ export interface ProviderLaunchOperations {
   sessionsDir(realm: RealmRef): Promise<string | null>
 }
 
+/** One reviewer invocation (plan: provider review through MCP): a fresh,
+ *  non-interactive process of the reviewing provider, run from a launch the
+ *  accounts service prepared (kind `review`), in the reviewed project. */
+export interface ReviewRunInput {
+  /** From the prepared launch: the executable setup proved. */
+  executable: string
+  /** From the prepared launch: the realm's environment. */
+  env: Readonly<Record<string, string>>
+  /** The project under review: the process's working directory. */
+  cwd: string
+  /** The review request, handed to the process on stdin, never as argv. */
+  prompt: string
+  timeoutMs: number
+  signal?: AbortSignal
+}
+
+export interface ReviewUsage {
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+}
+
+export type ReviewRunResult =
+  | { ok: true; text: string; usage?: ReviewUsage }
+  | { ok: false; code: 'timed-out' | 'cancelled' | 'failed' | 'no-output' | 'not-started'; message: string; usage?: ReviewUsage }
+
+export interface ProviderReviewOperations {
+  run(input: ReviewRunInput): Promise<ReviewRunResult>
+}
+
 export interface ProviderRealmOperations {
   /** The exact environment patch for a bound realm (D1): Claude = the existing
    *  profile-home mechanism; Codex = CODEX_HOME. */
@@ -257,6 +287,9 @@ export interface ProviderPackage {
   /** Present when the provider's managed accounts launch in their own realm
    *  (Codex); absent for providers that keep their own launch path (Claude). */
   readonly launch?: ProviderLaunchOperations
+  /** Present when the provider can review a change for another provider's
+   *  session (plan: provider review through MCP). */
+  readonly review?: ProviderReviewOperations
   readonly realms?: ProviderRealmOperations
   /** Present when the provider's managed accounts each get an app-managed
    *  folder (Codex); absent for providers that keep their own (Claude). */

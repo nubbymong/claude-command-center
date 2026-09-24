@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "8fd27d33c91f1e4c0152a04df6901765d1dd98d5cb49c8b08f15cd325a0432d4",
-  "manifestHead": "39952b893b9faa2f2350ec526893110a9ca415e0",
+  "manifestPathDigest": "98fb9b19be6b1e20d6100b9eeeb783a5291c78b0bc312fb7b923c68d86d4b548",
+  "manifestHead": "60ea77be256dc27835bfe13d45346ee2f1d9cf26",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -351,13 +351,13 @@
       "path": "src/main/codex-review-mcp-tool.ts",
       "predicates": [
         "P01",
-        "P06",
+        "P04",
         "P14"
       ],
       "category": "REVIEW-MCP",
       "disposition": "move",
-      "evidence": "tests/unit/main/codex-review-mcp-tool.test.ts adapted (install/auth gate resolves the provider-default Codex realm); exec/ACL cases retained (WP1.57)",
-      "note": "the install/auth gate and codex exec env resolve the Codex provider-default account realm through the package entry point instead of readCodexAuthStatus() on the global home; review logic unchanged",
+      "evidence": "tests/unit/main/codex-review-mcp-tool.test.ts rewritten by WP2 commit 5a (the review runs on a prepared review launch: reviewer default else provider default, lease released after the run, refusals mapped, request on stdin); exec/ACL/path/git-guard cases retained (WP1.57)",
+      "note": "WP2 commit 5a: the review no longer runs through runCodexStreaming/readCodexAuthStatus; the accounts service prepares a review launch (kind review, local) and the Codex package reviewer adapter (src/main/providers/codex/review.ts) runs one isolated codex exec",
       "adaptsTests": [
         "tests/unit/main/codex-review-mcp-tool.test.ts"
       ]
@@ -608,7 +608,7 @@
       "category": "AUTH",
       "disposition": "replace",
       "evidence": "WP1.57 legacy-retirement gate (zero production imports of getCodexHome/readCodexAuthStatus/parseChatgptPlanFromJwt at the candidate); replacement covered by tests/wp1/codex-auth-adapter.test.ts (WP1.20-WP1.25, WP1.62)",
-      "note": "realm-explicit login/status/logout/test-connection rebuilt inside the Codex package; runCodexProcess/runCodexStreaming retained package-internal (key-via-stdin + redaction assertions carried over from auth-login.test.ts) and take an explicit allowlisted env; getCodexHome, readCodexAuthStatus and parseChatgptPlanFromJwt deleted (auth.json/token parsing prohibited, design 9.2)",
+      "note": "realm-explicit login/status/logout/test-connection rebuilt inside the Codex package; runCodexProcess retained package-internal (runCodexStreaming deleted by WP2 commit 5a: the reviewer runs through the CLI runner) (key-via-stdin + redaction assertions carried over from auth-login.test.ts) and take an explicit allowlisted env; getCodexHome, readCodexAuthStatus and parseChatgptPlanFromJwt deleted (auth.json/token parsing prohibited, design 9.2)",
       "adaptsTests": [
         "tests/unit/providers/codex/auth.test.ts",
         "tests/unit/providers/codex/auth-login.test.ts"
@@ -782,6 +782,19 @@
       "disposition": "retain",
       "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 resume picker UNCHANGED; tests/unit/providers/codex/resume-picker-deploy.test.ts",
       "note": "deploys the picker script; the picker reads CODEX_HOME from the PTY env, so a managed realm works unchanged"
+    },
+    {
+      "path": "src/main/providers/codex/review.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5a adapter: one isolated codex exec per review from the launch the accounts service prepared (realm environment, proven executable), request on stdin, depth guard strips the requesting session Conductor bearer and id, runs through the CLI runner (tests/wp1/cli-discovery.test.ts \"the Codex reviewer (WP2 5a)\"; tests/unit/main/codex-review-mcp-tool.test.ts) (WP1.38, WP1.42)",
+      "note": "created by WP2 commit 5a; replaces the legacy runCodexStreaming review path"
     },
     {
       "path": "src/main/providers/codex/spawn.ts",
@@ -2088,13 +2101,12 @@
       "path": "tests/integration/codex-cli-compat.test.ts",
       "predicates": [
         "P01",
-        "P06",
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "existing flag-drift test (listed in docs/wp1/baseline-test-inventory.json); WP2 commit 5a derives its assertions from the Codex reviewer argv (cli-runner review operation) instead of the retired buildArgv, and asserts the stdin prompt contract; must stay green on the merge candidate (WP1.33)",
+      "note": "WP2 commit 5a: the -o/--output-last-message and -C/--cd assertions were for the retired review path and are gone; every flag the reviewer passes is asserted"
     },
     {
       "path": "tests/unit/channel-rules-store.test.ts",
@@ -2266,7 +2278,7 @@
       "path": "tests/unit/main/codex-review-mcp-tool.test.ts",
       "predicates": [
         "P01",
-        "P06",
+        "P04",
         "P09",
         "P13"
       ],
@@ -2274,6 +2286,18 @@
       "disposition": "replace",
       "evidence": "WP1.58: install/auth gate cases adapted to realm resolution; exec/ACL cases retained; adapted in place: tests/unit/main/codex-review-mcp-tool.test.ts",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/codex-review-session-abort.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5a test (tests/unit/main/codex-review-session-abort.test.ts): unregistering a session from codex_review stops its in-flight reviews (and only its own), releasing their reviewer leases (WP1.38)",
+      "note": "created by WP2 commit 5a"
     },
     {
       "path": "tests/unit/main/codex-review-usage.test.ts",

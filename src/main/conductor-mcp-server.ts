@@ -43,7 +43,7 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import { isAllowedBrowserUrl } from '../shared/browser-url'
 import { pushAgentUrlToWebview } from './webview-manager'
 import type { GlobalVisionConfig } from '../shared/types'
-import { registerCodexReviewTool } from './codex-review-mcp-tool'
+import { registerCodexReviewTool, abortCodexReviews } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
 import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, getLastCompletedCanvasStateForSession, renderVersion, reopenVersionForReview, resolveInsideCanvasRoot, setVersionVerdict } from './canvas/canvas-store'
 import { completeCanvasGuarded } from './canvas/canvas-completion'
@@ -599,6 +599,8 @@ export function registerCodexReviewSession(sessionId: string, cwd: string): void
 export function unregisterCodexReviewSession(sessionId: string): void {
   codexReviewOptedIn.delete(sessionId)
   sessionCwds.delete(sessionId)
+  // A review never outlives the session it serves (WP2 5a).
+  abortCodexReviews(sessionId)
 }
 
 function resultToMcpContent(result: VisionResult) {

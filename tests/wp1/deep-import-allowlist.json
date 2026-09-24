@@ -2,7 +2,6 @@
   "schema": "wp1-deep-import-allowlist/2",
   "note": "WP1.55 ratchet: every production import that reaches into a provider package (Claude, Codex or core) past its index.ts. An entry needs either a non-retain disposition for `from` in tests/wp1/legacy-codex-ledger.json (the consumer is rebuilt or adapted by WP1) or a recorded `exempt` block; at the candidate phase only entries whose exemption decision starts with `owner-approved` may remain. The list may only shrink: tests/wp1/dependency-boundaries.test.ts R4 fails on a new entry and on a stale one.",
   "entries": [
-    { "from": "src/main/codex-review-mcp-tool.ts", "to": "src/main/providers/codex/auth.ts" },
     { "from": "src/main/conductor-mcp-server.ts", "to": "src/main/providers/codex/mcp-config.ts",
       "exempt": { "reason": "the config.toml heal is a Codex-package operation the MCP server calls at start/stop; the call site takes the external-default realm path (ledger note) and is routed through the Codex entry point in the Codex adapter slice", "decision": "pending-owner: exemption or entry-point routing in slice 2" } },
     { "from": "src/main/hooks/per-session-settings.ts", "to": "src/main/providers/claude/statusline-command.ts",

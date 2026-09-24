@@ -17,6 +17,7 @@ import { runCodexCli, defaultCodexRunDeps } from './cli-runner'
 import { discoverCodex } from './discovery'
 import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
 import { createCodexAuthOperations } from './auth-operations'
+import { createCodexReviewOperations } from './review'
 import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
 import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
 import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort } from './realm-folders'
@@ -33,6 +34,7 @@ export {
 } from './cli-runner'
 export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry, CodexKillTree } from './cli-runner'
 export { discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
+export { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT } from './review'
 export type { CodexDiscovery, CodexDiscoveryDeps, CodexExecutableIdentity, CodexExecutableCheck, CodexFileStat } from './discovery'
 export { codexLoginShellPath, codexOperationBaseEnv, extractMarkedPath, absolutePathEntries } from './process-env'
 export {
@@ -266,6 +268,9 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
       discover,
       installRecipes: codexInstallRecipes,
     },
+    // A reviewer for another provider's sessions (plan: provider review
+    // through MCP), run from a launch the accounts service prepared.
+    review: createCodexReviewOperations(),
     ...(source && realmFs ? {
       ...withLaunch(createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven })),
       realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks }),

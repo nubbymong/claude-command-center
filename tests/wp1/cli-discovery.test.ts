@@ -12,6 +12,7 @@ import { EventEmitter } from 'node:events'
 import { codexCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
 import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
 import type { CodexDiscoveryDeps, CodexRunResult, CodexRunDeps, CodexProcessEntry } from '../../src/main/providers/codex'
+import { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT } from '../../src/main/providers/codex'
 
 describe('codex --version', () => {
   it('reads the semver from the CLI banner, and nothing else', () => {
@@ -724,5 +725,339 @@ describe('the login-shell PATH (macOS/Linux)', () => {
     expect(extractMarkedPath(`${O}/usr/bin`)).toBeNull()
     expect(extractMarkedPath(`${O}/usr/bin\n/x${C}`)).toBeNull()
     expect(extractMarkedPath(`${O}.:rel${C}`)).toBeNull()
+  })
+})
+
+// WP2 commit 5a (plan: provider review through MCP): Codex as a reviewer. One
+// isolated `codex exec` per review, from a launch the accounts service
+// prepared; the request on stdin, never argv; the reply read from the pinned
+// CLI's JSONL (rust-v0.155.1 exec_events.rs).
+describe('the Codex reviewer (WP2 5a)', () => {
+  const jsonl = (...events: unknown[]) => events.map((e) => JSON.stringify(e)).join('\n') + '\n'
+  const turn = (input: number, cached: number, output: number) => ({ type: 'turn.completed', usage: { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0 } })
+  const reply = (text: string) => ({ type: 'item.completed', item: { id: 'i', type: 'agent_message', text } })
+  const input = (over: Record<string, unknown> = {}) => ({
+    executable: 'C:\\Tools\\codex.exe', cwd: 'D:\\proj', prompt: 'Review this. Focus area: race %OPENAI_API_KEY% & calc', timeoutMs: 1000,
+    env: { PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows', CODEX_HOME: 'C:\\res\\codex-realms\\r1', conductor_mcp_token: 't', Claude_Multi_Session_Id: 's', CCC_SESSION_WORKTREE: 'w', nodefaultcurrentdirectoryinexepath: '0' },
+    ...over,
+  })
+
+  it('reads the pinned exec stream: the last agent message, usage summed over turns, the failure; anything else ignored', () => {
+    const out = parseCodexExecEvents([
+      'not json', '{"broken', JSON.stringify({ type: 'thread.started', thread_id: 't' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', text: 'nope' } }),
+      JSON.stringify(reply('draft')), JSON.stringify(turn(100, 10, 5)),
+      JSON.stringify(reply('final')), JSON.stringify(turn(20, -3, Number.NaN)),
+    ].join('\r\n'))
+    expect(out).toEqual({ text: 'final', usage: { inputTokens: 120, cachedInputTokens: 10, outputTokens: 5 } })
+    expect(parseCodexExecEvents(jsonl({ type: 'turn.failed', error: { message: 'quota' } }))).toEqual({ text: null, error: 'quota' })
+    expect(parseCodexExecEvents(jsonl({ type: 'error', message: 'stream lost' }))).toEqual({ text: null, error: 'stream lost' })
+    expect(parseCodexExecEvents('')).toEqual({ text: null })
+  })
+
+  it('runs the proven executable read-only and ephemeral, in the project, the request on stdin and never in argv', async () => {
+    const { deps, spawned } = fakeDeps()
+    const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input())
+    const s = spawned[0]
+    expect(s.file).toBe('C:\\Tools\\codex.exe')
+    expect(s.args).toEqual(['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-'])
+    expect(s.opts).toMatchObject({ cwd: 'D:\\proj', shell: false, windowsVerbatimArguments: false })
+    expect(s.child.stdin!.end).toHaveBeenCalledWith(input().prompt)
+    expect(s.args.join(' ')).not.toContain('OPENAI_API_KEY')
+    s.child.stdout.emit('data', jsonl(reply('1. A finding.'), turn(1200, 200, 80)))
+    s.child.emit('close', 0)
+    expect(await p).toEqual({ ok: true, text: '1. A finding.', usage: { inputTokens: 1200, cachedInputTokens: 200, outputTokens: 80 } })
+  })
+
+  it('a reviewer never inherits the requesting session\'s Conductor bearer or id, in any spelling; cmd.exe never looks in the project for a program', async () => {
+    const { deps, spawned } = fakeDeps()
+    void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input())
+    const env = spawned[0].opts.env as Record<string, string>
+    expect(Object.keys(env).map((k) => k.toUpperCase())).not.toEqual(expect.arrayContaining(['CONDUCTOR_MCP_TOKEN']))
+    expect(Object.keys(env).map((k) => k.toUpperCase())).not.toContain('CLAUDE_MULTI_SESSION_ID')
+    expect(Object.keys(env).map((k) => k.toUpperCase())).not.toContain('CCC_SESSION_WORKTREE')
+    expect(Object.entries(env).filter(([k]) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual([['NoDefaultCurrentDirectoryInExePath', '1']])
+    expect(env).toMatchObject({ CODEX_HOME: 'C:\\res\\codex-realms\\r1', PATH: 'C:\\Windows' })
+    // POSIX names are exact: only the exact names are the guard's; no Windows-only variable is added.
+    void createCodexReviewOperations({ platform: 'linux', runDeps: () => deps }).run(input({ executable: '/usr/bin/codex', cwd: '/proj', env: { CONDUCTOR_MCP_TOKEN: 't', CLAUDE_MULTI_SESSION_ID: 's', CODEX_HOME: '/h' } }))
+    expect(spawned[1].opts.env).toEqual({ CODEX_HOME: '/h' })
+  })
+
+  it('a Windows shim runs through cmd.exe with a constant verbatim line, in the project; the request stays on stdin', async () => {
+    const { deps, spawned } = fakeDeps()
+    void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input({ executable: 'C:\\npm\\codex.cmd' }))
+    const s = spawned[0]
+    expect(s.file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(s.args).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\codex.cmd" exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m gpt-5.5 -"'])
+    expect(s.opts).toMatchObject({ cwd: 'D:\\proj', windowsVerbatimArguments: true })
+    expect(s.child.stdin!.end).toHaveBeenCalledWith(input().prompt)
+  })
+
+  it('says why a review did not come back: not started, cancelled, timed out, failed (redacted), no reply; a long reply keeps its tail', async () => {
+    const ops = (d: CodexRunDeps) => createCodexReviewOperations({ platform: 'win32', runDeps: () => d })
+    // A path the runner refuses: nothing starts.
+    const f0 = fakeDeps()
+    expect(await ops(f0.deps).run(input({ executable: 'codex.exe' }))).toMatchObject({ ok: false, code: 'not-started' })
+    expect(f0.spawned).toHaveLength(0)
+    // Failed, with its usage, a key in the message redacted.
+    const f1 = fakeDeps()
+    const p1 = ops(f1.deps).run(input())
+    f1.spawned[0].child.stdout.emit('data', jsonl(turn(5, 0, 0), { type: 'turn.failed', error: { message: 'bad key sk-' + 'a'.repeat(40) } }))
+    f1.spawned[0].child.emit('close', 1)
+    const r1 = await p1
+    expect(r1).toMatchObject({ ok: false, code: 'failed', usage: { inputTokens: 5 } })
+    expect(r1.ok === false && r1.message).toContain('[REDACTED]')
+    expect(r1.ok === false && r1.message).not.toContain('a'.repeat(40))
+    // Exit 0 with no reply.
+    const f2 = fakeDeps()
+    const p2 = ops(f2.deps).run(input())
+    f2.spawned[0].child.stdout.emit('data', jsonl(turn(1, 0, 1)))
+    f2.spawned[0].child.emit('close', 0)
+    expect(await p2).toMatchObject({ ok: false, code: 'no-output', usage: { inputTokens: 1 } })
+    // Cancelled.
+    const f3 = fakeDeps()
+    const ac = new AbortController()
+    const p3 = ops(f3.deps).run(input({ signal: ac.signal }))
+    ac.abort()
+    expect(await p3).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(f3.killed).toHaveLength(1)
+    // A spawn error.
+    const f4 = fakeDeps()
+    const p4 = ops(f4.deps).run(input())
+    f4.spawned[0].child.emit('error', new Error('ENOENT'))
+    expect(await p4).toMatchObject({ ok: false, code: 'not-started' })
+    // Truncated to the cap, the tail kept.
+    const f5 = fakeDeps()
+    const p5 = ops(f5.deps).run(input())
+    f5.spawned[0].child.stdout.emit('data', jsonl(reply('x'.repeat(REVIEW_MAX_TEXT) + 'THE END')))
+    f5.spawned[0].child.emit('close', 0)
+    const r5 = await p5
+    expect(r5.ok && r5.text.startsWith('[review truncated')).toBe(true)
+    expect(r5.ok && r5.text.endsWith('THE END')).toBe(true)
+    expect(r5.ok && r5.text.length).toBeLessThan(REVIEW_MAX_TEXT + 100)
+  })
+
+  it('at its deadline the review is killed and says it timed out', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, killed } = fakeDeps()
+      const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input({ timeoutMs: 50 }))
+      await vi.advanceTimersByTimeAsync(60)
+      expect(killed).toHaveLength(1)
+      expect(await p).toMatchObject({ ok: false, code: 'timed-out' })
+    } finally { vi.useRealTimers() }
+  })
+})
+
+// WP2 5a, ADR-009 round 1: the stream is read as it arrives, failure text is
+// redacted whole then bounded, a deadline stop is a timeout, the Conductor
+// variables go by prefix, and a network-path project is refused on the shim
+// route.
+describe('the Codex reviewer: ADR-009 round 1 (WP2 5a)', () => {
+  const jsonl = (...events: unknown[]) => events.map((e) => JSON.stringify(e)).join('\n') + '\n'
+  const reply = (text: string) => ({ type: 'item.completed', item: { id: 'i', type: 'agent_message', text } })
+  const input = (over: Record<string, unknown> = {}) => ({
+    executable: 'C:\\Tools\\codex.exe', cwd: 'D:\\proj', prompt: 'Review this.', timeoutMs: 1000,
+    env: { PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows', CODEX_HOME: 'C:\\res\\codex-realms\\r1' }, ...over,
+  })
+  const ops = (d: CodexRunDeps, platform: NodeJS.Platform = 'win32') => createCodexReviewOperations({ platform, runDeps: () => d })
+
+  it('a reply after more output than any cap is still the review; one event larger than the reader keeps is skipped, not fatal', async () => {
+    const { deps, spawned } = fakeDeps()
+    const p = ops(deps).run(input())
+    const out = spawned[0].child.stdout
+    out.emit('data', jsonl(reply('Let me look at the files first.')))
+    // 20 MiB of ordinary events (beyond the 16 MiB the old capture kept) ...
+    const filler = JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', aggregated_output: 'x'.repeat(1024 * 1024) } }) + '\n'
+    for (let i = 0; i < 20; i++) out.emit('data', filler)
+    // ... one 9 MiB event, split across chunks ...
+    const huge = JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', aggregated_output: 'y'.repeat(9 * 1024 * 1024) } })
+    out.emit('data', huge.slice(0, 5 * 1024 * 1024))
+    out.emit('data', huge.slice(5 * 1024 * 1024) + '\n')
+    // ... then the real reply, itself split mid-line.
+    const last = jsonl(reply('1. REAL FINDING.'))
+    out.emit('data', last.slice(0, 20))
+    out.emit('data', last.slice(20))
+    spawned[0].child.emit('close', 0)
+    expect(await p).toMatchObject({ ok: true, text: '1. REAL FINDING.' })
+    // A stream arrives in pipe-sized chunks: an unterminated event past the
+    // reader's bound is dropped whole, and reading resumes at the next line.
+    const chunked = (emit: (s: string) => void, s: string) => { for (let i = 0; i < s.length; i += 64 * 1024) emit(s.slice(i, i + 64 * 1024)) }
+    const reader = createCodexExecEventReader()
+    chunked((s) => reader.push(s), huge + '\n' + jsonl(reply('after')))
+    expect(reader.end()).toEqual({ text: 'after', dropped: true })
+    const f2 = fakeDeps()
+    const p2 = ops(f2.deps).run(input())
+    chunked((s) => f2.spawned[0].child.stdout.emit('data', s), huge + '\n')
+    f2.spawned[0].child.emit('close', 0)
+    expect(await p2).toMatchObject({ ok: false, code: 'no-output', message: expect.stringContaining('larger than this app reads') })
+  })
+
+  it('stderr is redacted whole before its tail is kept, so a cut never exposes part of a key', async () => {
+    const key = 'sk-proj-' + 'Q'.repeat(150)
+    const { deps, spawned } = fakeDeps()
+    const p = ops(deps).run(input())
+    spawned[0].child.stderr.emit('data', `auth failed for key ${key} ` + '.'.repeat(420))
+    spawned[0].child.emit('close', 1)
+    const r = await p
+    expect(r.ok).toBe(false)
+    expect(r.ok === false && r.message).not.toMatch(/Q{8}/)
+  })
+
+  it('failure and no-review messages are redacted (bearer, JWT, JSON secret fields, short keys, refresh tokens, hex keys) and bounded', async () => {
+    const leaks = ['Authorization: Bearer abcdefgh12345678', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl', '{"access_token": "opaque-value-1"}', '{"refresh_token":"rt_abcdefghijkl"}', 'sk-shortkey1', '0123456789abcdef0123456789abcdef']
+    for (const leak of leaks) {
+      const f = fakeDeps()
+      const p = ops(f.deps).run(input())
+      f.spawned[0].child.stdout.emit('data', jsonl({ type: 'turn.failed', error: { message: `upstream said ${leak}` } }))
+      f.spawned[0].child.emit('close', 1)
+      const r = await p
+      expect(r.ok === false && r.message, leak).toContain('[REDACTED]')
+      for (const part of ['abcdefgh12345678', 'c2lnbmF0dXJl', 'opaque-value-1', 'rt_abcdefghijkl', 'sk-shortkey1', '0123456789abcdef0123456789abcdef']) {
+        expect(r.ok === false && r.message, leak).not.toContain(part)
+      }
+    }
+    const f = fakeDeps()
+    const p = ops(f.deps).run(input())
+    f.spawned[0].child.stdout.emit('data', jsonl({ type: 'error', message: 'token=sk-' + 'k'.repeat(40) + ' ' + 'z'.repeat(2_000_000) }))
+    f.spawned[0].child.emit('close', 0)
+    const r = await p
+    expect(r).toMatchObject({ ok: false, code: 'no-output' })
+    expect(r.ok === false && r.message.length).toBeLessThan(600)
+    expect(r.ok === false && r.message).not.toContain('kkkkkkkk')
+  })
+
+  it('a deadline that finds the root already gone (a descendant still holding the pipes) is a timeout, not a review', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned, killed } = fakeDeps()
+      const p = ops(deps).run(input({ timeoutMs: 50 }))
+      spawned[0].child.stdout.emit('data', jsonl(reply('partial')))
+      spawned[0].child.emit('exit', 0, null)
+      await vi.advanceTimersByTimeAsync(60)
+      expect(await p).toMatchObject({ ok: false, code: 'timed-out' })
+      expect(killed).toHaveLength(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('every Conductor variable goes, by prefix: any spelling on Windows, exact names on POSIX', async () => {
+    const { deps, spawned } = fakeDeps()
+    void ops(deps).run(input({ env: { PATH: 'p', SystemRoot: 'C:\\Windows', CCC_STATUS_URL: 'http://127.0.0.1:1/s?t=x', ccc_arg_secret: 's', Conductor_Anything: 'c', claude_multi_other: 'm', CODEX_HOME: 'h' } }))
+    expect(Object.keys(spawned[0].opts.env as object).sort()).toEqual(['CODEX_HOME', 'NoDefaultCurrentDirectoryInExePath', 'PATH', 'SystemRoot'])
+    void ops(deps, 'linux').run(input({ executable: '/usr/bin/codex', cwd: '/proj', env: { CCC_STATUS_URL: 'u', CONDUCTOR_X: 'x', CLAUDE_MULTI_Y: 'y', ccc_lower: 'kept', CODEX_HOME: '/h' } }))
+    expect(spawned[1].opts.env).toEqual({ ccc_lower: 'kept', CODEX_HOME: '/h' })
+  })
+
+  it('an npm shim cannot run in a network-path project (cmd.exe would start in the Windows folder); a real executable can', async () => {
+    for (const cwd of ['\\\\wsl.localhost\\Ubuntu\\home\\u\\proj', '//server/share/proj']) {
+      const f = fakeDeps()
+      const r = await ops(f.deps).run(input({ executable: 'C:\\npm\\codex.cmd', cwd }))
+      expect(r, cwd).toMatchObject({ ok: false, code: 'not-started', message: expect.stringContaining('network path') })
+      expect(f.spawned).toHaveLength(0)
+    }
+    const f = fakeDeps()
+    void ops(f.deps).run(input({ cwd: '\\\\server\\share\\proj' }))
+    expect(f.spawned[0].opts.cwd).toBe('\\\\server\\share\\proj')
+  })
+})
+
+describe('the Codex reviewer: ADR-009 round 1, environment and reply (WP2 5a)', () => {
+  const jsonl = (...events: unknown[]) => events.map((e) => JSON.stringify(e)).join('\n') + '\n'
+  const reply = (text: string) => ({ type: 'item.completed', item: { id: 'i', type: 'agent_message', text } })
+  const base = { executable: 'C:\\Tools\\codex.exe', cwd: 'D:\\proj', prompt: 'Review this.', timeoutMs: 1000 }
+
+  it('only absolute PATH entries reach the reviewer, under any spelling of PATH on Windows', () => {
+    const { deps, spawned } = fakeDeps()
+    void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run({ ...base, env: { SystemRoot: 'C:\\Windows', Path: 'C:\\Windows;.;node_modules\\.bin;;D:\\tools;"C:\\Program Files\\x";\\\\srv\\share\\bin;\\rooted;bin' } })
+    expect((spawned[0].opts.env as Record<string, string>).Path).toBe('C:\\Windows;D:\\tools;"C:\\Program Files\\x";\\\\srv\\share\\bin')
+    void createCodexReviewOperations({ platform: 'linux', runDeps: () => deps }).run({ ...base, executable: '/usr/bin/codex', cwd: '/proj', env: { PATH: '/usr/bin::bin:./x:/opt/b:' } })
+    expect((spawned[1].opts.env as Record<string, string>).PATH).toBe('/usr/bin:/opt/b')
+  })
+
+  it('a credential the review quotes is redacted; ordinary review text (code, hashes, "token:" in code) is not', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl'
+    const text = [
+      '1. auth.json holds {"access_token": "at-secret-1", "refresh_token": "rt_abcdefghijkl"}',
+      `2. header Authorization: Bearer abcdefgh12345678 and id ${jwt}`,
+      '3. key sk-proj-' + 'A1'.repeat(20) + ' and ghp_' + 'B'.repeat(36),
+      '4. In foo.ts, `token: string` is unchecked; see commit 0123456789abcdef0123456789abcdef01234567.',
+    ].join('\n')
+    const { deps, spawned } = fakeDeps()
+    const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run({ ...base, env: {} })
+    spawned[0].child.stdout.emit('data', jsonl(reply(text)))
+    spawned[0].child.emit('close', 0)
+    const r = await p
+    expect(r.ok).toBe(true)
+    const out = r.ok ? r.text : ''
+    for (const secret of ['at-secret-1', 'rt_abcdefghijkl', 'abcdefgh12345678', 'c2lnbmF0dXJl', 'A1A1A1A1', 'B'.repeat(36)]) expect(out, secret).not.toContain(secret)
+    expect(out).toContain('`token: string` is unchecked; see commit 0123456789abcdef0123456789abcdef01234567.')
+    expect(out).toContain('1. auth.json holds')
+  })
+})
+
+// WP2 5a, ADR-009 confirmation: the review's own text is only redacted where
+// it holds a token-shaped credential; redaction reads a bounded window and a
+// secret the window cuts never shows; stderr's real tail is reported.
+describe('the Codex reviewer: ADR-009 confirmation fixes (WP2 5a)', () => {
+  const jsonl = (...events: unknown[]) => events.map((e) => JSON.stringify(e)).join('\n') + '\n'
+  const reply = (text: string) => ({ type: 'item.completed', item: { id: 'i', type: 'agent_message', text } })
+  const base = { executable: 'C:\\Tools\\codex.exe', cwd: 'D:\\proj', prompt: 'Review this.', timeoutMs: 1000, env: {} }
+  const ops = (d: CodexRunDeps) => createCodexReviewOperations({ platform: 'win32', runDeps: () => d })
+  const pem = (c: string, n: number) => `-----BEGIN RSA PRIVATE KEY-----\n${c.repeat(n)}\n-----END RSA PRIVATE KEY-----\n`
+  const chunked = (emit: (s: string) => void, s: string) => { for (let i = 0; i < s.length; i += 64 * 1024) emit(s.slice(i, i + 64 * 1024)) }
+  const runWith = async (feed: (child: { stdout: EventEmitter; stderr: EventEmitter }) => void, code: number) => {
+    const f = fakeDeps()
+    const p = ops(f.deps).run(base)
+    feed(f.spawned[0].child)
+    f.spawned[0].child.emit('close', code)
+    return p
+  }
+
+  it('ordinary review prose is returned untouched', async () => {
+    const prose = 'This is a basic implementation. Use Bearer authentication here. Basic validation is missing. rt_sigprocmask and sk-folding-cube are fine. See `?access_token=" + token` in api.ts.'
+    const r = await runWith((c) => c.stdout.emit('data', jsonl(reply(prose))), 0)
+    expect(r).toEqual({ ok: true, text: prose })
+  })
+
+  it('a long review is redacted on a bounded window, and a key the window cuts never shows', async () => {
+    const head = 'p'.repeat(200_000)
+    const first = pem('K', 12_000)
+    const second = pem('M', 16_000)
+    // The window (the kept tail plus the margin) starts 4000 key characters into the first block.
+    const windowStart = head.length + 32 + 4_000
+    const total = windowStart + REVIEW_MAX_TEXT + 20 * 1024
+    const text = head + first + second + 'z'.repeat(total - head.length - first.length - second.length)
+    const r = await runWith((c) => chunked((s) => c.stdout.emit('data', s), jsonl(reply(text))), 0)
+    expect(r.ok).toBe(true)
+    const out = r.ok ? r.text : ''
+    expect(out.startsWith('[review truncated')).toBe(true)
+    expect(out).not.toMatch(/K{8}/)
+    expect(out).not.toMatch(/M{8}/)
+    expect(out.endsWith('zzz')).toBe(true)
+  })
+
+  it('a long failure message is redacted on a bounded window, and a key the window cuts never shows', async () => {
+    // Five whole key blocks (redacted to almost nothing), then one the window's end cuts.
+    const message = pem('M', 16_000).repeat(5) + pem('K', 12_000) + 'z'.repeat(1_000)
+    const r = await runWith((c) => chunked((s) => c.stdout.emit('data', s), jsonl({ type: 'turn.failed', error: { message } })), 1)
+    expect(r.ok).toBe(false)
+    expect(r.ok === false && r.message).not.toMatch(/K{8}/)
+    expect(r.ok === false && r.message).not.toMatch(/M{8}/)
+  })
+
+  it("stderr's real tail is reported (not the tail of its first part), and a key its window cuts never shows", async () => {
+    const r = await runWith((c) => chunked((s) => c.stderr.emit('data', s), 'warning: slow disk\n'.repeat(20_000) + 'FATAL: the real reason'), 1)
+    expect(r.ok === false && r.message).toContain('FATAL: the real reason')
+    const cut = 'p'.repeat(300_000) + pem('K', 12_000) + pem('M', 16_000).repeat(5)
+    const r2 = await runWith((c) => chunked((s) => c.stderr.emit('data', s), cut), 1)
+    expect(r2.ok === false && r2.message).not.toMatch(/K{8}/)
+    expect(r2.ok === false && r2.message).not.toMatch(/M{8}/)
+  })
+
+  it('a review whose signal was already aborted is cancelled, not "not started"', async () => {
+    const f = fakeDeps()
+    const ac = new AbortController()
+    ac.abort()
+    expect(await ops(f.deps).run({ ...base, signal: ac.signal })).toMatchObject({ ok: false, code: 'cancelled' })
   })
 })

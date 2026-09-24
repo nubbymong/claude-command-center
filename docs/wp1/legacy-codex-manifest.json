@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T03:54:31.418Z",
-  "head": "39952b893b9faa2f2350ec526893110a9ca415e0",
-  "tree": "d4a8a17d7faa06705c0ad4bfb4640b93f45bce7d",
+  "generatedAt": "2026-09-24T04:59:27.687Z",
+  "head": "60ea77be256dc27835bfe13d45346ee2f1d9cf26",
+  "tree": "9eeebf74adc41ecc9bc50d121611a3f2abc10091",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2208,
+  "trackedFileCount": 2210,
   "excludedFileCount": 368,
-  "scannedFileCount": 1840,
+  "scannedFileCount": 1842,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 306,
-  "pathDigest": "8fd27d33c91f1e4c0152a04df6901765d1dd98d5cb49c8b08f15cd325a0432d4",
+  "matchedPathCount": 308,
+  "pathDigest": "98fb9b19be6b1e20d6100b9eeeb783a5291c78b0bc312fb7b923c68d86d4b548",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -175,7 +175,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 84
+      "lineCount": 97
     },
     {
       "path": "package.json",
@@ -364,10 +364,10 @@
       "path": "src/main/codex-review-mcp-tool.ts",
       "predicates": [
         "P01",
-        "P06",
+        "P04",
         "P14"
       ],
-      "lineCount": 45
+      "lineCount": 50
     },
     {
       "path": "src/main/codex-review-usage.ts",
@@ -395,7 +395,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 66
+      "lineCount": 67
     },
     {
       "path": "src/main/config-manager.ts",
@@ -546,7 +546,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 66
+      "lineCount": 53
     },
     {
       "path": "src/main/providers/codex/cli-contract.ts",
@@ -600,7 +600,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 154
+      "lineCount": 157
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -671,6 +671,16 @@
         "P14"
       ],
       "lineCount": 9
+    },
+    {
+      "path": "src/main/providers/codex/review.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P14"
+      ],
+      "lineCount": 23
     },
     {
       "path": "src/main/providers/codex/spawn.ts",
@@ -1592,10 +1602,9 @@
       "path": "tests/integration/codex-cli-compat.test.ts",
       "predicates": [
         "P01",
-        "P06",
         "P13"
       ],
-      "lineCount": 23
+      "lineCount": 25
     },
     {
       "path": "tests/unit/channel-rules-store.test.ts",
@@ -1719,11 +1728,20 @@
       "path": "tests/unit/main/codex-review-mcp-tool.test.ts",
       "predicates": [
         "P01",
-        "P06",
+        "P04",
         "P09",
         "P13"
       ],
-      "lineCount": 132
+      "lineCount": 79
+    },
+    {
+      "path": "tests/unit/main/codex-review-session-abort.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 12
     },
     {
       "path": "tests/unit/main/codex-review-usage.test.ts",
