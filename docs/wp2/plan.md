@@ -623,8 +623,9 @@ obligations fall on later slices:
 
 ## Commit 5b (claude_review): design and owner decisions (2026-09-24)
 
-Not built yet. 5a laid the groundwork: the `ProviderPackage.review` seam,
-the one-review-per-session registry, and cancel on session end.
+Built on 2026-09-24 ("What was built", below). 5a laid the groundwork:
+the `ProviderPackage.review` seam, the one-review-per-session registry,
+and cancel on session end.
 
 **What exists.** A Codex session connects on `/mcp`, where the server forces
 the source to `codex` and binds the session id. Tools are registered per
@@ -714,6 +715,182 @@ only the other provider's tool.
 3. **When to offer `claude_review`.** DECIDED (owner, 2026-09-24): only
    while Claude is enabled and a Claude account can run reviews (the
    reviewer or default account; on macOS the normal sign-in).
+
+**What was built (2026-09-24).**
+
+- **Accounts service.**
+  - `ProviderLaunchOperations.kinds` says which launches a package prepares.
+    `prepareLaunch` refuses any other kind before it chooses or leases an
+    account; a declaration that is not a list of known kinds prepares
+    nothing. This is data, not a provider name: Codex prepares sessions and
+    reviews; Claude prepares reviews only, so a Claude session is refused
+    there (A12).
+  - A review never runs remotely, whichever provider reviews.
+  - `reviewReady(provider)` says whether a review could be prepared now: the
+    reviewer default, else the provider default, is active, not blocked,
+    locatable, and needs no per-launch confirmation (an agent cannot give
+    one). A test checks, condition by condition, that it agrees with what
+    `prepareLaunch` then does.
+  - `sessionsDirs` reads only packages whose sessions launch there.
+- **Claude package** (`setup`, a review-only `launch`, `review`; present only
+  when the composition root hands it `ClaudePackageDeps.review`).
+  - `setup.discover` resolves `claude` as the version probe does, proves a
+    version at or above 2.1.278 through the CLI runner, and records the file
+    identity. Overlapping checks keep the newest proof.
+  - When the launch is prepared it re-verifies that file. Claude Code updates
+    itself in place, so a changed file is proved again (with the version
+    floor) rather than refused until a setup screen this release does not
+    have. A proven file below the floor is never run. The file is not
+    re-read between preparation and the spawn (as for Codex).
+  - The launch resolves the realm's `claude-profile:<id>` to a profile and
+    asks account-profiles for its home. The package imports neither
+    account-profiles nor the Codex package (R2): the profile home, the
+    credential-consumer hold, the preflight record and the CLI runner are
+    injected.
+- **Profile home.** `profileRealmLaunch(id)` in account-profiles, still the
+  only module that composes a profile home's variables.
+  - It runs `setupProfileLinks`, and returns the base (git and npm at the real
+    home, the home's `.local/bin` on PATH) and the realm selector that
+    `withProfileHome` composes (the same helpers): hardened, the reviewer's
+    environment equals a session's.
+  - It records the ambient variables the hardening will remove, for the
+    preflight.
+  - On macOS it returns the normal sign-in: the real home, nothing
+    redirected. That sign-in is the primary account (first-run capture makes
+    it one on every platform), so only the primary may review there; another
+    profile is refused with the reason, since it would be named while the
+    primary's sign-in was used.
+- **Reviewer.**
+  - `claude -p --restricted --strict-mcp-config --tools Read,Grep,Glob
+    --output-format json --no-session-persistence`: a constant argv, the
+    request on stdin, in the project, through the CLI runner (no shell, the
+    whole chain killed).
+  - The reviewer account is held as a credential consumer for the run
+    (`holdProfileForRun`): the hold is taken before the wait for a refresh
+    in flight, re-armed for the run's full bound after it, released when the
+    run settles, and let go at once when the review is cancelled during the
+    wait. The launch preflight is recorded.
+  - The environment rules, redaction and reply bounding are the Codex
+    reviewer's, moved unchanged into provider core (`review-support.ts`).
+  - The pinned 2.1.278 result is read: the result line, or the array of
+    messages when the user's own config turns `verbose` on (`--restricted`
+    does not ignore that setting). Only `subtype: success` with `is_error:
+    false` is a review. Usage counts every input token, of which the cache
+    reads are the cached ones.
+  - `cliCommandLine`, extracted from `codexCommandLine` for the composition
+    root to hand the Claude package, refuses any argv element carrying a
+    character a shell or cmd.exe reads; every Codex argv passes it.
+- **The diff** (`src/main/review-diff.ts`). The repository's own
+  configuration is untrusted: an agent that can write the project can plant
+  a `.git` there, a pointer to a git dir of its own included.
+  - Mode `working` diffs through a PRIVATE git dir this module writes in a
+    temp folder: its own minimal config, HEAD as a commit id (the empty tree
+    before the first commit), the objects through an alternates entry, the
+    index through `GIT_INDEX_FILE`, every `sharedindex.*` of a split index
+    copied beside it. The diffing git reads no repository configuration,
+    only the user's global and system configuration and this one, so there
+    is no window between a check and the diff in which a repository could
+    add a filter; the filter drivers the user's own configuration names are
+    emptied too.
+  - Of the repository's own settings, only the value-only ones that decide
+    how the work tree compares are carried into that config (`core.filemode`,
+    `symlinks`, `autocrlf`, `eol`, `safecrlf`, `ignorecase`,
+    `precomposeunicode`, `trustctime`, `checkStat`), each only as one of its
+    key's own tokens, so the diff reads as the user's own `git diff` does
+    (no mode change on a Windows checkout, no line-ending noise). The
+    repository is otherwise read only by `rev-parse`. HEAD before the first
+    commit is the empty tree; a HEAD that names something other than a
+    commit is refused.
+  - Mode `range` must be a real range (`A..B`, `A...B`): tree against tree,
+    which reads no work-tree file, so no filter can run. A single revision,
+    which git would diff against the work tree, is refused.
+  - Every run: git by absolute path; `--work-tree=<project>`, so a
+    repository's `core.worktree` cannot point it elsewhere; `--no-pager -c
+    core.fsmonitor=false -c core.pager=cat -c diff.external= -c
+    protocol.allow=never`; `--no-ext-diff --no-textconv --no-color
+    --ignore-submodules=all --end-of-options`; no GIT_* variable inherited,
+    no optional lock, no prompt, no lazy fetch; the review's cancel stops
+    git.
+  - A range side is revisions only. The output is bounded at 512 KB and
+    refused past it, never cut.
+  - Mode `working` is tracked files against HEAD; untracked files are not
+    included, and the prompt says so.
+  - The change goes in the prompt between two markers carrying a fresh
+    nonce. Nothing to review, or a change it cannot read, prepares no launch.
+- **MCP.**
+  - A local Codex spawn registers the session with its PTY directory (never
+    home or above it). A session is registered for one reviewer at a time;
+    unregistering stays shared.
+  - `offeredReviewTool` offers each connection only the other provider's
+    reviewer: `claude_review` to a Codex connection while the Conductor tools
+    are on and `reviewReady('claude')`.
+  - Both tools share the session checks, the one-review-per-session slot and
+    cancel on unregister.
+  - A request's cancel stops its review on Codex's stateless `/mcp` route
+    too: a client that drops the request closes that exchange's server at
+    once (the close listener now goes on before the request is handled), and
+    a cancel notification, which arrives on a connection of its own, is
+    routed by the session that connection authenticated and the request's
+    id.
+  - A Codex session now waits up to 1000 s for a Conductor tool
+    (`mcp_servers.conductor.tool_timeout_sec`): the pinned Codex's default is
+    300 s (`DEFAULT_TOOL_TIMEOUT`, rust-v0.155.1), below the 900 s a review
+    may take.
+- **Defaults taken (owner may overturn).**
+  - The Settings toggle for Codex review does not gate `claude_review`; the
+    Conductor tools switch does. A toggle of its own comes with the renderer
+    slice (commit 6).
+  - A Claude CLI that updated itself is proved again, not refused.
+  - On macOS only the primary account (the normal sign-in) reviews. A Mac
+    whose Claude reviewer default is an older non-primary profile is offered
+    the tool and then refused with the reason (`reviewReady` does not see
+    the macOS rule, which lives in the profile-home port).
+  - Claude reviews record no usage in the Codex-review usage store (it feeds
+    the Claude session statusline) and emit no channel-routing event (the
+    Codex Routing rules are for Codex reviews).
+- **Real-process proof (2026-09-24, Windows VM; CI runs it on all three
+  platforms).**
+  - `tests/wp1/fake-cli.test.ts`: discovery proves 2.1.278 through a real
+    `claude.cmd` shim. The request reaches the fake CLI byte for byte on
+    stdin, with the constant argv, in the project, with no Conductor
+    variable, and a `node` planted in the project never runs.
+  - Same file, real git: a repository whose fsmonitor hook, clean filter,
+    textconv, external diff (configured and from the environment) and pager
+    each write a marker, and whose `core.worktree` points outside the
+    project. The review diff is produced, none of them runs, and nothing
+    outside is read; plain `git diff` on the same repository runs them and
+    reads outside. A project with a planted `.git` file naming a git dir of
+    its own that configures all of these: the same, in both modes.
+  - Same file: a clean filter the repository gains between the filter check
+    and the diff (the race, made deterministic) runs nothing, while plain
+    git runs it; an executable bit `core.filemode=false` says to ignore is
+    no change, as for the user's own `git diff`; a linked worktree diffs its
+    own change.
+  - `tests/wp1/review-profile-home.test.ts`: the reviewer's profile-home
+    environment, hardened, equals the session's; on macOS it is the normal
+    sign-in, for the primary account only.
+- **ADR-009 (5b).** One round of three Opus lenses (injection and platform;
+  accounts, leases, depth and session binding; correctness, blast radius,
+  coverage and quality) plus a confirmation by the same attackers, and an
+  independent spec-compliance review (round and confirmation).
+  - Round 1: one BLOCKER, a repository's `core.worktree` (reachable through
+    a planted `.git` file) pointed the diff outside the project; and a
+    filter race between the check and the diff. Both closed by the private
+    git dir and the work-tree pin, re-proven by the same attacker with real
+    git.
+  - Round 1 MAJORs: the profile-home proof file was quarantined by Windows
+    Defender (restored; the proof moved to its own file); the hold order was
+    unasserted; Codex's per-tool wait was below a review's length. All
+    fixed. MINORs fixed: a cancel during the refresh wait, the hold's clock,
+    the macOS non-primary profile, the verbose result form, and a test for
+    every guard the lens found untested.
+  - Confirmation: the injection lens and the spec review passed. Its two
+    new findings are fixed with regression tests (not re-attacked): the
+    private git dir dropped the repository's value-only work-tree settings
+    (MAJOR: mode and line-ending noise), and a cancel on Codex's stateless
+    route did not reach the review (MINOR).
+  - Mutation proofs: 78/78 host mutants and 7/7 real-process mutants (on the
+    VM) of the 5b guards killed, each test red under its mutant.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

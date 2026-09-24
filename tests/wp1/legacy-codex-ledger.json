@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "7d2dd193bb1b1ab06ea1dbad665784e8619b14ec31052ce0da76ad84dacf87b9",
-  "manifestHead": "d03b8247ebaf0606f7ecf3e65a84e1507d7c3190",
+  "manifestPathDigest": "dce38c569eea63cf3b76fcf1083af0c04b3342037187e6f2bcc6acdbe5fe2c93",
+  "manifestHead": "a9ba9e1e1471b24166e3152195481b67102ff730",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -543,6 +543,16 @@
       "note": "created by WP2; replaces the singleton Codex account IPC once the renderer moves to providerAccounts (commit 5)"
     },
     {
+      "path": "src/main/providers/claude/discovery.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b: Claude Code CLI discovery for the reviewer that serves Codex sessions (resolve, version floor 2.1.278 through the runner, file identity, re-verify) (tests/wp1/claude-reviewer.test.ts \"proving the Claude Code executable\"; tests/wp1/fake-cli.test.ts) (WP1.17, WP1.38)",
+      "note": "created by WP2 commit 5b; mentions Codex only as the session a Claude review serves"
+    },
+    {
       "path": "src/main/providers/claude/index.ts",
       "predicates": [
         "P14"
@@ -561,6 +571,26 @@
       "disposition": "added",
       "evidence": "Claude package keeps only its own legacy writes by provider id; no Codex code path; covered by tests/wp1/claude-legacy-store.test.ts (WP1.4)",
       "note": "provider-id filter inside the Claude package"
+    },
+    {
+      "path": "src/main/providers/claude/review-launch.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b: the review-only Claude launch (kinds review) in the reviewer account profile home, prepared by the accounts service for a Codex session claude_review (tests/wp1/claude-reviewer.test.ts; tests/wp1/launch-handoff.test.ts \"a Claude review launch\") (WP1.38, WP1.46)",
+      "note": "created by WP2 commit 5b"
+    },
+    {
+      "path": "src/main/providers/claude/review.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b adapter: one isolated claude -p --restricted per review for a Codex session, constant argv, request on stdin, depth guard, the reviewer account held as a credential consumer, run through the CLI runner (tests/wp1/claude-reviewer.test.ts; tests/wp1/fake-cli.test.ts \"the Claude reviewer against a fake Claude CLI\") (WP1.38, WP1.46)",
+      "note": "created by WP2 commit 5b"
     },
     {
       "path": "src/main/providers/claude/spawn.ts",
@@ -798,7 +828,6 @@
       "predicates": [
         "P01",
         "P04",
-        "P09",
         "P14"
       ],
       "category": "AUTH",
@@ -881,6 +910,17 @@
       "disposition": "added",
       "evidence": "provider package contract; tests/wp1/provider-core.test.ts, tests/wp1/dependency-boundaries.test.ts R1 (WP1.55)",
       "note": "names both providers in a comment only"
+    },
+    {
+      "path": "src/main/providers/core/review-support.ts",
+      "predicates": [
+        "P09",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b: the reviewer environment, redaction and reply bounding moved unchanged out of the Codex reviewer so both reviewers apply the same rules (tests/wp1/cli-discovery.test.ts \"the Codex reviewer (WP2 5a)\"; tests/wp1/claude-reviewer.test.ts) (WP1.38)",
+      "note": "created by WP2 commit 5b from src/main/providers/codex/review.ts"
     },
     {
       "path": "src/main/providers/host-color-scheme.ts",

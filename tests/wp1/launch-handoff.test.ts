@@ -10,7 +10,8 @@
 //
 // PURE: the real Codex package on a fake CLI, in-memory everything.
 import { describe, it, expect } from 'vitest'
-import { harness, addCodexAccount, managedHome, memoryFs, MemoryPort, EXE, EXT_HOME } from './accounts-harness'
+import { harness, addCodexAccount, claudeSnapshot, managedHome, memoryFs, MemoryPort, EXE, EXT_HOME } from './accounts-harness'
+import type { ClaudeReviewPorts } from '../../src/main/providers/claude'
 import type { Harness } from './accounts-harness'
 
 const realmOf = (h: Harness, accountId: string) => h.doc().accounts.find((a) => a.id === accountId)!.authRealmId
@@ -261,5 +262,210 @@ describe('after a restart', () => {
     const noCli = await harness({ port, folders, cli: false })
     expect(await noCli.service.prepareLaunch(session('s'))).toMatchObject({ ok: false, code: 'cli-unavailable' })
     expect(noCli.leases.count(id)).toBe(0)
+  })
+})
+
+// WP2 commit 5b (owner decisions 1 and 3): a Claude review runs on a registry
+// account through a launch the accounts service prepares -- the reviewer
+// default, else the provider default, in that account's profile home -- and
+// Claude sessions never launch this way (A12). A review tool is offered only
+// while a review could be prepared now.
+describe('a Claude review launch (WP2 5b)', () => {
+  const PROFILES = ['profile-a1', 'profile-b2']
+  async function claudeHarness(opts: { review?: boolean; seeds?: ReturnType<typeof claudeSnapshot>[] } = {}) {
+    const box: { h?: Harness } = {}
+    const composed: string[] = []
+    const versionRuns: string[] = []
+    const ports: ClaudeReviewPorts = {
+      lookupRealm: async (ref) => {
+        const r = box.h!.doc().realms.find((x) => x.id === ref.authRealmId)
+        return r && r.lifecycle === 'active' ? { ok: true, realm: r } : { ok: false }
+      },
+      profileRealmLaunch: (id) => {
+        composed.push(id)
+        const home = `C:\\res\\profiles\\${id}`
+        return { home, baseEnv: { PATH: 'C:\\Windows', ANTHROPIC_API_KEY: 'sk-ant-ambient-000000000000000000', USERPROFILE: 'C:\\Users\\u' }, realmEnv: { set: { USERPROFILE: home } }, sessionsDir: `${home}\\.claude\\projects` }
+      },
+      holdProfile: async () => () => {},
+      recordPreflight: () => {},
+      resolveExecutable: async () => 'C:\\Users\\u\\.local\\bin\\claude.exe',
+      fileStat: { realpath: (p) => p, stat: () => ({ size: 1, mtimeMs: 1, ctimeMs: 1, dev: '1', ino: '1', isFile: true }) },
+      commandLine: (e, a) => ({ file: e, args: [...a], verbatim: false, cwd: 'C:\\' }),
+      shellEnv: () => ({}),
+      run: async (cmd) => { versionRuns.push(cmd.args.join(' ')); return { exitCode: 0, stdout: '2.1.278 (Claude Code)\n', stderr: '', timedOut: false, truncated: false } },
+      platform: 'win32',
+    }
+    const h = await harness({
+      claude: opts.seeds ?? [claudeSnapshot(PROFILES[0], { isDefault: true }), claudeSnapshot(PROFILES[1])],
+      ...(opts.review === false ? {} : { claudeReview: ports }),
+    })
+    box.h = h
+    const idOf = (legacyId: string) => h.doc().legacyLinks.find((l) => l.legacyId === legacyId)!.accountId
+    return { h, idOf, composed, versionRuns }
+  }
+  const review = (ownerId: string, over: Record<string, unknown> = {}) => ({ kind: 'review' as const, providerId: 'claude' as const, ownerId, ...over })
+
+  it('a Claude session is refused here before anything is chosen, leased, proved or composed: its sessions keep their own path (A12)', async () => {
+    const t = await claudeHarness()
+    const a = t.idOf(PROFILES[0])
+    for (const named of [{}, { providerAccountId: a }]) {
+      const r = await t.h.service.prepareLaunch({ kind: 'session', providerId: 'claude', ownerId: 's', ...named })
+      expect(r).toMatchObject({ ok: false, code: 'unsupported' })
+    }
+    expect(t.h.leases.count(a)).toBe(0)
+    expect([t.composed, t.versionRuns]).toEqual([[], []])
+    // The same guard lets Codex prepare both kinds.
+    await addCodexAccount(t.h)
+    expect((await t.h.service.prepareLaunch(session('c1'))).ok).toBe(true)
+  })
+
+  it('runs on the provider default, or the reviewer default once one is set, in that account\'s profile home, hardened', async () => {
+    const t = await claudeHarness()
+    const [a, b] = PROFILES.map(t.idOf)
+    const first = await t.h.service.prepareLaunch(review('r1'))
+    expect(first).toMatchObject({ ok: true, reviewer: 'provider-default', binding: { providerAccountId: a }, home: `C:\\res\\profiles\\${PROFILES[0]}` })
+    if (!first.ok) return
+    expect(first.env.USERPROFILE).toBe(`C:\\res\\profiles\\${PROFILES[0]}`)
+    expect(Object.keys(first.env)).not.toContain('ANTHROPIC_API_KEY')
+    expect(first.executable).toBe('C:\\Users\\u\\.local\\bin\\claude.exe')
+    expect(t.h.leases.count(a)).toBe(1)
+    first.lease.release()
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: b })).toEqual({ ok: true })
+    expect(await t.h.service.prepareLaunch(review('r2'))).toMatchObject({ ok: true, reviewer: 'reviewer-default', binding: { providerAccountId: b } })
+    expect(t.composed).toEqual([PROFILES[0], PROFILES[1]])
+  })
+
+  it('a review runs on this computer only, whichever provider reviews', async () => {
+    const t = await claudeHarness()
+    expect(await t.h.service.prepareLaunch(review('r', { remote: true }))).toMatchObject({ ok: false, code: 'unsupported' })
+    await addCodexAccount(t.h)
+    expect(await t.h.service.prepareLaunch({ kind: 'review', providerId: 'codex', ownerId: 'rc', remote: true })).toMatchObject({ ok: false, code: 'unsupported' })
+    expect(t.composed).toEqual([])
+  })
+
+  it('is ready to offer only while it could be prepared: the reviewer, Claude on, an account that needs no confirmation', async () => {
+    const t = await claudeHarness()
+    expect(t.h.service.reviewReady('claude')).toBe(true)
+    expect((await t.h.service.setProviderEnabled('claude', false)).ok).toBe(true)
+    expect(t.h.service.reviewReady('claude')).toBe(false)
+    expect((await t.h.service.setProviderEnabled('claude', true)).ok).toBe(true)
+    expect(t.h.service.reviewReady('claude')).toBe(true)
+    expect((await claudeHarness({ seeds: [] })).h.service.reviewReady('claude')).toBe(false)
+    expect((await claudeHarness({ review: false })).h.service.reviewReady('claude')).toBe(false)
+    // No default and no active account: nothing a review could use.
+    const inactive = await claudeHarness({ seeds: [claudeSnapshot(PROFILES[0], { lifecycle: 'inactive' })] })
+    expect(inactive.h.doc().accounts.filter((x) => x.providerId === 'claude').map((x) => x.lifecycle)).toEqual(['inactive'])
+    expect(inactive.h.service.reviewReady('claude')).toBe(false)
+    // Codex asks the same question of its own accounts: an unverified
+    // sign-in (the adopted ~/.codex) needs a person's confirmation per
+    // launch, which an agent cannot give, so it is not offered.
+    expect(t.h.service.reviewReady('codex')).toBe(false)
+    t.h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect((await t.h.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
+    expect(t.h.service.reviewReady('codex')).toBe(false)
+    const managed = await addCodexAccount(t.h)
+    expect(await t.h.service.setReviewerDefault({ providerId: 'codex', accountId: managed })).toEqual({ ok: true })
+    expect(t.h.service.reviewReady('codex')).toBe(true)
+    // Asking composes no profile home (turning Claude on re-checks its CLI, as for Codex).
+    expect(t.composed).toEqual([])
+  })
+
+  it('a package that prepares no reviews is never ready, and its realms are never read for session transcripts', async () => {
+    const t = await claudeHarness()
+    expect(await t.h.service.sessionsDirs('claude')).toEqual([])
+    expect(t.composed).toEqual([])
+  })
+})
+
+// ADR-009 round 1 (5b): each guard of the Claude review launch with a test
+// that fails without it.
+describe('a Claude review launch: round-1 regressions (WP2 5b)', () => {
+  const P = ['profile-a1', 'profile-b2']
+  async function setup(over: Partial<ClaudeReviewPorts> = {}) {
+    const box: { h?: Harness } = {}
+    const ports: ClaudeReviewPorts = {
+      lookupRealm: async (ref) => {
+        const r = box.h!.doc().realms.find((x) => x.id === ref.authRealmId)
+        return r && r.lifecycle === 'active' ? { ok: true, realm: r } : { ok: false }
+      },
+      profileRealmLaunch: (id) => ({ home: `H:\\${id}`, baseEnv: { PATH: 'C:\\Windows' }, realmEnv: { set: { USERPROFILE: `H:\\${id}` } }, sessionsDir: `H:\\${id}\\p` }),
+      holdProfile: async () => () => {},
+      recordPreflight: () => {},
+      resolveExecutable: async () => 'C:\\claude.exe',
+      fileStat: { realpath: (p) => p, stat: () => ({ size: 1, mtimeMs: 1, ctimeMs: 1, dev: '1', ino: '1', isFile: true }) },
+      commandLine: (e, a) => ({ file: e, args: [...a], verbatim: false, cwd: 'C:\\' }),
+      shellEnv: () => ({}),
+      run: async () => ({ exitCode: 0, stdout: '2.1.278 (Claude Code)\n', stderr: '', timedOut: false, truncated: false }),
+      platform: 'win32',
+      ...over,
+    }
+    const h = await harness({ claude: [claudeSnapshot(P[0], { isDefault: true }), claudeSnapshot(P[1])], claudeReview: ports })
+    box.h = h
+    return h
+  }
+  const review = (ownerId: string) => ({ kind: 'review' as const, providerId: 'claude' as const, ownerId })
+  /** Whether a review is offered must be whether one can be prepared. */
+  async function agrees(h: Harness, label: string): Promise<boolean> {
+    const ready = h.service.reviewReady('claude')
+    const r = await h.service.prepareLaunch(review(`agree-${label}`))
+    if (r.ok) r.lease.release()
+    expect(ready, `${label}: reviewReady ${ready} but prepareLaunch ${r.ok ? 'ok' : r.code}`).toBe(r.ok)
+    return ready
+  }
+
+  it('a malformed kinds declaration prepares nothing; unknown entries are ignored', async () => {
+    const h = await setup()
+    const launch = h.claude.launch as unknown as { kinds: unknown }
+    for (const bad of ['review', undefined, null, { 0: 'review' }, ['Review'], []]) {
+      launch.kinds = bad
+      expect(await h.service.prepareLaunch(review('m')), JSON.stringify(bad)).toMatchObject({ ok: false, code: 'unsupported' })
+      expect(h.service.reviewReady('claude')).toBe(false)
+    }
+    launch.kinds = ['bogus', 'review']
+    expect(await agrees(h, 'mixed')).toBe(true)
+  })
+
+  it('offered exactly when it can be prepared, condition by condition', async () => {
+    const h = await setup()
+    expect(await agrees(h, 'fresh')).toBe(true)
+    const launch = h.claude.launch as unknown as { kinds: unknown }
+    launch.kinds = ['session']
+    expect(await agrees(h, 'no review kind')).toBe(false)
+    launch.kinds = ['review']
+    const caps = h.claude.capabilities
+    ;(h.claude as unknown as { capabilities: unknown }).capabilities = { ...caps, 'session.launch': { state: 'unsupported', note: 'test' } }
+    expect(await agrees(h, 'capability off')).toBe(false)
+    ;(h.claude as unknown as { capabilities: unknown }).capabilities = caps
+    expect((await h.service.setProviderEnabled('claude', false)).ok).toBe(true)
+    expect(await agrees(h, 'claude off')).toBe(false)
+    expect((await h.service.setProviderEnabled('claude', true)).ok).toBe(true)
+    h.useStore(null)
+    expect(await agrees(h, 'no registry')).toBe(false)
+    h.useStore(h.store)
+    expect(await agrees(h, 'back')).toBe(true)
+  })
+
+  it('a reviewer default that became inactive is not offered, and not prepared', async () => {
+    const h = await setup()
+    const b = h.doc().legacyLinks.find((l) => l.legacyId === P[1])!.accountId
+    expect(await h.service.setReviewerDefault({ providerId: 'claude', accountId: b })).toEqual({ ok: true })
+    h.setClaude([claudeSnapshot(P[0], { isDefault: true }), claudeSnapshot(P[1], { lifecycle: 'inactive' })])
+    const identityId = h.doc().accounts.find((x) => x.id === b)!.identityId
+    expect((await h.service.updateIdentity({ identityId, colourKey: 'plum' })).ok).toBe(true)
+    await agrees(h, 'reviewer inactive')
+  })
+
+  it('a package whose sessions do not launch here is never read for session transcripts', async () => {
+    const h = await setup()
+    const launch = h.claude.launch as unknown as { sessionsDir: () => Promise<string | null> }
+    launch.sessionsDir = async () => 'H:\\would-be-read'
+    expect(await h.service.sessionsDirs('claude')).toEqual([])
+  })
+
+  it('a profile that cannot review here says why, and holds nothing', async () => {
+    const h = await setup({ profileRealmLaunch: () => ({ refused: 'on macOS a review runs on your normal Claude sign-in, which is your primary account' }) })
+    const a = h.doc().legacyLinks.find((l) => l.legacyId === P[0])!.accountId
+    expect(await h.service.prepareLaunch(review('mac'))).toMatchObject({ ok: false, code: 'realm-unavailable', message: expect.stringContaining('primary account') })
+    expect(h.leases.count(a)).toBe(0)
   })
 })

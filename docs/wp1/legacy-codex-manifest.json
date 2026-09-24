@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T05:09:06.323Z",
-  "head": "d03b8247ebaf0606f7ecf3e65a84e1507d7c3190",
-  "tree": "d024a89b6ff751448e126368b1f02e9671143868",
+  "generatedAt": "2026-09-24T09:51:22.598Z",
+  "head": "a9ba9e1e1471b24166e3152195481b67102ff730",
+  "tree": "621d99e2afc63e4f591bfa4e281d536dc4fa4c48",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2212,
-  "excludedFileCount": 368,
-  "scannedFileCount": 1844,
+  "trackedFileCount": 2222,
+  "excludedFileCount": 372,
+  "scannedFileCount": 1850,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 310,
-  "pathDigest": "7d2dd193bb1b1ab06ea1dbad665784e8619b14ec31052ce0da76ad84dacf87b9",
+  "matchedPathCount": 314,
+  "pathDigest": "dce38c569eea63cf3b76fcf1083af0c04b3342037187e6f2bcc6acdbe5fe2c93",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -182,7 +182,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 108
+      "lineCount": 126
     },
     {
       "path": "package.json",
@@ -374,7 +374,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 50
+      "lineCount": 44
     },
     {
       "path": "src/main/codex-review-usage.ts",
@@ -402,7 +402,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 67
+      "lineCount": 88
     },
     {
       "path": "src/main/config-manager.ts",
@@ -499,16 +499,37 @@
       "lineCount": 1
     },
     {
+      "path": "src/main/providers/claude/discovery.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "src/main/providers/claude/index.ts",
       "predicates": [
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 4
     },
     {
       "path": "src/main/providers/claude/legacy-store.ts",
       "predicates": [
         "P05"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/main/providers/claude/review-launch.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/main/providers/claude/review.ts",
+      "predicates": [
+        "P14"
       ],
       "lineCount": 1
     },
@@ -578,7 +599,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 87
+      "lineCount": 84
     },
     {
       "path": "src/main/providers/codex/discovery.ts",
@@ -684,10 +705,9 @@
       "predicates": [
         "P01",
         "P04",
-        "P09",
         "P14"
       ],
-      "lineCount": 23
+      "lineCount": 22
     },
     {
       "path": "src/main/providers/codex/spawn.ts",
@@ -697,7 +717,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 57
+      "lineCount": 60
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -723,7 +743,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 7
+      "lineCount": 11
     },
     {
       "path": "src/main/providers/core/external-default-migration.ts",
@@ -740,6 +760,14 @@
         "P14"
       ],
       "lineCount": 6
+    },
+    {
+      "path": "src/main/providers/core/review-support.ts",
+      "predicates": [
+        "P09",
+        "P14"
+      ],
+      "lineCount": 2
     },
     {
       "path": "src/main/providers/host-color-scheme.ts",
@@ -767,7 +795,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 116
+      "lineCount": 118
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -1739,7 +1767,7 @@
         "P09",
         "P13"
       ],
-      "lineCount": 79
+      "lineCount": 77
     },
     {
       "path": "tests/unit/main/codex-review-session-abort.test.ts",
@@ -1748,7 +1776,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 12
+      "lineCount": 19
     },
     {
       "path": "tests/unit/main/codex-review-usage.test.ts",
@@ -1780,7 +1808,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 10
+      "lineCount": 25
     },
     {
       "path": "tests/unit/main/conductor-mcp-session-binding.test.ts",
@@ -2025,7 +2053,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 196
+      "lineCount": 197
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",

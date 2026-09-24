@@ -33,11 +33,14 @@ const h = vi.hoisted(() => ({
   installs: 0,
   credentialLoads: 0,
   legacyInstalled: true,
+  claudeReview: [] as Array<{ sid: string; cwd: string }>,
+  ptyCwds: [] as string[],
 }))
 
 vi.mock('node-pty', () => ({
-  spawn: (cmd: string, args: string[] | string, opts: { env?: Record<string, string> }) => {
+  spawn: (cmd: string, args: string[] | string, opts: { env?: Record<string, string>; cwd?: string }) => {
     if (h.failSpawn) throw new Error('File not found: ' + cmd)
+    h.ptyCwds.push(opts?.cwd ?? '')
     const p: FakePty = { cmd, args, env: opts?.env ?? {}, exit: [], kill: vi.fn() }
     h.ptys.push(p)
     return {
@@ -73,6 +76,7 @@ vi.mock('../../src/main/logging/logging-service', () => ({ getLogSupervisor: () 
 vi.mock('../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 0,
   registerCodexReviewSession: () => {},
+  registerClaudeReviewSession: (sid: string, cwd: string) => { h.claudeReview.push({ sid, cwd }) },
   unregisterCodexReviewSession: () => {},
   disposeCodexReviewUsage: () => {},
 }))
@@ -192,6 +196,8 @@ beforeEach(() => {
   h.installs = 0
   h.credentialLoads = 0
   h.legacyInstalled = true
+  h.claudeReview = []
+  h.ptyCwds = []
   sent.length = 0
   destroyed = false
 })
@@ -427,5 +433,24 @@ describe('pty:spawn while the launch is prepared (ADR-009 pass on commit 4)', ()
       await expect(spawnIpc({ ...codexRequest, ssh, shellOnly, configId: 'cfg1', legacyVersion: { enabled: true, version: '2.1.0' } })).rejects.toThrow(/this computer only/)
     }
     expect([h.installs, h.credentialLoads, h.prepareCalls, h.ptys.length]).toEqual([0, 0, 0, 0])
+  })
+})
+
+// WP2 commit 5b: a local Codex session may ask for a Claude review of the
+// project its PTY runs in; never of home or anything above it (#188).
+describe('a Codex session registers for claude_review (WP2 5b)', () => {
+  it('with the directory its PTY started in, once it is running', () => {
+    start(launch('a'))
+    expect(h.claudeReview).toEqual([{ sid: SID, cwd: h.ptyCwds[0] }])
+    expect(h.ptyCwds[0]).toBeTruthy()
+  })
+
+  it('not when that directory is the home folder or above it, nor when the spawn fails', () => {
+    spawnPty(fakeWin, SID, { cwd: path.parse(os.homedir()).root, provider: 'codex', codexOptions, codexLaunch: launch('b') })
+    expect(h.ptys).toHaveLength(1)
+    expect(h.claudeReview).toEqual([])
+    h.failSpawn = true
+    expect(() => start(launch('c'))).toThrow()
+    expect(h.claudeReview).toEqual([])
   })
 })

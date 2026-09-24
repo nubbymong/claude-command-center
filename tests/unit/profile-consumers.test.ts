@@ -13,6 +13,7 @@ import {
   noteProfileRefreshInFlight,
   pendingProfileRefresh,
   waitForProfileRefresh,
+  holdProfileForRun,
   _resetProfileConsumersForTest,
   PROFILE_CONSUMER_MAX_AGE_MS,
 } from '../../src/main/profile-consumers'
@@ -200,5 +201,64 @@ describe('profile-consumers — in-flight refresh (#49)', () => {
   it('an empty profileId registers nothing', () => {
     noteProfileRefreshInFlight('', Promise.resolve())
     expect(pendingProfileRefresh('')).toBeNull()
+  })
+})
+
+// WP2 5b: a Claude reviewer run holds its account's profile like any other
+// consumer -- taken BEFORE the wait for a refresh in flight, re-armed for the
+// run's full bound after it, and let go at once when the run is cancelled.
+describe('profile-consumers -- holdProfileForRun (WP2 5b)', () => {
+  it('nothing in flight: held at once, released once', async () => {
+    const release = await holdProfileForRun('p', 60_000)
+    expect(release).not.toBeNull()
+    expect(profileConsumerCount('p')).toBe(1)
+    release!()
+    release!()
+    expect(profileConsumerCount('p')).toBe(0)
+  })
+
+  it('holds the profile WHILE it waits out a refresh, so no new rotation starts, and runs only after it settles', async () => {
+    let settle!: () => void
+    noteProfileRefreshInFlight('p', new Promise<void>((r) => { settle = r }))
+    const p = holdProfileForRun('p', 60_000)
+    await Promise.resolve()
+    expect(hasTransientProfileConsumer('p')).toBe(true)
+    let done = false
+    void p.then(() => { done = true })
+    await new Promise((r) => setTimeout(r, 5))
+    expect(done).toBe(false)
+    settle()
+    const release = await p
+    expect(profileConsumerCount('p')).toBe(1)
+    release!()
+    expect(profileConsumerCount('p')).toBe(0)
+  })
+
+  it('the run\'s bound starts after the wait: a long wait does not age the run\'s hold out', async () => {
+    vi.useFakeTimers()
+    let settle!: () => void
+    noteProfileRefreshInFlight('p', new Promise<void>((r) => { settle = r }))
+    const p = holdProfileForRun('p', 30_000)
+    await vi.advanceTimersByTimeAsync(50_000)
+    settle()
+    const release = await p
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(hasTransientProfileConsumer('p')).toBe(true)
+    release!()
+  })
+
+  it('a cancel during the wait lets go at once: nothing held, nothing to run', async () => {
+    noteProfileRefreshInFlight('p', new Promise<void>(() => {}))
+    const ac = new AbortController()
+    const p = holdProfileForRun('p', 60_000, ac.signal)
+    await Promise.resolve()
+    expect(profileConsumerCount('p')).toBe(1)
+    ac.abort()
+    expect(await p).toBeNull()
+    expect(profileConsumerCount('p')).toBe(0)
+    const pre = new AbortController()
+    pre.abort()
+    expect(await holdProfileForRun('q', 60_000, pre.signal)).toBeNull()
+    expect(profileConsumerCount('q')).toBe(0)
   })
 })

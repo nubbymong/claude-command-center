@@ -16,6 +16,7 @@ import type {
 } from '../../../shared/providers'
 import type { SessionProvider } from '../types'
 import type { LegacyAccountsPort } from './account-registry-store'
+import type { LaunchLeaseKind } from './consumer-leases'
 
 export interface DiscoveryResult {
   state: DiscoveryState
@@ -199,6 +200,11 @@ export interface LaunchPreparation {
  *  lease the caller holds keeps the realm from being removed meanwhile, so
  *  this takes no realm lock and runs no CLI. */
 export interface ProviderLaunchOperations {
+  /** The kinds of launch this package prepares here. Data, so no provider
+   *  name decides it: Claude prepares reviewer invocations only, because its
+   *  sessions keep their own launch path (A12). The accounts service refuses
+   *  any other kind before anything is chosen or leased. */
+  readonly kinds: readonly LaunchLeaseKind[]
   prepare(realm: RealmRef): Promise<LaunchPreparation | { ok: false; code: AuthFailureCode; message?: string }>
   /** Where a realm writes its session transcripts (plan A13: what the usage
    *  index reads), or null when the realm cannot be located now. A path
@@ -220,6 +226,9 @@ export interface ReviewRunInput {
   prompt: string
   timeoutMs: number
   signal?: AbortSignal
+  /** From the prepared launch: the reviewer account's realm, for a provider
+   *  that also holds the account's own credentials while it runs (Claude). */
+  realm?: RealmRef
 }
 
 export interface ReviewUsage {
@@ -284,8 +293,9 @@ export interface ProviderPackage {
   readonly managedLaunch?: ProviderManagedLaunchOperations
   readonly setup?: ProviderSetupOperations
   readonly auth?: ProviderAuthOperations
-  /** Present when the provider's managed accounts launch in their own realm
-   *  (Codex); absent for providers that keep their own launch path (Claude). */
+  /** Present when the provider's accounts launch through the accounts
+   *  service, for the kinds it lists: Codex sessions and reviews; Claude
+   *  reviews only (its sessions keep their own launch path, A12). */
   readonly launch?: ProviderLaunchOperations
   /** Present when the provider can review a change for another provider's
    *  session (plan: provider review through MCP). */

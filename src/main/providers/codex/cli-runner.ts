@@ -87,15 +87,35 @@ export function codexCommandLine(
 ): CodexCommand | { refused: string } {
   const args = ARGS[operation]
   if (!args) return { refused: 'not a Codex CLI operation this app runs' }
-  if (typeof executable !== 'string' || !executable) return { refused: 'no Codex executable' }
+  return cliCommandLine(executable, args, platform, env, 'Codex')
+}
+
+/** The characters a constant argv element may carry: none that cmd.exe, a
+ *  shim or a shell reads (no space, quote, `% & ^ | < > ( ) !`). */
+const PLAIN_ARG = /^[A-Za-z0-9._,:=/-]+$/
+
+/** codexCommandLine's rules for any CLI's CONSTANT argv (WP2 commit 5b: the
+ *  composition root hands this to the Claude package, which imports nothing
+ *  of this one). `label` names the CLI in a refusal. An argv element outside
+ *  PLAIN_ARG is refused: on the shim route it lands on a cmd.exe line
+ *  verbatim, so no text there may be a caller's. */
+export function cliCommandLine(
+  executable: string,
+  args: readonly string[],
+  platform: NodeJS.Platform,
+  env: { ComSpec?: string; SystemRoot?: string },
+  label: string,
+): CodexCommand | { refused: string } {
+  if (!Array.isArray(args) || args.some((a) => typeof a !== 'string' || !PLAIN_ARG.test(a))) return { refused: `not a ${label} CLI command line this app runs` }
+  if (typeof executable !== 'string' || !executable) return { refused: `no ${label} executable` }
   const pathApi = platform === 'win32' ? path.win32 : path.posix
-  if (!pathApi.isAbsolute(executable)) return { refused: 'the Codex executable path is not absolute' }
+  if (!pathApi.isAbsolute(executable)) return { refused: `the ${label} executable path is not absolute` }
   if (platform === 'win32') {
     // A drive or a share, never `\x` (the current drive), `\\?\` or `\\.\`;
     // and no trailing dot or space, which Windows drops -- `codex.cmd.` must
     // not dodge the shim route below.
-    if (!/^([A-Za-z]:\\|\\\\[^\\?.][^\\]*\\[^\\]+\\)/.test(executable)) return { refused: 'the Codex executable is not on a drive or a share' }
-    if (/[. ]$/.test(executable)) return { refused: 'the Codex executable name ends in a dot or a space' }
+    if (!/^([A-Za-z]:\\|\\\\[^\\?.][^\\]*\\[^\\]+\\)/.test(executable)) return { refused: `the ${label} executable is not on a drive or a share` }
+    if (/[. ]$/.test(executable)) return { refused: `the ${label} executable name ends in a dot or a space` }
   }
   const cwd = pathApi.dirname(executable)
   if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(executable)) {
@@ -103,12 +123,12 @@ export function codexCommandLine(
   }
   // eslint-disable-next-line no-control-regex
   if (/["%&^\x00-\x1f]/.test(executable)) {
-    return { refused: 'the Codex shim path carries a character cmd.exe or the shim would re-read (" % & ^ or a control character)' }
+    return { refused: `the ${label} shim path carries a character cmd.exe or the shim would re-read (" % & ^ or a control character)` }
   }
   const absoluteCmd = (p: string | undefined): p is string => isWindowsAbsolute(p) && /[\\/]cmd\.exe$/i.test(p)
   const system32 = env.SystemRoot ? path.win32.join(env.SystemRoot, 'System32', 'cmd.exe') : undefined
   const shell = absoluteCmd(env.ComSpec) ? env.ComSpec : absoluteCmd(system32) ? system32 : null
-  if (!shell) return { refused: 'no absolute cmd.exe to run the Codex shim with (SystemRoot is not set)' }
+  if (!shell) return { refused: `no absolute cmd.exe to run the ${label} shim with (SystemRoot is not set)` }
   return { file: shell, args: ['/d', '/v:off', '/s', '/c', `""${executable}" ${args.join(' ')}"`], verbatim: true, cwd }
 }
 

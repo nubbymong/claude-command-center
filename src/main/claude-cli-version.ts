@@ -217,6 +217,13 @@ async function resolveForVersionProbe(): Promise<ClaudeCliProbe> {
   return found ? { installed: true, path: found, probe } : { installed: false, probe }
 }
 
+/** The executable this probe runs, or null: the Claude reviewer's discovery
+ *  (WP2 commit 5b) resolves exactly as the version probe does. */
+export async function resolveClaudeExecutable(): Promise<string | null> {
+  const probe = await resolveForVersionProbe()
+  return probe.installed && probe.path ? probe.path : null
+}
+
 function runVersionProbe(): Promise<string | null> {
   return resolveForVersionProbe().then((probe) => new Promise<string | null>((resolve) => {
     if (!probe.installed || !probe.path) {

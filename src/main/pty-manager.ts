@@ -61,7 +61,7 @@ import {
   removeLocalSessionMcpConfig,
   removeLocalSessionStatusUrl,
 } from './hooks/per-session-settings'
-import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
+import { registerCodexReviewSession, registerClaudeReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
 import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
 import { designatedWorktreeDir } from './canvas/canvas-worktree'
@@ -4187,6 +4187,16 @@ function spawnPtyResolved(
         },
       )
       codexTelemetrySources.set(sessionId, codexTelSrc)
+      // WP2 commit 5b: a local Codex session may ask for a Claude review of
+      // the project it runs in -- the directory its PTY started in, never
+      // home or above it (the codex_review rule, #188). Whether the tool is
+      // offered is decided per MCP connection; killPty's unregister (run
+      // before every spawn) clears this, so a respawn re-decides.
+      if (isHomeOrAncestor(resolvedCwd)) {
+        logWarn(`[pty] claude_review NOT registered for ${sessionId}: the project directory resolves to (or above) the home directory. Set a real project directory to enable review.`)
+      } else {
+        registerClaudeReviewSession(sessionId, resolvedCwd)
+      }
     } catch (err) {
       if (codexLaunchLeases.get(sessionId) === launch.lease) codexLaunchLeases.delete(sessionId)
       if (started) {

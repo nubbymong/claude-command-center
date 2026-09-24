@@ -7,6 +7,7 @@
 import { createCodexPackage } from '../../src/main/providers/codex'
 import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry } from '../../src/main/providers/codex'
 import { createClaudePackage } from '../../src/main/providers/claude'
+import type { ClaudeReviewPorts } from '../../src/main/providers/claude'
 import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore, registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
 import type { RegistryFsPort, ProviderPackage, LegacyAccountsPort } from '../../src/main/providers/core'
 import { findRealm } from '../../src/shared/providers'
@@ -99,6 +100,8 @@ export interface HarnessOpts {
   folders?: ReturnType<typeof memoryFs>
   /** Running sessions that hold no account lease, per provider (Claude's). */
   unleasedSessions?: (providerId: ProviderId) => number
+  /** The Claude reviewer's ports (WP2 5b): absent, Claude has no launch. */
+  claudeReview?: ClaudeReviewPorts
 }
 
 export const claudeSnapshot = (legacyId: string, over: Partial<LegacyAccountSnapshot> = {}): LegacyAccountSnapshot => ({
@@ -189,7 +192,7 @@ export async function harness(o: HarnessOpts = {}) {
       },
     },
   })
-  const claude = createClaudePackage()
+  const claude = createClaudePackage(o.claudeReview ? { review: o.claudeReview } : {})
   // The launch environment is applied through the registry (the one removal
   // site, realmEnvForProvider): register this harness's packages there, as
   // boot does. Vitest isolates each test file's module registry.

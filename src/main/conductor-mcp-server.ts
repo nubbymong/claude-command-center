@@ -43,7 +43,8 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import { isAllowedBrowserUrl } from '../shared/browser-url'
 import { pushAgentUrlToWebview } from './webview-manager'
 import type { GlobalVisionConfig } from '../shared/types'
-import { registerCodexReviewTool, abortCodexReviews } from './codex-review-mcp-tool'
+import { registerCodexReviewTool, registerClaudeReviewTool, abortSessionReviews, cancelReviewRequest } from './codex-review-mcp-tool'
+import { getAccountsService } from './provider-accounts'
 import { registerCanvasTools } from './canvas-mcp-tool'
 import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, getLastCompletedCanvasStateForSession, renderVersion, reopenVersionForReview, resolveInsideCanvasRoot, setVersionVerdict } from './canvas/canvas-store'
 import { completeCanvasGuarded } from './canvas/canvas-completion'
@@ -547,7 +548,28 @@ export function ingestStatusPayload(
 let McpServer: any = null
 let SSEServerTransport: any = null
 let StreamableHTTPServerTransport: any = null
+let CancelledNotificationSchema: any = null
 let z: any = null
+
+/** One stateless /mcp exchange. The close listener goes on BEFORE the request
+ *  is handled: a long tool call (a review) awaits inside handleRequest, and a
+ *  client that drops the request (an interrupt, its own tool timeout) must
+ *  close the server then -- which aborts the call's signal -- not after the
+ *  call has run to its own deadline. */
+export async function serveStatelessMcp(
+  server: { connect(t: unknown): Promise<void>; close(): unknown },
+  transport: { handleRequest(req: unknown, res: unknown): Promise<void>; close(): unknown },
+  req: unknown,
+  res: { on(event: 'close', fn: () => void): unknown },
+): Promise<void> {
+  await server.connect(transport)
+  res.on('close', () => {
+    try { transport.close() } catch { /* already closed */ }
+    try { server.close() } catch { /* already closed */ }
+  })
+  // handleRequest reads the body itself when not provided.
+  await transport.handleRequest(req, res)
+}
 
 function loadMcpDeps(): void {
   if (!McpServer) {
@@ -559,6 +581,7 @@ function loadMcpDeps(): void {
     // legacy SSE transport returns 202 + pushes the response down the event
     // stream, which the new client mis-reads as "missing-content-type".
     StreamableHTTPServerTransport = require('@modelcontextprotocol/sdk/server/streamableHttp.js').StreamableHTTPServerTransport
+    CancelledNotificationSchema = require('@modelcontextprotocol/sdk/types.js').CancelledNotificationSchema
     z = require('zod')
   }
 }
@@ -589,18 +612,65 @@ const authWarnedForPort = new Set<number>()
 // Claude spawn; cleared on dispose. Soft ACL (the LLM passes its own session
 // id; not a hard authorisation boundary -- see spec section 8 for rationale).
 const codexReviewOptedIn = new Set<string>()
+// WP2 commit 5b: the same for claude_review, populated by pty-manager on a
+// local Codex spawn. A session is in at most one of the two sets (each is
+// offered only the other provider's reviewer); the project folder map and
+// unregistering are shared.
+const claudeReviewOptedIn = new Set<string>()
 const sessionCwds = new Map<string, string>()
 
 export function registerCodexReviewSession(sessionId: string, cwd: string): void {
+  claudeReviewOptedIn.delete(sessionId)
   codexReviewOptedIn.add(sessionId)
   sessionCwds.set(sessionId, cwd)
 }
 
+/** A local Codex session with a real project folder may ask for a Claude
+ *  review (commit 5b); whether the tool is OFFERED is decided per connection
+ *  (createServer). */
+export function registerClaudeReviewSession(sessionId: string, cwd: string): void {
+  codexReviewOptedIn.delete(sessionId)
+  claudeReviewOptedIn.add(sessionId)
+  sessionCwds.set(sessionId, cwd)
+}
+
+/** Which review tool a connection is offered: each session only the OTHER
+ *  provider's reviewer.
+ *  - A Claude (or unknown) connection: codex_review, while the Conductor
+ *    tools and its own toggle are on and Codex is enabled (P6.9: never to a
+ *    Codex session, which would review itself).
+ *  - A Codex connection (the /mcp route forces the source): claude_review
+ *    (WP2 commit 5b, owner decision 3), while the Conductor tools are on and
+ *    a Claude review could be prepared now -- Claude on, and a Claude account
+ *    that can review without a per-launch confirmation (on macOS the normal
+ *    sign-in). Asked per connection, so turning Claude off or losing the
+ *    reviewer account withdraws it from the next request.
+ *  Pure, and `claudeReviewReady` is asked only for a Codex connection. */
+export function offeredReviewTool(
+  source: 'claude' | 'codex' | 'unknown',
+  gates: { toolsMaster: boolean; codexReviewOn: boolean; codexEnabled: boolean; claudeReviewReady: () => boolean },
+): 'codex_review' | 'claude_review' | null {
+  if (source === 'codex') return gates.toolsMaster && gates.claudeReviewReady() ? 'claude_review' : null
+  return gates.codexReviewOn && gates.codexEnabled ? 'codex_review' : null
+}
+
+/** Every review a session is registered for (at most one, by the rule above),
+ *  and its project folder: a read for diagnostics and tests. */
+export function reviewRegistrationOf(sessionId: string): { tools: Array<'codex_review' | 'claude_review'>; cwd: string | null } | null {
+  const tools: Array<'codex_review' | 'claude_review'> = []
+  if (codexReviewOptedIn.has(sessionId)) tools.push('codex_review')
+  if (claudeReviewOptedIn.has(sessionId)) tools.push('claude_review')
+  return tools.length || sessionCwds.has(sessionId) ? { tools, cwd: sessionCwds.get(sessionId) ?? null } : null
+}
+
+/** Clears either registration: every spawn re-establishes its own. */
 export function unregisterCodexReviewSession(sessionId: string): void {
   codexReviewOptedIn.delete(sessionId)
+  claudeReviewOptedIn.delete(sessionId)
   sessionCwds.delete(sessionId)
-  // A review never outlives the session it serves (WP2 5a).
-  abortCodexReviews(sessionId)
+  // A review never outlives the session it serves (WP2 5a), whichever tool
+  // started it.
+  abortSessionReviews(sessionId)
 }
 
 function resultToMcpContent(result: VisionResult) {
@@ -983,12 +1053,31 @@ export async function startMcpServer(
     // reconsider if reciprocal review demand surfaces.
     // Also requires Codex itself to be enabled ("Do you use Codex?" — absent
     // means yes for pre-onboarding installs): the tool runs the codex CLI.
-    if (source !== 'codex' && toolOn('codexReview') && toolCfg?.codexEnabled !== false) {
+    const reviewTool = offeredReviewTool(source, {
+      toolsMaster,
+      codexReviewOn: toolOn('codexReview'),
+      codexEnabled: toolCfg?.codexEnabled !== false,
+      claudeReviewReady: () => getAccountsService()?.reviewReady('claude') === true,
+    })
+    if (reviewTool === 'codex_review') {
       registerCodexReviewTool(
         server,
         z,
         () => codexReviewOptedIn,
         (sessionId: string) => sessionCwds.get(sessionId) ?? null,
+        () => boundSessionId,
+      )
+    }
+
+    // WP2 commit 5b: claude_review (see offeredReviewTool). The session must
+    // also have registered (a local Codex spawn with a real project folder);
+    // the tool checks that per call.
+    if (reviewTool === 'claude_review') {
+      registerClaudeReviewTool(
+        server,
+        z,
+        () => claudeReviewOptedIn,
+        (sessionId: string) => (claudeReviewOptedIn.has(sessionId) ? sessionCwds.get(sessionId) ?? null : null),
         () => boundSessionId,
       )
     }
@@ -1251,17 +1340,18 @@ export async function startMcpServer(
           // Authenticated session, not a query re-parse (GHSA-q83v-phcc-hgv4).
           const boundSessionId = authedSession
           const server = createServer(source, boundSessionId, 'http')
+          // Stateless: a request's cancel arrives on a POST of its own, to a
+          // fresh server that never saw the request. Route it to the review
+          // that request is serving, by the session THIS connection
+          // authenticated (WP2 5b: claude_review is the first long call here).
+          server.server.setNotificationHandler(CancelledNotificationSchema, async (n: { params: { requestId: string | number } }) => {
+            if (boundSessionId) cancelReviewRequest(boundSessionId, n.params.requestId)
+          })
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,  // stateless
             enableJsonResponse: true,       // prefer JSON for unary responses (what rmcp expects)
           })
-          // handleRequest reads the body itself when not provided.
-          await server.connect(transport)
-          await transport.handleRequest(req, res)
-          res.on('close', () => {
-            try { transport.close() } catch { /* already closed */ }
-            try { server.close() } catch { /* already closed */ }
-          })
+          await serveStatelessMcp(server, transport, req, res)
         } catch (err: any) {
           logError(`[vision-mcp] /mcp handler error: ${err?.message ?? err}`)
           if (!res.headersSent) {

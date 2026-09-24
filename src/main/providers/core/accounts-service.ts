@@ -125,6 +125,13 @@ function failure(code: AccountsFailureCode, message?: string, extra: { consumers
   return { ok: false, code, message: message ?? FAIL_MESSAGES[code] ?? 'That did not work.', ...extra }
 }
 
+/** The launch kinds a package prepares, as it declares them; a declaration
+ *  that is not a list of known kinds prepares nothing (fail closed). */
+function launchKindsOf(p: ProviderPackage): readonly LaunchLeaseKind[] {
+  const kinds: unknown = p.launch?.kinds
+  return Array.isArray(kinds) ? kinds.filter((k): k is LaunchLeaseKind => (LAUNCH_LEASE_KINDS as readonly unknown[]).includes(k)) : []
+}
+
 /** Chain transitions; the first refusal is the result. */
 function chain(doc: ProviderRegistryDoc, steps: ReadonlyArray<(d: ProviderRegistryDoc) => RegistryResult>): RegistryResult {
   let cur = doc
@@ -1167,13 +1174,36 @@ export class AccountsService {
     return failure('unsupported', `${p.displayName} runs on this computer only in this release; it is not available in SSH sessions.`)
   }
 
+  /** Whether a reviewer invocation of this provider can be prepared now: a
+   *  review tool is offered only then (commit 5b, decision 3). The package
+   *  reviews and prepares reviews here, the provider is on, and the account a
+   *  review would use (the reviewer default, else the provider default) is
+   *  active, not blocked, locatable, and needs no per-launch acknowledgement,
+   *  which an agent cannot give. The same checks prepareLaunch makes before
+   *  it runs anything; the executable and the lease are checked when a
+   *  review starts. Synchronous, and no I/O: asked per MCP connection. */
+  reviewReady(providerId: ProviderId): boolean {
+    const p = this.pkg(providerId)
+    if (!p?.launch || !p.review || !launchKindsOf(p).includes('review')) return false
+    if (!this.capability(p, 'session.launch').enabled || !this.isEnabled(p.id)) return false
+    const ready = this.ready()
+    if ('ok' in ready) return false
+    const chosen = chooseReviewerAccount(ready.doc, p.id)
+    if (!chosen.ok) return false
+    const a = findAccount(ready.doc, chosen.accountId)
+    if (!a || a.identityAssurance === 'realm-only' || findRealm(ready.doc, a.authRealmId)?.ownership === 'external-default') return false
+    return resolveLaunchBinding(ready.doc, { providerId: p.id, providerAccountId: a.id }).ok
+  }
+
   /** The transcript folders of a provider's live realms (plan A13): what the
    *  usage index reads beside the provider's own default folder. Paths only;
    *  a realm that cannot be located now is left out. */
   async sessionsDirs(providerId: ProviderId): Promise<string[]> {
     const p = this.pkg(providerId)
     const ready = this.ready()
-    if (!p?.launch || 'ok' in ready) return []
+    // Only a package whose sessions launch here writes session transcripts in
+    // its realms (a reviewer invocation persists none).
+    if (!p?.launch || !launchKindsOf(p).includes('session') || 'ok' in ready) return []
     const out: string[] = []
     for (const realm of ready.doc.realms) {
       if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
@@ -1209,6 +1239,13 @@ export class AccountsService {
     if (!LAUNCH_LEASE_KINDS.includes(input.kind)) return failure('invalid-request')
     const p = this.pkg(input.providerId)
     if (!p?.launch) return failure('unsupported')
+    // The package says which kinds it prepares (data, not a provider name): a
+    // Claude session keeps its own launch path (A12), so only its reviews come
+    // here. Refused before an account is chosen or leased.
+    if (!launchKindsOf(p).includes(input.kind)) return failure('unsupported', `${p.displayName} does not start a ${input.kind === 'session' ? 'session' : 'review'} this way.`)
+    // A reviewer invocation always runs on this computer, beside the session
+    // it serves.
+    if (input.kind === 'review' && input.remote === true) return failure('unsupported', 'A review runs on this computer only.')
     if (input.remote === true) {
       const remote = this.remoteLaunchRefusal(p.id)
       if (remote) return remote

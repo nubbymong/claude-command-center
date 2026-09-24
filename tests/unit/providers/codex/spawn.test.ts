@@ -182,6 +182,11 @@ describe('CodexProvider', () => {
       expect(out.args).toContain('mcp_servers.conductor.url=http://localhost:19333/mcp?cccSessionId=sid')
       expect(out.args).toContain('mcp_servers.conductor.enabled=true')
       expect(out.args).toContain('mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN')
+      // WP2 5b: a Claude review may run 900 s plus its diff, launch and kill
+      // settle; the pinned Codex gives a tool 300 s unless told otherwise.
+      const timeoutFlag = out.args.find((a) => a.startsWith('mcp_servers.conductor.tool_timeout_sec='))
+      expect(timeoutFlag).toBe('mcp_servers.conductor.tool_timeout_sec=1000.0')
+      expect(Number(timeoutFlag!.split('=')[1])).toBeGreaterThan(900 + 30 + 15)
       // Token rides a bearer header via env -- NOT the URL -- and is this
       // session's per-session HMAC. The URL still has no `&`, so it survives the
       // cmd.exe .cmd-shim spawn path.

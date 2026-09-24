@@ -16,8 +16,8 @@ vi.mock('../../../src/main/codex-review-usage', () => ({
 // debug-logger is already mocked globally in tests/unit/setup.ts; no per-file
 // mock needed here. (Source under test calls logInfo through that module.)
 
-import { runCodexReview, registerCodexReviewTool, abortCodexReviews, MAX_REVIEWS_PER_SESSION } from '../../../src/main/codex-review-mcp-tool'
-import type { CodexReviewDeps } from '../../../src/main/codex-review-mcp-tool'
+import { runCodexReview, runClaudeReview, registerCodexReviewTool, registerClaudeReviewTool, abortSessionReviews, cancelReviewRequest, MAX_REVIEWS_PER_SESSION } from '../../../src/main/codex-review-mcp-tool'
+import type { ReviewToolDeps } from '../../../src/main/codex-review-mcp-tool'
 
 const optedIn = new Set<string>(['sess-allowed'])
 
@@ -25,7 +25,7 @@ const optedIn = new Set<string>(['sess-allowed'])
 // (kind `review`) and through the Codex package's reviewer adapter. Both are
 // injected here: the service's own rules are covered by tests/wp1 and the
 // adapter's by tests/wp1/cli-discovery.test.ts.
-interface Harness { deps: CodexReviewDeps; prepareLaunch: ReturnType<typeof vi.fn>; run: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> }
+interface Harness { deps: ReviewToolDeps; prepareLaunch: ReturnType<typeof vi.fn>; run: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> }
 function makeDeps(): Harness {
   const release = vi.fn()
   const prepareLaunch = vi.fn(async (_input: Record<string, unknown>): Promise<Record<string, unknown>> => ({
@@ -219,8 +219,8 @@ describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its se
     h = makeDeps()
   })
   afterEach(() => {
-    abortCodexReviews('sess-allowed')
-    abortCodexReviews('sess-other')
+    abortSessionReviews('sess-allowed')
+    abortSessionReviews('sess-other')
     rmSync(testResourcesDir, { recursive: true, force: true })
     rmSync(gitCwd, { recursive: true, force: true })
   })
@@ -263,11 +263,11 @@ describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its se
     const mine = runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
     const theirs = runCodexReview({ cccSessionId: 'sess-other', mode: 'working' }, sets, gitCwd, h.deps)
     await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2))
-    abortCodexReviews('sess-allowed')
+    abortSessionReviews('sess-allowed')
     expect(await mine).toMatchObject({ text: 'Codex review was cancelled.' })
     const signals = h.run.mock.calls.map((c) => c[0].signal as AbortSignal)
     expect(signals.filter((s) => s.aborted)).toHaveLength(1)
-    abortCodexReviews('sess-other')
+    abortSessionReviews('sess-other')
     await theirs
     expect(h.release).toHaveBeenCalledTimes(2)
   })
@@ -277,7 +277,7 @@ describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its se
     h.run.mockImplementationOnce(() => new Promise((res) => { settle = () => res({ ok: false, code: 'cancelled', message: 'x' }) }))
     const old = runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
     await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1))
-    abortCodexReviews('sess-allowed')
+    abortSessionReviews('sess-allowed')
     const again = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
     expect(again).toMatchObject({ isError: false })
     expect(h.release).toHaveBeenCalledTimes(1)
@@ -290,7 +290,7 @@ describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its se
     await old
     expect(h.release).toHaveBeenCalledTimes(2)
     expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toMatchObject({ text: expect.stringContaining('already running') })
-    abortCodexReviews('sess-allowed')
+    abortSessionReviews('sess-allowed')
     await newer
   })
 
@@ -304,11 +304,11 @@ describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its se
     // Another session is not limited by this one.
     const other = runCodexReview({ cccSessionId: 'sess-other', mode: 'working' }, sets, gitCwd, h.deps)
     await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2))
-    abortCodexReviews('sess-allowed')
+    abortSessionReviews('sess-allowed')
     await first
     h.run.mockImplementation(async () => ({ ok: true, text: 'again' }))
     expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toMatchObject({ isError: false })
-    abortCodexReviews('sess-other')
+    abortSessionReviews('sess-other')
     await other
   })
 
@@ -379,5 +379,171 @@ describe('registerCodexReviewTool: the session id comes only from the transport'
     expect(out.isError).toBe(true)
     expect(out.content[0].text).toContain('not enabled')
     expect(h.prepareLaunch).not.toHaveBeenCalled()
+  })
+})
+
+// WP2 commit 5b: claude_review, offered to a Codex session. It shares every
+// session check and the one-review-per-session slot with codex_review; the
+// change is produced by main (the reviewer has no git) and sent in the
+// prompt between markers no diff can forge; it runs on the Claude reviewer
+// account's prepared launch.
+describe('claude_review tool (WP2 5b)', () => {
+  let gitCwd: string
+  let h: Harness
+  let diff: ReturnType<typeof vi.fn>
+  const sets = new Set<string>(['sess-allowed', 'sess-other'])
+  const DIFF = 'diff --git a/x.ts b/x.ts\n+const y = 1\n'
+  const claudeDeps = (): ReviewToolDeps => ({ ...h.deps, diff: diff as never })
+  const untilStopped = (input: Record<string, unknown>) => new Promise<Record<string, unknown>>((res) => {
+    const s = input.signal as AbortSignal
+    const done = () => res({ ok: false, code: 'cancelled', message: 'The review was cancelled.' })
+    if (s.aborted) done(); else s.addEventListener('abort', done)
+  })
+  beforeEach(() => {
+    testResourcesDir = mkdtempSync(join(tmpdir(), 'ccc-claude-review-tool-'))
+    gitCwd = mkdtempSync(join(tmpdir(), 'ccc-claude-review-git-'))
+    mkdirSync(join(gitCwd, '.git'))
+    recordReview.mockReset()
+    h = makeDeps()
+    diff = vi.fn(async () => ({ ok: true, diff: DIFF }))
+  })
+  afterEach(() => {
+    abortSessionReviews('sess-allowed')
+    abortSessionReviews('sess-other')
+    rmSync(testResourcesDir, { recursive: true, force: true })
+    rmSync(gitCwd, { recursive: true, force: true })
+  })
+
+  it('runs on the Claude reviewer launch, the change from main in the prompt between nonce markers, the account\'s realm passed on', async () => {
+    const r = await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'range', range: 'HEAD~1..HEAD', focus: 'races' }, sets, gitCwd, claudeDeps())
+    expect(r).toEqual({ isError: false, text: '1. A finding.\n\n\n---\nClaude review -- 1 message used -- 1200 input tokens (200 cached), 80 output tokens.' })
+    expect(diff).toHaveBeenCalledWith({ cwd: gitCwd, mode: 'range', range: 'HEAD~1..HEAD', signal: expect.any(AbortSignal) })
+    // The diff runs under the review's own stop: a cancel or the session's end stops git too.
+    expect((diff.mock.calls[0][0] as { signal: AbortSignal }).signal).toBe((h.run.mock.calls[0][0] as { signal: AbortSignal }).signal)
+    expect(h.prepareLaunch).toHaveBeenCalledWith({ kind: 'review', providerId: 'claude', ownerId: expect.stringMatching(/^review:sess-allowed:\d+$/), remote: false })
+    const run = h.run.mock.calls[0][0] as Record<string, unknown>
+    expect(run.realm).toEqual({ authRealmId: 'realm-1' })
+    expect(run.cwd).toBe(gitCwd)
+    const prompt = run.prompt as string
+    const nonce = /<<<CHANGE-([0-9a-f]{16})\n/.exec(prompt)?.[1]
+    expect(nonce).toBeDefined()
+    expect(prompt).toContain(`<<<CHANGE-${nonce}\n${DIFF}\nCHANGE-${nonce}>>>`)
+    expect(prompt).toContain('Scope: git revision range HEAD~1..HEAD.')
+    expect(prompt).toContain('Focus area: races')
+    await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps())
+    expect(h.run.mock.calls[1][0].prompt).not.toContain(nonce)
+    // Usage is recorded for Codex's own reviews only (the Claude session statusline).
+    expect(recordReview).not.toHaveBeenCalled()
+  })
+
+  it('mode paths sends no diff: the reviewer reads the named files, still contained to the project', async () => {
+    expect(await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'paths', paths: ['a.ts', 'src/b.ts'] }, sets, gitCwd, claudeDeps())).toMatchObject({ isError: false })
+    expect(diff).not.toHaveBeenCalled()
+    const prompt = h.run.mock.calls[0][0].prompt as string
+    expect(prompt).toContain('(read them): a.ts, src/b.ts')
+    expect(prompt).not.toContain('<<<CHANGE')
+    expect(await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'paths', paths: ['../x'] }, sets, gitCwd, claudeDeps())).toMatchObject({ isError: true, text: 'Paths must be inside the session cwd. Rejected: ../x' })
+  })
+
+  it('nothing to review, or a change it cannot read, spends no account: no launch is prepared', async () => {
+    diff.mockResolvedValueOnce({ ok: true, diff: '  \n' })
+    expect(await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps())).toEqual({ isError: false, text: 'Claude review: nothing to review -- there are no uncommitted changes to tracked files.' })
+    diff.mockResolvedValueOnce({ ok: false, message: 'the change is larger than 512 KB' })
+    expect(await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'range', range: 'a..b' }, sets, gitCwd, claudeDeps())).toEqual({ isError: true, text: 'Claude review could not read the change: the change is larger than 512 KB.' })
+    expect(h.prepareLaunch).not.toHaveBeenCalled()
+    const noDiff = { ...h.deps }
+    expect(await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, noDiff)).toMatchObject({ isError: true, text: expect.stringContaining('not ready') })
+  })
+
+  it('the diff runs inside the session\'s one review slot, shared with codex_review; a cancel while it runs prepares nothing', async () => {
+    let finish!: (v: unknown) => void
+    diff.mockImplementationOnce(() => new Promise((r) => { finish = r }))
+    const ac = new AbortController()
+    const first = runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps(), ac.signal)
+    await vi.waitFor(() => expect(diff).toHaveBeenCalled())
+    expect(await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps())).toMatchObject({ isError: true, text: expect.stringContaining('already running') })
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toMatchObject({ isError: true, text: expect.stringContaining('already running') })
+    ac.abort()
+    finish({ ok: true, diff: DIFF })
+    expect(await first).toEqual({ isError: true, text: 'Claude review was cancelled.' })
+    expect(h.prepareLaunch).not.toHaveBeenCalled()
+    expect(await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps())).toMatchObject({ isError: false })
+  })
+
+  it('closing the session stops its Claude review and frees its place; the lease goes once the run settles', async () => {
+    h.run.mockImplementationOnce(untilStopped)
+    const p = runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps())
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalled())
+    abortSessionReviews('sess-allowed')
+    expect(await p).toEqual({ isError: true, text: 'Claude review was cancelled.' })
+    expect(h.release).toHaveBeenCalledTimes(1)
+  })
+
+  it('refusals say what to do, in Claude\'s terms', async () => {
+    h.prepareLaunch.mockResolvedValueOnce({ ok: false, code: 'not-found', message: 'x' })
+    expect((await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps())).text).toBe('Claude review needs a Claude account: add one in Accounts, then try again.')
+    h.prepareLaunch.mockResolvedValueOnce({ ok: false, code: 'provider-disabled', message: 'x' })
+    expect((await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps())).text).toBe('Claude review is unavailable: Claude is turned off in Settings.')
+    expect((await runClaudeReview({ cccSessionId: 'sess-nope', mode: 'working' }, sets, gitCwd, claudeDeps())).text).toContain('local Codex sessions')
+    h.run.mockResolvedValueOnce({ ok: false, code: 'failed', message: 'Claude Code exited with code 1.' })
+    expect((await runClaudeReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, claudeDeps())).text).toBe('Claude review failed: Claude Code exited with code 1.\n\n---\nClaude review -- 1 message used. Usage data unavailable.')
+  })
+
+  it('the registered tool is claude_review, bound to the transport\'s session, and passes the cancel through', async () => {
+    let name = ''
+    let handler: ((args: unknown, extra?: { signal?: AbortSignal }) => Promise<any>) | null = null
+    const server = { tool: (n: string, _d: string, _s: unknown, fn: typeof handler) => { name = n; handler = fn } }
+    const chain: any = new Proxy(function () { return chain }, { get: () => chain, apply: () => chain })
+    registerClaudeReviewTool(server, chain, () => sets, () => gitCwd, () => 'sess-allowed', claudeDeps())
+    expect(name).toBe('claude_review')
+    h.run.mockImplementationOnce(untilStopped)
+    const ac = new AbortController()
+    const p = handler!({ mode: 'working', cccSessionId: 'sess-other' }, { signal: ac.signal })
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalled())
+    expect((h.prepareLaunch.mock.calls[0][0] as Record<string, unknown>).ownerId).toMatch(/^review:sess-allowed:/)
+    ac.abort()
+    expect((await p).content[0].text).toBe('Claude review was cancelled.')
+    registerClaudeReviewTool(server, chain, () => sets, () => gitCwd, () => null, claudeDeps())
+    expect((await handler!({ mode: 'working' })).content[0].text).toContain('no bound Conductor session')
+  })
+})
+
+// ADR-009 confirmation (5b): on Codex's stateless /mcp route a request's
+// cancel arrives on a connection of its own; the server routes it here by the
+// session that connection authenticated and the request's id.
+describe('a review request cancelled from another connection (WP2 5b)', () => {
+  let gitCwd: string
+  let h: Harness
+  const sets = new Set<string>(['sess-allowed', 'sess-other'])
+  const chain: any = new Proxy(function () { return chain }, { get: () => chain, apply: () => chain })
+  beforeEach(() => {
+    testResourcesDir = mkdtempSync(join(tmpdir(), 'ccc-claude-review-cancel-'))
+    gitCwd = mkdtempSync(join(tmpdir(), 'ccc-claude-review-cancel-git-'))
+    h = makeDeps()
+  })
+  afterEach(() => {
+    abortSessionReviews('sess-allowed')
+    rmSync(testResourcesDir, { recursive: true, force: true })
+    rmSync(gitCwd, { recursive: true, force: true })
+  })
+
+  it('stops the review serving that request of that session, and nothing of any other session', async () => {
+    let handler: ((args: unknown, extra?: { signal?: AbortSignal; requestId?: string | number }) => Promise<any>) | null = null
+    const server = { tool: (_n: string, _d: string, _s: unknown, fn: typeof handler) => { handler = fn } }
+    registerClaudeReviewTool(server, chain, () => sets, () => gitCwd, () => 'sess-allowed', { ...h.deps, diff: async () => ({ ok: true, diff: 'x' }) } as ReviewToolDeps)
+    h.run.mockImplementationOnce((input: Record<string, unknown>) => new Promise((res) => {
+      const s = input.signal as AbortSignal
+      s.addEventListener('abort', () => res({ ok: false, code: 'cancelled', message: 'The review was cancelled.' }))
+    }))
+    const p = handler!({ mode: 'paths', paths: ['a.ts'] }, { requestId: 7 })
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalled())
+    expect(cancelReviewRequest('sess-other', 7)).toBe(false)
+    expect(cancelReviewRequest('sess-allowed', 8)).toBe(false)
+    expect((h.run.mock.calls[0][0].signal as AbortSignal).aborted).toBe(false)
+    expect(cancelReviewRequest('sess-allowed', 7)).toBe(true)
+    expect((await p).content[0].text).toBe('Claude review was cancelled.')
+    // Settled: the request is forgotten.
+    expect(cancelReviewRequest('sess-allowed', 7)).toBe(false)
+    expect(h.release).toHaveBeenCalledTimes(1)
   })
 })

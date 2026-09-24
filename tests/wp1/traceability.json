@@ -242,7 +242,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/cli-discovery.test.ts",
-        "tests/wp1/provider-conformance.test.ts"
+        "tests/wp1/provider-conformance.test.ts",
+        "tests/wp1/claude-reviewer.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -557,7 +558,9 @@
         "tests/wp1/managed-launch.test.ts",
         "tests/wp1/authority-manifest.test.ts",
         "tests/wp1/startup-manifest-boundary.test.ts",
-        "tests/wp1/launch-handoff-pty.test.ts"
+        "tests/wp1/launch-handoff-pty.test.ts",
+        "tests/wp1/claude-reviewer.test.ts",
+        "tests/wp1/review-profile-home.test.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/claude-settings-isolation-2026-09-21.md"

@@ -134,6 +134,11 @@ const CMD_UNSAFE_ARG_RE = /["%&^|<>!()\s]/
 /** A drive or a share, never `\x`, `\\?\` or `\\.\` (as cli-runner). */
 const WIN_ABSOLUTE_RE = /^([A-Za-z]:\\|\\\\[^\\?.][^\\]*\\[^\\]+\\)/
 
+/** How long a Codex session waits for one Conductor tool call: above the
+ *  longest review a review tool allows (900 s) plus its diff, launch and
+ *  kill-settle time. */
+export const CONDUCTOR_TOOL_TIMEOUT_SEC = '1000.0'
+
 /** A .cmd/.bat shim runs through cmd.exe named by ABSOLUTE path -- ComSpec or
  *  SystemRoot as the parent spells them (Windows names are case-insensitive),
  *  never a PATH lookup -- with AutoRun and delayed expansion off, in the `/s`
@@ -217,6 +222,12 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
     flags.push('-c', `mcp_servers.conductor.url=http://localhost:${mcpPort}/mcp?cccSessionId=${encodeURIComponent(opts.sessionId)}`)
     flags.push('-c', 'mcp_servers.conductor.enabled=true')
     flags.push('-c', 'mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN')
+    // WP2 5b: a claude_review call runs for as long as its timeoutSeconds
+    // (up to 900 s) plus the diff, the launch and the kill's settle bound.
+    // The pinned Codex waits 300 s for a tool by default (DEFAULT_TOOL_TIMEOUT,
+    // codex-rs/codex-mcp/src/rmcp_client.rs, rust-v0.155.1) and would give up
+    // on a longer review first; seconds, read as a float.
+    flags.push('-c', `mcp_servers.conductor.tool_timeout_sec=${CONDUCTOR_TOOL_TIMEOUT_SEC}`)
   }
 
   // CLAUDE_MULTI_SESSION_ID identifies the spawning CCC session for downstream

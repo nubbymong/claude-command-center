@@ -28,7 +28,7 @@ import path from 'node:path'
 // WP2 Codex adapter: the CLI contract, install recipes, the allowlisted
 // subprocess environment, realm paths, the CLI runner and discovery.
 export {
-  codexCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, makeCodexKillTree, makeCodexProcessLister,
+  codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, makeCodexKillTree, makeCodexProcessLister,
   codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, WINDOWS_PROCESS_QUERY,
   CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids,
 } from './cli-runner'
@@ -284,7 +284,7 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
 /** The auth operations, and the launch preparation that shares their realm
  *  and executable checks: one package, one proof. */
 function withLaunch(ops: CodexAuthOperations): Pick<ProviderPackage, 'auth' | 'launch'> {
-  return { auth: ops, launch: { prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.sessionsDir(realm) } }
+  return { auth: ops, launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.sessionsDir(realm) } }
 }
 
 /** The real filesystem behind the managed folders. */

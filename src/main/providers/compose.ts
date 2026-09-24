@@ -8,11 +8,13 @@ import { PROVIDER_IDS } from '../../shared/providers'
 import type { ProviderPackageFactory } from './core'
 import { registerProviderPackage, listProviderPackages, tryGetProviderPackage } from './core'
 import { createClaudePackage } from './claude'
-import type { ClaudeLegacyAccountsIo } from './claude'
-import { createCodexPackage } from './codex'
+import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts } from './claude'
+import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps } from './codex'
 import type { CodexRealmSource } from './codex'
 import { findRealm } from '../../shared/providers'
-import { readProfilesStrict, updateProfilesStrict, mkdirSecure } from '../account-profiles'
+import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, recordProfileReviewPreflight } from '../account-profiles'
+import { holdProfileForRun } from '../profile-consumers'
+import { resolveClaudeExecutable } from '../claude-cli-version'
 import { readConfigChecked } from '../config-manager'
 import { getAccountRegistry, getAccountRegistryResourcesDir } from '../provider-account-registry'
 import { takeProviderSecret } from '../provider-accounts'
@@ -46,11 +48,35 @@ export const codexRealmSource: CodexRealmSource = {
   mkdirSecure: (dir) => mkdirSecure(dir),
 }
 
+/** The Claude reviewer's ports (WP2 commit 5b): the registry's realms, the
+ *  profile-home composition (account-profiles is the one module allowed to
+ *  compose it), the credential-consumer hold, and the CLI runner. Handed in
+ *  here, at the root, so the Claude package imports neither a shared main
+ *  module that reaches the Codex package nor the Codex package itself. */
+export const claudeReviewPorts: ClaudeReviewPorts = {
+  // A SNAPSHOT read, as codexRealmSource's: only a realm in use.
+  lookupRealm: async (ref) => {
+    const doc = getAccountRegistry()?.current()
+    const realm = doc ? findRealm(doc, ref.authRealmId) : undefined
+    return realm && realm.lifecycle === 'active' ? { ok: true, realm } : { ok: false }
+  },
+  profileRealmLaunch: (profileId) => profileRealmLaunch(profileId),
+  // The hold first, then the wait for a refresh in flight (claude-headless's
+  // order), then a fresh hold for the run; a cancel during the wait lets go.
+  holdProfile: holdProfileForRun,
+  recordPreflight: (profileId, env) => recordProfileReviewPreflight(profileId, env),
+  resolveExecutable: () => resolveClaudeExecutable(),
+  commandLine: (executable, args, platform, env) => cliCommandLine(executable, args, platform, env, 'Claude Code'),
+  shellEnv: (env, platform) => codexShellEnv(env, platform),
+  // Built per run, never at compose time (and it reads SystemRoot fresh).
+  run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps()),
+}
+
 /** Keyed by `ProviderId`, so a provider added to the union but not composed
  *  here is a compile error rather than one that silently never registers.
  *  Exactly one package per provider: the Codex realm locks live in it. */
 const PACKAGE_FACTORIES: Readonly<Record<ProviderId, ProviderPackageFactory>> = {
-  claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo }),
+  claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo, review: claudeReviewPorts }),
   codex: () => createCodexPackage({ realms: codexRealmSource, auth: { takeSecret: (handle) => takeProviderSecret(handle) } }),
 }
 

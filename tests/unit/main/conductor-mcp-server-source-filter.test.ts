@@ -9,7 +9,7 @@
  * Returning null means the caller falls back to the tool's arg-supplied id.
  */
 import { describe, it, expect } from 'vitest'
-import { parseSourceFromUrl, parseCccSessionIdFromUrl } from '../../../src/main/conductor-mcp-server'
+import { parseSourceFromUrl, parseCccSessionIdFromUrl, offeredReviewTool, serveStatelessMcp } from '../../../src/main/conductor-mcp-server'
 
 describe('parseSourceFromUrl (P6.9)', () => {
   it('returns "codex" for ?source=codex', () => {
@@ -83,5 +83,54 @@ describe('parseCccSessionIdFromUrl (P7.7.10)', () => {
     // ACL lookups or error-message logs.
     const huge = 'x'.repeat(300)
     expect(parseCccSessionIdFromUrl(`/sse?cccSessionId=${huge}`)).toBe(null)
+  })
+})
+
+// WP2 commit 5b (owner decision 3): each session is offered only the OTHER
+// provider's reviewer, and claude_review only while a Claude review could be
+// prepared now.
+describe('offeredReviewTool', () => {
+  const on = { toolsMaster: true, codexReviewOn: true, codexEnabled: true, claudeReviewReady: () => true }
+  it('a Claude or unknown connection gets codex_review while its toggles allow; never claude_review', () => {
+    for (const source of ['claude', 'unknown'] as const) {
+      expect(offeredReviewTool(source, on)).toBe('codex_review')
+      expect(offeredReviewTool(source, { ...on, codexReviewOn: false })).toBeNull()
+      expect(offeredReviewTool(source, { ...on, codexEnabled: false })).toBeNull()
+    }
+  })
+  it('a Codex connection gets claude_review only while a Claude review is ready and the Conductor tools are on; never codex_review', () => {
+    expect(offeredReviewTool('codex', on)).toBe('claude_review')
+    expect(offeredReviewTool('codex', { ...on, claudeReviewReady: () => false })).toBeNull()
+    expect(offeredReviewTool('codex', { ...on, toolsMaster: false })).toBeNull()
+    // The codex_review toggles do not decide it.
+    expect(offeredReviewTool('codex', { ...on, codexReviewOn: false, codexEnabled: false })).toBe('claude_review')
+  })
+  it('asks whether a Claude review is ready only for a Codex connection', () => {
+    let asked = 0
+    offeredReviewTool('claude', { ...on, claudeReviewReady: () => { asked++; return true } })
+    expect(asked).toBe(0)
+  })
+})
+
+// ADR-009 confirmation (5b): a stateless /mcp exchange closes its server as
+// soon as the client drops the request -- while a long call (a review) is
+// still inside handleRequest -- which aborts that call; not after it has run
+// to its own deadline.
+describe('serveStatelessMcp', () => {
+  it('a client that drops the request closes the transport and the server while the call is still running', async () => {
+    const closed: string[] = []
+    const listeners: Array<() => void> = []
+    let finish!: () => void
+    const server = { connect: async () => {}, close: () => { closed.push('server') } }
+    const transport = { handleRequest: () => new Promise<void>((r) => { finish = r }), close: () => { closed.push('transport') } }
+    const res = { on: (_e: 'close', fn: () => void) => { listeners.push(fn) } }
+    const p = serveStatelessMcp(server, transport, {}, res)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(listeners).toHaveLength(1)
+    listeners[0]()
+    expect(closed).toEqual(['transport', 'server'])
+    finish()
+    await p
   })
 })

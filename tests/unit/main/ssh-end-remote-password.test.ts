@@ -99,6 +99,7 @@ vi.mock('../../../src/main/logging/logging-service', () => ({
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 0,
   registerCodexReviewSession: () => {},
+  registerClaudeReviewSession: () => {},
   unregisterCodexReviewSession: () => {},
 }))
 vi.mock('../../../src/main/providers', () => ({
