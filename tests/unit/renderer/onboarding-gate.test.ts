@@ -9,10 +9,10 @@ const stampedExcept = (skip: string[] = []): Record<string, string> =>
   Object.fromEntries(ALL_IDS.filter((id) => !skip.includes(id)).map((id) => [id, '2.0.0']))
 
 describe('deriveOnboarding', () => {
-  it('fresh install -> full flow; codexSetup excluded while codex is off', () => {
+  it('fresh install -> full flow; codexSetup and helloCodex excluded while codex is off', () => {
     const { due, steps } = deriveOnboarding({}, {})
     expect(due).toBe(true)
-    expect(steps.map((s) => s.id)).toEqual(ALL_IDS.filter((id) => id !== 'codexSetup'))
+    expect(steps.map((s) => s.id)).toEqual(ALL_IDS.filter((id) => id !== 'codexSetup' && id !== 'helloCodex'))
   })
 
   it('Codex only (claudeEnabled false) -> no Claude Code pages; codexSetup included', () => {
@@ -23,9 +23,10 @@ describe('deriveOnboarding', () => {
   })
 
   it('WP2: a completed upgrader is not made due by the new fresh-install pages', () => {
-    // Their completedSteps predate assistants and codexSetup, so both are
-    // "undone"; neither requires setup, so the harness does not open for them.
-    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['assistants', 'codexSetup']) }
+    // Their completedSteps predate assistants, codexSetup and helloCodex, so
+    // all three are "undone"; none requires setup, so the harness does not
+    // open for them (the Codex introduction reaches them as the takeover).
+    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, completedSteps: stampedExcept(['assistants', 'codexSetup', 'helloCodex']) }
     expect(deriveOnboarding(meta, {}).due).toBe(false)
     expect(deriveOnboarding(meta, { codexEnabled: true }).due).toBe(false)
   })
@@ -36,12 +37,13 @@ describe('deriveOnboarding', () => {
     const legacy = { setupVersion: '1.5.45', lastSeenVersion: '1.5.39', commandsSeeded: true } as unknown as OnboardingMetaView
     const { due, steps } = deriveOnboarding(legacy, {})
     expect(due).toBe(true)
-    expect(steps.length).toBe(ALL_IDS.length - 1)
+    expect(steps.length).toBe(ALL_IDS.length - 2)
   })
 
-  it('codex ON -> codexSetup is included', () => {
+  it('codex ON -> codexSetup and helloCodex are included', () => {
     const { steps } = deriveOnboarding({}, { codexEnabled: true })
     expect(steps.map((s) => s.id)).toContain('codexSetup')
+    expect(steps.map((s) => s.id)).toContain('helloCodex')
     expect(steps.length).toBe(ALL_IDS.length)
   })
 
@@ -50,7 +52,7 @@ describe('deriveOnboarding', () => {
     const { due, steps } = deriveOnboarding(meta, {})
     expect(due).toBe(true)
     expect(steps.map((s) => s.id)).toEqual(
-      ALL_IDS.filter((id) => !['whatsNewV2', 'welcome', 'findClaude', 'codexSetup'].includes(id)),
+      ALL_IDS.filter((id) => !['whatsNewV2', 'welcome', 'findClaude', 'codexSetup', 'helloCodex'].includes(id)),
     )
   })
 
@@ -231,14 +233,16 @@ describe('stepsNewSince — the pages an upgrader is shown after the notes', () 
     expect(stepsNewSince('2.1.0-beta.17', {})).toEqual([])
   })
 
-  it('WP2: never shows an upgrader the assistants choice or Codex setup, though both are new in 2.1.1', () => {
+  it('WP2: never shows an upgrader the assistants choice, Codex setup or the Codex introduction, though all are new in 2.1.1', () => {
     // Owner call: upgraders are not asked; they change providers in
-    // Settings, Accounts. Both steps are freshInstallOnly.
+    // Settings, Accounts. All three steps are freshInstallOnly; the Codex
+    // introduction reaches upgraders as the one-time takeover (commit 6f).
     for (const from of ['2.0.4', '2.1.0', '2.1.1-beta.1']) {
       for (const settings of [{}, { codexEnabled: true }, { claudeEnabled: false, codexEnabled: true }]) {
         const ids = stepsNewSince(from, settings).map((s) => s.id)
         expect(ids, `${from} ${JSON.stringify(settings)}`).not.toContain('assistants')
         expect(ids, `${from} ${JSON.stringify(settings)}`).not.toContain('codexSetup')
+        expect(ids, `${from} ${JSON.stringify(settings)}`).not.toContain('helloCodex')
       }
     }
   })

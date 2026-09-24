@@ -2,16 +2,17 @@ import { describe, it, expect } from 'vitest'
 import { STEPS } from '../../../src/renderer/onboarding/steps'
 
 describe('onboarding registry', () => {
-  it('has 13 steps in the locked order', () => {
+  it('has 14 steps in the locked order', () => {
     // github precedes statusline (user call 2026-07-01): the status-line
     // page's Copilot preview element only exists once the meter is enabled.
     // commandBar follows welcome (2026-08-22, #382): the one-row bar page,
     // new in 2.1.0-beta.17, sits with the other "what this is" pages.
     // WP2 (2.1.1): assistants follows welcome; codexSetup follows the Claude
     // account page and replaces the legacy codex and codexSignIn pages.
+    // WP2 commit 6f: helloCodex, the Codex introduction, follows codexSetup.
     expect(STEPS.map((s) => s.id)).toEqual([
       'whatsNewV2', 'welcome', 'assistants', 'commandBar', 'findClaude', 'compatibility', 'accounts',
-      'codexSetup', 'github', 'statusline', 'builtinTools',
+      'codexSetup', 'helloCodex', 'github', 'statusline', 'builtinTools',
       'transparency', 'finish',
     ])
   })
@@ -47,6 +48,7 @@ describe('onboarding registry', () => {
       compatibility: '2.0.0',
       accounts: '2.0.0',
       codexSetup: '2.1.1',
+      helloCodex: '2.1.1',
       github: '2.0.0',
       statusline: '2.0.0',
       builtinTools: '2.0.0',
@@ -59,27 +61,30 @@ describe('onboarding registry', () => {
     expect(STEPS.find((s) => s.id === 'finish')?.requiresSetup).toBe(false)
   })
 
-  it('the conditional steps are Claude Code\'s own pages and Codex setup', () => {
-    expect(STEPS.filter((s) => s.when).map((s) => s.id)).toEqual(['findClaude', 'compatibility', 'accounts', 'codexSetup', 'statusline'])
+  it('the conditional steps are Claude Code\'s own pages, Codex setup and the Codex introduction', () => {
+    expect(STEPS.filter((s) => s.when).map((s) => s.id)).toEqual(['findClaude', 'compatibility', 'accounts', 'codexSetup', 'helloCodex', 'statusline'])
   })
 
-  it('Claude Code\'s pages follow claudeEnabled (absent = on); codexSetup only when codexEnabled is true', () => {
+  it('Claude Code\'s pages follow claudeEnabled (absent = on); codexSetup and helloCodex only when codexEnabled is true', () => {
     for (const id of ['findClaude', 'compatibility', 'accounts', 'statusline']) {
       const step = STEPS.find((s) => s.id === id)!
       expect(step.when!({}), id).toBe(true)
       expect(step.when!({ claudeEnabled: true }), id).toBe(true)
       expect(step.when!({ claudeEnabled: false, codexEnabled: true }), id).toBe(false)
     }
-    const codexSetup = STEPS.find((s) => s.id === 'codexSetup')!
-    expect(codexSetup.when!({ codexEnabled: true })).toBe(true)
-    expect(codexSetup.when!({ codexEnabled: false })).toBe(false)
-    expect(codexSetup.when!({})).toBe(false)
+    for (const id of ['codexSetup', 'helloCodex']) {
+      const step = STEPS.find((s) => s.id === id)!
+      expect(step.when!({ codexEnabled: true }), id).toBe(true)
+      expect(step.when!({ codexEnabled: false }), id).toBe(false)
+      expect(step.when!({}), id).toBe(false)
+    }
   })
 
-  it('only the assistants choice and Codex setup are fresh-install only, and neither asks for setup', () => {
-    // requiresSetup false: a completed upgrader, who lacks both in
-    // completedSteps, must not be made due by them (deriveOnboarding).
-    expect(STEPS.filter((s) => s.freshInstallOnly).map((s) => s.id)).toEqual(['assistants', 'codexSetup'])
+  it('only the assistants choice, Codex setup and the Codex introduction are fresh-install only, and none asks for setup', () => {
+    // requiresSetup false: a completed upgrader, who lacks them in
+    // completedSteps, must not be made due by them (deriveOnboarding). The
+    // Codex introduction reaches upgraders as the one-time takeover instead.
+    expect(STEPS.filter((s) => s.freshInstallOnly).map((s) => s.id)).toEqual(['assistants', 'codexSetup', 'helloCodex'])
     for (const s of STEPS.filter((x) => x.freshInstallOnly)) expect(s.requiresSetup, s.id).toBe(false)
   })
 

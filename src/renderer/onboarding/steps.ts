@@ -103,6 +103,13 @@ export const STEPS: OnboardingStep[] = [
   // version-change one or the first-run one, handed the page once by the
   // harness, never via stepsNewSince.)
   { id: 'codexSetup',    sinceVersion: '2.1.1', requiresSetup: false, freshInstallOnly: true, when: usesCodex },
+  // "Hello, Codex" (WP2 commit 6f), the Codex introduction: follows Codex
+  // setup wherever that page is shown (a fresh install, and the upgrader it
+  // is handed to), and only once Codex is set up; the harness adds that test
+  // and its own seen stamp. Fresh installs only here, like codexSetup: an
+  // upgrader is never re-walked for it; the one-time takeover outside
+  // onboarding covers them.
+  { id: 'helloCodex',    sinceVersion: '2.1.1', requiresSetup: false, freshInstallOnly: true, when: usesCodex },
   // github precedes statusline (user call 2026-07-01): the status-line page's
   // Copilot preview element only exists once the GitHub meter is enabled.
   { id: 'github',        sinceVersion: '2.0.0', requiresSetup: true  },

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import './onboarding.css'
 import { OnboardingShell } from './OnboardingShell'
@@ -14,6 +14,8 @@ import { GitHubStep } from './GitHubStep'
 import { BuiltinToolsStep } from './BuiltinToolsStep'
 import { AssistantsStep } from './AssistantsStep'
 import { CodexSetupStep } from './CodexSetupStep'
+import { HelloCodexStep } from './HelloCodex'
+import { helloCodexDue } from './hello-codex'
 import { TransparencyStep } from './TransparencyStep'
 import { FinishStep } from './FinishStep'
 import { settleOnboardingFinish, settleWhatsNewOnly } from './settle'
@@ -21,6 +23,7 @@ import { seenVersion } from './whats-new-gate'
 import { usesClaude, usesCodex, claudeWasMissingAtSetup } from './provider-choice'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 
 interface StepNav {
   onNext: () => void
@@ -37,6 +40,16 @@ interface OnboardingCtx {
   stepAside: () => void
   /** How many times the user has come back from stepping aside. */
   returns: number
+  /** Hello Codex's "Start a Codex session": open New saved config with
+   *  Codex chosen once this run ends (the harness covers the window until
+   *  then). */
+  requestCodexSession: () => void
+}
+
+/** What a run hands back beyond the tour choice. Only ever passed when set. */
+export interface OnboardingCompleteExtra {
+  /** Open New saved config with the Codex card chosen (Hello Codex). */
+  startCodexSession?: boolean
 }
 
 interface StepDone {
@@ -88,6 +101,15 @@ const codexChosen = () => usesCodex(useSettingsStore.getState().settings)
  *  page once, in this run: the flag is in memory only (provider-choice.ts),
  *  so a later start never shows it again, and nothing else is re-run. */
 const codexHandOff = () => isUpgrader() && claudeWasMissingAtSetup() && codexChosen()
+
+/** Where the Codex setup page is shown: a fresh install that chose Codex,
+ *  and the upgrader handed to it above. */
+const codexSetupShown = () => (!isUpgrader() && codexChosen()) || codexHandOff()
+
+/** WP2 commit 6f: the Codex introduction is due (Codex set up per the
+ *  accounts snapshot, and never seen). Read at navigation time, so signing
+ *  in on the Codex setup page makes it the next page. */
+const helloCodexIsDue = () => helloCodexDue(useProviderAccountsStore.getState().snapshot, useAppMetaStore.getState().meta)
 
 // The built onboarding pages in flow order. Grows as each page lands; the full
 // registry-driven flow (completedSteps stamping, per-step settle, finish, and
@@ -191,7 +213,7 @@ const PAGES: BuiltStep[] = [
     // the upgrader handed to it by this run's "Use Codex only" (codexHandOff).
     // It replaces the "Do you use Codex?" and Codex sign-in pages, which have
     // left the flow.
-    when: () => (!isUpgrader() && codexChosen()) || codexHandOff(),
+    when: codexSetupShown,
     render: (nav, ctx, _done, run) => (
       <CodexSetupStep
         onNext={nav.onNext}
@@ -199,6 +221,20 @@ const PAGES: BuiltStep[] = [
         stepAside={ctx.stepAside}
         returns={ctx.returns}
       />
+    ),
+  },
+  {
+    id: 'helloCodex',
+    phase: 1,
+    // "Hello, Codex" (WP2 commit 6f): straight after Codex setup, wherever
+    // that page is shown, once Codex is set up and the introduction has not
+    // been seen. Every way forward stamps it seen, so Back from a later page
+    // never shows it twice; Back from its own page 1 returns to Codex setup
+    // unstamped. Anyone else (an upgrader, or Codex set up later in Settings)
+    // meets it as the one-time takeover outside onboarding instead.
+    when: () => codexSetupShown() && helloCodexIsDue(),
+    render: (nav, ctx, _done, run) => (
+      <HelloCodexStep onNext={nav.onNext} onBack={run.isFirst ? undefined : nav.onBack} onStartSession={ctx.requestCodexSession} />
     ),
   },
   // GitHub deliberately precedes Status line (user call 2026-07-01): the p4
@@ -229,14 +265,16 @@ const PAGES: BuiltStep[] = [
  *   change) to the Codex setup page (see codexHandOff): that page alone, no
  *   notes, no phases, and nothing stamped when it ends. App sets it only when
  *   neither the full flow nor the notes are due; in those runs the page joins
- *   them instead.
+ *   them instead. The Codex introduction follows it when due (WP2 commit 6f).
+ * @param onComplete `extra` is passed only when a page asked for something
+ *   after the run: Hello Codex's "Start a Codex session".
  */
 export function OnboardingHarness({
   onComplete,
   whatsNewOnly = false,
   codexSetupOnly = false,
 }: {
-  onComplete: (startTour: boolean) => void
+  onComplete: (startTour: boolean, extra?: OnboardingCompleteExtra) => void
   whatsNewOnly?: boolean
   codexSetupOnly?: boolean
 }) {
@@ -248,7 +286,7 @@ export function OnboardingHarness({
   // is where that reshuffle is wanted: the pages after the assistants page
   // follow the choice as it is saved.
   const [{ pages, newIds }] = useState<{ pages: BuiltStep[]; newIds: ReadonlySet<string> }>(() => {
-    if (codexSetupOnly) return { pages: PAGES.filter((p) => p.id === 'codexSetup'), newIds: new Set() }
+    if (codexSetupOnly) return { pages: PAGES.filter((p) => p.id === 'codexSetup' || p.id === 'helloCodex'), newIds: new Set() }
     if (!whatsNewOnly) return { pages: PAGES, newIds: new Set() }
     // The stamp clamped to the last build that ran, not the raw stamp — the
     // same origin the launch decision used (#369), so a stamp written ahead of
@@ -256,14 +294,18 @@ export function OnboardingHarness({
     const lastSeen = seenVersion()
     const { codexEnabled, claudeEnabled } = useSettingsStore.getState().settings
     // In a notes run, every page after the notes is there BECAUSE it is new in
-    // this build, and is badged so; the Codex setup hand-off is there because
-    // of this run's "Use Codex only", so it joins the run unbadged.
+    // this build, and is badged so; the Codex setup hand-off (and the Codex
+    // introduction after it, when due) is there because of this run's "Use
+    // Codex only", so it joins the run unbadged.
     const fresh = new Set(stepsNewSince(lastSeen, { codexEnabled, claudeEnabled }).map((s) => s.id))
+    const handOff = codexHandOff()
     return {
-      pages: PAGES.filter((p) => p.id === 'whatsNewV2' || fresh.has(p.id) || (p.id === 'codexSetup' && codexHandOff())),
+      pages: PAGES.filter((p) => p.id === 'whatsNewV2' || fresh.has(p.id) || (handOff && (p.id === 'codexSetup' || p.id === 'helloCodex'))),
       newIds: fresh,
     }
   })
+  // Hello Codex's "Start a Codex session", held until the run ends.
+  const codexSessionRequested = useRef(false)
   // Start at the first APPLICABLE page — pages[0] (whatsNewV2) is upgrader-only,
   // so a fresh install must open on welcome, not render a when():false page.
   const [cursor, setCursor] = useState(() => (pages.find((p) => !p.when || p.when()) ?? pages[0]).id)
@@ -291,7 +333,8 @@ export function OnboardingHarness({
       if (codexSetupOnly) { /* nothing to stamp */ }
       else if (whatsNewOnly) settleWhatsNewOnly()
       else settleOnboardingFinish()
-      onComplete(startTour)
+      if (codexSessionRequested.current) onComplete(startTour, { startCodexSession: true })
+      else onComplete(startTour)
     },
   }
   const nav: StepNav = {
@@ -312,7 +355,10 @@ export function OnboardingHarness({
       }
     },
   }
-  const ctx: OnboardingCtx = { version, setVersion, stepAside: () => setAside(true), returns }
+  const ctx: OnboardingCtx = {
+    version, setVersion, stepAside: () => setAside(true), returns,
+    requestCodexSession: () => { codexSessionRequested.current = true },
+  }
   const run: RunShape = { whatsNewOnly, isLast, isFirst }
   return (
     <>

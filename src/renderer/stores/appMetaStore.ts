@@ -13,6 +13,12 @@ export interface AppMeta {
    *  rather than a boolean, exactly like lastSeenVersion — see
    *  onboarding/multi-spawn-intro-gate.ts. */
   multiSpawnIntroVersion?: string
+  /** The build running when the Codex introduction was first left (Done,
+   *  Skip, Escape or "Start a Codex session"; WP2 commit 6f), or a replay of
+   *  it left while it was still due. Presence is what counts: once written,
+   *  it is never shown again, not even after an upgrade. A replay of an
+   *  introduction already seen never writes it. See onboarding/hello-codex.ts. */
+  helloCodexSeenVersion?: string
   commandsSeeded?: boolean
   colorMigrated?: boolean
   /** Set once the saved config the RETIRED "Ask the Conductor" path used to

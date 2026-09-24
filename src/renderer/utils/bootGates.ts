@@ -40,6 +40,13 @@
  *                          copy counts are read from the sessions this start
  *                          brought back; shown first it would count zero and
  *                          claim nothing was resumable.
+ *  10. helloCodex       — the one-time Codex introduction (WP2 commit 6f),
+ *                          outside onboarding. After everything above,
+ *                          including the `*Due` short-circuit: it must never
+ *                          cover a running setup. bootChain below asks this
+ *                          chain whether it would be next; only then does
+ *                          HelloCodexHost latch it open, and only once it is
+ *                          open is it an input here.
  *
  * `resume` joined the chain on 2026-08-21. It and the Sentinel panel were the
  * two boot surfaces still OUTSIDE it, each with its own render condition — the
@@ -71,6 +78,7 @@ export type BootGate =
   | 'loggingConsent'
   | 'resume'
   | 'multiSpawnIntro'
+  | 'helloCodex'
 
 export interface BootGateState {
   configLoaded: boolean
@@ -93,6 +101,9 @@ export interface BootGateState {
    *  boot (decideMultiSpawnIntro) from meta read before anything stamped.
    *  Optional: absent === false. */
   multiSpawnIntroDue?: boolean
+  /** The Codex introduction's one-time takeover is open (latched by App once
+   *  it was due and nothing was in its way). Optional: absent === false. */
+  helloCodexOpen?: boolean
   /** shouldShowWhatsNew() — true before postConfigInit has armed the harness. */
   whatsNewDue: boolean
   /** shouldShowTraining() || isFirstInstall() — true before the tour opens. */
@@ -116,5 +127,23 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   if (!s.loggingConsentSeen) return 'loggingConsent'
   if (s.resumePending) return 'resume'
   if (s.multiSpawnIntroDue) return 'multiSpawnIntro'
+  if (s.helloCodexOpen) return 'helloCodex'
   return null
+}
+
+/**
+ * App's whole boot-chain decision, in one place so it can be tested as App
+ * uses it: the gate that renders now, and the two answers the Codex
+ * introduction's host needs. `helloCodexGatesClear`: every gate above the
+ * takeover has had its turn, the *Due waits included (would the takeover be
+ * next if it were open?). `helloCodexTurn`: the takeover is open and it is
+ * its turn, so it renders.
+ */
+export function bootChain(s: BootGateState): { gate: BootGate | null; helloCodexGatesClear: boolean; helloCodexTurn: boolean } {
+  const gate = pickBootGate(s)
+  return {
+    gate,
+    helloCodexGatesClear: pickBootGate({ ...s, helloCodexOpen: true }) === 'helloCodex',
+    helloCodexTurn: gate === 'helloCodex',
+  }
 }

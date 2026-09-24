@@ -323,17 +323,23 @@ export function DialogCallout({ tone = 'neutral', children, testId, className = 
  * Do NOT add this to a dialog that holds unsaved user input unless the caller
  * gates it: a form that discards a half-typed config on one keypress, with no
  * confirm and no undo, is a worse bug than the missing shortcut.
+ *
+ * `when`, if given, is asked on each Escape: false leaves the key alone
+ * (neither stopped nor acted on), so a dialog opened later and painted above
+ * this one gets it instead. A full-screen surface that registered first needs
+ * this, because registering first means hearing Escape first.
  */
-export function useDialogEscape(onClose: (() => void) | undefined, enabled = true) {
+export function useDialogEscape(onClose: (() => void) | undefined, enabled = true, when?: () => boolean) {
   React.useEffect(() => {
     if (!enabled || !onClose) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      if (when && !when()) return
       e.stopImmediatePropagation()
       e.preventDefault()
       onClose()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose, enabled])
+  }, [onClose, enabled, when])
 }

@@ -109,9 +109,13 @@ interface Props {
    *  SSH/terminal change re-binds against the saved config, so the dialog
    *  says so up front instead of letting a restart fail as a surprise. */
   liveSessionCount?: number
+  /** A NEW config's provider card, chosen up front: Hello Codex's "Start a
+   *  Codex session" (WP2 commit 6f). Ignored on an edit, and while that
+   *  provider is off. */
+  initialProvider?: 'codex'
 }
 
-export default function SessionDialog({ onConfirm, onCancel, initial, liveSessionCount = 0 }: Props) {
+export default function SessionDialog({ onConfirm, onCancel, initial, liveSessionCount = 0, initialProvider }: Props) {
   const groups = useConfigStore((s) => s.groups)
   const addGroup = useConfigStore((s) => s.addGroup)
   const sections = useConfigStore((s) => s.sections)
@@ -141,7 +145,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [uiProvider, setUiProvider] = useState<UiProvider | null>(
     initial
       ? (initial.shellOnly ? 'terminal' : (initial.provider ?? 'claude'))
-      : (claudeDisabled && !codexDisabled ? 'codex' : null)
+      : ((initialProvider === 'codex' || claudeDisabled) && !codexDisabled ? 'codex' : null)
   )
   const [sessionType, setSessionType] = useState<SessionType | null>(initial ? (initial.sessionType ?? 'local') : null)
 

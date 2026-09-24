@@ -62,6 +62,8 @@ import { useAppMetaStore } from './stores/appMetaStore'
 import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
+import { HelloCodexHost, useHeldCodexSessionStart } from './onboarding/HelloCodex'
+import { useHelloCodexStore } from './onboarding/hello-codex'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
 import { finishSetup, harnessRun, cliSetupAtStart } from './onboarding/setup-handoff'
 import { bootWhatsNewSurface, lastRunVersionOf } from './onboarding/upgrade-flow'
@@ -86,7 +88,7 @@ import { setupSleepListeners } from './stores/sleepStore'
 import { setupActiveListeners } from './stores/activeStore'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
-import { pickBootGate } from './utils/bootGates'
+import { bootChain } from './utils/bootGates'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
 import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
@@ -239,6 +241,14 @@ export default function App() {
   }, [])
 
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
+  /** The provider card the first-config dialog opens on. Set only by Hello
+   *  Codex's "Start a Codex session" (WP2 commit 6f); cleared when the
+   *  dialog closes, so every other way in opens it as before. */
+  const [guidedConfigProvider, setGuidedConfigProvider] = useState<'codex' | undefined>(undefined)
+  const startCodexSession = () => {
+    setGuidedConfigProvider('codex')
+    setShowGuidedConfig(true)
+  }
   // Live-app guided tour that follows the onboarding finish step (or the
   // Feature Guide button). Anchored coach-marks over the real UI, ending by
   // opening the first-config dialog.
@@ -270,6 +280,13 @@ export default function App() {
   // the finish step's completion stamp dismiss the harness, but a hook placed
   // after a conditional return breaks the Rules of Hooks and blanks the app.
   const onboardingMeta = useAppMetaStore((s) => s.meta)
+  // WP2 commit 6f: the Codex introduction's takeover, once HelloCodexHost has
+  // latched it open, takes the last turn in the boot chain (pickBootGate).
+  const helloCodexTakeoverOpen = useHelloCodexStore((s) => s.open === 'takeover')
+  // Its "Start a Codex session", held while the resume prompt is unanswered
+  // (New saved config outranks that prompt, and a launch would autosave over
+  // the restore set it is asking about).
+  const requestCodexSession = useHeldCodexSessionStart(pendingRestore !== null, startCodexSession)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   // Subscribe to sessions through a STRUCTURAL equality so the root shell does
   // NOT re-render on the statusline bridge's ~1-3×/s telemetry ticks (which only
@@ -1220,7 +1237,7 @@ export default function App() {
   // due, otherwise the page joins that run.
   const harness = harnessRun({ fullFlowDue: deriveOnboarding(onboardingMeta, {}).due, whatsNewOnly, codexSetupHandOff })
   const onboardingDue = harness.due
-  const bootGate = pickBootGate({
+  const bootGateState = {
     configLoaded,
     onboardingDue,
     logsWipeBytes,
@@ -1232,10 +1249,15 @@ export default function App() {
     loggingConsentSeen: Boolean(loggingConsentSeen),
     resumePending: pendingRestore !== null,
     multiSpawnIntroDue,
+    helloCodexOpen: helloCodexTakeoverOpen,
     whatsNewDue: shouldShowWhatsNew(),
     trainingDue: shouldShowTraining() || isFirstInstall(),
     githubOnboardingDue: isGitHubOnboardingDue(),
-  })
+  }
+  // bootChain: the gate that renders now, and for the Codex introduction
+  // whether every gate above it has had its turn and whether it is its turn.
+  const boot = bootChain(bootGateState)
+  const bootGate = boot.gate
 
   return (
     <ErrorBoundary>
@@ -1247,7 +1269,7 @@ export default function App() {
           <OnboardingHarness
             whatsNewOnly={whatsNewOnly}
             codexSetupOnly={harness.codexSetupOnly}
-            onComplete={(startTour) => {
+            onComplete={(startTour, extra) => {
               // The settle already stamped this run (the harness unmounts on
               // this render). Clear the notes-only arm explicitly: unlike the
               // full flow, nothing it writes is read back by deriveOnboarding,
@@ -1257,6 +1279,11 @@ export default function App() {
               setCodexSetupHandOff(false)
               // Launch the live-app tour if chosen.
               if (startTour) setTourActive(true)
+              // Hello Codex's "Start a Codex session": New saved config with
+              // Codex chosen, after the tour when one was chosen too (the
+              // tour outranks the dialog in pickBootGate), and after the
+              // resume prompt when saved sessions are waiting (held).
+              if (extra?.startCodexSession) requestCodexSession()
             }}
           />
         )}
@@ -1363,6 +1390,20 @@ export default function App() {
           />
         )}
 
+        {/* WP2 commit 6f: the Codex introduction outside onboarding. The
+            host opens the one-time takeover on the first accounts snapshot
+            that makes it due, once the boot gates are through and no dialog
+            is open; it renders on its own turn (bootGate 'helloCodex'). A
+            replay from the Feature Guide or Settings, Accounts shows here
+            too, and writes the seen stamp only if the page was still due.
+            Rendered BEFORE the close dialogs below, at the same z-50 as
+            they are (or lower), so they paint above it. */}
+        <HelloCodexHost
+          gatesClear={boot.helloCodexGatesClear}
+          takeoverTurn={boot.helloCodexTurn}
+          onStartSession={requestCodexSession}
+        />
+
         <SshCloseDialog />
         {closeDialog && (
           <CloseDialog
@@ -1438,7 +1479,8 @@ export default function App() {
             GuidedConfigView). */}
         {bootGate === 'guidedConfig' && (
           <SessionDialog
-            onCancel={() => setShowGuidedConfig(false)}
+            initialProvider={guidedConfigProvider}
+            onCancel={() => { setShowGuidedConfig(false); setGuidedConfigProvider(undefined) }}
             onConfirm={async (data, password, sudoPassword, argSecret, launchAck) => {
               const { generateId } = await import('./utils/id')
               const config = { ...data, id: generateId() }
@@ -1449,6 +1491,7 @@ export default function App() {
               useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
               trackUsage('sessions.create-config')
               setShowGuidedConfig(false)
+              setGuidedConfigProvider(undefined)
               const sessionId = launchConfig(config)
               // The dialog's ticked "launch with the sign-in already on this
               // computer" covers exactly this launch, never a later one.

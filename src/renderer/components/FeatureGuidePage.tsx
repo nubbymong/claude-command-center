@@ -7,6 +7,8 @@ import { launchAskConductor } from '../lib/askConductor'
 import { ASK_CLAUDE_OFF, useAskConductorBlocked } from '../lib/askConductorGate'
 import { changelog } from '../changelog'
 import { WhatsNewEntries } from './WhatsNewEntries'
+import { showHelloCodexReplay, codexSetUp } from '../onboarding/hello-codex'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 
 // Full-screen Feature Guide — a peer page (ViewType 'help'), NOT the old
 // createPortal modal that floated over every other page. It renders the same
@@ -265,6 +267,7 @@ function GuideIcon() {
 function FeatureCard({ step, onOpenExplained }: { step: TrainingStep; onOpenExplained?: () => void }) {
   const shot = getScreenshot(step.screenshotFilename)
   const highlights = step.highlights ?? step.bullets ?? []
+  const codexReady = useProviderAccountsStore((s) => codexSetUp(s.snapshot))
   return (
     <article
       data-ux-id={`card-${step.id}`}
@@ -295,6 +298,19 @@ function FeatureCard({ step, onOpenExplained }: { step: TrainingStep; onOpenExpl
               title="Open the Canvas Explained page here, inside the guide"
             >
               View Canvas Explained
+            </button>
+          )}
+          {/* The Codex introduction, replayed (WP2 commit 6f): offered only
+              once Codex is set up, since its first page says the account is
+              ready. A replay marks it seen only if it was still due. */}
+          {step.id === 'codex-provider' && codexReady && (
+            <button
+              data-ux-id="show-codex-intro"
+              onClick={showHelloCodexReplay}
+              className="ml-auto shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-md transition-colors focus-ring"
+              style={{ background: 'color-mix(in srgb, var(--brand) 16%, transparent)', border: '1px solid color-mix(in srgb, var(--brand) 45%, transparent)', color: 'var(--brand)' }}
+            >
+              Show the Codex introduction
             </button>
           )}
         </div>

@@ -51,6 +51,7 @@ import ConfigLoadFailedNotice from './ConfigLoadFailedNotice'
 import ConfigLoadFailedRailIndicator from './sidebar/ConfigLoadFailedRailIndicator'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
+import { useHelloCodexStore } from '../onboarding/hello-codex-open'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
@@ -340,6 +341,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       // Suppressed while onboarding overlays the shell — Ctrl+T here would
       // open the New Config dialog invisibly underneath it.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      // And while the Codex introduction covers it (WP2 commit 6f).
+      if (useHelloCodexStore.getState().open !== null) return
       const sc = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
       if (matchesShortcut(e, sc.newConfig)) {
         e.preventDefault()

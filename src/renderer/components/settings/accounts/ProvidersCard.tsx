@@ -11,6 +11,7 @@ import { ProviderMark } from '../../sidebar/Badges'
 import ToggleSwitch from '../../github/config/ToggleSwitch'
 import { Section } from '../../SettingsPage'
 import { Pill, StatusText, ErrorLine, RowButton } from './accounts-ui'
+import { showHelloCodexReplay, codexSetUp } from '../../../onboarding/hello-codex'
 
 /** The CLI is missing, could not be checked, or cannot be used as found:
  *  worth checking again once the user has installed or updated it. */
@@ -25,6 +26,7 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const status = providerStatus(p)
+  const codexReady = useProviderAccountsStore((s) => codexSetUp(s.snapshot))
 
   // The result arrives with the snapshot main pushes after the check.
   const checkAgain = async () => {
@@ -64,6 +66,14 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
             <RowButton onClick={() => { void checkAgain() }} disabled={checking} testId={`provider-check-again-${p.providerId}`}>
               {checking ? 'Checking...' : 'Check again'}
             </RowButton>
+          </div>
+        )}
+        {/* The Codex introduction, replayed (WP2 commit 6f): offered only
+            once Codex is set up, since its first page says the account is
+            ready. A replay marks it seen only if it was still due. */}
+        {p.providerId === 'codex' && codexReady && (
+          <div className="mt-1" data-ux-id="provider-codex-intro">
+            <RowButton onClick={showHelloCodexReplay} testId="provider-codex-intro">Show the Codex introduction</RowButton>
           </div>
         )}
       </div>
