@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "32e89e25c10cc77e4a25adf08063f4ed6b9d74d8c774dd36a897702f288b4edc",
-  "manifestHead": "bb0b7ab988751f139e4b0acd8b84cc92921f5c72",
+  "manifestPathDigest": "f9487a422ceaa9ca70a7958cce7555969eda48815456efc134e4d8f498f06771",
+  "manifestHead": "c4da765a375b4aec2e918b0f3f40529928360523",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -3510,6 +3510,16 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-provider-binding.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 regression for the per-spawn MCP (WP1.68): a connection's tool set follows the provider its session's credential was issued to; tests/unit/main/conductor-mcp-provider-binding.test.ts",
+      "note": "Codex appears as the provider name the test issues a credential to; no Codex code path"
     }
   ]
 }

@@ -27,6 +27,7 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 19333,
   // GHSA-q83v: the writer embeds the per-session HMAC, not the raw secret.
   mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
+  issueMcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
 
 vi.mock('../../../src/main/providers/claude/statusline-command', () => ({

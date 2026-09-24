@@ -1,51 +1,14 @@
 /**
- * P6.9 regression: parseSourceFromUrl correctly identifies the SSE
- * connection's originating provider via the ?source= query string.
- * The MCP server uses this to gate codex_review tool registration
- * (Codex sessions don't see the tool to avoid self-review confusion).
+ * The provider-facing helpers of the conductor MCP server: the session id
+ * parsed from the transport URL, which review tool each provider is offered,
+ * and the stateless /mcp serving path.
  *
  * P7.7.10 additions: parseCccSessionIdFromUrl returns the CCC session id
  * baked into the per-session --mcp-config URL by writeLocalSessionMcpConfig.
  * Returning null means the caller falls back to the tool's arg-supplied id.
  */
 import { describe, it, expect } from 'vitest'
-import { parseSourceFromUrl, parseCccSessionIdFromUrl, offeredReviewTool, serveStatelessMcp } from '../../../src/main/conductor-mcp-server'
-
-describe('parseSourceFromUrl (P6.9)', () => {
-  it('returns "codex" for ?source=codex', () => {
-    expect(parseSourceFromUrl('/sse?source=codex')).toBe('codex')
-  })
-
-  it('returns "claude" for ?source=claude', () => {
-    expect(parseSourceFromUrl('/sse?source=claude')).toBe('claude')
-  })
-
-  it('returns "unknown" when source param is absent', () => {
-    expect(parseSourceFromUrl('/sse')).toBe('unknown')
-  })
-
-  it('returns "unknown" for an unrecognised source value', () => {
-    expect(parseSourceFromUrl('/sse?source=other')).toBe('unknown')
-  })
-
-  // P9.6: the /mcp streamable-HTTP route reuses parseSourceFromUrl so the
-  // same source-based codex_review gate (`if source !== 'codex'`) applies.
-  // Without this Codex sessions reaching the server via /mcp would see
-  // codex_review and could recursively review themselves.
-  it('returns "codex" for /mcp?source=codex (streamable HTTP route)', () => {
-    expect(parseSourceFromUrl('/mcp?source=codex')).toBe('codex')
-  })
-
-  it('returns "claude" for /mcp?source=claude', () => {
-    expect(parseSourceFromUrl('/mcp?source=claude')).toBe('claude')
-  })
-
-  it('returns "unknown" for a malformed URL', () => {
-    // The function uses URL constructor which throws on invalid input;
-    // the catch block returns 'unknown'.
-    expect(parseSourceFromUrl('not a url')).toBe('unknown')
-  })
-})
+import { parseCccSessionIdFromUrl, offeredReviewTool, serveStatelessMcp } from '../../../src/main/conductor-mcp-server'
 
 describe('parseCccSessionIdFromUrl (P7.7.10)', () => {
   it('returns the sessionId for ?cccSessionId=<sid>', () => {
@@ -71,9 +34,8 @@ describe('parseCccSessionIdFromUrl (P7.7.10)', () => {
     expect(parseCccSessionIdFromUrl('/sse?cccSessionId=sess%2Bone')).toBe('sess+one')
   })
 
-  it('coexists with the source param (both readable from the same URL)', () => {
+  it('reads the session id beside other query params', () => {
     const url = '/sse?source=claude&cccSessionId=mpg2xyz'
-    expect(parseSourceFromUrl(url)).toBe('claude')
     expect(parseCccSessionIdFromUrl(url)).toBe('mpg2xyz')
   })
 

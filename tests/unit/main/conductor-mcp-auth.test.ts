@@ -11,7 +11,7 @@
  *
  * isAuthorizedMcpRequest is a pure helper (no I/O, no http types) so the
  * auth contract can be unit-tested directly -- the same idiom as
- * parseSourceFromUrl / buildSessionNotFoundResponse in this module.
+ * parseCccSessionIdFromUrl / buildSessionNotFoundResponse in this module.
  */
 import { describe, it, expect } from 'vitest'
 import {

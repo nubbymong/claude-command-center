@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { getConductorMcpPort, mcpSessionToken } from '../../conductor-mcp-server'
+import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
 import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 import { SHIM_GATHER_JS, SHIM_STATUS_URL_JS } from './statusline-gather'
 import { CONTAINER_NAME_RE, readContainerName } from '../../../shared/container-command'
@@ -226,7 +226,7 @@ export function statusPostUrl(
 ): string {
   if (!(mcpPort > 0) || !includeConductorMcp) return ''
   const listen = remoteMcpPort && remoteMcpPort > 0 ? remoteMcpPort : mcpPort
-  const url = `http://127.0.0.1:${listen}/status?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`
+  const url = `http://127.0.0.1:${listen}/status?cccSessionId=${encodeURIComponent(sessionId)}&token=${issueMcpSessionToken(sessionId, 'claude')}`
   if (!/^[A-Za-z0-9:/?=&._%-]+$/.test(url)) {
     throw new Error('statusPostUrl: generated URL fails the charset guard')
   }
@@ -320,7 +320,7 @@ export function generateRemoteSetupScript(
         mcpServers: {
           'conductor': {
             type: 'sse',
-            url: `http://localhost:${remoteMcpPort && remoteMcpPort > 0 ? remoteMcpPort : mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`,
+            url: `http://localhost:${remoteMcpPort && remoteMcpPort > 0 ? remoteMcpPort : mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${issueMcpSessionToken(sessionId, 'claude')}`,
           },
         },
       })
@@ -1047,7 +1047,7 @@ export function generateWindowsRemoteSetupScript(
         mcpServers: {
           conductor: {
             type: 'sse',
-            url: `http://localhost:${remoteMcpPort && remoteMcpPort > 0 ? remoteMcpPort : mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`,
+            url: `http://localhost:${remoteMcpPort && remoteMcpPort > 0 ? remoteMcpPort : mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${issueMcpSessionToken(sessionId, 'claude')}`,
           },
         },
       })

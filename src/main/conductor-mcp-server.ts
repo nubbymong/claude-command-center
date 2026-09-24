@@ -61,23 +61,6 @@ import { readAttachmentChecked, readImageFileChecked } from './canvas/canvas-evi
 import { canvasConfigNameForSession } from './canvas/canvas-session-link'
 import { readCheckedFile } from './utils/safe-file-read'
 
-/** P6.9: Parse the `source` query string from the SSE request URL.
- *  The Codex TOML writer appends `?source=codex` so the server can skip
- *  registering the codex_review tool for Codex sessions (avoids
- *  Codex-self-review confusion). Unknown / missing source defaults to
- *  'unknown' which behaves like 'claude' (codex_review IS advertised). */
-export function parseSourceFromUrl(reqUrl: string): 'claude' | 'codex' | 'unknown' {
-  try {
-    const url = new URL(reqUrl, 'http://localhost')
-    const param = url.searchParams.get('source')
-    if (param === 'codex') return 'codex'
-    if (param === 'claude') return 'claude'
-    return 'unknown'
-  } catch {
-    return 'unknown'
-  }
-}
-
 /** P7.7.10: Parse the `cccSessionId` query string from the SSE request URL.
  *  The per-session --mcp-config writer bakes the CCC session id into the
  *  URL so the server can resolve it from the transport rather than trusting
@@ -135,6 +118,31 @@ export function getConductorMcpSecret(): string {
  */
 export function mcpSessionToken(sessionId: string): string {
   return crypto.createHmac('sha256', getConductorMcpSecret()).update(sessionId, 'utf8').digest('hex')
+}
+
+export type McpClientProvider = 'claude' | 'codex'
+
+/** The provider each session's credential was issued to this run, recorded
+ *  when the app hands the session its token and read back when the session
+ *  connects: a connection's tool set follows the session it authenticated as.
+ *  The latest issue for a session id stands, except that a Codex record is
+ *  kept for the run: a session's provider is fixed when it is created, so a
+ *  later Claude issue for a Codex session's id is not one to honour. One small
+ *  entry per session id. */
+const sessionProviders = new Map<string, McpClientProvider>()
+
+/** Hand a session its MCP credential, recording the provider it goes to.
+ *  Every writer of a session's MCP config, SSH shim or Codex environment
+ *  issues through here, never through `mcpSessionToken` directly. */
+export function issueMcpSessionToken(sessionId: string, provider: McpClientProvider): string {
+  if (sessionProviders.get(sessionId) !== 'codex') sessionProviders.set(sessionId, provider)
+  return mcpSessionToken(sessionId)
+}
+
+/** The provider a session's credential was issued to this run, or null when
+ *  none was: such a session is not offered a tool set on the SSE route. */
+export function mcpSessionProvider(sessionId: string): McpClientProvider | null {
+  return sessionProviders.get(sessionId) ?? null
 }
 
 const BEARER_SCHEME = 'bearer'
@@ -1228,10 +1236,17 @@ export async function startMcpServer(
       }
 
       if (req.method === 'GET' && req.url && req.url.startsWith('/sse')) {
-        const source = parseSourceFromUrl(req.url)
         // The bound session is the AUTHENTICATED one, not a re-parse of the
-        // query — the token proved it.
+        // query — the token proved it. Its provider is the one its credential
+        // was issued to (issueMcpSessionToken); the request does not say.
         const boundSessionId = authedSession
+        const source = mcpSessionProvider(boundSessionId)
+        if (!source) {
+          logWarn(`[vision-mcp] Refused SSE connection (sid=${boundSessionId}): no credential was issued to this session in this run`)
+          res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end('Forbidden')
+          return
+        }
         logInfo(`[vision-mcp] New SSE connection (source=${source}, sid=${boundSessionId})`)
         const server = createServer(source, boundSessionId, 'sse')
         // Bake this session's OWN token + id into the /messages endpoint the SDK

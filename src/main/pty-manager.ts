@@ -38,7 +38,7 @@ import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
 import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
-import { getConductorMcpPort } from './conductor-mcp-server'
+import { getConductorMcpPort, issueMcpSessionToken } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
 import { getRemoteMcpPort } from './ssh-remote-port'
 import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
@@ -1540,6 +1540,12 @@ function spawnPtyResolved(
     const localMcpPort = getConductorMcpPort()
     const remoteMcpPort = getRemoteMcpPort(sessionId, localMcpPort)
     const sshArgs = buildSshArgs(ssh, localMcpPort, os.platform(), remoteMcpPort)
+    // The tunnel is up as soon as ssh logs in, and a remote Claude kept running
+    // in tmux from an earlier run reconnects through it before any setup script
+    // is written, still holding its session token: record that credential as
+    // this session's now (SSH sessions are Claude-only, refused above for any
+    // other provider), so the reconnect is served.
+    if (localMcpPort > 0) issueMcpSessionToken(sessionId, 'claude')
 
     // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
     // Claude Code inside the SSH session can reach it via http://localhost:<port>.

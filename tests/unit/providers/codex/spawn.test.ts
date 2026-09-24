@@ -28,7 +28,10 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => (globalThis as any).__mockMcpPort ?? 0,
   // GHSA-q83v: Codex's bearer token is now HMAC(secret, sessionId). Deterministic
   // session-specific stub so the assertions can pin THIS session's token.
-  mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
+  // A site that minted directly (skipping the provider record) gets a token no check expects.
+  mcpSessionToken: () => 'tok-minted-directly',
+  // Only the right provider gets the expected token: a wrong one fails the token checks.
+  issueMcpSessionToken: (sessionId: string, provider: string) => ({ codex: `tok-${sessionId}` } as Record<string, string>)[provider] ?? 'tok-wrong-provider',
 }))
 
 vi.mock('../../../../src/main/providers/codex/telemetry', async (importOriginal) => {

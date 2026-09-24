@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T10:04:50.082Z",
-  "head": "bb0b7ab988751f139e4b0acd8b84cc92921f5c72",
-  "tree": "71103a9e76bf885e03feebf5c5f139d9b0604e3d",
+  "generatedAt": "2026-09-24T11:48:15.386Z",
+  "head": "c4da765a375b4aec2e918b0f3f40529928360523",
+  "tree": "b6af2d570ddb447df14dcd4ae818e8e7a08921af",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2222,
+  "trackedFileCount": 2223,
   "excludedFileCount": 372,
-  "scannedFileCount": 1850,
+  "scannedFileCount": 1851,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 314,
-  "pathDigest": "32e89e25c10cc77e4a25adf08063f4ed6b9d74d8c774dd36a897702f288b4edc",
+  "matchedPathCount": 315,
+  "pathDigest": "f9487a422ceaa9ca70a7958cce7555969eda48815456efc134e4d8f498f06771",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -402,7 +402,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 88
+      "lineCount": 84
     },
     {
       "path": "src/main/config-manager.ts",
@@ -717,7 +717,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 60
+      "lineCount": 59
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -1803,12 +1803,19 @@
       "lineCount": 2
     },
     {
+      "path": "tests/unit/main/conductor-mcp-provider-binding.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
       "path": "tests/unit/main/conductor-mcp-server-source-filter.test.ts",
       "predicates": [
         "P05",
         "P13"
       ],
-      "lineCount": 25
+      "lineCount": 15
     },
     {
       "path": "tests/unit/main/conductor-mcp-session-binding.test.ts",
@@ -2053,7 +2060,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 197
+      "lineCount": 198
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",

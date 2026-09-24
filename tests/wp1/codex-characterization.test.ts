@@ -23,7 +23,10 @@ vi.mock('child_process', async (importOriginal) => {
 vi.mock('../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '' }))
 vi.mock('../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => (globalThis as any).__wp1McpPort ?? 0,
-  mcpSessionToken: (sid: string) => `tok-${sid}`,
+  // A site that minted directly (skipping the provider record) gets a token no check expects.
+  mcpSessionToken: () => 'tok-minted-directly',
+  // Only the right provider gets the expected token: a wrong one fails the token checks.
+  issueMcpSessionToken: (sid: string, provider: string) => ({ codex: `tok-${sid}` } as Record<string, string>)[provider] ?? 'tok-wrong-provider',
 }))
 vi.mock('../../src/main/config-manager', () => ({ readConfig: () => ({ conductorToolsEnabled: true }) }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))

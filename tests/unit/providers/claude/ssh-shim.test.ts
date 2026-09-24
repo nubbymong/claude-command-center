@@ -13,7 +13,10 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   // GHSA-q83v: the remote config now carries HMAC(secret, sessionId), not the
   // raw secret. Deterministic session-specific stub so the assertion proves
   // THIS session's token is baked in.
-  mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
+  // A site that minted directly (skipping the provider record) gets a token no check expects.
+  mcpSessionToken: () => 'tok-minted-directly',
+  // Only the right provider gets the expected token: a wrong one fails the token checks.
+  issueMcpSessionToken: (sessionId: string, provider: string) => ({ claude: `tok-${sessionId}` } as Record<string, string>)[provider] ?? 'tok-wrong-provider',
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
@@ -159,6 +162,8 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   it('bakes this session\'s per-session token into the remote MCP URL (GHSA-q83v)', () => {
     const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     expect(script).toContain('&token=tok-sid-x')
+    // The MCP URL itself, not just the status URL the script also carries.
+    expect(script).toContain('/sse?cccSessionId=sid-x&token=tok-sid-x')
   })
 
   // #242 finding F2 (MAJOR, adversarial review round 5): ssh-shim.ts:200
@@ -922,6 +927,10 @@ describe('generateWindowsRemoteSetupScript (item 3)', () => {
     // The URL (and its token) is written to the sidecar, not the command.
     expect(script).toContain(`fs.writeFileSync(urlPath,"http://127.0.0.1:19333/status?cccSessionId=winsid&token=tok-winsid",{flag:'wx'})`)
     expect(script).not.toContain(`' winsid "http://`)
+  })
+  it('bakes this session\'s per-session token into the Windows remote MCP URL', () => {
+    const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: false, includeConductorMcp: true }, NONCE)
+    expect(script).toContain('/sse?cccSessionId=winsid&token=tok-winsid')
   })
   it('argv carries only the sid when the conductor MCP is off (no tunnel ⇒ CONOUT$ ladder)', () => {
     const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true, includeConductorMcp: false }, NONCE)

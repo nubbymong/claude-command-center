@@ -20,7 +20,10 @@ import os from 'node:os'
 const h = vi.hoisted(() => ({ port: 19333 }))
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => h.port,
-  mcpSessionToken: (sessionId: string) => `tok${sessionId.replace(/[^a-zA-Z0-9]/g, '')}`,
+  // A site that minted directly (skipping the provider record) gets a token no check expects.
+  mcpSessionToken: () => 'tok-minted-directly',
+  // Only the right provider gets the expected token: a wrong one fails the token checks.
+  issueMcpSessionToken: (sessionId: string, provider: string) => ({ claude: `tok${sessionId.replace(/[^a-zA-Z0-9]/g, '')}` } as Record<string, string>)[provider] ?? 'tok-wrong-provider',
 }))
 
 import { writeLocalSessionSettings } from '../../../src/main/hooks/per-session-settings'

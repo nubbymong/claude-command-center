@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // Importing the Codex entry point loads its spawn module, which reads the
 // live MCP port and the resources directory at call time; keep both inert.
 vi.mock('../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '' }))
-vi.mock('../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () => 0, mcpSessionToken: () => 'tok' }))
+vi.mock('../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () => 0, mcpSessionToken: () => 'tok', issueMcpSessionToken: () => 'tok' }))
 
 import { CAPABILITY_KEYS, WP1_REQUIRED_CAPABILITIES, PROVIDER_IDS, missingCapabilityKeys, isNeverOwnedLaunchVariable, NEVER_OWNED_LAUNCH_VARIABLES } from '../../src/shared/providers'
 import type { CapabilityPlatform } from '../../src/shared/providers'

@@ -5,7 +5,7 @@ import { execSync } from 'child_process'
 import { sandboxFor, approvalFor } from './permissions'
 import { getResourcesDirectory } from '../../ipc/setup-handlers'
 import type { SpawnOptions } from '../types'
-import { getConductorMcpPort, mcpSessionToken } from '../../conductor-mcp-server'
+import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
 import { readConfig } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
 import { codexShellEnv } from './cli-runner'
@@ -202,9 +202,10 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   // is written to the user's global ~/.codex/config.toml, so plain `codex` outside
   // CCC never tries the dead endpoint. The token rides a bearer header via the
   // CONDUCTOR_MCP_TOKEN env var (Codex sends `Authorization: Bearer <value>`, which
-  // the conductor server accepts), so the URL carries only `?source=codex` -- no
+  // the conductor server accepts), so the URL carries only the session id -- no
   // `&`, which keeps it intact through the cmd.exe .cmd-shim spawn path. The
-  // `source=codex` marker keeps codex_review hidden from Codex (no self-review).
+  // token is issued as a Codex one, which keeps codex_review hidden from Codex
+  // (no self-review).
   // Built-in tools master (onboarding p6 / Settings): off = no conductor MCP
   // flags at all, so Codex launches without the built-in tools. Read fresh
   // per spawn; port 0 (server unbound) behaves identically.
@@ -213,8 +214,8 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   if (mcpPort > 0) {
     // cccSessionId is the ONLY query param, so the URL stays free of `&` — a
     // second param would be a cmd.exe command separator on the win32 .cmd-shim
-    // spawn path. `source=codex` is inferred server-side from the /mcp route
-    // (that route is Codex-only), so it need not ride the URL. The per-session
+    // spawn path. The /mcp route is Codex-only and serves the Codex tool set,
+    // so no provider marker need ride the URL. The per-session
     // HMAC token (below, via the bearer header) commits to this session id, so
     // the gate verifies the binding the same way a Claude session's is
     // (GHSA-q83v-phcc-hgv4); Codex's tools are install-global, but the token
@@ -240,7 +241,7 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   // U6: bearer token for the per-spawn conductor MCP entry above. Per-session
   // HMAC, matched to the cccSessionId baked into the URL (GHSA-q83v-phcc-hgv4).
   if (mcpPort > 0) {
-    setOwned(env, 'CONDUCTOR_MCP_TOKEN', mcpSessionToken(opts.sessionId), win32)
+    setOwned(env, 'CONDUCTOR_MCP_TOKEN', issueMcpSessionToken(opts.sessionId, 'codex'), win32)
   }
   // The host's light/dark scheme, the same way the local Claude spawn gets it
   // (book item 34: Codex sessions never did, so a light-mode Codex TUI came up
