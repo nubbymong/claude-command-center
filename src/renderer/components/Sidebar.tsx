@@ -11,7 +11,8 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import { useAccountAuthStore } from '../stores/accountAuthStore'
-import SessionDialog from './SessionDialog'
+import SessionDialog, { type SessionDialogLaunchAck } from './SessionDialog'
+import { grantLaunchAcknowledgement } from '../stores/launchAckStore'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
@@ -365,7 +366,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => {
+  const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string, launchAck?: SessionDialogLaunchAck) => {
     const config: TerminalConfig = { ...data, id: generateId() }
     addConfig(config)
     // Same stamps as the guided first-config path (App.tsx): without them the
@@ -384,7 +385,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       await window.electronAPI.credentials.save(config.id + '_argsecret', argSecret)
     }
     setShowNewDialog(false)
-    launchFromConfig(config)
+    const sessionId = launchFromConfig(config)
+    // The dialog's ticked "launch with the sign-in already on this computer"
+    // covers exactly this launch, never a later one (launchAckStore).
+    if (sessionId && launchAck) grantLaunchAcknowledgement(sessionId, launchAck.accountId)
   }
 
   const handleEditConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => {
@@ -436,8 +440,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     }
   }
 
-  const launchFromConfig = async (config: TerminalConfig) => {
-    launchConfig(config)
+  /** Returns the new session's id ('' when the launch was blocked). */
+  const launchFromConfig = (config: TerminalConfig): string => {
+    const sessionId = launchConfig(config)
     // The missed-copy guard: a launch from the SAVED tab used to switch the
     // main view to the new terminal while leaving the panel on Saved, so the
     // tile the user had just made was on a list they were not looking at —
@@ -445,6 +450,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     // A no-op for the surfaces that already live on Running (Quick Start).
     selectPanelTab('running')
     onViewChange('sessions')
+    return sessionId
   }
 
   // ── Allow Multi Spawn (phase 4) ─────────────────────────────────────────

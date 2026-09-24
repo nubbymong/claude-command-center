@@ -191,6 +191,11 @@ export interface Session {
    *  here. Renderer-only, not persisted. */
   sshRemoteAccount?: string
   codexOptions?: CodexOptions
+  /** WP2: the provider account this Codex session runs under, copied from
+   *  its config (an opaque registry id). Absent = the provider default. The
+   *  per-launch acknowledgement an unverified sign-in needs is never kept
+   *  here: each launch asks (see stores/launchAckStore.ts). */
+  providerAccountId?: string
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead
   // of the global `enabledByDefault`. Shape lives in shared/github-types.ts.

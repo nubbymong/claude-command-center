@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "73a72a84403608e78607f458dc2ac6d5145367ae726ab8484d4325f16d9ab043",
-  "manifestHead": "ad0f6a16da728d560c097f9166c8224ec4ae99fa",
+  "manifestPathDigest": "77dadaee0702f913a49e652c35beb59ce064c655de85889001094d0a85a9bc2b",
+  "manifestHead": "37876e4f0a076abb7764af85538df6776c84ced8",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -3620,6 +3620,97 @@
       "disposition": "added",
       "evidence": "WP2 commit 6b provider accounts store (WP1.39); tests/unit/renderer/provider-accounts-store.test.ts",
       "note": "fixture snapshots name Codex accounts"
+    },
+    {
+      "path": "src/renderer/components/LaunchAckConfirm.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts",
+      "note": "the per-launch confirm for an unverified sign-in; the provider is named in its copy"
+    },
+    {
+      "path": "src/renderer/utils/launchAccount.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts",
+      "note": "picker options, launch plan, refusal wording, the restart default per provider"
+    },
+    {
+      "path": "tests/unit/renderer/accounts-snapshot-harness.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts",
+      "note": "fixture snapshots name Codex accounts"
+    },
+    {
+      "path": "tests/unit/renderer/launch-account.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts",
+      "note": "fixture snapshots name Codex accounts"
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-codex-account.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c session dialog account picker (WP1.42); tests/unit/renderer/session-dialog-codex-account.test.tsx",
+      "note": "drives the real session dialog with the Codex card"
+    },
+    {
+      "path": "tests/unit/renderer/session-header-restart-menu.test.tsx",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "note": "Codex sessions get the two restarts"
+    },
+    {
+      "path": "tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "note": "drives the real TerminalView launch path"
+    },
+    {
+      "path": "tests/unit/renderer/session-persistence-restore.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: adapted to the account binding, the saved session carries its Codex account through restore (WP1.42); tests/unit/renderer/session-persistence-restore.test.ts",
+      "note": "existing test extended in WP2 6c; Codex appears as the provider of a fixture session"
     }
   ]
 }

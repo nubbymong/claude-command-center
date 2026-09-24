@@ -700,12 +700,16 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         }
       }
 
-      // Closed, swept or superseded while it was prepared: start nothing.
+      // Closed, swept or superseded while it was prepared: start nothing, and
+      // SAY so. The renderer holds any pty:exit that arrives while its own
+      // spawn is in flight (the replaced run's late or synthetic exit), and
+      // applies it only when this request started nothing -- which, without
+      // this answer, it cannot tell from a spawn that went ahead.
       if (preparation && !preparation.current) {
         logInfo(`[pty] Session ${sessionId}: closed or superseded while its spawn was prepared -- not spawning`)
         codexLease?.release()
         preparation.abandon()
-        return
+        return { started: false as const }
       }
 
       // Agent Canvas UAT roots are NOT registered here any more (adversarial

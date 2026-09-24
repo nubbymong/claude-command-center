@@ -2,16 +2,26 @@ import { useCallback } from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty, clearSpawned } from '../ptyTracker'
 import { markSessionForResumePicker } from '../utils/resumePicker'
+import { restartPicksConversation } from '../utils/launchAccount'
 import { useAccountGateStore } from '../stores/accountGateStore'
 
 // Shared restart/recover logic for SessionHeader and the v2 bottom bar.
 // Behaviour is identical to the inline functions that previously lived in
 // SessionHeader -- extracted so both can share the EXACT same mechanism.
 
+/** How a restart starts the session again. */
+export interface RestartOptions {
+  /** Open the resume picker so the user picks the conversation (canvas F7,
+   *  "Restart and pick a conversation"). Absent, the provider's default
+   *  applies (restartPicksConversation): some providers always offer it,
+   *  others offer a plain "Restart" that starts a new conversation. */
+  pickConversation?: boolean
+}
+
 export function useRestartSession(
   session: Session | null | undefined,
   isShowingPartner = false,
-): { restart: (overrides?: Partial<Session>) => void; recover: () => void } {
+): { restart: (overrides?: Partial<Session>, options?: RestartOptions) => void; recover: () => void } {
   const forceRemount = useCallback(
     (status: 'idle' | 'working', overrides?: Partial<Session>) => {
       if (!session) return
@@ -81,7 +91,7 @@ export function useRestartSession(
     [session],
   )
 
-  const restart = useCallback((overrides?: Partial<Session>) => {
+  const restart = useCallback((overrides?: Partial<Session>, options?: RestartOptions) => {
     if (!session) return
     if (isShowingPartner) {
       // Partner terminal: just kill partner PTY, leave main Claude untouched
@@ -100,8 +110,10 @@ export function useRestartSession(
     }
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
     killSessionPty(session.id)
-    // Show resume picker on restart so user can pick a conversation
-    if (session.sessionType === 'local' && !session.shellOnly) {
+    // Show resume picker on restart so user can pick a conversation, unless
+    // this provider's plain "Restart" starts a new one (canvas F7).
+    const pick = options?.pickConversation ?? restartPicksConversation(session.provider)
+    if (session.sessionType === 'local' && !session.shellOnly && pick) {
       markSessionForResumePicker(session.id)
     }
     // Restart (and switch, which routes through here) already determines the

@@ -142,6 +142,10 @@ export function buildLaunchSession(config: TerminalConfig, opts?: LaunchSessionO
     provider: config.provider,
     profileId: config.profileId,
     codexOptions: config.codexOptions,
+    // WP2: the account a Codex session runs under rides from the config to
+    // the spawn (TerminalView sends it as `providerAccountId`). Codex only:
+    // main refuses the field on any other provider's spawn.
+    providerAccountId: config.provider === 'codex' ? config.providerAccountId : undefined,
     githubIntegration: config.githubIntegration,
   }
   // SSH Persistent (Phase 3): a reattach spawns with reconnect set. TerminalView

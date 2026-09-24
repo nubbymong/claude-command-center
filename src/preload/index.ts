@@ -182,7 +182,12 @@ export interface ElectronAPI {
         reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
         permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
       }
-    }) => Promise<void>
+      /** WP2: the Codex account the session runs under (an opaque registry
+       *  id). Absent = the provider default. */
+      providerAccountId?: string
+      /** WP2: THIS launch's acknowledgement of an unverified sign-in. */
+      acknowledgeRealmOnly?: boolean
+    }) => Promise<{ started: false } | void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void

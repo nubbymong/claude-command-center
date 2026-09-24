@@ -29,6 +29,8 @@ import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import { shouldShowWhatsNew } from './onboarding/whats-new-gate'
 import AccountLaunchGate from './components/AccountLaunchGate'
+import LaunchAckConfirm from './components/LaunchAckConfirm'
+import { grantLaunchAcknowledgement } from './stores/launchAckStore'
 import NewAccountPrompt from './components/NewAccountPrompt'
 import SentinelPanel from './components/sentinel/SentinelPanel'
 import { useAddAccount } from './hooks/useAddAccount'
@@ -1411,7 +1413,7 @@ export default function App() {
         {bootGate === 'guidedConfig' && (
           <SessionDialog
             onCancel={() => setShowGuidedConfig(false)}
-            onConfirm={async (data, password, sudoPassword, argSecret) => {
+            onConfirm={async (data, password, sudoPassword, argSecret, launchAck) => {
               const { generateId } = await import('./utils/id')
               const config = { ...data, id: generateId() }
               useConfigStore.getState().addConfig(config)
@@ -1421,7 +1423,10 @@ export default function App() {
               useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
               trackUsage('sessions.create-config')
               setShowGuidedConfig(false)
-              launchConfig(config)
+              const sessionId = launchConfig(config)
+              // The dialog's ticked "launch with the sign-in already on this
+              // computer" covers exactly this launch, never a later one.
+              if (sessionId && launchAck) grantLaunchAcknowledgement(sessionId, launchAck.accountId)
               setView('sessions')
             }}
           />
@@ -1436,6 +1441,11 @@ export default function App() {
             restore painted its per-session account pickers over the Multi Spawn
             startup page, which by design comes AFTER resume. */}
         <AccountLaunchGate suppressed={bootGate !== null} />
+        {/* WP2: the per-launch confirm for an unverified sign-in (a
+            provider's own home shared with other apps on this computer).
+            Same placement and the same suppression rule as the account gate
+            above. */}
+        <LaunchAckConfirm suppressed={bootGate !== null} />
         {/* Sentinel findings panel: global overlay, driven by sentinelStore.
             Suppressed while ANY boot gate is up — it is not a gate itself (it
             owns no turn in the sequence and can arrive at any time), but it

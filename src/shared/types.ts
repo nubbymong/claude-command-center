@@ -213,6 +213,10 @@ export interface SavedSession {
   resumeCwd?: string
   claudeOptions?: ClaudeOptions
   codexOptions?: CodexOptions
+  /** WP2: the provider account a Codex session runs under -- an opaque
+   *  registry id, never a path or a credential. Absent = the provider
+   *  default. A launch acknowledgement is never stored here or anywhere. */
+  providerAccountId?: string
   // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   model?: string

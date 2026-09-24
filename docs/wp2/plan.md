@@ -519,17 +519,22 @@ obligations fall on later slices:
   the user's re-check action that accepts a new one. Until then the first
   launch after a start re-runs discovery. `realm.isolated` stays `unknown`
   until the evidence pass.
-- **Known until commit 6:** the renderer sends no `providerAccountId` yet.
-  Codex sessions therefore run on the provider default, and an adopted
-  external account (realm-only) is refused until the session dialog asks for
-  the acknowledgement. (`codex_review` moved onto `prepareLaunch` in
-  commit 5a.)
-- **For commit 6 (renderer):** a Restart that lands while the replaced
-  spawn is still being prepared produces a synthetic `pty:exit` for the
-  cancelled preparation just before the new one starts. The same happens
-  today on a profile-refresh wait. If the remounted terminal is already
-  listening it can mark the live session exited. Fix it where the event is
-  consumed: exits tagged with a spawn generation the terminal checks.
+- **Known until commit 6 (done in 6c):** the renderer sent no
+  `providerAccountId`. Since 6c the session dialog picks the Codex account,
+  the saved config and session carry it to `pty:spawn`, and an adopted
+  external account (realm-only) is acknowledged per launch: the dialog's tick
+  for the launch it starts, otherwise a confirm before each later launch;
+  never persisted. (`codex_review` moved onto `prepareLaunch` in commit 5a.)
+- **For commit 6 (done in 6c, differently):** a Restart that lands while the
+  replaced spawn is still being prepared produces a synthetic `pty:exit` for
+  the cancelled preparation just before the new one starts. Built as a hold
+  in the terminal rather than a generation tag from main: an exit that
+  arrives while the view's own `pty:spawn` is in flight is held, dropped when
+  the spawn started, applied when it rejected or answered `{ started: false }`
+  (main now says so when a preparation was closed or superseded; before, it
+  returned nothing and the view could not tell). A view torn down by a
+  Restart never acts on its late answer; one only remounted still reports a
+  refusal to the view now showing the session (spawn tokens in `ptyTracker`).
 - **Known limit:** main counts running and starting Claude sessions when
   Claude is switched off. It does not check the switch before a Claude
   spawn; the renderer gates that, and A12 keeps Claude's launch path.

@@ -84,6 +84,10 @@ export function buildSessionState(): SessionState {
       loggingEnabled: s.loggingEnabled,
     } : undefined,
     codexOptions: s.codexOptions,
+    // WP2: a reopened Codex session keeps the account it ran under. The
+    // account id only: a launch acknowledgement is never saved, so the
+    // reopened session asks again if its account needs one.
+    providerAccountId: s.provider === 'codex' ? s.providerAccountId : undefined,
   }))
   return {
     sessions,
@@ -408,6 +412,7 @@ export async function restoreSavedSessions(
         resumeUuid: saved.resumeUuid,
         resumeCwd: saved.resumeCwd,
         codexOptions: saved.codexOptions,
+        providerAccountId: saved.provider === 'codex' && typeof saved.providerAccountId === 'string' ? saved.providerAccountId : undefined,
       }
     })
 

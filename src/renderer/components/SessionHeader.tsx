@@ -9,9 +9,10 @@ import { useAccountAuthStore, type AccountAuthStatus } from '../stores/accountAu
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { BrandMark } from './BrandMark'
-import { ContainerGlyph, containerBadgeTitle } from './sidebar/Badges'
+import { ContainerGlyph, containerBadgeTitle, ProviderMark } from './sidebar/Badges'
 import { containerNameOf, resolveTransportBadge } from './sidebar/transportBadge'
 import { useRestartSession } from '../hooks/useRestartSession'
+import { RowMenu } from './ui/RowMenu'
 import { ASK_LABEL } from '../lib/askConductor'
 import { sshAuthGiveUpMemory } from '../stores/sshAuthGiveUp'
 
@@ -60,6 +61,30 @@ function AskHeaderLead({ session }: { session: Session }) {
         Past discussions
       </button>
     </>
+  )
+}
+
+/**
+ * A Codex session's Restart (canvas F7): a menu with "Restart" (a new
+ * conversation) and "Restart and pick a conversation" (the resume picker, the
+ * existing terminal script). A Codex session has no Model / Compact / Restart
+ * cluster in the status strip -- those write Claude slash commands -- so its
+ * Restart lives here, where the canvas puts it. A launch on an unverified
+ * sign-in asks for its confirmation again on the way back up (TerminalView).
+ */
+function CodexRestartMenu({ session }: { session: Session }) {
+  const { restart } = useRestartSession(session)
+  return (
+    <RowMenu
+      label="Restart this session"
+      testId="codex-restart"
+      itemTestId={(key) => `codex-restart-${key}`}
+      trigger={<>Restart<span aria-hidden className="inline-block w-0 h-0" style={{ borderLeft: '4px solid transparent', borderRight: '4px solid transparent', borderTop: '5px solid var(--text-muted)' }} /></>}
+      items={[
+        { key: 'fresh', label: 'Restart', onSelect: () => restart(undefined, { pickConversation: false }) },
+        { key: 'pick', label: 'Restart and pick a conversation', onSelect: () => restart(undefined, { pickConversation: true }) },
+      ]}
+    />
   )
 }
 
@@ -684,6 +709,10 @@ export default function SessionHeader({ session }: Props) {
           {/* Color dot: at-a-glance session identifier */}
           <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: identity }} />
 
+          {/* The provider's own mark before the name of a Codex session (canvas
+              F7), the same mark Accounts and the session type badges draw. */}
+          {session.provider === 'codex' && !session.shellOnly && <ProviderMark providerId="codex" size={16} title="Codex" />}
+
           {/* Editable work name for this session (F2 / double-click tab / here). */}
           <SessionNameField session={session} />
 
@@ -717,6 +746,7 @@ export default function SessionHeader({ session }: Props) {
       {/* Right cluster: account · claude.ai · Claude Code | GitHub — styled to
           match the title-bar service pills (GitHub slug shows on hover). */}
       <SessionAuthPills session={session} />
+      {!isAsk && session.provider === 'codex' && !session.shellOnly && <CodexRestartMenu session={session} />}
       {/* The encrypted notes left this header for the command bar's Core band
           (ADR-018 D10): one lock with a count, the notes in its popover. */}
     </div>

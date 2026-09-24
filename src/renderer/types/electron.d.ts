@@ -247,7 +247,17 @@ export interface ElectronAPI {
         reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
         permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
       }
-    }) => Promise<void>
+      /** WP2: the Codex account the session runs under (an opaque registry
+       *  id). Absent = the provider default. Codex only. */
+      providerAccountId?: string
+      /** WP2: THIS launch's acknowledgement of an unverified sign-in (the
+       *  provider's shared home). Counts only with the providerAccountId it
+       *  names; never persisted. Codex only. */
+      acknowledgeRealmOnly?: boolean
+      /** Resolves `{ started: false }` when main started nothing for this
+       *  request: its launch was cancelled or superseded while it was being
+       *  prepared. Anything else means the spawn went ahead. */
+    }) => Promise<void | { started: false }>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void

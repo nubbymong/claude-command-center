@@ -326,7 +326,9 @@ describe('pty:spawn while the launch is prepared (ADR-009 pass on commit 4)', ()
     await flush()
     killIpc()
     d.resolve(prepared(l))
-    await req
+    // WP2 commit 6: and the request says it started nothing, so a renderer
+    // holding exits while its spawn is in flight knows to apply this one.
+    await expect(req).resolves.toEqual({ started: false })
     expect(h.ptys).toHaveLength(0)
     expect(l.lease.release).toHaveBeenCalledTimes(1)
     expect(sent).toContain(`pty:exit:${SID}`)
@@ -340,7 +342,9 @@ describe('pty:spawn while the launch is prepared (ADR-009 pass on commit 4)', ()
     await flush()
     killAllPty()
     d.resolve(prepared(l))
-    await req
+    // The window survives a sweep when the update installer fails to launch:
+    // the view whose preparation was swept learns its start ended from this.
+    await expect(req).resolves.toEqual({ started: false })
     expect(h.ptys).toHaveLength(0)
     expect(l.lease.release).toHaveBeenCalledTimes(1)
   })

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T15:35:08.640Z",
-  "head": "ad0f6a16da728d560c097f9166c8224ec4ae99fa",
-  "tree": "96f4074fa3c8d2332061df583d71bcc21ae3cf8b",
+  "generatedAt": "2026-09-24T16:55:01.478Z",
+  "head": "37876e4f0a076abb7764af85538df6776c84ced8",
+  "tree": "61ad57d97f7e67e86710b4c7bc0f2a0c277a4824",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2233,
+  "trackedFileCount": 2244,
   "excludedFileCount": 372,
-  "scannedFileCount": 1861,
+  "scannedFileCount": 1872,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 324,
-  "pathDigest": "73a72a84403608e78607f458dc2ac6d5145367ae726ab8484d4325f16d9ab043",
+  "matchedPathCount": 332,
+  "pathDigest": "77dadaee0702f913a49e652c35beb59ce064c655de85889001094d0a85a9bc2b",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -889,7 +889,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 27
+      "lineCount": 28
     },
     {
       "path": "src/renderer/App.tsx",
@@ -962,6 +962,13 @@
       "lineCount": 9
     },
     {
+      "path": "src/renderer/components/LaunchAckConfirm.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 2
+    },
+    {
       "path": "src/renderer/components/LogsButton.tsx",
       "predicates": [
         "P05",
@@ -1008,7 +1015,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 48
+      "lineCount": 80
     },
     {
       "path": "src/renderer/components/SessionDialog/CodexFormFields.tsx",
@@ -1018,7 +1025,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 21
+      "lineCount": 31
     },
     {
       "path": "src/renderer/components/SessionDialog/ProviderSegmentedControl.tsx",
@@ -1033,7 +1040,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 4
+      "lineCount": 14
     },
     {
       "path": "src/renderer/components/SessionStatusStrip.tsx",
@@ -1075,7 +1082,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 19
+      "lineCount": 29
     },
     {
       "path": "src/renderer/components/codex/CodexSettingsTab.tsx",
@@ -1229,7 +1236,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 10
+      "lineCount": 14
     },
     {
       "path": "src/renderer/hooks/useSwitchAccount.ts",
@@ -1403,7 +1410,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 16
+      "lineCount": 21
     },
     {
       "path": "src/renderer/stores/codexAccountStore.ts",
@@ -1423,7 +1430,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 6
+      "lineCount": 7
     },
     {
       "path": "src/renderer/stores/providerAccountsStore.ts",
@@ -1440,7 +1447,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 11
+      "lineCount": 12
     },
     {
       "path": "src/renderer/stores/settingsStore.ts",
@@ -1489,7 +1496,15 @@
         "P09",
         "P11"
       ],
-      "lineCount": 11
+      "lineCount": 14
+    },
+    {
+      "path": "src/renderer/utils/launchAccount.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "lineCount": 18
     },
     {
       "path": "src/renderer/utils/sessionLaunch.ts",
@@ -1587,7 +1602,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 19
+      "lineCount": 20
     },
     {
       "path": "tests/e2e/codex-session-creation.spec.ts",
@@ -2172,6 +2187,14 @@
       "lineCount": 4
     },
     {
+      "path": "tests/unit/renderer/accounts-snapshot-harness.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 11
+    },
+    {
       "path": "tests/unit/renderer/accounts-surface.test.tsx",
       "predicates": [
         "P04",
@@ -2312,6 +2335,15 @@
       "lineCount": 1
     },
     {
+      "path": "tests/unit/renderer/launch-account.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 68
+    },
+    {
       "path": "tests/unit/renderer/launch-always-new.test.tsx",
       "predicates": [
         "P05",
@@ -2446,6 +2478,16 @@
       "lineCount": 9
     },
     {
+      "path": "tests/unit/renderer/session-dialog-codex-account.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 51
+    },
+    {
       "path": "tests/unit/renderer/session-dialog-credentials.test.tsx",
       "predicates": [
         "P13"
@@ -2483,6 +2525,14 @@
       "lineCount": 10
     },
     {
+      "path": "tests/unit/renderer/session-header-restart-menu.test.tsx",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "lineCount": 21
+    },
+    {
       "path": "tests/unit/renderer/session-launch.test.ts",
       "predicates": [
         "P13"
@@ -2503,6 +2553,14 @@
         "P13"
       ],
       "lineCount": 18
+    },
+    {
+      "path": "tests/unit/renderer/session-persistence-restore.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "lineCount": 5
     },
     {
       "path": "tests/unit/renderer/session-persistence-resume.test.ts",
@@ -2577,6 +2635,15 @@
         "P13"
       ],
       "lineCount": 5
+    },
+    {
+      "path": "tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 50
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",
