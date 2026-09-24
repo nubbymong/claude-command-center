@@ -441,12 +441,34 @@ obligations fall on later slices:
   slow Windows runner the kill took 8.1 s, which is the process-table
   timeout (8 s, about twice a typical cold PowerShell start). A table read
   that times out falls back to killing the root alone. On Windows the root
-  is cmd.exe, so the Codex CLI outlives a deadline or a cancel. Fix it:
-  either read the chain once the run is established and use that snapshot
-  when the kill-time read fails (the root still running proves the chain
-  is alive, as it does today after a slow read), or give the read a budget
-  a loaded machine meets. Needs its own ADR-009 pass and a real-process
-  test that forces the kill-time read to fail.
+  is cmd.exe, so the Codex CLI outlives a deadline or a cancel.
+  **Fixed (2026-09-24):**
+  - A run still going after `CODEX_TREE_PRIME_MS` (2 s) reads its process
+    table once, in the background, with a 30 s budget.
+  - If that early read is still running when the kill comes, the kill waits
+    for it rather than starting a second cold read beside it. It uses the
+    whole chain, because the CIM query captures the table when it runs, at
+    the end of the slow start. If the early read fails meanwhile, the kill's
+    own read gets the time left. The kill spends at most 10 s reading (the
+    15 s settle bound minus taskkill's 5 s).
+  - If it finished earlier and the kill's own read fails, only its wrapper
+    line is used: cmd.exe -> node -> the codex binary. Each member waits
+    for the next, and Windows reuses no pid while a handle to it is open.
+    Helpers the codex binary started are never killed from an earlier read.
+  - Everything is used only while the root still runs.
+  - If no read answers within the kill's 10 s, only the root is killed, as
+    before the fix. On Windows a codex under cmd.exe then keeps running.
+  - An early read taken before node had started codex yields cmd.exe ->
+    node. Killing node still ends codex: node places its children in a job
+    that dies with it.
+  - Short runs, such as a status check, never pay for the read.
+  - The real-process test forces the kill-time read to fail and ends the
+    whole tree. With the fallback removed, it fails on Windows (VM,
+    2026-09-24).
+
+  Residual: a wrapper that exits while the root still runs could have its
+  pid reused before the kill. That needs a parent to have reaped it, which
+  the npm and native wrappers do not do while they run.
 - **Known, accepted:** deleting the very last Claude profile does not archive
   its account (indistinguishable from a failed read); emoji ZWJ sequences
   store with spaces (stripSpoofableText); reconcile is quadratic in profile

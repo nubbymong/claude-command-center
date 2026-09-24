@@ -10,7 +10,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { codexCommandLine, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, CODEX_KILL_SETTLE_MS } from '../../src/main/providers/codex'
+import { spawn as nodeSpawn } from 'node:child_process'
+import { codexCommandLine, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS } from '../../src/main/providers/codex'
 import type { CodexCliOperation, CodexDiscovery, CodexAuthDeps } from '../../src/main/providers/codex'
 
 const IS_WIN = process.platform === 'win32'
@@ -183,6 +184,32 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
     while (alive() && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100))
     expect(alive(), `the sleeping fake (pid ${pid}) outlived the tree kill`).toBe(false)
   }, 45_000)
+
+  it('a kill whose own process-table read fails still ends the WHOLE tree, from the chain the run showed once established', async () => {
+    const cmd = IS_WIN
+      ? { file: path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe'), args: ['/d', '/v:off', '/s', '/c', `""${exe}" sleep"`], verbatim: true, cwd: dir }
+      : { file: exe, args: ['sleep'], verbatim: false, cwd: dir }
+    const pidFile = path.join(dir, 'sleep.pid')
+    try { fs.unlinkSync(pidFile) } catch { /* first run */ }
+    // The real table reader, except that every read after the first fails --
+    // the kill-time read, as on a machine where PowerShell is too slow.
+    const real = makeCodexProcessLister(process.platform, process.env.SystemRoot)
+    expect(real, 'a process table reader exists on this platform').not.toBeNull()
+    let reads = 0
+    const lister = async () => { if (++reads > 1) throw new Error('process table unavailable'); return real!() }
+    const deps = { spawn: nodeSpawn, platform: process.platform, killTree: makeCodexKillTree(process.platform, nodeSpawn, process.env.SystemRoot, lister) }
+    const r = await runCodexCli(cmd, { env: codexCliEnv(poisoned, home('sleep-noread')), timeoutMs: CODEX_TREE_PRIME_MS + 8000 }, deps)
+    expect(r).toMatchObject({ timedOut: true, exitCode: null })
+    // Read once while running; the kill either waited for that read (still
+    // running) or tried its own, which failed, and used the earlier one.
+    expect([1, 2], 'reads').toContain(reads)
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'))
+    expect(pid).toBeGreaterThan(0)
+    const alive = () => { try { process.kill(pid, 0); return true } catch { return false } }
+    const deadline = Date.now() + 8000
+    while (alive() && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100))
+    expect(alive(), `the sleeping fake (pid ${pid}) outlived a kill whose table read failed`).toBe(false)
+  }, 60_000)
 })
 
 // WP1.20, WP1.22, WP1.51, WP1.62 -- slice 3c: the auth operations over the

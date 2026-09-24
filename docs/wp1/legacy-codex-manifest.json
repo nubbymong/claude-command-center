@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-24T03:05:13.603Z",
-  "head": "e7d976118fa75d1275f5f464e935a539e7270aa2",
-  "tree": "c8036154ba401cbb4eae0fba37fbf37a099f88f3",
+  "generatedAt": "2026-09-24T03:54:31.418Z",
+  "head": "39952b893b9faa2f2350ec526893110a9ca415e0",
+  "tree": "d4a8a17d7faa06705c0ad4bfb4640b93f45bce7d",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -175,7 +175,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 78
+      "lineCount": 84
     },
     {
       "path": "package.json",
@@ -571,7 +571,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 59
+      "lineCount": 87
     },
     {
       "path": "src/main/providers/codex/discovery.ts",

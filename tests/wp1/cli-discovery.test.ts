@@ -9,7 +9,7 @@ import {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
 } from '../../src/main/providers/codex'
 import { EventEmitter } from 'node:events'
-import { codexCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath } from '../../src/main/providers/codex'
+import { codexCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
 import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
 import type { CodexDiscoveryDeps, CodexRunResult, CodexRunDeps, CodexProcessEntry } from '../../src/main/providers/codex'
 
@@ -372,6 +372,177 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
     await makeCodexKillTree('win32', late.spawn, 'C:\\Windows', async () => { d.exitCode = 0; return table })(d as never)
     // Its chain exited before it (cmd.exe waits for node, node for codex): those pids may be strangers' now.
     expect(late.calls).toEqual([])
+  })
+
+  // WP2 (must-fix before the PR leaves draft): on a loaded machine the
+  // kill-time table read can time out; the root alone would then be killed
+  // and the codex binary under cmd.exe would keep running.
+  const named = (call: readonly string[]) => new Set(call.filter((_a, i) => call[i - 1] === '/PID').map(Number))
+
+  it('an early read still running at kill time is awaited, not raced by a second read, and its whole chain is killed', async () => {
+    const { calls, spawn } = taskkills()
+    let reads = 0
+    let release!: (t: CodexProcessEntry[]) => void
+    const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { reads++; throw new Error('kill-time read must not run') }, () => { reads++; return new Promise((r) => { release = r }) })
+    const c = child()
+    kill.prime!(c as never)
+    kill.prime!(c as never)
+    const done = kill(c as never)
+    await Promise.resolve()
+    release(table)
+    await done
+    expect(reads).toBe(1)
+    expect(named(calls[0])).toEqual(new Set([10, 11, 12, 15]))
+  })
+
+  it('an EARLIER read stands in for a failed kill-time read with its wrapper line only -- never a helper the codex binary may have reaped', async () => {
+    const { calls, spawn } = taskkills()
+    let reads = 0
+    const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { reads++; throw new Error('timed out') }, async () => { reads++; return table })
+    const c = child()
+    kill.prime!(c as never)
+    await new Promise((r) => setTimeout(r, 0))
+    await kill(c as never)
+    expect(reads).toBe(2)
+    expect(named(calls[0])).toEqual(new Set([10, 11, 12]))
+  })
+
+  const KILL_READ_BUDGET = CODEX_KILL_SETTLE_MS - CODEX_TASKKILL_TIMEOUT_MS
+
+  it('an early read that never answers is waited for only as long as the kill can read (taskkill still lands inside the settle bound); then the root alone', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, spawn } = taskkills()
+      const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => table, () => new Promise<CodexProcessEntry[]>(() => {}))
+      const c = child()
+      kill.prime!(c as never)
+      let finished = false
+      const done = Promise.resolve(kill(c as never)).then(() => { finished = true })
+      await vi.advanceTimersByTimeAsync(KILL_READ_BUDGET - 10)
+      expect(finished).toBe(false)
+      await vi.advanceTimersByTimeAsync(20)
+      await done
+      expect(calls).toEqual([['/F', '/PID', '10']])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('an early read that FAILS while the kill waits for it hands the time left to the kill\'s own read', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, spawn } = taskkills()
+      let fail!: (e: Error) => void
+      let own = 0
+      const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { own++; return table }, () => new Promise<CodexProcessEntry[]>((_r, rej) => { fail = rej }))
+      const c = child()
+      kill.prime!(c as never)
+      const done = Promise.resolve(kill(c as never))
+      await vi.advanceTimersByTimeAsync(1500)
+      fail(new Error('powershell failed'))
+      await vi.advanceTimersByTimeAsync(10)
+      await done
+      expect(own).toBe(1)
+      expect(named(calls[0])).toEqual(new Set([10, 11, 12, 15]))
+    } finally { vi.useRealTimers() }
+  })
+
+  it('an early table that is not a list (even an iterable of rows) counts as a failed read', async () => {
+    const { calls, spawn } = taskkills()
+    const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { throw new Error('timed out') }, async () => new Set(table) as never)
+    const c = child()
+    kill.prime!(c as never)
+    await new Promise((r) => setTimeout(r, 0))
+    await kill(c as never)
+    expect(calls).toEqual([['/F', '/PID', '10']])
+  })
+
+  it('the table reader honours its own budget (the early read gets the longer one)', async () => {
+    const seen: number[] = []
+    const execFile = ((_f: string, _a: string[], o: Record<string, unknown>, cb: (e: Error | null, out: string) => void) => { seen.push(o.timeout as number); cb(null, '') }) as never
+    await makeCodexProcessLister('win32', 'C:\\Windows', { execFile })!()
+    await makeCodexProcessLister('win32', 'C:\\Windows', { execFile, timeoutMs: CODEX_PRIME_TABLE_TIMEOUT_MS })!()
+    expect(seen).toEqual([CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_PRIME_TABLE_TIMEOUT_MS])
+    expect(CODEX_PRIME_TABLE_TIMEOUT_MS).toBeGreaterThan(KILL_READ_BUDGET)
+  })
+
+  it('an early read that failed, or a root that has exited, adds nothing', async () => {
+    const failed = taskkills()
+    const k1 = makeCodexKillTree('win32', failed.spawn, 'C:\\Windows', async () => { throw new Error('timed out') }, async () => { throw new Error('also') })
+    const c = child()
+    k1.prime!(c as never)
+    await new Promise((r) => setTimeout(r, 0))
+    await k1(c as never)
+    expect(failed.calls).toEqual([['/F', '/PID', '10']])
+    const exitedRun = taskkills()
+    const d = child()
+    const k2 = makeCodexKillTree('win32', exitedRun.spawn, 'C:\\Windows', async () => { throw new Error('timed out') }, async () => table)
+    k2.prime!(d as never)
+    await new Promise((r) => setTimeout(r, 0))
+    d.exitCode = 0
+    await k2(d as never)
+    expect(exitedRun.calls).toEqual([])
+  })
+
+  it('the wrapper line: the root, then each only chain child, down to the codex binary and no further', () => {
+    expect(codexWrapperLinePids(10, table)).toEqual([12, 11, 10])
+    // A native codex root wraps nothing.
+    expect(codexWrapperLinePids(12, table)).toEqual([12])
+    // Two chain children: which one is the line is not known, so it stops.
+    expect(codexWrapperLinePids(30, [
+      { pid: 30, ppid: 1, name: 'cmd.exe', created: 1 },
+      { pid: 31, ppid: 30, name: 'node.exe', created: 2 },
+      { pid: 32, ppid: 30, name: 'node.exe', created: 3 },
+    ])).toEqual([30])
+  })
+
+  it('the runner reads the chain once for a run still going after CODEX_TREE_PRIME_MS -- never for a short, stopped or exited run, and a prime that throws breaks nothing', async () => {
+    vi.useFakeTimers()
+    try {
+      const cmd = { file: 'C:/x/codex.exe', args: ['login'], verbatim: false, cwd: 'C:/x' }
+      const { deps, spawned } = fakeDeps()
+      const prime = vi.fn()
+      const withPrime: CodexRunDeps = { ...deps, killTree: Object.assign((c: Parameters<CodexRunDeps['killTree']>[0]) => deps.killTree(c), { prime }) }
+      // Short: closes before the prime is due.
+      const short = runCodexCli(cmd, { env: {}, timeoutMs: 60_000 }, withPrime)
+      spawned[0].child.emit('close', 0)
+      await short
+      // Stopped before it is due.
+      const ac = new AbortController()
+      const stopped = runCodexCli(cmd, { env: {}, timeoutMs: 60_000, signal: ac.signal }, withPrime)
+      ac.abort()
+      await stopped
+      // Exited (its pipes still open) before it is due.
+      const exiting = runCodexCli(cmd, { env: {}, timeoutMs: 60_000 }, withPrime)
+      spawned[2].child.emit('exit', 0)
+      await vi.advanceTimersByTimeAsync(CODEX_TREE_PRIME_MS + 10)
+      expect(prime).not.toHaveBeenCalled()
+      spawned[2].child.emit('close', 0)
+      await exiting
+      // Long: due once.
+      const long = runCodexCli(cmd, { env: {}, timeoutMs: 60_000 }, withPrime)
+      await vi.advanceTimersByTimeAsync(CODEX_TREE_PRIME_MS - 10)
+      expect(prime).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(20)
+      expect(prime).toHaveBeenCalledTimes(1)
+      expect(prime.mock.calls[0][0]).toBe(spawned[3].child)
+      spawned[3].child.emit('close', 0)
+      expect(await long).toMatchObject({ exitCode: 0 })
+      // A prime that throws does not break the run.
+      const throwing: CodexRunDeps = { ...deps, killTree: Object.assign((c: Parameters<CodexRunDeps['killTree']>[0]) => deps.killTree(c), { prime: () => { throw new Error('boom') } }) }
+      const survives = runCodexCli(cmd, { env: {}, timeoutMs: 60_000 }, throwing)
+      await vi.advanceTimersByTimeAsync(CODEX_TREE_PRIME_MS + 10)
+      spawned[4].child.emit('close', 0)
+      expect(await survives).toMatchObject({ exitCode: 0 })
+      // Stopping, its kill still under way when the prime falls due: no read.
+      const slowKill: CodexRunDeps = { ...deps, killTree: Object.assign(() => new Promise<void>(() => {}), { prime }) }
+      const ac2 = new AbortController()
+      const stopping = runCodexCli(cmd, { env: {}, timeoutMs: 60_000, signal: ac2.signal }, slowKill)
+      await vi.advanceTimersByTimeAsync(500)
+      ac2.abort()
+      await vi.advanceTimersByTimeAsync(CODEX_TREE_PRIME_MS + 10)
+      expect(prime).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(CODEX_KILL_SETTLE_MS)
+      await stopping
+    } finally { vi.useRealTimers() }
   })
 
   it('launchers a global install may use (bun, deno) are part of the chain; a child with no start time under a parent with one is not', () => {

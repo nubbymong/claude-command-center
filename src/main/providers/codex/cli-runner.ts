@@ -134,12 +134,17 @@ export interface CodexRunOptions {
   signal?: AbortSignal
 }
 
+/** Kills a run's own processes (see makeCodexKillTree). `prime`, when
+ *  present, reads the run's chain once the run is established, so a kill
+ *  whose own table read fails still names the whole chain. */
+export type CodexKillTree = ((child: ChildProcess) => Promise<void> | void) & { prime?: (child: ChildProcess) => void }
+
 export interface CodexRunDeps {
   spawn: (file: string, args: readonly string[], opts: SpawnOptions) => ChildProcess
   platform: NodeJS.Platform
   /** Kill the run's own processes (see makeCodexKillTree); the runner waits
    *  for the returned promise, bounded, before a stopped run settles. */
-  killTree: (child: ChildProcess) => Promise<void> | void
+  killTree: CodexKillTree
 }
 
 /** One row of the process table. `created` is in milliseconds, when known. */
@@ -149,6 +154,31 @@ export interface CodexProcessEntry { pid: number; ppid: number; name: string; cr
  *  JavaScript launchers a global install runs codex.js with (node, bun, deno)
  *  and codex and its own helpers. */
 const CHAIN_IMAGE = /^(cmd\.exe|node|node\.exe|bun|bun\.exe|deno|deno\.exe|codex(?:[-._][a-z0-9._-]*)?)$/
+
+/** Images that only wrap the codex binary and wait for it. */
+const WRAPPER_IMAGE = /^(cmd\.exe|node|node\.exe|bun|bun\.exe|deno|deno\.exe)$/
+
+/** The wrapper line alone: the root, then its ONLY chain child, down to the
+ *  codex binary (cmd.exe -> node -> codex). Each member waits for the next,
+ *  and Windows reuses no pid while a handle to it is open, so while the root
+ *  runs this line is still this run's. Anything the codex binary started (a
+ *  command runner, say) is left out: one it has already reaped may have
+ *  handed its pid to a stranger. */
+export function codexWrapperLinePids(rootPid: number, table: readonly CodexProcessEntry[]): number[] {
+  const inChain = new Set(codexChainPids(rootPid, table))
+  const byPid = new Map<number, CodexProcessEntry>()
+  for (const e of table) if (e && inChain.has(e.pid)) byPid.set(e.pid, e)
+  const image = (p: number) => ((byPid.get(p)?.name ?? '').split(/[\\/]/).pop() ?? '').trim().toLowerCase()
+  const out = [rootPid]
+  let cur = rootPid
+  while (WRAPPER_IMAGE.test(image(cur))) {
+    const kids = [...byPid.values()].filter((e) => e.ppid === cur && e.pid !== cur && !out.includes(e.pid))
+    if (kids.length !== 1) break
+    cur = kids[0].pid
+    out.push(cur)
+  }
+  return out.reverse()
+}
 
 /** The processes a run owns: its root and, below it, only chain images. A
  *  process of any other image -- a browser the sign-in opened -- is not the
@@ -227,8 +257,11 @@ export function parsePosixProcessTable(text: string): CodexProcessEntry[] {
 /** A constant query with no double quote in it: passed as plain -Command
  *  text (an encoded command is what endpoint protection flags). */
 export const WINDOWS_PROCESS_QUERY = "Get-CimInstance Win32_Process | ForEach-Object { $c = 0; if ($_.CreationDate) { $c = $_.CreationDate.ToFileTimeUtc() }; '{0},{1},{2},{3}' -f $_.ProcessId, $_.ParentProcessId, $c, $_.Name }"
-/** How long reading the process table may take. */
+/** How long reading the process table may take at kill time. */
 export const CODEX_PROCESS_TABLE_TIMEOUT_MS = 8000
+/** How long the EARLY read (see CodexKillTree.prime) may take: it runs in the
+ *  background, so a loaded machine gets far longer than a kill can wait. */
+export const CODEX_PRIME_TABLE_TIMEOUT_MS = 30_000
 /** How long taskkill may take. */
 export const CODEX_TASKKILL_TIMEOUT_MS = 5000
 
@@ -242,13 +275,13 @@ type ExecFileLike = (file: string, args: string[], opts: Record<string, unknown>
 export function makeCodexProcessLister(
   platform: NodeJS.Platform,
   systemRoot: string | undefined,
-  ports: { execFile?: ExecFileLike; readProc?: () => CodexProcessEntry[]; exists?: (f: string) => boolean } = {},
+  ports: { execFile?: ExecFileLike; readProc?: () => CodexProcessEntry[]; exists?: (f: string) => boolean; timeoutMs?: number } = {},
 ): (() => Promise<CodexProcessEntry[]>) | null {
   const exec = ports.execFile ?? (execFile as unknown as ExecFileLike)
   const exists = ports.exists ?? ((f: string) => { try { return fs.statSync(f).isFile() } catch { return false } })
   const read = (file: string, args: string[], opts: Record<string, unknown>, parse: (t: string) => CodexProcessEntry[]) => () =>
     new Promise<CodexProcessEntry[]>((resolve, reject) => {
-      exec(file, args, { encoding: 'utf8', timeout: CODEX_PROCESS_TABLE_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...opts }, (err, stdout) => {
+      exec(file, args, { encoding: 'utf8', timeout: ports.timeoutMs ?? CODEX_PROCESS_TABLE_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...opts }, (err, stdout) => {
         if (err) reject(err)
         else resolve(parse(String(stdout)))
       })
@@ -278,24 +311,65 @@ export function makeCodexProcessLister(
 
 /** Exported for the test: the kill with its guards. It reads the process
  *  table, kills the run's own chain (codexChainPids) and resolves when that is
- *  done. When the table cannot be read it kills the root alone -- never the
- *  whole tree, which may hold the user's browser. */
+ *  done -- never the whole tree, which may hold the user's browser. When the
+ *  table cannot be read at kill time it falls back to the EARLY read (prime,
+ *  with its own longer budget, `primeListProcesses`): still running, it is
+ *  awaited -- bounded -- and used whole, since it is as fresh as a kill-time
+ *  read; finished earlier, only its wrapper line is used
+ *  (codexWrapperLinePids). With neither, the root alone. */
 export function makeCodexKillTree(
   platform: NodeJS.Platform,
   spawn: CodexRunDeps['spawn'],
   systemRoot: string | undefined,
   listProcesses: (() => Promise<CodexProcessEntry[]>) | null,
-): (child: ChildProcess) => Promise<void> {
+  primeListProcesses: (() => Promise<CodexProcessEntry[]>) | null = listProcesses,
+): CodexKillTree {
   const running = (child: ChildProcess) => !!child.pid && child.exitCode === null && child.signalCode === null
   const killRoot = (child: ChildProcess) => { try { if (running(child)) child.kill('SIGKILL') } catch { /* already gone */ } }
-  return async (child) => {
+  // What each run's early read (prime) found, by run: `table` stays
+  // undefined while the read is running, null when it failed.
+  const primed = new WeakMap<ChildProcess, { done: Promise<void>; table?: CodexProcessEntry[] | null }>()
+  const bounded = <T>(p: Promise<T>, ms: number): Promise<T | null> => new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    p.then((v) => { clearTimeout(timer); resolve(v) }, () => { clearTimeout(timer); resolve(null) })
+  })
+  const kill: CodexKillTree = async (child) => {
     const pid = child.pid
     // Only a process that is still running: once the root has exited its pid
     // can be reused, and a kill by pid would hit a stranger.
     if (!pid || !running(child)) return
     let pids = [pid]
-    if (listProcesses) {
-      try { pids = codexChainPids(pid, await listProcesses()) } catch { pids = [pid] }
+    const early = primed.get(child)
+    if (early && early.table === undefined) {
+      // The early read is still running -- a slow table, the very case this
+      // is for. Wait for it rather than start a second cold read beside it
+      // (two would compete on a loaded machine). The CIM query captures the
+      // table when it runs, at the end of the slow PowerShell start, so an
+      // answer that arrives now is as fresh as a kill-time read: its whole
+      // chain is used. If it fails, the kill's own read gets the time left.
+      // Both together stay inside the settle bound, with taskkill's.
+      const started = Date.now()
+      await bounded(early.done, CODEX_KILL_READ_BUDGET_MS)
+      if (early.table) {
+        pids = codexChainPids(pid, early.table)
+      } else if (early.table === null && listProcesses) {
+        const left = CODEX_KILL_READ_BUDGET_MS - (Date.now() - started)
+        const own = left > 0 ? await bounded(listProcesses(), left) : null
+        if (own) pids = codexChainPids(pid, own)
+      }
+    } else if (listProcesses) {
+      try {
+        pids = codexChainPids(pid, await listProcesses())
+      } catch {
+        // The table could not be read now (PowerShell blocked, or too slow on
+        // a loaded machine: Windows CI went past its 8 s budget). An earlier
+        // read stands in for it, but only its wrapper line -- the root still
+        // running (checked again below) vouches for that line, not for a
+        // helper the codex binary may since have reaped. With no earlier
+        // read, the root alone.
+        pids = early?.table ? codexWrapperLinePids(pid, early.table) : [pid]
+      }
     }
     // The table took time to read. A root that exited meanwhile means its
     // chain has almost certainly exited before it (cmd.exe waits for node,
@@ -325,17 +399,41 @@ export function makeCodexKillTree(
       for (const p of pids) { try { process.kill(p, 'SIGKILL') } catch { /* already gone */ } }
     }
   }
+  kill.prime = (child) => {
+    const pid = child.pid
+    if (!primeListProcesses || !pid || primed.has(child) || !running(child)) return
+    const entry: { done: Promise<void>; table?: CodexProcessEntry[] | null } = { done: Promise.resolve() }
+    let read: Promise<CodexProcessEntry[]>
+    try { read = primeListProcesses() } catch { read = Promise.reject(new Error('no table')) }
+    entry.done = read.then(
+      (table) => { entry.table = Array.isArray(table) ? table : null },
+      () => { entry.table = null },
+    )
+    primed.set(child, entry)
+  }
+  return kill
 }
 
 export function defaultCodexRunDeps(platform: NodeJS.Platform = process.platform, systemRoot = process.env.SystemRoot): CodexRunDeps {
-  return { spawn: nodeSpawn, platform, killTree: makeCodexKillTree(platform, nodeSpawn, systemRoot, makeCodexProcessLister(platform, systemRoot)) }
+  return {
+    spawn: nodeSpawn,
+    platform,
+    killTree: makeCodexKillTree(platform, nodeSpawn, systemRoot, makeCodexProcessLister(platform, systemRoot), makeCodexProcessLister(platform, systemRoot, { timeoutMs: CODEX_PRIME_TABLE_TIMEOUT_MS })),
+  }
 }
 
 const MAX_TIMEOUT_MS = 2_147_483_647
+/** A run still going after this long reads its process chain once (see
+ *  CodexKillTree.prime): short runs -- a status check -- never pay for it. */
+export const CODEX_TREE_PRIME_MS = 2_000
 /** How long a stopped run waits for its kill to land before it settles
  *  anyway: longer than reading the process table plus taskkill, so a slow
  *  table does not settle a run whose kill has not been issued yet. */
 export const CODEX_KILL_SETTLE_MS = 15_000
+/** How long a kill may spend reading the process table -- waiting for the
+ *  early read, then its own -- so that taskkill still lands inside the
+ *  settle bound. */
+const CODEX_KILL_READ_BUDGET_MS = CODEX_KILL_SETTLE_MS - CODEX_TASKKILL_TIMEOUT_MS
 
 /** Run one prepared command. Never rejects.
  *
@@ -356,10 +454,12 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     let child: ChildProcess | null = null
     let exited: number | null | undefined
     let stopping = false
+    let primeTimer: ReturnType<typeof setTimeout> | null = null
     const finish = (r: Omit<CodexRunResult, 'stdout' | 'stderr' | 'truncated'>) => {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
+      if (primeTimer) clearTimeout(primeTimer)
       opts.signal?.removeEventListener('abort', onAbort)
       resolve({ ...r, stdout, stderr, truncated })
     }
@@ -443,6 +543,14 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     child.on('error', (e) => { if (!stopping) finish({ exitCode: null, timedOut: false, spawnError: e.message }) })
     child.on('close', (code) => { if (!stopping) finish({ exitCode: typeof code === 'number' ? code : null, timedOut: false }) })
     timer = setTimeout(() => stop('deadline'), opts.timeoutMs)
+    if (deps.killTree.prime) {
+      const c = child
+      primeTimer = setTimeout(() => {
+        primeTimer = null
+        if (!settled && !stopping && exited === undefined) { try { deps.killTree.prime?.(c) } catch { /* the kill falls back to its own read */ } }
+      }, CODEX_TREE_PRIME_MS)
+      ;(primeTimer as unknown as { unref?: () => void }).unref?.()
+    }
     opts.signal?.addEventListener('abort', onAbort, { once: true })
     if (opts.stdin !== undefined && child.stdin) {
       child.stdin.on('error', () => { /* the child closed its stdin early; its exit code tells */ })
