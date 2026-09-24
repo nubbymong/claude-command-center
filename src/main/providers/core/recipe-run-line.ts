@@ -22,7 +22,7 @@
 //     name (`@scope/name`) reaches npm literally and not as PowerShell
 //     splatting.
 import type { CapabilityPlatform } from '../../../shared/providers'
-import { quoteArgForShell } from '../../spawn-claude-command'
+import { quoteArgForShell } from '../../../shared/shell-quote'
 import type { InstallRecipe } from './package'
 
 /** A program name that can be typed bare at the start of the line. */
