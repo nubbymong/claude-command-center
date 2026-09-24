@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { codexCommandLine, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations } from '../../src/main/providers/codex'
+import { codexCommandLine, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, CODEX_KILL_SETTLE_MS } from '../../src/main/providers/codex'
 import type { CodexCliOperation, CodexDiscovery, CodexAuthDeps } from '../../src/main/providers/codex'
 
 const IS_WIN = process.platform === 'win32'
@@ -48,7 +48,9 @@ if (a === 'login' || a === 'login --device-auth') {
     const b = require('child_process').spawn(win ? 'ping' : 'sleep', win ? ['-n', '120', '127.0.0.1'] : ['120'], { stdio: 'ignore', detached: win })
     fs.writeFileSync(path.join(__dirname, 'browser.pid'), String(b.pid))
     fs.writeFileSync(path.join(__dirname, 'login.pid'), String(process.pid))
-    setTimeout(() => fs.writeFileSync(auth, 'Logged in using ChatGPT\\n'), 2500)
+    // After the delay the HANG file names (ms), so a test can place it past
+    // the runner's own kill window.
+    setTimeout(() => fs.writeFileSync(auth, 'Logged in using ChatGPT\\n'), Number(fs.readFileSync(path.join(home, 'HANG'), 'utf8')) || 2500)
     process.stderr.write('Open https://auth.example/oauth/authorize?state=s1 to sign in\\n')
     setInterval(() => {}, 1000)
     return
@@ -158,14 +160,17 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
     const started = Date.now()
     const r = await runCodexCli(cmd, { env: codexCliEnv(poisoned, home('sleep')), timeoutMs: 3000 })
     expect(r).toMatchObject({ timedOut: true, exitCode: null })
-    expect(Date.now() - started).toBeLessThan(10_000)
+    // Settles within the runner's own bound: the deadline, then at most the
+    // kill's settle window (reading the process table on Windows is a cold
+    // PowerShell start, seconds on a loaded machine), not a typical speed.
+    expect(Date.now() - started).toBeLessThan(3000 + CODEX_KILL_SETTLE_MS + 2000)
     const pid = Number(fs.readFileSync(pidFile, 'utf8'))
     expect(pid).toBeGreaterThan(0)
     const alive = () => { try { process.kill(pid, 0); return true } catch { return false } }
     const deadline = Date.now() + 8000
     while (alive() && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100))
     expect(alive(), `the sleeping fake (pid ${pid}) outlived the tree kill`).toBe(false)
-  })
+  }, 45_000)
 })
 
 // WP1.20, WP1.22, WP1.51, WP1.62 -- slice 3c: the auth operations over the
@@ -234,25 +239,29 @@ describe('the auth operations against the fake Codex CLI (real processes)', () =
 
   it('cancelling a waiting browser sign-in kills its own processes only -- the browser it opened lives -- and the realm stays signed out', async () => {
     const id = realm()
-    fs.writeFileSync(path.join(homeOf(id), 'HANG'), '')
+    // The fake would sign the realm in only after the runner's whole kill
+    // window: the cancel must kill it before then on any machine, however
+    // slow its process table is to read.
+    fs.writeFileSync(path.join(homeOf(id), 'HANG'), String(CODEX_KILL_SETTLE_MS + 5000))
     const ops = createCodexAuthOperations(deps())
     const ac = new AbortController()
     const r = await ops.login({ authRealmId: id }, 'browser', { signal: ac.signal, onOutput: (t) => { if (/sign in/.test(t)) ac.abort() } })
-    expect(r).toMatchObject({ ok: false, code: 'cancelled', state: 'signed-out' })
     const loginPid = Number(fs.readFileSync(path.join(dir, 'login.pid'), 'utf8'))
     const browserPid = Number(fs.readFileSync(path.join(dir, 'browser.pid'), 'utf8'))
+    // Every assertion inside the try: a failure must not leave the "browser"
+    // running in the test folder (afterAll could not remove it).
     try {
+      expect(r).toMatchObject({ ok: false, code: 'cancelled', state: 'signed-out' })
       const deadline = Date.now() + 3000
       while (alive(loginPid) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 50))
       expect(alive(loginPid), `the waiting fake login (pid ${loginPid}) outlived the cancel`).toBe(false)
       expect(alive(browserPid), `the "browser" (pid ${browserPid}) the sign-in opened was killed with it`).toBe(true)
-      // Past the moment the fake would have signed the realm in, had it lived.
-      await new Promise((res) => setTimeout(res, 3000))
+      // The fake is gone, so nothing can sign the realm in later.
       expect(await ops.status({ authRealmId: id })).toEqual({ ok: true, state: 'signed-out' })
     } finally {
       try { process.kill(browserPid) } catch { /* already gone */ }
     }
-  })
+  }, 45_000)
 
   it('a managed realm holding a .env is refused before the CLI runs', async () => {
     const id = realm()
