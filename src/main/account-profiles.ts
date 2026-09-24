@@ -2393,6 +2393,26 @@ export interface ProfileRealmLaunch {
   sessionsDir: string
 }
 
+/** Why this profile cannot run Claude reviews on this platform, or null when
+ *  it can. The one rule, read by the reviewer launch below and, through the
+ *  Claude package's ports, by the accounts service (the tool is not offered,
+ *  the profile cannot be made the reviewer, and the snapshot says why).
+ *
+ *  macOS: Claude has one account there, the normal sign-in, which is the
+ *  primary profile (see profileRealmLaunch); every other profile is refused.
+ *  THROWS when it cannot tell (profiles.json unreadable, or no primary
+ *  recorded): a caller must not read that as "not the primary" -- nothing is
+ *  offered on it, and nothing already chosen is cleared because of it. */
+export function profileReviewRefusal(profileId: string, platform: NodeJS.Platform = process.platform): string | null {
+  if (platform !== 'darwin') return null
+  const all = readProfilesStrict()
+  if (all === null) throw new Error('the profile list could not be read')
+  const primary = all.find((p) => p && p.isPrimary)?.id
+  if (!primary) throw new Error('no primary profile is recorded')
+  if (primary === profileId) return null
+  return 'On macOS only your normal Claude sign-in can run Claude reviews.'
+}
+
 /** The profile-home composition of withProfileHome, for a reviewer launch the
  *  accounts service prepares and hardens (WP2 commit 5b). The ONLY other place
  *  a profile home's USERPROFILE/HOME is composed (the managed-launch source
@@ -2421,9 +2441,15 @@ export function profileRealmLaunch(
   const env: Record<string, string> = {}
   for (const k of Object.keys(source)) { const v = source[k]; if (typeof v === 'string') env[k] = v }
   if (process.platform === 'darwin') {
-    if (getPrimaryProfileId() !== profileId) {
-      return { refused: 'on macOS a review runs on your normal Claude sign-in, which is your primary account: make it the Claude reviewer (or leave the reviewer unset)' }
+    // A launch must fail with a reason either way, so "could not tell" is a
+    // refusal here (it matters only to offering and clearing).
+    let refused: string | null
+    try {
+      refused = profileReviewRefusal(profileId, 'darwin')
+    } catch {
+      refused = 'This app could not tell which Claude account is your normal sign-in on this Mac.'
     }
+    if (refused) return { refused }
     const realHome = os.homedir()
     return { home: realHome, baseEnv: env, realmEnv: { set: {} }, sessionsDir: path.join(realHome, '.claude', 'projects') }
   }

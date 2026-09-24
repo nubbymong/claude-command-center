@@ -102,7 +102,10 @@ export const DEFAULT_TYPOGRAPHY: TypographySettings = {
  *  filters a tool group on the conductor MCP server's tool list. */
 export interface ConductorToolsSettings {
   vision: boolean
+  /** Claude sessions may ask Codex for a review (codex_review). */
   codexReview: boolean
+  /** Codex sessions may ask Claude for a review (claude_review). */
+  claudeReview: boolean
   hostTransfer: boolean
   canvas: boolean
 }
@@ -110,6 +113,7 @@ export interface ConductorToolsSettings {
 export const DEFAULT_CONDUCTOR_TOOLS: ConductorToolsSettings = {
   vision: true,
   codexReview: true,
+  claudeReview: true,
   hostTransfer: true,
   canvas: true,
 }

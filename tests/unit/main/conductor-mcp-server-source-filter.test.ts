@@ -52,18 +52,22 @@ describe('parseCccSessionIdFromUrl (P7.7.10)', () => {
 // provider's reviewer, and claude_review only while a Claude review could be
 // prepared now.
 describe('offeredReviewTool', () => {
-  const on = { toolsMaster: true, codexReviewOn: true, codexEnabled: true, claudeReviewReady: () => true }
+  const on = { toolsMaster: true, codexReviewOn: true, codexEnabled: true, claudeReviewOn: true, claudeReviewReady: () => true }
   it('a Claude or unknown connection gets codex_review while its toggles allow; never claude_review', () => {
     for (const source of ['claude', 'unknown'] as const) {
       expect(offeredReviewTool(source, on)).toBe('codex_review')
       expect(offeredReviewTool(source, { ...on, codexReviewOn: false })).toBeNull()
       expect(offeredReviewTool(source, { ...on, codexEnabled: false })).toBeNull()
+      // The Claude review switch does not decide it.
+      expect(offeredReviewTool(source, { ...on, claudeReviewOn: false })).toBe('codex_review')
     }
   })
   it('a Codex connection gets claude_review only while a Claude review is ready and the Conductor tools are on; never codex_review', () => {
     expect(offeredReviewTool('codex', on)).toBe('claude_review')
     expect(offeredReviewTool('codex', { ...on, claudeReviewReady: () => false })).toBeNull()
     expect(offeredReviewTool('codex', { ...on, toolsMaster: false })).toBeNull()
+    // Its own switch (Settings, Built-in tools) withdraws it.
+    expect(offeredReviewTool('codex', { ...on, claudeReviewOn: false })).toBeNull()
     // The codex_review toggles do not decide it.
     expect(offeredReviewTool('codex', { ...on, codexReviewOn: false, codexEnabled: false })).toBe('claude_review')
   })

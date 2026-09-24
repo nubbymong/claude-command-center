@@ -648,17 +648,17 @@ export function registerClaudeReviewSession(sessionId: string, cwd: string): voi
  *    tools and its own toggle are on and Codex is enabled (P6.9: never to a
  *    Codex session, which would review itself).
  *  - A Codex connection (the /mcp route forces the source): claude_review
- *    (WP2 commit 5b, owner decision 3), while the Conductor tools are on and
- *    a Claude review could be prepared now -- Claude on, and a Claude account
+ *    (WP2 commit 5b, owner decision 3), while the Conductor tools and its own
+ *    toggle are on and a Claude review could be prepared now -- Claude on, and a Claude account
  *    that can review without a per-launch confirmation (on macOS the normal
  *    sign-in). Asked per connection, so turning Claude off or losing the
  *    reviewer account withdraws it from the next request.
  *  Pure, and `claudeReviewReady` is asked only for a Codex connection. */
 export function offeredReviewTool(
   source: 'claude' | 'codex' | 'unknown',
-  gates: { toolsMaster: boolean; codexReviewOn: boolean; codexEnabled: boolean; claudeReviewReady: () => boolean },
+  gates: { toolsMaster: boolean; codexReviewOn: boolean; codexEnabled: boolean; claudeReviewOn: boolean; claudeReviewReady: () => boolean },
 ): 'codex_review' | 'claude_review' | null {
-  if (source === 'codex') return gates.toolsMaster && gates.claudeReviewReady() ? 'claude_review' : null
+  if (source === 'codex') return gates.toolsMaster && gates.claudeReviewOn && gates.claudeReviewReady() ? 'claude_review' : null
   return gates.codexReviewOn && gates.codexEnabled ? 'codex_review' : null
 }
 
@@ -830,11 +830,11 @@ export async function startMcpServer(
     // off; this filter is belt-and-braces for stale session configs.
     const toolCfg = readConfig<{
       conductorToolsEnabled?: boolean
-      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
+      conductorTools?: { vision?: boolean; codexReview?: boolean; claudeReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
       codexEnabled?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
-    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer' | 'canvas') =>
+    const toolOn = (k: 'vision' | 'codexReview' | 'claudeReview' | 'hostTransfer' | 'canvas') =>
       toolsMaster && toolCfg?.conductorTools?.[k] !== false
 
     // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
@@ -1064,6 +1064,7 @@ export async function startMcpServer(
     const reviewTool = offeredReviewTool(source, {
       toolsMaster,
       codexReviewOn: toolOn('codexReview'),
+      claudeReviewOn: toolOn('claudeReview'),
       codexEnabled: toolCfg?.codexEnabled !== false,
       claudeReviewReady: () => getAccountsService()?.reviewReady('claude') === true,
     })

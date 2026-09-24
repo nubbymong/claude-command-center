@@ -79,6 +79,25 @@ describe('a reviewer launch in a profile home (WP2 5b)', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' })
     const l = profiles.profileRealmLaunch(primary.id, source('/usr/bin'))
     expect(l).toEqual({ home: os.homedir(), baseEnv: source('/usr/bin'), realmEnv: { set: {} }, sessionsDir: path.join(os.homedir(), '.claude', 'projects') })
-    expect(profiles.profileRealmLaunch(other.id, source('/usr/bin'))).toEqual({ refused: expect.stringContaining('primary account') })
+    expect(profiles.profileRealmLaunch(other.id, source('/usr/bin'))).toEqual({ refused: expect.stringMatching(/normal Claude sign-in/) })
+  })
+
+  it('the platform rule on its own (WP2 commit 6): on macOS only the primary can review; elsewhere every profile can', () => {
+    const primary = profiles.createProfile('Primary')
+    const other = profiles.createProfile('Other')
+    profiles.setPrimaryProfile(primary.id)
+    expect(profiles.profileReviewRefusal(primary.id, 'darwin')).toBeNull()
+    expect(profiles.profileReviewRefusal(other.id, 'darwin')).toMatch(/normal Claude sign-in/)
+    for (const platform of ['win32', 'linux'] as const) expect(profiles.profileReviewRefusal(other.id, platform)).toBeNull()
+    // It cannot tell without a recorded primary: it says so rather than refusing every profile.
+    expect(profiles.updateProfilesStrict((all) => { for (const x of all) x.isPrimary = false; return true })).toBe(true)
+    expect(() => profiles.profileReviewRefusal(primary.id, 'darwin')).toThrow(/no primary/)
+    // A launch still fails with a reason then, not "that did not work".
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    expect(profiles.profileRealmLaunch(primary.id, source('/usr/bin'))).toEqual({ refused: expect.stringMatching(/could not tell/) })
+    profiles.setPrimaryProfile(primary.id)
+    // The launch refuses with the same words.
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    expect(profiles.profileRealmLaunch(other.id, source('/usr/bin'))).toEqual({ refused: profiles.profileReviewRefusal(other.id, 'darwin') })
   })
 })

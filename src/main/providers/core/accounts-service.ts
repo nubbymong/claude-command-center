@@ -37,7 +37,7 @@ import type {
   CapabilityKey, CapabilityPlatform, ScopedCapabilityKey, ProviderPreference, SignInMethod, AccountsSnapshot, AccountsFailure,
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
   SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, ExternalDefaultOutcome, CredentialClass,
-  ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice,
+  ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView,
 } from '../../../shared/providers'
 import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, InstallRecipe } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
@@ -116,10 +116,14 @@ const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
   'not-signed-in': 'This account is not signed in.',
   'secret-unavailable': 'The key was not received; enter it again.',
   'sign-in-changed': 'This account now holds a different sign-in than before. Review it in Accounts and confirm it before continuing.',
+  'review-unavailable': 'This account cannot run reviews on this computer.',
   'realm-only': 'An unverified sign-in needs your confirmation each time, so it cannot be used unattended.',
   'not-found': 'That account or setup no longer exists.',
   'invalid-request': 'That request was not valid.',
 }
+
+/** A package's platform review rule for one realm (see reviewRefusalOf). */
+type PlatformReviewRule = { kind: 'allowed' } | { kind: 'refused'; message: string } | { kind: 'unknown' }
 
 function failure(code: AccountsFailureCode, message?: string, extra: { consumers?: number; state?: KnownAuthState } = {}): AccountsFailure {
   return { ok: false, code, message: message ?? FAIL_MESSAGES[code] ?? 'That did not work.', ...extra }
@@ -180,6 +184,9 @@ export class AccountsService {
   private readonly signedInWith = new Map<string, SignInMethod>()
   // Typed by the shared view union: a core outcome it lacks fails to compile.
   private readonly migrationRuns = new Map<ProviderId, ExternalDefaultOutcome>()
+  /** Reviewer choices cleared at start-up because they can never run here
+   *  (clearUnusableReviewerDefaults); shown once, removed by a new choice. */
+  private readonly reviewerNotices = new Map<ProviderId, { message: string; store: AccountRegistryStore }>()
   private opSeq = 0
   private subscribedStore: AccountRegistryStore | null = null
   private unsubscribeStore: (() => void) | null = null
@@ -262,6 +269,8 @@ export class AccountsService {
     const registry: RegistryModeView = !store || !status ? { mode: 'unavailable' } : status.mode === 'ready' ? { mode: 'ready' } : { mode: 'recovery', reason: status.reason }
     const doc = store && status?.mode === 'ready' ? store.current() : null
     const packages = this.deps.packages()
+    // One read of each realm's platform rule for the whole snapshot.
+    const memo = new Map<string, PlatformReviewRule>()
     const accounts: AccountView[] = (doc?.accounts ?? []).map((a) => {
       const realm = doc ? findRealm(doc, a.authRealmId) : undefined
       const external = realm?.ownership === 'external-default'
@@ -288,6 +297,8 @@ export class AccountsService {
       if (a.planLabel !== undefined) view.planLabel = a.planLabel
       if (a.lastAuthenticatedAt !== undefined) view.lastAuthenticatedAt = a.lastAuthenticatedAt
       if (a.lastValidatedAt !== undefined) view.lastValidatedAt = a.lastValidatedAt
+      const refusal = doc ? this.reviewRefusalOf(doc, a, memo) : undefined
+      if (refusal) view.reviewRefusal = refusal
       return view
     })
     const pendingSetups: PendingSetupView[] = (doc?.journals ?? []).map((j) => ({
@@ -310,7 +321,11 @@ export class AccountsService {
     return {
       revision: this.revision,
       registry,
-      providers: packages.map((p) => this.installationView(p)),
+      providers: packages.map((p) => {
+        const view = this.installationView(p)
+        const review = this.reviewReadiness(p, doc, memo)
+        return review ? { ...view, review } : view
+      }),
       identities: (doc?.identities ?? []).map((i) => ({ id: i.id, colourKey: i.colourKey, ...(i.friendlyName !== undefined ? { friendlyName: i.friendlyName } : {}), ...(i.groupId !== undefined ? { groupId: i.groupId } : {}) })),
       groups: (doc?.groups ?? []).map((g) => ({ id: g.id, name: g.name, order: g.order })),
       accounts,
@@ -321,6 +336,9 @@ export class AccountsService {
         identityId: c.identityId, field: c.field, providerId: c.providerId, legacyId: c.legacyId,
         legacyValue: c.legacyValue, registryValue: c.registryValue, detectedAt: c.detectedAt,
       })),
+      // Only the notices this registry produced: a resources directory chosen
+      // later is another registry, with its own reviewer choices.
+      reviewerNotices: [...this.reviewerNotices].filter(([, n]) => n.store === store).map(([providerId, n]) => ({ providerId, message: n.message })),
     }
   }
 
@@ -958,8 +976,92 @@ export class AccountsService {
     if (!p) return failure('not-found')
     const ready = this.ready()
     if ('ok' in ready) return ready
+    // An account this platform never lets review is refused with the reason,
+    // not stored to be refused at every review (prepare still refuses too).
+    const chosen = input.accountId ? findAccount(ready.doc, input.accountId) : undefined
+    if (chosen && chosen.providerId === input.providerId) {
+      const refusal = this.reviewRefusalOf(ready.doc, chosen)
+      if (refusal) return failure('review-unavailable', refusal.message)
+    }
     const r = await ready.store.mutate((d, t) => setReviewerDefault(d, input.providerId, input.accountId, t))
-    return this.fromStore(r) ?? { ok: true }
+    const bad = this.fromStore(r)
+    if (bad) return bad
+    if (this.reviewerNotices.delete(input.providerId)) this.changed()
+    return { ok: true }
+  }
+
+  /** Why this account cannot host its provider's reviewer invocations here
+   *  (the package's platform rule), as the surface shows it, or undefined.
+   *  A rule that could not tell refuses (`unknown`): nothing is offered on a
+   *  guess. On macOS the Claude rule reads profiles.json, so a caller that
+   *  asks for many accounts passes one `memo` for the call. */
+  private reviewRefusalOf(doc: ProviderRegistryDoc, account: { providerId: ProviderId; authRealmId: string }, memo?: Map<string, PlatformReviewRule>): ReviewRefusalView | undefined {
+    const r = this.platformReviewRule(doc, account, memo)
+    if (r.kind === 'refused') return { reason: 'platform', message: r.message }
+    if (r.kind === 'unknown') return { reason: 'unknown', message: 'This app could not check whether this account can run reviews here.' }
+    return undefined
+  }
+
+  /** The package's platform rule, telling "refused" apart from "could not
+   *  tell" (the rule threw): only a definite refusal clears a choice. */
+  private platformReviewRule(doc: ProviderRegistryDoc, account: { providerId: ProviderId; authRealmId: string }, memo?: Map<string, PlatformReviewRule>): PlatformReviewRule {
+    const p = this.pkg(account.providerId)
+    if (!p?.launch?.reviewRefusal || !launchKindsOf(p).includes('review')) return { kind: 'allowed' }
+    const realm = findRealm(doc, account.authRealmId)
+    if (!realm) return { kind: 'allowed' }
+    const known = memo?.get(realm.id)
+    if (known) return known
+    let rule: PlatformReviewRule
+    try {
+      const message = p.launch.reviewRefusal(realm)
+      rule = typeof message === 'string' && message ? { kind: 'refused', message } : { kind: 'allowed' }
+    } catch {
+      rule = { kind: 'unknown' }
+    }
+    memo?.set(realm.id, rule)
+    return rule
+  }
+
+  /** A reviewer default this platform can never use (chosen before the rule
+   *  applied, or the account stopped qualifying) is cleared, never silently
+   *  swapped for another: reviews then use the provider default, and the
+   *  Accounts surface says what happened. Run at start-up, so a rule that
+   *  only becomes definite later leaves the choice in place for that run
+   *  (the tool is still not offered on it; the surface shows the refusal). */
+  async clearUnusableReviewerDefaults(): Promise<void> {
+    const ready = this.ready()
+    if ('ok' in ready) return
+    for (const a of ready.doc.accounts) {
+      if (a.isReviewerDefault !== true) continue
+      if (this.platformReviewRule(ready.doc, a).kind !== 'refused') continue
+      // Decided again under the lock, on the document the write applies to:
+      // a choice the user made meanwhile is theirs, and only a definite
+      // refusal clears (a rule that could not tell, e.g. the profile list
+      // unreadable at start-up, clears nothing).
+      let cleared: string | null = null
+      const r = await ready.store.mutate((d, t) => {
+        const cur = findAccount(d, a.id)
+        if (cur?.isReviewerDefault !== true) return { ok: true, doc: d }
+        const rule = this.platformReviewRule(d, cur)
+        if (rule.kind !== 'refused') return { ok: true, doc: d }
+        const out = setReviewerDefault(d, a.providerId, null, t)
+        if (out.ok) cleared = rule.message
+        return out
+      })
+      if (!r.ok) { this.log(`an unusable ${a.providerId} reviewer default was not cleared (${r.code})`); continue }
+      if (cleared === null) continue
+      this.reviewerNotices.set(a.providerId, { message: cleared, store: ready.store })
+      this.changed()
+    }
+  }
+
+  /** Whether a review of this provider could run now, and on which account:
+   *  the answer reviewReady gives, for the surface. */
+  private reviewReadiness(p: ProviderPackage, doc: ProviderRegistryDoc | null, memo: Map<string, PlatformReviewRule>): ReviewReadinessView | undefined {
+    if (!p.review || !p.launch || !launchKindsOf(p).includes('review')) return undefined
+    const chosen = doc ? chooseReviewerAccount(doc, p.id) : null
+    const choice = chosen?.ok && chosen.source !== 'explicit' ? { accountId: chosen.accountId, source: chosen.source } : {}
+    return { ready: this.reviewReady(p.id, memo), ...choice }
   }
 
   // -------------------------------------------------------------------------
@@ -1181,8 +1283,10 @@ export class AccountsService {
    *  active, not blocked, locatable, and needs no per-launch acknowledgement,
    *  which an agent cannot give. The same checks prepareLaunch makes before
    *  it runs anything; the executable and the lease are checked when a
-   *  review starts. Synchronous, and no I/O: asked per MCP connection. */
-  reviewReady(providerId: ProviderId): boolean {
+   *  review starts. Synchronous, and asked per MCP connection: no CLI, and
+   *  no I/O beyond the platform rule (on macOS the Claude rule reads
+   *  profiles.json). */
+  reviewReady(providerId: ProviderId, memo?: Map<string, PlatformReviewRule>): boolean {
     const p = this.pkg(providerId)
     if (!p?.launch || !p.review || !launchKindsOf(p).includes('review')) return false
     if (!this.capability(p, 'session.launch').enabled || !this.isEnabled(p.id)) return false
@@ -1192,6 +1296,8 @@ export class AccountsService {
     if (!chosen.ok) return false
     const a = findAccount(ready.doc, chosen.accountId)
     if (!a || a.identityAssurance === 'realm-only' || findRealm(ready.doc, a.authRealmId)?.ownership === 'external-default') return false
+    // Never offered on an account this platform will not let review.
+    if (this.reviewRefusalOf(ready.doc, a, memo)) return false
     return resolveLaunchBinding(ready.doc, { providerId: p.id, providerAccountId: a.id }).ok
   }
 

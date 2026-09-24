@@ -44,6 +44,20 @@ export interface ProviderInstallationView {
   signInMethods: Readonly<Record<SignInMethod, CapabilityView>>
   status: CapabilityView
   logout: CapabilityView
+  /** Present when this provider reviews for the other provider's sessions:
+   *  whether a review could be prepared now on the account side, and on
+   *  which account. The review switches and the Conductor tools switch
+   *  decide the offer as well; for Claude reviews this is the account check
+   *  the offer makes. */
+  review?: ReviewReadinessView
+}
+
+export interface ReviewReadinessView {
+  ready: boolean
+  /** The account a review would use: the reviewer default, else the
+   *  provider default. Absent when there is none. */
+  accountId?: string
+  source?: 'reviewer-default' | 'provider-default'
 }
 
 export interface IdentityView {
@@ -90,6 +104,26 @@ export interface AccountView {
   runningReviews: number
   /** Everything holding the account: sessions, sign-ins, operations. */
   consumers: number
+  /** Why this account cannot run this provider's reviews here. `platform`:
+   *  it never can on this platform (Claude on macOS: only the normal
+   *  sign-in). `unknown`: the app could not tell, so nothing is offered on
+   *  it for now. Either way it cannot be made the reviewer. Absent when
+   *  nothing about the platform stops it. */
+  reviewRefusal?: ReviewRefusalView
+}
+
+export interface ReviewRefusalView {
+  reason: 'platform' | 'unknown'
+  message: string
+}
+
+/** A reviewer choice the app cleared because that account can never run
+ *  reviews on this platform. `message` is the platform rule; the surface
+ *  says the earlier choice was cleared. Shown beside the reviewer line
+ *  until a reviewer is chosen for the provider. */
+export interface ReviewerNoticeView {
+  providerId: ProviderId
+  message: string
 }
 
 /** An account being set up, or one an interrupted setup left behind (9.3). */
@@ -139,6 +173,7 @@ export interface AccountsSnapshot {
   pendingSetups: PendingSetupView[]
   externalDefaults: ExternalDefaultView[]
   conflicts: IdentityConflictView[]
+  reviewerNotices: ReviewerNoticeView[]
 }
 
 /** Why an Accounts operation did not succeed. The surface acts on the code
@@ -159,6 +194,7 @@ export type AccountsFailureCode =
   | 'not-signed-in'
   | 'secret-unavailable'
   | 'sign-in-changed'          // the realm now holds another sign-in: reconcile it first (design 5.5)
+  | 'review-unavailable'       // this account cannot run reviews here, or the app could not tell: the message says which
   | 'internal'                 // unexpected; the app log has the detail
   | AuthOperationCode
   | RealmFolderCode

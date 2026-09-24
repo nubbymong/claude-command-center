@@ -105,6 +105,12 @@ export async function runStartupProviderMigrations(): Promise<void> {
       logError(`[accounts] ${pkg.id} external default at start threw: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
+  // A reviewer choice this platform can never use is cleared, and said so.
+  try {
+    await s.clearUnusableReviewerDefaults()
+  } catch (e) {
+    logError(`[accounts] clearing unusable reviewer defaults threw: ${e instanceof Error ? e.message : String(e)}`)
+  }
 }
 
 /** The resources directory changed while the app runs (the first-run setup

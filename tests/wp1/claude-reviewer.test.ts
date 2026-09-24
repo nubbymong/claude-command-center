@@ -470,6 +470,28 @@ describe('the review-only Claude launch, round-1 regressions (WP2 5b)', () => {
     const t = ports(() => '2.1.278', { profileRealmLaunch: vi.fn(() => ({ refused: 'on macOS a review runs on your normal Claude sign-in' })) })
     expect(await createClaudeReviewLaunch(t.p).launch.prepare({ authRealmId: realm().id })).toEqual({ ok: false, code: 'realm-unavailable', message: 'on macOS a review runs on your normal Claude sign-in' })
   })
+
+  it('answers the platform rule on its own, from the registry record, with nothing run (WP2 commit 6)', () => {
+    const rule = vi.fn((id: string) => (id === PID ? 'On macOS a Claude review runs on your normal Claude sign-in.' : null))
+    const t = ports(() => '2.1.278', { profileReviewRefusal: rule })
+    const launch = createClaudeReviewLaunch(t.p).launch
+    expect(launch.reviewRefusal!(realm())).toBe('On macOS a Claude review runs on your normal Claude sign-in.')
+    expect(rule).toHaveBeenCalledWith(PID)
+    // A record that names no profile is left to prepare, which refuses it: the
+    // rule is not even asked (this one would refuse any profile it is asked about).
+    const refuseAll = vi.fn((_id: string) => 'refused')
+    const strict = createClaudeReviewLaunch(ports(() => '2.1.278', { profileReviewRefusal: refuseAll }).p).launch
+    expect(strict.reviewRefusal!(realm({ pathRef: 'somewhere-else' }))).toBeNull()
+    expect(refuseAll).not.toHaveBeenCalled()
+    // No platform rule wired: nothing refuses here.
+    expect(createClaudeReviewLaunch(ports(() => '2.1.278').p).launch.reviewRefusal!(realm())).toBeNull()
+    // A rule that cannot tell throws through: the accounts service refuses to
+    // offer on it but never clears a choice because of it.
+    const failing = createClaudeReviewLaunch(ports(() => '2.1.278', { profileReviewRefusal: () => { throw new Error('unreadable') } }).p).launch
+    expect(() => failing.reviewRefusal!(realm())).toThrow('unreadable')
+    expect(t.p.profileRealmLaunch).not.toHaveBeenCalled()
+    expect(t.p.run).not.toHaveBeenCalled()
+  })
 })
 
 describe('the composition root wires the reviewer\'s account hold', () => {
@@ -477,6 +499,15 @@ describe('the composition root wires the reviewer\'s account hold', () => {
     const { claudeReviewPorts } = await import('../../src/main/providers/compose')
     const { holdProfileForRun } = await import('../../src/main/profile-consumers')
     expect(claudeReviewPorts.holdProfile).toBe(holdProfileForRun)
+  })
+
+  it('the platform rule is account-profiles\' profileReviewRefusal (off macOS it refuses nothing)', async () => {
+    const { claudeReviewPorts } = await import('../../src/main/providers/compose')
+    const { profileReviewRefusal } = await import('../../src/main/account-profiles')
+    expect(claudeReviewPorts.profileReviewRefusal).toBe(profileReviewRefusal)
+    expect(profileReviewRefusal('profile-a1', 'win32')).toBeNull()
+    expect(profileReviewRefusal('profile-a1', 'linux')).toBeNull()
+    if (process.platform !== 'darwin') expect(claudeReviewPorts.profileReviewRefusal!('profile-a1')).toBeNull()
   })
 
   it('the realm lookup answers only for a realm in use', async () => {

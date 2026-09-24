@@ -43,7 +43,8 @@ const server = await import('../../../src/main/conductor-mcp-server')
 
 let port = 0
 beforeAll(async () => {
-  port = 29000 + Math.floor(Math.random() * 1000)
+  // Its own range, so it cannot draw the port of another MCP test running beside it.
+  port = 30000 + Math.floor(Math.random() * 1000)
   await server.startMcpServer(port, () => null)
 })
 afterAll(() => {

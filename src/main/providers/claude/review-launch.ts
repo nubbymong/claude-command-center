@@ -29,6 +29,10 @@ export interface ClaudeReviewPorts extends ClaudeCliPorts {
    *  review here (on macOS only the primary account is the normal sign-in).
    *  Throws when the home cannot be set up. */
   profileRealmLaunch(profileId: string): { home: string; baseEnv: Record<string, string>; realmEnv: RealmEnvPatch; sessionsDir: string } | { refused: string }
+  /** account-profiles' platform rule on its own (profileReviewRefusal): why
+   *  this profile can never review here, or null; throws when it cannot
+   *  tell. Synchronous; absent means no platform rule applies. */
+  profileReviewRefusal?(profileId: string): string | null
   /** See ClaudeReviewDeps.holdProfile. */
   holdProfile(profileId: string, maxAgeMs: number, signal?: AbortSignal): Promise<(() => void) | null>
   /** See ClaudeReviewDeps.recordPreflight. */
@@ -113,14 +117,16 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
 
   /** The profile behind a realm: a live Claude profile-home realm whose
    *  reference names a valid profile id, else null. */
+  const profileOfRecord = (r: AuthRealm): string | null => {
+    if (r.kind !== 'claude-config-home' || typeof r.pathRef !== 'string' || !r.pathRef.startsWith(CLAUDE_PROFILE_PATH_REF_PREFIX)) return null
+    const id = r.pathRef.slice(CLAUDE_PROFILE_PATH_REF_PREFIX.length)
+    return isValidProfileId(id) ? id : null
+  }
   const profileOf = async (realm: RealmRef): Promise<string | null> => {
     let found: Awaited<ReturnType<ClaudeReviewPorts['lookupRealm']>>
     try { found = await ports.lookupRealm({ authRealmId: realm.authRealmId }) } catch { return null }
     if (!found || found.ok !== true || !found.realm) return null
-    const r = found.realm
-    if (r.kind !== 'claude-config-home' || typeof r.pathRef !== 'string' || !r.pathRef.startsWith(CLAUDE_PROFILE_PATH_REF_PREFIX)) return null
-    const id = r.pathRef.slice(CLAUDE_PROFILE_PATH_REF_PREFIX.length)
-    return isValidProfileId(id) ? id : null
+    return profileOfRecord(found.realm)
   }
 
   return {
@@ -140,6 +146,15 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
         } catch {
           return refuse('not-started')
         }
+      },
+      // The platform rule alone, for the accounts service's offer and choice.
+      // A record that names no profile is left to `prepare`, which refuses it.
+      // A rule that cannot tell throws through: the service refuses to offer
+      // on it but never clears a choice because of it.
+      reviewRefusal(realm: AuthRealm): string | null {
+        const profileId = profileOfRecord(realm)
+        if (!profileId || !ports.profileReviewRefusal) return null
+        return ports.profileReviewRefusal(profileId)
       },
       // A reviewer persists no transcript (--no-session-persistence), and
       // Claude sessions do not launch here: nothing for the usage index.

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "f9487a422ceaa9ca70a7958cce7555969eda48815456efc134e4d8f498f06771",
-  "manifestHead": "c4da765a375b4aec2e918b0f3f40529928360523",
+  "manifestPathDigest": "771727c46b5c4159f9527f9cd50ba54691447f7774dfa53cbf9263756442c8ef",
+  "manifestHead": "fe23694ceaf5e3af92ea0ec675e81591964208e2",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -3520,6 +3520,17 @@
       "disposition": "added",
       "evidence": "WP2 regression for the per-spawn MCP (WP1.68): a connection's tool set follows the provider its session's credential was issued to; tests/unit/main/conductor-mcp-provider-binding.test.ts",
       "note": "Codex appears as the provider name the test issues a credential to; no Codex code path"
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-review-switches.test.ts",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6 regression for the per-spawn MCP review tools (WP1.68): each review direction follows its own Settings switch over real SSE and streamable HTTP connections; tests/unit/main/conductor-mcp-review-switches.test.ts",
+      "note": "codexEnabled and the Codex session appear as test settings and the provider a credential is issued to; no Codex code path"
     }
   ]
 }

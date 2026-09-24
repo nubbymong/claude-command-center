@@ -272,7 +272,7 @@ describe('after a restart', () => {
 // while a review could be prepared now.
 describe('a Claude review launch (WP2 5b)', () => {
   const PROFILES = ['profile-a1', 'profile-b2']
-  async function claudeHarness(opts: { review?: boolean; seeds?: ReturnType<typeof claudeSnapshot>[] } = {}) {
+  async function claudeHarness(opts: { review?: boolean; seeds?: ReturnType<typeof claudeSnapshot>[]; refuse?: { rule: (profileId: string) => string | null } } = {}) {
     const box: { h?: Harness } = {}
     const composed: string[] = []
     const versionRuns: string[] = []
@@ -294,6 +294,7 @@ describe('a Claude review launch (WP2 5b)', () => {
       shellEnv: () => ({}),
       run: async (cmd) => { versionRuns.push(cmd.args.join(' ')); return { exitCode: 0, stdout: '2.1.278 (Claude Code)\n', stderr: '', timedOut: false, truncated: false } },
       platform: 'win32',
+      ...(opts.refuse ? { profileReviewRefusal: (id: string) => opts.refuse!.rule(id) } : {}),
     }
     const h = await harness({
       claude: opts.seeds ?? [claudeSnapshot(PROFILES[0], { isDefault: true }), claudeSnapshot(PROFILES[1])],
@@ -374,6 +375,126 @@ describe('a Claude review launch (WP2 5b)', () => {
     const t = await claudeHarness()
     expect(await t.h.service.sessionsDirs('claude')).toEqual([])
     expect(t.composed).toEqual([])
+  })
+
+  // WP2 commit 6 (owner, 2026-09-24): on macOS a Claude profile that is not
+  // the normal sign-in is never offered as a reviewer that will not work.
+  // The platform rule is the package's (profileReviewRefusal port); here it
+  // refuses the second profile, as it does on a Mac whose primary is the first.
+  const MAC_RULE = 'On macOS only your normal Claude sign-in can run Claude reviews.'
+  const refuseSecond = () => ({ rule: (id: string) => (id === PROFILES[1] ? MAC_RULE : null) })
+
+  it('an account the platform will not let review says so in the snapshot, and cannot be made the reviewer', async () => {
+    const t = await claudeHarness({ refuse: refuseSecond() })
+    const [a, b] = PROFILES.map(t.idOf)
+    const view = (id: string) => t.h.service.snapshot().accounts.find((x) => x.id === id)!
+    expect(view(b).reviewRefusal).toEqual({ reason: 'platform', message: MAC_RULE })
+    expect(view(a).reviewRefusal).toBeUndefined()
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: b })).toEqual({ ok: false, code: 'review-unavailable', message: MAC_RULE })
+    expect(t.h.doc().accounts.find((x) => x.id === b)!.isReviewerDefault).not.toBe(true)
+    // The account that can review is still accepted, and a review is offered.
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: a })).toEqual({ ok: true })
+    expect(t.h.service.reviewReady('claude')).toBe(true)
+    // The surface reads the same answer, and the account a review would use.
+    expect(t.h.service.snapshot().providers.find((p) => p.providerId === 'claude')!.review).toEqual({ ready: true, accountId: a, source: 'reviewer-default' })
+    expect(t.composed).toEqual([])
+  })
+
+  it('no review is offered while the account a review would use is one the platform refuses', async () => {
+    const refuse = { rule: (_id: string): string | null => MAC_RULE }
+    const t = await claudeHarness({ refuse })
+    expect(t.h.service.reviewReady('claude')).toBe(false)
+    refuse.rule = () => null
+    expect(t.h.service.reviewReady('claude')).toBe(true)
+    // A rule that fails refuses too: never offered on a guess.
+    refuse.rule = () => { throw new Error('profiles unreadable') }
+    expect(t.h.service.reviewReady('claude')).toBe(false)
+    const snap = t.h.service.snapshot()
+    expect(snap.accounts.find((x) => x.id === t.idOf(PROFILES[0]))!.reviewRefusal).toEqual({ reason: 'unknown', message: expect.stringMatching(/could not check/) })
+    expect(snap.providers.find((p) => p.providerId === 'claude')!.review).toEqual({ ready: false, accountId: t.idOf(PROFILES[0]), source: 'provider-default' })
+    // Codex reviews have no platform rule, and no Codex account here: not ready, nothing refused.
+    expect(snap.providers.find((p) => p.providerId === 'codex')!.review).toEqual({ ready: false })
+  })
+
+  it('a reviewer choice that stopped qualifying is cleared at start-up and said so once, never swapped silently', async () => {
+    const refuse = { rule: (_id: string): string | null => null }
+    const t = await claudeHarness({ refuse })
+    const [a, b] = PROFILES.map(t.idOf)
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: b })).toEqual({ ok: true })
+    // A rule that cannot tell (the profile list unreadable at start-up) clears
+    // nothing and posts no notice; the tool is just not offered meanwhile.
+    refuse.rule = () => { throw new Error('profiles unreadable') }
+    await t.h.service.clearUnusableReviewerDefaults()
+    expect(t.h.doc().accounts.find((x) => x.id === b)!.isReviewerDefault).toBe(true)
+    expect(t.h.service.snapshot().reviewerNotices).toEqual([])
+    expect(t.h.service.reviewReady('claude')).toBe(false)
+    // The platform rule now refuses it (the primary changed, or it predates the rule).
+    refuse.rule = (id) => (id === PROFILES[1] ? MAC_RULE : null)
+    expect(t.h.service.reviewReady('claude')).toBe(false)
+    await t.h.service.clearUnusableReviewerDefaults()
+    expect(t.h.doc().accounts.filter((x) => x.providerId === 'claude' && x.isReviewerDefault === true)).toEqual([])
+    expect(t.h.service.snapshot().reviewerNotices).toEqual([{ providerId: 'claude', message: MAC_RULE }])
+    // Reviews now use the provider default, which can review.
+    expect(t.h.service.reviewReady('claude')).toBe(true)
+    expect(await t.h.service.prepareLaunch(review('r-after'))).toMatchObject({ ok: true, reviewer: 'provider-default', binding: { providerAccountId: a } })
+    // Running it again changes nothing and adds no second notice.
+    await t.h.service.clearUnusableReviewerDefaults()
+    expect(t.h.service.snapshot().reviewerNotices).toHaveLength(1)
+    // A new choice removes the notice.
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: a })).toEqual({ ok: true })
+    expect(t.h.service.snapshot().reviewerNotices).toEqual([])
+  })
+
+  it('the start-up clear never undoes a choice the user makes while it runs, and posts nothing then (ADR-009 6a)', async () => {
+    const refuse = { rule: (_id: string): string | null => null }
+    const t = await claudeHarness({ refuse })
+    const [a, b] = PROFILES.map(t.idOf)
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: b })).toEqual({ ok: true })
+    refuse.rule = (id) => (id === PROFILES[1] ? MAC_RULE : null)
+    // The user picks A while the clear is deciding about B: neither is awaited first.
+    const pick = t.h.service.setReviewerDefault({ providerId: 'claude', accountId: a })
+    const clear = t.h.service.clearUnusableReviewerDefaults()
+    expect(await pick).toEqual({ ok: true })
+    await clear
+    expect(t.h.doc().accounts.filter((x) => x.providerId === 'claude' && x.isReviewerDefault === true).map((x) => x.id)).toEqual([a])
+    expect(t.h.service.snapshot().reviewerNotices).toEqual([])
+    // The same when the user clears the reviewer meanwhile: nothing is posted.
+    refuse.rule = () => null
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: b })).toEqual({ ok: true })
+    refuse.rule = (id) => (id === PROFILES[1] ? MAC_RULE : null)
+    const unset = t.h.service.setReviewerDefault({ providerId: 'claude', accountId: null })
+    const clear2 = t.h.service.clearUnusableReviewerDefaults()
+    expect(await unset).toEqual({ ok: true })
+    await clear2
+    expect(t.h.service.snapshot().reviewerNotices).toEqual([])
+  })
+
+  it('the clear decides again under the lock: a rule that cannot tell by then clears nothing (ADR-009 6a)', async () => {
+    const refuse = { rule: (_id: string): string | null => null }
+    const t = await claudeHarness({ refuse })
+    const b = t.idOf(PROFILES[1])
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: b })).toEqual({ ok: true })
+    refuse.rule = (id) => (id === PROFILES[1] ? MAC_RULE : null)
+    const clear = t.h.service.clearUnusableReviewerDefaults()
+    // Between the first look and the write, the profile list stops being readable.
+    refuse.rule = () => { throw new Error('profiles unreadable') }
+    await clear
+    expect(t.h.doc().accounts.find((x) => x.id === b)!.isReviewerDefault).toBe(true)
+    expect(t.h.service.snapshot().reviewerNotices).toEqual([])
+  })
+
+  it('a notice belongs to the registry it came from: a resources directory chosen later does not show it (ADR-009 6a)', async () => {
+    const refuse = { rule: (_id: string): string | null => null }
+    const t = await claudeHarness({ refuse })
+    expect(await t.h.service.setReviewerDefault({ providerId: 'claude', accountId: t.idOf(PROFILES[1]) })).toEqual({ ok: true })
+    refuse.rule = (id) => (id === PROFILES[1] ? MAC_RULE : null)
+    await t.h.service.clearUnusableReviewerDefaults()
+    expect(t.h.service.snapshot().reviewerNotices).toHaveLength(1)
+    const original = t.h.store
+    t.h.useStore(t.h.newStore())
+    expect(t.h.service.snapshot().reviewerNotices).toEqual([])
+    t.h.useStore(original)
+    expect(t.h.service.snapshot().reviewerNotices).toHaveLength(1)
   })
 })
 

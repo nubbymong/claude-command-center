@@ -12,7 +12,7 @@ import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts } from './claude'
 import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps } from './codex'
 import type { CodexRealmSource } from './codex'
 import { findRealm } from '../../shared/providers'
-import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, recordProfileReviewPreflight } from '../account-profiles'
+import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight } from '../account-profiles'
 import { holdProfileForRun } from '../profile-consumers'
 import { resolveClaudeExecutable } from '../claude-cli-version'
 import { readConfigChecked } from '../config-manager'
@@ -61,6 +61,7 @@ export const claudeReviewPorts: ClaudeReviewPorts = {
     return realm && realm.lifecycle === 'active' ? { ok: true, realm } : { ok: false }
   },
   profileRealmLaunch: (profileId) => profileRealmLaunch(profileId),
+  profileReviewRefusal,
   // The hold first, then the wait for a refresh in flight (claude-headless's
   // order), then a fresh hold for the run; a cancel during the wait lets go.
   holdProfile: holdProfileForRun,

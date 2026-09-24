@@ -12,7 +12,7 @@
 import type { ProviderId } from '../../../shared/providers'
 import type {
   ProviderCapabilities, CapabilityPlatform, RealmEnvPatch, AuthMethod, KnownAuthState, DiscoveryState, Compatibility,
-  SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight, RealmKind,
+  SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight, RealmKind, AuthRealm,
 } from '../../../shared/providers'
 import type { SessionProvider } from '../types'
 import type { LegacyAccountsPort } from './account-registry-store'
@@ -206,6 +206,14 @@ export interface ProviderLaunchOperations {
    *  any other kind before anything is chosen or leased. */
   readonly kinds: readonly LaunchLeaseKind[]
   prepare(realm: RealmRef): Promise<LaunchPreparation | { ok: false; code: AuthFailureCode; message?: string }>
+  /** Why a reviewer invocation can never run in this realm on this platform
+   *  (e.g. Claude on macOS: only the normal sign-in reviews), or null when
+   *  nothing about the platform stops it. From the registry's own record:
+   *  synchronous, no CLI. The accounts service asks it before a review tool
+   *  is offered and before an account is made the reviewer, and shows the
+   *  reason; `prepare` still refuses on its own. THROWS when it cannot tell:
+   *  the service then offers nothing on that account, but clears nothing. */
+  reviewRefusal?(realm: AuthRealm): string | null
   /** Where a realm writes its session transcripts (plan A13: what the usage
    *  index reads), or null when the realm cannot be located now. A path
    *  only: no CLI, no executable check. */
