@@ -661,6 +661,47 @@ only the other provider's tool.
   bounded output that is refused past the limit. It goes into the prompt.
   Mode `paths` needs no diff.
 
+**Groundwork facts (2026-09-24, read from the code and the pinned CLI).**
+
+- **Claude accounts are already in the registry.** Each legacy profile is
+  mirrored into the registry at start-up as one account, with one realm:
+  `claude-config-home`, `pathRef: claude-profile:<id>`
+  (`claude/legacy-accounts.ts`). The provider default follows the primary
+  profile. A Claude reviewer default can be set today. Nothing resolves
+  `claude-profile:<id>` to a path yet; the equivalent is the profile's home,
+  `getProfileConfigDir(id)`.
+- **A review launch must reproduce what `withProfileHome` composes.**
+  - Environment: the profile home as `USERPROFILE` (and `HOME` on Linux),
+    `GIT_CONFIG_GLOBAL` and the npm config pointed at the real home, the
+    realm variables, and the ambient-authority strip.
+  - Preparation: `setupProfileLinks` first.
+  - Account use: the profile-consumer hold and the pending-token-refresh
+    wait. Account leases do not cover these.
+  - Session-only, and not for a reviewer: `CCC_*` variables and the
+    primary-credential sync.
+  - On macOS a profile home does not isolate the sign-in, so a Claude review
+    is refused there.
+- **No version proof exists for Claude.** `resolveClaudeForPty` resolves by
+  name, and the 2.1.278 floor feeds only the preflight diagnostic. 5b adds
+  `setup.discover` for Claude (resolve, version check, recorded identity),
+  as Codex has.
+- **`prepareLaunch` has no per-kind guard.** Once Claude has a `launch`, a
+  Claude `kind: 'session'` launch must be refused by a data guard; A12
+  keeps Claude sessions on their own path. The Claude package must receive
+  profile-home composition through `ClaudePackageDeps`: importing
+  `account-profiles` would break dependency rule R2.
+- **The pinned Claude CLI has a mode made for this.** `claude -p
+  --restricted` (2.1.278) removes the tools that run commands or code, and
+  ignores user, project and local settings files. It also confines the file
+  tools to the working folders and refuses `bypassPermissions`. With
+  `--strict-mcp-config`, `--tools` limited to Read, Grep and Glob, `--output-format json`
+  and `--no-session-persistence`, it is a read-only reviewer that a
+  project's own settings cannot widen. That removes the need for the
+  project gate for settings.
+
+  The diff still has to come from main, because a restricted reviewer has
+  no git. The recommendation for decision 2 is unchanged.
+
 **Owner decisions.**
 
 1. **The Claude reviewer account.** Registry-based, through a review-only
