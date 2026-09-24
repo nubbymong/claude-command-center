@@ -2,7 +2,7 @@
 // dependency-boundary test fails this package on any concrete-provider import.
 export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
-  ProviderManagedLaunchOperations, ProviderRealmFolderOperations, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec,
+  ProviderManagedLaunchOperations, ProviderRealmFolderOperations, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
   DiscoveryResult, InstallRecipe, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthFailureCode, AuthCredentialKind,
 } from './package'
 export {
@@ -22,3 +22,11 @@ export type {
 // WP2: adopting a provider's own default sign-in once, on upgrade (design 6.3).
 export { migrateExternalDefaultRealm } from './external-default-migration'
 export type { ExternalDefaultMigrationOutcome, ExternalDefaultMigrationDeps, ProviderPreference } from './external-default-migration'
+
+// WP2 commit 3: consumer leases, the one-shot secret channel and the
+// accounts service (design 9.2, 9.3, 11; plan A6, A11).
+export { ConsumerLeaseRegistry, LAUNCH_LEASE_KINDS } from './consumer-leases'
+export type { LeaseKind, LaunchLeaseKind, LeaseOwner, AccountLease, LeaseAddResult } from './consumer-leases'
+export { SecretHandleStore, SECRET_HANDLE_TTL_MS, SECRET_HANDLES_PER_RENDERER } from './secret-handles'
+export { AccountsService } from './accounts-service'
+export type { AccountsServiceDeps, LaunchLeaseResult } from './accounts-service'

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "7a3591daf825ae97ad6522d2660149d39bad538ee1071ab1b10565c9fc009da4",
-  "manifestHead": "065d23d2f8152fdb99ad6bcc45071d4f21317295",
+  "manifestPathDigest": "22e405255c4c260499bcfe10fc11bf16c39e4ec07b56857f9ee938ce49e56e10",
+  "manifestHead": "660452b31cdd00ba68743abf548a14af32cf0fd0",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -523,6 +523,16 @@
       "note": ""
     },
     {
+      "path": "src/main/provider-accounts.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 runtime for the provider-neutral accounts service: the one secret store, the lease registry, the registered packages and the saved settings (three-way preference from each package's enablement data, owner-enabled experimental capabilities); runs the one-time Codex default-home adoption after the legacy reconcile; covered by tests/wp1/setup-journal-recovery.test.ts (WP1.47), tests/wp1/consumer-leases.test.ts (WP1.46), tests/wp1/provider-ipc.test.ts (WP1.42)",
+      "note": "created by WP2; replaces the singleton Codex account IPC once the renderer moves to providerAccounts (commit 5)"
+    },
+    {
       "path": "src/main/providers/claude/index.ts",
       "predicates": [
         "P14"
@@ -649,6 +659,18 @@
       "disposition": "added",
       "evidence": "new WP2 Codex discovery: resolve, canonicalise, prove the version, record the executable identity and re-verify it; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.49)",
       "note": "created by WP2"
+    },
+    {
+      "path": "src/main/providers/codex/enablement.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P14"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "new WP2 data-only statement of where Codex on/off is saved (codexEnabled; absent = not answered yet) read by the accounts service through the package contract instead of a provider-name condition; covered by tests/wp1/setup-journal-recovery.test.ts (WP1.47) and tests/wp1/fault-isolation.test.ts (WP1.59)",
+      "note": "created by WP2; the renderer codexEnabled gates are retired with the legacy Codex surfaces"
     },
     {
       "path": "src/main/providers/codex/index.ts",

@@ -251,6 +251,38 @@ export const IPC = {
   CODEX_LOGOUT: 'codex:logout',
   CODEX_TEST_CONNECTION: 'codex:testConnection',
 
+  // Provider accounts (WP2 commit 3): the one provider-neutral Accounts
+  // surface. Requests name opaque ids only; replies are views, never paths,
+  // tokens, keys or environment values. SECRET is one-way (send, no reply).
+  PROVIDER_ACCOUNTS_SNAPSHOT: 'providerAccounts:snapshot',
+  PROVIDER_ACCOUNTS_CHANGED: 'providerAccounts:changed', // main -> renderer: AccountsSnapshot
+  PROVIDER_ACCOUNTS_DISCOVER: 'providerAccounts:discover',
+  PROVIDER_ACCOUNTS_INSTALL_RECIPES: 'providerAccounts:installRecipes',
+  PROVIDER_ACCOUNTS_SET_ENABLED: 'providerAccounts:setEnabled',
+  PROVIDER_ACCOUNTS_BEGIN_SETUP: 'providerAccounts:beginSetup',
+  PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE: 'providerAccounts:issueSecretHandle',
+  PROVIDER_ACCOUNTS_SECRET: 'providerAccounts:secret',
+  PROVIDER_ACCOUNTS_SIGN_IN: 'providerAccounts:signIn',
+  PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT: 'providerAccounts:signInOutput', // main -> the renderer that started it: SignInOutputEvent
+  PROVIDER_ACCOUNTS_CANCEL_SIGN_IN: 'providerAccounts:cancelSignIn',
+  PROVIDER_ACCOUNTS_COMPLETE_SETUP: 'providerAccounts:completeSetup',
+  PROVIDER_ACCOUNTS_ABANDON_SETUP: 'providerAccounts:abandonSetup',
+  PROVIDER_ACCOUNTS_REFRESH_STATUS: 'providerAccounts:refreshStatus',
+  PROVIDER_ACCOUNTS_LOGOUT: 'providerAccounts:logout',
+  PROVIDER_ACCOUNTS_SET_LIFECYCLE: 'providerAccounts:setLifecycle',
+  PROVIDER_ACCOUNTS_SET_DEFAULT: 'providerAccounts:setDefault',
+  PROVIDER_ACCOUNTS_UPDATE_IDENTITY: 'providerAccounts:updateIdentity',
+  PROVIDER_ACCOUNTS_CREATE_GROUP: 'providerAccounts:createGroup',
+  PROVIDER_ACCOUNTS_RENAME_GROUP: 'providerAccounts:renameGroup',
+  PROVIDER_ACCOUNTS_DELETE_GROUP: 'providerAccounts:deleteGroup',
+  PROVIDER_ACCOUNTS_LINK_IDENTITY: 'providerAccounts:linkIdentity',
+  PROVIDER_ACCOUNTS_UNLINK_IDENTITY: 'providerAccounts:unlinkIdentity',
+  PROVIDER_ACCOUNTS_ADOPT_EXTERNAL: 'providerAccounts:adoptExternal',
+  PROVIDER_ACCOUNTS_RUN_MIGRATION: 'providerAccounts:runMigration',
+  PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN: 'providerAccounts:reconcileSignIn',
+  PROVIDER_ACCOUNTS_RESOLVE_CONFLICT: 'providerAccounts:resolveConflict',
+  PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT: 'providerAccounts:setReviewerDefault',
+
   // Memory
   MEMORY_SCAN: 'memory:scan',
   MEMORY_RECENT_SESSIONS: 'memory:recentSessions',

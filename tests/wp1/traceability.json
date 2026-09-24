@@ -315,7 +315,8 @@
       "tests": [
         "tests/wp1/codex-auth-adapter.test.ts",
         "tests/wp1/secret-entry.test.tsx",
-        "tests/wp1/secret-scan.test.ts"
+        "tests/wp1/secret-scan.test.ts",
+        "tests/wp1/secret-channel.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -411,7 +412,8 @@
       "title": "Secret scanning of logs, IPC captures and test artifacts finds no seeded secret",
       "kind": "automated",
       "tests": [
-        "tests/wp1/secret-scan.test.ts"
+        "tests/wp1/secret-scan.test.ts",
+        "tests/wp1/provider-ipc.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -614,7 +616,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/launch-handoff.test.ts",
-        "tests/wp1/provider-core.test.ts"
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/provider-ipc.test.ts"
       ],
       "evidence": [],
       "status": "planned",

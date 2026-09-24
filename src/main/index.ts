@@ -26,6 +26,7 @@ import { recordLiveUsageForSession } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders } from './providers/compose'
 import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
+import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory } from './provider-accounts'
 import { probeClaudeCliVersion } from './claude-cli-version'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
@@ -35,7 +36,7 @@ import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from '
 // Direct from data-paths, not the handlers barrel: this runs at module scope
 // before app-ready, so it must not pull the IPC registration side of that module
 // in ahead of time.
-import { devSessionDataDir } from './data-paths'
+import { devSessionDataDir, onResourcesDirectoryChanged } from './data-paths'
 import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
@@ -62,6 +63,7 @@ import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { registerCodexHandlers } from './ipc/codex-handlers'
+import { registerProviderAccountsHandlers } from './ipc/provider-accounts-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerExeHandlers, stopAllCapturedRuns } from './ipc/exe-handlers'
 import { registerRegistryHandlers } from './ipc/registry-handlers'
@@ -508,12 +510,24 @@ if (!gotTheLock) {
     // start-up; Claude keeps launching from profiles.json either way (A12).
     try {
       const rd = getResourcesDirectory()
-      if (rd) {
-        initAccountRegistry(rd)
-        void reconcileLegacyAccountStores()
-      }
+      if (rd) initAccountRegistry(rd)
     } catch (err) {
       logError('[main] account registry start failed:', err)
+    }
+    // The accounts service (WP2 commit 3) exists either way: without a
+    // registry it reports the account list as unavailable. The one-time
+    // adoption of a provider's own default sign-in runs after the legacy
+    // reconcile, outside the registry lock.
+    try {
+      initProviderAccounts()
+      // A resources directory chosen after start (first-run setup) moves the
+      // registry with it before anything reads or reconciles it.
+      onResourcesDirectoryChanged((dir) => { void followResourcesDirectory(dir) })
+      void reconcileLegacyAccountStores()
+        .then(() => runStartupProviderMigrations())
+        .catch((err) => logError('[main] account start-up work failed:', err))
+    } catch (err) {
+      logError('[main] accounts service start failed:', err)
     }
 
     // Probe the Claude CLI version once, in the background. The managed-launch
@@ -695,6 +709,7 @@ if (!gotTheLock) {
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
     registerCodexHandlers()
+    registerProviderAccountsHandlers(getWindow, getAccountsService)
     registerCodexReviewHandlers()
     registerExeHandlers()
     registerChannelHandlers()

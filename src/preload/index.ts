@@ -31,6 +31,11 @@ import type {
   Rect,
   TrailEntry,
 } from '../shared/canvas'
+import type {
+  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest,
+  CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
+  ExternalDefaultOutcome, ResolveConflictRequest, SetReviewerDefaultRequest,
+} from '../shared/providers'
 
 function onChannel<T>(channel: string, cb: (data: T) => void): () => void {
   const handler = (_: unknown, data: T) => cb(data)
@@ -568,6 +573,39 @@ export interface ElectronAPI {
   }
   shell: {
     openExternal: (url: string) => Promise<void>
+  }
+  /** WP2: the provider-neutral Accounts surface. Opaque ids in, views out;
+   *  an API key goes only through sendSecret, one way, bound to a handle. */
+  providerAccounts: {
+    snapshot: () => Promise<AccountsSnapshot | null>
+    onChanged: (cb: (snapshot: AccountsSnapshot) => void) => () => void
+    discover: (providerId: ProviderId) => Promise<AccountsResult<{ installation: ProviderInstallationView }>>
+    installRecipes: (providerId: ProviderId) => Promise<InstallRecipeView[] | AccountsResult>
+    setEnabled: (providerId: ProviderId, enabled: boolean) => Promise<AccountsResult>
+    beginSetup: (req: BeginSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
+    issueSecretHandle: (accountId: string) => Promise<AccountsResult<{ handle: string }>>
+    sendSecret: (deposit: SecretDeposit) => void
+    signIn: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
+    cancelSignIn: (accountId: string) => Promise<AccountsResult>
+    completeSetup: (req: CompleteSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
+    abandonSetup: (accountId: string) => Promise<AccountsResult>
+    refreshStatus: (accountId: string) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    logout: (req: LogoutRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    setLifecycle: (req: SetLifecycleRequest) => Promise<AccountsResult>
+    setDefault: (accountId: string) => Promise<AccountsResult>
+    updateIdentity: (req: UpdateIdentityRequest) => Promise<AccountsResult>
+    createGroup: (name: string) => Promise<AccountsResult<{ groupId: string }>>
+    renameGroup: (groupId: string, name: string) => Promise<AccountsResult>
+    deleteGroup: (groupId: string) => Promise<AccountsResult>
+    linkIdentity: (accountId: string, identityId: string) => Promise<AccountsResult>
+    unlinkIdentity: (accountId: string) => Promise<AccountsResult<{ identityId: string }>>
+    adoptExternal: (providerId: ProviderId) => Promise<AccountsResult<{ accountId: string }>>
+    runMigration: (providerId: ProviderId) => Promise<AccountsResult<{ outcome: ExternalDefaultOutcome }>>
+    /** "This is still my account": clears a blocked account after a fresh check. */
+    reconcileSignIn: (accountId: string) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    resolveConflict: (req: ResolveConflictRequest) => Promise<AccountsResult>
+    setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<AccountsResult>
   }
   codex: {
     status: () => Promise<{
@@ -1247,6 +1285,42 @@ const electronAPI: ElectronAPI = {
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
+  providerAccounts: {
+    snapshot: () => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SNAPSHOT),
+    onChanged: (cb) => onChannel<AccountsSnapshot>(IPC.PROVIDER_ACCOUNTS_CHANGED, cb),
+    discover: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_DISCOVER, { providerId }),
+    installRecipes: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, { providerId }),
+    setEnabled: (providerId, enabled) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_ENABLED, { providerId, enabled }),
+    beginSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: req.providerId, method: req.method }),
+    issueSecretHandle: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE, { accountId }),
+    // One way and fire-and-forget: the key is never in a request or a reply,
+    // and nothing here keeps or logs it.
+    sendSecret: (deposit) => ipcRenderer.send(IPC.PROVIDER_ACCOUNTS_SECRET, { handle: deposit.handle, secret: deposit.secret }),
+    signIn: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN, req.secretHandle !== undefined
+      ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
+      : { accountId: req.accountId, method: req.method }),
+    onSignInOutput: (cb) => onChannel<SignInOutputEvent>(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, cb),
+    cancelSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, { accountId }),
+    completeSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, req),
+    abandonSetup: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ABANDON_SETUP, { accountId }),
+    refreshStatus: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_REFRESH_STATUS, { accountId }),
+    logout: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_LOGOUT, req),
+    setLifecycle: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_LIFECYCLE, req),
+    setDefault: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_DEFAULT, { accountId }),
+    updateIdentity: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_UPDATE_IDENTITY, req),
+    createGroup: (name) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CREATE_GROUP, { name }),
+    renameGroup: (groupId, name) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RENAME_GROUP, { groupId, name }),
+    deleteGroup: (groupId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_DELETE_GROUP, { groupId }),
+    linkIdentity: (accountId, identityId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_LINK_IDENTITY, { accountId, identityId }),
+    unlinkIdentity: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_UNLINK_IDENTITY, { accountId }),
+    adoptExternal: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ADOPT_EXTERNAL, { providerId }),
+    runMigration: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RUN_MIGRATION, { providerId }),
+    reconcileSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN, { accountId }),
+    resolveConflict: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, {
+      identityId: req.identityId, field: req.field, providerId: req.providerId, legacyId: req.legacyId, keep: req.keep,
+    }),
+    setReviewerDefault: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: req.providerId, accountId: req.accountId }),
   },
   codex: {
     status: () => ipcRenderer.invoke(IPC.CODEX_STATUS),

@@ -134,6 +134,16 @@ export class AccountRegistryStore {
 
   status(): RegistryStatus { return this.state }
 
+  /** This store was replaced (its resources directory is no longer the
+   *  app's). From now on it reads as unloaded and refuses every change, so
+   *  an operation that captured it before the swap cannot write to a file
+   *  the app no longer uses -- or to the same file behind the new store's
+   *  lock. */
+  retire(): void {
+    this.doc = null
+    this.state = { mode: 'recovery', reason: 'unloaded', problems: ['this registry was replaced after the resources directory changed'] }
+  }
+
   /** The current document, or null in recovery mode. Treat it as read-only. */
   current(): ProviderRegistryDoc | null { return this.doc }
 

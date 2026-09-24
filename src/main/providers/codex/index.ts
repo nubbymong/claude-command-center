@@ -5,6 +5,7 @@ import type { SessionProvider, SpawnOptions, TelemetrySource, HistorySession } f
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import type { ProviderCapabilities, AuthRealm } from '../../../shared/providers'
 import type { ProviderPackage, RealmRef } from '../core'
+import { CODEX_ENABLEMENT } from './enablement'
 import { resolveCodexBinary, buildCodexSpawn } from './spawn'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
@@ -122,6 +123,20 @@ export const codexCapabilities: ProviderCapabilities = {
   'session.ssh': { state: 'unsupported', note: 'Codex over SSH is not supported' },
 }
 
+/** The declaration once the composition root wires the registry's realms:
+ *  the auth operations then exist and the accounts service drives them.
+ *  Device sign-in stays experimental (the provider labels it beta), so it is
+ *  off until the owner enables it. Real-CLI qualification per OS is the
+ *  release gate (WP1.64), not this declaration. */
+export const codexWiredCapabilities: ProviderCapabilities = {
+  ...codexCapabilities,
+  'auth.browser': { state: 'supported', note: 'codex login (ChatGPT) in the account\'s own CODEX_HOME' },
+  'auth.device': { state: 'experimental', note: 'codex login --device-auth, labelled beta by the provider' },
+  'auth.apiKey': { state: 'supported', note: 'codex login --with-api-key over a one-shot non-TTY stdin pipe, never an argument' },
+  'auth.status': { state: 'supported', note: 'codex login status in the account\'s own CODEX_HOME' },
+  'auth.logout': { state: 'supported', note: 'codex logout in the selected realm; an external home needs the user\'s acknowledgement' },
+}
+
 /** Ambient variables that could override a bound Codex realm (D3).
  *
  *  Slice 1 carried two names. Two things widen it here, both on the owner's
@@ -237,9 +252,10 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     id: session.id,
     displayName: session.displayName,
     session,
-    capabilities: codexCapabilities,
+    capabilities: source && realmFs ? codexWiredCapabilities : codexCapabilities,
     ambientAuthVariables: codexAmbientAuthVariables,
     ownedLaunchVariables: codexOwnedLaunchVariables,
+    enablement: CODEX_ENABLEMENT,
     // No `managedLaunch`: the app writes no Codex settings file today, so it
     // has nothing to sanitise, and no CLI floor has been established. Both
     // land with the Codex adapter slice.

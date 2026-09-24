@@ -1,9 +1,10 @@
 // WP1.27, WP1.4 -- WP2 slice 2 (plan A1): the REAL registry file port and the strict
-// profiles.json reader, against real files in a temp directory.
+// profiles.json reader, against real files in a temp directory; and (commit 3)
+// the registry following a resources directory chosen after start.
 //
 // HOST QUARANTINE: this suite writes files. It runs on the VM and in CI, never
 // on the owner's workstation. It touches no ACL, no junction and no real home.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -111,5 +112,89 @@ describe('the strict profiles.json reader', () => {
     expect(fs.readFileSync(meta(), 'utf8')).toBe(before)
     expect(updateProfilesStrict((all) => { all[0].name = 'Office'; return true })).toBe(true)
     expect(JSON.parse(fs.readFileSync(meta(), 'utf8'))).toEqual({ profiles: [{ id: 'profile-a1', name: 'Office', accountEmail: '', createdAt: 1 }, null, 'junk'], future: { keep: 1 } })
+  })
+})
+
+describe('the registry follows the resources directory (plan: carried from slice 2)', () => {
+  // The real data-paths over temp directories. Its Windows-registry backing
+  // is replaced, so nothing outside the temp directory is read or written.
+  const ENV = ['CCC_E2E_DATA_DIR', 'CCC_DEV_DATA_DIR'] as const
+  const savedEnv: Partial<Record<(typeof ENV)[number], string>> = {}
+  async function load(initial: string) {
+    // An override would win over the registry value this suite controls.
+    for (const k of ENV) { if (process.env[k] !== undefined) savedEnv[k] = process.env[k]; delete process.env[k] }
+    vi.resetModules()
+    let stored: string | null = initial
+    vi.doMock('../../src/main/registry', () => ({
+      readRegistry: (key: string) => (key === 'ResourcesDirectory' ? stored : null),
+      writeRegistry: (key: string, value: string) => { if (key === 'ResourcesDirectory') stored = value },
+    }))
+    vi.doUnmock('../../src/main/data-paths')
+    const paths = await import('../../src/main/data-paths')
+    const reg = await import('../../src/main/provider-account-registry')
+    const accounts = await import('../../src/main/provider-accounts')
+    const logger = await import('../../src/main/debug-logger')
+    return { paths, reg, accounts, logger }
+  }
+  afterEach(() => {
+    for (const k of ENV) if (savedEnv[k] !== undefined) process.env[k] = savedEnv[k]
+    vi.doUnmock('../../src/main/registry')
+    vi.resetModules()
+  })
+
+  it('a directory chosen after start moves the registry there before anything reconciles it; the old file is left as it was', async () => {
+    const a = path.join(root, 'a')
+    const b = path.join(root, 'b')
+    fs.mkdirSync(a)
+    fs.mkdirSync(b)
+    const { paths, reg, accounts } = await load(a)
+    expect(paths.getResourcesDirectory()).toBe(a)
+    reg.initAccountRegistry(a)
+    expect(reg.accountRegistryIsCurrent()).toBe(true)
+    expect((await reg.getAccountRegistry()!.mutate((d, t) => createIdentity(d, { id: idn(1), colourKey: 'pink' }, t))).ok).toBe(true)
+    const fileA = fs.readFileSync(path.join(a, REGISTRY_DIRNAME, REGISTRY_FILENAME), 'utf8')
+    const replaced = reg.getAccountRegistry()!
+    const heard: string[] = []
+    paths.onResourcesDirectoryChanged((dir) => heard.push(dir))
+    const followed: Promise<void>[] = []
+    paths.onResourcesDirectoryChanged((dir) => { followed.push(accounts.followResourcesDirectory(dir)) })
+    expect(paths.setResourcesDirectory(b)).toBe(true)
+    await Promise.all(followed)
+    expect(heard).toEqual([b])
+    expect(reg.getAccountRegistryResourcesDir()).toBe(b)
+    expect(reg.accountRegistryIsCurrent()).toBe(true)
+    expect(reg.getAccountRegistry()!.current()!.identities).toEqual([])
+    expect(fs.readFileSync(path.join(a, REGISTRY_DIRNAME, REGISTRY_FILENAME), 'utf8')).toBe(fileA)
+    // An operation that captured the replaced store cannot write through it.
+    expect((await replaced.mutate((d, t) => createIdentity(d, { id: idn(2), colourKey: 'pink' }, t))).ok).toBe(false)
+    expect(fs.readFileSync(path.join(a, REGISTRY_DIRNAME, REGISTRY_FILENAME), 'utf8')).toBe(fileA)
+    // The same folder spelled another way keeps the one store.
+    const current = reg.getAccountRegistry()
+    await accounts.followResourcesDirectory(b + path.sep)
+    expect(reg.getAccountRegistry()).toBe(current)
+    // The same directory again is no change.
+    expect(paths.setResourcesDirectory(b)).toBe(true)
+    expect(heard).toEqual([b])
+  })
+
+  it('the same folder spelled another way is the directory the registry was loaded from: its reconciles are not skipped', async () => {
+    const a = path.join(root, 'a')
+    fs.mkdirSync(a)
+    const { reg } = await load(a + path.sep)
+    reg.initAccountRegistry(a)
+    expect(reg.accountRegistryIsCurrent()).toBe(true)
+  })
+
+  it('a reconcile against a registry loaded from another directory is refused, never mixed', async () => {
+    const a = path.join(root, 'a')
+    const b = path.join(root, 'b')
+    fs.mkdirSync(a)
+    fs.mkdirSync(b)
+    const { reg, logger } = await load(b)
+    reg.initAccountRegistry(a)
+    expect(reg.accountRegistryIsCurrent()).toBe(false)
+    vi.mocked(logger.logError).mockClear()
+    expect(await reg.reconcileLegacyAccountStores()).toEqual([])
+    expect(vi.mocked(logger.logError).mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/reconcile skipped: the resources directory changed/)
   })
 })

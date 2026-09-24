@@ -1,11 +1,14 @@
-// WP1.15, WP1.16, WP1.42, WP1.47, WP1.61 (design 5.3, 5.7, 9.3, 11): account
-// lifecycle, provider defaults, setup journals and launch-binding resolution
-// as a transition table over the pure registry. No filesystem, no process.
+// WP1.15, WP1.16, WP1.42, WP1.47, WP1.61 (design 5.3, 5.5, 5.7, 9.3, 11):
+// account lifecycle, provider defaults, setup journals, launch-binding
+// resolution, sign-in drift and its explicit reconcile, and the reviewer
+// default, as a transition table over the pure registry. No filesystem, no
+// process.
 import { describe, it, expect } from 'vitest'
 import {
   emptyRegistry, checkRegistryInvariants, createIdentity, beginAccountSetup, commitAccountSetup,
   abandonAccountSetup, markSetupCredentialsWritten, setAccountLifecycle, setProviderDefault,
   recordAuthCheck, resolveLaunchBinding, providerDefaultAccount, selectableAccounts,
+  reconcileAccountSignIn, setReviewerDefault, chooseReviewerAccount, parseRegistryDoc, linkAccountIdentity,
 } from '../../src/shared/providers'
 import type { ProviderRegistryDoc, AccountLifecycle } from '../../src/shared/providers'
 
@@ -212,5 +215,151 @@ describe('blocked is sticky (design 5.3, adversarial round 1)', () => {
     const doc = ok(setAccountLifecycle(blocked(), acct(2), 'inactive', { consumers: 0 }, 94))
     expect(setAccountLifecycle(doc, acct(2), 'active', { consumers: 0 }, 95)).toMatchObject({ ok: false, code: 'lifecycle' })
     expect(setProviderDefault(blocked(), acct(2), 95)).toMatchObject({ ok: false, code: 'lifecycle' })
+  })
+})
+
+describe('the kind of credential is compared too (design 5.5)', () => {
+  it('a realm signed in with an account that now reports an API key (or the reverse) is BLOCKED and its method kept', () => {
+    let doc = ok(recordAuthCheck(two(), acct(1), { state: 'signed-in', observedCredential: 'account' }, 90))
+    expect(doc.accounts[0]).toMatchObject({ authMethod: 'browser', operationalState: 'ready' })
+    doc = ok(recordAuthCheck(doc, acct(1), { state: 'signed-in', observedCredential: 'api-key', authMethod: 'apiKey' }, 91))
+    expect(doc.accounts[0]).toMatchObject({ authMethod: 'browser', operationalState: 'blocked' })
+    const key = ok(recordAuthCheck(two(), acct(2), { state: 'signed-in', authMethod: 'apiKey' }, 90))
+    expect(ok(recordAuthCheck(key, acct(2), { state: 'signed-in', observedCredential: 'account' }, 91)).accounts[1]).toMatchObject({ authMethod: 'apiKey', operationalState: 'blocked' })
+  })
+
+  it('a record with no known method compares nothing; an unknown kind is refused', () => {
+    const unknown = ok(recordAuthCheck(two(), acct(1), { state: 'signed-in', authMethod: 'unknown' }, 90))
+    expect(ok(recordAuthCheck(unknown, acct(1), { state: 'signed-in', observedCredential: 'api-key' }, 91)).accounts[0].operationalState).toBe('ready')
+    expect(recordAuthCheck(two(), acct(1), { state: 'signed-in', observedCredential: 'token' as never }, 91)).toMatchObject({ ok: false, code: 'invalid-value' })
+  })
+})
+
+describe('reconciling a blocked sign-in (design 5.3, 5.5)', () => {
+  const subjectBlocked = () => {
+    const doc = ok(recordAuthCheck(two(), acct(2), { state: 'signed-in', providerSubject: 'a', providerAuthorityId: 'x' }, 90))
+    return ok(recordAuthCheck(doc, acct(2), { state: 'signed-in', providerSubject: 'b', providerAuthorityId: 'x' }, 91))
+  }
+
+  it('is the one transition that clears blocked: the reported subject replaces the one on record', () => {
+    const doc = ok(reconcileAccountSignIn(subjectBlocked(), acct(2), { state: 'signed-in', providerSubject: 'b', providerAuthorityId: 'x' }, 92))
+    expect(doc.accounts[1]).toMatchObject({ providerSubject: 'b', operationalState: 'ready', lastAuthenticatedAt: 92 })
+    expect(checkRegistryInvariants(doc)).toEqual([])
+    expect(resolveLaunchBinding(doc, { providerId: 'codex', providerAccountId: acct(2) }).ok).toBe(true)
+  })
+
+  it('adopts a credential of another kind as the method, keeping a kind to compare next time', () => {
+    const blocked = ok(recordAuthCheck(two(), acct(1), { state: 'signed-in', observedCredential: 'api-key' }, 90))
+    const keyed = ok(reconcileAccountSignIn(blocked, acct(1), { state: 'signed-in', observedCredential: 'api-key' }, 91))
+    expect(keyed.accounts[0]).toMatchObject({ authMethod: 'apiKey', operationalState: 'ready' })
+    const back = ok(reconcileAccountSignIn(ok(recordAuthCheck(keyed, acct(1), { state: 'signed-in', observedCredential: 'account' }, 92)), acct(1), { state: 'signed-in', observedCredential: 'account' }, 93))
+    expect(back.accounts[0]).toMatchObject({ authMethod: 'browser', operationalState: 'ready' })
+    // A signed-out realm is reconciled to attention: someone must sign in.
+    expect(ok(reconcileAccountSignIn(blocked, acct(1), { state: 'signed-out' }, 94)).accounts[0]).toMatchObject({ operationalState: 'attention', authMethod: 'browser' })
+  })
+
+  it('refuses, leaving it blocked: a status that did not answer, a malformed or half subject, a subject another account holds, an archived account', () => {
+    const doc = subjectBlocked()
+    for (const state of ['error', 'unknown', 'unsupported'] as const) expect(reconcileAccountSignIn(doc, acct(2), { state }, 92), state).toMatchObject({ ok: false, code: 'invalid-value' })
+    expect(reconcileAccountSignIn(doc, acct(2), { state: 'signed-in', providerSubject: 'b' }, 92)).toMatchObject({ ok: false, code: 'invalid-value' })
+    expect(reconcileAccountSignIn(doc, acct(2), { state: 'signed-in', providerSubject: ' b', providerAuthorityId: 'x' }, 92)).toMatchObject({ ok: false, code: 'invalid-value' })
+    const other = ok(recordAuthCheck(doc, acct(1), { state: 'signed-in', providerSubject: 'b', providerAuthorityId: 'x' }, 92))
+    expect(reconcileAccountSignIn(other, acct(2), { state: 'signed-in', providerSubject: 'b', providerAuthorityId: 'x' }, 93)).toMatchObject({ ok: false, code: 'subject-conflict' })
+    const archived = ok(setAccountLifecycle(ok(setAccountLifecycle(doc, acct(2), 'inactive', { consumers: 0 }, 94)), acct(2), 'archived', { consumers: 0 }, 95))
+    expect(reconcileAccountSignIn(archived, acct(2), { state: 'signed-in' }, 96)).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(reconcileAccountSignIn(doc, acct(9), { state: 'signed-in' }, 96)).toMatchObject({ ok: false, code: 'not-found' })
+  })
+})
+
+describe('the reviewer default (plan: provider review through MCP)', () => {
+  it('at most one per provider; choosing another moves it; null clears it', () => {
+    let doc = ok(setReviewerDefault(two(), 'codex', acct(2), 90))
+    expect(doc.accounts.map((a) => a.isReviewerDefault)).toEqual([undefined, true])
+    doc = ok(setReviewerDefault(doc, 'codex', acct(1), 91))
+    expect(doc.accounts.map((a) => a.isReviewerDefault)).toEqual([true, undefined])
+    expect(checkRegistryInvariants(doc)).toEqual([])
+    doc = ok(setReviewerDefault(doc, 'codex', null, 92))
+    expect(doc.accounts.every((a) => !('isReviewerDefault' in a))).toBe(true)
+  })
+
+  it('only an active, unblocked, vouched-for account of that provider', () => {
+    const doc = two()
+    expect(setReviewerDefault(doc, 'claude', acct(1), 90)).toMatchObject({ ok: false, code: 'invalid-value' })
+    expect(setReviewerDefault(doc, 'codex', acct(9), 90)).toMatchObject({ ok: false, code: 'not-found' })
+    expect(setReviewerDefault(doc, 'gemini' as never, acct(1), 90)).toMatchObject({ ok: false, code: 'invalid-value' })
+    const inactive = ok(setAccountLifecycle(doc, acct(2), 'inactive', { consumers: 0 }, 90))
+    expect(setReviewerDefault(inactive, 'codex', acct(2), 91)).toMatchObject({ ok: false, code: 'lifecycle' })
+    const blocked = ok(recordAuthCheck(doc, acct(2), { state: 'signed-in', observedCredential: 'api-key' }, 90))
+    expect(setReviewerDefault(blocked, 'codex', acct(2), 91)).toMatchObject({ ok: false, code: 'lifecycle' })
+    let ext = ok(createIdentity(emptyRegistry(), { id: idn(1), colourKey: 'mauve' }, 1))
+    ext = ok(beginAccountSetup(ext, { accountId: acct(1), realmId: realm(1), providerId: 'codex', method: 'external', realmKind: 'codex-home', ownership: 'external-default', pathRef: 'external-default' }, 2))
+    ext = ok(commitAccountSetup(ext, acct(1), { identityId: idn(1), authMethod: 'external', lastKnownAuthState: 'signed-in', identityAssurance: 'realm-only' }, 3))
+    expect(setReviewerDefault(ext, 'codex', acct(1), 4)).toMatchObject({ ok: false, code: 'realm-only' })
+  })
+
+  it('archiving the reviewer default clears it; the invariants refuse two, or an archived one', () => {
+    let doc = ok(setReviewerDefault(two(), 'codex', acct(2), 90))
+    doc = ok(setAccountLifecycle(ok(setAccountLifecycle(doc, acct(2), 'inactive', { consumers: 0 }, 91)), acct(2), 'archived', { consumers: 0 }, 92))
+    expect('isReviewerDefault' in doc.accounts[1]).toBe(false)
+    expect(checkRegistryInvariants(doc)).toEqual([])
+    const both = JSON.parse(JSON.stringify(two())) as ProviderRegistryDoc
+    both.accounts[0].isReviewerDefault = true
+    both.accounts[1].isReviewerDefault = true
+    expect(checkRegistryInvariants(both).join()).toMatch(/2 reviewer defaults/)
+    const archived = JSON.parse(JSON.stringify(doc)) as ProviderRegistryDoc
+    archived.accounts[1].isReviewerDefault = true
+    expect(checkRegistryInvariants(archived).join()).toMatch(/reviewer default .* is archived/)
+  })
+
+  it('is only ever stored as true, and reads back', () => {
+    const doc = ok(setReviewerDefault(two(), 'codex', acct(2), 90))
+    expect(parseRegistryDoc(JSON.parse(JSON.stringify(doc)))).toEqual({ ok: true, doc })
+    for (const v of [false, 'yes', 1, null]) {
+      const bad = JSON.parse(JSON.stringify(doc))
+      bad.accounts[0].isReviewerDefault = v
+      expect(parseRegistryDoc(bad), String(v)).toMatchObject({ ok: false, reason: 'invalid' })
+    }
+    // A schema 2 file has no reviewer default: it reads as none chosen.
+    expect(parseRegistryDoc({ ...JSON.parse(JSON.stringify(two())), schemaVersion: 2 })).toMatchObject({ ok: true, doc: { schemaVersion: 3 } })
+  })
+
+  it('the choice: the named account, else the reviewer default, else the provider default -- never a silent fallback past a chosen one', () => {
+    const doc = two()
+    expect(chooseReviewerAccount(doc, 'codex', acct(2))).toEqual({ ok: true, accountId: acct(2), source: 'explicit' })
+    expect(chooseReviewerAccount(doc, 'codex')).toEqual({ ok: true, accountId: acct(1), source: 'provider-default' })
+    const chosen = ok(setReviewerDefault(doc, 'codex', acct(2), 90))
+    expect(chooseReviewerAccount(chosen, 'codex')).toEqual({ ok: true, accountId: acct(2), source: 'reviewer-default' })
+    // Chosen then made inactive: still chosen, so the binding refuses it.
+    const inactive = ok(setAccountLifecycle(chosen, acct(2), 'inactive', { consumers: 0 }, 91))
+    expect(chooseReviewerAccount(inactive, 'codex')).toMatchObject({ accountId: acct(2), source: 'reviewer-default' })
+    expect(resolveLaunchBinding(inactive, { providerId: 'codex', providerAccountId: acct(2) })).toMatchObject({ ok: false, code: 'not-active' })
+    expect(chooseReviewerAccount(emptyRegistry(), 'codex')).toMatchObject({ ok: false, code: 'not-found' })
+    expect(chooseReviewerAccount(doc, 'claude')).toMatchObject({ ok: false, code: 'not-found' })
+  })
+})
+
+describe('ADR-009 round 1 regressions: unverified identities', () => {
+  function withExternal(doc: ProviderRegistryDoc, n: number): ProviderRegistryDoc {
+    doc = ok(createIdentity(doc, { id: idn(n), colourKey: 'mauve' }, n))
+    doc = ok(beginAccountSetup(doc, { accountId: acct(n), realmId: realm(n), providerId: 'codex', method: 'external', realmKind: 'codex-home', ownership: 'external-default', pathRef: 'external-default' }, n + 1))
+    return ok(commitAccountSetup(doc, acct(n), { identityId: idn(n), authMethod: 'external', lastKnownAuthState: 'signed-in', identityAssurance: 'realm-only' }, n + 2))
+  }
+
+  it('an identity an unverified sign-in shows cannot be joined, by a link or by a setup committed into it', () => {
+    const doc = withExternal(two(), 7)
+    expect(linkAccountIdentity(doc, acct(1), idn(7), 90)).toMatchObject({ ok: false, code: 'not-linkable' })
+    let pending = ok(beginAccountSetup(doc, { accountId: acct(8), realmId: realm(8), providerId: 'codex', method: 'browser', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${realm(8)}` }, 91))
+    expect(commitAccountSetup(pending, acct(8), { identityId: idn(7), authMethod: 'browser', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted' }, 92)).toMatchObject({ ok: false, code: 'not-linkable' })
+    // An ordinary identity still links.
+    expect(linkAccountIdentity(doc, acct(1), idn(2), 93).ok).toBe(true)
+    pending = ok(commitAccountSetup(pending, acct(8), { identityId: idn(2), authMethod: 'browser', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted' }, 94))
+    expect(checkRegistryInvariants(pending)).toEqual([])
+  })
+
+  it('the invariants refuse an unverified reviewer default (a hand-edited file)', () => {
+    const doc = JSON.parse(JSON.stringify(withExternal(emptyRegistry(), 7))) as ProviderRegistryDoc
+    doc.accounts[0].isReviewerDefault = true
+    expect(checkRegistryInvariants(doc).join()).toMatch(/reviewer default .* is an unverified sign-in/)
+    expect(parseRegistryDoc(doc)).toMatchObject({ ok: false, reason: 'invalid' })
   })
 })

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-23T21:31:40.448Z",
-  "head": "065d23d2f8152fdb99ad6bcc45071d4f21317295",
-  "tree": "5e8a6206a98d7c97a039b8a6aa8d2852ba12018c",
+  "generatedAt": "2026-09-24T01:03:31.560Z",
+  "head": "660452b31cdd00ba68743abf548a14af32cf0fd0",
+  "tree": "b01200a49c9216860bb980d039d48bf1d5ccbd90",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2190,
-  "excludedFileCount": 357,
-  "scannedFileCount": 1833,
+  "trackedFileCount": 2205,
+  "excludedFileCount": 365,
+  "scannedFileCount": 1840,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 303,
-  "pathDigest": "7a3591daf825ae97ad6522d2660149d39bad538ee1071ab1b10565c9fc009da4",
+  "matchedPathCount": 305,
+  "pathDigest": "22e405255c4c260499bcfe10fc11bf16c39e4ec07b56857f9ee938ce49e56e10",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -175,7 +175,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 56
+      "lineCount": 69
     },
     {
       "path": "package.json",
@@ -485,6 +485,13 @@
       "lineCount": 1
     },
     {
+      "path": "src/main/provider-accounts.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "src/main/providers/claude/index.ts",
       "predicates": [
         "P14"
@@ -576,6 +583,15 @@
       "lineCount": 45
     },
     {
+      "path": "src/main/providers/codex/enablement.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P14"
+      ],
+      "lineCount": 4
+    },
+    {
       "path": "src/main/providers/codex/index.ts",
       "predicates": [
         "P01",
@@ -584,7 +600,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 143
+      "lineCount": 154
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -690,7 +706,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 3
+      "lineCount": 7
     },
     {
       "path": "src/main/providers/core/external-default-migration.ts",
@@ -698,7 +714,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 3
     },
     {
       "path": "src/main/providers/core/package.ts",

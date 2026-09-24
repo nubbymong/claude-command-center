@@ -191,6 +191,8 @@ export function createClaudePackage(deps: ClaudePackageDeps = {}): ProviderPacka
     capabilities: claudeCapabilities,
     ambientAuthVariables,
     ownedLaunchVariables: claudeOwnedLaunchVariables,
+    // On unless the user turned it off (A4): Claude-only users change nothing.
+    enablement: { settingsKey: 'claudeEnabled', absent: 'on' },
     managedLaunch: {
       minimumCliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
       sanitizeManagedSettings: sanitizeClaudeManagedSettings,

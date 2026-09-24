@@ -47,7 +47,7 @@ import {
   findAccount, EXTERNAL_DEFAULT_PATH_REF,
 } from '../../../shared/providers'
 import type {
-  ProviderRegistryDoc, RegistryResult, ProviderId, AuthMethod, ProviderMigrationMarker, ProviderMigrationSkipReason,
+  ProviderRegistryDoc, RegistryResult, ProviderId, AuthMethod, ProviderMigrationMarker, ProviderMigrationSkipReason, ProviderPreference,
 } from '../../../shared/providers'
 import type { ProviderPackage, AuthCredentialKind, AuthFailureCode } from './package'
 import type { AccountRegistryStore } from './account-registry-store'
@@ -65,7 +65,7 @@ export type ExternalDefaultMigrationOutcome =
 
 /** The user's preference for a provider: a durable yes or no, or nothing
  *  durable yet (installation alone is never consent). */
-export type ProviderPreference = 'on' | 'off' | 'undecided'
+export type { ProviderPreference } from '../../../shared/providers'
 
 export interface ExternalDefaultMigrationDeps {
   store: Pick<AccountRegistryStore, 'current' | 'mutate' | 'status'>

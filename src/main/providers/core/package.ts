@@ -238,6 +238,16 @@ export interface ProviderPackage {
    *  6.3). Absent: nothing to adopt (Claude's accounts come from its legacy
    *  store). */
   readonly externalDefaultRealm?: ExternalDefaultRealmSpec
+  /** Where the user's on/off for this provider is saved, and what no saved
+   *  value means (A4): data, so no provider-name condition decides it. */
+  readonly enablement?: ProviderEnablementSpec
+}
+
+export interface ProviderEnablementSpec {
+  /** A boolean settings key: true is on, false is off. */
+  readonly settingsKey: string
+  /** What an absent value means: on, or not answered yet. */
+  readonly absent: 'on' | 'undecided'
 }
 
 export interface ExternalDefaultRealmSpec {

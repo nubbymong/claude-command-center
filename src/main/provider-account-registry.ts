@@ -16,8 +16,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteFileSync } from './atomic-write'
 import { mkdirSecure } from './account-profiles'
+import { getResourcesDirectory } from './data-paths'
 import { logInfo, logError } from './debug-logger'
-import { AccountRegistryStore, listProviderPackages } from './providers/core'
+import { AccountRegistryStore, ConsumerLeaseRegistry, listProviderPackages } from './providers/core'
 import type { RegistryFsPort, RegistryStatus, LegacyReconcileOutcome } from './providers/core'
 
 export const REGISTRY_DIRNAME = 'providers'
@@ -81,16 +82,38 @@ export function createRegistryFsPort(resourcesDir: string): RegistryFsPort {
 }
 
 let store: AccountRegistryStore | null = null
+let storeResourcesDir: string | null = null
+
+/** The one consumer lease registry (A11). The store reads its counts under
+ *  the lock that applies a lifecycle change; the accounts service adds and
+ *  releases leases. */
+const leases = new ConsumerLeaseRegistry()
+
+export function getConsumerLeases(): ConsumerLeaseRegistry {
+  return leases
+}
+
+/** The resources directory the registry was loaded from: the managed realm
+ *  folders live under it, so realm lookups use exactly this one. */
+export function getAccountRegistryResourcesDir(): string | null {
+  return storeResourcesDir
+}
 
 /** Load the registry once at start. Never throws: a registry problem leaves
  *  the app running in recovery mode, and Claude keeps working from
  *  profiles.json. */
 export function initAccountRegistry(resourcesDir: string): RegistryStatus {
+  // A replaced store refuses every later change: an operation that captured
+  // it cannot write the old directory's file, nor the same file behind the
+  // new store's own lock.
+  store?.retire()
   store = new AccountRegistryStore({
     fs: createRegistryFsPort(resourcesDir),
     now: () => Date.now(),
+    consumers: (accountId) => leases.count(accountId),
     log: (m) => logInfo(m),
   })
+  storeResourcesDir = resourcesDir
   const status = store.load()
   logInfo(`[registry] loaded: ${status.mode}${status.mode === 'recovery' ? ` (${status.reason})` : ''}`)
   return status
@@ -100,10 +123,51 @@ export function getAccountRegistry(): AccountRegistryStore | null {
   return store
 }
 
+/** Whether the registry was loaded from the resources directory the app uses
+ *  NOW. The file port captures its directory when the store is made, while
+ *  a legacy store (Claude's profiles.json) is read from the current one: a
+ *  reconcile across the two would mirror one directory's profiles into
+ *  another directory's registry. */
+export function accountRegistryIsCurrent(): boolean {
+  if (!store || storeResourcesDir === null) return false
+  try { return sameDirectory(getResourcesDirectory(), storeResourcesDir) } catch { return false }
+}
+
+/** Two spellings of one folder: compared by the real path when both exist,
+ *  else by the resolved path; case-insensitively on Windows and macOS (their
+ *  default file systems ignore case). */
+export function sameDirectory(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  const canon = (p: string) => {
+    let out: string
+    try { out = fs.realpathSync.native(p) } catch { out = path.resolve(p) }
+    out = out.replace(/[\\/]+$/, '')
+    return platform === 'win32' || platform === 'darwin' ? out.toLowerCase() : out
+  }
+  return canon(a) === canon(b)
+}
+
+/** Mirror one provider's legacy account store now (after an identity edit
+ *  it mirrors). A failure is logged and retried at the next start. */
+export async function reconcileLegacyAccountStore(providerId: string): Promise<void> {
+  const s = store
+  const pkg = listProviderPackages().find((p) => p.id === providerId)
+  if (!s || !pkg?.legacyAccounts) return
+  if (!accountRegistryIsCurrent()) {
+    logError(`[registry] ${providerId}: write-through skipped: the resources directory changed since the registry was loaded`)
+    return
+  }
+  const outcome = await s.reconcileLegacy(pkg.legacyAccounts)
+  if (!outcome.ok) logError(`[registry] ${providerId}: write-through not applied (${outcome.code}): ${outcome.message}`)
+}
+
 /** Mirror every provider's legacy account store into the registry. */
 export async function reconcileLegacyAccountStores(): Promise<Array<{ providerId: string; outcome: LegacyReconcileOutcome }>> {
   const s = store
   if (!s) return []
+  if (!accountRegistryIsCurrent()) {
+    logError('[registry] reconcile skipped: the resources directory changed since the registry was loaded')
+    return []
+  }
   const out: Array<{ providerId: string; outcome: LegacyReconcileOutcome }> = []
   for (const pkg of listProviderPackages()) {
     if (!pkg.legacyAccounts) continue
@@ -124,4 +188,5 @@ export async function reconcileLegacyAccountStores(): Promise<Array<{ providerId
 
 export function _resetAccountRegistryForTest(): void {
   store = null
+  storeResourcesDir = null
 }

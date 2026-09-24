@@ -177,6 +177,80 @@ managed account is the recommended path.
 Then: full suite (Git Bash), typecheck, CI (Windows, macOS), exact-head spec +
 quality reviews (Opus), draft PR with the ADR-009 marker.
 
+## Scope additions and revised allocation (owner, 2026-09-24)
+
+Completed slices stand: their mutation campaigns and broad suites are not
+rerun because the plan changed. New or affected behaviour gets targeted
+tests; filesystem and process integration runs on the VM and CI; the full
+suite and the final exact-head reviews are for the end-to-end candidate.
+
+**Additions**
+
+- **Hello Codex.** Once Codex is enabled and set up successfully, a
+  dedicated introduction page, part of the FULL-SCREEN post-install
+  experience. It explains Codex accounts, launching and resuming sessions,
+  code review, and the key differences from Claude. Mockups go on the Agent
+  Canvas for the owner's review BEFORE the renderer slice implements it.
+- **Bidirectional provider review through MCP.** A Claude session gets
+  `codex_review`; a Codex session gets `claude_review`.
+  - Each review is an isolated reviewer invocation: a fresh,
+    non-interactive process of the reviewing provider. No delegation to a
+    live session.
+  - A review is bound to the requesting session's project and to the exact
+    working tree, range or paths it names.
+  - The reviewer account is explicit per request, or a default reviewer
+    account per provider (falling back to that provider's default account).
+  - No self-review loops: a reviewer invocation cannot request another
+    review (depth one), and a session is offered only the other provider's
+    tool.
+  - The existing session security boundaries hold: the per-session MCP
+    token, project binding and realm isolation.
+- **Provider-neutral review architecture now,** so it needs no retrofit:
+  the accounts service and the launch handoff treat a reviewer invocation
+  as one more account consumer. It resolves an account to a binding, takes
+  a lease of kind `review`, and composes the realm environment through
+  `realmEnvForProvider`, exactly as a session does.
+
+**Revised commit allocation**
+
+1. Registry core -- done.
+2. Codex package adapter (slices 3a-3e) -- done.
+3. Accounts service, IPC and leases -- in progress. Adds a `review` lease
+   kind, reviewer-account resolution (explicit, else the per-provider
+   reviewer default, else the provider default) and one lease API shared
+   by sessions and reviewer invocations.
+   - One launch-lease API: `acquireLaunchLease({ kind: 'session' | 'review' })`
+     and `releaseLaunch`. The reviewer choice, the launch binding and the
+     lease are made under the one registry lock. A chosen reviewer account
+     that cannot run is refused, never swapped for another.
+   - The reviewer default lives in the registry (`isReviewerDefault`, at most
+     one per provider, never archived; schema 3, schemas 1 and 2 upgrade).
+     An unverified realm-only sign-in cannot be the reviewer default: its
+     per-launch acknowledgement cannot come from an unattended review.
+   - Sign-in drift (design 5.3, 5.5): a status check compares the kind of
+     credential (provider account or API key) with the method on record; a
+     change blocks the account. An external sign-out or archive checks the
+     home first and is refused while blocked. "Reconcile this sign-in" is
+     the only way to clear `blocked`: a fresh check the user vouches for.
+   - Identity conflicts are in the snapshot and settled over IPC (keep this
+     app's value or the provider's).
+   - A resources directory chosen after start (first-run setup) re-creates
+     the registry there, with the start-up reconcile and adoption; a
+     reconcile against a registry from another directory is refused.
+4. Launch handoff -- as planned. One realm-bound launch builder (account
+   -> binding -> lease -> realm env -> proven executable) serves both
+   interactive sessions and reviewer invocations.
+5. Provider review through MCP -- new.
+   - A provider-neutral review core: request shape, binding to the project
+     and to the exact tree, range or paths, reviewer-account choice, depth
+     guard, and per-provider review adapters on the package contract.
+   - `codex_review` moves onto it, and `claude_review` is added.
+   - Targeted tests only.
+6. Renderer -- as planned, plus the Hello Codex full-screen page (only
+   after its canvas mockups are reviewed) and the reviewer-account default.
+7. Docs, ledger and evidence -- as planned, plus Hello Codex and
+   cross-provider review in app-knowledge, tips and the guides.
+
 ## Carried forward from slice 1's ADR-009 pass (2026-09-23)
 
 The pure registry and the Claude snapshot passed after two fix rounds (three
@@ -278,6 +352,61 @@ obligations fall on later slices:
   If it does, an adopted external home is signed in by the user's own dotenv
   key: say so in app-knowledge (the key stays in that home; the app stores
   nothing).
+- **Launch handoff and review (from commit 3):** take every launch lease
+  through `acquireLaunchLease`, and release it on exit through
+  `releaseLaunch` with the same kind and owner id. Before an external-home
+  launch, run the same drift check the sign-out runs (design 5.5), outside
+  the registry lock and before the lease. A reviewer invocation whose chosen
+  account is realm-only is refused with `acknowledgement-required`; decide
+  in commit 5 whether the requesting session's user can acknowledge it.
+- **Codex is local-only in 2.1.1 (owner, 2026-09-24):** SSH Codex stays out
+  of this release, but it must be functionally gated and said so, not only
+  hidden. Today the gate is the session dialog alone (SSH cards disabled for
+  Codex; Codex's `session.ssh` capability is `unsupported`). Commit 4 adds
+  the main-side refusal: a Codex spawn (or reviewer invocation) with an SSH
+  session type is refused from the provider's `session.ssh` capability, with
+  a user-facing reason, before any account lease. Commit 6: the Hello Codex
+  page and the session dialog say Codex sessions and Codex reviews run on
+  this computer only in this release. Commit 7: an app-knowledge entry (and
+  a tip) saying the same.
+- **Launch handoff (from commit 3's ADR-009 pass):** Claude sessions take
+  no lease yet (A12 keeps their launch path), so a Claude switch-off or
+  inactivation cannot see running Claude sessions: commit 4 gives each
+  Claude PTY a `session` lease (owner = session id), or refuses turning
+  Claude off while any Claude PTY runs.
+- **Renderer (from commit 3's ADR-009 pass):** the old writers of
+  `codexEnabled` (the Codex settings tab, onboarding) bypass the main-side
+  switch-off check until they go through SET_ENABLED; meanwhile the service
+  follows the saved setting when it changes, failing closed: a switch-off
+  made in the app stands until the saved setting reads it back, a switch-on
+  gives way to any saved "off", and a settings read that fails changes
+  nothing (the last value read stands). Re-signing a committed,
+  signed-out account in place (with the "same account?" confirmation) needs
+  a service operation that does not exist yet: it lands with the renderer.
+  A refusal carries the number of consumers; the breakdown by kind
+  (`consumersOf`, main-side today), the list and the navigation design 5.3
+  asks for land with the surface. Repairing or re-authenticating the
+  external home in place (design 5.5) is not offered: the service refuses a
+  sign-in into it, and the user adds a managed account instead.
+- **Departures recorded (commit 3):** drift marks the account `blocked`
+  (design 5.3 says `attention`): blocked is the refusal state launches and
+  defaults already honour. A blocked managed account may still be made
+  inactive, archived or signed out -- each removes access rather than
+  granting it; only the external home's sign-out and archive wait for the
+  reconcile (5.5). Leases are in memory with no heartbeats and no start-up
+  reclaim (design 11): every consumer in WP2 is a process of this app and
+  dies with it; revisit when a session can outlive the app (SSH, tmux).
+  Archiving the reviewer default clears the choice, so reviews then use the
+  provider default; an inactive one is still the choice and is refused.
+- **Known, accepted (commit 3):** an external archive whose status check
+  cannot run (the CLI gone) still archives unless the account is already
+  blocked: archiving changes nothing outside this app. A reconcile records a
+  provider-account sign-in on a managed realm as the browser flow (the CLI
+  does not say browser or device), so the next check still has a kind to
+  compare. After a resources-directory change the settings file is still
+  read from the CONFIG folder cached at start (pre-existing, outside WP2).
+  A start-up reconcile already running when the directory changes may
+  finish against the old registry, which is then no longer used.
 - **Launch handoff (from slice 3d's pass):** the realm lock covers sign-in,
   sign-out, status and folder removal, not a running session; a managed
   launch's consumer lease must also block removal. Flip `realm.isolated` to

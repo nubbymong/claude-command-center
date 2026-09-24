@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process'
 import { IPC } from '../../src/shared/ipc-channels'
 
 const ROOT = path.resolve(__dirname, '..', '..')
+const PROVIDER_CORE = 'src/main/providers/core/'
 
 class FakePty {
   pid = 4242; cols = 80; rows = 24; process = 'sh'; handleFlowControl = false
@@ -240,14 +241,33 @@ describe('C8: AccountProfile.colourKey is never written by the main process on t
     // colour, never a profile write) are exempt from the OBJECT-LITERAL
     // family only, by file path; an assignment there still counts.
     const literalExempt = new Set(['src/shared/account-types.ts', 'src/main/claude-account-identity.ts', 'src/main/account-color.ts'])
-    // A provider-registry identity, not a profile record: the one-time
-    // adoption of the external Codex home (WP2 slice 3e) names its private
-    // identity with a fixed colour. Exempt from the OBJECT-LITERAL family
-    // only, and pinned by its exact text like the sanctioned write above.
-    const REGISTRY_IDENTITY = { path: 'src/main/providers/core/external-default-migration.ts', text: '(x) => createIdentity(x, { id: identityId, friendlyName: spec.identityLabel, colourKey: EXTERNAL_IDENTITY_COLOUR }, t),' }
-    const registryIdentity = (l: string) => pathOf(l) === REGISTRY_IDENTITY.path && l.slice(at(l).length).trim() === REGISTRY_IDENTITY.text
-    const writes = [...new Set([...literal.filter((l) => !literalExempt.has(pathOf(l)) && !registryIdentity(l)), ...other.filter((l) => !sanctioned.includes(l))])]
+    // WP2: provider core works on registry identities (ConductorIdentity),
+    // never on a profile record, and the Accounts IPC schema only validates
+    // a requested colour. Both are exempt from the OBJECT-LITERAL family only
+    // (an assignment there still counts), and the exemption is sound only
+    // because core cannot reach the profile store at all: the next test pins
+    // core's imports to core, shared and Node built-ins.
+    const literalExemptDir = (p: string) => p.startsWith(PROVIDER_CORE) || p === 'src/main/ipc/provider-accounts-handlers.ts'
+    const writes = [...new Set([...literal.filter((l) => !literalExempt.has(pathOf(l)) && !literalExemptDir(pathOf(l))), ...other.filter((l) => !sanctioned.includes(l))])]
     expect(writes, writes.join('\n')).toEqual([])
+  })
+
+  it('provider core cannot reach the profile store: it imports only core, shared and Node built-ins (what makes its C8 exemption sound)', () => {
+    const dir = path.join(ROOT, PROVIDER_CORE)
+    const files = fs.readdirSync(dir).filter((n) => n.endsWith('.ts'))
+    expect(files.length).toBeGreaterThan(3)
+    const bad: string[] = []
+    for (const f of files) {
+      const text = fs.readFileSync(path.join(dir, f), 'utf8')
+      for (const m of text.matchAll(/(?:^|\n)\s*(import|export)\b([^'"]*?)\bfrom\s+['"]([^'"]+)['"]/g)) {
+        const spec = m[3]
+        const typeOnly = /^\s*type\b/.test(m[2])
+        const ok = spec.startsWith('./') || spec.startsWith('../../../shared/') || spec.startsWith('node:') || (typeOnly && spec === '../types')
+        if (!ok) bad.push(`${f}: ${spec}`)
+      }
+      for (const m of text.matchAll(/\b(?:require|import)\s*\(\s*['"]([^'"]+)['"]/g)) bad.push(`${f}: dynamic ${m[1]}`)
+    }
+    expect(bad).toEqual([])
   })
 })
 

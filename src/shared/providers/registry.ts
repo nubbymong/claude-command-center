@@ -26,10 +26,11 @@ import type {
 /** Bump on ANY new field, record or list. The parser drops what it does not
  *  know and the next write persists that loss, so an older build must see a
  *  newer document as `newer-schema` (recovery), never as its own. */
-export const REGISTRY_SCHEMA_VERSION = 2 as const
-/** Schema 1 (the first WP2 builds, never released) had no `migrations`: it
- *  reads as schema 2 with none recorded yet, and is written back as 2. */
-const UPGRADABLE_SCHEMA_VERSION = 1
+export const REGISTRY_SCHEMA_VERSION = 3 as const
+/** Older WP2 builds, never released: schema 1 had no `migrations` (it reads
+ *  as none recorded yet), schema 2 no reviewer default (none chosen yet).
+ *  Both are written back as the current schema. */
+const UPGRADABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2]
 
 /** The last values Conductor and a legacy store agreed on, per field. A
  *  reconcile compares the legacy store and the registry against it to tell
@@ -115,7 +116,7 @@ export interface ProviderRegistryDoc {
 
 export type RegistryErrorCode =
   | 'invalid-id' | 'invalid-value' | 'not-found' | 'duplicate' | 'lifecycle' | 'default-required'
-  | 'blocked-by-consumers' | 'realm-conflict' | 'subject-conflict' | 'not-linkable' | 'legacy-owned'
+  | 'blocked-by-consumers' | 'realm-conflict' | 'subject-conflict' | 'not-linkable' | 'legacy-owned' | 'realm-only'
 
 export type RegistryResult =
   | { ok: true; doc: ProviderRegistryDoc }
@@ -212,6 +213,11 @@ export function isRealmKindOf(kind: unknown, providerId: ProviderId): kind is Re
   return oneOf(REALM_KINDS, kind) && REALM_KIND_PROVIDER[kind as RealmKind] === providerId
 }
 
+/** The realm kind a provider's accounts sign in to, or null for none. */
+export function providerRealmKind(providerId: ProviderId): RealmKind | null {
+  return REALM_KINDS.find((k) => REALM_KIND_PROVIDER[k] === providerId) ?? null
+}
+
 export const EXTERNAL_DEFAULT_PATH_REF = 'external-default'
 export const MANAGED_PATH_REF_PREFIX = 'managed:'
 export const CLAUDE_PROFILE_PATH_REF_PREFIX = 'claude-profile:'
@@ -247,6 +253,22 @@ function operationalFor(state: KnownAuthState): OperationalState {
 
 /** Realms that still hold their pathRef: everything but a retired one. */
 const holdsPath = (r: AuthRealm) => r.lifecycle !== 'retired'
+
+/** The account without the reviewer-default mark (removed, never `false`). */
+function withoutReviewerDefault(a: ProviderAccount): ProviderAccount {
+  const { isReviewerDefault: _r, ...rest } = a
+  return rest
+}
+
+/** What kind of credential a sign-in method stands for: a provider account
+ *  (browser, device, or one another client signed in) or an API key.
+ *  `unknown` says nothing. */
+export type CredentialClass = 'account' | 'api-key'
+export function credentialClassOf(m: AuthMethod | undefined): CredentialClass | undefined {
+  if (m === 'apiKey') return 'api-key'
+  if (m === 'browser' || m === 'device' || m === 'external') return 'account'
+  return undefined
+}
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -294,6 +316,13 @@ function isLegacyRecord(doc: ProviderRegistryDoc, account: ProviderAccount): boo
  *  from a free field a caller set. */
 function isRealmOnly(account: ProviderAccount, realm: AuthRealm | undefined): boolean {
   return account.identityAssurance === 'realm-only' || realm?.ownership === 'external-default'
+}
+
+/** An identity an unverified sign-in shows: nothing else may join it, or a
+ *  guess would name a real account (and its name and colour would be
+ *  written into a provider's own list). */
+function identityOfRealmOnly(doc: ProviderRegistryDoc, identityId: string): boolean {
+  return doc.accounts.some((a) => a.identityId === identityId && isRealmOnly(a, findRealm(doc, a.authRealmId)))
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +417,7 @@ export function linkAccountIdentity(doc: ProviderRegistryDoc, accountId: string,
   if (!account) return fail('not-found', `account ${accountId} does not exist`)
   if (!findIdentity(doc, identityId)) return fail('not-found', `identity ${identityId} does not exist`)
   if (isRealmOnly(account, findRealm(doc, account.authRealmId))) return fail('not-linkable', 'an unverified external sign-in cannot be linked to an identity')
+  if (account.identityId !== identityId && identityOfRealmOnly(doc, identityId)) return fail('not-linkable', 'that identity belongs to an unverified sign-in')
   if (isLegacyRecord(doc, account) && doc.accounts.some((a) => a.id !== accountId && a.identityId === identityId && a.providerId === account.providerId && isLegacyRecord(doc, a))) {
     // Two records of one legacy store on one identity would write each
     // other's name and colour: an edit to one profile would rewrite the other.
@@ -493,6 +523,7 @@ export function commitAccountSetup(doc: ProviderRegistryDoc, accountId: string, 
     return fail('invalid-value', 'the external default sign-in cannot be vouched for; it is realm-only')
   }
   if (reliable && subjectTaken(doc, journal.providerId, authority, subject, accountId)) return fail('subject-conflict', 'another live account is already signed in as this user')
+  if (identityOfRealmOnly(doc, input.identityId)) return fail('not-linkable', 'that identity belongs to an unverified sign-in')
   const account: ProviderAccount = compact({
     id: accountId,
     providerId: journal.providerId,
@@ -613,9 +644,12 @@ export function setAccountLifecycle(
     if (others) return fail('default-required', 'choose another default account first')
   }
   const becomesDefault = next === 'active' && !providerDefaultAccount(doc, account.providerId)
-  accounts = accounts.map((a) => (a.id === accountId
-    ? { ...a, lifecycle: next, isProviderDefault: next === 'active' ? becomesDefault : false, updatedAt: now }
-    : a))
+  accounts = accounts.map((a) => {
+    if (a.id !== accountId) return a
+    const moved = { ...a, lifecycle: next, isProviderDefault: next === 'active' ? becomesDefault : false, updatedAt: now }
+    // An archived account is never chosen for anything again.
+    return next === 'archived' ? withoutReviewerDefault(moved) : moved
+  })
   const realms = next === 'archived'
     ? doc.realms.map((r) => (r.id === account.authRealmId ? { ...r, lifecycle: 'retired' as const } : r))
     : doc.realms
@@ -659,6 +693,9 @@ export interface AuthCheckInput {
   /** Only reliable -- and only acted on -- together with an authority. */
   providerSubject?: string
   providerAuthorityId?: string
+  /** The kind of credential the provider's status reports in the realm, when
+   *  it says. Compared with the method on record (design 5.5). */
+  observedCredential?: CredentialClass
 }
 
 /** Record the result of a provider status check on an account's own realm.
@@ -673,22 +710,33 @@ export interface AuthCheckInput {
  *  With no subject on record, a reliable pair (subject AND authority) is
  *  adopted, unless another live account already holds it: then this account is
  *  BLOCKED rather than the check refused, so a realm signed in as someone else
- *  can never launch. Blocked is sticky; clearing it is an explicit user action
- *  in the accounts flow, never a side effect of a later check. */
+ *  can never launch.
+ *
+ *  The same holds for the kind of credential: a realm the record says is
+ *  signed in with a provider account that now reports an API key (or the
+ *  reverse) has been signed in again by someone, somewhere -- for the
+ *  external home, possibly another app. It is BLOCKED and its method is not
+ *  rewritten. A record with no known method compares nothing.
+ *
+ *  Blocked is sticky; clearing it is an explicit user action
+ *  (`reconcileAccountSignIn`), never a side effect of a later check. */
 export function recordAuthCheck(doc: ProviderRegistryDoc, accountId: string, input: AuthCheckInput, now: number): RegistryResult {
   const account = findAccount(doc, accountId)
   if (!account) return fail('not-found', `account ${accountId} does not exist`)
   if (!oneOf(AUTH_STATES, input.state)) return fail('invalid-value', 'unknown auth state')
   if (input.authMethod !== undefined && !oneOf(AUTH_METHODS, input.authMethod)) return fail('invalid-value', 'unknown sign-in method')
+  if (input.observedCredential !== undefined && input.observedCredential !== 'account' && input.observedCredential !== 'api-key') return fail('invalid-value', 'unknown credential kind')
+  const recordedClass = credentialClassOf(account.authMethod)
+  const methodDrift = recordedClass !== undefined && input.observedCredential !== undefined && input.observedCredential !== recordedClass
   const next: ProviderAccount = { ...account, lastKnownAuthState: input.state, lastValidatedAt: now, updatedAt: now }
   if (input.state === 'signed-in') next.lastAuthenticatedAt = now
-  if (input.authMethod !== undefined) next.authMethod = input.authMethod
+  if (input.authMethod !== undefined && !methodDrift) next.authMethod = input.authMethod
   const label = normaliseLabel(input.providerLabel, LABEL_MAX)
   if (label !== undefined) next.providerLabel = label
   const plan = normaliseLabel(input.planLabel, PLAN_MAX)
   if (plan !== undefined) next.planLabel = plan
 
-  let drift = account.operationalState === 'blocked'
+  let drift = account.operationalState === 'blocked' || methodDrift
   const reported = input.providerSubject !== undefined || input.providerAuthorityId !== undefined
   const subject = safeToken(input.providerSubject, SUBJECT_MAX)
   const authority = safeToken(input.providerAuthorityId, SUBJECT_MAX)
@@ -703,6 +751,86 @@ export function recordAuthCheck(doc: ProviderRegistryDoc, accountId: string, inp
   }
   next.operationalState = drift ? 'blocked' : operationalFor(input.state)
   return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? compact(next) : a)) })
+}
+
+/** The explicit "this is still my account" after a blocked check (design
+ *  5.3, 5.5): the ONLY transition that clears `blocked`. It takes a status
+ *  the provider answered just now and makes the record say what the realm
+ *  holds -- the reported subject pair replaces the one on record, and a
+ *  credential of another kind replaces the method -- because the user, not
+ *  a check, has vouched for it. History recorded before stays as it was.
+ *
+ *  Refused, leaving the account blocked: an archived account, a status that
+ *  did not answer (error, unknown, unsupported), a subject reported without
+ *  its authority or malformed, and a subject another live account holds. */
+export function reconcileAccountSignIn(doc: ProviderRegistryDoc, accountId: string, input: AuthCheckInput, now: number): RegistryResult {
+  const account = findAccount(doc, accountId)
+  if (!account) return fail('not-found', `account ${accountId} does not exist`)
+  if (account.lifecycle === 'archived') return fail('lifecycle', 'an archived account is not reconciled')
+  if (input.state !== 'signed-in' && input.state !== 'signed-out' && input.state !== 'expired') return fail('invalid-value', 'a reconcile needs a status the provider answered')
+  if (input.observedCredential !== undefined && input.observedCredential !== 'account' && input.observedCredential !== 'api-key') return fail('invalid-value', 'unknown credential kind')
+  const next: ProviderAccount = { ...account, lastKnownAuthState: input.state, lastValidatedAt: now, updatedAt: now, operationalState: operationalFor(input.state) }
+  if (input.state === 'signed-in') next.lastAuthenticatedAt = now
+  const reported = input.providerSubject !== undefined || input.providerAuthorityId !== undefined
+  if (reported) {
+    const subject = safeToken(input.providerSubject, SUBJECT_MAX)
+    const authority = safeToken(input.providerAuthorityId, SUBJECT_MAX)
+    if (subject === undefined || authority === undefined) return fail('invalid-value', 'the reported account cannot be read reliably')
+    if (subjectTaken(doc, account.providerId, authority, subject, accountId)) return fail('subject-conflict', 'another live account is already signed in as this user')
+    next.providerSubject = subject
+    next.providerAuthorityId = authority
+  }
+  if (input.observedCredential !== undefined && input.observedCredential !== credentialClassOf(account.authMethod)) {
+    // The CLI names the kind, not the flow: a provider account signed in
+    // outside Conductor is recorded as the external home's own method or,
+    // for a managed realm, as the browser flow (both are the same ChatGPT
+    // sign-in), so the next check still has a kind to compare.
+    next.authMethod = input.observedCredential === 'api-key' ? 'apiKey'
+      : findRealm(doc, account.authRealmId)?.ownership === 'external-default' ? 'external' : 'browser'
+  }
+  return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? compact(next) : a)) })
+}
+
+// ---------------------------------------------------------------------------
+// Reviewer accounts (plan, commit 3: provider review through MCP)
+// ---------------------------------------------------------------------------
+
+/** Choose the account a provider's reviewer invocations use when a request
+ *  names none, or clear the choice (`null`). Only an active, unblocked
+ *  account the user has vouched for: an unverified realm-only sign-in needs
+ *  a per-launch acknowledgement that an unattended review cannot give. */
+export function setReviewerDefault(doc: ProviderRegistryDoc, providerId: ProviderId, accountId: string | null, now: number): RegistryResult {
+  if (!isProviderId(providerId)) return fail('invalid-value', 'unknown provider')
+  const clear = (a: ProviderAccount) => (a.providerId === providerId && a.isReviewerDefault === true && a.id !== accountId ? { ...withoutReviewerDefault(a), updatedAt: now } : a)
+  if (accountId === null) return done({ ...doc, accounts: doc.accounts.map(clear) })
+  const account = findAccount(doc, accountId)
+  if (!account) return fail('not-found', `account ${accountId} does not exist`)
+  if (account.providerId !== providerId) return fail('invalid-value', 'the account belongs to another provider')
+  if (account.lifecycle !== 'active') return fail('lifecycle', 'only an active account can review')
+  if (account.operationalState === 'blocked') return fail('lifecycle', 'a blocked account cannot review')
+  if (isRealmOnly(account, findRealm(doc, account.authRealmId))) return fail('realm-only', 'an unverified sign-in needs your confirmation each time, so it cannot review unattended')
+  if (account.isReviewerDefault === true) return done(doc)
+  return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? { ...a, isReviewerDefault: true as const, updatedAt: now } : clear(a))) })
+}
+
+export type ReviewerChoice = 'explicit' | 'reviewer-default' | 'provider-default'
+
+/** The account a reviewer invocation runs under: the one the request names,
+ *  else the provider's reviewer default, else its default account. Only the
+ *  CHOICE -- the launch binding then validates the account exactly as for a
+ *  session, so a chosen account that is inactive, blocked or gone fails
+ *  there rather than silently falling back to another one. */
+export function chooseReviewerAccount(
+  doc: ProviderRegistryDoc,
+  providerId: ProviderId,
+  explicitAccountId?: string,
+): { ok: true; accountId: string; source: ReviewerChoice } | { ok: false; code: 'not-found'; message: string } {
+  if (explicitAccountId !== undefined) return { ok: true, accountId: explicitAccountId, source: 'explicit' }
+  const reviewer = doc.accounts.find((a) => a.providerId === providerId && a.isReviewerDefault === true)
+  if (reviewer) return { ok: true, accountId: reviewer.id, source: 'reviewer-default' }
+  const def = providerDefaultAccount(doc, providerId)
+  if (def) return { ok: true, accountId: def.id, source: 'provider-default' }
+  return { ok: false, code: 'not-found', message: 'no account of this provider is set up to review' }
 }
 
 // ---------------------------------------------------------------------------
@@ -818,6 +946,10 @@ export function checkRegistryInvariants(doc: ProviderRegistryDoc): string[] {
     for (const d of defaults) if (d.lifecycle !== 'active') problems.push(`default account ${d.id} is ${d.lifecycle}`)
     if (defaults.length > 1) problems.push(`${p} has ${defaults.length} default accounts`)
     if (mine.some((a) => a.lifecycle === 'active') && defaults.filter((d) => d.lifecycle === 'active').length === 0) problems.push(`${p} has active accounts but no default`)
+    const reviewers = mine.filter((a) => a.isReviewerDefault === true)
+    if (reviewers.length > 1) problems.push(`${p} has ${reviewers.length} reviewer defaults`)
+    for (const r of reviewers) if (r.lifecycle === 'archived') problems.push(`reviewer default ${r.id} is archived`)
+    for (const r of reviewers) if (isRealmOnly(r, realmsById.get(r.authRealmId))) problems.push(`reviewer default ${r.id} is an unverified sign-in`)
   }
 
   const subjects = new Map<string, string>()
@@ -923,6 +1055,8 @@ function parseAccount(o: unknown): Parsed<ProviderAccount> {
   if (!oneOf(AUTH_METHODS, o.authMethod)) return X(`${where}: unknown sign-in method`)
   if (!oneOf(LIFECYCLES, o.lifecycle)) return X(`${where}: unknown lifecycle`)
   if (typeof o.isProviderDefault !== 'boolean') return X(`${where}: isProviderDefault is not a boolean`)
+  // Stored only when set: absent is "not the reviewer default".
+  if (o.isReviewerDefault !== undefined && o.isReviewerDefault !== true) return X(`${where}: isReviewerDefault is not true`)
   if (!isTime(o.createdAt) || !isTime(o.updatedAt)) return X(`${where}: timestamps are invalid`)
   if (!oneOf(AUTH_STATES, o.lastKnownAuthState)) return X(`${where}: unknown auth state`)
   if (!oneOf(OP_STATES, o.operationalState)) return X(`${where}: unknown operational state`)
@@ -940,6 +1074,7 @@ function parseAccount(o: unknown): Parsed<ProviderAccount> {
     planLabel: plan.ok ? plan.value : undefined,
     lifecycle: o.lifecycle,
     isProviderDefault: o.isProviderDefault,
+    isReviewerDefault: o.isReviewerDefault === true ? true : undefined,
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
     lastAuthenticatedAt: lastAuth.ok ? lastAuth.value : undefined,
@@ -1036,7 +1171,7 @@ export function parseRegistryDoc(raw: unknown): RegistryParseResult {
   const v = raw.schemaVersion
   if (typeof v !== 'number' || !Number.isInteger(v)) return { ok: false, reason: 'invalid', problems: ['schemaVersion is missing'] }
   if (v > REGISTRY_SCHEMA_VERSION) return { ok: false, reason: 'newer-schema', problems: [`schema ${v} is newer than ${REGISTRY_SCHEMA_VERSION}`] }
-  if (v !== REGISTRY_SCHEMA_VERSION && v !== UPGRADABLE_SCHEMA_VERSION) return { ok: false, reason: 'invalid', problems: [`unknown schema ${v}`] }
+  if (v !== REGISTRY_SCHEMA_VERSION && !UPGRADABLE_SCHEMA_VERSIONS.includes(v)) return { ok: false, reason: 'invalid', problems: [`unknown schema ${v}`] }
   const problems: string[] = []
   const src: Record<string, unknown> = raw
   function list<T>(key: string, parse: (o: unknown) => Parsed<T>): T[] {
@@ -1062,7 +1197,7 @@ export function parseRegistryDoc(raw: unknown): RegistryParseResult {
     legacyLinks: list('legacyLinks', parseLegacyLink),
     conflicts: list('conflicts', parseConflict),
     // Required from schema 2, like every other list; schema 1 predates it.
-    migrations: v === UPGRADABLE_SCHEMA_VERSION ? [] : list('migrations', parseMigration),
+    migrations: v === 1 ? [] : list('migrations', parseMigration),
   }
   if (problems.length) return { ok: false, reason: 'invalid', problems }
   const broken = checkRegistryInvariants(doc)
@@ -1333,7 +1468,7 @@ export function reconcileLegacyAccounts(
       warnings.push(`legacy record ${l.legacyId} was removed while in use; deferred`)
       continue
     }
-    accounts = accounts.map((x) => (x.id === a.id ? { ...x, lifecycle: 'archived' as const, isProviderDefault: false, updatedAt: now } : x))
+    accounts = accounts.map((x) => (x.id === a.id ? withoutReviewerDefault({ ...x, lifecycle: 'archived' as const, isProviderDefault: false, updatedAt: now }) : x))
     realms = realms.map((r) => (r.id === a.authRealmId ? { ...r, lifecycle: 'retired' as const } : r))
     archived++
   }

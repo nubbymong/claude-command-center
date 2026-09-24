@@ -82,6 +82,12 @@ export function packageRegistrationProblem(pkg: ProviderPackage): string | null 
     // Adopting a shared home needs the operations that check it first.
     if (!pkg.setup || !pkg.auth) return 'externalDefaultRealm needs the setup and auth operations'
   }
+  const en = pkg.enablement
+  if (en !== undefined) {
+    if (typeof en !== 'object' || en === null) return 'enablement must be an object when present'
+    if (typeof en.settingsKey !== 'string' || !/^[a-z][A-Za-z0-9]{0,40}Enabled$/.test(en.settingsKey)) return 'enablement.settingsKey must name a boolean ...Enabled setting'
+    if (en.absent !== 'on' && en.absent !== 'undecided') return 'enablement.absent must be on or undecided'
+  }
   for (const key of CAPABILITY_KEYS) {
     const d = pkg.capabilities[key]
     // Platform overrides are declarations too: a key that is `unknown` by

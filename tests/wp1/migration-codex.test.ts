@@ -654,18 +654,19 @@ describe('the migration marker, the schema and the package declaration', () => {
     }
   })
 
-  it('schema 2 requires the list; a schema 1 file (no list yet) reads as none recorded and is written back as 2', async () => {
-    expect(REGISTRY_SCHEMA_VERSION).toBe(2)
+  it('schema 2 and later require the list; a schema 1 file (no list yet) reads as none recorded and is written back as the current schema', async () => {
+    expect(REGISTRY_SCHEMA_VERSION).toBe(3)
     const { migrations: _m, ...v2NoList } = emptyRegistry()
     expect(parseRegistryDoc(v2NoList)).toMatchObject({ ok: false })
+    expect(parseRegistryDoc({ ...v2NoList, schemaVersion: 2 })).toMatchObject({ ok: false })
     const v1 = { ...v2NoList, schemaVersion: 1 }
-    expect(parseRegistryDoc(v1)).toMatchObject({ ok: true, doc: { schemaVersion: 2, migrations: [] } })
-    expect(parseRegistryDoc({ ...v1, schemaVersion: 3 })).toMatchObject({ ok: false, reason: 'newer-schema' })
+    expect(parseRegistryDoc(v1)).toMatchObject({ ok: true, doc: { schemaVersion: 3, migrations: [] } })
+    expect(parseRegistryDoc({ ...v1, schemaVersion: 4 })).toMatchObject({ ok: false, reason: 'newer-schema' })
     const port = new MemoryPort()
     port.file = JSON.stringify(v1)
     const w = world({ signedIn: null }, port)
     expect(await w.run()).toBe('not-signed-in')
-    expect(JSON.parse(port.file!)).toMatchObject({ schemaVersion: 2, migrations: [expect.objectContaining({ outcome: 'none' })] })
+    expect(JSON.parse(port.file!)).toMatchObject({ schemaVersion: 3, migrations: [expect.objectContaining({ outcome: 'none' })] })
   })
 
   it('Codex declares its external home only when wired; a declaration must be well formed and backed', () => {
