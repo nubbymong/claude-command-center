@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-25T11:16:39.266Z",
-  "head": "ea63ff78e702f4334a9d58b934a46fd6dd0551c8",
-  "tree": "309c8a0d3599b9019f7006ced7eb8740114eeb08",
+  "generatedAt": "2026-09-25T22:42:47.825Z",
+  "head": "c55ba0c72fbf21e27205b8341cee2f599b1ac3b3",
+  "tree": "de5c46460ebd14d25f7482503f0be4576d444d44",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2300,
+  "trackedFileCount": 2307,
   "excludedFileCount": 376,
-  "scannedFileCount": 1924,
+  "scannedFileCount": 1931,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,11 +139,18 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 359,
-  "pathDigest": "878a08ae13d44392230a00ca7985c6778b8eb7d2d817ced8028a79658f2639bf",
+  "matchedPathCount": 361,
+  "pathDigest": "7842030a98406f46eddf0b3979ebbdd34f8b7138eca477c205b6ee16ba002840",
   "entries": [
     {
       "path": "AGENTS.md",
+      "predicates": [
+        "P12"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "CONTRIBUTING.md",
       "predicates": [
         "P12"
       ],
@@ -161,14 +168,21 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 14
+      "lineCount": 16
+    },
+    {
+      "path": "SECURITY.md",
+      "predicates": [
+        "P12"
+      ],
+      "lineCount": 3
     },
     {
       "path": "docs/USER_GUIDE.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 77
+      "lineCount": 97
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -189,7 +203,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 3
     },
     {
       "path": "resources/codex-pricing.json",
@@ -920,7 +934,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 3
+      "lineCount": 2
     },
     {
       "path": "src/renderer/components/InsightsPage.tsx",
@@ -1520,7 +1534,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 44
+      "lineCount": 43
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -1561,7 +1575,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 55
+      "lineCount": 59
     },
     {
       "path": "src/shared/canvas.ts",
@@ -2837,7 +2851,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 4
+      "lineCount": 5
     },
     {
       "path": "tests/unit/renderer/tokenomicspage-formatting.test.ts",

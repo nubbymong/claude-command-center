@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "878a08ae13d44392230a00ca7985c6778b8eb7d2d817ced8028a79658f2639bf",
-  "manifestHead": "ea63ff78e702f4334a9d58b934a46fd6dd0551c8",
+  "manifestPathDigest": "7842030a98406f46eddf0b3979ebbdd34f8b7138eca477c205b6ee16ba002840",
+  "manifestHead": "c55ba0c72fbf21e27205b8341cee2f599b1ac3b3",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -120,6 +120,16 @@
       "note": "names Codex as a tool that reads the brief"
     },
     {
+      "path": "CONTRIBUTING.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "retain",
+      "evidence": "WP1.35 front-facing docs, WP2 sweep: one prerequisite line names OpenAI's Codex CLI 0.153.4 or newer as optional for work on Codex features; no Codex code path and no account or history claim",
+      "note": "contributor prerequisite, not a runtime claim"
+    },
+    {
       "path": "PRIVACY.md",
       "predicates": [
         "P12"
@@ -138,6 +148,16 @@
       "disposition": "replace",
       "evidence": "WP1.35 documentation sweep recorded in docs/wp1/evidence/release-qualification.md",
       "note": "stop claiming unsupported Codex account behaviour; describe provider selection"
+    },
+    {
+      "path": "SECURITY.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "retain",
+      "evidence": "WP1.35 front-facing docs, WP2 sweep: the scope names account isolation for Claude and Codex accounts in scope and the Codex CLI itself out of scope; no Codex code path and no account or history claim",
+      "note": "security scope text, not a runtime claim"
     },
     {
       "path": "docs/USER_GUIDE.md",
