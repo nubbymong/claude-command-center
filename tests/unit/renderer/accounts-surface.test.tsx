@@ -324,7 +324,7 @@ describe('Codex rows', () => {
     expect(q('account-method-acc-work')?.textContent).toBe('ChatGPT sign-in')
     expect(q('account-method-acc-personal')?.textContent).toBe('API key')
     expect(q('account-state-acc-work')?.textContent).toBe('Signed in')
-    expect(q('account-state-acc-old')?.textContent).toBe('Needs attention: signed in as a different account')
+    expect(q('account-state-acc-old')?.textContent).toBe('Needs attention: signed in a different way than before')
   })
 
   it("titles the external home with its label, leaves its method empty, and never shows an identity's 'unverified' name", () => {
@@ -450,7 +450,7 @@ describe('Codex rows', () => {
       await flush()
       await act(async () => { answer({ ok: true, state: 'signed-in' }) })
       await flush()
-      expect(q('account-state-acc-work')!.textContent).toBe('Needs attention: signed in as a different account')
+      expect(q('account-state-acc-work')!.textContent).toBe('Needs attention: signed in a different way than before')
       expect(q('account-checked-acc-work')).toBeNull()
     })
 
@@ -911,7 +911,7 @@ describe('Sign in again', () => {
     expect(q('sign-in-again-who')?.textContent).toContain('Personal')
     expect(q('sign-in-again-who')?.textContent).toContain('alex@home.example')
     expect(q('sign-in-again-confirm-label')?.textContent).toBe('Sign in to the same account as before (alex@home.example).')
-    expect(q('sign-in-again-who')?.textContent).toContain('A different account is blocked until you confirm it in Accounts.')
+    expect(q('sign-in-again-who')?.textContent).toContain('If it is signed in a different way than before, the account waits until you confirm it in Accounts.')
 
     expect((q('sign-in-again-continue') as HTMLButtonElement).disabled).toBe(true)
     await click('sign-in-again-continue')

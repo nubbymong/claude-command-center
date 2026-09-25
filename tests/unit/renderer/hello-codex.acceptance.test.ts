@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 // Acceptance criteria for Hello Codex, the Codex introduction (WP2 commit 6f):
 // docs/wp2/hello-codex-spec.md, "Acceptance criteria". Written as pending
-// cases before the page was built; commit 6f turned AC1-AC13 into real tests.
-// AC14 belongs to commit 7 (the Feature Guide and app-knowledge guidance) and
-// stays pending here until then. The last block holds the review round 1
-// fixes: a Codex-only install, the close dialogs above the takeover, the
-// arming delay, the global shortcuts, Back, and the resume prompt.
+// cases before the page was built; commit 6f turned AC1-AC13 into real tests,
+// and commit 7 (the Feature Guide and app-knowledge guidance) AC14. The last
+// block holds the review round 1 fixes: a Codex-only install, the close
+// dialogs above the takeover, the arming delay, the global shortcuts, Back,
+// and the resume prompt.
 //
 // Drives the REAL gate (hello-codex.ts), the REAL component and its takeover
 // host (HelloCodex.tsx), the REAL onboarding harness with every other page a
@@ -76,6 +76,7 @@ const { DEFAULT_SHORTCUTS } = await import('../../../src/renderer/utils/shortcut
 const { default: SessionDialog } = await import('../../../src/renderer/components/SessionDialog')
 const { default: CloseDialog } = await import('../../../src/renderer/components/CloseDialog')
 const { default: FeatureGuidePage } = await import('../../../src/renderer/components/FeatureGuidePage')
+const { APP_KNOWLEDGE_SECTIONS } = await import('../../../src/shared/app-knowledge')
 const { ProvidersCard } = await import('../../../src/renderer/components/settings/accounts/ProvidersCard')
 const { snapshot, provider, account, work, local } = await import('./accounts-snapshot-harness')
 type ProviderView = Parameters<typeof provider>[0]
@@ -743,9 +744,42 @@ describe('Hello Codex: presentation and copy', () => {
     expect(src('src/renderer/onboarding/onboarding.css')).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.ob-root \.hc-page \{ animation: none !important; \} \}/)
   })
 
-  // AC14 is commit 7's (the guidance slice: the Feature Guide and app-knowledge
-  // entries for Codex). It stays pending until that slice writes them.
-  it.todo('AC14: the Feature Guide and app-knowledge entries (commit 7) say what the pages say: local only, the reviewer default, confirming an existing sign-in each launch')
+  // AC14 is commit 7's (the guidance slice). The three statements are taken as
+  // the pages word them, so a rewrite of either side shows up here: the pages
+  // must still say each one, and so must the app-knowledge Codex entry (the
+  // Feature Guide reference and what Ask Conductor reads) and the Feature
+  // Guide's Codex card as it renders.
+  it('AC14: the Feature Guide and app-knowledge entries say what the pages say: local only, the reviewer default, confirming an existing sign-in each launch', async () => {
+    const STATEMENTS: Array<[string, string]> = [
+      ['local only', 'Codex sessions and Codex reviews run on this computer only'],
+      ['the reviewer default', 'Code reviews use the reviewer default, or the default if none is set'],
+      ['confirming an existing sign-in each launch', 'must be confirmed at each launch, and cannot run reviews'],
+    ]
+    const flat = (s: string) => s.replace(/`/g, '').replace(/\s+/g, ' ')
+
+    // The pages say each one (Claude Code on or off, whatever the build ships).
+    for (const claudeOn of [true, false]) {
+      const pageCopy = flat(helloCodexPages({ claudeReview: CLAUDE_REVIEW_SHIPS, claudeOn }).flatMap((p) => p.points.map((pt) => `${pt.lead} ${pt.rest}`)).join(' '))
+      for (const [what, s] of STATEMENTS) expect(pageCopy, `the pages (Claude Code ${claudeOn ? 'on' : 'off'}): ${what}`).toContain(s)
+    }
+
+    // app-knowledge: the Codex entry says each one.
+    const codex = APP_KNOWLEDGE_SECTIONS.find((s) => s.id === 'codex')
+    expect(codex, 'app-knowledge has a codex entry').toBeDefined()
+    for (const [what, s] of STATEMENTS) expect(flat(codex!.body), `app-knowledge: ${what}`).toContain(s)
+
+    // The Feature Guide: the Codex card under Integrations, as it renders.
+    await render(h(FeatureGuidePage, { onNavigateToSessions: vi.fn(), onStartTour: vi.fn() }))
+    await act(async () => { (container.querySelector('[data-ux-id="rail-integrations"]') as HTMLElement).click() })
+    const card = flat(container.querySelector('[data-ux-id="card-codex-provider"]')?.textContent ?? '')
+    for (const [what, s] of STATEMENTS) expect(card, `the Feature Guide Codex card: ${what}`).toContain(s)
+
+    // And the guide's search finds the app-knowledge entry by what it says.
+    const search = container.querySelector('[data-ux-id="search"]') as HTMLInputElement
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => { setValue.call(search, 'confirmed at each launch'); search.dispatchEvent(new Event('input', { bubbles: true })) })
+    expect(container.textContent).toContain(codex!.title)
+  })
 })
 
 describe('Hello Codex: review round 1', () => {

@@ -11,7 +11,8 @@ build, the fewest words were changed; each change is listed under "Copy
 changed for truth", and the strings added for a Codex-only install under
 "New strings for the owner". Owner scope: plan.md "Scope additions" (Hello
 Codex). Acceptance tests: `tests/unit/renderer/hello-codex.acceptance.test.ts`
-(AC1-AC13 real; AC14 is commit 7's and stays pending).
+(AC1-AC13 real since commit 6f; AC14 real since commit 7, the guidance
+commit).
 
 Code: `src/renderer/onboarding/hello-codex.ts` (the gate, the seen stamp, the
 open state, the copy as data) and `src/renderer/onboarding/HelloCodex.tsx`

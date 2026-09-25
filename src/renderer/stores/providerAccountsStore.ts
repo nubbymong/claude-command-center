@@ -373,10 +373,11 @@ export function signInMethodLabel(account: Pick<AccountView, 'authMethod'>, p: P
   }
 }
 
-/** An account's sign-in state as a row says it. A blocked account (its
- *  home now holds another sign-in) says so before anything else. */
+/** An account's sign-in state as a row says it. A blocked account (a check
+ *  found it signed in a different way than before, such as an API key where
+ *  there was a ChatGPT sign-in) says so before anything else. */
 export function accountState(account: Pick<AccountView, 'operationalState' | 'lastKnownAuthState'>): { text: string; tone: StatusTone } {
-  if (account.operationalState === 'blocked') return { text: 'Needs attention: signed in as a different account', tone: 'warn' }
+  if (account.operationalState === 'blocked') return { text: 'Needs attention: signed in a different way than before', tone: 'warn' }
   switch (account.lastKnownAuthState) {
     case 'signed-in': return { text: 'Signed in', tone: account.operationalState === 'attention' ? 'warn' : 'ok' }
     case 'signed-out': return { text: 'Signed out', tone: 'warn' }

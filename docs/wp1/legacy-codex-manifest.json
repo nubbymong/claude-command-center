@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-25T02:42:24.047Z",
-  "head": "ee9a122f113419d9c822a3bfc126bdb0bf9bd697",
-  "tree": "b078fecd87238a46499e6deb3a28350c33ddd1a2",
+  "generatedAt": "2026-09-25T03:58:52.914Z",
+  "head": "accec3c218aa4ab5d8984c16f498d66416ec8416",
+  "tree": "f6494d6811d066fcad5a4977e651c33a79217df1",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2279,
-  "excludedFileCount": 373,
-  "scannedFileCount": 1906,
+  "trackedFileCount": 2283,
+  "excludedFileCount": 375,
+  "scannedFileCount": 1908,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -154,21 +154,21 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 4
+      "lineCount": 33
     },
     {
       "path": "README.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 7
+      "lineCount": 14
     },
     {
       "path": "docs/USER_GUIDE.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 2
+      "lineCount": 75
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -1042,7 +1042,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 32
+      "lineCount": 33
     },
     {
       "path": "src/renderer/components/command-bar/chips.tsx",
@@ -1491,14 +1491,14 @@
         "P11",
         "P12"
       ],
-      "lineCount": 22
+      "lineCount": 87
     },
     {
       "path": "src/renderer/training-steps.ts",
       "predicates": [
         "P11"
       ],
-      "lineCount": 21
+      "lineCount": 41
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -1540,7 +1540,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 21
+      "lineCount": 55
     },
     {
       "path": "src/shared/canvas.ts",
@@ -2351,7 +2351,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 280
+      "lineCount": 291
     },
     {
       "path": "tests/unit/renderer/insights-codex-empty.test.ts",
@@ -2751,7 +2751,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 81
+      "lineCount": 85
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",

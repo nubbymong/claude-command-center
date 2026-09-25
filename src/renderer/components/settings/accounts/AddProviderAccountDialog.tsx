@@ -655,7 +655,7 @@ export function SignInAgainDialog({ provider, account, name, onClose }: SignInAg
                     />
                     <span>
                       <span data-testid="sign-in-again-confirm-label">{account.providerLabel ? `Sign in to the same account as before (${account.providerLabel}).` : 'Sign in to the same account as before.'}</span>
-                      <span className="block text-[11.5px] mt-0.5" style={{ color: 'var(--text-muted)' }}>A different account is blocked until you confirm it in Accounts.</span>
+                      <span className="block text-[11.5px] mt-0.5" style={{ color: 'var(--text-muted)' }}>If it is signed in a different way than before, the account waits until you confirm it in Accounts.</span>
                     </span>
                   </label>
                 </div>

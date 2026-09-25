@@ -199,7 +199,7 @@ describe('reviewerNotice', () => {
 
 describe('row text', () => {
   it('says a blocked account needs attention before anything else', () => {
-    expect(accountState(old)).toEqual({ text: 'Needs attention: signed in as a different account', tone: 'warn' })
+    expect(accountState(old)).toEqual({ text: 'Needs attention: signed in a different way than before', tone: 'warn' })
     expect(accountState(work).text).toBe('Signed in')
     expect(accountState({ ...work, lastKnownAuthState: 'signed-out' }).text).toBe('Signed out')
     expect(accountState({ ...work, lastKnownAuthState: 'expired' }).text).toBe('Expired')

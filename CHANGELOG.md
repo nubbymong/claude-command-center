@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.1-beta.2] - 2026-09-25
+
+> Codex becomes a full second assistant beside Claude Code. One Accounts page covers both: turn each on or off, see whether it is installed and up to date, and keep more than one Codex account, each with its own sign-in. A saved config picks the Codex account it runs under, a Codex session can restart into an earlier conversation, and each assistant can ask the other to review its work. A new install asks which assistants you use, and the app can run with Codex alone.
+
+### Added
+- Settings, Accounts is now one page for both assistants. A Providers card at the top turns Claude Code and Codex on or off, says whether each one is installed and which version, and, when Codex is missing or too old, lists the install or update commands from OpenAI's own instructions to copy, with Check again. Your Claude accounts and your Codex accounts are listed below it. At least one provider always stays on, and a provider cannot be switched off while anything of it is still running.
+- More than one Codex account. Add one with ChatGPT, a device code or an API key; the key goes to Codex, and this app never stores it. Each Codex account signs in inside its own folder, which the app creates in its resources folder, so sessions never mix identities, and the app never reads the sign-in Codex keeps there. Each account row has a menu: Make default, Make reviewer, Sign in again, Check sign-in, Sign out, Make inactive and Archive.
+- The Codex sign-in already on your computer can be used too. Once you say you use Codex, the app asks Codex whether it is signed in and offers it in Settings, Accounts. Because the app did not create it, you confirm it at each launch, and it never runs code reviews; if it is signed out, run codex login in a terminal, then Check sign-in.
+- New saved config picks the Codex account a config runs under, with the default listed first; an account that needs attention cannot be picked. A Codex session header has a Restart menu: Restart starts a new conversation, and Restart and pick a conversation lists recent ones in the terminal to pick from.
+- Code review works both ways. A Claude session can ask for a Codex review, and a Codex session can ask for a Claude review. Each review is a separate, one-off, read-only reviewer in the project, on your reviewer account: the reviewer default, or the default account when none is set. Settings, General, Built-in tools has a switch for each direction that names the account reviews will use and, when a review cannot run, says why. A review tool is now offered only while a review could actually run. On macOS, Claude reviews use your normal Claude sign-in.
+- A fresh install asks which assistants you will use: Claude Code, Codex, or both. A computer without Claude Code can choose Use Codex only on the setup screen instead of stopping. Choosing Codex leads to a Set up Codex page that checks for the Codex CLI, can run the npm or Homebrew install or update command in a visible terminal tab once you confirm it, and signs you in.
+- Hello Codex: a five-page introduction to Codex in this app, shown once when Codex is on and a Codex account you added is signed in. Replay it from Show the Codex introduction on the Codex card in the Feature Guide, or on the Codex row in Settings, Accounts.
+
+### Changed
+- A provider that is off starts nowhere, whichever way a session is started: a saved config says why instead of launching, and a restored or restarted tab reads Not started, names the provider and points at Settings, Accounts. The tab and its conversation are kept, so turning the provider back on and restarting the tab carries on. With Claude Code off, Ask Conductor, Cloud Agents and Insights say so, and terminal-only configs still run.
+- Signing a Codex account in again asks you to confirm it is the same account as before, and offers the same kind of sign-in it had. When a check finds a Codex account now signed in a different way than before, such as an API key where it had a ChatGPT sign-in, the account reads Needs attention and waits for you to confirm it with This is still my account before any session or review runs on it.
+- The old Settings Codex tab and its single Codex sign-in are gone: everything they did now lives in Settings, Accounts, and Test connection is Check sign-in on each account. The ChatGPT plan label is no longer shown, because it came from a Codex sign-in file this app no longer reads. Codex sessions and Codex reviews run on this computer only in this release, and the session dialog says why its SSH options are off for Codex.
+
 ## [2.1.1-beta.1] - 2026-09-16
 
 > The mouse wheel scrolls a remote session the way it scrolls a local one, instead of typing arrow keys at Claude. Otherwise a maintenance release: the runtime and its dependencies refreshed, and the largest source files split into focused modules with no change in behaviour.
@@ -1598,6 +1616,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.1-beta.2]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.1-beta.2
 [2.1.1-beta.1]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.1-beta.1
 [2.1.0]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0
 [2.1.0-rc.17]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.17
