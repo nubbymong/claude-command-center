@@ -156,7 +156,7 @@
       ],
       "category": "DOCS",
       "disposition": "retain",
-      "evidence": "WP1.35 front-facing docs, WP2 sweep: the scope names account isolation for Claude and Codex accounts in scope and the Codex CLI itself out of scope; no Codex code path and no account or history claim",
+      "evidence": "WP1.35 front-facing docs, WP2 sweep: the scope names isolation between Claude and Codex accounts in scope (behaviour WP2 implements with one sign-in folder per Codex account) and the Codex CLI itself out of scope; no Codex code path and no unsupported account or history claim",
       "note": "security scope text, not a runtime claim"
     },
     {
