@@ -1,47 +1,60 @@
 # Mode matrix: e2e evidence
 
-This file records the end-to-end runs that `tests/wp1/traceability.json` names as evidence for
-WP1.1 and WP1.60, and that the legacy-Codex ledger cites for its two adapted e2e specs (WP1.58:
-`tests/e2e/codex-session-creation.spec.ts` and `tests/e2e/codex-settings-section.spec.ts`; the
-ledger row for the first also cites WP1.2, whose own evidence is
-`docs/wp1/evidence/real-cli-matrix.md`, not recorded yet, and not this file).
+This file is evidence for WP1.1 and WP1.60 (`docs/wp1/evidence/mode-matrix.md`). It also covers the two adapted e2e specs that the legacy-Codex ledger places in this gate (WP1.58):
+- `tests/e2e/codex-session-creation.spec.ts`
+- `tests/e2e/codex-settings-section.spec.ts`
 
-It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest: WP1.60's
-upgrade, restart, enable/disable and minimum real-launch modes are not covered here (see "Not
-covered").
+The ledger also cites WP1.2. Its evidence is `docs/wp1/evidence/real-cli-matrix.md`, not this file.
 
-## The run recorded here
+It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest: WP1.60's upgrade, restart, enable/disable and minimum real-launch modes are not covered here (see "Not covered").
 
-- Code: commit `5a3e02781d43b5ea2883d39a2f0590f77be1cab5` with this change's visual fixes applied
-  on top as an uncommitted patch (`git apply`, clean). The fixes that came after this run (the
-  window-close dialogs and the "Closing..." overlay also hide the native panes) and the ledger and
-  manifest refresh are not in it. The final head is run again before merge, and this record is
-  updated with that commit.
-- Date: 2026-09-25 (VM local clock 2026-09-24 23:02-23:12 PDT).
-- Machine: Windows 11 Hyper-V test VM (Windows 11 Enterprise Evaluation 10.0.22621, x64).
+**Current record:** commit `38cbc9d71ce549b78a1ee1eff5fab57e2c9f9ddb`, the final WP2 head, with no patch applied. Earlier runs are kept below as history.
+
+- Date: 2026-09-25 (VM local clock 03:07:09-03:10:17 PDT).
+- Commit: `38cbc9d71ce549b78a1ee1eff5fab57e2c9f9ddb` (`origin/session/beta/c4d568ce-wp2-codex`).
+  - The VM checkout was reset to that full sha and verified against the fetched remote head; it has 0 tracked changes.
+  - `out/main/index.js` was built from it at 02:53:30.
+- Machine: Hyper-V VM WinDev2407Eval, Windows 11 Enterprise Evaluation 10.0.22621 (build 22621), 64-bit.
 - Toolchain: Node v24.16.0, Electron 43.7.1, @playwright/test 1.62.1, app 2.1.1-beta.1.
-- Build: `npm ci`, `node node_modules\electron\install.js`, `npm run build` (exit 0). The
-  postinstall `electron-rebuild` of node-pty and better-sqlite3 fails on the VM with MSB8040
-  (Spectre-mitigated libraries are not installed there); both modules load their shipped N-API
-  win32-x64 prebuilds, so the run is unaffected.
-- Codex on the machine: the VM has a real Codex CLI 0.142.4 on its PATH, below the app's minimum
-  (`CODEX_MIN_SUPPORTED_VERSION`, 0.153.4, `src/main/providers/codex/cli-contract.ts`). It was
-  left on the runner's PATH for every spec.
-- Actor: the VM operator agent (Claude Code), driving the VM over SSH.
+- Build:
+  - `npm ci` exits 255. Its postinstall `electron-rebuild` of node-pty and better-sqlite3 fails with MSB8040, because the Spectre-mitigated libraries are not installed on the VM. Both modules load their shipped N-API win32-x64 prebuilds, so the run is unaffected.
+  - `npm ci` left Electron's binary missing, and `node node_modules\electron\install.js` restored it.
+  - `npm run build` exited 0.
+- Codex on the machine: the VM's real Codex CLI (`...\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe`) stayed on the runner's PATH, as in the previous record.
+  - The previous record gives its version as 0.142.4. It was not run in this pass, because a Rust CLI may resolve its home through the Windows profile API rather than `USERPROFILE`.
+  - `codex-session-creation` supplies its own fake Codex (`tests/e2e/helpers/fake-codex.ts`).
+- Actor: the VM operator agent (Claude Code), driving the VM over SSH. The runner was launched detached through WMI `Win32_Process.Create`.
 
 ## Isolation (every run)
 
-The e2e helper's `CCC_E2E_DATA_DIR` isolates the data and resources folders and `--user-data-dir`
-isolates Electron. App boot also touches `~/.claude` (`src/main/index.ts:561`, the statusline heal;
-`src/main/index.ts:874-878`, the stale sidecar sweep) and a session writes
-`~/.claude/settings-<sid>.json`, so every run here also set `USERPROFILE` and `HOME` to a fresh
-throwaway folder and cleared `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. No run read or wrote the VM's
-real `~/.claude`, `~/.codex`, app data or registry.
+The e2e helper's `CCC_E2E_DATA_DIR` isolates the data and resources folders, and `--user-data-dir` isolates Electron. App boot still touches `~/.claude`:
+- the statusline heal at `src/main/index.ts:561`;
+- the stale sidecar sweep at `:876-880` (line numbers at `38cbc9d7`);
+- a session writes `~/.claude/settings-<sid>.json`.
 
-## Gate specs
+So every run here also set `USERPROFILE`/`HOME` to a fresh throwaway folder, and cleared `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. No run read or wrote the VM's real `~/.claude`, `~/.codex`, app data or registry.
 
-Command (PowerShell, repo root, the throwaway home exported first, PATH untouched):
-`npx playwright test tests/e2e/codex-session-creation.spec.ts tests/e2e/model-picker.spec.ts tests/e2e/codex-settings-section.spec.ts --reporter=list --workers=1`
+This run's evidence:
+- **Before and after snapshots are identical:**
+  - Registry: the SHA-256 of `reg query /s` for `HKCU\Software\AI Code Conductor` and its two legacy keys matched.
+  - File counts and newest write times matched for `C:\Users\User\.claude` (520 files, newest 2026-09-24 05:16), `C:\Users\User\.codex` (6472 files, newest 2026-09-24 08:35) and `...\AppData\Local\AI Code Conductor` (169 files, newest `debug\app.log` 2026-09-24 23:52:44).
+- **The final sweep** found 0 files written after 02:50 in those three folders.
+- **The fake home got the writes instead.** It received two `.claude\settings-<sid>.json` session sidecars and a PSReadLine history, so the redirect worked.
+- **Leaked data folders:** the helper could not delete six of its per-launch data folders (EPERM). Windows had not yet released the handles when the helper cleaned up. The operator deleted them, and the fake home, after the run.
+- **Spec list:**
+  - The run passed the 21 tracked specs explicitly, from `git ls-files tests/e2e/*.spec.ts`.
+  - The VM checkout also holds two untracked, VM-local specs (`dock-mark`, `ssh-pi-pills`), and a bare `npx playwright test` would have picked them up.
+  - The 21 passed are the whole suite of the commit.
+
+## Full e2e suite at `38cbc9d7` (no patch)
+
+Command (PowerShell, repo root, fake home exported first, PATH untouched):
+
+`npx playwright test <the 21 tracked specs> --reporter=list --workers=1`
+
+The config has `retries: 1`.
+
+Gate specs:
 
 | Spec | Test | Result |
 |---|---|---|
@@ -50,22 +63,9 @@ Command (PowerShell, repo root, the throwaway home exported first, PATH untouche
 | model-picker.spec.ts | a pinned versioned row is selectable and round-trips into the persisted config | PASS |
 | codex-settings-section.spec.ts | Settings has no Codex tab; Settings, Accounts shows the Codex row with its status | PASS |
 
-4 passed, 0 failed, 0 skipped.
+The second `codex-session-creation` test asserts that main discovered the spec's fake Codex at 0.155.1 (supported). Its pass therefore also shows that the app did not use the machine's older real Codex.
 
-`codex-session-creation.spec.ts` controls which Codex the app sees
-(`tests/e2e/helpers/fake-codex.ts`): a fake at the pinned version first on the app instance's PATH,
-every folder holding a real Codex removed from that PATH. Its second test asserts that main
-discovered the fake at 0.155.1 (supported) before it creates the config, so the pass shows the app
-did not use the machine's 0.142.4. An independent check with the helper's own `fakeCodexEnv`,
-following the app's Windows lookup order (`where codex.exe`, then `where codex.cmd`,
-`src/main/providers/codex/spawn.ts`): on the runner's PATH, `codex.exe` resolves to the real CLI
-under `...\AppData\Local\Programs\OpenAI\Codex\bin`; on the app instance's PATH, `codex.exe`
-resolves to nothing and `codex.cmd` to the fake, the first PATH entry. The only folder removed from
-PATH was `...\OpenAI\Codex\bin`.
-
-## The rest of the e2e suite (same code, same isolation)
-
-Command: `npx playwright test <the other 18 tracked specs> --reporter=list --workers=1`.
+Rest of the suite:
 
 | Spec | Tests | Result |
 |---|---|---|
@@ -88,55 +88,69 @@ Command: `npx playwright test <the other 18 tracked specs> --reporter=list --wor
 | terminal-links | 2 | PASS |
 | views | 11 | PASS |
 
-Totals, all 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky.
+**Totals, all 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky.** Playwright exited 1.
 
-The one failure is the environment, not the code. `session-dialog-permutations.spec.ts:224` (the
-terminal-only secret argument) received `--token` with no value. The secret is stored through
-Electron `safeStorage` (DPAPI), and under the VM's key-authenticated OpenSSH logon DPAPI is not
-available: a direct probe in the same logon returned `isEncryptionAvailable() = false` and
-"Encryption is not available". This test needs an interactive desktop logon to count, and is not
-evidence either way from this run.
+**The one failure is an environment limit, not a product bug and not a stale spec.**
+- The failing test is `session-dialog-permutations.spec.ts:182` (the terminal-only config runs its command with the secret). It failed on both attempts.
+- Expected: `--token|E2E-SECRET-9f3a`. Received: `ARGV=--token`, with an empty value.
+- Why the value is empty: the secret is kept in `safeStorage` (DPAPI on Windows). `src/main/credential-store.ts:104` refuses to store it when `safeStorage.isEncryptionAvailable()` is false, so `CCC_ARG_SECRET` resolves to nothing.
+- A direct probe, run in this run's own launch context, confirmed the cause.
+  - The probe was a minimal Electron main script, not the app.
+  - Context: created through WMI from the key-authenticated OpenSSH session, the same fake home, and a throwaway `--user-data-dir`.
+  - The process token's logon group is `NT AUTHORITY\NETWORK`.
+  - Result: `isEncryptionAvailable=false`, and `encryptString` threw "Encryption is not available".
+- A key-authenticated SSH logon carries no password-derived credentials, so DPAPI cannot open the user's master key.
+- The spec's expectation is correct. This test needs an interactive desktop logon to count.
+- Its six sibling tests in the same spec pass, including "Terminal only x Local shows the command / arguments / secret fields".
 
 ## Modes exercised in the real app (driven, not gating)
 
-Driven with Playwright `_electron` against `out/main/index.js`, with a fresh isolated data dir and
-throwaway home for each run and the window at the app's minimum size, 1280x720. The Codex CLI was
-the repo's own fake from `tests/wp1/fake-cli.test.ts` (its `FAKE` script and npm-style `.cmd` shim;
-the one change: `--version` reads its version from a side file), and "Run in a terminal" typed into
-a fake `npm.cmd`. No real Codex session was launched, and nothing here stands in for
-`docs/wp1/evidence/real-cli-matrix.md`.
+Not re-driven at `38cbc9d7`. The rows below were recorded at `5a3e0278` + visual-fixes-r2.patch; the patch's files (`contain-focus.ts`, `fake-codex.ts`, the adapted `codex-session-creation` spec) have since landed in `4561e643`. The last row was recorded at `accec3c2`.
+
+The driving setup:
+- Playwright `_electron` against `out/main/index.js`, with a fresh isolated data dir and fake home for each run, and the window at the app's minimum 1280x720.
+- The Codex CLI was the repo's own fake from `tests/wp1/fake-cli.test.ts`: its `FAKE` script and npm-style `.cmd` shim. The only change is that `--version` reads a side file.
+- "Run in a terminal" typed into a fake `npm.cmd`.
+- No real Codex session was launched, and nothing here stands in for `real-cli-matrix.md`.
 
 | Mode | Path | Result |
 |---|---|---|
-| Fresh, Codex only (no `claude` on PATH) | "Claude Code is not installed" -> Use Codex only -> Welcome -> showcase -> assistants (Codex only) -> command bar -> Set up Codex: CLI not found -> Run in a terminal (steps aside, and back) -> too old -> ready to sign in -> Sign in with ChatGPT -> name -> signed in -> Hello Codex -> GitHub ... Finish -> app | reached; Settings, Accounts shows Claude Code Off and Codex 0.155.1 ready; the Hello Codex replay opens, and Escape closes it |
+| Fresh, Codex only (no `claude` on PATH) | "Claude Code is not installed" -> Use Codex only -> Welcome -> showcase -> assistants (Codex only) -> command bar -> Set up Codex: CLI not found -> Run in a terminal (steps aside, back) -> too old -> ready to sign in -> Sign in with ChatGPT -> name -> signed in -> Hello Codex -> GitHub ... Finish -> app | reached. Settings, Accounts shows Claude Code Off and Codex 0.155.1 ready. The replay opens, and Escape closes it. |
 | Fresh, Codex only, Codex set up after onboarding | Set up Codex skipped -> app -> Settings, Accounts: Check again, Add account, sign in -> the one-time Hello Codex takeover opens | reached |
-| Fresh, Claude found | Claude CLI Setup (the terminal has the focus; skipped) -> Welcome -> assistants with Claude, Codex and Both all selectable (Both by default) | reached |
-| Fresh, Codex only, this computer already signed in | Set up Codex settles on "Using this sign-in" and "Add a new Codex account (Recommended)"; Hello Codex is correctly not due (an external sign-in) | reached, in the first run only (commit `accec3c2`, no patch) |
+| Fresh, Claude found | Claude CLI Setup (terminal focused; skipped) -> Welcome -> assistants with Claude, Codex, Both all selectable (default Both) | reached |
+| Fresh, Codex only, this computer already signed in | Set up Codex settles on "Using this sign-in" + "Add a new Codex account (Recommended)"; Hello Codex is correctly not due (external sign-in) | reached (first run, `accec3c2`) |
 
-## Not covered
-
-Upgrade, restart, enable/disable round trips, and a minimum launch smoke of a real Codex session:
-the rest of WP1.60's modes.
-
-WP1.1 (a fresh Claude-only setup reaches a usable app without Codex installed): its planned tests,
-`tests/wp1/mode-matrix.test.ts` and `tests/e2e/onboarding-provider-select.spec.ts`, do not exist
-yet, and the "Fresh, Claude found" row above stops at the assistants page and does not record whether
-Codex was absent, so it is not WP1.1 evidence.
+Not covered here, for WP1.60's other modes:
+- upgrade;
+- restart;
+- enable and disable round trips;
+- a minimum launch smoke of a real Codex session.
 
 ## History
 
-### `accec3c2`, no patch (2026-09-25, VM local 20:31-20:36 PDT)
+### `5a3e0278` + visual-fixes-r2.patch (2026-09-25, VM local 2026-09-24 23:02-23:12 PDT)
 
-- `codex-settings-section`: PASS. `codex-session-creation`: both tests SKIPPED. Their entry,
-  `button:has-text("New Terminal Config")`, no longer existed in `src/renderer`, so the spec proved
-  nothing; it has since been adapted.
-- The whole suite (the two specs above included): 73 passed, 2 failed (`model-picker.spec.ts:124`, a stale Saved-tab
-  expectation, since adapted; and the DPAPI secret test above), 2 skipped (the two above), 0
-  flaky; 77 tests in 21 specs.
+- Gate specs (`codex-session-creation` x2, `model-picker`, `codex-settings-section`): 4 passed.
+  - `codex-session-creation` controlled which Codex the app saw, through `fake-codex.ts` (0.155.1).
+  - An independent check with the helper's `fakeCodexEnv` showed:
+    - on the runner's PATH, `codex.exe` resolved to the real 0.142.4;
+    - on the app instance's PATH, `codex.exe` resolved to nothing, and `codex.cmd` to the fake, which is the first PATH entry;
+    - the only folder removed from PATH was `...\OpenAI\Codex\bin`.
+- Rest of the suite (18 specs): 73 passed, 1 failed. The failure was the same DPAPI secret test (`session-dialog-permutations.spec.ts:224`), with the same cause. A direct probe in that logon returned `isEncryptionAvailable() = false`.
+- Totals, all 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky.
 
-### `accec3c2` with the first visual-fixes patch (2026-09-25, VM local 22:18-22:21 PDT)
+### `accec3c2` without a patch (2026-09-25, VM local 20:31-20:36 PDT)
 
-- `codex-settings-section`, `model-picker`: PASS. `codex-session-creation`: test 1 PASS; test 2
-  FAIL with the VM's Codex 0.142.4 on PATH ("Update Codex to launch this config",
-  `src/renderer/components/SessionDialog.tsx:438`), PASS with it removed from PATH. Fixed by the
-  spec's own fake Codex (above).
+- `codex-settings-section`: PASS.
+- `codex-session-creation`: both tests SKIPPED. Its entry point, `button:has-text("New Terminal Config")`, no longer exists in `src/renderer`, so the spec proved nothing.
+- Rest of the suite: 73 passed, 2 failed, 2 skipped (the two above), 0 flaky, across 77 tests in 21 specs. The two failures:
+  - `model-picker:124`, a stale Saved-tab expectation, since adapted;
+  - the DPAPI secret test above.
+
+### `accec3c2` + visual-fixes.patch (2026-09-25, VM local 22:18-22:21 PDT)
+
+- `codex-settings-section` and `model-picker`: PASS.
+- `codex-session-creation`: test 1 PASS. Test 2:
+  - FAIL with the VM's Codex 0.142.4 on PATH ("Update Codex to launch this config", `src/renderer/components/SessionDialog.tsx:438`);
+  - PASS with it removed from PATH.
+  - Fixed in r2 by the spec's own fake Codex (above).
