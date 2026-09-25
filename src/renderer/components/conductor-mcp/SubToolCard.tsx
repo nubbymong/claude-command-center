@@ -1,21 +1,21 @@
 import React from 'react'
+import { SUB_TOOL_PILL_TOKEN, SUB_TOOL_PILL_WASH, type SubToolStatusColor } from './sub-tool-tones'
 
 interface SubToolCardProps {
   title: string
   icon: React.ReactNode
   statusLabel: string
-  statusColor: 'green' | 'yellow' | 'red' | 'overlay1'
+  statusColor: SubToolStatusColor
   description?: string
   toolList?: string[]
   actions?: React.ReactNode
   children?: React.ReactNode
 }
 
-const COLOR_CLASSES: Record<SubToolCardProps['statusColor'], string> = {
-  green: 'bg-green/15 text-green',
-  yellow: 'bg-yellow/15 text-yellow',
-  red: 'bg-red/15 text-red',
-  overlay1: 'bg-overlay1/15 text-overlay1',
+/** A status pill: its semantic token over a wash of itself (sub-tool-tones). */
+function pillStyle(color: SubToolStatusColor): React.CSSProperties {
+  const token = `var(--${SUB_TOOL_PILL_TOKEN[color]})`
+  return { color: token, background: `color-mix(in srgb, ${token} ${SUB_TOOL_PILL_WASH}%, transparent)` }
 }
 
 /**
@@ -34,7 +34,7 @@ export default function SubToolCard({
       <div className="flex items-center gap-3">
         <div className="text-text">{icon}</div>
         <div className="text-text font-medium text-sm">{title}</div>
-        <span className={`text-xs px-2 py-0.5 rounded-full transition-colors duration-200 ${COLOR_CLASSES[statusColor]}`}>
+        <span className="text-xs px-2 py-0.5 rounded-full transition-colors duration-200" style={pillStyle(statusColor)} data-testid="sub-tool-status" data-tone={statusColor}>
           {statusLabel}
         </span>
         <div className="flex-1" />

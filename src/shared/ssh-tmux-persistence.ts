@@ -93,3 +93,22 @@ export function resolveRunningClaudeInfo(
 ): string | undefined {
   return explicitReason ?? (tmuxInPlay ? undefined : SSH_PERSISTENCE_PROBE_NONE)
 }
+
+/**
+ * The remote tmux session a CCC session runs in: `ccc-<safeSid>`, where every
+ * character outside [A-Za-z0-9_-] becomes `_` (the rule main's ssh-tmux.ts
+ * safeSid applies when it creates the session).
+ */
+export function tmuxSessionName(sessionId: string): string {
+  return `ccc-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+}
+
+/**
+ * That session as an exact-match tmux target, single-quoted for any POSIX
+ * shell a user pastes it into: `'=ccc-<safeSid>'`. The `=` stops tmux matching
+ * a longer session name by prefix, and the quotes stop zsh expanding a word
+ * that begins with `=` into a command path.
+ */
+export function tmuxExactTarget(sessionId: string): string {
+  return `'=${tmuxSessionName(sessionId)}'`
+}

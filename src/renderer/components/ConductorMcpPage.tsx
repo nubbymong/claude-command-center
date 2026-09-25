@@ -5,6 +5,7 @@ import CompatBadge from './sentinel/CompatBadge'
 import VisionSubTool from './conductor-mcp/VisionSubTool'
 import AgentCanvasSubTool from './conductor-mcp/AgentCanvasSubTool'
 import CodexReviewSubTool from './conductor-mcp/CodexReviewSubTool'
+import ClaudeReviewSubTool from './conductor-mcp/ClaudeReviewSubTool'
 import HostTransferSubTool from './conductor-mcp/HostTransferSubTool'
 
 const headerIcon = (
@@ -46,7 +47,7 @@ export default function ConductorMcpPage() {
   // state falls into 'Stopped' because the renderer can't observe a bound
   // server until the first status push arrives.
   const statusLabel = serverRunning
-    ? `Running -- port ${mcpPort}`
+    ? `Running on port ${mcpPort}`
     : 'Stopped'
 
   return (
@@ -78,6 +79,7 @@ export default function ConductorMcpPage() {
             <VisionSubTool />
             <AgentCanvasSubTool />
             <CodexReviewSubTool />
+            <ClaudeReviewSubTool />
             <HostTransferSubTool />
           </>
         ) : (
@@ -99,8 +101,8 @@ export default function ConductorMcpPage() {
             </div>
             <div className="text-sm font-medium text-text mb-1">Conductor MCP server is not running</div>
             <div className="text-xs text-overlay1 mb-1 max-w-sm">
-              The local MCP listener never bound to a port, so Vision, Codex review, host
-              transfer and the Agent Canvas are unavailable to your sessions.
+              The local MCP listener never bound to a port, so Vision, Codex review, Claude
+              review, host transfer and the Agent Canvas are unavailable to your sessions.
             </div>
             <div className="text-xs text-overlay0 max-w-sm">
               It normally starts automatically at launch. Restart AI Code Conductor to bring it

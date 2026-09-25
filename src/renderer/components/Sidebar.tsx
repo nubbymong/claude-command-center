@@ -10,8 +10,10 @@ import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useConductorMcpStore } from '../stores/conductorMcpStore'
-import { useAccountAuthStore } from '../stores/accountAuthStore'
-import SessionDialog from './SessionDialog'
+import { useAccountAuthStore, claudeCodeNotChecked } from '../stores/accountAuthStore'
+import { useClaudeOff } from '../lib/claudeOff'
+import SessionDialog, { type SessionDialogLaunchAck } from './SessionDialog'
+import { grantLaunchAcknowledgement } from '../stores/launchAckStore'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
@@ -50,6 +52,7 @@ import ConfigLoadFailedNotice from './ConfigLoadFailedNotice'
 import ConfigLoadFailedRailIndicator from './sidebar/ConfigLoadFailedRailIndicator'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
+import { useHelloCodexStore } from '../onboarding/hello-codex-open'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
@@ -141,6 +144,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   // refreshes both. Fetched when a session context menu opens — not polled, since
   // the Claude Code check is a heavy subprocess.
   const authByProfile = useAccountAuthStore((s) => s.byProfile)
+  // WP2: while Claude Code is off (or main did not check), the menu offers no
+  // Claude Code sign-in and says why (claudeCodeNotChecked).
+  const claudeOffForMenu = useClaudeOff()
   const refreshWebSessions = React.useCallback(async (profileId?: string, force = false) => {
     if (!profileId) return
     await useAccountAuthStore.getState().refresh(profileId, { force })
@@ -339,6 +345,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       // Suppressed while onboarding overlays the shell — Ctrl+T here would
       // open the New Config dialog invisibly underneath it.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      // And while the Codex introduction covers it (WP2 commit 6f).
+      if (useHelloCodexStore.getState().open !== null) return
       const sc = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
       if (matchesShortcut(e, sc.newConfig)) {
         e.preventDefault()
@@ -365,7 +373,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => {
+  const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string, launchAck?: SessionDialogLaunchAck) => {
     const config: TerminalConfig = { ...data, id: generateId() }
     addConfig(config)
     // Same stamps as the guided first-config path (App.tsx): without them the
@@ -384,7 +392,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       await window.electronAPI.credentials.save(config.id + '_argsecret', argSecret)
     }
     setShowNewDialog(false)
-    launchFromConfig(config)
+    const sessionId = launchFromConfig(config)
+    // The dialog's ticked "launch with the sign-in already on this computer"
+    // covers exactly this launch, never a later one (launchAckStore).
+    if (sessionId && launchAck) grantLaunchAcknowledgement(sessionId, launchAck.accountId)
   }
 
   const handleEditConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => {
@@ -436,8 +447,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     }
   }
 
-  const launchFromConfig = async (config: TerminalConfig) => {
-    launchConfig(config)
+  /** Returns the new session's id ('' when the launch was blocked). */
+  const launchFromConfig = (config: TerminalConfig): string => {
+    const sessionId = launchConfig(config)
     // The missed-copy guard: a launch from the SAVED tab used to switch the
     // main view to the new terminal while leaving the panel on Saved, so the
     // tile the user had just made was on a list they were not looking at —
@@ -445,6 +457,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     // A no-op for the surfaces that already live on Running (Quick Start).
     selectPanelTab('running')
     onViewChange('sessions')
+    return sessionId
   }
 
   // ── Allow Multi Spawn (phase 4) ─────────────────────────────────────────
@@ -1639,6 +1652,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               !!actionProfileId && authByProfile[actionProfileId]?.web === 'active'
             }
             codeSignedIn={!!actionProfileId && (s.provider ?? 'claude') === 'claude' && authByProfile[actionProfileId]?.cliAuthed === true}
+            codeNotChecked={actionProfileId ? claudeCodeNotChecked(authByProfile[actionProfileId], claudeOffForMenu) ?? undefined : undefined}
             onOpenArtifacts={
               actionProfileId
                 ? () => {

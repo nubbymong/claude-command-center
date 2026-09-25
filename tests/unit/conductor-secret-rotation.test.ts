@@ -29,7 +29,7 @@ vi.mock('../../src/main/clipboard-file', () => ({ mimeForImage: () => 'image/png
 vi.mock('../../src/main/providers/codex/mcp-config', () => ({ removeConductorVisionFromCodexConfig: () => {} }))
 vi.mock('../../src/main/vision-manager', () => ({ getGlobalManager: () => null, startGlobalVision: () => {}, launchBrowser: () => {} }))
 vi.mock('../../src/main/update-watcher', () => ({ isPackagedApp: () => false, getInstallPath: () => '', getProjectRootPath: () => '' }))
-vi.mock('../../src/main/codex-review-mcp-tool', () => ({ registerCodexReviewTool: () => {} }))
+vi.mock('../../src/main/codex-review-mcp-tool', () => ({ registerCodexReviewTool: () => {}, registerClaudeReviewTool: () => {}, abortSessionReviews: () => {}, cancelReviewRequest: () => false }))
 
 const HEX64 = /^[0-9a-f]{64}$/
 const LEGACY = 'a'.repeat(64)

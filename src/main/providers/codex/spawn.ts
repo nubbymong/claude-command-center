@@ -5,9 +5,10 @@ import { execSync } from 'child_process'
 import { sandboxFor, approvalFor } from './permissions'
 import { getResourcesDirectory } from '../../ipc/setup-handlers'
 import type { SpawnOptions } from '../types'
-import { getConductorMcpPort, mcpSessionToken } from '../../conductor-mcp-server'
+import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
 import { readConfig } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
+import { codexShellEnv } from './cli-runner'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -121,14 +122,71 @@ export function getCodexResumePickerPath(): string | null {
   return null
 }
 
-export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string> } {
+/** A value that must reach cmd.exe exactly as written holds no control character. */
+const hasControl = (s: string): boolean => [...s].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
+/** The shim's path is quoted on the line, but cmd.exe still expands `%` inside
+ *  quotes and the npm shim re-reads its own path (`%~dp0`): the characters
+ *  discovery's own cmd.exe route refuses (cli-runner `codexCommandLine`). */
+const CMD_UNSAFE_PATH_RE = /["%&^]/
+/** Arguments go unquoted (none needs quoting): any character cmd.exe gives a
+ *  meaning, and any whitespace, is refused. */
+const CMD_UNSAFE_ARG_RE = /["%&^|<>!()\s]/
+/** A drive or a share, never `\x`, `\\?\` or `\\.\` (as cli-runner). */
+const WIN_ABSOLUTE_RE = /^([A-Za-z]:\\|\\\\[^\\?.][^\\]*\\[^\\]+\\)/
+
+/** How long a Codex session waits for one Conductor tool call: above the
+ *  longest review a review tool allows (900 s) plus its diff, launch and
+ *  kill-settle time. */
+export const CONDUCTOR_TOOL_TIMEOUT_SEC = '1000.0'
+
+/** A .cmd/.bat shim runs through cmd.exe named by ABSOLUTE path -- ComSpec or
+ *  SystemRoot as the parent spells them (Windows names are case-insensitive),
+ *  never a PATH lookup -- with AutoRun and delayed expansion off, in the `/s`
+ *  form: cmd.exe strips exactly the outer pair of quotes and runs
+ *  `"<shim>" <args>`, whatever the shim's path holds (spaces, parentheses).
+ *  The line goes to node-pty VERBATIM: its per-argument quoting would escape
+ *  the inner quotes. Throws when the path or an argument cannot pass through
+ *  unchanged. The same line cli-runner's `codexCommandLine` builds for
+ *  discovery and sign-in; mirrored by `launchTarget` in
+ *  scripts/lib/codex-resume-picker-lib.js. */
+export function codexCmdExeTarget(shim: string, args: readonly string[], env: Readonly<Record<string, string | undefined>>): { cmd: string; commandLine: string } {
+  const shell = codexShellEnv(env, 'win32')
+  const usable = (p: string | undefined): p is string =>
+    typeof p === 'string' && WIN_ABSOLUTE_RE.test(p) && /[\\/]cmd\.exe$/i.test(p) && !CMD_UNSAFE_PATH_RE.test(p) && !hasControl(p)
+  const system32 = shell.SystemRoot ? path.win32.join(shell.SystemRoot, 'System32', 'cmd.exe') : undefined
+  const cmd = usable(shell.ComSpec) ? shell.ComSpec : usable(system32) ? system32 : null
+  if (!cmd) {
+    throw new Error('Cannot start Codex: the Windows folder (SystemRoot) is not set to an absolute path.')
+  }
+  if (!WIN_ABSOLUTE_RE.test(shim) || /[. ]$/.test(shim) || CMD_UNSAFE_PATH_RE.test(shim) || hasControl(shim)
+      || args.some((a) => a === '' || CMD_UNSAFE_ARG_RE.test(a) || hasControl(a))) {
+    throw new Error('Cannot start Codex: its path or launch options contain characters cmd.exe would reinterpret.')
+  }
+  return { cmd, commandLine: `/d /v:off /s /c "${[`"${shim}"`, ...args].join(' ')}"` }
+}
+
+/** Set a variable main owns, removing every other spelling of it first: on
+ *  Windows names are case-insensitive and a child reads the FIRST match in
+ *  its environment block, so an inherited `conductor_mcp_token` would
+ *  otherwise shadow the value set here. */
+function setOwned(env: Record<string, string>, name: string, value: string, win32: boolean): void {
+  if (win32) for (const k of Object.keys(env)) if (k !== name && k.toUpperCase() === name.toUpperCase()) delete env[k]
+  env[name] = value
+}
+
+export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string } {
   const co = opts.codexOptions
   if (!co) throw new Error('codexOptions required for Codex spawn')
 
-  const resolved = resolveCodexBinary()
-  if (!resolved) {
-    throw new Error('Codex CLI not found on PATH. Install with `npm i -g @openai/codex`.')
+  // WP2 (plan A10): a Codex session runs only from its prepared launch in its
+  // account's realm -- the executable setup proved (never a second lookup)
+  // and the realm's environment (ambient credentials removed, CODEX_HOME set).
+  const launch = opts.realmLaunch
+  if (!launch) {
+    throw new Error('A Codex session needs its account: choose a Codex account for this session.')
   }
+  const executable = launch.executable
+  const win32 = process.platform === 'win32'
 
   // Build the canonical Codex flag list once; both the picker and the direct
   // spawn paths forward the same flags.
@@ -144,9 +202,10 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   // is written to the user's global ~/.codex/config.toml, so plain `codex` outside
   // CCC never tries the dead endpoint. The token rides a bearer header via the
   // CONDUCTOR_MCP_TOKEN env var (Codex sends `Authorization: Bearer <value>`, which
-  // the conductor server accepts), so the URL carries only `?source=codex` -- no
+  // the conductor server accepts), so the URL carries only the session id -- no
   // `&`, which keeps it intact through the cmd.exe .cmd-shim spawn path. The
-  // `source=codex` marker keeps codex_review hidden from Codex (no self-review).
+  // token is issued as a Codex one, which keeps codex_review hidden from Codex
+  // (no self-review).
   // Built-in tools master (onboarding p6 / Settings): off = no conductor MCP
   // flags at all, so Codex launches without the built-in tools. Read fresh
   // per spawn; port 0 (server unbound) behaves identically.
@@ -155,8 +214,8 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   if (mcpPort > 0) {
     // cccSessionId is the ONLY query param, so the URL stays free of `&` — a
     // second param would be a cmd.exe command separator on the win32 .cmd-shim
-    // spawn path. `source=codex` is inferred server-side from the /mcp route
-    // (that route is Codex-only), so it need not ride the URL. The per-session
+    // spawn path. The /mcp route is Codex-only and serves the Codex tool set,
+    // so no provider marker need ride the URL. The per-session
     // HMAC token (below, via the bearer header) commits to this session id, so
     // the gate verifies the binding the same way a Claude session's is
     // (GHSA-q83v-phcc-hgv4); Codex's tools are install-global, but the token
@@ -164,26 +223,39 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
     flags.push('-c', `mcp_servers.conductor.url=http://localhost:${mcpPort}/mcp?cccSessionId=${encodeURIComponent(opts.sessionId)}`)
     flags.push('-c', 'mcp_servers.conductor.enabled=true')
     flags.push('-c', 'mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN')
+    // WP2 5b: a claude_review call runs for as long as its timeoutSeconds
+    // (up to 900 s) plus the diff, the launch and the kill's settle bound.
+    // The pinned Codex waits 300 s for a tool by default (DEFAULT_TOOL_TIMEOUT,
+    // codex-rs/codex-mcp/src/rmcp_client.rs, rust-v0.155.1) and would give up
+    // on a longer review first; seconds, read as a float.
+    flags.push('-c', `mcp_servers.conductor.tool_timeout_sec=${CONDUCTOR_TOOL_TIMEOUT_SEC}`)
   }
 
   // CLAUDE_MULTI_SESSION_ID identifies the spawning CCC session for downstream
   // hook / telemetry correlation in P3+. Codex CLI itself does not read it; it
   // is transparent pass-through and survives any future env-var hygiene pass.
-  const env: Record<string, string> = {
-    ...process.env,
-    CLAUDE_MULTI_SESSION_ID: opts.sessionId,
-  } as Record<string, string>
+  // Built on the REALM's environment; nothing set below names a realm or a
+  // credential, so CODEX_HOME stays the one the launch set.
+  const env: Record<string, string> = { ...launch.env }
+  setOwned(env, 'CLAUDE_MULTI_SESSION_ID', opts.sessionId, win32)
   // U6: bearer token for the per-spawn conductor MCP entry above. Per-session
   // HMAC, matched to the cccSessionId baked into the URL (GHSA-q83v-phcc-hgv4).
   if (mcpPort > 0) {
-    env.CONDUCTOR_MCP_TOKEN = mcpSessionToken(opts.sessionId)
+    setOwned(env, 'CONDUCTOR_MCP_TOKEN', issueMcpSessionToken(opts.sessionId, 'codex'), win32)
   }
   // The host's light/dark scheme, the same way the local Claude spawn gets it
   // (book item 34: Codex sessions never did, so a light-mode Codex TUI came up
   // dark). Harmless to a TUI that does not read it.
   if (opts.hostColorScheme) {
-    env.COLORFGBG = colorFgBgValue(opts.hostColorScheme)
+    setOwned(env, 'COLORFGBG', colorFgBgValue(opts.hostColorScheme), win32)
   }
+  // The working directory stays the PROJECT (a departure from the design's
+  // "shim folder as cwd": Codex's workspace IS its cwd, so any other folder
+  // would point it at the wrong files). What that protects against -- a
+  // program name resolved from the project folder -- is closed instead by
+  // telling cmd.exe not to search the current directory.
+  if (win32) setOwned(env, 'NoDefaultCurrentDirectoryInExePath', '1', win32)
+  const viaCmdExe = win32 && /\.(cmd|bat)$/i.test(executable)
 
   // Picker swap: when useResumePicker is true and the picker script is
   // deployed, run `node <picker> <flags>` instead of `codex <flags>`. The
@@ -194,16 +266,22 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   if (opts.useResumePicker) {
     const pickerScript = getCodexResumePickerPath()
     if (pickerScript) {
+      // The picker starts the same proven executable (never its own lookup),
+      // through cmd.exe under the same rules; refuse here what it would.
+      if (viaCmdExe) codexCmdExeTarget(executable, flags, env)
+      const pickerEnv = { ...env }
+      setOwned(pickerEnv, 'CCC_CODEX_EXECUTABLE', executable, win32)
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env }
+      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }
 
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved.cmd)) {
+  if (viaCmdExe) {
     // node-pty / ConPTY cannot directly invoke .cmd shims; route through cmd.exe.
-    return { cmd: 'cmd.exe', args: ['/c', resolved.cmd, ...flags], env }
+    const target = codexCmdExeTarget(executable, flags, env)
+    return { cmd: target.cmd, args: [], commandLine: target.commandLine, env }
   }
-  return { cmd: resolved.cmd, args: flags, env }
+  return { cmd: executable, args: flags, env }
 }

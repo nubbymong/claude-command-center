@@ -6,7 +6,7 @@ interface Props {
   value: ProviderId
   onChange: (next: ProviderId) => void
   sessionType: 'local' | 'ssh'
-  /** Codex master switch ("Do you use Codex?") is off — Settings → Codex. */
+  /** Codex is switched off (the Providers card in Settings, Accounts). */
   codexMasterOff?: boolean
 }
 
@@ -76,7 +76,7 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
         {sessionType === 'ssh'
           ? 'Codex is not available for SSH sessions yet.'
           : codexMasterOff
-            ? "Codex is switched off: its configs won't launch and new ones can't use it. Enable it in Settings → Codex."
+            ? "Codex is switched off: its configs won't launch and new ones can't use it. Turn it on in Settings, Accounts."
             : "Which CLI this config runs: Anthropic's Claude Code, or OpenAI's Codex (its own account and sign-in)."}
       </p>
     </div>

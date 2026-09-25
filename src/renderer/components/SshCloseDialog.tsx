@@ -1,6 +1,8 @@
 import React from 'react'
 import { useSshCloseStore, endRemoteAndClose, leaveRunningAndClose } from '../stores/sshCloseStore'
-import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, useDialogEscape } from './ui/Dialog'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, useDialogEscape, WINDOW_CLOSE_Z } from './ui/Dialog'
+import { useContainFocus } from '../onboarding/contain-focus'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 
 // SSH tmux enhancement (items 4 + 11): the confirmation shown when closing a
 // PERSISTENT remote session. "End remote session" runs tmux kill-session +
@@ -8,11 +10,22 @@ import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, Dia
 // "Leave running" detaches only — the remote stays alive so it can be
 // reattached later. Closing straight away (the old behaviour) silently
 // stranded the remote, which is the exact wart this closes.
+//
+// It paints on the top layer (WINDOW_CLOSE_Z), above the onboarding pages and
+// the introduction's takeover and replay, and keeps Tab inside itself while
+// open. Not the repo's useFocusTrap: that moves focus to the first control,
+// which here is "End remote session", the destructive one; "Leave running"
+// keeps the focus it opens with.
 export default function SshCloseDialog() {
   const pending = useSshCloseStore((s) => s.pending)
   const clear = useSshCloseStore((s) => s.clear)
   const [busy, setBusy] = React.useState(false)
   useDialogEscape(pending ? clear : undefined, !busy)
+  const panelRef = React.useRef<HTMLDivElement>(null)
+  useContainFocus(panelRef, !!pending, { topmost: true })
+  // Native panes paint above all HTML: hidden while this shows (the overlay
+  // is `absolute`, and DialogOverlay holds that flag only for a `fixed` one).
+  useOccludesNativePanes(!!pending)
 
   if (!pending) return null
 
@@ -27,8 +40,8 @@ export default function SshCloseDialog() {
   const leave = () => leaveRunningAndClose(pending.sessionId)
 
   return (
-    <DialogOverlay position="absolute" z="z-[60]" testId="ssh-close-dialog">
-      <DialogPanel width="w-[440px]" labelledBy="ssh-close-heading">
+    <DialogOverlay position="absolute" z={WINDOW_CLOSE_Z} testId="ssh-close-dialog">
+      <DialogPanel width="w-[440px]" labelledBy="ssh-close-heading" panelRef={panelRef}>
         <DialogHeader
           titleId="ssh-close-heading"
           title={<>Close “{pending.label}”?</>}

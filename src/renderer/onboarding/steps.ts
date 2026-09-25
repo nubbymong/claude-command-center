@@ -1,4 +1,5 @@
 import type { FC } from 'react'
+import { usesClaude, usesCodex } from './provider-choice'
 
 /**
  * Bump ONLY to force EVERY user through the WHOLE flow again (rare). NOT __APP_VERSION__.
@@ -36,6 +37,7 @@ export const ONBOARDING_VERSION = '3'
 /** The minimal settings view the step `when` predicates read. Widen as later steps need it. */
 export interface OnboardingSettingsView {
   codexEnabled?: boolean
+  claudeEnabled?: boolean
 }
 
 export interface OnboardingStepProps {
@@ -55,6 +57,10 @@ export interface OnboardingStep {
   requiresSetup: boolean
   /** Optional applicability gate; a when()-false step is excluded from the applicable set. */
   when?: (settings: OnboardingSettingsView) => boolean
+  /** Shown on a fresh install only, never to an upgrader: `stepsNewSince`
+   *  leaves it out whatever its `sinceVersion`, and the harness skips it
+   *  whenever there is a version the user ran before. */
+  freshInstallOnly?: boolean
   /** Attached per-page in later phases; absent here so pure tests build steps from metadata. */
   Component?: FC<OnboardingStepProps>
   /** Attached per-page in later phases; writes this step's real underlying flag(s). */
@@ -78,21 +84,36 @@ export interface OnboardingStep {
 export const STEPS: OnboardingStep[] = [
   { id: 'whatsNewV2',    sinceVersion: '2.0.0', requiresSetup: false },
   { id: 'welcome',       sinceVersion: '2.0.0', requiresSetup: false },
+  // "Which assistants will you use?" (WP2, 2.1.1): fresh installs only (owner
+  // call 2026-09-24): an upgrader keeps the providers they have and changes
+  // them in Settings, Accounts. The answer decides which pages follow.
+  { id: 'assistants',    sinceVersion: '2.1.1', requiresSetup: false, freshInstallOnly: true },
   // The one-row command bar (ADR-018, #382): stamped with the release it ships
   // in, so every existing user gets this page once on the first launch after
   // the upgrade (stepsNewSince), and fresh installs meet it in the full flow.
   { id: 'commandBar',    sinceVersion: '2.1.0-beta.17', requiresSetup: false },
-  { id: 'findClaude',    sinceVersion: '2.0.0', requiresSetup: false },
-  { id: 'compatibility', sinceVersion: '2.0.0', requiresSetup: false },
-  { id: 'accounts',      sinceVersion: '2.0.0', requiresSetup: false },
+  // Claude Code's own pages follow the assistants choice.
+  { id: 'findClaude',    sinceVersion: '2.0.0', requiresSetup: false, when: usesClaude },
+  { id: 'compatibility', sinceVersion: '2.0.0', requiresSetup: false, when: usesClaude },
+  { id: 'accounts',      sinceVersion: '2.0.0', requiresSetup: false, when: usesClaude },
+  // "Set up Codex" (WP2, 2.1.1): install, update and sign in, when Codex is
+  // chosen. Fresh installs only, like the choice itself; it replaces the
+  // "Do you use Codex?" and Codex sign-in pages. (One upgrader does see it:
+  // the one who chose "Use Codex only" on a setup screen in this run, the
+  // version-change one or the first-run one, handed the page once by the
+  // harness, never via stepsNewSince.)
+  { id: 'codexSetup',    sinceVersion: '2.1.1', requiresSetup: false, freshInstallOnly: true, when: usesCodex },
+  // "Hello, Codex" (WP2 commit 6f), the Codex introduction: follows Codex
+  // setup wherever that page is shown (a fresh install, and the upgrader it
+  // is handed to), and only once Codex is set up; the harness adds that test
+  // and its own seen stamp. Fresh installs only here, like codexSetup: an
+  // upgrader is never re-walked for it; the one-time takeover outside
+  // onboarding covers them.
+  { id: 'helloCodex',    sinceVersion: '2.1.1', requiresSetup: false, freshInstallOnly: true, when: usesCodex },
   // github precedes statusline (user call 2026-07-01): the status-line page's
   // Copilot preview element only exists once the GitHub meter is enabled.
-  // codex precedes builtinTools (user call 2026-07-02): the answer drives the
-  // Code review card's "Codex off" state and the codex_review tool gate.
   { id: 'github',        sinceVersion: '2.0.0', requiresSetup: true  },
-  { id: 'statusline',    sinceVersion: '2.0.0', requiresSetup: true  },
-  { id: 'codex',         sinceVersion: '2.0.0', requiresSetup: true  },
-  { id: 'codexSignIn',   sinceVersion: '2.0.0', requiresSetup: true, when: (s) => s.codexEnabled === true },
+  { id: 'statusline',    sinceVersion: '2.0.0', requiresSetup: true, when: usesClaude },
   { id: 'builtinTools',  sinceVersion: '2.0.0', requiresSetup: true  },
   { id: 'transparency',  sinceVersion: '2.0.0', requiresSetup: true  },
   { id: 'finish',        sinceVersion: '2.0.0', requiresSetup: false },

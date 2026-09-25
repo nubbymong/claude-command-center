@@ -132,12 +132,12 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await providerCard('claude').click()
     await transportCard('ssh').click()
     await expect(provider('codex')).toBeDisabled()
-    await expect(page.locator("text=Codex can't run over SSH yet")).toBeVisible()
+    await expect(page.locator("text=Codex can't run over SSH in this release")).toBeVisible()
     // Codex first → SSH card disabled.
     await transportCard('local').click()
     await providerCard('codex').click()
     await expect(transport('ssh')).toBeDisabled()
-    await expect(page.locator('text=Codex runs on this PC only')).toBeVisible()
+    await expect(page.locator('text=Codex runs on this computer only')).toBeVisible()
   })
 
   test('Terminal only × Local shows the command / arguments / secret fields', async () => {

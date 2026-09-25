@@ -119,17 +119,6 @@ const mockElectronAPI = {
     isRunning: vi.fn(() => Promise.resolve(false)),
     onStatusChanged: vi.fn(() => () => {}),
   },
-  codex: {
-    status: vi.fn(() => Promise.resolve({
-      installed: false,
-      version: null,
-      authMode: 'none' as const,
-      hasOpenAiApiKeyEnv: false,
-    })),
-    login: vi.fn(() => Promise.resolve({ ok: true })),
-    logout: vi.fn(() => Promise.resolve({ ok: true })),
-    testConnection: vi.fn(() => Promise.resolve({ ok: true, message: 'connected' })),
-  },
   dialog: { openFolder: vi.fn(() => Promise.resolve(null)) },
   vision: {
     start: vi.fn(() => Promise.resolve({ ok: true })),

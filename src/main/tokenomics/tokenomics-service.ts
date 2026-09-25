@@ -7,6 +7,8 @@ import { readConfig } from '../config-manager'
 import { onRegistryReload } from '../model-registry-service'
 import { getDataDirectory, getResourcesDirectory } from '../data-paths'
 import type { TkConfigDim } from './tk-types'
+import { getAccountsService } from '../provider-accounts'
+import { logError } from '../debug-logger'
 
 /**
  * Reserved attribution id for the Ask Conductor help session (#465). Its spend
@@ -21,6 +23,36 @@ export const TK_HELP_CONFIG_ID = '__ask-help__'
 
 let _sup: TokenomicsSupervisor | null = null
 let _unsubReload: (() => void) | null = null
+let _unsubAccounts: (() => void) | null = null
+
+/** WP2 (plan A13): each Codex account runs in its own realm and writes its
+ *  transcripts there, so the index follows those folders as accounts are
+ *  added, removed or signed out, beside the user's own ~/.codex. */
+function followCodexRealmDirs(): void {
+  const svc = getAccountsService()
+  if (!svc) return
+  let lastKey = ''
+  let running = false
+  let again = false
+  const refresh = async (): Promise<void> => {
+    if (running) { again = true; return }
+    running = true
+    try {
+      do {
+        again = false
+        const dirs = await svc.sessionsDirs('codex')
+        const key = JSON.stringify(dirs)
+        if (key !== lastKey) { lastKey = key; _sup?.setCodexRealmSessionsDirs(dirs) }
+      } while (again)
+    } catch (err) {
+      logError(`[tokenomics] Codex account folders not refreshed: ${(err as Error)?.message ?? err}`)
+    } finally {
+      running = false
+    }
+  }
+  _unsubAccounts = svc.subscribe(() => { void refresh() })
+  void refresh()
+}
 
 // Minimal shape of a saved config we attribute usage to. Defined locally rather
 // than importing the renderer-store `TerminalConfig` (main must not import from
@@ -62,6 +94,7 @@ export function initTokenomics(opts: { emit: (channel: string, payload: unknown)
   void fetchModelPricing().then(() => { _sup?.setPricing(getAllPricing()) }).catch(() => {})
   // Registry hot-reload must reach the worker's pricing CTE (spec §4 consumer 2).
   _unsubReload = onRegistryReload(() => { _sup?.setPricing(getAllPricing()) })
+  followCodexRealmDirs()
 }
 
 export function getTokenomicsSupervisor(): TokenomicsSupervisor | null { return _sup }
@@ -69,4 +102,8 @@ export function getTokenomicsSupervisor(): TokenomicsSupervisor | null { return 
 /** Push the current saved-config dimension to the worker (call after config edits). */
 export function refreshTokenomicsConfigs(): void { _sup?.setConfigs(loadConfigDims()) }
 
-export function shutdownTokenomics(): void { _sup?.shutdown(); _sup = null; _unsubReload?.(); _unsubReload = null }
+export function shutdownTokenomics(): void {
+  _sup?.shutdown(); _sup = null
+  _unsubReload?.(); _unsubReload = null
+  _unsubAccounts?.(); _unsubAccounts = null
+}

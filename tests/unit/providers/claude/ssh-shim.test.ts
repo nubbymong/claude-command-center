@@ -13,7 +13,10 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   // GHSA-q83v: the remote config now carries HMAC(secret, sessionId), not the
   // raw secret. Deterministic session-specific stub so the assertion proves
   // THIS session's token is baked in.
-  mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
+  // A site that minted directly (skipping the provider record) gets a token no check expects.
+  mcpSessionToken: () => 'tok-minted-directly',
+  // Only the right provider gets the expected token: a wrong one fails the token checks.
+  issueMcpSessionToken: (sessionId: string, provider: string) => ({ claude: `tok-${sessionId}` } as Record<string, string>)[provider] ?? 'tok-wrong-provider',
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
@@ -159,6 +162,8 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   it('bakes this session\'s per-session token into the remote MCP URL (GHSA-q83v)', () => {
     const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     expect(script).toContain('&token=tok-sid-x')
+    // The MCP URL itself, not just the status URL the script also carries.
+    expect(script).toContain('/sse?cccSessionId=sid-x&token=tok-sid-x')
   })
 
   // #242 finding F2 (MAJOR, adversarial review round 5): ssh-shim.ts:200
@@ -703,15 +708,15 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
     const cmd = buildRemoteTmuxKillCommand('sess-1')
     // Targets the tmux session name, mirroring buildTmuxLaunchCommand — with
     // tmux's `=` EXACT-match prefix (see the exactness case below).
-    expect(cmd).toContain('kill-session -t =ccc-sess-1')
+    expect(cmd).toContain("kill-session -t '=ccc-sess-1'")
     // Tries PATH + both Homebrew prefixes (macOS non-login exec has a minimal
     // PATH, so `command -v tmux` alone would miss /opt/homebrew/bin) + system +
     // the CCC-staged tier-2 binary.
-    expect(cmd).toContain('tmux kill-session -t =ccc-sess-1')
-    expect(cmd).toContain('/opt/homebrew/bin/tmux kill-session -t =ccc-sess-1')
-    expect(cmd).toContain('/usr/local/bin/tmux kill-session -t =ccc-sess-1')
-    expect(cmd).toContain('/usr/bin/tmux kill-session -t =ccc-sess-1')
-    expect(cmd).toContain('"$HOME/.claude/bin/tmux" kill-session -t =ccc-sess-1')
+    expect(cmd).toContain("tmux kill-session -t '=ccc-sess-1'")
+    expect(cmd).toContain("/opt/homebrew/bin/tmux kill-session -t '=ccc-sess-1'")
+    expect(cmd).toContain("/usr/local/bin/tmux kill-session -t '=ccc-sess-1'")
+    expect(cmd).toContain("/usr/bin/tmux kill-session -t '=ccc-sess-1'")
+    expect(cmd).toContain(`"$HOME/.claude/bin/tmux" kill-session -t '=ccc-sess-1'`)
     // Removes the two per-session sidecars.
     expect(cmd).toContain('rm -f ~/.claude/settings-sess-1.json ~/.claude/mcp-sess-1.json')
     // Every step best-effort; the whole exec still exits 0.
@@ -719,7 +724,7 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
   })
   it('sanitizes a session id with shell metacharacters into the -t argument', () => {
     const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
-    expect(cmd).toContain('kill-session -t =ccc-a_b_c__x_')
+    expect(cmd).toContain("kill-session -t '=ccc-a_b_c__x_'")
     // No raw metacharacter reaches the target token.
     expect(cmd).not.toContain('ccc-a;b')
   })
@@ -739,7 +744,7 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
     const cmd = buildRemoteTmuxKillCommand('a')
     const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
     expect(operands.length).toBe(5)
-    for (const t of operands) expect(t).toBe('=ccc-a')
+    for (const t of operands) expect(t).toBe("'=ccc-a'")
     // The pre-fix form is GONE: no `-t` operand is the bare name that tmux
     // would widen to a prefix/fnmatch search.
     expect(cmd).not.toMatch(/kill-session -t ccc-a(\s|$)/)
@@ -749,7 +754,7 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
     const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
     const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
     expect(operands.length).toBeGreaterThan(0)
-    for (const t of operands) expect(t).toMatch(/^=ccc-[A-Za-z0-9_-]+$/)
+    for (const t of operands) expect(t).toMatch(/^'=ccc-[A-Za-z0-9_-]+'$/)
   })
 })
 
@@ -777,10 +782,13 @@ describe('buildContainerKillCommand (#572 in-container orphan)', () => {
     }
   })
 
+  // The script runs under `sh -c` (WP2 T24 fix round; it was `bash -c`, which
+  // a container without bash could not run): this shape changed ON PURPOSE,
+  // and only there.
   it('rootless podman: engine exec + marker-scoped kill + sidecar removal, exit-0 tail', () => {
     const cmd = buildContainerKillCommand('lv20abc', rootless)
     expect(cmd).toBe(
-      "podman exec ccc-test bash -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json ~/.claude/ccc-status-lv20abc.url 2>/dev/null; exec pkill -f \"/settings-lv20abc\\.json\"' 2>/dev/null; true"
+      "podman exec ccc-test sh -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json ~/.claude/ccc-status-lv20abc.url 2>/dev/null; exec pkill -f \"/settings-lv20abc\\.json\"' 2>/dev/null; true"
     )
     // No sudo anywhere for a rootless container.
     expect(cmd).not.toContain('sudo')
@@ -865,7 +873,7 @@ describe('buildContainerKillCommand (#572 in-container orphan)', () => {
     const killAt = cmd.indexOf('pkill -f "/settings-lv20abc\\.json"')
     expect(rmAt).toBeGreaterThan(-1)
     expect(killAt).toBeGreaterThan(rmAt)
-    // `exec` replaces the shell image, so the marker-bearing `bash -c` cmdline
+    // `exec` replaces the shell image, so the marker-bearing `sh -c` cmdline
     // is GONE before pkill scans /proc — procps never signals its own pid.
     // Measured on the real container: the naive `pkill; rm; true` ordering
     // exits 143 (self-SIGTERM) with the sidecars left behind.
@@ -922,6 +930,10 @@ describe('generateWindowsRemoteSetupScript (item 3)', () => {
     // The URL (and its token) is written to the sidecar, not the command.
     expect(script).toContain(`fs.writeFileSync(urlPath,"http://127.0.0.1:19333/status?cccSessionId=winsid&token=tok-winsid",{flag:'wx'})`)
     expect(script).not.toContain(`' winsid "http://`)
+  })
+  it('bakes this session\'s per-session token into the Windows remote MCP URL', () => {
+    const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: false, includeConductorMcp: true }, NONCE)
+    expect(script).toContain('/sse?cccSessionId=winsid&token=tok-winsid')
   })
   it('argv carries only the sid when the conductor MCP is off (no tunnel ⇒ CONOUT$ ladder)', () => {
     const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true, includeConductorMcp: false }, NONCE)

@@ -43,6 +43,9 @@ interface SessionContextMenuProps {
   /** True when this account's Claude Code CLI is already signed in; disables the
    *  "Sign in to Claude Code" item so it isn't offered when it would be a no-op. */
   codeSignedIn?: boolean
+  /** WP2: Claude Code is off (or main did not check its sign-in): no sign-in
+   *  is offered, and the menu says why instead. */
+  codeNotChecked?: { label: string; reason: string }
   /** #605: the session's LIVE watchdog checks. Undefined when no watcher is
    *  armed for this session (master switch off, or a session type that never
    *  arms one) -- the whole block is hidden then, rather than offering toggles
@@ -56,7 +59,7 @@ export default function SessionContextMenu({
   x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
   configPinned, onPinConfig,
   canSwitchAccount, profiles, accountAliases, onSwitchAccount,
-  onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn,
+  onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn, codeNotChecked,
   watchdogChecks, onToggleWatchdogCheck,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -243,7 +246,17 @@ export default function SessionContextMenu({
               {hasWebSession ? 'Re-authenticate claude.ai...' : 'Authenticate claude.ai...'}
             </button>
           )}
-          {onSignInCode && (
+          {onSignInCode && codeNotChecked && (
+            <div
+              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 opacity-60"
+              style={{ color: 'var(--text-primary)' }}
+              title={codeNotChecked.reason}
+              data-testid="session-menu-claude-code-not-checked"
+            >
+              {codeNotChecked.label}
+            </div>
+          )}
+          {onSignInCode && !codeNotChecked && (
             <button
               onClick={() => { if (codeSignedIn) return; onSignInCode(); onDismiss() }}
               disabled={codeSignedIn}

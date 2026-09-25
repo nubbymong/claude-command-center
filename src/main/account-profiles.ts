@@ -800,6 +800,41 @@ export function deleteProfileMeta(id: string): void {
   saveProfiles(listProfiles().filter((x) => x.id !== id))
 }
 
+/** profiles.json read strictly, for the provider account registry (WP2): no
+ *  file is an empty list, and ANY other failure -- unreadable, not JSON, no
+ *  profiles array -- is null. Never the `[]` listProfiles returns, which the
+ *  registry would read as "every account was removed". */
+export function readProfilesStrict(): AccountProfile[] | null {
+  let raw: string
+  try { raw = fs.readFileSync(profilesMetaFile(), 'utf8') } catch (e) {
+    return (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? [] : null
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<AccountProfilesConfig> | null
+    return Array.isArray(parsed?.profiles) ? parsed.profiles : null
+  } catch { return null }
+}
+
+/** Edit profiles.json in place, and only when it read completely. `edit`
+ *  gets copies of the profile OBJECTS and returns whether it changed any;
+ *  anything else in the list, and every other key of the file, is written
+ *  back exactly as it was. Returns false when the file could not be read
+ *  (nothing is written then). */
+export function updateProfilesStrict(edit: (profiles: AccountProfile[]) => boolean): boolean {
+  const file = profilesMetaFile()
+  let top: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray((parsed as { profiles?: unknown }).profiles)) return false
+    top = parsed as Record<string, unknown>
+  } catch { return false }
+  const isRecord = (v: unknown): v is AccountProfile => !!v && typeof v === 'object' && !Array.isArray(v)
+  const entries = (top.profiles as unknown[]).map((v) => (isRecord(v) ? { ...v } : v))
+  if (!edit(entries.filter(isRecord))) return true
+  atomicWriteSecure(file, JSON.stringify({ ...top, profiles: entries }, null, 2))
+  return true
+}
+
 /** The captured-global "primary" account, or null if none is marked yet. */
 export function getPrimaryProfileId(): string | null {
   return listProfiles().find((p) => p.isPrimary)?.id ?? null
@@ -2307,30 +2342,17 @@ export function profileSecureStorageRoot(home: string): string | null {
   return path.join(home, '.claude')
 }
 
-export function withProfileHome(
-  env: Record<string, string>,
-  home: string | null,
-  context?: ManagedLaunchContext,
-): Record<string, string> {
-  if (!home) return env
+/** What a profile-home launch composes BEFORE its realm patch, for a session
+ *  (withProfileHome) and a reviewer (profileRealmLaunch) alike. */
+function profileHomeLaunchBase(env: Record<string, string>, home: string): Record<string, string> {
   const realHome = os.homedir()
   const next: Record<string, string> = {
     ...env,
-    USERPROFILE: home,
     // Belt-and-suspenders: keep git/npm reading the real shared config even if a
     // hard-linked dotfile ever desyncs (the mirror also links these through).
     GIT_CONFIG_GLOBAL: path.join(realHome, '.gitconfig'),
     npm_config_userconfig: path.join(realHome, '.npmrc'),
   }
-  // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
-  // Pointing HOME at the fake profile home — which mirrors only dot-entries, never
-  // ~/Library (see mirrorRealHome) — leaves the spawned `claude` with no keychain to
-  // resolve, surfacing the macOS "A keychain cannot be found to store ..." dialog (#117).
-  // Multi-account is disabled on macOS anyway (see AccountsPanel), so HOME-based identity
-  // isolation buys nothing there; leaving HOME at the real home restores keychain access
-  // and resolves the single global account correctly. Linux keychains (Secret Service /
-  // D-Bus) are not HOME-path-based, so keep the redirect there for multi-account isolation.
-  if (process.platform === 'linux') next.HOME = home
   // Claude's native install lives at `$HOME/.local/bin`. With the home redirected,
   // CC computes that as `<home>/.local/bin` (a junction to the real ~/.local) but
   // PATH still carries the *real* home's `.local/bin`, so `/doctor` falsely warns
@@ -2342,6 +2364,134 @@ export function withProfileHome(
   const curPath = next[pathKey] ?? ''
   const already = curPath.split(path.delimiter).some((p) => p.toLowerCase() === localBin.toLowerCase())
   if (!already) next[pathKey] = curPath ? `${curPath}${path.delimiter}${localBin}` : localBin
+  return next
+}
+
+/** A profile home's realm selector, applied last through the Claude package's
+ *  own policy (see withProfileHome for why each variable is here). */
+function profileRealmSet(home: string): Record<string, string> {
+  const realmSet: Record<string, string> =
+    process.platform === 'linux' ? { USERPROFILE: home, HOME: home } : { USERPROFILE: home }
+  const realmConfigRoot = profileRealmConfigRoot(home)
+  if (realmConfigRoot) realmSet.ANTHROPIC_CONFIG_DIR = realmConfigRoot
+  const secureStorageRoot = profileSecureStorageRoot(home)
+  if (secureStorageRoot) realmSet.CLAUDE_SECURESTORAGE_CONFIG_DIR = secureStorageRoot
+  return realmSet
+}
+
+/** A reviewer launch in a Claude account's home (WP2 commit 5b). */
+export interface ProfileRealmLaunch {
+  /** The profile home; on macOS the real home (the normal sign-in). */
+  home: string
+  /** The environment before the realm patch: this process's, with git and
+   *  npm reading the real home's config and the home's `.local/bin` on PATH. */
+  baseEnv: Record<string, string>
+  /** The realm selector. The accounts service applies it through the Claude
+   *  package's policy, which removes the ambient authority variables first. */
+  realmEnv: { set: Record<string, string> }
+  /** Where Claude writes this home's transcripts. */
+  sessionsDir: string
+}
+
+/** Why this profile cannot run Claude reviews on this platform, or null when
+ *  it can. The one rule, read by the reviewer launch below and, through the
+ *  Claude package's ports, by the accounts service (the tool is not offered,
+ *  the profile cannot be made the reviewer, and the snapshot says why).
+ *
+ *  macOS: Claude has one account there, the normal sign-in, which is the
+ *  primary profile (see profileRealmLaunch); every other profile is refused.
+ *  THROWS when it cannot tell (profiles.json unreadable, or no primary
+ *  recorded): a caller must not read that as "not the primary" -- nothing is
+ *  offered on it, and nothing already chosen is cleared because of it. */
+export function profileReviewRefusal(profileId: string, platform: NodeJS.Platform = process.platform): string | null {
+  if (platform !== 'darwin') return null
+  const all = readProfilesStrict()
+  if (all === null) throw new Error('the profile list could not be read')
+  const primary = all.find((p) => p && p.isPrimary)?.id
+  if (!primary) throw new Error('no primary profile is recorded')
+  if (primary === profileId) return null
+  return 'On macOS only your normal Claude sign-in can run Claude reviews.'
+}
+
+/** The profile-home composition of withProfileHome, for a reviewer launch the
+ *  accounts service prepares and hardens (WP2 commit 5b). The ONLY other place
+ *  a profile home's USERPROFILE/HOME is composed (the managed-launch source
+ *  guard allows this module alone): the Claude package receives this through
+ *  its injected ports and never imports this module (rule R2).
+ *
+ *  It refreshes the home's links first (setupProfileLinks), as every launch
+ *  under a profile home does. Session-only work is NOT done: no CCC_*
+ *  variables, no primary-credential sync, no project-settings gate (the
+ *  reviewer runs `--restricted`, which reads no user, project or local
+ *  settings file).
+ *
+ *  macOS: Claude has one account there, the normal sign-in (multi-account is
+ *  off, D2: the login keychain is found through $HOME and is shared), which
+ *  is the primary profile first-run capture made of it. The review runs on
+ *  that sign-in with no redirect -- nothing is patched -- and only for the
+ *  primary: any other profile would be named while the primary's sign-in
+ *  was used.
+ *
+ *  `source` is the environment to start from (this process's by default). */
+export function profileRealmLaunch(
+  profileId: string,
+  source: Readonly<Record<string, string | undefined>> = process.env,
+): ProfileRealmLaunch | { refused: string } {
+  if (!isValidProfileId(profileId)) throw new Error('invalid profile id')
+  const env: Record<string, string> = {}
+  for (const k of Object.keys(source)) { const v = source[k]; if (typeof v === 'string') env[k] = v }
+  if (process.platform === 'darwin') {
+    // A launch must fail with a reason either way, so "could not tell" is a
+    // refusal here (it matters only to offering and clearing).
+    let refused: string | null
+    try {
+      refused = profileReviewRefusal(profileId, 'darwin')
+    } catch {
+      refused = 'This app could not tell which Claude account is your normal sign-in on this Mac.'
+    }
+    if (refused) return { refused }
+    const realHome = os.homedir()
+    return { home: realHome, baseEnv: env, realmEnv: { set: {} }, sessionsDir: path.join(realHome, '.claude', 'projects') }
+  }
+  setupProfileLinks(profileId)
+  const home = getProfileConfigDir(profileId)
+  const baseEnv = profileHomeLaunchBase(env, home)
+  // Diagnostic, as withProfileHome records it: the ambient variables the
+  // accounts service's hardening will remove, for the launch's preflight.
+  try {
+    const ambient = new Set(ambientAuthVariablesForProvider('claude').map((k) => k.toLowerCase()))
+    recordAmbientStrip(home, Object.keys(baseEnv).filter((k) => ambient.has(k.toLowerCase())))
+  } catch { /* never let a diagnostic refuse a launch */ }
+  return { home, baseEnv, realmEnv: { set: profileRealmSet(home) }, sessionsDir: path.join(home, '.claude', 'projects') }
+}
+
+/** Record the preflight of a reviewer launch (WP2 commit 5b) on the env the
+ *  accounts service hardened. A diagnostic: it never refuses. There is no
+ *  project gate verdict to report: the reviewer reads no project settings. */
+export function recordProfileReviewPreflight(profileId: string, env: Readonly<Record<string, string>>): void {
+  try {
+    if (!isValidProfileId(profileId)) return
+    const home = process.platform === 'darwin' ? os.homedir() : getProfileConfigDir(profileId)
+    recordManagedLaunchPreflight('review', profileId, home, env, null, 'probe')
+  } catch { /* diagnostic only */ }
+}
+
+export function withProfileHome(
+  env: Record<string, string>,
+  home: string | null,
+  context?: ManagedLaunchContext,
+): Record<string, string> {
+  if (!home) return env
+  const next = profileHomeLaunchBase({ ...env, USERPROFILE: home }, home)
+  // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
+  // Pointing HOME at the fake profile home — which mirrors only dot-entries, never
+  // ~/Library (see mirrorRealHome) — leaves the spawned `claude` with no keychain to
+  // resolve, surfacing the macOS "A keychain cannot be found to store ..." dialog (#117).
+  // Multi-account is disabled on macOS anyway (see AccountsPanel), so HOME-based identity
+  // isolation buys nothing there; leaving HOME at the real home restores keychain access
+  // and resolves the single global account correctly. Linux keychains (Secret Service /
+  // D-Bus) are not HOME-path-based, so keep the redirect there for multi-account isolation.
+  if (process.platform === 'linux') next.HOME = home
 
   // One call does the ambient removal, the realm patch and the host control,
   // in that order, from the REGISTERED package's own policy. It is deliberately
@@ -2374,12 +2524,7 @@ export function withProfileHome(
   // developer's own configuration, which D3 says a managed session inherits.
   // ANTHROPIC_CONFIG_DIR outranks THEM, so isolating the store costs nothing
   // here.
-  const realmConfigRoot = profileRealmConfigRoot(home)
-  const realmSet: Record<string, string> =
-    process.platform === 'linux' ? { USERPROFILE: home, HOME: home } : { USERPROFILE: home }
-  if (realmConfigRoot) realmSet.ANTHROPIC_CONFIG_DIR = realmConfigRoot
-  const secureStorageRoot = profileSecureStorageRoot(home)
-  if (secureStorageRoot) realmSet.CLAUDE_SECURESTORAGE_CONFIG_DIR = secureStorageRoot
+  const realmSet = profileRealmSet(home)
   let hardened: Record<string, string>
   try {
     hardened = realmEnvForProvider('claude', next, { set: realmSet })

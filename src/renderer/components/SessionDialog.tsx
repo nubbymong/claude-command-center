@@ -12,6 +12,20 @@ import { resolveAllowMultiSpawnOnSave } from '../utils/multiSpawn'
 import { secretValueProblem, secretPlacementProblem } from '../../shared/command-secret'
 import { parseDockerPostCommand } from '../../shared/container-command'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND } from './ui/Dialog'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
+import { accountFieldState, defaultAccountId, providerTooOldText, accountEmail } from '../utils/launchAccount'
+import { ClaudeGlyph, CodexGlyph } from './sidebar/Badges'
+import { CLAUDE_OFF_LAUNCH_REASON, CODEX_OFF_LAUNCH_REASON } from '../hooks/useLaunchConfig'
+
+/** The one launch the dialog's ticked "launch with the sign-in already on
+ *  this computer" covers: the caller grants it to the session it starts
+ *  (stores/launchAckStore.ts). Never saved with the config. */
+export interface SessionDialogLaunchAck {
+  accountId: string
+}
+
+/** One message for Codex over SSH, wherever the dialog has to say it. */
+const CODEX_SSH_TEXT = "Codex can't run over SSH in this release. Choose Claude Code or Terminal only."
 
 export type SessionType = 'local' | 'ssh'
 
@@ -84,8 +98,10 @@ const DANGEROUS_MODE_COPY: Record<string, string> = {
 interface Props {
   /** `argSecret` is the Terminal-only secret argument: handed to the caller so it
    *  can be written to the OS keychain under `<configId>_argsecret`. It is never
-   *  part of the config object and never persisted to the config file. */
-  onConfirm: (config: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => void
+   *  part of the config object and never persisted to the config file.
+   *  `launchAck` is set when the user ticked the per-launch confirmation for
+   *  an unverified sign-in: it covers only the launch a NEW config starts. */
+  onConfirm: (config: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string, launchAck?: SessionDialogLaunchAck) => void
   onCancel: () => void
   initial?: Partial<TerminalConfig>
   /** Live sessions of the config being edited (0 / absent = none). Edits only
@@ -93,9 +109,13 @@ interface Props {
    *  SSH/terminal change re-binds against the saved config, so the dialog
    *  says so up front instead of letting a restart fail as a surprise. */
   liveSessionCount?: number
+  /** A NEW config's provider card, chosen up front: Hello Codex's "Start a
+   *  Codex session" (WP2 commit 6f). Ignored on an edit, and while that
+   *  provider is off. */
+  initialProvider?: 'codex'
 }
 
-export default function SessionDialog({ onConfirm, onCancel, initial, liveSessionCount = 0 }: Props) {
+export default function SessionDialog({ onConfirm, onCancel, initial, liveSessionCount = 0, initialProvider }: Props) {
   const groups = useConfigStore((s) => s.groups)
   const addGroup = useConfigStore((s) => s.addGroup)
   const sections = useConfigStore((s) => s.sections)
@@ -109,14 +129,24 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   // field. Discarding a half-filled config on one keypress with no confirm and
   // no undo is worse than not having the shortcut. Cancel is the way out.
 
-  // Codex master ("Do you use Codex?"): with it off, Codex configs can't launch,
-  // so the card renders disabled with a pointer to Settings → Codex.
+  // Codex's on/off (the Providers card in Settings, Accounts): with it off,
+  // Codex configs can't launch, so the card renders disabled with a pointer
+  // to Settings, Accounts.
   const codexDisabled = useSettingsStore((s) => s.settings.codexEnabled === false)
+  // Claude Code off (a Codex-only install, WP2): Claude configs can't launch
+  // (isConfigLaunchBlocked), so the Claude card renders disabled the same way,
+  // with the reason every launch surface gives. Terminal only stays: it runs
+  // no Claude.
+  const claudeDisabled = useSettingsStore((s) => s.settings.claudeEnabled === false)
 
   // ── The two driving choices. A NEW config starts with neither chosen and the
-  // dialog reveals itself as they're answered; EDIT opens fully revealed.
+  // dialog reveals itself as they're answered; EDIT opens fully revealed. A new
+  // config never starts on a provider that is off: with Claude Code off it
+  // starts on Codex, the assistant that is on (nothing, if Codex is off too).
   const [uiProvider, setUiProvider] = useState<UiProvider | null>(
-    initial ? (initial.shellOnly ? 'terminal' : (initial.provider ?? 'claude')) : null
+    initial
+      ? (initial.shellOnly ? 'terminal' : (initial.provider ?? 'claude'))
+      : ((initialProvider === 'codex' || claudeDisabled) && !codexDisabled ? 'codex' : null)
   )
   const [sessionType, setSessionType] = useState<SessionType | null>(initial ? (initial.sessionType ?? 'local') : null)
 
@@ -204,6 +234,28 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [codexModel, setCodexModel] = useState(initial?.codexOptions?.model ?? 'gpt-5.5')
   const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']>>(initial?.codexOptions?.reasoningEffort ?? 'medium')
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
+  // The Codex account (WP2 commit 6). `null` = not touched: the field shows
+  // the saved binding, else the provider default, and follows the snapshot
+  // until the user picks. Editing a config the user did not re-point keeps
+  // what is stored (an unbound config stays unbound); a new config saves the
+  // account it shows.
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  const [codexAccountPick, setCodexAccountPick] = useState<string | null>(null)
+  // The per-launch confirmation for an unverified sign-in, held as the id of
+  // the account it was ticked FOR: a snapshot push that moves the default
+  // while the dialog is open must never carry the tick to another account.
+  // Dialog state only: it covers the one launch a new config starts, and is
+  // never saved. An edit launches nothing, so it asks for nothing.
+  const [realmAckFor, setRealmAckFor] = useState<string | null>(null)
+  const codexAccountId = codexAccountPick ?? initial?.providerAccountId ?? defaultAccountId(accountsSnapshot, 'codex') ?? ''
+  const codexAccount = accountFieldState(accountsSnapshot, 'codex', codexAccountId || undefined)
+  const codexTooOld = providerTooOldText(accountsSnapshot, 'codex')
+  const realmAck = !!codexAccountId && realmAckFor === codexAccountId
+  // The checkbox is asked for only where it covers something: a new config's
+  // launch, on an account that needs it and has nothing else to fix first.
+  const askRealmAck = !isEdit && codexAccount.needsAck && !codexAccount.notice
+  // No Codex account at all (F9): only once the snapshot says so.
+  const codexNoAccount = !!accountsSnapshot && codexAccount.options.length === 0 && !codexAccount.unlisted
 
   // ── Organise
   const [groupId, setGroupId] = useState<string | undefined>(initial?.groupId)
@@ -337,7 +389,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     // A hand-edited or migrated config can carry the Codex×SSH combination the
     // cards forbid; the disabled cards don't constrain saved state, so guard it
     // here or the config saves and then hard-throws at spawn.
-    if (uiProvider === 'codex' && sessionType === 'ssh') return "Codex can't run over SSH — pick Claude Code or Terminal only"
+    if (uiProvider === 'codex' && sessionType === 'ssh') return CODEX_SSH_TEXT
     // A terminal-only secret argument the shell cannot carry intact (a double
     // quote, a trailing backslash, cmd metacharacters on Windows; a line break
     // anywhere) is refused here, by the same rule the command-button dialog
@@ -377,6 +429,17 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       if (!name) return 'Name the container to save'
       if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) return 'Container name can only use letters, numbers and _ . -'
       if (rtDir.trim() && !/^[A-Za-z0-9_./~-]+$/.test(rtDir.trim())) return 'Container directory can only use letters, numbers and _ . / - ~'
+    }
+    if (uiProvider === 'codex') {
+      // Canvas F9: a NEW config launches the moment it is created, so a Codex
+      // that cannot run it, or an account that needs attention first, holds
+      // the button back. Editing a saved config launches nothing: it stays
+      // saveable, and the field still says what is wrong.
+      if (!isEdit && codexTooOld) return 'Update Codex to launch this config'
+      if (!isEdit && codexNoAccount) return 'Sign in to Codex first'
+      if (!isEdit && codexAccount.notice) return 'Choose a Codex account that does not need attention'
+      // The per-launch confirmation for an unverified sign-in (canvas F6).
+      if (askRealmAck && !realmAck) return 'Confirm the sign-in for this launch to continue'
     }
     if (!label.trim()) return 'Add a label to save'
     return ''
@@ -509,6 +572,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       } : undefined,
       claudeOptions,
       codexOptions,
+      // WP2: the Codex account, as an opaque id (never a path or a
+      // credential). Edit keeps what is stored unless the user re-pointed it.
+      providerAccountId: uiProvider === 'codex'
+        ? (isEdit && codexAccountPick === null ? initial?.providerAccountId : (codexAccountId || undefined))
+        : undefined,
       // Allow Multi Spawn (phase 4.1): TRI-STATE, not an opt-in-only flag.
       // Turning it off on a config that had it on stores an explicit `false`,
       // which the startup migration is forbidden to touch — otherwise the
@@ -553,6 +621,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       passwordSaved && sshPassword.length > 0 ? sshPassword : undefined,
       sudoSaved && sudoPassword.length > 0 ? sudoPassword : undefined,
       secretSaved && secretArg.length > 0 ? secretArg : undefined,
+      // The ticked confirmation, naming the account it confirmed. Only the
+      // launch a new config starts uses it; nothing stores it.
+      uiProvider === 'codex' && askRealmAck && realmAck ? { accountId: codexAccountId } : undefined,
     )
   }
 
@@ -589,7 +660,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
         disabled={disabled}
         onChange={() => setUiProvider(id)}
       />
-      <span className={`block text-sm font-medium ${disabled ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>{title}</span>
+      {/* The app's own provider glyphs (canvas F6), the ones ProviderMark
+          draws, in the card's token colour: ProviderMark's peach and mauve
+          tiles are palette classes, and this dialog is kept palette-free
+          (session-dialog-tokens.test). Inside the title span so the title
+          stays the card's first span. Terminal only has none. */}
+      <span className={`flex items-center gap-1.5 text-sm font-medium ${disabled ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>
+        {id === 'claude' && <span className="inline-flex shrink-0" data-testid="provider-glyph-claude"><ClaudeGlyph size={13} /></span>}
+        {id === 'codex' && <span className="inline-flex shrink-0" data-testid="provider-glyph-codex"><CodexGlyph size={13} /></span>}
+        {title}
+      </span>
       <span className="block text-[10px] text-[var(--text-muted)] mt-0.5">{sub}</span>
     </label>
   )
@@ -675,15 +755,18 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
             choices. Claude Code signs in with your Claude account; Codex needs its own OpenAI account.
           </Hint>
           <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Provider">
-            {providerCard('claude', 'Claude Code', "Anthropic's coding agent", false)}
+            {providerCard('claude', 'Claude Code', "Anthropic's coding agent", claudeDisabled)}
             {providerCard('codex', 'Codex', "OpenAI's coding agent", codexDisabled || sessionType === 'ssh')}
             {providerCard('terminal', 'Terminal only', 'A plain terminal — no AI', false)}
           </div>
           {sessionType === 'ssh' && (
-            <p className="text-[11px] text-[var(--status-danger)] mt-1.5">Codex can't run over SSH yet — choose Claude Code or Terminal only.</p>
+            <p className="text-[11px] text-[var(--status-danger)] mt-1.5" data-testid="codex-ssh-note">{CODEX_SSH_TEXT}</p>
           )}
           {codexDisabled && sessionType !== 'ssh' && (
-            <p className="text-[11px] text-[var(--text-muted)] mt-1.5">Codex is off — enable it in Settings → Codex to use it here.</p>
+            <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="codex-off-note">{CODEX_OFF_LAUNCH_REASON}</p>
+          )}
+          {claudeDisabled && (
+            <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="claude-off-note">{CLAUDE_OFF_LAUNCH_REASON}</p>
           )}
           {uiProvider !== null && (
             <>
@@ -693,7 +776,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                 {connectionCard('ssh-persistent', 'SSH Persistent', 'Survives disconnects, reattaches', uiProvider === 'codex')}
               </div>
               {uiProvider === 'codex' && (
-                <p className="text-[11px] text-[var(--text-muted)] mt-1.5">Codex runs on this PC only — SSH isn't available.</p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="codex-local-note">Codex runs on this computer only in this release.</p>
               )}
               {/* Allow Multi Spawn (phase 4). Off by default: a launcher runs
                   ONE session at a time, and every launch surface refuses the
@@ -1204,8 +1287,25 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
                         if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
                       }}
-                      onOpenSettings={() => {
-                        window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'codex' } }))
+                      onOpenAccounts={() => {
+                        window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'accounts' } }))
+                      }}
+                      tooOld={codexTooOld}
+                      account={{
+                        available: !!accountsSnapshot,
+                        value: codexAccountId,
+                        options: codexAccount.options,
+                        unlisted: codexAccount.unlisted,
+                        notice: codexAccount.notice,
+                        noAccount: codexNoAccount,
+                        askAck: askRealmAck,
+                        ackLabel: codexAccount.selected?.external
+                          ? `Launch with the Codex sign-in already on this computer${accountEmail(codexAccount.selected) ? ` (${accountEmail(codexAccount.selected)})` : ''}`
+                          : 'Launch with this account although its sign-in is not verified',
+                        ackChecked: realmAck,
+                        onChange: (id) => setCodexAccountPick(id),
+                        // Bound to the account it was ticked for (see realmAckFor).
+                        onAckChange: (checked) => setRealmAckFor(checked ? codexAccountId : null),
                       }}
                     />
                   </div>

@@ -158,25 +158,38 @@ export async function launchIsolatedApp(opts?: {
    *  BEFORE launch — e.g. an account profiles.json or a restored session-state.
    *  Receives the data dir root. */
   seedExtra?: (dataDir: string) => void
+  /** Environment for this app instance on top of the runner's own (after
+   *  seedExtra, so it can name files seeded there). A key set here replaces
+   *  the runner's whatever its case (Windows keeps `Path`, and two spellings
+   *  in one environment block leave which one wins to chance); `undefined`
+   *  removes it. */
+  env?: (dataDir: string) => Record<string, string | undefined>
 }): Promise<IsolatedApp> {
   sweepStaleTempDirs()
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-e2e-'))
   seedCleanConfig(dataDir)
   opts?.seedExtra?.(dataDir)
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    NODE_ENV: 'test',
+    E2E_HEADLESS: '1',
+    CCC_E2E_DATA_DIR: dataDir,
+    // Pin off: the splash is gated out for e2e (first window must be the
+    // main window). A CCC_FORCE_SPLASH=1 left exported in the dev shell —
+    // e.g. after running the splash probe — would otherwise flow through
+    // the ...process.env spread and make the splash the first window,
+    // timing out every spec with no obvious cause.
+    CCC_FORCE_SPLASH: '0',
+  }
+  for (const [key, value] of Object.entries(opts?.env?.(dataDir) ?? {})) {
+    for (const existing of Object.keys(env)) {
+      if (existing.toLowerCase() === key.toLowerCase()) delete env[existing]
+    }
+    if (value !== undefined) env[key] = value
+  }
   const app = await electron.launch({
     args: [APP_PATH, `--user-data-dir=${path.join(dataDir, 'electron-userdata')}`],
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      E2E_HEADLESS: '1',
-      CCC_E2E_DATA_DIR: dataDir,
-      // Pin off: the splash is gated out for e2e (first window must be the
-      // main window). A CCC_FORCE_SPLASH=1 left exported in the dev shell —
-      // e.g. after running the splash probe — would otherwise flow through
-      // the ...process.env spread and make the splash the first window,
-      // timing out every spec with no obvious cause.
-      CCC_FORCE_SPLASH: '0',
-    },
+    env: Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined)),
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')

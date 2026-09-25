@@ -313,7 +313,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Give Claude a browser to drive',
         title: 'Conductor MCP',
-        body: '**Conductor MCP** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nEach Conductor-spawned session gets its own `~/.claude/mcp-<sid>.json`, passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup). When you stop the browser, the MCP server stays up so the other sub-tools (codex_review, host transfer) remain available.',
+        body: '**Conductor MCP** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nEach Conductor-spawned session gets its own `~/.claude/mcp-<sid>.json`, passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup). When you stop the browser, the MCP server stays up so the other sub-tools (code review, host transfer) remain available.',
         actionLabel: 'Open Conductor MCP',
         actionTarget: 'vision',
         focusHint: 'Sidebar -- Conductor MCP',
@@ -545,7 +545,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'How the Conductor MCP server injects into Claude settings',
         title: 'Conductor MCP Registration',
-        body: 'The Conductor MCP server hosts four sub-tools (Vision, Codex review, Host transfer, Agent Canvas) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review`, `fetch_host_screenshot` and the `canvas_*` tools)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
+        body: 'The Conductor MCP server hosts five sub-tools (Vision, Codex review, Claude review, Host transfer, Agent Canvas) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review`, `fetch_host_screenshot` and the `canvas_*` tools)\n\nA local Codex session reaches the same server through its own per-session setting, and is offered `claude_review` rather than `codex_review`, so each assistant can ask the other for a review.\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
       },
     },
   },
@@ -589,9 +589,9 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Where the app stores everything',
         title: 'Resources Folder',
-        body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` -- JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` -- per-session JSONL activity logs\n• `screenshots/` -- any screenshots captured by the Snap features\n• `insights/` -- AI-generated usage reports\n• `status/` -- real-time session metrics (written by the statusline script)\n• `scripts/` -- deployed helper scripts like the statusline\n• `claude-versions/` -- installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer -- see the credential tip).',
-        bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` -- JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` -- per-session JSONL activity logs\n• `screenshots/` -- captured by Snap features\n• `insights/` -- AI usage reports\n• `status/` -- real-time session metrics (from statusline script)\n• `scripts/` -- deployed helper scripts\n• `claude-versions/` -- installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
-        bodyWin: 'The app stores everything under your resources folder -- `%LOCALAPPDATA%\\AI Code Conductor\\resources\\` on a new install, `...\\Claude Command Center\\...` if you upgraded:\n\n• `CONFIG\\` -- JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` -- per-session JSONL activity logs\n• `screenshots\\` -- captured by Snap features\n• `insights\\` -- AI usage reports\n• `status\\` -- real-time session metrics (from statusline script)\n• `scripts\\` -- deployed helper scripts\n• `claude-versions\\` -- installed legacy Claude CLI versions\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
+        body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` -- JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` -- per-session JSONL activity logs\n• `screenshots/` -- any screenshots captured by the Snap features\n• `insights/` -- AI-generated usage reports\n• `status/` -- real-time session metrics (written by the statusline script)\n• `scripts/` -- deployed helper scripts like the statusline\n• `claude-versions/` -- installed legacy Claude CLI versions\n• `providers/` -- your Claude and Codex account list: names, colours, the default and reviewer accounts\n• `codex-realms/` -- one sign-in folder per Codex account you add; Codex writes its own sign-in there and the app never reads it\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer -- see the credential tip).',
+        bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` -- JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` -- per-session JSONL activity logs\n• `screenshots/` -- captured by Snap features\n• `insights/` -- AI usage reports\n• `status/` -- real-time session metrics (from statusline script)\n• `scripts/` -- deployed helper scripts\n• `claude-versions/` -- installed legacy Claude CLI versions\n• `providers/` -- your Claude and Codex account list: names, colours, the default and reviewer accounts\n• `codex-realms/` -- one sign-in folder per Codex account you add; Codex writes its own sign-in there and the app never reads it\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
+        bodyWin: 'The app stores everything under your resources folder -- `%LOCALAPPDATA%\\AI Code Conductor\\resources\\` on a new install, `...\\Claude Command Center\\...` if you upgraded:\n\n• `CONFIG\\` -- JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` -- per-session JSONL activity logs\n• `screenshots\\` -- captured by Snap features\n• `insights\\` -- AI usage reports\n• `status\\` -- real-time session metrics (from statusline script)\n• `scripts\\` -- deployed helper scripts\n• `claude-versions\\` -- installed legacy Claude CLI versions\n• `providers\\` -- your Claude and Codex account list: names, colours, the default and reviewer accounts\n• `codex-realms\\` -- one sign-in folder per Codex account you add; Codex writes its own sign-in there and the app never reads it\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
       },
     },
   },
@@ -944,9 +944,113 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Run OpenAI Codex sessions beside Claude',
         title: 'Codex Sessions',
-        body: 'A saved config does not have to run Claude Code. Switch **Settings > Codex** on, and the session dialog grows a provider choice: **Claude** or **Codex**, with its own account and its own sign-in.\n\nEverything else is the same session model you already use -- tabs, notes, commands, logs -- so a Codex session sits in the sidebar next to a Claude one and behaves like it.\n\n**Tokenomics counts Codex too**, so the spend comparison is in one place rather than two. Local sessions only for now: SSH configs stay on Claude.',
+        body: 'A saved config does not have to run Claude Code. Turn Codex on and add a Codex account in **Settings, Accounts**, and the session dialog lets a config pick **Codex** instead of **Claude Code**, with the Codex account it runs under and that account\'s own sign-in.\n\nA Codex session opens as a tab and sits in the sidebar next to a Claude one, with the same notes and command buttons. **Tokenomics counts Codex too**, so the spend comparison is in one place rather than two; the Logs page does not index Codex conversations yet. Local sessions only for now: SSH configs stay on Claude.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
+      },
+    },
+  },
+
+  {
+    id: 'tip.provider-switch',
+    category: 'sessions',
+    complexity: 'simple',
+    priority: 58,
+    variants: {
+      primary: {
+        shortText: 'Turn off an assistant you do not use',
+        title: 'Claude Code and Codex, On or Off',
+        body: 'The **Providers** card at the top of **Settings, Accounts** has a switch for Claude Code and one for Codex, and says whether each is installed and which version. When Codex is missing or too old, its row shows the install or update command to copy, then **Check again**.\n\nA provider that is off starts nowhere: its configs say why instead of launching, and a tab restored for it reads **Not started** until you turn it back on and **Restart** the tab. The tab and its conversation are kept.\n\nAt least one provider always stays on, and a provider cannot be turned off while anything of it is still running -- the row says how many things are using it.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+        focusHint: 'Settings, Accounts -- the Providers card',
+      },
+    },
+  },
+
+  {
+    id: 'tip.codex-accounts-reviewer',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 60,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'More than one Codex account, and one for reviews',
+        title: 'Codex Accounts and the Reviewer',
+        body: 'You can add more than one Codex account in **Settings, Accounts** -- each one signs in inside its own folder, so sessions never mix identities.\n\n• **Default** -- what a new Codex session uses unless its config picks another\n• **Reviewer** -- what a Codex review uses. With none set, reviews use the default\n\nSet either from the menu on the account row (**Make default**, **Make reviewer**).\n\nThe Codex sign-in already on this computer (`~/.codex`) can be used too, but it must be confirmed at each launch, and it cannot run reviews. For code review, add a Codex account and make it the reviewer.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+        focusHint: 'Settings, Accounts -- the Codex section, the menu on each account row',
+      },
+    },
+  },
+
+  {
+    id: 'tip.review-switches',
+    category: 'agents',
+    complexity: 'intermediate',
+    priority: 57,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Ask the other assistant to review your work',
+        title: 'Code Review, Both Ways',
+        body: 'From a Claude session, ask for a **Codex review**; from a Codex session, ask for a **Claude review**. Each review is a separate, one-off, read-only reviewer in the session\'s project, on your reviewer account -- never one of your open sessions.\n\nEach direction has **its own switch** in **Settings, General, Built-in Tools**, under Code review. Each row names the account reviews will use and, when a review cannot run, says why.\n\nChanges there or in Settings, Accounts apply to sessions started after them.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+        focusHint: 'Settings, General -- Built-in Tools, Code review',
+      },
+    },
+  },
+
+  {
+    id: 'tip.codex-restart-pick',
+    category: 'sessions',
+    complexity: 'simple',
+    priority: 55,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Pick up an earlier Codex conversation',
+        title: 'Restart a Codex Session',
+        body: 'A Codex session\'s header has a **Restart** menu with two choices:\n\n• **Restart** -- a fresh start with a new conversation\n• **Restart and pick a conversation** -- lists its recent conversations in the terminal: type a number to pick one, or **n** for a new one\n\nA session on a sign-in you confirm at each launch asks for that confirmation again on the way back up.',
+        focusHint: 'Codex session header -- Restart',
+      },
+    },
+  },
+
+  {
+    id: 'tip.codex-check-sign-in',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 52,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Is that Codex account still signed in?',
+        title: 'Check Sign-in and Sign In Again',
+        body: 'Each Codex account in **Settings, Accounts** has a menu:\n\n• **Check sign-in** asks Codex right now and shows the answer on the row\n• **Sign in again** signs a signed-out or expired account back in, after you confirm it is the same account as before (close its sessions first)\n\nA check also notices when an account is now signed in a different way than before (an API key where it had a ChatGPT sign-in, for example): the row reads **Needs attention: signed in a different way than before**, and nothing runs on it until you confirm it with **This is still my account**.\n\nFor the Codex sign-in already on this computer, run `codex login` in a terminal, then **Check sign-in**.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+        focusHint: 'Settings, Accounts -- the menu on a Codex account row',
+      },
+    },
+  },
+
+  {
+    id: 'tip.hello-codex-replay',
+    category: 'ui-navigation',
+    complexity: 'simple',
+    priority: 45,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Replay the Codex introduction',
+        title: 'Hello Codex, Again',
+        body: 'The five-page Codex introduction shows once, when you have said you use Codex and a Codex account you added in the app is signed in. To see it again, press **Show the Codex introduction**:\n\n• in the **Feature Guide**, under Integrations, on the Codex card\n• in **Settings, Accounts**, on the Codex row of the Providers card\n\nBoth appear once you have said you use Codex and a Codex account you added in the app is signed in; the Codex sign-in already on this computer does not count.',
+        actionLabel: 'Open the Feature Guide',
+        actionTarget: 'help',
       },
     },
   },

@@ -19,9 +19,6 @@ import { paletteSurvivors, expectRaisedPanel, expectNoBackdropClose, expectBrand
 vi.mock('../../../src/renderer/stores/configStore', () => ({
   useConfigStore: (sel: any) => sel({ groups: [{ id: 'g1', name: 'Group one' }], addGroup: vi.fn(), sections: [], addSection: vi.fn() }),
 }))
-vi.mock('../../../src/renderer/stores/codexAccountStore', () => ({
-  useCodexAccountStore: (sel: any) => sel({ installed: false, authMode: 'none' }),
-}))
 
 if (typeof window !== 'undefined') {
   ;(window as any).electronAPI = {
@@ -33,6 +30,8 @@ if (typeof window !== 'undefined') {
 }
 
 import SessionDialog from '../../../src/renderer/components/SessionDialog'
+import { useProviderAccountsStore } from '../../../src/renderer/stores/providerAccountsStore'
+import { provider, snapshot } from './accounts-snapshot-harness'
 
 let container: HTMLDivElement
 let root: Root
@@ -100,10 +99,17 @@ describe('no palette class survives in any reveal', () => {
     expect(paletteSurvivors(byTest('session-dialog')!)).toEqual([])
   })
 
-  it('editing a Codex config (the Codex form fields and their "not installed" banner)', () => {
-    render(EDIT_CODEX)
-    expect(container.textContent).toContain('Codex CLI is not installed')
-    expect(paletteSurvivors(byTest('session-dialog')!)).toEqual([])
+  it('editing a Codex config (the Codex form fields and their "not found" banner)', () => {
+    // The banner reads main's discovery from the Accounts snapshot (WP2
+    // commit 6g: the retired singleton Codex store is gone).
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', discoveryState: 'missing', version: undefined })] }), loaded: true })
+    try {
+      render(EDIT_CODEX)
+      expect(byTest('codex-cli-missing')!.textContent).toContain('Codex was not found on this computer')
+      expect(paletteSurvivors(byTest('session-dialog')!)).toEqual([])
+    } finally {
+      useProviderAccountsStore.setState({ snapshot: null, loaded: false })
+    }
   })
 
   it('editing a Terminal-only config with a relative working directory (the "not a full path" warning)', () => {

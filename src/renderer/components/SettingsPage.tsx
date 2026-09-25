@@ -13,7 +13,6 @@ import { formatInstalledVersion } from '../utils/versionLabel'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import CopilotMeterSettings from './settings/CopilotMeterSettings'
 import { isSentinelEnabled } from '../../shared/sentinel-enabled'
-import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import { CustomCommandsTab } from './settings/CustomCommandsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
@@ -23,15 +22,41 @@ import { resolveResumeAccountMode } from '../utils/sessionLaunch'
 import { Kbd } from './ui/Kbd'
 import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
-import AccountsPanel from './AccountsPanel'
+import { AccountsSurface } from './settings/accounts/AccountsSurface'
+import { CodeReviewTools } from './settings/CodeReviewTools'
 import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
 declare const __BUILD_TIME__: string
 declare const __BUILD_SHA__: string
 declare const __APP_VERSION__: string
 
-export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'commands', 'hooks', 'about'] as const
+export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'commands', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
+
+/** Tab ids that no longer exist, and the tab that replaced each. The Codex
+ *  tab (WP2 commit 6g) became the Codex row of Settings, Accounts: its on/off
+ *  switch, its status and install commands, and its accounts. */
+const RETIRED_SETTINGS_TABS: Readonly<Record<string, SettingsTab>> = Object.freeze({ codex: 'accounts' })
+
+/** The tab a deep link opens: a current tab id as it is, a retired one as the
+ *  tab that replaced it, anything else none (Settings opens where it was). */
+export function resolveSettingsTab(tab: unknown): SettingsTab | null {
+  if (typeof tab !== 'string') return null
+  if ((SETTINGS_TAB_IDS as readonly string[]).includes(tab)) return tab as SettingsTab
+  return Object.prototype.hasOwnProperty.call(RETIRED_SETTINGS_TABS, tab) ? RETIRED_SETTINGS_TABS[tab] : null
+}
+
+/** The app:openSettings listener App registers: Settings opens, on the tab
+ *  the event names as resolveSettingsTab reads it (a retired tab opens the
+ *  one that replaced it; a malformed detail opens none). */
+export function openSettingsHandler(deps: { openTab: (tab: SettingsTab) => void; showSettings: () => void }): (e: Event) => void {
+  return (e: Event) => {
+    const detail = (e as CustomEvent).detail as { tab?: unknown } | null | undefined
+    const tab = resolveSettingsTab(detail?.tab)
+    if (tab) deps.openTab(tab)
+    deps.showSettings()
+  }
+}
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -40,7 +65,6 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'uifont', label: 'Font & Size' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'github', label: 'GitHub' },
-  { id: 'codex', label: 'Codex' },
   { id: 'commands', label: 'Custom Commands' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'about', label: 'About' }
@@ -179,7 +203,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     value={settings.defaultWorkingDirectory}
                     onChange={e => save({ defaultWorkingDirectory: e.target.value })}
                     placeholder="Leave empty for home directory"
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
                   />
                 </Field>
                 <Field label="Local Machine Name">
@@ -187,7 +211,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     value={settings.localMachineName}
                     onChange={e => save({ localMachineName: e.target.value })}
                     placeholder="e.g. Desktop, Laptop"
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
                   />
                 </Field>
                 <Field label="Update Channel">
@@ -196,7 +220,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     // updateChannelChosen records that this is a real choice, so the
                     // onboarding recap never pre-selects over the top of it.
                     onChange={(e) => save({ updateChannel: e.target.value as UpdateChannel, updateChannelChosen: true })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
                   >
                     <option value="stable">Stable -- production releases only</option>
                     <option value="beta">Beta -- stable + pre-release builds</option>
@@ -206,7 +230,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   <select
                     value={settings.theme}
                     onChange={(e) => save({ theme: e.target.value as ThemeMode })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
                   >
                     <option value="dark">Dark</option>
                     <option value="light">Light</option>
@@ -225,7 +249,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Show intelligent tips
-                  <span className="text-[10px] text-overlay0">(the tip row in the sidebar, under Ask Conductor)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(the tip row in the sidebar, under Ask Conductor)</span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-2">
                   <input
@@ -235,7 +259,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Show Ask Conductor
-                  <span className="text-[10px] text-overlay0">(The button at the bottom of the sidebar)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(The button at the bottom of the sidebar)</span>
                 </label>
                 {/* Sessions panel (the two-mode left panel, design pass
                     2026-08-24; supersedes the #362 layout picker). One choice:
@@ -244,7 +268,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   <select
                     value={resolveDefaultPanelTab(settings.sessionsPanelDefaultTab)}
                     onChange={(e) => save({ sessionsPanelDefaultTab: e.target.value as PanelTab })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
                     data-ux-id="settings-sessions-panel-default-tab"
                   >
                     <option value="running">Running -- your live sessions (default)</option>
@@ -262,7 +286,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Disable Claude Code dynamic workflows
-                  <span className="text-[10px] text-overlay0">(applies to new sessions; CC fans out up to 1000 subagents per workflow)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(applies to new sessions; CC fans out up to 1000 subagents per workflow)</span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
@@ -273,7 +297,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Index conversation logs
-                    <span className="block text-[10px] text-overlay0">The Conductor indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">The Conductor indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
                   </span>
                 </label>
                 <div className="flex items-center gap-2 mt-1">
@@ -283,71 +307,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   >
                     Clear index
                   </button>
-                  <span className="text-[10px] text-overlay0">(removes the app's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(removes the app's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
                 </div>
               </Section>
 
-              {/* Built-in tools (conductor MCP) -- the recovery surface for the
+              {/* Built-in Tools (conductor MCP) -- the recovery surface for the
                   onboarding p6 master ("switch them on anytime in Settings"). */}
-              <Section title="Built-in Tools" icon={<path d="M8 2v4M8 10v4M2 8h4M10 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
-                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.conductorToolsEnabled !== false}
-                    onChange={(e) => save({ conductorToolsEnabled: e.target.checked })}
-                    className="mt-0.5 rounded border-surface1"
-                  />
-                  <span>
-                    Give sessions the built-in tools (conductor MCP)
-                    <span className="block text-[10px] text-overlay0">A local helper registered per session (Claude, Codex, local and SSH). Applies to new sessions.</span>
-                  </span>
-                </label>
-                <div
-                  inert={settings.conductorToolsEnabled === false}
-                  className={settings.conductorToolsEnabled !== false ? 'pl-6 space-y-1.5' : 'pl-6 space-y-1.5 opacity-40'}
-                >
-                  {([
-                    ['vision', 'Vision: see & drive a browser'],
-                    ['codexReview', 'Code review'],
-                    ['hostTransfer', 'Host screenshots (incl. over SSH)'],
-                    ['canvas', 'Agent Canvas: read the rendered page'],
-                  ] as const).map(([key, label]) => {
-                    // Code review runs the codex CLI: with the Codex master off
-                    // the MCP server never registers the tool, so a live
-                    // checkbox here would be a dead control (onboarding p6
-                    // blocks the same card). Stored preference is untouched.
-                    const codexBlocked = key === 'codexReview' && settings.codexEnabled === false
-                    return (
-                      <label
-                        key={key}
-                        className={
-                          codexBlocked
-                            ? 'flex items-center gap-2 text-sm text-subtext0 opacity-40 cursor-not-allowed'
-                            : 'flex items-center gap-2 text-sm text-subtext0 cursor-pointer'
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={codexBlocked}
-                          checked={!codexBlocked && (settings.conductorTools ?? DEFAULT_CONDUCTOR_TOOLS)[key] !== false}
-                          onChange={(e) =>
-                            save({
-                              conductorTools: {
-                                ...DEFAULT_CONDUCTOR_TOOLS,
-                                ...(settings.conductorTools || {}),
-                                [key]: e.target.checked,
-                              },
-                            })
-                          }
-                          className="rounded border-surface1"
-                        />
-                        {label}
-                        {codexBlocked && <span className="text-[10px] text-overlay0">(Codex is off)</span>}
-                      </label>
-                    )
-                  })}
-                </div>
-              </Section>
+              <BuiltinToolsSection settings={settings} save={save} onOpenAccounts={() => setActiveTab('accounts')} />
 
               <Section title="Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
@@ -359,7 +325,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Enable Sentinel
-                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.</span>
                   </span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
@@ -370,7 +336,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Auto-open findings panel
-                  <span className="text-[10px] text-overlay0">(When an analysis completes with open findings)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(When an analysis completes with open findings)</span>
                 </label>
                 <Field label="Analysis account">
                   <select
@@ -381,7 +347,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       ? settings.sentinelAccountProfileId ?? ''
                       : ''}
                     onChange={(e) => save({ sentinelAccountProfileId: e.target.value || null })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus-ring-strong focus:border-blue/50 transition-colors"
                   >
                     <option value="">Primary account (default)</option>
                     {sentinelAccountProfiles.map((p) => (
@@ -390,7 +356,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       </option>
                     ))}
                   </select>
-                  <span className="block text-[10px] text-overlay0 mt-1">
+                  <span className="block text-[10px] text-[var(--text-muted)] mt-1">
                     The account Sentinel's background analysis runs under. Switch it if that account hits its usage limit. Applies to the next analysis or Re-run.
                   </span>
                 </Field>
@@ -406,13 +372,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Session Watchdog (auto-retry on rate limit / overload)
-                    <span className="block text-[10px] text-overlay0">Auto-types a retry message into a session's terminal after a rate-limit reset, an overload/server-error backoff, or a flagged-safeguard clears. Off by default. Applies to newly launched sessions.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Auto-types a retry message into a session's terminal after a rate-limit reset, an overload/server-error backoff, or a flagged-safeguard clears. Off by default. Applies to newly launched sessions.</span>
                   </span>
                 </label>
                 {settings.watchdog?.enabled === true && (
                   <>
                     <div className="pl-6 pt-1" data-testid="watchdog-checks">
-                      <div className="text-[10px] text-overlay0 mb-1">
+                      <div className="text-[10px] text-[var(--text-muted)] mb-1">
                         Which checks may auto-type. Each session can switch these for itself from its right-click menu; changing them here sets what a newly launched session starts with.
                       </div>
                       {([
@@ -443,7 +409,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                             />
                             <span>
                               {label}
-                              <span className="block text-[10px] text-overlay0">{hint}</span>
+                              <span className="block text-[10px] text-[var(--text-muted)]">{hint}</span>
                             </span>
                           </label>
                         )
@@ -454,7 +420,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                         type="text"
                         value={settings.watchdog?.retryMessage ?? DEFAULT_WATCHDOG_SETTINGS.retryMessage}
                         onChange={(e) => save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), retryMessage: e.target.value } })}
-                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus:outline-none focus:border-blue/50 transition-colors"
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus-ring-strong focus:border-blue/50 transition-colors"
                       />
                     </Field>
                     <Field label="Max retries">
@@ -466,7 +432,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                           const n = parseInt(e.target.value, 10)
                           save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), maxRetries: Number.isFinite(n) && n > 0 ? n : DEFAULT_WATCHDOG_SETTINGS.maxRetries } })
                         }}
-                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus-ring-strong focus:border-blue/50 transition-colors"
                       />
                     </Field>
                     <Field label="Silence alert (seconds)">
@@ -480,16 +446,16 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                           const clamped = Number.isFinite(secs) ? Math.max(0, Math.min(3600, secs)) : 0
                           save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), silenceWindowMs: clamped * 1000 } })
                         }}
-                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus-ring-strong focus:border-blue/50 transition-colors"
                       />
-                      <span className="block text-[10px] text-overlay0 mt-1">Flags a watched session in the services view when its provider stops streaming for this long. Status only — never triggers a retry. 0 turns it off.</span>
+                      <span className="block text-[10px] text-[var(--text-muted)] mt-1">Flags a watched session in the services view when its provider stops streaming for this long. Status only — never triggers a retry. 0 turns it off.</span>
                     </Field>
                   </>
                 )}
               </Section>
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
-                <p className="text-[11px] text-overlay0 leading-relaxed">
+                <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
                   Terminal font, size and line height moved to the Font &amp; Size tab.
                 </p>
                 <Field label="Cursor Style">
@@ -525,7 +491,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     GPU rendering
-                    <span className="block text-[10px] text-overlay0">Draws terminals on the GPU, which is faster with several busy sessions. ON by default. The GPU renderer shares one cache of character images across every open terminal; when one session rebuilds that cache, each other session now redraws its own view the way a window resize does, so the text no longer drops out. If you ever do see characters go missing while backgrounds stay, press Ctrl+Alt+G to save a diagnostic (an event log plus a screenshot) and send it over. Turn this off to fall back to the plain renderer. Applies to terminals opened after the change.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Draws terminals on the GPU, which is faster with several busy sessions. ON by default. The GPU renderer shares one cache of character images across every open terminal; when one session rebuilds that cache, each other session now redraws its own view the way a window resize does, so the text no longer drops out. If you ever do see characters go missing while backgrounds stay, press Ctrl+Alt+G to save a diagnostic (an event log plus a screenshot) and send it over. Turn this off to fall back to the plain renderer. Applies to terminals opened after the change.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
@@ -537,7 +503,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Classic terminal copy/paste
-                    <span className="block text-[10px] text-overlay0">Disables Claude&apos;s mouse mode so selection + right-click copy/paste work the classic way: select text then right-click to copy; right-click with nothing selected to paste. Trade-off: you lose Claude&apos;s click-to-expand and scroll-inside-Claude; xterm scrollback + native selection take over. Changes apply to newly-launched sessions.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Disables Claude&apos;s mouse mode so selection + right-click copy/paste work the classic way: select text then right-click to copy; right-click with nothing selected to paste. Trade-off: you lose Claude&apos;s click-to-expand and scroll-inside-Claude; xterm scrollback + native selection take over. Changes apply to newly-launched sessions.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
@@ -549,7 +515,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Clickable question options (Claude Code)
-                    <span className="block text-[10px] text-overlay0">Claude Code 2.1.195+ renders its multiple-choice questions as clickable targets. Off by default: stray clicks in the terminal could select an answer, so answers stay keyboard-only (type the option number or arrow + Enter); wheel scroll is unaffected. Applies to newly-launched sessions.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Claude Code 2.1.195+ renders its multiple-choice questions as clickable targets. Off by default: stray clicks in the terminal could select an answer, so answers stay keyboard-only (type the option number or arrow + Enter); wheel scroll is unaffected. Applies to newly-launched sessions.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
@@ -561,10 +527,10 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Disable background tasks
-                    <span className="block text-[10px] text-overlay0">Stops a stray Ctrl+B (or /bg) from detaching a session into a background agent and stranding your conversation. On by default. Turn off only if you deliberately use Claude Code background agents. Applies to newly-launched sessions.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Stops a stray Ctrl+B (or /bg) from detaching a session into a background agent and stranding your conversation. On by default. Turn off only if you deliberately use Claude Code background agents. Applies to newly-launched sessions.</span>
                   </span>
                 </label>
-                <p className="text-[11px] text-overlay0 mt-2 leading-relaxed">
+                <p className="text-[11px] text-[var(--text-muted)] mt-2 leading-relaxed">
                   Terminal settings apply to new terminals. Restart sessions for changes to take effect.
                 </p>
               </Section>
@@ -577,12 +543,12 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       onClick={() => save({ debugMode: !settings.debugMode })}
                       label="Verbose Logging"
                     />
-                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-blue' : 'text-overlay0'}`}>
+                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-blue' : 'text-[var(--text-muted)]'}`}>
                       {settings.debugMode ? 'ON' : 'OFF'}
                     </span>
                   </div>
                 </Field>
-                <p className="text-[11px] text-overlay0 mt-1 leading-relaxed">
+                <p className="text-[11px] text-[var(--text-muted)] mt-1 leading-relaxed">
                   Logs PTY input/output, session events, and IPC calls to app.log. Persists across updates.
                 </p>
                 <button
@@ -594,7 +560,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
               </Section>
 
               <Section title="Advanced" icon={<path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
-                <p className="text-[11px] text-overlay0 mb-2 leading-relaxed">
+                <p className="text-[11px] text-[var(--text-muted)] mb-2 leading-relaxed">
                   Re-display the account attribution banner on the Tokenomics page if you previously dismissed it.
                 </p>
                 <button
@@ -608,7 +574,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
           )}
 
           {activeTab === 'accounts' && (
-            <>
+            <AccountsSurface onAddClaudeAccount={handleAddAccount}>
               {/* #446: which account a RESUMED session (app-relaunch restore)
                   runs under. Only meaningful with 2+ accounts; default keeps
                   today's silent continue-under-last behaviour. */}
@@ -617,19 +583,18 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   <select
                     value={resolveResumeAccountMode(settings.resumeAccountMode)}
                     onChange={(e) => save({ resumeAccountMode: e.target.value as 'ask' | 'auto-last' })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
                     data-ux-id="settings-resume-account-mode"
                   >
                     <option value="auto-last">Auto-resume last — the account it ran under (default)</option>
                     <option value="ask">Ask each time — pick the account when a session resumes</option>
                   </select>
                 </Field>
-                <p className="text-[11px] text-overlay0 mt-1">
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
                   Only matters when you have two or more accounts. Applies when the app restarts and restores your sessions.
                 </p>
               </Section>
-              <AccountsPanel onAdd={handleAddAccount} />
-            </>
+            </AccountsSurface>
           )}
 
           {activeTab === 'statusline' && (
@@ -677,8 +642,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
 
           {activeTab === 'github' && <GitHubConfigTab />}
 
-          {activeTab === 'codex' && <CodexSettingsTab />}
-
           {activeTab === 'commands' && <CustomCommandsTab />}
 
           {activeTab === 'hooks' && <HooksGatewaySection />}
@@ -694,7 +657,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Build</span>
-                  <span className="text-xs text-overlay0 font-mono tabular-nums">
+                  <span className="text-xs text-[var(--text-muted)] font-mono tabular-nums">
                     {/* #384: commit short sha first, then the build time. */}
                     {shortSha(__BUILD_SHA__)} · {formatBuildTime(__BUILD_TIME__)}
                   </span>
@@ -708,7 +671,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   >
                     View full changelog
                   </button>
-                  <span className="text-[11px] text-overlay0">|</span>
+                  <span className="text-[11px] text-[var(--text-muted)]">|</span>
                   <button
                     onClick={() => setShowTraining(true)}
                     className="text-[11px] text-blue hover:text-blue/80 transition-colors"
@@ -788,7 +751,7 @@ function StatusLineTab({
         <Toggle on={statusLineEnabled} onClick={() => setMaster(!statusLineEnabled)} label="Status line" />
         <div className="min-w-0">
           <div className="text-sm text-text leading-tight">Show the status line</div>
-          <div className="text-[11px] text-overlay0 leading-tight">
+          <div className="text-[11px] text-[var(--text-muted)] leading-tight">
             Live usage, cost and limits beneath every session. When off, only the session controls remain.
           </div>
         </div>
@@ -811,7 +774,7 @@ function StatusLineTab({
           <div className="rounded-lg border border-surface0/80 overflow-hidden">
             <StatusLinePreview sl={sl} />
           </div>
-          <p className="text-[11px] text-overlay0 mt-2">
+          <p className="text-[11px] text-[var(--text-muted)] mt-2">
             Toggle elements below to see how the status line changes.
           </p>
         </div>
@@ -839,7 +802,7 @@ function StatusLineTab({
                 />
                 <div className="min-w-0">
                   <div className="text-sm text-text leading-tight">{label}</div>
-                  <div className="text-[11px] text-overlay0 leading-tight">{description}</div>
+                  <div className="text-[11px] text-[var(--text-muted)] leading-tight">{description}</div>
                 </div>
               </div>
             ))}
@@ -885,7 +848,7 @@ function BucketToggleCard({ title, subtitle, labels, hidden, onToggle }: {
     <div className="settings-card overflow-hidden">
       <div className="px-4 py-2.5 border-b settings-divider">
         <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">{title}</h3>
-        <p className="text-[11px] text-overlay0 mt-0.5">{subtitle}</p>
+        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{subtitle}</p>
       </div>
       <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
         {labels.map((label) => (
@@ -926,14 +889,14 @@ function UsageBucketToggles(): React.ReactElement | null {
 
   if (labels === null) {
     return (
-      <div className="settings-card px-4 py-3 text-[11px] text-overlay0">
+      <div className="settings-card px-4 py-3 text-[11px] text-[var(--text-muted)]">
         Loading your current usage limits…
       </div>
     )
   }
   if (labels.length === 0) {
     return (
-      <div className="settings-card px-4 py-3 text-[11px] text-overlay0">
+      <div className="settings-card px-4 py-3 text-[11px] text-[var(--text-muted)]">
         Per-limit toggles appear here once your usage limits load (start a session or open the account usage view once).
       </div>
     )
@@ -968,7 +931,7 @@ function FooterDisplayCard(): React.ReactElement {
     <div className="settings-card overflow-hidden">
       <div className="px-4 py-2.5 border-b settings-divider">
         <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Multi-account footer style</h3>
-        <p className="text-[11px] text-overlay0 mt-0.5">
+        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
           Minimal replaces each account&apos;s bars with traffic-light dots -- one for usage (the worse of your
           time windows) and one per model -- and shows the account&apos;s name instead of its email where you
           have set one. Green under 70%, amber to 89%, red at 90% and above: the same points the bars change
@@ -1122,7 +1085,7 @@ export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?
   const statusColor =
     status === 'up-to-date' ? 'text-green' :
     status === 'available' ? 'text-yellow' :
-    'text-overlay0'
+    'text-[var(--text-muted)]'
 
   // Once a check finds an update, the primary button BECOMES the install action
   // — previously this screen only printed "Update available" and left the user to
@@ -1155,12 +1118,12 @@ export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?
           <span className={`text-xs ${statusColor}`}>{statusText}</span>
         )}
         {(status === 'up-to-date' || status === 'available') && (
-          <span className="text-[10px] text-overlay0" title="Installed version and release channel">
+          <span className="text-[10px] text-[var(--text-muted)]" title="Installed version and release channel">
             Installed: {formatInstalledVersion(__APP_VERSION__, channel)}
           </span>
         )}
         {updateFound && !installing && (
-          <span className="text-[10px] text-overlay0">Restarts the app; open sessions are saved.</span>
+          <span className="text-[10px] text-[var(--text-muted)]">Restarts the app; open sessions are saved.</span>
         )}
       </div>
     </Field>
@@ -1264,13 +1227,13 @@ function FontSizeTab({ settings, save }: {
         >
           The quick brown fox jumps over the lazy dog
         </div>
-        <p className="text-[11px] text-overlay0 leading-relaxed">
+        <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
           Size scales the whole app together. The terminal keeps its own font below.
         </p>
       </Section>
 
       <Section title="Regions" icon={<><rect x="2" y="2.5" width="5" height="4" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /><rect x="9" y="2.5" width="5" height="4" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /><rect x="2" y="9" width="12" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /></>}>
-        <p className="text-[11px] text-overlay0 leading-relaxed -mt-1 mb-1">
+        <p className="text-[11px] text-[var(--text-muted)] leading-relaxed -mt-1 mb-1">
           Nudge a part of the UI relative to the global size. 100% follows global. For example, set Status bars below 100% to keep them smaller than the rest.
         </p>
         {TYPOGRAPHY_REGIONS.map((r) => {
@@ -1282,7 +1245,7 @@ function FontSizeTab({ settings, save }: {
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm text-text leading-tight">{r.label}</div>
-                  <div className="text-[10px] text-overlay0 leading-tight">{r.hint}</div>
+                  <div className="text-[10px] text-[var(--text-muted)] leading-tight">{r.hint}</div>
                 </div>
                 {overridden && (
                   <button onClick={() => resetRegion(r.key)} className="text-[11px] text-blue hover:text-blue/80 transition-colors shrink-0">
@@ -1313,14 +1276,14 @@ function FontSizeTab({ settings, save }: {
       </Section>
 
       <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
-        <p className="text-[11px] text-overlay0 leading-relaxed -mt-1">
+        <p className="text-[11px] text-[var(--text-muted)] leading-relaxed -mt-1">
           The terminal is independent of the UI scale above and keeps its own font.
         </p>
         <Field label="Font Family">
           <select
             value={terminal.fontFamily}
             onChange={(e) => save({ terminal: { ...terminal, fontFamily: e.target.value } })}
-            className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-48 focus:outline-none focus:border-blue/50 transition-colors"
+            className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-48 focus-ring-strong focus:border-blue/50 transition-colors"
           >
             {['Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New'].map((f) => (
               <option key={f} value={f}>{f}</option>
@@ -1361,19 +1324,89 @@ function FontSizeTab({ settings, save }: {
   )
 }
 
+/**
+ * Settings, General, Built-in Tools: the conductor MCP master, the simple
+ * per-tool switches, and the Code review group (one switch per review
+ * direction, each live only while that review could run). The master off
+ * makes everything below it inert.
+ */
+export function BuiltinToolsSection({ settings, save, onOpenAccounts }: {
+  settings: AppSettings
+  save: (updates: Partial<AppSettings>) => void | Promise<void>
+  onOpenAccounts: () => void
+}) {
+  return (
+    <Section title="Built-in Tools" icon={<path d="M8 2v4M8 10v4M2 8h4M10 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
+      <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={settings.conductorToolsEnabled !== false}
+          onChange={(e) => save({ conductorToolsEnabled: e.target.checked })}
+          className="mt-0.5 rounded border-surface1"
+          data-testid="builtin-tools-master"
+        />
+        <span>
+          Give sessions the built-in tools (conductor MCP)
+          <span className="block text-[10px] text-[var(--text-muted)]">A local helper registered per session (Claude, Codex, local and SSH). Applies to new sessions.</span>
+        </span>
+      </label>
+      <div
+        inert={settings.conductorToolsEnabled === false}
+        className={settings.conductorToolsEnabled !== false ? 'pl-6 space-y-1.5' : 'pl-6 space-y-1.5 opacity-40'}
+        data-testid="builtin-tools-list"
+      >
+        {([
+          ['vision', 'Vision: see & drive a browser'],
+          ['hostTransfer', 'Host screenshots (incl. over SSH)'],
+          ['canvas', 'Agent Canvas: read the rendered page'],
+        ] as const).map(([key, label]) => (
+          <label key={key} className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(settings.conductorTools ?? DEFAULT_CONDUCTOR_TOOLS)[key] !== false}
+              onChange={(e) =>
+                save({
+                  conductorTools: {
+                    ...DEFAULT_CONDUCTOR_TOOLS,
+                    ...(settings.conductorTools || {}),
+                    [key]: e.target.checked,
+                  },
+                })
+              }
+              className="rounded border-surface1"
+            />
+            {label}
+          </label>
+        ))}
+        <div className="pt-2">
+          <CodeReviewTools onOpenAccounts={onOpenAccounts} />
+        </div>
+      </div>
+    </Section>
+  )
+}
+
 /* ── Shared section/field helpers ─────────────────────── */
 
-export function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+export function Section({ title, icon, mark, testId, children }: {
+  title: string
+  icon?: React.ReactNode
+  /** Drawn instead of `icon`: an element of its own (a provider's mark). */
+  mark?: React.ReactNode
+  testId?: string
+  children: React.ReactNode
+}) {
   return (
     <div
       className="settings-card overflow-hidden"
+      data-testid={testId}
     >
       <div className="px-4 py-2.5 flex items-center gap-2 border-b settings-divider">
-        {icon && (
+        {mark ?? (icon && (
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-secondary)' }}>
             {icon}
           </svg>
-        )}
+        ))}
         <SectionLabel>{title}</SectionLabel>
       </div>
       <div className="p-4 space-y-3">{children}</div>
@@ -1429,9 +1462,9 @@ export function TabsRail({ activeTab, onChange }: { activeTab: SettingsTab; onCh
           <button
             key={tab.id}
             onClick={() => onChange(tab.id)}
-            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring-strong-inset"
             style={{
-              background: active ? 'color-mix(in srgb, var(--color-blue) 15%, transparent)' : 'transparent',
+              background: active ? 'color-mix(in srgb, var(--color-blue) 8%, transparent)' : 'transparent',
               color: active ? 'var(--color-blue)' : 'var(--text-secondary)',
               borderLeft: `2px solid ${active ? 'var(--color-blue)' : 'transparent'}`,
             }}
@@ -1481,7 +1514,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
             ref={inputRef}
             tabIndex={0}
             data-shortcut-capture
-            className="px-2.5 py-1 bg-crust border border-blue/50 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center outline-none animate-pulse"
+            className="px-2.5 py-1 bg-crust border border-blue/50 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center focus-ring-strong animate-pulse"
             onKeyDown={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -1507,7 +1540,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
             ref={testRef}
             tabIndex={0}
             data-shortcut-capture
-            className="px-2.5 py-1 bg-crust border border-green/40 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center outline-none"
+            className="px-2.5 py-1 bg-crust border border-green/40 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center focus-ring-strong"
             onKeyDown={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -1538,7 +1571,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
             </button>
             <button
               onClick={() => setTesting(true)}
-              className="px-1.5 py-1 rounded-md text-[10px] bg-surface0/40 text-overlay0 hover:text-overlay1 transition-colors border border-transparent hover:border-surface0/60"
+              className="px-1.5 py-1 rounded-md text-[10px] bg-surface0/40 text-[var(--text-muted)] hover:text-text transition-colors border border-transparent hover:border-surface0/60"
               title="Test this shortcut"
             >
               Test

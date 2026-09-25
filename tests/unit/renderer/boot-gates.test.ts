@@ -83,12 +83,12 @@ describe('pickBootGate — the tour and the first-config dialog own turns (#609)
     // input that can produce an unknown value fails here.
     const known = new Set([
       'logsWipe', 'onboarding', 'training', 'guidedTour', 'guidedConfig',
-      'githubOnboarding', 'loggingConsent', 'resume', 'multiSpawnIntro',
+      'githubOnboarding', 'loggingConsent', 'resume', 'multiSpawnIntro', 'helloCodex',
     ])
     const flags = [
       'onboardingDue', 'showTraining', 'showTrainingAll', 'tourActive', 'showGuidedConfig',
       'showGitHubOnboarding', 'loggingConsentSeen', 'resumePending',
-      'multiSpawnIntroDue', 'whatsNewDue', 'trainingDue', 'githubOnboardingDue',
+      'multiSpawnIntroDue', 'helloCodexOpen', 'whatsNewDue', 'trainingDue', 'githubOnboardingDue',
     ] as const
     for (let mask = 0; mask < (1 << flags.length); mask++) {
       const over: Record<string, boolean> = {}
@@ -229,5 +229,38 @@ describe('pickBootGate — the Multi Spawn startup page', () => {
     const { multiSpawnIntroDue, ...withoutIt } = makeState({ multiSpawnIntroDue: true })
     expect(multiSpawnIntroDue).toBe(true)
     expect(pickBootGate(withoutIt as BootGateState)).toBeNull()
+  })
+})
+
+/**
+ * WP2 commit 6f: the Codex introduction's one-time takeover takes the LAST
+ * turn. It must never cover a running setup, so it waits for every gate above
+ * it, the `*Due` waits included. App asks this chain whether the takeover
+ * would be next (helloCodexOpen: true) before it latches it open.
+ */
+describe('pickBootGate: the Codex introduction takeover', () => {
+  it('takes its turn when nothing else is up', () => {
+    expect(pickBootGate(makeState({ helloCodexOpen: true }))).toBe('helloCodex')
+  })
+
+  it('waits for every gate above it, the Multi Spawn page included', () => {
+    for (const over of [
+      { onboardingDue: true }, { showTraining: true }, { tourActive: true }, { showGuidedConfig: true },
+      { showGitHubOnboarding: true }, { loggingConsentSeen: false }, { resumePending: true }, { multiSpawnIntroDue: true },
+    ] as Partial<BootGateState>[]) {
+      const gate = pickBootGate(makeState({ helloCodexOpen: true, ...over }))
+      expect(gate, JSON.stringify(over)).not.toBe('helloCodex')
+      expect(gate, JSON.stringify(over)).not.toBeNull()
+    }
+  })
+
+  it('waits while a gate above it is still due but not yet up', () => {
+    for (const over of [{ whatsNewDue: true }, { trainingDue: true }, { githubOnboardingDue: true }] as Partial<BootGateState>[]) {
+      expect(pickBootGate(makeState({ helloCodexOpen: true, ...over })), JSON.stringify(over)).toBeNull()
+    }
+  })
+
+  it('is absent === false, like the other optional gates', () => {
+    expect(pickBootGate(makeState())).toBeNull()
   })
 })

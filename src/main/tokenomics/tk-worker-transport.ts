@@ -1,8 +1,13 @@
 import type { TkConfigDim, TkPricing } from './tk-types'
 
 export type ToTkWorker =
-  | { type: 'open'; dbPath: string; pricing: Record<string, TkPricing>; configs: TkConfigDim[]; claudeProjectsDir: string; codexSessionsDir: string }
+  /** `codexSessionsDir` is the user's own Codex home's; `codexRealmSessionsDirs`
+   *  (WP2, plan A13) are those of the app's Codex accounts, each in its own
+   *  realm. Indexed together. */
+  | { type: 'open'; dbPath: string; pricing: Record<string, TkPricing>; configs: TkConfigDim[]; claudeProjectsDir: string; codexSessionsDir: string; codexRealmSessionsDirs?: string[] }
   | { type: 'set-pricing'; pricing: Record<string, TkPricing> }
+  /** The Codex accounts' transcript folders changed (an account added, removed or signed out). */
+  | { type: 'set-codex-realm-dirs'; dirs: string[] }
   | { type: 'set-configs'; configs: TkConfigDim[] }
   | { type: 'reindex' }
   | { type: 'query'; id: number; kind: string; args: Record<string, unknown> }

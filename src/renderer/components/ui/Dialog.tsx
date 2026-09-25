@@ -48,6 +48,22 @@ export const dialogSegStyle = (selected: boolean, disabled?: boolean): React.CSS
 
 /* ---- overlay --------------------------------------------------------------- */
 
+/**
+ * The top layer: the window-close dialogs (CloseDialog, SshCloseDialog) and
+ * the "Closing..." overlay. Closing the window can be asked for from anywhere,
+ * including from under the surfaces that cover the whole window: the
+ * onboarding pages (`.ob-root`, z-index 100), the dialogs opened over them
+ * (z-[110]) and the introduction's takeover and replay (z-50). A close dialog
+ * painted underneath one of those was invisible and still held the focus, so
+ * a blind Enter saved the sessions and quit (VM audit 2026-09-25). Nothing
+ * else in the app's HTML paints above this layer, and the native panes (the
+ * in-app browser and the claude.ai account view, which main paints above all
+ * HTML) are hidden while any of the three shows: each holds the occlusion
+ * flag itself (useOccludesNativePanes), because an `absolute` overlay does
+ * not. Both are pinned in window-close-dialogs.test.tsx.
+ */
+export const WINDOW_CLOSE_Z = 'z-[200]'
+
 export interface DialogOverlayProps {
   children: React.ReactNode
   /** `fixed` covers the window (default); `absolute` covers the nearest positioned ancestor. */
@@ -299,6 +315,9 @@ export function DialogCallout({ tone = 'neutral', children, testId, className = 
 
 /* ---- escape ---------------------------------------------------------------- */
 
+/** How many surfaces hold Escape right now (useHoldEscape). */
+let escapeHolds = 0
+
 /**
  * Escape closes the dialog. Registered on `window` in the capture phase so it
  * wins over the terminal's own key handling, and so the key does not also
@@ -323,17 +342,45 @@ export function DialogCallout({ tone = 'neutral', children, testId, className = 
  * Do NOT add this to a dialog that holds unsaved user input unless the caller
  * gates it: a form that discards a half-typed config on one keypress, with no
  * confirm and no undo, is a worse bug than the missing shortcut.
+ *
+ * `when`, if given, is asked on each Escape: false leaves the key alone
+ * (neither stopped nor acted on), so a dialog opened later and painted above
+ * this one gets it instead. A full-screen surface that registered first needs
+ * this, because registering first means hearing Escape first.
+ *
+ * While a surface holds Escape (useHoldEscape), this leaves the key alone
+ * altogether: that surface paints above every dialog and handles it itself.
  */
-export function useDialogEscape(onClose: (() => void) | undefined, enabled = true) {
+export function useDialogEscape(onClose: (() => void) | undefined, enabled = true, when?: () => boolean) {
   React.useEffect(() => {
     if (!enabled || !onClose) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      if (escapeHolds > 0) return
+      if (when && !when()) return
       e.stopImmediatePropagation()
       e.preventDefault()
       onClose()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose, enabled])
+  }, [onClose, enabled, when])
+}
+
+/**
+ * Hold Escape for a surface that paints above EVERY dialog, can open while
+ * any of them is showing, and handles the key itself (the End notice,
+ * SshEndNoticeDialog). While `active`, every useDialogEscape handler leaves
+ * Escape alone. Without it, a dialog opened earlier, and so painted
+ * underneath, would hear Escape first (window listeners run in the order they
+ * were added) and close itself instead of the surface on top. A layout
+ * effect, so the hold is in place in the same commit that shows the surface:
+ * there is no frame in which a dialog underneath can take an Escape.
+ */
+export function useHoldEscape(active: boolean): void {
+  React.useLayoutEffect(() => {
+    if (!active) return
+    escapeHolds += 1
+    return () => { escapeHolds -= 1 }
+  }, [active])
 }

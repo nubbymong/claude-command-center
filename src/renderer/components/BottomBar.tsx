@@ -7,6 +7,7 @@ import { ViewType } from '../types/views'
 import MultiAccountStatusline from './MultiAccountStatusline'
 import { useRegionTypography } from '../hooks/useTypography'
 import { formatInstalledVersion } from '../utils/versionLabel'
+import { useClaudeOff } from '../lib/claudeOff'
 
 declare const __BUILD_TIME__: string
 declare const __APP_VERSION__: string
@@ -45,15 +46,22 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
   const closeCliHelp = useCallback(() => setShowCliHelp(false), [])
   useDialogEscape(closeCliHelp, showCliHelp)
 
+  // Claude Code switched off in Settings, Accounts: there is no Claude CLI
+  // to watch, so the indicator is absent, as the bar treats any feature that
+  // is not in use (no Beta pill off the beta channel, no Update pill without
+  // an update), rather than a red "not found" every 30 s.
+  const claudeOff = useClaudeOff()
+
   // Ported from StatusBar: initial check + 30s poll. Keeps the CLI dot live
   // so the user notices if claude drops off PATH mid-session.
   useEffect(() => {
+    if (claudeOff) return
     window.electronAPI.cli.check().then(setCliAvailable)
     const interval = setInterval(() => {
       window.electronAPI.cli.check().then(setCliAvailable)
     }, 30000)
     return () => clearInterval(interval)
-  }, [])
+  }, [claudeOff])
 
   // Update availability: check on mount, then re-check on a 30-min interval and
   // when the window regains focus (debounced to <=1/5min). Without this the
@@ -94,17 +102,20 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
     >
       {/* Runtime band */}
       <div className="flex items-center gap-3 shrink-0">
-        <button
-          className="flex items-center gap-1.5 focus-ring rounded"
-          title={cliAvailable ? 'Claude CLI available' : cliAvailable === false ? 'Claude CLI not found -- click for help' : 'Checking CLI...'}
-          onClick={() => { if (cliAvailable === false) setShowCliHelp(true) }}
-        >
-          <span
-            className="w-1.5 h-1.5 rounded-full"
-            style={{ background: cliAvailable == null ? 'var(--text-muted)' : cliAvailable ? 'var(--status-success)' : 'var(--status-danger)' }}
-          />
-          <span className={cliAvailable === false ? 'text-red' : ''}>CLI</span>
-        </button>
+        {!claudeOff && (
+          <button
+            className="flex items-center gap-1.5 focus-ring rounded"
+            title={cliAvailable ? 'Claude CLI available' : cliAvailable === false ? 'Claude CLI not found -- click for help' : 'Checking CLI...'}
+            onClick={() => { if (cliAvailable === false) setShowCliHelp(true) }}
+            data-testid="bottom-bar-cli"
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full"
+              style={{ background: cliAvailable == null ? 'var(--text-muted)' : cliAvailable ? 'var(--status-success)' : 'var(--status-danger)' }}
+            />
+            <span className={cliAvailable === false ? 'text-red' : ''}>CLI</span>
+          </button>
+        )}
         <span title={`Built: ${__BUILD_TIME__}`} className="tabular-nums" style={{ color: 'var(--text-muted)' }}>v{__APP_VERSION__}</span>
         {channel === 'beta' && (
           <button

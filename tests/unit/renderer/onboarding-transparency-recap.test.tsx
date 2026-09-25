@@ -139,7 +139,7 @@ describe('Transparency recap rows', () => {
   it('keeps the rest of the recap intact', () => {
     render()
     const text = container.textContent ?? ''
-    for (const label of ['Theme', 'Account', 'GitHub', 'Status line', 'Codex (Beta)', 'Built-in tools']) {
+    for (const label of ['Theme', 'Account', 'GitHub', 'Status line', 'Codex (Beta)', 'Built-in Tools']) {
       expect(text).toContain(label)
     }
   })

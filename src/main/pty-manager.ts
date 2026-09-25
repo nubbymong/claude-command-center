@@ -10,17 +10,16 @@ import { resolveTmuxArchive } from './tmux-archive-cache'
 export { _setTmuxArchiveResolverForTest, _downloadAndCacheTmuxArchiveForTest } from './tmux-archive-cache'
 import { bufferSshLine, bufferSetupLine, clearSshLineBuffer, clearSetupLineBuffer, clearAllSshLineBuffers } from './ssh-line-buffer'
 export { _getSetupLineBufferLenForTest } from './ssh-line-buffer'
-import { captureCodexSpawnIdentity, clearCodexSpawnIdentity } from './codex-spawn-identity'
-export { captureCodexSpawnIdentity, clearCodexSpawnIdentity, getCodexSpawnIdentityMap } from './codex-spawn-identity'
+import type { AccountLease } from './providers/core'
 export type { TmuxDetectionClass } from './ssh-sentinel-parsers'
 export { parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel } from './ssh-sentinel-parsers'
 import { randomId } from '../shared/id'
 import {
   composeRuntimeCommand, composeContainerEntryCommand, parseDockerPostCommand, isContainerRuntime,
-  isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand,
+  isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand, readContainerName,
 } from '../shared/container-command'
 import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
-import type { SshRuntime, DetachedRemoteLiveness } from '../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
@@ -36,9 +35,9 @@ import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
-import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
+import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
-import { getConductorMcpPort } from './conductor-mcp-server'
+import { getConductorMcpPort, issueMcpSessionToken } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
 import { getRemoteMcpPort } from './ssh-remote-port'
 import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
@@ -61,7 +60,7 @@ import {
   removeLocalSessionMcpConfig,
   removeLocalSessionStatusUrl,
 } from './hooks/per-session-settings'
-import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
+import { registerCodexReviewSession, registerClaudeReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
 import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
 import { designatedWorktreeDir } from './canvas/canvas-worktree'
@@ -156,6 +155,9 @@ export const CONTAINER_ENGINE_NOT_FOUND_RE = /(?:^|[\r\n])[^\r\n]{0,40}(?:docker
 interface PtySession {
   ptyProcess: pty.IPty
   sessionId: string
+  /** The agent CLI this PTY runs, or null for a plain shell (WP2: a
+   *  provider switch-off must see running sessions). */
+  agent?: 'claude' | 'codex' | null
 }
 
 // Buffer writes for PTYs that haven't spawned yet (e.g., partner terminal initially hidden)
@@ -286,6 +288,71 @@ const ptySessions = new Map<string, PtySession>()
 // identity maps already cover them.
 const shellOnlyProfileHolds = new Map<string, () => void>()
 
+/** A Codex session's launch, prepared and held in main (WP2, plan A10): the
+ *  lease on its account, the executable setup proved (re-verified at
+ *  preparation), its realm's environment -- ambient credentials removed,
+ *  CODEX_HOME set -- and where that realm writes its transcripts. */
+export interface CodexLaunch {
+  lease: AccountLease
+  executable: string
+  env: Record<string, string>
+  sessionsDir: string
+}
+
+// WP2 (plan A10): the account lease of each running Codex session, so a
+// session in use blocks sign-out, deactivation and switching the provider
+// off. Taken over right before its PTY spawns; released with the session's
+// resources on a natural exit (cleanupSessionResources), once the process
+// has ended on a kill (a close, a sweep, or the killPty a respawn opens with
+// -- the PREVIOUS spawn's lease, never the new one), and by a spawn that
+// fails.
+const codexLaunchLeases = new Map<string, AccountLease>()
+/** Every lease pty-manager has taken over, including one it is releasing
+ *  once its killed process has ended. */
+const takenCodexLeases = new WeakSet<AccountLease>()
+
+/** Running agent sessions of a provider that hold no account lease --
+ *  Claude's, whose launch path (A12) takes none yet -- so turning the
+ *  provider off can refuse while one runs (WP2 plan, carried forward). */
+export function countUnleasedAgentSessions(providerId: string): number {
+  let n = 0
+  for (const s of ptySessions.values()) if (s.agent === providerId && !codexLaunchLeases.has(s.sessionId)) n++
+  // A spawn still waiting (a preparation, a refresh, the project gate) is a
+  // session about to start: counted too, unless a registered PTY of the same
+  // id was counted above.
+  for (const [id, w] of refreshWaitSpawns) if (w.agent === providerId && !ptySessions.has(id)) n++
+  return n
+}
+
+/** Whether this session's registered PTY holds exactly this lease. */
+export function holdsCodexLaunchLease(sessionId: string, lease: AccountLease): boolean {
+  return codexLaunchLeases.get(sessionId) === lease
+}
+
+/** Whether pty-manager took this lease over: from then on it releases it on
+ *  every path, and pty:spawn must not. */
+export function codexLaunchLeaseTaken(lease: AccountLease): boolean {
+  return takenCodexLeases.has(lease)
+}
+
+/** A killed PTY's process is ended asynchronously (node-pty closes the
+ *  pseudo-console, then kills its processes; on Windows that can take
+ *  seconds). The account stays leased until it has actually gone -- no
+ *  sign-out or folder removal beside a Codex still winding down -- or, if no
+ *  exit is ever reported, for a bounded grace. */
+const CODEX_LEASE_EXIT_GRACE_MS = 6_000
+function releaseCodexLeaseOnExit(proc: pty.IPty, lease: AccountLease): void {
+  let done = false
+  const release = (): void => {
+    if (done) return
+    done = true
+    try { lease.release() } catch { /* idempotent; never breaks a teardown */ }
+  }
+  try { proc.onExit(() => release()) } catch { release(); return }
+  const timer = setTimeout(release, CODEX_LEASE_EXIT_GRACE_MS)
+  ;(timer as unknown as { unref?: () => void }).unref?.()
+}
+
 // rc.15 review R3 (aicc_planning#49): a LOCAL spawn whose profile is mid-refresh
 // waits for the refresh to settle before its PTY exists. The hold is taken
 // BEFORE the wait (so no further rotation can start), the session is known to
@@ -311,6 +378,13 @@ const refreshWaitSpawns = new Map<string, {
    *  the card always resolves. NOT used on the supersede path (which deletes the
    *  entry before killPty runs) or the destroyed-window path. */
   win: BrowserWindow
+  /** A PREPARATION's writes are buffered like any spawn that has not started
+   *  yet (as they were before pty:spawn registered it); only a refresh wait or
+   *  a project-gate wait drops them. */
+  keepWrites?: boolean
+  /** The agent the pending spawn will run (null: a plain shell), so turning a
+   *  provider off sees a spawn that has not started yet. */
+  agent?: 'claude' | 'codex' | null
 }>()
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
@@ -388,8 +462,9 @@ const sshTmuxWrappedBySession = new Set<string>()
 /**
  * SSH tmux enhancement (item 4): deliberately END a persistent remote session.
  * Opens a fresh, non-interactive ssh exec (buildSshExecArgs) that runs
- * buildRemoteTmuxKillCommand -- `tmux kill-session -t ccc-<sid>` (both
- * host-authored tmux-bin forms) plus sidecar cleanup -- then exits. Fire-and-
+ * buildRemoteTmuxKillCommand -- `tmux kill-session -t '=ccc-<sid>'` through
+ * each host-authored tmux location (PATH, both Homebrew prefixes, /usr/bin,
+ * the staged ~/.claude/bin/tmux) plus sidecar cleanup -- then exits. Fire-and-
  * forget with a bounded lifetime; the caller kills the local PTY separately.
  *
  * A no-op when we have no target for the session (never an SSH session, or
@@ -414,7 +489,23 @@ const sshTmuxWrappedBySession = new Set<string>()
  * third-party leak (adversarial pass, 2026-08-30).
  *
  * Returns the outcome so callers that care (the live matrix) can await it;
- * the IPC caller stays fire-and-forget.
+ * endSshRemoteDetailed returns it with the container details the renderer
+ * shows. The IPC handler resolves with that result, and its renderer callers
+ * never wait on it before tearing the local session down: the target is read
+ * synchronously when End is called (the first line of endSshRemoteDetailed,
+ * before anything yields), so a local kill that arrives after the End call
+ * cannot lose it.
+ *
+ * ROOTFUL CONTAINER, NO SAVED SUDO PASSWORD (live T24, 2026-09-25): the
+ * in-container kill can only try `sudo -n`, which cannot elevate where sudo
+ * wants a password (a password typed at the entry prompt is never saved), and
+ * it used to fail silently while End said completed, leaving Claude running in
+ * the container. The kill segment now asks sudo first and prints a sentinel
+ * carrying a per-End nonce when sudo cannot run the engine without a password
+ * (buildContainerKillCommand, point 3), then attempts the kill regardless;
+ * this function reads the sentinel off the exec's output and resolves
+ * 'container-needs-sudo', and the renderer tells the user the command that
+ * stops it. The host tmux kill and the sidecar cleanup still run.
  *
  * CONTAINER RUNTIME (#572, one hop deeper -- live-proven by T20,
  * ssh-statusline-docker.live.ts, 2026-08-31): when the session's runtime is a
@@ -487,7 +578,13 @@ const END_REMOTE_SUDO_PROMPT_RE = /^password:\s*$/
  * one shape it must not swallow is already excluded above.
  */
 const END_REMOTE_SSH_PROMPT_RE = /password[:?]\s*$/i
-export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<'completed' | 'failed' | 'no-target'> {
+/** Output kept for the sudo sentinel: the End exec prints a handful of lines. */
+const END_REMOTE_OUTPUT_CAP = 64 * 1024
+export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<SshEndRemoteOutcome> {
+  return endSshRemoteDetailed(sessionId, fallbackTarget).then((r) => r.outcome)
+}
+
+export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndTarget): Promise<SshEndRemoteResult> {
   // Phase 3.5 — the DETACHED case. `sshTargetBySession` is captured at spawn and
   // dropped by killPty, and "Leave running" IS a killPty: so for every remote in
   // the resume registry the map is empty, and before this the End IPC resolved
@@ -500,10 +597,26 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
   // WINS: it carries the session's real runtime and the credentials it actually
   // authed with, which is strictly better evidence than the config on disk.
   const target = sshTargetBySession.get(sessionId) ?? fallbackTarget
-  if (!target) return Promise.resolve('no-target')
+  if (!target) return Promise.resolve({ outcome: 'no-target' })
   const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
   const hasSudoPassword = Boolean(target.sudoPassword)
-  const containerKill = buildContainerKillCommand(sessionId, target.runtime, { hasSudoPassword })
+  // A rootful container with no saved sudo password: the kill segment probes
+  // sudo and prints this End's sentinel when it cannot elevate (see above).
+  const sudoProbeNonce = target.runtime?.sudo && !hasSudoPassword ? randomId() : undefined
+  const containerKill = buildContainerKillCommand(sessionId, target.runtime, { hasSudoPassword, sudoProbeNonce })
+  const probing = Boolean(containerKill && sudoProbeNonce)
+  /** The result for a finished exec: its own outcome, unless this End's sudo
+   *  sentinel is in what it printed. */
+  const settle = (outcome: 'completed' | 'failed', output: string): SshEndRemoteResult => {
+    if (probing && target.runtime && parseEndSudoSentinel(output, sudoProbeNonce!)) {
+      logWarn(`[ssh] ${sessionId}: end-remote may not have stopped Claude inside the container: sudo needs a password and End holds none for this session`)
+      return {
+        outcome: 'container-needs-sudo',
+        container: { engine: target.runtime.engine === 'podman' ? 'podman' : 'docker', name: readContainerName(target.runtime), host: target.host },
+      }
+    }
+    return { outcome }
+  }
   // Container kill FIRST, then the host tmux kill + sidecar cleanup.
   const remoteCommand = containerKill
     ? `${containerKill}; ${buildRemoteTmuxKillCommand(sessionId)}`
@@ -538,19 +651,22 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
     return new Promise((resolve) => {
       let settled = false
       let child: pty.IPty | null = null
+      // Everything the exec printed (bounded), for the sudo sentinel.
+      let output = ''
       const done = (r: 'completed' | 'failed', why: string): void => {
         if (settled) return
         settled = true
         clearTimeout(deadline)
         try { child?.kill() } catch { /* already gone */ }
-        logInfo(`[ssh] ${sessionId}: end-remote (password) ${r} (${why})`)
-        resolve(r)
+        const result = settle(r, output)
+        logInfo(`[ssh] ${sessionId}: end-remote (password) ${result.outcome} (${why})`)
+        resolve(result)
       }
       const deadline = setTimeout(() => done('failed', 'timeout'), END_REMOTE_PASSWORD_TIMEOUT_MS)
       try {
         // Argv build INSIDE the executor's try (adversarial pass): a sync throw
-        // here must resolve 'failed' like every other failure, not escape as an
-        // exception into a fire-and-forget IPC caller.
+        // here must resolve 'failed' like every other failure, never reject
+        // the End promise the IPC handler returns and the live lanes await.
         const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
         child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
       } catch (err) {
@@ -563,6 +679,7 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
       // sudo prompt follows it) and none can be replayed.
       let tail = ''
       child.onData((d) => {
+        output = (output + d).slice(-END_REMOTE_OUTPUT_CAP)
         // Bounded rolling tail; the prompt always sits at the end of it.
         tail = (tail + d).slice(-2048)
         // `settled` too (adversarial pass): after the timeout killed the child,
@@ -605,17 +722,17 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
     try {
       const args = buildSshExecArgs(target, remoteCommand, os.platform())
       logInfo(`[ssh] ${sessionId}: ending remote session (tmux kill-session + sidecar cleanup over a separate exec)`)
-      const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err) => {
+      const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
         if (err) logInfo(`[ssh] ${sessionId}: end-remote exec exited non-zero (host was already gone, or refused key auth): ${err.message}`)
         else logInfo(`[ssh] ${sessionId}: end-remote exec completed`)
-        resolve(err ? 'failed' : 'completed')
+        resolve(settle(err ? 'failed' : 'completed', typeof stdout === 'string' ? stdout : String(stdout ?? '')))
       })
       // Never let a stuck child keep a handle alive; execFile's own timeout also
       // covers this, but unref so it can't hold the process open.
       try { child.unref() } catch { /* noop */ }
     } catch (err) {
       logError(`[ssh] ${sessionId}: endSshRemote failed to dispatch: ${(err as Error)?.message ?? err}`)
-      resolve('failed')
+      resolve({ outcome: 'failed' })
     }
   })
 }
@@ -1007,6 +1124,7 @@ function deferSpawnUntil<T>(
   pending: Promise<T>,
   why: string,
   next: (settled: T) => SpawnPtyOptions,
+  agent: 'claude' | 'codex' | null = 'claude',
 ): void {
   const release = acquireProfileConsumer(profileId, { maxAgeMs: Infinity })
   let cancelled = false
@@ -1024,6 +1142,7 @@ function deferSpawnUntil<T>(
     // Carried over from the wait this spawn superseded (see spawnPty).
     abandonedTeardown: inheritedTeardown,
     win,
+    agent,
   })
   logInfo(`[profiles] session ${sessionId}: ${why}`)
   // A failed re-entry, or a wait that itself failed, with no PTY registered:
@@ -1106,11 +1225,82 @@ function deferSpawnUntil<T>(
   })
 }
 
+/** A spawn pty:spawn is still preparing in main -- awaiting a Codex account
+ *  launch (a CLI status check, discovery) or a legacy CLI install -- before
+ *  spawnPty can run. See beginSpawnPreparation. */
+export interface SpawnPreparation {
+  /** Still this session's newest spawn: not cancelled (a close, a sweep),
+   *  not superseded (a newer spawn), and its window still there. */
+  readonly current: boolean
+  /** Run the prepared spawn in spawnPty's place, carrying the teardown of
+   *  the PTY it replaces. Only while current. */
+  spawn(options?: SpawnPtyOptions): void
+  /** The preparation failed or is being abandoned: end the session a
+   *  replaced PTY's exit left to it. A no-op once cancelled or superseded --
+   *  the close or the newer spawn did that. */
+  abandon(): void
+}
+
+/** Register a spawn main is preparing as a WAIT, on the same contract as a
+ *  refresh wait (refreshWaitSpawns): a close or a sweep cancels it (killPty,
+ *  killAllPty -- with a synthetic exit when it replaced nothing), a newer
+ *  spawn of the same session supersedes it and inherits the replaced PTY's
+ *  teardown, writes meanwhile are dropped rather than queued, and the
+ *  replaced PTY's late exit is handed to it rather than taken for the end of
+ *  the session being prepared. Without this a tab closed during the
+ *  preparation still got its PTY -- a Codex one holding its account lease
+ *  until the app quit -- and the older of two spawns could win (ADR-009 pass
+ *  on WP2 commit 4). */
+export function beginSpawnPreparation(win: BrowserWindow, sessionId: string, agent: 'claude' | 'codex' | null): SpawnPreparation {
+  const superseded = refreshWaitSpawns.get(sessionId)
+  const inheritedTeardown = superseded?.abandonedTeardown
+  if (superseded) {
+    logInfo(`[pty] Session ${sessionId} was still waiting to spawn; this spawn supersedes that wait`)
+    superseded.cancel()
+  }
+  let cancelled = false
+  const entry: { cancel: () => void; abandonedTeardown?: () => void; win: BrowserWindow; keepWrites: boolean; agent: 'claude' | 'codex' | null } = {
+    cancel: () => {
+      cancelled = true
+      if (refreshWaitSpawns.get(sessionId) === entry) refreshWaitSpawns.delete(sessionId)
+    },
+    abandonedTeardown: inheritedTeardown,
+    win,
+    keepWrites: true,
+    agent,
+  }
+  refreshWaitSpawns.set(sessionId, entry)
+  const isCurrent = (): boolean => !cancelled && refreshWaitSpawns.get(sessionId) === entry && !win.isDestroyed()
+  return {
+    get current() { return isCurrent() },
+    spawn(options) {
+      if (!isCurrent()) throw new Error('this spawn was cancelled or superseded while it was prepared')
+      refreshWaitSpawns.delete(sessionId)
+      const teardown = entry.abandonedTeardown
+      try {
+        spawnPtyResolved(win, sessionId, options, teardown)
+      } catch (err) {
+        if (teardown && !ptySessions.has(sessionId)) {
+          logInfo(`[pty] Session ${sessionId}: the prepared spawn failed before it had a PTY -- ending the session its predecessor's exit was told to leave alone`)
+          teardown()
+        }
+        throw err
+      }
+    },
+    abandon() {
+      if (refreshWaitSpawns.get(sessionId) !== entry) return
+      refreshWaitSpawns.delete(sessionId)
+      cancelled = true
+      entry.abandonedTeardown?.()
+    },
+  }
+}
+
 export function spawnPty(win: BrowserWindow, sessionId: string, options?: SpawnPtyOptions): void {
   const supersededWait = refreshWaitSpawns.get(sessionId)
   const inheritedTeardown = supersededWait?.abandonedTeardown
   if (supersededWait) {
-    logInfo(`[pty] Session ${sessionId} was still waiting for a profile refresh; this spawn supersedes that wait`)
+    logInfo(`[pty] Session ${sessionId} was still waiting to spawn (a profile refresh or a preparation); this spawn supersedes that wait`)
     supersededWait.cancel()
   }
   try {
@@ -1205,6 +1395,10 @@ function spawnPtyResolved(
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
     }
+    /** MAIN-INTERNAL (WP2, plan A10): the Codex session's prepared launch --
+     *  its account lease, executable and realm environment. Set only by
+     *  pty:spawn in main; never accepted from the renderer. */
+    codexLaunch?: CodexLaunch
   },
   /** MAIN-INTERNAL: the teardown carried over from a superseded refresh wait
    *  (see spawnPty). Attached to this spawn's own wait if it parks; dropped
@@ -1313,10 +1507,10 @@ function spawnPtyResolved(
   }
 
   if (options?.ssh) {
-    // Defensive guard: Codex over SSH is not yet supported. The renderer-side
-    // dialog prevents this combination, but guard here in case of direct IPC calls.
+    // Defence in depth: pty:spawn refuses a Codex SSH session first, by the
+    // provider's `session.ssh` capability, before it loads anything for it.
     if ((options?.provider ?? 'claude') === 'codex') {
-      throw new Error('Codex over SSH is not supported in v1.5.0 (planned for v1.5.x). Switch the session to local or pick the Claude provider.')
+      throw new Error('Codex runs on this computer only in this release; it is not available in SSH sessions. Switch the session to local or pick the Claude provider.')
     }
 
     // SSH session: spawn ssh command, then chain claude after cd
@@ -1388,6 +1582,12 @@ function spawnPtyResolved(
     const localMcpPort = getConductorMcpPort()
     const remoteMcpPort = getRemoteMcpPort(sessionId, localMcpPort)
     const sshArgs = buildSshArgs(ssh, localMcpPort, os.platform(), remoteMcpPort)
+    // The tunnel is up as soon as ssh logs in, and a remote Claude kept running
+    // in tmux from an earlier run reconnects through it before any setup script
+    // is written, still holding its session token: record that credential as
+    // this session's now (SSH sessions are Claude-only, refused above for any
+    // other provider), so the reconnect is served.
+    if (localMcpPort > 0) issueMcpSessionToken(sessionId, 'claude')
 
     // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
     // Claude Code inside the SSH session can reach it via http://localhost:<port>.
@@ -3953,20 +4153,28 @@ function spawnPtyResolved(
       }
     })
   } else if ((options?.provider ?? 'claude') === 'codex' && !options?.shellOnly) {
-    captureCodexSpawnIdentity(sessionId)
     // Codex local session — spawn `codex` directly. Codex itself owns the
     // REPL, so there is no shell-wrap-then-cd-then-launch dance like Claude
     // requires. cwd is propagated through pty.spawn options.
     // shellOnly falls through to the Claude branch below so the user gets a
     // plain shell, regardless of provider selection.
     //
+    // WP2 (plan A10): it runs ONLY in its account's realm, from the launch
+    // pty:spawn prepared -- the executable setup proved and the realm's
+    // environment. There is no other way to start one: no second resolution
+    // of the executable, and never the ambient home.
+    const launch = options?.codexLaunch
+    if (!launch) {
+      throw new Error('A Codex session needs its account: choose a Codex account for this session.')
+    }
     // Copilot review on PR #31 (p9.15): buildSpawnCommand or pty.spawn can
     // throw before onExit is wired up (binary missing, ConPTY init failure,
-    // node-pty resolver miss). Clean up the spawn-identity map entry on
-    // failure so it doesn't leak.
+    // node-pty resolver miss). A spawn that failed releases its lease, and
+    // ends a PTY it had already started, so no Codex runs unheld.
+    let started: pty.IPty | undefined
     try {
       const provider = getProvider('codex')
-      const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
+      const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = provider.buildSpawnCommand({
         sessionId,
         provider: 'codex',
         cwd: options?.cwd,
@@ -3974,18 +4182,25 @@ function spawnPtyResolved(
         rows,
         useResumePicker: options?.useResumePicker,
         codexOptions: options?.codexOptions,
+        realmLaunch: { executable: launch.executable, env: launch.env, sessionsDir: launch.sessionsDir },
         // Same light/dark signal the local Claude spawn gets (book item 34).
         hostColorScheme: resolveHostColorScheme(
           readConfig<{ theme?: string }>('settings')?.theme,
           nativeTheme.shouldUseDarkColors,
         ),
       })
-      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${describePathForLog(resolvedCwd)}`)
-      // Codex sessions never designate a canvas worktree; drop any inherited hint.
-      delete (spawnEnv as Record<string, string>).CCC_SESSION_WORKTREE
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(resolvedCwd)}`)
+      // Codex sessions never designate a canvas worktree; drop any inherited
+      // hint, in every spelling (Windows names are case-insensitive).
+      for (const k of Object.keys(spawnEnv)) if (k.toUpperCase() === 'CCC_SESSION_WORKTREE') delete (spawnEnv as Record<string, string>)[k]
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
-      ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
+      // The lease is this session's from here: the killPty above has already
+      // released the previous spawn's (or will, once its process has ended).
+      codexLaunchLeases.set(sessionId, launch.lease)
+      takenCodexLeases.add(launch.lease)
+      // A cmd.exe line goes verbatim (see buildSpawnCommand's `commandLine`).
+      ptyProcess = started = pty.spawn(spawnCmd, commandLine ?? spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
@@ -4005,7 +4220,8 @@ function spawnPtyResolved(
       // from telemetry ticks — the indexing worker reads raw transcripts.)
       const codexTelSrc = provider.ingestSessionTelemetry(
         sessionId,
-        { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
+        // The realm's own transcripts: a managed account never writes to ~/.codex.
+        { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp, sessionsDir: launch.sessionsDir },
         (data) => {
           // Copilot review on PR #31 (p9.17): decorate at the send site so
           // the renderer receives accountColour. decorateStatuslineWithColour
@@ -4019,8 +4235,26 @@ function spawnPtyResolved(
         },
       )
       codexTelemetrySources.set(sessionId, codexTelSrc)
+      // WP2 commit 5b: a local Codex session may ask for a Claude review of
+      // the project it runs in -- the directory its PTY started in, never
+      // home or above it (the codex_review rule, #188). Whether the tool is
+      // offered is decided per MCP connection; killPty's unregister (run
+      // before every spawn) clears this, so a respawn re-decides.
+      if (isHomeOrAncestor(resolvedCwd)) {
+        logWarn(`[pty] claude_review NOT registered for ${sessionId}: the project directory resolves to (or above) the home directory. Set a real project directory to enable review.`)
+      } else {
+        registerClaudeReviewSession(sessionId, resolvedCwd)
+      }
     } catch (err) {
-      clearCodexSpawnIdentity(sessionId)
+      if (codexLaunchLeases.get(sessionId) === launch.lease) codexLaunchLeases.delete(sessionId)
+      if (started) {
+        // A PTY that started: its lease goes when its process does.
+        takenCodexLeases.add(launch.lease)
+        releaseCodexLeaseOnExit(started, launch.lease)
+        try { started.kill() } catch { /* already gone */ }
+      } else {
+        launch.lease.release()
+      }
       throw err
     }
   } else {
@@ -4097,7 +4331,8 @@ function spawnPtyResolved(
       if (pending) {
         deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
           `profile ${resolvedProfileId} is mid-refresh -- holding the spawn until it settles`,
-          () => ({ ...options, refreshAwaited: true }))
+          () => ({ ...options, refreshAwaited: true }),
+          options?.shellOnly ? null : 'claude')
         return
       }
     }
@@ -4134,7 +4369,8 @@ function spawnPtyResolved(
         })
       deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
         `checking the project settings in ${gateDirs.map(describePathForLog).join(' and ')}${managedPickerLaunch(options) ? ' and every worktree the resume picker may open' : ''} before the managed launch`,
-        ({ verdict, dirs }) => ({ ...options, refreshAwaited: true, projectGate: verdict, projectGateDirs: dirs }))
+        ({ verdict, dirs }) => ({ ...options, refreshAwaited: true, projectGate: verdict, projectGateDirs: dirs }),
+        options?.shellOnly ? null : 'claude')
       return
     }
     // Home selection (Bug 2): EVERY session of an account -- shell-only (plain
@@ -4400,12 +4636,16 @@ function spawnPtyResolved(
       // without a respawn), so the strip/card/statusline follow the new account.
       startWatchingAccountIdentity(sessionId, resolvedProfileId)
 
-      // codex_review is authorised globally (2 Aug decision): every LOCAL Claude
-      // session registers. Availability is still governed at tool-registration
-      // time by the global Codex master + conductor tool toggles
-      // (conductor-mcp-server createServer), and SSH sessions never reach this
-      // branch, so the tool keeps running only against paths that exist on this
-      // machine. The per-config enableCodexReview flag is retired (ignored).
+      // Every LOCAL Claude session with a real project folder REGISTERS for
+      // codex_review here; registering does not offer the tool. Whether it is
+      // offered is decided per MCP connection (offeredReviewTool, called from
+      // conductor-mcp-server createServer): the Conductor tools master and the
+      // codex_review switch (Settings, General, Built-in tools) must be on,
+      // Codex must be enabled, and a Codex review must be preparable now (the
+      // accounts service's reviewReady: the provider on and a reviewer account
+      // ready). SSH sessions never reach this branch, so the tool only ever
+      // runs against paths that exist on this machine. The per-config
+      // enableCodexReview flag is retired (ignored).
       //
       // SECURITY (adversarial review, #188): register the ACTUAL launch cwd
       // (`claudeCwd`, post-resume-override) — not the pre-override `resolvedCwd`
@@ -4696,7 +4936,7 @@ function spawnPtyResolved(
     })
   }
 
-  ptySessions.set(sessionId, { ptyProcess, sessionId })
+  ptySessions.set(sessionId, { ptyProcess, sessionId, agent: options?.shellOnly ? null : (options?.provider ?? 'claude') })
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
   // Watchdog (#235): any interactive Claude session — LOCAL or SSH (owner
   // 2026-08-31: it observes the PTY, which an SSH session has too; the headless
@@ -4893,8 +5133,6 @@ function spawnPtyResolved(
       // exit/quit, crash) leaked the 2Hz full-file telemetry read + its maps
       // until the tab was closed.
       cleanupSessionResources(sessionId)
-      // P8.8: clear spawn-time identity capture. Safe no-op for non-codex sessions.
-      clearCodexSpawnIdentity(sessionId)
       // Phase R: clear spawn-time Claude account capture so the map can't grow unbounded.
       // Capture the watched profileId BEFORE stopWatching clears it.
       const exitProfileId = getWatchedProfileId(sessionId)
@@ -5065,7 +5303,8 @@ export function writePty(sessionId: string, data: string): void {
   // line was typed for has not started, and a replay into it would be a command
   // the user never saw run. Judged BEFORE the duplicate-submit suppressor, so a
   // dropped line does not arm it against the user's own resend.
-  if (refreshWaitSpawns.has(sessionId)) {
+  const parkedWait = refreshWaitSpawns.get(sessionId)
+  if (parkedWait && !parkedWait.keepWrites) {
     logInfo(`[pty] Dropped write for ${sessionId} (${data.length} bytes): the spawn is waiting for a profile refresh`)
     return
   }
@@ -5148,6 +5387,12 @@ function cleanupSessionResources(sessionId: string): void {
   if (profileHold) {
     shellOnlyProfileHolds.delete(sessionId)
     profileHold()
+  }
+  // WP2: the Codex session's account lease (see codexLaunchLeases).
+  const codexLease = codexLaunchLeases.get(sessionId)
+  if (codexLease) {
+    codexLaunchLeases.delete(sessionId)
+    codexLease.release()
   }
   pendingWrites.delete(sessionId)
   launchPendingSessions.delete(sessionId)
@@ -5260,7 +5505,7 @@ export function killPty(sessionId: string): void {
   // yet -- cancel the wait (its hold goes with it); there is nothing else to kill.
   const waiting = refreshWaitSpawns.get(sessionId)
   if (waiting) {
-    logInfo(`[pty] Session ${sessionId} was still waiting for a profile refresh; the spawn is cancelled`)
+    logInfo(`[pty] Session ${sessionId} was still waiting to spawn (a profile refresh or a preparation); the spawn is cancelled`)
     waiting.cancel()
     // The replaced PTY's exit, if it already arrived, was left to this spawn to
     // supersede; with the spawn cancelled it ends the session now (once).
@@ -5278,6 +5523,14 @@ export function killPty(sessionId: string): void {
     }
   }
   const entry = ptySessions.get(sessionId)
+  // WP2: a killed Codex PTY keeps its account lease until its process has
+  // ended (see releaseCodexLeaseOnExit); cleanupSessionResources below then
+  // finds no lease to release.
+  const dyingLease = entry ? codexLaunchLeases.get(sessionId) : undefined
+  if (entry && dyingLease) {
+    codexLaunchLeases.delete(sessionId)
+    releaseCodexLeaseOnExit(entry.ptyProcess, dyingLease)
+  }
   // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
   // these, but killPty does, at the end).
   const tmuxPersistent = sshTmuxWrappedBySession.has(sessionId)

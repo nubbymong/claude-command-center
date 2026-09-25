@@ -48,8 +48,9 @@ import { logWarn } from './debug-logger'
  * v3 (GHSA-q83v-phcc-hgv4): through v2 the secret was written VERBATIM into
  * every session's own --mcp-config as the `?token=`, so it was a shared
  * credential held by every principal on the machine. It is now used only as an
- * HMAC KEY: each session's config carries `mcpSessionToken(sessionId)` =
- * HMAC(secret, sessionId), and the secret itself never leaves this process.
+ * HMAC KEY: each session's config carries the token `issueMcpSessionToken`
+ * hands it, HMAC(secret, sessionId), and the secret itself never leaves this
+ * process.
  * But a v2 secret is known to anything that read a config, so as an HMAC key it
  * would let such a reader forge a binding for any session — it must be
  * discarded and a fresh, never-distributed key minted. Same one-time cost: a

@@ -35,15 +35,25 @@ const { buildTmuxListCommand, parseTmuxLivenessOutput, TMUX_LIVENESS_BEGIN, TMUX
 const { probeTmuxLive } = await import('../../../src/main/pty-manager')
 const { deadSessionIds, hasUnverifiedOffer } = await import('../../../src/renderer/utils/detachedRemotesLiveness')
 
-function have(shell: string): boolean {
-  const r = spawnSync(shell, ['-c', 'exit 0'], { stdio: 'ignore', timeout: 10000, windowsHide: true })
-  return !r.error && r.status === 0
+// Git for Windows' sh can fail to start while the parallel suite saturates the
+// runner (seen once on windows-2025 with nothing else changed), so try a few
+// times and keep the reason: a runner that really has no sh stays red, and says
+// why.
+function probe(shell: string): { ok: boolean; why: string } {
+  let why = ''
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const r = spawnSync(shell, ['-c', 'exit 0'], { stdio: 'ignore', timeout: 10000, windowsHide: true })
+    if (!r.error && r.status === 0) return { ok: true, why: '' }
+    why = `attempt ${attempt}: ${r.error ? String(r.error) : `status ${r.status} signal ${r.signal}`}`
+  }
+  return { ok: false, why }
 }
-const HAVE_SH = have('sh')
+const SH = probe('sh')
+const HAVE_SH = SH.ok
 
 // Never a silent skip: a runner without `sh` cannot run the R8 gate, and must say
 // so in red rather than report green.
-it('a POSIX sh is available on this runner (the R8 gate needs it)', () => { expect(HAVE_SH).toBe(true) })
+it('a POSIX sh is available on this runner (the R8 gate needs it)', () => { expect(SH.why).toBe('') })
 
 // A synthetic tmux whose behaviour the test picks per run. Installed as the
 // on-PATH candidate (a temp bin dir first on PATH) and, when asked, as the

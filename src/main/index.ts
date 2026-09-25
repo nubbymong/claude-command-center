@@ -25,7 +25,11 @@ import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, 
 import { recordLiveUsageForSession } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders } from './providers/compose'
-import { probeClaudeCliVersion } from './claude-cli-version'
+import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
+import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart } from './provider-accounts'
+import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
+import { providerProbeRefusal } from './provider-launch-gate'
+import { providerUseWithoutLease } from './provider-in-use'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
@@ -34,7 +38,7 @@ import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from '
 // Direct from data-paths, not the handlers barrel: this runs at module scope
 // before app-ready, so it must not pull the IPC registration side of that module
 // in ahead of time.
-import { devSessionDataDir } from './data-paths'
+import { devSessionDataDir, onResourcesDirectoryChanged } from './data-paths'
 import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
@@ -60,7 +64,7 @@ import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
-import { registerCodexHandlers } from './ipc/codex-handlers'
+import { registerProviderAccountsHandlers } from './ipc/provider-accounts-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerExeHandlers, stopAllCapturedRuns } from './ipc/exe-handlers'
 import { registerRegistryHandlers } from './ipc/registry-handlers'
@@ -502,10 +506,46 @@ if (!gotTheLock) {
       return
     }
 
+    // WP2: the provider account registry. Best-effort and after providers are
+    // composed: a registry problem leaves it in recovery mode and never blocks
+    // start-up; Claude keeps launching from profiles.json either way (A12).
+    try {
+      const rd = getResourcesDirectory()
+      if (rd) initAccountRegistry(rd)
+    } catch (err) {
+      logError('[main] account registry start failed:', err)
+    }
+    // The accounts service (WP2 commit 3) exists either way: without a
+    // registry it reports the account list as unavailable. The one-time
+    // adoption of a provider's own default sign-in runs after the legacy
+    // reconcile, outside the registry lock.
+    try {
+      // A switch-off is refused while any of the provider runs: its sessions,
+      // and (WP2) for Claude Code its cloud agents, Insights runs, Sentinel
+      // runs and accepted SSH "Launch Claude"s too (provider-in-use.ts).
+      initProviderAccounts({ unleasedSessions: (id) => providerUseWithoutLease(id) })
+      // A resources directory chosen after start (first-run setup) moves the
+      // registry with it before anything reads or reconciles it.
+      onResourcesDirectoryChanged((dir) => { void followResourcesDirectory(dir) })
+      void reconcileLegacyAccountStores()
+        .then(() => runStartupProviderMigrations())
+        .catch((err) => logError('[main] account start-up work failed:', err))
+        // Then, whatever that did, look for each switched-on provider's CLI
+        // once, in the background (WP2 6g: the retired Codex store's boot
+        // refresh kept Codex's status current; this does, for every provider).
+        .then(() => discoverProvidersAtStart())
+    } catch (err) {
+      logError('[main] accounts service start failed:', err)
+    }
+
     // Probe the Claude CLI version once, in the background. The managed-launch
     // preflight needs it to say which side of the verified floor the user is
     // on, and no launch waits for it: until it answers, the preflight reports
-    // the version as unverified rather than assuming it is fine.
+    // the version as unverified rather than assuming it is fine. The probe
+    // itself skips while Claude Code is switched off (WP2), by main's launch
+    // rule, wired in here because that rule's graph imports the probe's
+    // importers (claude-cli-version.ts, setClaudeCliProbeAllowed).
+    setClaudeCliProbeAllowed(() => providerProbeRefusal('claude') === null)
     void probeClaudeCliVersion()
 
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything
@@ -634,7 +674,14 @@ if (!gotTheLock) {
     }
     registerConfigHandlers({
       // #266 MAJOR-2: unticking the watchdog must tear down RUNNING watchers.
-      onSettingsSaved: () => getWatchdogManager()?.applySettings(),
+      // Each in its own try: a failure in one never skips the other.
+      onSettingsSaved: () => {
+        try { getWatchdogManager()?.applySettings() } catch (err) { logError('[main] watchdog settings apply failed:', err) }
+        // WP2 6d: a provider's saved on/off may have changed (the Providers
+        // switch, onboarding, Settings): the accounts snapshot says so now, and
+        // a provider the save turned on is looked for.
+        try { getAccountsService()?.settingsChanged() } catch (err) { logError('[main] accounts settings change failed:', err) }
+      },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only
@@ -680,7 +727,7 @@ if (!gotTheLock) {
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
-    registerCodexHandlers()
+    registerProviderAccountsHandlers(getWindow, getAccountsService)
     registerCodexReviewHandlers()
     registerExeHandlers()
     registerChannelHandlers()

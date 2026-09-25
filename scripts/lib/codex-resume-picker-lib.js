@@ -173,8 +173,10 @@ function walkRollouts(home, maxDays, cwd) {
 // Returns argv for `codex` (or the picker's wrapping spawn).
 //   uuid != null -> ['resume', uuid, ...flags]
 //   uuid == null -> [...flags] (fresh session)
+// The id comes from a transcript file: only a UUID resumes (WP2), anything
+// else -- an option-shaped string included -- starts a fresh session.
 function buildResumeArgs(uuid, flags) {
-  if (uuid) return ['resume', uuid, ...flags]
+  if (isResumeId(uuid)) return ['resume', uuid, ...flags]
   return [...flags]
 }
 
@@ -200,4 +202,46 @@ function shouldUseShell(cmd, platform) {
   return platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)
 }
 
-module.exports = { parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell }
+// -- launchTarget ---------------------------------------------------
+// How the picker starts codex (WP2): never through a shell option. A .cmd or
+// .bat shim runs through cmd.exe named by absolute path (ComSpec or
+// SystemRoot, in any spelling: Windows names are case-insensitive), AutoRun
+// and delayed expansion off, in the `/s /c ""<shim>" <args>"` form, passed
+// VERBATIM (`verbatim: true` -> spawnSync's windowsVerbatimArguments):
+// libuv's per-argument quoting would escape the inner quotes. cmd.exe still
+// parses the line, so a path or an argument carrying one of its
+// metacharacters is refused rather than quoted. Null = refused. Mirrors
+// codexCmdExeTarget in src/main/providers/codex/spawn.ts.
+const CMD_UNSAFE_PATH_RE = /["%&^]/
+const CMD_UNSAFE_ARG_RE = /["%&^|<>!()\s]/
+const WIN_ABSOLUTE_RE = /^([A-Za-z]:\\|\\\\[^\\?.][^\\]*\\[^\\]+\\)/
+const hasControl = (s) => [...s].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
+function envValue(env, name) {
+  const values = new Set()
+  for (const k of Object.keys(env || {})) {
+    const v = env[k]
+    if (typeof v === 'string' && v !== '' && /^[A-Za-z]+$/.test(k) && k.toUpperCase() === name.toUpperCase()) values.add(v)
+  }
+  return values.size === 1 ? [...values][0] : undefined
+}
+function launchTarget(cmd, args, platform, env) {
+  if (!shouldUseShell(cmd, platform)) return { file: cmd, args, verbatim: false }
+  const usable = (p) => typeof p === 'string' && WIN_ABSOLUTE_RE.test(p) && /[\\/]cmd\.exe$/i.test(p) && !CMD_UNSAFE_PATH_RE.test(p) && !hasControl(p)
+  const comSpec = envValue(env, 'ComSpec')
+  const root = envValue(env, 'SystemRoot')
+  const system32 = root ? root.replace(/\\+$/, '') + '\\System32\\cmd.exe' : undefined
+  const shell = usable(comSpec) ? comSpec : usable(system32) ? system32 : null
+  if (!shell) return null
+  if (!WIN_ABSOLUTE_RE.test(cmd) || /[. ]$/.test(cmd) || CMD_UNSAFE_PATH_RE.test(cmd) || hasControl(cmd)) return null
+  if (args.some((a) => typeof a !== 'string' || a === '' || CMD_UNSAFE_ARG_RE.test(a) || hasControl(a))) return null
+  return { file: shell, args: ['/d', '/v:off', '/s', '/c', `"${[`"${cmd}"`, ...args].join(' ')}"`], verbatim: true }
+}
+
+// -- isResumeId -----------------------------------------------------
+// A conversation id read from a transcript is used only when it is a UUID:
+// anything else starts a fresh session.
+function isResumeId(id) {
+  return typeof id === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(id)
+}
+
+module.exports = { parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, isResumeId }

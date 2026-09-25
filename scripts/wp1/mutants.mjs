@@ -19,14 +19,13 @@ export const MUTANTS = [
     from: '    if (!shellOnly && !resolvedProfileId) {\n      const primary = getPrimaryProfileId()', to: '    if (false) {\n      const primary = getPrimaryProfileId()', filter: 'C1' },
   { id: 'M3', desc: 'delete handler skips the post-clear in-use re-check', file: 'src/main/ipc/account-profiles-handlers.ts',
     from: '    if (isProfileInUseByLiveSession(p.id)) {\n      removeWebSession(p.id)', to: '    if (false) {\n      removeWebSession(p.id)', filter: 'C5' },
-  { id: 'M4', desc: 'codex login api-key mode no longer requires apiKey', file: 'src/main/ipc/codex-handlers.ts',
-    from: "      if (!apiKey) return { ok: false, error: 'apiKey required' }\n", to: '', filter: 'C4' },
+  // M4 and M7 mutated src/main/ipc/codex-handlers.ts for the C4
+  // characterization. WP2 commit 6g deleted that file with the codex:* IPC,
+  // and C4 with it; the ids are not reused.
   { id: 'M5', desc: 'withProfileHome drops the git/npm real-home pins', file: 'src/main/account-profiles.ts',
     from: "    GIT_CONFIG_GLOBAL: path.join(realHome, '.gitconfig'),\n    npm_config_userconfig: path.join(realHome, '.npmrc'),\n", to: '', filter: 'C1' },
   { id: 'M6', desc: 'PATH dedupe guard removed', file: 'src/main/account-profiles.ts',
     from: '  if (!already) next[pathKey]', to: '  if (true) next[pathKey]', filter: 'C1' },
-  { id: 'M7', desc: 'chatgpt/device dispatch swapped', file: 'src/main/ipc/codex-handlers.ts',
-    from: "    if (mode === 'chatgpt') return await codexLoginChatgpt()\n    if (mode === 'device') return await codexLoginDeviceAuth()", to: "    if (mode === 'chatgpt') return await codexLoginDeviceAuth()\n    if (mode === 'device') return await codexLoginChatgpt()", filter: 'C4' },
   { id: 'M8', desc: 'delete handler id guard removed', file: 'src/main/ipc/account-profiles-handlers.ts',
     from: "    if (!p || !isValidProfileId(p.id)) return { ok: false, error: 'invalid profile id' }", to: "    if (!p) return { ok: false, error: 'invalid profile id' }", filter: 'C5' },
 ]

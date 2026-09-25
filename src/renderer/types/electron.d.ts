@@ -39,6 +39,11 @@ import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
 import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
+import type {
+  AccountsSnapshot as ProviderAccountsSnapshot, AccountsResult as ProviderAccountsResult, ProviderInstallationView, InstallRecipeView,
+  SignInOutputEvent, BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
+  SecretDeposit, KnownAuthState, ProviderId as ProviderAccountsProviderId, ExternalDefaultOutcome, ResolveConflictRequest, SetReviewerDefaultRequest,
+} from '../../shared/providers'
 import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
 export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
 import type {
@@ -209,7 +214,7 @@ export interface ElectronAPI {
       }
       shellOnly?: boolean
       elevated?: boolean
-      terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+      terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean; noCommandSecrets?: boolean }
       configId?: string
       configLabel?: string
       loggingEnabled?: boolean
@@ -242,7 +247,17 @@ export interface ElectronAPI {
         reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
         permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
       }
-    }) => Promise<void>
+      /** WP2: the Codex account the session runs under (an opaque registry
+       *  id). Absent = the provider default. Codex only. */
+      providerAccountId?: string
+      /** WP2: THIS launch's acknowledgement of an unverified sign-in (the
+       *  provider's shared home). Counts only with the providerAccountId it
+       *  names; never persisted. Codex only. */
+      acknowledgeRealmOnly?: boolean
+      /** Resolves `{ started: false }` when main started nothing for this
+       *  request: its launch was cancelled or superseded while it was being
+       *  prepared. Anything else means the spawn went ahead. */
+    }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').ProviderLaunchRefused)>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void
@@ -254,15 +269,16 @@ export interface ElectronAPI {
   }
   ssh: {
     runPostCommand: (sessionId: string) => Promise<void>
-    launchClaude: (sessionId: string) => Promise<void>
+    launchClaude: (sessionId: string) => Promise<void | import('../../shared/providers').ProviderLaunchRefused>
     skip: (sessionId: string) => Promise<void>
     getState: (sessionId: string) => Promise<{ state: string; info?: string }>
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
     onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
     /** END a remote session. A bare id for a LIVE one (main holds its spawn
      *  target); `{ sessionId, configId }` for a DETACHED one, which main
-     *  reconnects to from the SAVED config (Phase 3.5). */
-    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
+     *  reconnects to from the SAVED config (Phase 3.5). Resolves with what End
+     *  did once its exec finishes; read it with readSshEndRemoteResult. */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<import('../../shared/types').SshEndRemoteResult>
     /** SSH Persistent (resume liveness): ask main whether a config's detached
      *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
     checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../../shared/types').DetachedRemoteLiveness>
@@ -582,7 +598,7 @@ export interface ElectronAPI {
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
     probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
-    spawnCliSetup: (cols: number, rows: number) => Promise<string>
+    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
     killCliSetup: () => Promise<boolean>
   }
   diagnostics: {
@@ -627,9 +643,9 @@ export interface ElectronAPI {
     gracefulExit: () => Promise<boolean>
   }
   insights: {
-    run: (opts?: { profileId?: string }) => Promise<string>
+    run: (opts?: { profileId?: string }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
     /** Cross-account roll-up: runs every targeted account, then synthesizes one report. */
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>
@@ -670,11 +686,11 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent | import('../../shared/providers').ProviderLaunchRefused>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<CloudAgent | null>
+    retry: (id: string) => Promise<CloudAgent | null | import('../../shared/providers').ProviderLaunchRefused>
     list: () => Promise<CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */
@@ -694,7 +710,7 @@ export interface ElectronAPI {
   cli: {
     check: () => Promise<boolean>
     path: () => Promise<string | null>
-    version: () => Promise<string | null>
+    version: () => Promise<string | null | import('../../shared/providers').ProviderLaunchRefused>
   }
   help: {
     workspace: () => Promise<string | null>
@@ -869,23 +885,41 @@ export interface ElectronAPI {
     rendererReady: () => Promise<unknown>
     onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
   }
-  codex: {
-    status: () => Promise<{
-      installed: boolean
-      version: string | null
-      authMode: 'chatgpt' | 'api-key' | 'none'
-      planType?: string
-      accountId?: string
-      hasOpenAiApiKeyEnv: boolean
-    }>
-    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
-      ok: boolean
-      browserUrl?: string
-      deviceCode?: string
-      error?: string
-    }>
-    logout: () => Promise<{ ok: boolean }>
-    testConnection: () => Promise<{ ok: boolean; message: string }>
+  /** WP2: the provider-neutral Accounts surface (mirrors the preload's
+   *  typing). Opaque ids in, views out; an API key goes only through
+   *  sendSecret, one way, bound to a handle. */
+  providerAccounts: {
+    snapshot: () => Promise<ProviderAccountsSnapshot | null>
+    onChanged: (cb: (snapshot: ProviderAccountsSnapshot) => void) => () => void
+    discover: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ installation: ProviderInstallationView }>>
+    installRecipes: (providerId: ProviderAccountsProviderId) => Promise<InstallRecipeView[] | ProviderAccountsResult>
+    setEnabled: (providerId: ProviderAccountsProviderId, enabled: boolean) => Promise<ProviderAccountsResult>
+    beginSetup: (req: BeginSetupRequest) => Promise<ProviderAccountsResult<{ accountId: string }>>
+    issueSecretHandle: (accountId: string) => Promise<ProviderAccountsResult<{ handle: string }>>
+    sendSecret: (deposit: SecretDeposit) => void
+    signIn: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    /** Sign an existing managed account in again, in its own realm. */
+    signInAgain: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
+    cancelSignIn: (accountId: string) => Promise<ProviderAccountsResult>
+    completeSetup: (req: CompleteSetupRequest) => Promise<ProviderAccountsResult<{ accountId: string }>>
+    abandonSetup: (accountId: string) => Promise<ProviderAccountsResult>
+    refreshStatus: (accountId: string) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    logout: (req: LogoutRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    setLifecycle: (req: SetLifecycleRequest) => Promise<ProviderAccountsResult>
+    setDefault: (accountId: string) => Promise<ProviderAccountsResult>
+    updateIdentity: (req: UpdateIdentityRequest) => Promise<ProviderAccountsResult>
+    createGroup: (name: string) => Promise<ProviderAccountsResult<{ groupId: string }>>
+    renameGroup: (groupId: string, name: string) => Promise<ProviderAccountsResult>
+    deleteGroup: (groupId: string) => Promise<ProviderAccountsResult>
+    linkIdentity: (accountId: string, identityId: string) => Promise<ProviderAccountsResult>
+    unlinkIdentity: (accountId: string) => Promise<ProviderAccountsResult<{ identityId: string }>>
+    adoptExternal: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ accountId: string }>>
+    runMigration: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ outcome: ExternalDefaultOutcome }>>
+    /** "This is still my account": clears a blocked account after a fresh check. */
+    reconcileSignIn: (accountId: string) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    resolveConflict: (req: ResolveConflictRequest) => Promise<ProviderAccountsResult>
+    setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<ProviderAccountsResult>
   }
 }
 

@@ -100,6 +100,7 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
     h.codexReviewRoots.push({ sessionId, cwd })
   },
   unregisterCodexReviewSession: () => {},
+  registerClaudeReviewSession: () => {},
 }))
 
 vi.mock('../../../src/main/providers', () => ({

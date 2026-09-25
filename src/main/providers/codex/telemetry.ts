@@ -13,7 +13,6 @@
 
 import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join } from 'path'
-import { getCodexHome } from './auth'
 import { computeCodexCostUsd } from './pricing'
 import type { StatuslineData } from '../../../shared/types'
 import type { TelemetrySource } from '../types'
@@ -277,21 +276,25 @@ const claimed = new Set<string>()
  * Windows path note: Codex records cwd exactly as provided by the OS at spawn
  * time. Pass the same resolvedCwd string from pty-manager (backslashes on
  * Windows) so the exact-string match works correctly.
+ *
+ * `sessionsDir` (WP2): the transcript folder of the realm the session runs in.
+ * Required (WP2 commit 6g): there is no fallback to the ambient home, which
+ * would claim another account's transcript. Without one nothing is watched.
  */
 export function watchAndClaimRollout(
   sessionId: string,
   sessionCwd: string,
   spawnTimestamp: number,
   onUpdate: (sl: StatuslineData) => void,
+  sessionsDir: string,
 ): TelemetrySource {
-  const home = getCodexHome()
+  if (typeof sessionsDir !== 'string' || !sessionsDir) return { stop() {} }
   // NOTE: dateDir is bound to today's UTC date at call time; it will not follow
   // midnight UTC rollover (sessions started before midnight won't be found after).
   // Known limitation -- fix by re-computing dateDir on each poll tick.
   const today = new Date()
   const dateDir = join(
-    home,
-    'sessions',
+    sessionsDir,
     String(today.getUTCFullYear()),
     String(today.getUTCMonth() + 1).padStart(2, '0'),
     String(today.getUTCDate()).padStart(2, '0'),

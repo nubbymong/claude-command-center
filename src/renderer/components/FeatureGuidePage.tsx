@@ -4,8 +4,11 @@ import CanvasExplainedPage from './CanvasExplainedPage'
 import { APP_KNOWLEDGE_SECTIONS } from '../../shared/app-knowledge'
 import { trainingSteps, SECTION_LABELS, type TrainingStep, type TrainingSection } from '../training-steps'
 import { launchAskConductor } from '../lib/askConductor'
+import { ASK_CLAUDE_OFF, useAskConductorBlocked } from '../lib/askConductorGate'
 import { changelog } from '../changelog'
 import { WhatsNewEntries } from './WhatsNewEntries'
+import { showHelloCodexReplay, codexSetUp } from '../onboarding/hello-codex'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 
 // Full-screen Feature Guide — a peer page (ViewType 'help'), NOT the old
 // createPortal modal that floated over every other page. It renders the same
@@ -67,6 +70,9 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
   const [query, setQuery] = useState('')
   const [question, setQuestion] = useState('')
   const [launching, setLaunching] = useState(false)
+  // Ask is a Claude session: with Claude Code off the Ask button is disabled
+  // and says why (launchAskConductor refuses as well).
+  const askOff = useAskConductorBlocked()
   // The Canvas Explained page, embedded (owner request): the front-page card
   // only exists inside an open session's canvas pane, so the guide — which
   // works with zero sessions open — carries the alternate route. Local state,
@@ -103,6 +109,7 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
   // clipboard: it rides the spawn environment as CCC_ASK_PROMPT, so the session
   // opens with it already asked instead of asking the user to paste.
   const ask = async () => {
+    if (askOff) return
     setLaunching(true)
     try {
       const id = await launchAskConductor(question)
@@ -220,6 +227,7 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
               askInputRef={askInputRef}
               onAsk={ask}
               launching={launching}
+              askOff={askOff}
               onStartTour={onStartTour}
               onGo={(id) => setActive(id)}
             />
@@ -259,6 +267,7 @@ function GuideIcon() {
 function FeatureCard({ step, onOpenExplained }: { step: TrainingStep; onOpenExplained?: () => void }) {
   const shot = getScreenshot(step.screenshotFilename)
   const highlights = step.highlights ?? step.bullets ?? []
+  const codexReady = useProviderAccountsStore((s) => codexSetUp(s.snapshot))
   return (
     <article
       data-ux-id={`card-${step.id}`}
@@ -289,6 +298,19 @@ function FeatureCard({ step, onOpenExplained }: { step: TrainingStep; onOpenExpl
               title="Open the Canvas Explained page here, inside the guide"
             >
               View Canvas Explained
+            </button>
+          )}
+          {/* The Codex introduction, replayed (WP2 commit 6f): offered only
+              once Codex is set up, since its first page says the account is
+              ready. A replay marks it seen only if it was still due. */}
+          {step.id === 'codex-provider' && codexReady && (
+            <button
+              data-ux-id="show-codex-intro"
+              onClick={showHelloCodexReplay}
+              className="ml-auto shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-md transition-colors focus-ring"
+              style={{ background: 'color-mix(in srgb, var(--brand) 16%, transparent)', border: '1px solid color-mix(in srgb, var(--brand) 45%, transparent)', color: 'var(--brand)' }}
+            >
+              Show the Codex introduction
             </button>
           )}
         </div>
@@ -366,13 +388,15 @@ function SectionHero({ eyebrow, title, blurb }: { eyebrow: string; title: string
 
 // ── Overview landing ─────────────────────────────────────────────────────────
 function Overview({
-  question, setQuestion, askInputRef, onAsk, launching, onStartTour, onGo,
+  question, setQuestion, askInputRef, onAsk, launching, askOff = false, onStartTour, onGo,
 }: {
   question: string
   setQuestion: (v: string) => void
   askInputRef: React.RefObject<HTMLInputElement | null>
   onAsk: () => void
   launching: boolean
+  /** Claude Code is off: Ask cannot open, and the card says why. */
+  askOff?: boolean
   onStartTour: () => void
   onGo: (id: GuideSectionId) => void
 }) {
@@ -416,21 +440,25 @@ function Overview({
             ref={askInputRef}
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !launching) onAsk() }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !launching && !askOff) onAsk() }}
             placeholder="e.g. How do I run two accounts at once?"
             className="flex-1 rounded-lg px-3 py-2 text-[13px] outline-none"
             style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
           />
           <button
             onClick={onAsk}
-            disabled={launching}
+            disabled={launching || askOff}
+            title={askOff ? ASK_CLAUDE_OFF : undefined}
+            data-ux-id="ask-card-button"
             className="text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors focus-ring disabled:opacity-60"
             style={{ background: 'var(--brand)', color: 'var(--ob-on)' }}
           >
             {launching ? 'Opening…' : 'Ask'}
           </button>
         </div>
-        <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>Opens the Ask Conductor session with your question already asked. It reads this app&apos;s own documentation, not your code.</p>
+        <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }} data-ux-id="ask-card-note">
+          {askOff ? ASK_CLAUDE_OFF : <>Opens the Ask Conductor session with your question already asked. It reads this app&apos;s own documentation, not your code.</>}
+        </p>
       </div>
 
       {/* The two full-screen walkthrough surfaces the app already has. */}
@@ -483,11 +511,11 @@ function WhatsNewSection() {
 
 // ── Reference (prose from app-knowledge) ─────────────────────────────────────
 function Reference() {
-  const ids = ['privacy', 'troubleshooting', 'shortcuts']
+  const ids = ['privacy', 'troubleshooting', 'known-issues', 'shortcuts']
   const secs = ids.map((id) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)).filter(Boolean) as { id: string; title: string; body: string }[]
   return (
     <div>
-      <SectionHero eyebrow="Reference" title="Privacy, data and troubleshooting" blurb="The plain-English answers to where your data lives and what to check when something looks off." />
+      <SectionHero eyebrow="Reference" title="Privacy, data, troubleshooting and known issues" blurb="The plain-English answers to where your data lives and what to check when something looks off." />
       {secs.map((s) => (
         <article key={s.id} data-ux-id={`ref-${s.id}`} className="rounded-2xl p-5 mb-4" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
           <h3 className="text-[15px] font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>{s.title}</h3>

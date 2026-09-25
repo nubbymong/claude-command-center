@@ -31,6 +31,11 @@ import type {
   Rect,
   TrailEntry,
 } from '../shared/canvas'
+import type {
+  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest,
+  CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
+  ExternalDefaultOutcome, ResolveConflictRequest, SetReviewerDefaultRequest,
+} from '../shared/providers'
 
 function onChannel<T>(channel: string, cb: (data: T) => void): () => void {
   const handler = (_: unknown, data: T) => cb(data)
@@ -177,7 +182,12 @@ export interface ElectronAPI {
         reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
         permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
       }
-    }) => Promise<void>
+      /** WP2: the Codex account the session runs under (an opaque registry
+       *  id). Absent = the provider default. */
+      providerAccountId?: string
+      /** WP2: THIS launch's acknowledgement of an unverified sign-in. */
+      acknowledgeRealmOnly?: boolean
+    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').ProviderLaunchRefused) | void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void
@@ -190,8 +200,9 @@ export interface ElectronAPI {
   ssh: {
     /** Manually trigger the post-connect command stage. */
     runPostCommand: (sessionId: string) => Promise<void>
-    /** Manually trigger the Claude launch stage. */
-    launchClaude: (sessionId: string) => Promise<void>
+    /** Manually trigger the Claude launch stage. Answers a refusal while
+     *  Claude Code is off. */
+    launchClaude: (sessionId: string) => Promise<void | import('../shared/providers').ProviderLaunchRefused>
     /** User opts out of any further auto-writes; PTY is theirs to drive. */
     skip: (sessionId: string) => Promise<void>
     /** One-shot query of the current flow state, used to recover from
@@ -211,8 +222,9 @@ export interface ElectronAPI {
      *  main has no captured target for it, so it rebuilds the connection from
      *  the SAVED config named by `configId` (host/user/port + that config's own
      *  keychain secrets). Passing ids is the whole of the caller's power — the
-     *  host is never named here, and neither is the tmux session. */
-    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
+     *  host is never named here, and neither is the tmux session. Resolves
+     *  with what End did once its exec finishes (SshEndRemoteResult). */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<import('../shared/types').SshEndRemoteResult>
     /** SSH Persistent (resume liveness): ask main whether a config's detached
      *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
     checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../shared/types').DetachedRemoteLiveness>
@@ -569,23 +581,40 @@ export interface ElectronAPI {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
-  codex: {
-    status: () => Promise<{
-      installed: boolean
-      version: string | null
-      authMode: 'chatgpt' | 'api-key' | 'none'
-      planType?: string
-      accountId?: string
-      hasOpenAiApiKeyEnv: boolean
-    }>
-    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
-      ok: boolean
-      browserUrl?: string
-      deviceCode?: string
-      error?: string
-    }>
-    logout: () => Promise<{ ok: boolean }>
-    testConnection: () => Promise<{ ok: boolean; message: string }>
+  /** WP2: the provider-neutral Accounts surface. Opaque ids in, views out;
+   *  an API key goes only through sendSecret, one way, bound to a handle. */
+  providerAccounts: {
+    snapshot: () => Promise<AccountsSnapshot | null>
+    onChanged: (cb: (snapshot: AccountsSnapshot) => void) => () => void
+    discover: (providerId: ProviderId) => Promise<AccountsResult<{ installation: ProviderInstallationView }>>
+    installRecipes: (providerId: ProviderId) => Promise<InstallRecipeView[] | AccountsResult>
+    setEnabled: (providerId: ProviderId, enabled: boolean) => Promise<AccountsResult>
+    beginSetup: (req: BeginSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
+    issueSecretHandle: (accountId: string) => Promise<AccountsResult<{ handle: string }>>
+    sendSecret: (deposit: SecretDeposit) => void
+    signIn: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    /** Sign an existing managed account in again, in its own realm. */
+    signInAgain: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
+    cancelSignIn: (accountId: string) => Promise<AccountsResult>
+    completeSetup: (req: CompleteSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
+    abandonSetup: (accountId: string) => Promise<AccountsResult>
+    refreshStatus: (accountId: string) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    logout: (req: LogoutRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    setLifecycle: (req: SetLifecycleRequest) => Promise<AccountsResult>
+    setDefault: (accountId: string) => Promise<AccountsResult>
+    updateIdentity: (req: UpdateIdentityRequest) => Promise<AccountsResult>
+    createGroup: (name: string) => Promise<AccountsResult<{ groupId: string }>>
+    renameGroup: (groupId: string, name: string) => Promise<AccountsResult>
+    deleteGroup: (groupId: string) => Promise<AccountsResult>
+    linkIdentity: (accountId: string, identityId: string) => Promise<AccountsResult>
+    unlinkIdentity: (accountId: string) => Promise<AccountsResult<{ identityId: string }>>
+    adoptExternal: (providerId: ProviderId) => Promise<AccountsResult<{ accountId: string }>>
+    runMigration: (providerId: ProviderId) => Promise<AccountsResult<{ outcome: ExternalDefaultOutcome }>>
+    /** "This is still my account": clears a blocked account after a fresh check. */
+    reconcileSignIn: (accountId: string) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    resolveConflict: (req: ResolveConflictRequest) => Promise<AccountsResult>
+    setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<AccountsResult>
   }
   github: GitHubBridge
   hooks: HooksBridge
@@ -628,12 +657,12 @@ export interface ElectronAPI {
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
     probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
-    spawnCliSetup: (cols: number, rows: number) => Promise<string>
+    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
     killCliSetup: () => Promise<boolean>
   }
   insights: {
-    run: (opts?: { profileId?: string }) => Promise<string>
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
+    run: (opts?: { profileId?: string }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
     getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
@@ -667,11 +696,11 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent>
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent | import('../shared/providers').ProviderLaunchRefused>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
+    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null | import('../shared/providers').ProviderLaunchRefused>
     list: () => Promise<import('../shared/types').CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */
@@ -691,7 +720,7 @@ export interface ElectronAPI {
   cli: {
     check: () => Promise<boolean>
     path: () => Promise<string | null>
-    version: () => Promise<string | null>
+    version: () => Promise<string | null | import('../shared/providers').ProviderLaunchRefused>
   }
   help: {
     workspace: () => Promise<string | null>
@@ -1248,11 +1277,44 @@ const electronAPI: ElectronAPI = {
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   },
-  codex: {
-    status: () => ipcRenderer.invoke(IPC.CODEX_STATUS),
-    login: (payload) => ipcRenderer.invoke(IPC.CODEX_LOGIN, payload),
-    logout: () => ipcRenderer.invoke(IPC.CODEX_LOGOUT),
-    testConnection: () => ipcRenderer.invoke(IPC.CODEX_TEST_CONNECTION),
+  providerAccounts: {
+    snapshot: () => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SNAPSHOT),
+    onChanged: (cb) => onChannel<AccountsSnapshot>(IPC.PROVIDER_ACCOUNTS_CHANGED, cb),
+    discover: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_DISCOVER, { providerId }),
+    installRecipes: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, { providerId }),
+    setEnabled: (providerId, enabled) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_ENABLED, { providerId, enabled }),
+    beginSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: req.providerId, method: req.method }),
+    issueSecretHandle: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE, { accountId }),
+    // One way and fire-and-forget: the key is never in a request or a reply,
+    // and nothing here keeps or logs it.
+    sendSecret: (deposit) => ipcRenderer.send(IPC.PROVIDER_ACCOUNTS_SECRET, { handle: deposit.handle, secret: deposit.secret }),
+    signIn: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN, req.secretHandle !== undefined
+      ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
+      : { accountId: req.accountId, method: req.method }),
+    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, req.secretHandle !== undefined
+      ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
+      : { accountId: req.accountId, method: req.method }),
+    onSignInOutput: (cb) => onChannel<SignInOutputEvent>(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, cb),
+    cancelSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, { accountId }),
+    completeSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, req),
+    abandonSetup: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ABANDON_SETUP, { accountId }),
+    refreshStatus: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_REFRESH_STATUS, { accountId }),
+    logout: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_LOGOUT, req),
+    setLifecycle: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_LIFECYCLE, req),
+    setDefault: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_DEFAULT, { accountId }),
+    updateIdentity: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_UPDATE_IDENTITY, req),
+    createGroup: (name) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CREATE_GROUP, { name }),
+    renameGroup: (groupId, name) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RENAME_GROUP, { groupId, name }),
+    deleteGroup: (groupId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_DELETE_GROUP, { groupId }),
+    linkIdentity: (accountId, identityId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_LINK_IDENTITY, { accountId, identityId }),
+    unlinkIdentity: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_UNLINK_IDENTITY, { accountId }),
+    adoptExternal: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ADOPT_EXTERNAL, { providerId }),
+    runMigration: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RUN_MIGRATION, { providerId }),
+    reconcileSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN, { accountId }),
+    resolveConflict: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, {
+      identityId: req.identityId, field: req.field, providerId: req.providerId, legacyId: req.legacyId, keep: req.keep,
+    }),
+    setReviewerDefault: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: req.providerId, accountId: req.accountId }),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

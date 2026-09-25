@@ -10,6 +10,8 @@ export interface TokenomicsSupervisorOptions {
   configs: TkConfigDim[]
   claudeProjectsDir: string
   codexSessionsDir: string
+  /** WP2 (plan A13): the transcript folders of the app's Codex accounts. */
+  codexRealmSessionsDirs?: string[]
   emit: (channel: string, payload: unknown) => void
   now?: () => number
   maxRestarts?: number
@@ -68,6 +70,7 @@ export class TokenomicsSupervisor {
     w.transport.post({
       type: 'open', dbPath: this.opts.dbPath, pricing: this.opts.pricing, configs: this.opts.configs,
       claudeProjectsDir: this.opts.claudeProjectsDir, codexSessionsDir: this.opts.codexSessionsDir,
+      codexRealmSessionsDirs: this.opts.codexRealmSessionsDirs ?? [],
     })
   }
 
@@ -156,6 +159,8 @@ export class TokenomicsSupervisor {
 
   setPricing(pricing: Record<string, TkPricing>): void { this.opts.pricing = pricing; this.sendOrBuffer({ type: 'set-pricing', pricing }) }
   setConfigs(configs: TkConfigDim[]): void { this.opts.configs = configs; this.sendOrBuffer({ type: 'set-configs', configs }) }
+  /** Kept for a restarted worker's `open`, and sent to the running one. */
+  setCodexRealmSessionsDirs(dirs: string[]): void { this.opts.codexRealmSessionsDirs = [...dirs]; this.sendOrBuffer({ type: 'set-codex-realm-dirs', dirs: [...dirs] }) }
   reindex(): void { this.sendOrBuffer({ type: 'reindex' }) }
 
   onIndexProgress(cb: (p: TkIndexProgress) => void): () => void { this.progressSubs.add(cb); return () => { this.progressSubs.delete(cb) } }

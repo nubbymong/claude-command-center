@@ -17,7 +17,7 @@ const STEPS: TourStep[] = [
   {
     selector: null,
     title: 'This is your workbench',
-    body: 'AI Code Conductor runs your Claude (and Codex) sessions side by side. A quick look at where things live, then we’ll start your first session.',
+    body: 'AI Code Conductor runs your Claude Code and Codex sessions side by side. A quick look at where things live, then we’ll start your first session.',
   },
   {
     selector: '[data-tour="nav-rail"]',
@@ -49,12 +49,12 @@ const STEPS: TourStep[] = [
     // silently missed and the tour skipped this step with no visible error.
     selector: '[data-tour="nav-settings"]',
     title: 'Change anything, anytime',
-    body: 'Everything you just set up (accounts, GitHub, status line, tools, Codex) lives in Settings.',
+    body: 'Everything you just set up lives in Settings: your assistants and their accounts under Accounts, GitHub, the status line and the built-in tools.',
   },
   {
     selector: '[data-tour="help-button"]',
     title: 'Help lives here',
-    body: 'The Feature Guide explains every feature in depth whenever you want it, and can hand your question to a Claude session that knows the app.',
+    body: 'The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.',
   },
   {
     selector: null,

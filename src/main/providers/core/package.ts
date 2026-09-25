@@ -12,9 +12,11 @@
 import type { ProviderId } from '../../../shared/providers'
 import type {
   ProviderCapabilities, CapabilityPlatform, RealmEnvPatch, AuthMethod, KnownAuthState, DiscoveryState, Compatibility,
-  SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight,
+  SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight, RealmKind, AuthRealm,
 } from '../../../shared/providers'
 import type { SessionProvider } from '../types'
+import type { LegacyAccountsPort } from './account-registry-store'
+import type { LaunchLeaseKind } from './consumer-leases'
 
 export interface DiscoveryResult {
   state: DiscoveryState
@@ -30,23 +32,67 @@ export interface DiscoveryResult {
 export interface InstallRecipe {
   id: string
   providerId: ProviderId
+  /** A first install, or an update of an existing one. */
+  purpose: 'install' | 'update'
   platform: CapabilityPlatform
   publisher: string
   sourceUrl: string
-  /** Structured argv; never a shell string, never interpolated with user data. */
-  command: readonly string[]
+  /** Structured argv, never interpolated with user data, run without a
+   *  shell. Null for a recipe the app only shows (`autoRunAllowed` false):
+   *  there is then nothing a careless caller could execute. */
+  command: readonly string[] | null
+  /** Exactly what the user is shown and may copy, character for character
+   *  the provider's documented command. */
+  displayCommand: string
   method: 'package-manager' | 'installer' | 'script'
   needsNetwork: boolean
   mayElevate: boolean
   /** A remote pipe-to-shell recipe is displayed/copied, never auto-run (8.4). */
   autoRunAllowed: boolean
+  /** Non-secret caveat shown beside the command. */
+  note?: string
 }
 
 /** An opaque realm reference resolved inside the main process. */
 export interface RealmRef { authRealmId: string }
 
+/** Why an auth operation did not succeed, for a caller that acts on it
+ *  (design 13) rather than on the message's wording. */
+export type AuthFailureCode =
+  | 'realm-unavailable'      // not resolvable, missing, or not at its canonical path
+  | 'external-overlap'       // the external home overlaps (or cannot be shown not to overlap) the managed homes
+  | 'cli-unavailable'        // not proven by setup, an unusable version, or changed since
+  | 'realm-env-file'         // a managed realm holds a .env
+  | 'busy'                   // another sign-in or sign-out holds this realm
+  | 'browser-busy'           // another browser sign-in is running (its callback port is machine-wide)
+  | 'already-signed-in'
+  | 'external-realm'         // no sign-in into another client's home
+  | 'external-ack-required'  // an external logout needs the user's acknowledgement
+  | 'method-unsupported'
+  | 'secret-unavailable'     // the handle expired or was already used: enter it again
+  | 'secret-channel-unavailable' // no secret-entry channel here: choose another method
+  | 'secret-invalid'
+  | 'cancelled'
+  | 'timed-out'
+  | 'not-started'            // the CLI could not be run
+  | 'provider-refused'       // the CLI ran and failed
+  | 'not-confirmed'          // the realm's status afterwards does not agree
+  | 'status-unrecognised'
+  | 'still-signed-in'        // a logout left the realm signed in
+
+/** How a signed-in realm is signed in, when the provider says: a provider
+ *  account sign-in or an API key. Never the credential itself. */
+export type AuthCredentialKind = 'account' | 'api-key' | 'unknown'
+
 export interface AuthOperationResult {
   ok: boolean
+  /** Set when `ok` is false. */
+  code?: AuthFailureCode
+  /** The realm's sign-in state as last observed, when the operation read it
+   *  (also after a failure: a cancelled sign-in may have completed anyway). */
+  state?: KnownAuthState
+  /** Set with `state: 'signed-in'` when the provider says how. */
+  credential?: AuthCredentialKind
   /** Redacted, user-safe message. Never contains tokens or full login URLs. */
   message?: string
   /** Provider-supplied stable subject + authority when observable (5.3). */
@@ -61,13 +107,150 @@ export interface ProviderSetupOperations {
   installRecipes(platform: CapabilityPlatform): readonly InstallRecipe[]
 }
 
+export interface AuthLoginInput {
+  /** API key: a main-issued single-use handle, never the secret itself. */
+  secretHandle?: string
+  /** The sign-in process's output as it arrives, redacted and display-only. */
+  onOutput?: (text: string) => void
+  /** Cancels this sign-in, and nothing else. */
+  signal?: AbortSignal
+}
+
+export interface AuthLogoutOptions {
+  /** An external realm is shared with other local clients: logging it out
+   *  needs the user's explicit acknowledgement of that wider effect (5.4). */
+  acknowledgeExternalRealm?: boolean
+}
+
 export interface ProviderAuthOperations {
   status(realm: RealmRef): Promise<{ state: KnownAuthState } & AuthOperationResult>
-  logout(realm: RealmRef): Promise<AuthOperationResult>
+  logout(realm: RealmRef, opts?: AuthLogoutOptions): Promise<AuthOperationResult>
   /** Browser/device flows run the genuine CLI in a Conductor surface; the
    *  api-key flow takes a one-shot non-TTY stdin pipe (9.2). Inputs are
    *  opaque handles, never the secret itself. */
-  login(realm: RealmRef, method: AuthMethod, input?: { secretHandle?: string }): Promise<AuthOperationResult>
+  login(realm: RealmRef, method: AuthMethod, input?: AuthLoginInput): Promise<AuthOperationResult>
+}
+
+/** Why a realm folder operation did not succeed (design 13: a realm
+ *  permission or path failure, an orphaned app-managed realm). */
+export type RealmFolderFailureCode =
+  | 'realm-unavailable'      // not resolvable in the registry
+  | 'not-managed'            // an external home: the app never creates or removes it
+  | 'lifecycle'              // not in a state that allows it (only a pending setup's folder)
+  | 'resources-unavailable'  // the app's data folder cannot be resolved
+  | 'overlaps-external'      // the external home overlaps (or cannot be shown not to overlap) the managed folders
+  | 'unsafe-path'            // a link, junction or reparse point, or not where the app put it
+  | 'permissions'            // it could not be made owner-only
+  | 'busy'                   // a sign-in or sign-out holds the realm
+  | 'credentials-present'    // a removal found a stored sign-in: sign out through the provider first
+  | 'not-empty'              // an empty-only removal found something inside
+  | 'unsafe-contents'        // a removal found a link, another volume or too much: nothing removed
+  | 'changed'                // the folder changed while in use, and the operation stopped
+  | 'io-failed'
+
+export interface RealmFolderResult {
+  ok: boolean
+  code?: RealmFolderFailureCode
+  /** User-safe; never a path. */
+  message?: string
+  /** prepare: the folder was made by this call (false: an earlier attempt's, re-verified). */
+  created?: boolean
+  /** remove: something was removed (false: it was already gone). */
+  removed?: boolean
+}
+
+/** The app-managed folder behind a realm, for providers whose managed
+ *  accounts each get one (design 5.4, 9.3). Main-process only; realms are
+ *  named by opaque reference, never by path. */
+export interface ProviderRealmFolderOperations {
+  /** Create a pending setup's folder before any sign-in, or re-verify the one
+   *  an earlier attempt left. */
+  prepare(realm: RealmRef): Promise<RealmFolderResult>
+  /** Remove a pending (abandoned) setup's folder: `empty-only` only when
+   *  nothing is inside, `all` after proving the whole tree is plain files and
+   *  folders inside the managed root. `all` proves the tree's SHAPE, not who
+   *  wrote it. The caller signs the realm out through the provider first (a
+   *  stored sign-in is refused, never deleted; one kept in an OS keyring is
+   *  invisible here), and removes the folder BEFORE it abandons the setup,
+   *  keeping the journal when this fails: the folder is only ever found
+   *  through its realm record. `removed: false` means nothing was there. */
+  remove(realm: RealmRef, opts: { contents: 'empty-only' | 'all' }): Promise<RealmFolderResult>
+}
+
+/** What a launch in a bound realm needs, proven at launch time (plan A10):
+ *  main-process only, never sent to a renderer. */
+export interface LaunchPreparation {
+  ok: true
+  /** The realm's home, canonical. */
+  home: string
+  /** The executable setup proved, re-verified now: the only path a launch
+   *  may run -- never a second resolution. */
+  executable: string
+  /** The environment the launch starts from (the provider's operation base).
+   *  The caller applies `realmEnv` through the package's own policy, which
+   *  removes the ambient authority variables first. */
+  baseEnv: Readonly<Record<string, string | undefined>>
+  /** The realm selector, set last. */
+  realmEnv: RealmEnvPatch
+  /** Where the provider writes this realm's session transcripts. */
+  sessionsDir: string
+}
+
+/** Launching sessions and reviewer invocations in a bound realm. The account
+ *  lease the caller holds keeps the realm from being removed meanwhile, so
+ *  this takes no realm lock and runs no CLI. */
+export interface ProviderLaunchOperations {
+  /** The kinds of launch this package prepares here. Data, so no provider
+   *  name decides it: Claude prepares reviewer invocations only, because its
+   *  sessions keep their own launch path (A12). The accounts service refuses
+   *  any other kind before anything is chosen or leased. */
+  readonly kinds: readonly LaunchLeaseKind[]
+  prepare(realm: RealmRef): Promise<LaunchPreparation | { ok: false; code: AuthFailureCode; message?: string }>
+  /** Why a reviewer invocation can never run in this realm on this platform
+   *  (e.g. Claude on macOS: only the normal sign-in reviews), or null when
+   *  nothing about the platform stops it. From the registry's own record:
+   *  synchronous, no CLI. The accounts service asks it before a review tool
+   *  is offered and before an account is made the reviewer, and shows the
+   *  reason; `prepare` still refuses on its own. THROWS when it cannot tell:
+   *  the service then offers nothing on that account, but clears nothing. */
+  reviewRefusal?(realm: AuthRealm): string | null
+  /** Where a realm writes its session transcripts (plan A13: what the usage
+   *  index reads), or null when the realm cannot be located now. A path
+   *  only: no CLI, no executable check. */
+  sessionsDir(realm: RealmRef): Promise<string | null>
+}
+
+/** One reviewer invocation (plan: provider review through MCP): a fresh,
+ *  non-interactive process of the reviewing provider, run from a launch the
+ *  accounts service prepared (kind `review`), in the reviewed project. */
+export interface ReviewRunInput {
+  /** From the prepared launch: the executable setup proved. */
+  executable: string
+  /** From the prepared launch: the realm's environment. */
+  env: Readonly<Record<string, string>>
+  /** The project under review: the process's working directory. */
+  cwd: string
+  /** The review request, handed to the process on stdin, never as argv. */
+  prompt: string
+  timeoutMs: number
+  signal?: AbortSignal
+  /** From the prepared launch: the reviewer account's realm, for a provider
+   *  that also holds the account's own credentials while it runs (Claude). */
+  realm?: RealmRef
+}
+
+export interface ReviewUsage {
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+}
+
+export type ReviewRunResult =
+  | { ok: true; text: string; usage?: ReviewUsage }
+  | { ok: false; code: 'timed-out' | 'cancelled' | 'failed' | 'no-output' | 'not-started'; message: string; usage?: ReviewUsage }
+
+export interface ProviderReviewOperations {
+  run(input: ReviewRunInput): Promise<ReviewRunResult>
 }
 
 export interface ProviderRealmOperations {
@@ -118,7 +301,43 @@ export interface ProviderPackage {
   readonly managedLaunch?: ProviderManagedLaunchOperations
   readonly setup?: ProviderSetupOperations
   readonly auth?: ProviderAuthOperations
+  /** Present when the provider's accounts launch through the accounts
+   *  service, for the kinds it lists: Codex sessions and reviews; Claude
+   *  reviews only (its sessions keep their own launch path, A12). */
+  readonly launch?: ProviderLaunchOperations
+  /** Present when the provider can review a change for another provider's
+   *  session (plan: provider review through MCP). */
+  readonly review?: ProviderReviewOperations
   readonly realms?: ProviderRealmOperations
+  /** Present when the provider's managed accounts each get an app-managed
+   *  folder (Codex); absent for providers that keep their own (Claude). */
+  readonly realmFolders?: ProviderRealmFolderOperations
+  /** Present when the provider keeps its own account store the registry must
+   *  mirror (Claude's profiles.json during 2.1.1). Creating it does no I/O;
+   *  only the registry store calls it. */
+  readonly legacyAccounts?: LegacyAccountsPort
+  /** Present when the provider has a default sign-in location of its own that
+   *  other local clients share (Codex's ~/.codex), which an upgrade registers
+   *  once, when it is signed in, as a realm-only external account (design
+   *  6.3). Absent: nothing to adopt (Claude's accounts come from its legacy
+   *  store). */
+  readonly externalDefaultRealm?: ExternalDefaultRealmSpec
+  /** Where the user's on/off for this provider is saved, and what no saved
+   *  value means (A4): data, so no provider-name condition decides it. */
+  readonly enablement?: ProviderEnablementSpec
+}
+
+export interface ProviderEnablementSpec {
+  /** A boolean settings key: true is on, false is off. */
+  readonly settingsKey: string
+  /** What an absent value means: on, or not answered yet. */
+  readonly absent: 'on' | 'undecided'
+}
+
+export interface ExternalDefaultRealmSpec {
+  readonly kind: RealmKind
+  /** The private identity's name: says the account is unverified. */
+  readonly identityLabel: string
 }
 
 /** Packages are created by the composition root, never at module load, so

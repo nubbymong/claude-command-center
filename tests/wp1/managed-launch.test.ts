@@ -150,12 +150,54 @@ export function profileHomeEnvOffenders(files: ReadonlyArray<{ path: string; tex
   /** Lines outside the choke point that may name a home variable as a STRING,
    *  matched on the EXACT source line. A path allowlist would exempt everything
    *  else in the same file; this exempts one known declaration and nothing more,
-   *  so buying an exemption means editing this table where a reviewer sees it. */
-  const ALLOWED_LITERALS = new Map<string, ReadonlySet<string>>([
-    ['src/main/providers/claude/index.ts', new Set([
-      "'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',",
-    ])],
+   *  so buying an exemption means editing this table where a reviewer sees it.
+   *
+   *  The text alone is not enough (adversarial review of WP2 slice 3c): the
+   *  same line inside a loop over the names -- `for (const k of [ <line> ])
+   *  out[k] = profileHome` -- would have been exempt too. So a listed line
+   *  counts only when it appears ONCE in its file and sits inside its own
+   *  top-level declaration: walking back over list elements and comments
+   *  alone reaches `anchor` at column 0, and walking forward reaches `close`
+   *  at column 0 -- so neither a function-local copy of the declaration nor
+   *  a `].map(...)` hung off its end is exempt (confirmation round). */
+  const ALLOWED_LITERALS = new Map<string, { anchor: RegExp; close: RegExp; lines: ReadonlySet<string> }>([
+    ['src/main/providers/claude/index.ts', {
+      anchor: /^export const claudeOwnedLaunchVariables: readonly string\[\] = \[$/,
+      close: /^\]$/,
+      lines: new Set([
+        "'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',",
+      ]),
+    }],
+    // WP2: the Codex setup/sign-in env ALLOWLIST forwards the parent's own
+    // HOME/USERPROFILE unchanged (a Codex realm is selected by CODEX_HOME, set
+    // last); it names them as strings and never composes a profile home.
+    ['src/main/providers/codex/cli-env.ts', {
+      anchor: /^const ALLOWED: ReadonlySet<string> = new Set\(\[$/,
+      close: /^\]\)$/,
+      lines: new Set([
+        "'COMMONPROGRAMFILES', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'USERNAME',",
+        "'HOME', 'USER', 'LOGNAME',",
+      ]),
+    }],
   ])
+  const exempted = (file: string, lines: readonly string[], i: number): boolean => {
+    const ex = ALLOWED_LITERALS.get(file)
+    const text = lines[i].trim()
+    if (!ex || !ex.lines.has(text)) return false
+    if (lines.filter((l) => l.trim() === text).length !== 1) return false
+    const element = (t: string) => t === '' || t.startsWith('//') || /^('[^']*',\s*)+$/.test(t)
+    let opened = false
+    for (let j = i - 1; j >= 0 && j >= i - 30; j -= 1) {
+      if (ex.anchor.test(lines[j])) { opened = true; break }
+      if (!element(lines[j].trim())) return false
+    }
+    if (!opened) return false
+    for (let j = i + 1; j < lines.length && j <= i + 30; j += 1) {
+      if (ex.close.test(lines[j])) return true
+      if (!element(lines[j].trim())) return false
+    }
+    return false
+  }
   // CASE-INSENSITIVE, because the property being policed is. Windows resolves
   // `UserProfile` and `USERPROFILE` to one variable, so `{ ...env, UserProfile:
   // home }` composes a profile-home environment just as surely -- and the
@@ -195,7 +237,6 @@ export function profileHomeEnvOffenders(files: ReadonlyArray<{ path: string; tex
   const offenders: string[] = []
   for (const f of files) {
     if (ALLOWED.has(f.path)) continue
-    const exempt = ALLOWED_LITERALS.get(f.path)
     const lines = f.text.split(/\r?\n/)
     lines.forEach((line, i) => {
       // A literal split by `+` and a literal split across LINES are one dodge,
@@ -231,7 +272,7 @@ export function profileHomeEnvOffenders(files: ReadonlyArray<{ path: string; tex
       // reason withProfileHome documents. Scoped to THAT line, so a hand-built
       // env elsewhere in the same file still fails.
       if (line.includes('withProfileHome')) return
-      if (exempt?.has(line.trim())) return
+      if (exempted(f.path, lines, i)) return
       offenders.push(`${f.path}:${i + 1}  ${line.trim()}`)
     })
   }
@@ -3204,13 +3245,40 @@ describe('the launch paths', () => {
     // exemption is that line and nothing else in the same file -- the whole-file
     // form is the mistake this guard was rewritten to stop making twice.
     const decl = "  'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',"
-    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/claude/index.ts', text: decl }])).toEqual([])
+    const claudeDecl = `export const claudeOwnedLaunchVariables: readonly string[] = [\n${decl}\n]`
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/claude/index.ts', text: claudeDecl }])).toEqual([])
     expect(profileHomeEnvOffenders([{
       path: 'src/main/providers/claude/index.ts',
-      text: `${decl}\nenv['HOME'] = home`,
+      text: `${claudeDecl}\nenv['HOME'] = home`,
     }])).toHaveLength(1)
     // ...and the same declaration in ANOTHER file is not exempt.
     expect(profileHomeEnvOffenders([{ path: 'src/main/rogue.ts', text: decl }])).toHaveLength(1)
+    // ...nor the listed text outside its own declaration, even in its own file
+    // (adversarial review of WP2 slice 3c): a loop over the names that
+    // composes a home, alone or beside the real declaration.
+    const names = "  'HOME', 'USER', 'LOGNAME',"
+    const allow = `const ALLOWED: ReadonlySet<string> = new Set([\n  // POSIX identity and home\n${names}\n])`
+    const loop = `for (const k of [\n${names}\n]) out[k] = profileHome`
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/codex/cli-env.ts', text: allow }])).toEqual([])
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/codex/cli-env.ts', text: loop }])).toHaveLength(1)
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/codex/cli-env.ts', text: `${allow}\n${loop}` }]).length).toBeGreaterThan(0)
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/claude/index.ts', text: decl }])).toHaveLength(1)
+    // ...nor a function-local copy of the declaration, nor one with a
+    // composition hung off its closing bracket (confirmation round).
+    const local = `function f(env, profileHome) {\n  const ALLOWED: ReadonlySet<string> = new Set([\n${names}\n  ])\n  for (const k of ALLOWED) env[k] = profileHome\n}`
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/codex/cli-env.ts', text: local }]).length).toBeGreaterThan(0)
+    const mapped = `const ALLOWED: ReadonlySet<string> = new Set([\n${names}\n].map((k) => { env[k] = profileHome; return k }))`
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/codex/cli-env.ts', text: mapped }]).length).toBeGreaterThan(0)
+    const claudeMapped = `export const claudeOwnedLaunchVariables: readonly string[] = [\n${decl}\n].map((k) => { process.env[k] = profileHome; return k })`
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/claude/index.ts', text: claudeMapped }]).length).toBeGreaterThan(0)
+    // ...nor the listed text in a top-level list of ANOTHER name.
+    const other = `const OTHER: ReadonlySet<string> = new Set([\n${names}\n])\nfor (const k of OTHER) env[k] = profileHome`
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/codex/cli-env.ts', text: other }]).length).toBeGreaterThan(0)
+    // ...nor one whose declaration never opens (the list's first line), nor
+    // an indented, function-local opening however its bracket closes.
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/codex/cli-env.ts', text: `${names}\n])` }])).toHaveLength(1)
+    const indented = `function f(env, profileHome) {\n  const ALLOWED: ReadonlySet<string> = new Set([\n${names}\n])\n  for (const k of ALLOWED) env[k] = profileHome\n}`
+    expect(profileHomeEnvOffenders([{ path: 'src/main/providers/codex/cli-env.ts', text: indented }]).length).toBeGreaterThan(0)
   })
 
   it('still composes the launch variables it owned before, unchanged', () => {

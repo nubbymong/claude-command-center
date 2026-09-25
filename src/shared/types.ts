@@ -131,8 +131,10 @@ export interface ClaudeOptions {
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
   agentIds?: string[]
-  /** RETIRED 2.1.0-beta.5 (was v1.5 P6): codex_review is authorised globally now —
-   *  every local Claude session registers, gated by the global Codex master switch.
+  /** RETIRED 2.1.0-beta.5 (was v1.5 P6): no per-config opt-in. Every local
+   *  Claude session with a real project folder registers for codex_review, and
+   *  main offers the tool per connection while the built-in tools and the Codex
+   *  review switch are on, Codex is on and a Codex account can run the review.
    *  The field remains only so stored configs round-trip; nothing reads it. */
   enableCodexReview?: boolean
   /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined / true = on).
@@ -156,6 +158,13 @@ export interface TerminalOptions {
   hasSecretArg?: boolean
   /** Run the terminal elevated (gsudo on Windows, sudo elsewhere). */
   elevated?: boolean
+  /** Leave the command-button secrets (their env vars) out of this shell's
+   *  environment. Set only by the transient install/update tab
+   *  (commandTerminal.ts), whose install script is a third party's: it keeps
+   *  the secrets out of that script's way, not a boundary against a script
+   *  running as the same user. It can only take secrets away, so main
+   *  honours it as sent. */
+  noCommandSecrets?: boolean
 }
 
 export interface CodexOptions {
@@ -213,6 +222,10 @@ export interface SavedSession {
   resumeCwd?: string
   claudeOptions?: ClaudeOptions
   codexOptions?: CodexOptions
+  /** WP2: the provider account a Codex session runs under -- an opaque
+   *  registry id, never a path or a credential. Absent = the provider
+   *  default. A launch acknowledgement is never stored here or anywhere. */
+  providerAccountId?: string
   // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   model?: string
@@ -297,6 +310,35 @@ export interface SessionState {
 export interface DetachedRemoteLiveness {
   outcome: 'verified' | 'unverified'
   liveSessionIds: string[]
+}
+
+/**
+ * What ending an SSH remote session did (`ssh:endRemote`, endSshRemote):
+ *   - 'completed'            the End exec ran to the end.
+ *   - 'failed'               it could not connect, or timed out.
+ *   - 'no-target'            main had no connection for the session.
+ *   - 'container-needs-sudo' the host tmux session and the session's files on
+ *                            the host were ended, but Claude may still be
+ *                            running inside a rootful container: sudo could
+ *                            not run the container engine without a password,
+ *                            and End holds none (none was saved in the
+ *                            config when the session started). The
+ *                            in-container kill was still attempted with
+ *                            `sudo -n` (which never prompts), so it may have
+ *                            worked where sudo allows that exec without a
+ *                            password; hence "may".
+ */
+export type SshEndRemoteOutcome = 'completed' | 'failed' | 'no-target' | 'container-needs-sudo'
+
+/** The `ssh:endRemote` result. `container` is set only with
+ *  'container-needs-sudo': where Claude may still be running (the engine and
+ *  container name the End path validated, and the SSH host it dialled). The
+ *  host is display-only, never part of a command; the renderer's reader
+ *  (readSshEndRemoteResult) leaves it out when it cannot be shown as one plain
+ *  token, and the notice then says "the SSH host". */
+export interface SshEndRemoteResult {
+  outcome: SshEndRemoteOutcome
+  container?: { engine: 'docker' | 'podman'; name: string; host?: string }
 }
 
 /**

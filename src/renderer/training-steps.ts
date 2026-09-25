@@ -101,10 +101,57 @@ export const trainingSteps: TrainingStep[] = [
       'Each session is **isolated** -- signing in to one never touches the others or your default',
       'Name and colour each account in **Settings, Accounts**; memory and history stay shared',
     ],
-    // No dedicated account-picker capture exists yet; the Settings shot shows
-    // where accounts are managed. (Future capture: step-accounts.jpg / the
-    // launch-time account picker.)
-    screenshotFilename: 'step-security.jpg',
+    // No dedicated account-picker capture exists yet. (Future capture:
+    // step-accounts.jpg / the launch-time account picker.)
+    // step-security.jpg shows the old Settings rail, which still lists the
+    // Codex page this release retired, so the neutral shell shot stands in
+    // until a recapture.
+    screenshotFilename: 'v2-shell-hero.jpg',
+  },
+  {
+    // WP2 (2.1.1): the one Accounts surface for both providers -- the
+    // Providers card (on/off, installed version, install commands) and the
+    // Codex accounts beside the Claude ones.
+    // Pinned at 2.1.1 (the guide's "since 2.1" chip) and NOT higher, on
+    // purpose. Nothing opens the tour by itself after an update any more:
+    // onboarding's settle stamps lastTrainingVersion (onboarding/settle.ts),
+    // and App opens the walkthrough only from the Feature Guide's Feature
+    // tour, which shows every card. A sinceVersion above the 2.1.1 that
+    // existing profiles already hold would show them nothing; it would only
+    // make shouldShowTraining() true, and trainingDue holds the boot chain
+    // (utils/bootGates.ts) -- resume prompt included -- until a harness run
+    // stamps it again, which a same-version launch never does.
+    id: 'provider-accounts',
+    title: 'Providers and Accounts',
+    sinceVersion: '2.1.1',
+    section: 'getting-started',
+    summary:
+      'One place for both assistants. Settings, Accounts starts with a Providers card: turn Claude Code and Codex on or off, and see whether each is installed and which version. Below it are your Claude accounts, then your Codex accounts, each Codex account with its own sign-in.',
+    highlights: [
+      'Turn **Claude Code** or **Codex** on or off; at least one stays on, and a provider cannot be turned off while anything of it is running',
+      'A provider that is off starts nowhere: its configs say why, and a tab restored for it reads **Not started** until you turn it back on and Restart the tab',
+      'Codex missing or too old? Its row shows the install or update commands to copy, then **Check again**',
+      '**Add Codex account**: sign in with ChatGPT, a device code or an API key, then give it a name, or say it is the same person as an account you already have',
+      'Each Codex account has a menu: **Make default**, **Make reviewer**, **Sign in again**, **Check sign-in**, **Sign out**, **Make inactive**, **Archive**',
+      'A row reading **Needs attention** is now signed in a different way than before (say, an API key where it had a ChatGPT sign-in); **This is still my account** checks it again and confirms it',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Settings -> Accounts' },
+      { label: 'Add a Codex account', value: 'Settings, Accounts -> Add Codex account' },
+      { label: 'First run', value: 'A fresh install asks: Which assistants will you use?' },
+    ],
+    proTip:
+      'Only use one assistant? Switch the other off on the Providers card: its configs and tabs then say so plainly instead of failing to start, and you can switch it back on at any time.',
+    bullets: [
+      '**Providers card** -- Claude Code and Codex on or off, installed or not, and which version',
+      'Your **Claude accounts** and **Codex accounts** on one page',
+      'A provider that is off **starts nowhere**, and says why',
+      '**Add Codex account** with ChatGPT, a device code or an API key',
+    ],
+    // No capture of the Accounts page exists yet, and step-security.jpg shows
+    // the retired Settings rail, so the neutral shell shot stands in. (Future
+    // capture: step-provider-accounts.jpg / Settings, Accounts.)
+    screenshotFilename: 'v2-shell-hero.jpg',
   },
   {
     // Shipped in 2.0 as "Ask Command Center" and renamed to "Ask Conductor",
@@ -163,28 +210,67 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.0',
     section: 'integrations',
     summary:
-      "OpenAI's Codex CLI sits alongside Claude in the New Session dialog -- pick the provider per session. gpt-5 series models, runtime permissions presets, the resume picker, and tokenomics segmenting all wired in.",
+      "OpenAI's Codex CLI runs beside Claude, or on its own. A saved config picks Codex and the Codex account it runs under; gpt-5 series models, permission presets, the resume picker, and tokenomics segmenting are all wired in.",
     highlights: [
-      'Provider is chosen on the saved config -- Claude Code, Codex, or Terminal only (Codex is local-only; it cannot run over SSH)',
-      'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2',
-      'Permission presets, model and reasoning effort are set on the Codex config (the session toolbar cluster is Claude-only)',
-      'Resume picker mirrors the Claude flow -- recent rollouts surfaced before spawn',
-      '**Tokenomics** segments Codex spend automatically alongside Claude, per-day and per-model',
+      'In this release, Codex sessions and Codex reviews run on this computer only, not over SSH -- the SSH options are off for Codex, and the dialog says why',
+      'Each Codex account has its **own sign-in folder**. New sessions use the default account. Code reviews use the reviewer default, or the default if none is set',
+      'The Codex sign-in already on this computer can be used too, but it must be confirmed at each launch, and cannot run reviews',
+      'Sign in with ChatGPT, a device code or an API key -- the key goes to Codex, and this app never stores it',
+      'The session header has a **Restart** menu: Restart for a new conversation, or **Restart and pick a conversation** to resume a recent one',
+      'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2; permission presets, model and reasoning effort are set on the Codex config',
+      '**Tokenomics** segments Codex spend automatically alongside Claude, per-day and per-model; the Logs page does not index Codex conversations yet',
     ],
     howToTrigger: [
-      { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex' },
-      { label: 'Auth', value: 'Settings -> Codex -> Login' },
-      { label: 'Model', value: 'Edit the Codex config -> model' },
+      { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex -> account' },
+      { label: 'Auth', value: 'Settings, Accounts: add a Codex account' },
+      { label: 'Reviewer', value: 'Settings, Accounts: account menu -> Make reviewer' },
+      { label: 'Introduction', value: 'Show the Codex introduction, on this card once you have said you use Codex and a Codex account you added is signed in' },
     ],
     proTip:
-      'Login once via Settings -> Codex; subsequent Codex sessions reuse the same auth. Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
+      'Sign in once per Codex account in Settings, Accounts; each Codex session runs under the account its config picks (the default unless you choose another). Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
     bullets: [
-      '**Provider per session** -- Claude OR Codex, picked at New Session time',
-      '**gpt-5 series** model dropdown plus **permissions presets** in the toolbar',
-      '**Resume picker** for recent Codex rollouts, same flow as Claude',
+      '**Provider per config** -- Claude Code, Codex or Terminal only, with the Codex account it runs under',
+      '**Several Codex accounts**, each with its own sign-in, a default and a reviewer',
+      '**gpt-5 series** model dropdown plus **permission presets** on the Codex config',
+      '**Restart and pick a conversation** to resume a recent Codex conversation',
       '**Tokenomics** segments Codex spend automatically alongside Claude',
     ],
-    screenshotFilename: 'step-codex.jpg',
+    screenshotFilename: 'v2-shell-hero.jpg',
+  },
+  {
+    // WP2 (2.1.1): code review in both directions, and the Built-in Tools
+    // switch for each. Pinned at 2.1.1 for the reason given on the Providers
+    // and Accounts card above.
+    id: 'code-review',
+    title: 'Code Review, Both Ways',
+    sinceVersion: '2.1.1',
+    section: 'integrations',
+    summary:
+      "Ask the other assistant for a second opinion. A Claude session can ask for a Codex review, and a Codex session can ask for a Claude review. Each review is a separate, one-off, read-only reviewer in the asking session's project, on your reviewer account; it never uses one of your open sessions.",
+    highlights: [
+      'From a Claude session, ask for a **Codex review**; from a Codex session, ask for a **Claude review**',
+      'Reviews use the **reviewer default**, or the default account when none is set -- choose it with **Make reviewer** in Settings, Accounts',
+      'Each direction has **its own switch** in Settings, General, Built-in Tools, naming the account reviews will use and, when a review cannot run, why',
+      'A sign-in that must be confirmed at each launch cannot review, so the Codex sign-in already on this computer never does: add a Codex account for that',
+      'Offered only while a review could run, in local sessions only, and skipped when the working directory is missing or is your home folder',
+      'On macOS, Claude reviews use your normal Claude sign-in',
+    ],
+    howToTrigger: [
+      { label: 'Ask', value: 'In a session: "get a Codex review" or "get a Claude review"' },
+      { label: 'Switches', value: 'Settings, General -> Built-in Tools -> Code review' },
+      { label: 'Reviewer', value: 'Settings, Accounts -> Make reviewer' },
+    ],
+    proTip:
+      'Changes to the switches or to the reviewer account apply to sessions started after them, so restart a session to pick them up.',
+    bullets: [
+      '**Codex review** from Claude sessions, **Claude review** from Codex sessions',
+      'A separate **read-only** reviewer on your **reviewer account**',
+      'One **switch per direction** in Settings, General, Built-in Tools',
+    ],
+    // No dedicated capture of the Code review switches exists yet; the shell
+    // shot is the same neutral stand-in the Ask Conductor card uses. (Future
+    // capture: step-code-review.jpg / Settings, General, Built-in Tools.)
+    screenshotFilename: 'v2-shell-hero.jpg',
   },
   {
     id: 'vision',
@@ -194,7 +280,7 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Browser automation via a global MCP server -- every Claude session shares one Chrome instance. Take screenshots, navigate, click, type, and inspect pages without leaving the terminal. Works over SSH too via automatic reverse tunnels.',
     highlights: [
-      '18 browser-vision tools (one of four sub-tools on the Conductor MCP server) exposed to Claude',
+      '18 browser-vision tools (one of five sub-tools on the Conductor MCP server) exposed to Claude',
       'One global Chrome -- all sessions share state, so cookies + login persist',
       'Reverse tunnel auto-injected on SSH connect (-R <port>) -- remote sessions reach the local Conductor MCP server',
       'A dot on the Conductor MCP nav icon shows MCP server health: green = running, red = stopped',
@@ -209,7 +295,7 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       '**Browser automation** via a global MCP server -- all sessions share one browser',
       'Click **Conductor MCP** in the sidebar nav to see the tool server and its browser',
-      '17 vision tools available to Claude: **screenshot, navigate, click, type** and more',
+      '18 vision tools available to Claude: **screenshot, navigate, click, type** and more',
       'Works over **SSH** too -- reverse tunnels connect remote sessions automatically',
     ],
     screenshotFilename: 'step-vision.jpg',
@@ -533,6 +619,7 @@ export const trainingSteps: TrainingStep[] = [
       'Every preference you can set lives here, organised in a left rail. Sandboxed renderer + signed updates + zod-validated IPC keep the app safe; the visible knobs let you tune everything else.',
     highlights: [
       'General -- default working dir, machine name, update channel, security toggles',
+      'Accounts -- the Providers card (Claude Code and Codex on or off) and every Claude and Codex account',
       'Status Line -- toggle each element of the in-terminal status bar + font + size',
       'Shortcuts -- rebind every keyboard shortcut',
       'GitHub -- sign in (OAuth / PAT / gh CLI) and configure per-session integration',
@@ -551,7 +638,10 @@ export const trainingSteps: TrainingStep[] = [
       'Choose **Stable or Beta** update channel for app updates',
       'Customize **keyboard shortcuts**, terminal font size, and status line metrics',
     ],
-    screenshotFilename: 'step-security.jpg',
+    // step-security.jpg shows the old Settings rail, which still lists the
+    // Codex page this release retired, so the neutral shell shot stands in
+    // until a recapture.
+    screenshotFilename: 'v2-shell-hero.jpg',
   },
   {
     id: 'sentinel',
@@ -580,9 +670,12 @@ export const trainingSteps: TrainingStep[] = [
       'Proposes **registry fixes you apply yourself** -- nothing changes automatically',
       'Toggle it in **Settings → Sentinel**',
     ],
-    // No dedicated Sentinel capture exists yet; the Settings shot shows where
-    // it is enabled. (Future capture: step-sentinel.jpg / the Sentinel panel.)
-    screenshotFilename: 'step-security.jpg',
+    // No dedicated Sentinel capture exists yet. (Future capture:
+    // step-sentinel.jpg / the Sentinel panel.)
+    // step-security.jpg shows the old Settings rail, which still lists the
+    // Codex page this release retired, so the neutral shell shot stands in
+    // until a recapture.
+    screenshotFilename: 'v2-shell-hero.jpg',
   },
   {
     id: 'tips',

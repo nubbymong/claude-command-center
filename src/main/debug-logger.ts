@@ -305,6 +305,24 @@ export function closeDebugLogger(): void {
 // unrelated exception is still handled normally.
 let inUncaughtExceptionHandler = false
 
+// node-pty on Windows queues a resize() made before a terminal is ready and
+// runs the queue from its data socket's first 'data' event. When the
+// session's process has already exited by then (an SSH session whose
+// connection is refused straight away), the queued resize throws there,
+// outside every caller's try/catch (resizePty's included), and the rethrow
+// below ended the whole app. node-pty marks the terminal ready before it runs
+// the queue, so dropping the error only skips the rest of that exited
+// terminal's queued calls; later calls run at once. A queued kill skipped
+// this way leaves the terminal as it is after any exit on its own (the app
+// never kills a PTY once it has exited). Matched exactly: this message,
+// thrown from node-pty's own code (a stack frame under node-pty); anything
+// else with the same text still rethrows.
+const EXITED_PTY_RESIZE = 'Cannot resize a pty that has already exited'
+function isExitedPtyResize(err: unknown): boolean {
+  if (!(err instanceof Error) || err.message !== EXITED_PTY_RESIZE) return false
+  return typeof err.stack === 'string' && /[\\/]node-pty[\\/]/.test(err.stack)
+}
+
 // Capture unhandled errors
 export function installGlobalErrorHandlers(): void {
   // A handled stream 'error' event never becomes an uncaughtException, so
@@ -325,6 +343,14 @@ export function installGlobalErrorHandlers(): void {
       if (err.code === 'EPIPE' || err.code === 'EIO') {
         try {
           writeToLog(formatMessage('ERROR', 'Uncaught exception (suppressed):', err))
+        } catch { /* never let the handler throw */ }
+        return
+      }
+      // A resize node-pty queued for a terminal whose process exited before it
+      // was ready (see isExitedPtyResize): not fatal, logged to the file only.
+      if (isExitedPtyResize(err)) {
+        try {
+          writeToLog(formatMessage('ERROR', 'Uncaught exception (suppressed, resize of an exited pty):', err))
         } catch { /* never let the handler throw */ }
         return
       }

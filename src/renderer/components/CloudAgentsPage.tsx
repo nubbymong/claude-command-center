@@ -9,6 +9,7 @@ import { MetricChip } from './ui/MetricChip'
 import NewAgentDialog from './NewAgentDialog'
 import PageFrame from './PageFrame'
 import { AgentHubExplainer, AgentHubExamples } from './agent-hub/AgentHubOnboarding'
+import { CLAUDE_OFF, useClaudeOff } from '../lib/claudeOff'
 
 const STATUS_COLORS: Record<CloudAgentStatus, string> = {
   running:   'var(--status-info)',
@@ -89,6 +90,8 @@ function ContextMenu({ x, y, agent, onClose }: {
   const cancel = useCloudAgentStore(s => s.cancel)
   const remove = useCloudAgentStore(s => s.remove)
   const retry = useCloudAgentStore(s => s.retry)
+  // A retry is a new Claude Code run: off while Claude Code is switched off.
+  const claudeOff = useClaudeOff()
   const menuRef = useRef<HTMLDivElement>(null)
   const isRunning = agent.status === 'running' || agent.status === 'pending'
 
@@ -100,7 +103,7 @@ function ContextMenu({ x, y, agent, onClose }: {
     return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
 
-  const menuItems: Array<{ label: string; icon: string; action: () => void; danger?: boolean; disabled?: boolean }> = []
+  const menuItems: Array<{ label: string; icon: string; action: () => void; danger?: boolean; disabled?: boolean; title?: string }> = []
 
   if (isRunning) {
     menuItems.push({
@@ -116,6 +119,8 @@ function ContextMenu({ x, y, agent, onClose }: {
       label: 'Retry',
       icon: String.fromCodePoint(0x21BB),
       action: () => { retry(agent.id); onClose() },
+      disabled: claudeOff,
+      title: claudeOff ? CLAUDE_OFF : undefined,
     })
   }
 
@@ -158,6 +163,7 @@ function ContextMenu({ x, y, agent, onClose }: {
           key={i}
           onClick={item.action}
           disabled={item.disabled}
+          title={item.title}
           className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors ${
             item.disabled
               ? 'text-[var(--text-muted)] cursor-not-allowed'
@@ -440,6 +446,7 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
   const cancel = useCloudAgentStore(s => s.cancel)
   const remove = useCloudAgentStore(s => s.remove)
   const retry = useCloudAgentStore(s => s.retry)
+  const claudeOff = useClaudeOff()
   const isRunning = agent.status === 'running' || agent.status === 'pending'
 
   return (
@@ -465,7 +472,10 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
               <>
                 <button
                   onClick={() => retry(agent.id)}
-                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-sapphire/10 text-sapphire hover:bg-sapphire/20 transition-colors border border-sapphire/20"
+                  disabled={claudeOff}
+                  title={claudeOff ? CLAUDE_OFF : undefined}
+                  data-testid="cloud-agent-retry"
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-sapphire/10 text-sapphire hover:bg-sapphire/20 transition-colors border border-sapphire/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Retry
                 </button>

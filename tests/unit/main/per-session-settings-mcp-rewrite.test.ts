@@ -23,7 +23,10 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
   // GHSA-q83v: the writer now embeds HMAC(secret, sessionId), not the raw
   // secret. The stub is a deterministic, session-specific stand-in so the
   // assertions can prove the URL carries THIS session's token.
-  mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
+  // A site that minted directly (skipping the provider record) gets a token no check expects.
+  mcpSessionToken: () => 'tok-minted-directly',
+  // Only the right provider gets the expected token: a wrong one fails the token checks.
+  issueMcpSessionToken: (sessionId: string, provider: string) => ({ claude: `tok-${sessionId}` } as Record<string, string>)[provider] ?? 'tok-wrong-provider',
 }))
 
 const {

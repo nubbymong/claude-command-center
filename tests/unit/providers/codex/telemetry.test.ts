@@ -4,16 +4,8 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { mkdirSync } from 'fs'
 
-// Mock getCodexHome before importing the module under test
-vi.mock('../../../../src/main/providers/codex/auth', () => ({
-  getCodexHome: vi.fn(() => _mockCodexHome),
-}))
-
-let _mockCodexHome = ''
-
 import { parseCodexRollout, mapTokenCountToStatusline, contextTokensInWindow, watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
 import type { TokenCountEvent } from '../../../../src/main/providers/codex/telemetry'
-import { getCodexHome } from '../../../../src/main/providers/codex/auth'
 
 const FIXTURE = readFileSync(join(__dirname, '../../../fixtures/codex/rollout-sample.jsonl'), 'utf-8')
 
@@ -171,14 +163,11 @@ describe('codex rollout parsing', () => {
 describe('watchAndClaimRollout', () => {
   afterEach(() => {
     vi.restoreAllMocks()
-    _mockCodexHome = ''
   })
 
   it('claims a rollout file matching cwd and timestamp window', async () => {
     // Set up a tmp dir as the mock codex home
     const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-'))
-    _mockCodexHome = tmpBase
-    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
 
     // Create the sessions/YYYY/MM/DD directory and write a rollout file
     const today = new Date()
@@ -208,7 +197,7 @@ describe('watchAndClaimRollout', () => {
     writeFileSync(rolloutPath, sessionMeta + '\n', 'utf-8')
 
     const updates: unknown[] = []
-    const src = watchAndClaimRollout('sess-1', '/test/cwd', spawnTs, (d) => updates.push(d))
+    const src = watchAndClaimRollout('sess-1', '/test/cwd', spawnTs, (d) => updates.push(d), join(tmpBase, 'sessions'))
 
     // Poll for up to 1s for the claim to happen
     await new Promise<void>((resolve) => {
@@ -231,8 +220,6 @@ describe('watchAndClaimRollout', () => {
 
   it('does NOT claim a rollout whose timestamp is older than spawnTimestamp - 5s', async () => {
     const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-stale-'))
-    _mockCodexHome = tmpBase
-    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
 
     const today = new Date()
     const dateDir = join(
@@ -261,7 +248,7 @@ describe('watchAndClaimRollout', () => {
     writeFileSync(rolloutPath, sessionMeta + '\n', 'utf-8')
 
     const updates: unknown[] = []
-    const src = watchAndClaimRollout('sess-stale', '/test/cwd', spawnTs, (d) => updates.push(d))
+    const src = watchAndClaimRollout('sess-stale', '/test/cwd', spawnTs, (d) => updates.push(d), join(tmpBase, 'sessions'))
 
     // Wait 600ms -- more than 2 poll cycles
     await new Promise((r) => setTimeout(r, 600))
@@ -275,8 +262,6 @@ describe('watchAndClaimRollout', () => {
     // Verifies that stop() tears down cleanly: tail polling stops (no further
     // onUpdate calls) and the claimed path is released for re-claim.
     const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-claimed-'))
-    _mockCodexHome = tmpBase
-    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
 
     const today = new Date()
     const dateDir = join(
@@ -304,14 +289,14 @@ describe('watchAndClaimRollout', () => {
     writeFileSync(rolloutPath, sessionMeta + '\n', 'utf-8')
 
     // First source claims it
-    const src1 = watchAndClaimRollout('sess-claim-1', '/reclaim/cwd', spawnTs, () => {})
+    const src1 = watchAndClaimRollout('sess-claim-1', '/reclaim/cwd', spawnTs, () => {}, join(tmpBase, 'sessions'))
     // Wait for claim poll
     await new Promise((r) => setTimeout(r, 600))
     src1.stop()
 
     // After stop(), the path is removed from claimed -- a second source can claim it
     const updates: unknown[] = []
-    const src2 = watchAndClaimRollout('sess-claim-2', '/reclaim/cwd', Date.now(), (d) => updates.push(d))
+    const src2 = watchAndClaimRollout('sess-claim-2', '/reclaim/cwd', Date.now(), (d) => updates.push(d), join(tmpBase, 'sessions'))
 
     // Wait for src2 to claim the file (polling interval is 250ms; 500ms is safe)
     await new Promise((r) => setTimeout(r, 500))
@@ -347,8 +332,6 @@ describe('watchAndClaimRollout', () => {
     vi.useFakeTimers()
 
     const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-slowcold-'))
-    _mockCodexHome = tmpBase
-    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
 
     const today = new Date()
     const dateDir = join(
@@ -362,7 +345,7 @@ describe('watchAndClaimRollout', () => {
     const spawnTs = Date.now()
     // Start the watcher BEFORE the rollout file exists. dateDir exists but is empty.
     const updates: import('../../../../src/shared/types').StatuslineData[] = []
-    const src = watchAndClaimRollout('sess-slowcold', '/slowcold/cwd', spawnTs, (d) => updates.push(d))
+    const src = watchAndClaimRollout('sess-slowcold', '/slowcold/cwd', spawnTs, (d) => updates.push(d), join(tmpBase, 'sessions'))
 
     // Advance 12 seconds. The 10s warn fires (silently in test); no claim yet.
     await vi.advanceTimersByTimeAsync(12_000)
@@ -414,8 +397,6 @@ describe('watchAndClaimRollout', () => {
     vi.useFakeTimers()
 
     const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-eph-'))
-    _mockCodexHome = tmpBase
-    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
 
     const today = new Date()
     const dateDir = join(
@@ -431,7 +412,7 @@ describe('watchAndClaimRollout', () => {
 
     const spawnTs = Date.now()
     const updates: unknown[] = []
-    const src = watchAndClaimRollout('sess-eph', '/eph/cwd', spawnTs, (d) => updates.push(d))
+    const src = watchAndClaimRollout('sess-eph', '/eph/cwd', spawnTs, (d) => updates.push(d), join(tmpBase, 'sessions'))
 
     // The give-up message text -- distinct from the 10s "still polling" warning.
     const isGiveUpCall = (c: unknown[]) =>
@@ -458,8 +439,6 @@ describe('watchAndClaimRollout', () => {
     vi.useFakeTimers()
 
     const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-polltail-'))
-    _mockCodexHome = tmpBase
-    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
 
     const today = new Date()
     const dateDir = join(
@@ -493,7 +472,7 @@ describe('watchAndClaimRollout', () => {
     writeFileSync(rolloutPath, sessionMeta + '\n' + taskStarted + '\n', 'utf-8')
 
     const updates: import('../../../../src/shared/types').StatuslineData[] = []
-    const src = watchAndClaimRollout('sess-poll', '/poll/cwd', spawnTs, (d) => updates.push(d))
+    const src = watchAndClaimRollout('sess-poll', '/poll/cwd', spawnTs, (d) => updates.push(d), join(tmpBase, 'sessions'))
 
     // Advance past claim-poll (250ms) to trigger claim + initial parseAndEmit.
     // Initial parse finds no token_count -- no update yet.
@@ -531,16 +510,88 @@ describe('watchAndClaimRollout', () => {
   })
 })
 
+describe('watchAndClaimRollout in a realm (WP2 plan A13)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('claims only from the sessions folder it is given: a matching rollout in the ambient home is never read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false })
+    const ambient = mkdtempSync(join(tmpdir(), 'ccc-test-codex-ambient-'))
+    const realmSessions = join(mkdtempSync(join(tmpdir(), 'ccc-test-codex-realm-')), 'sessions')
+    const today = new Date()
+    const ymd = [String(today.getUTCFullYear()), String(today.getUTCMonth() + 1).padStart(2, '0'), String(today.getUTCDate()).padStart(2, '0')]
+    const spawnTs = Date.now()
+    const ts = new Date(spawnTs + 100).toISOString()
+    const rollout = (id: string, input: number) => [
+      JSON.stringify({ timestamp: ts, type: 'session_meta', payload: { id, timestamp: ts, cwd: '/realm/cwd', model: 'gpt-5.5', cli_version: '0.155.1' } }),
+      JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type: 'task_started', model_context_window: 200000 } }),
+      JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: input + 1 }, last_token_usage: null, model_context_window: 200000 }, rate_limits: null } }),
+    ].join('\n') + '\n'
+    // The ambient home holds a rollout that matches this session's cwd and window.
+    const ambientDay = join(ambient, 'sessions', ...ymd)
+    mkdirSync(ambientDay, { recursive: true })
+    writeFileSync(join(ambientDay, 'rollout-ambient.jsonl'), rollout('ambient-1', 9999), 'utf-8')
+
+    const updates: import('../../../../src/shared/types').StatuslineData[] = []
+    const src = watchAndClaimRollout('sess-realm', '/realm/cwd', spawnTs, (d) => updates.push(d), realmSessions)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(updates).toHaveLength(0)
+
+    const realmDay = join(realmSessions, ...ymd)
+    mkdirSync(realmDay, { recursive: true })
+    writeFileSync(join(realmDay, 'rollout-realm.jsonl'), rollout('realm-1', 1500), 'utf-8')
+    await vi.advanceTimersByTimeAsync(1200)
+    src.stop()
+
+    expect(updates.length).toBeGreaterThan(0)
+    expect(updates.map((u) => u.inputTokens)).not.toContain(9999)
+    expect(updates[updates.length - 1].inputTokens).toBe(1500)
+  })
+
+  it('WP2 commit 6g: with no sessions folder nothing is watched; there is no fallback to the ambient home (CODEX_HOME)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false })
+    const ambient = mkdtempSync(join(tmpdir(), 'ccc-test-codex-ambient-'))
+    const saved = process.env.CODEX_HOME
+    process.env.CODEX_HOME = ambient
+    try {
+      const today = new Date()
+      const ymd = [String(today.getUTCFullYear()), String(today.getUTCMonth() + 1).padStart(2, '0'), String(today.getUTCDate()).padStart(2, '0')]
+      const spawnTs = Date.now()
+      const ts = new Date(spawnTs + 100).toISOString()
+      // The ambient home, under both of its old names, holds a rollout that
+      // matches this session's cwd and window.
+      for (const base of [ambient, join(ambient, '.codex')]) {
+        const day = join(base, 'sessions', ...ymd)
+        mkdirSync(day, { recursive: true })
+        writeFileSync(join(day, 'rollout-ambient.jsonl'), [
+          JSON.stringify({ timestamp: ts, type: 'session_meta', payload: { id: 'ambient-1', timestamp: ts, cwd: '/none/cwd', model: 'gpt-5.5', cli_version: '0.155.1' } }),
+          JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 9999, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: 10000 }, last_token_usage: null, model_context_window: 200000 }, rate_limits: null } }),
+        ].join('\n') + '\n', 'utf-8')
+      }
+      const watch = watchAndClaimRollout as unknown as (...a: unknown[]) => { stop(): void }
+      for (const folder of [undefined, '']) {
+        const updates: unknown[] = []
+        const src = watch('sess-none', '/none/cwd', spawnTs, (d: unknown) => updates.push(d), folder)
+        await vi.advanceTimersByTimeAsync(1500)
+        src.stop()
+        expect(updates, String(folder)).toHaveLength(0)
+      }
+    } finally {
+      if (saved === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = saved
+    }
+  })
+})
+
 describe('parseAndEmit truncation guard', () => {
   afterEach(() => {
     vi.restoreAllMocks()
-    _mockCodexHome = ''
   })
 
   it('re-parses from offset 0 when the rollout file is replaced with smaller content', async () => {
     const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-trunc-'))
-    _mockCodexHome = tmpBase
-    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
 
     const today = new Date()
     const dateDir = join(
@@ -584,7 +635,7 @@ describe('parseAndEmit truncation guard', () => {
     writeFileSync(rolloutPath, sessionMeta + '\n' + tokenCountLine + '\n', 'utf-8')
 
     const updates: import('../../../../src/shared/types').StatuslineData[] = []
-    const src = watchAndClaimRollout('sess-trunc', '/trunc/cwd', spawnTs, (d) => updates.push(d))
+    const src = watchAndClaimRollout('sess-trunc', '/trunc/cwd', spawnTs, (d) => updates.push(d), join(tmpBase, 'sessions'))
 
     // Wait for claim + initial parse
     await new Promise((r) => setTimeout(r, 400))

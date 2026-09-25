@@ -6,11 +6,12 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/id
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
 import {
-  CODEX_OFF_LAUNCH_REASON,
   alreadyRunningLaunchCopy,
   cannotSelectCopy,
   flattenPopoverCopy,
   isMultiSpawnLaunchBlocked,
+  launchBlockedReason,
+  useLaunchGateSettings,
 } from '../../hooks/useLaunchConfig'
 import MultiSpawnControl from './MultiSpawnControl'
 import { quickStartConfigs, resolveQuickStartCollapsed, runningCountLabel } from './sessionsPanelState'
@@ -63,7 +64,9 @@ export default function QuickStartPanel({
   const theme = useResolvedTheme()
   const collapsed = resolveQuickStartCollapsed(useSettingsStore((s) => s.settings.quickStartCollapsed))
   const updateSettings = useSettingsStore((s) => s.updateSettings)
-  const codexOff = useSettingsStore((s) => s.settings.codexEnabled === false)
+  // Both providers' switches, subscribed: a pin whose provider is off cannot
+  // start (the one rule, isConfigLaunchBlocked, worded per provider).
+  const launchGate = useLaunchGateSettings()
   // SSH Persistent (resume liveness): amber re-attachable counts, computed per
   // item below from the registry + liveness map (subscribed once here).
   const detachedEntries = useDetachedRemotesStore((s) => s.entries)
@@ -128,7 +131,8 @@ export default function QuickStartPanel({
       {!collapsed && items.map((config) => {
         const chipColour = resolveIdentityColor(config.identityColorKey ?? bucketLegacyColorToKey(config.color), theme)
         const typeKind = config.shellOnly ? 'shell' : (config.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'
-        const blocked = codexOff && config.provider === 'codex'
+        const blockedReason = launchBlockedReason(config, launchGate)
+        const blocked = blockedReason !== undefined
         const liveCount = running.get(config.id) ?? 0
         // Allow Multi Spawn (phase 4): the SAME rule the config rows and the
         // launch action use — running + not Multi Spawn = one at a time.
@@ -224,7 +228,7 @@ export default function QuickStartPanel({
                 onLaunch={(n) => onLaunchMany?.(config, n)}
                 onCountChange={(n) => onSpawnCountChange?.(config, n)}
                 disabled={blocked}
-                disabledReason={blocked ? CODEX_OFF_LAUNCH_REASON : undefined}
+                disabledReason={blockedReason}
                 testId="quick-start-multi-spawn"
               />
             ) : (
@@ -245,14 +249,14 @@ export default function QuickStartPanel({
                 className={
                   // #462: no solid brand fill — the subtle tinted language the
                   // command bar's + Add uses, sized down so the row stays short.
-                  // The Multi-Spawn refusal reuses the codex-off blocked recipe
+                  // The Multi-Spawn refusal reuses the provider-off blocked recipe
                   // so a refused start looks the same wherever it comes from.
                   blocked || spawnBlocked
                     ? 'h-5 px-2 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0 border border-[var(--border-subtle)] bg-[var(--surface-raised)] text-[var(--text-muted)] cursor-not-allowed'
                     : 'h-5 px-2 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0 border border-[color-mix(in_srgb,var(--brand)_50%,transparent)] bg-[color-mix(in_srgb,var(--brand)_15%,transparent)] text-[var(--brand)] hover:bg-[color-mix(in_srgb,var(--brand)_25%,transparent)] transition-colors focus-ring'
                 }
-                title={blocked ? CODEX_OFF_LAUNCH_REASON : spawnBlocked ? flattenPopoverCopy(launchCopy) : `Start ${config.label}`}
-                aria-label={blocked ? CODEX_OFF_LAUNCH_REASON : spawnBlocked ? flattenPopoverCopy(launchCopy) : `Start ${config.label}`}
+                title={blockedReason ?? (spawnBlocked ? flattenPopoverCopy(launchCopy) : `Start ${config.label}`)}
+                aria-label={blockedReason ?? (spawnBlocked ? flattenPopoverCopy(launchCopy) : `Start ${config.label}`)}
               >
                 {/* Owner call 2026-08-26: glyph only — the word "Start" on every
                     pinned row read as clutter. The title/aria keep the verb. */}

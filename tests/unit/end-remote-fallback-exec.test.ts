@@ -74,7 +74,7 @@ describe('endSshRemote — a fallback target reaches the host', () => {
   it('the tmux session it kills is ccc-<sessionId>, computed from the input', async () => {
     const sid = 'a1b2c3d4e5f6a1b2c3d4e5f6'
     await endSshRemote(sid, KEY_TARGET)
-    expect(remoteCommand()).toContain(`kill-session -t =ccc-${sid}`)
+    expect(remoteCommand()).toContain(`kill-session -t '=ccc-${sid}'`)
     // ...and the sidecars for that same id, nothing wider.
     expect(remoteCommand()).toContain(`settings-${sid}.json`)
   })
@@ -93,8 +93,8 @@ describe('endSshRemote — a fallback target reaches the host', () => {
     const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
     expect(operands.length).toBeGreaterThan(0)
     for (const t of operands) {
-      expect(t).toBe('=ccc-a__tmux_kill-server___')
-      expect(t).toMatch(/^=ccc-[A-Za-z0-9_-]+$/)
+      expect(t).toBe("'=ccc-a__tmux_kill-server___'")
+      expect(t).toMatch(/^'=ccc-[A-Za-z0-9_-]+'$/)
     }
     // The injected command never becomes a command of its own.
     expect(cmd).not.toContain('; tmux kill-server')
@@ -115,7 +115,7 @@ describe('endSshRemote — a fallback target reaches the host', () => {
     const cmd = remoteCommand()
     const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
     expect(operands.length).toBeGreaterThan(0)
-    for (const t of operands) expect(t).toBe('=ccc-a')
+    for (const t of operands) expect(t).toBe("'=ccc-a'")
     expect(cmd).not.toMatch(/kill-session -t ccc-a(\s|$)/)
   })
 

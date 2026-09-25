@@ -36,6 +36,8 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
   }
   return {
     DEFAULT_STATUS_LINE,
+    // Read at load by onboarding/hello-codex.ts (SettingsPage imports it).
+    DEFAULT_CONDUCTOR_TOOLS: { vision: true, codexReview: true, claudeReview: true, hostTransfer: true, canvas: true },
     useSettingsStore: (selector: any) =>
       selector({
         settings: { statusLine: DEFAULT_STATUS_LINE },

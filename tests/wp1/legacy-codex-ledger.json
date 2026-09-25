@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "bde1e9bb23f99efb172ed6dcc5e221796e63d251f41a8a7e61e68a24a641ffa7",
-  "manifestHead": "4f8afcc896c5817a4a098d2c8bc4094abfbe4c03",
+  "manifestPathDigest": "7842030a98406f46eddf0b3979ebbdd34f8b7138eca477c205b6ee16ba002840",
+  "manifestHead": "c55ba0c72fbf21e27205b8341cee2f599b1ac3b3",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -13,29 +13,99 @@
   },
   "claudeTestChanges": [
     {
+      "path": "tests/unit/claude-cli-auth-read.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.38: WP1 (#619, the project gate for managed Claude launches) added the cases \"a REFUSED project gate never launches the CLI\": the probe is not spawned and the read falls back to the credential file, it is a managed launch (ambient authority stripped, no host-managed flag), and the gate runs for the directory it inherits; the existing cases are kept; tests/unit/claude-cli-auth-read.test.ts"
+    },
+    {
+      "path": "tests/unit/claude-headless-profile-consumer.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.38: WP1 (#619) added the project-gate cases: the first run for a directory defers behind the gate and holds the profile across it, and a refused managed launch resolves { code: 1 } with the refusal on stderr, spawning nothing and releasing the hold, on the direct and the deferred path; the existing cases are kept; tests/unit/claude-headless-profile-consumer.test.ts"
+    },
+    {
+      "path": "tests/unit/cloud-agent-manager.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.38: WP1 (#619) added one case, a dispatch whose project settings could redirect the account is refused by the project gate; WP2 (accec3c2, main refuses a provider that is off) changed no case name; the existing cases are kept; tests/unit/cloud-agent-manager.test.ts"
+    },
+    {
+      "path": "tests/unit/legacy-version-security.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.38: WP1 (#619) added legacyCliPin, the enabled and valid legacy CLI pin with whether it is installed, which the PTY and cloud-agent launch paths read; the existing cases are kept; tests/unit/legacy-version-security.test.ts"
+    },
+    {
+      "path": "tests/unit/main/debug-logger-epipe-loop.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the WP2 fix for an SSH session refused at once on Windows (a resize node-pty queued for a terminal whose process had already exited threw outside every caller and ended the app) added three cases: that error, thrown from node-pty, is written to the log file only and not rethrown; the same message without a node-pty stack frame still rethrows; an ordinary error, even one from node-pty, still rethrows; the existing cases are kept unchanged, 9 baseline cases to 12; tests/unit/main/debug-logger-epipe-loop.test.ts"
+    },
+    {
+      "path": "tests/unit/main/end-remote-detached-fallback.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the WP2 T24 fix (End says when Claude may still be running in a rootful container) renamed its pty-manager mock to endSshRemoteDetailed, the function the ssh:endRemote handler now calls (every existing assertion reads the same mock under the new name), and added four cases in a new group: the handler resolves with the End result, passes an ordinary outcome through, still refuses an invalid payload before End runs, and calls End synchronously, before it yields; 21 baseline cases to 25; tests/unit/main/end-remote-detached-fallback.test.ts"
+    },
+    {
+      "path": "tests/unit/profile-consumers.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.16: WP2 commit 5b (bb0b7ab9) added holdProfileForRun, the hold a Claude review takes on its profile: held at once with nothing in flight, held while a refresh is waited out so no new rotation starts, its bound counted from after the wait, and released at once on a cancel during the wait; the existing cases are kept; tests/unit/profile-consumers.test.ts"
+    },
+    {
+      "path": "tests/unit/providers/claude/ssh-shim.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.57: WP2 (fe23694c, each session's MCP credential recorded with the provider it is issued to, replacing the retired source query parameter) added one case, the session's own token baked into the Windows remote MCP URL; the WP2 final fixes changed assertions (the single-quoted tmux target) but no case name; the WP2 T24 fix changed one assertion, the rootless container kill pin, from bash -c to sh -c, added one comment and edited one, and changed no case name; the existing cases are kept; tests/unit/providers/claude/ssh-shim.test.ts"
+    },
+    {
+      "path": "tests/unit/pty-shell-only-profile-hold.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.16: WP1 (#619) renamed three cases for the project gate a managed spawn now waits on: a profile-pinned shell reads as in use from the moment it is asked for, a bare shell still spawns synchronously, and a spawn that throws on the deferred re-entry leaves no hold; tests/unit/pty-shell-only-profile-hold.test.ts"
+    },
+    {
       "path": "tests/unit/renderer/accounts-panel.test.tsx",
       "disposition": "replace",
-      "evidence": "WP1.39/WP1.58: Accounts panel becomes the neutral surface; cases move to tests/wp1/accounts-surface.test.tsx"
+      "evidence": "WP1.39/WP1.58: the Claude profile panel was not replaced: the one Accounts surface renders it as its Claude section, so its cases stay in tests/unit/renderer/accounts-panel.test.tsx with every base case kept (WP1 added the per-account isolation notice case), and the surface around it, the Claude reviewer line, badges and Make reviewer included, is covered by tests/unit/renderer/accounts-surface.test.tsx"
     },
     {
-      "path": "tests/unit/renderer/account-profiles-store.test.ts",
+      "path": "tests/unit/renderer/ask-conductor-launch.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.58: store adapted to the neutral identity/account model; cases carried into tests/wp1/provider-store.test.ts"
+      "evidence": "WP1.2: WP2 commit 6e review fix (ca441e86) added the cases for Claude Code switched off: Ask Conductor reads the saved switch, starts, stages and types into nothing, and launches again once Claude Code is back on; the existing cases are kept; tests/unit/renderer/ask-conductor-launch.test.ts"
     },
     {
-      "path": "tests/unit/renderer/account-profiles-store-create.test.ts",
+      "path": "tests/unit/renderer/bottom-bar.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.58: as account-profiles-store.test.ts; tests/wp1/provider-store.test.ts"
+      "evidence": "WP1.2: WP2 commit 6e review fix (ca441e86) added one case: with Claude Code off the bottom bar shows no Claude CLI indicator and never asks for the CLI; the existing cases are kept; tests/unit/renderer/bottom-bar.test.ts"
     },
     {
-      "path": "tests/unit/renderer/setup-cli-hard-stop.test.tsx",
+      "path": "tests/unit/renderer/close-session-batch.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.19: setup hard-stop becomes per-provider; cases in tests/wp1/setup-surface.test.tsx"
+      "evidence": "WP1.33 mapping, not a WP1 change: the WP2 T24 fix makes a bulk close run a container session's End before its local kill (endContainerSessionRemote), so the first case was renamed to 'ends a container remote, kills the PTY, forgets the browser profile, then drops the record -- in that order, once per id', every order assertion now starts with that step, and one case was added (the container branch gets the session record, or nothing for an id the store no longer has); 2 baseline cases to 3; tests/unit/renderer/close-session-batch.test.ts"
     },
     {
-      "path": "tests/unit/main/account-profiles-set-active.test.ts",
+      "path": "tests/unit/renderer/sidebar-dock-tips.test.tsx",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.15: lifecycle moves to the neutral account lifecycle; cases in tests/wp1/account-lifecycle.test.ts"
+      "evidence": "WP1.2: WP2 commit 6e review fix (ca441e86) added the cases for the sidebar dock's Ask row with Claude Code off (says why, opens nothing, can still be hidden, live again once turned back on); the existing cases are kept; tests/unit/renderer/sidebar-dock-tips.test.tsx"
+    },
+    {
+      "path": "tests/unit/renderer/ssh-flow-overlay.test.tsx",
+      "disposition": "replace",
+      "evidence": "WP1.60: WP2 commit 6e review fix (ca441e86) added the cases for Claude Code off (each Launch Claude button disabled with the reason, the post-connect command and Skip still work), and the provider-off enforcement (accec3c2) added the cases for a launch main refuses (it says why and the button is live again); the existing cases are kept; tests/unit/renderer/ssh-flow-overlay.test.tsx"
+    },
+    {
+      "path": "tests/unit/renderer/tip-card-e5.test.tsx",
+      "disposition": "replace",
+      "evidence": "WP1.2: WP2 commit 6e review fix (ca441e86) added one case: the card's Discuss is disabled with the reason while Claude Code is off; the existing cases are kept; tests/unit/renderer/tip-card-e5.test.tsx"
+    },
+    {
+      "path": "tests/unit/renderer/toggle-switch.test.tsx",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping: the focus case was renamed and now asserts the strong keyboard focus ring (a 2px full-strength ring set off from the track) on every track state, after the VM capture at 38cbc9d7 found the 1px 50% ring invisible on the blue \"on\" track (WP2 final fixes); the other cases are kept; tests/unit/renderer/toggle-switch.test.tsx"
+    },
+    {
+      "path": "tests/unit/ssh-tmux.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: #618 (the tmux wheel-scroll fix, merged to beta after the WP1 baseline) added the wheel-binding, launch-line-limit, key-table and copy-mode cases; the WP2 final fixes changed assertions (the single-quoted tmux target) but no case name; tests/unit/ssh-tmux.test.ts"
+    },
+    {
+      "path": "tests/unit/training-steps.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.36: the WP2 guidance commit (5a3e0278) added the Providers and Accounts and the Code Review, Both Ways cards, so two case names changed (\"has exactly 23 steps\"; the 2.1.1 cards are surfaced together to users who ran the 2.1 tour); tests/unit/training-steps.test.ts"
     }
   ],
   "entries": [
@@ -48,6 +118,16 @@
       "disposition": "retain",
       "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
       "note": "names Codex as a tool that reads the brief"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "retain",
+      "evidence": "WP1.35 front-facing docs, WP2 sweep: one prerequisite line names OpenAI's Codex CLI 0.153.4 or newer as optional for work on Codex features; no Codex code path and no account or history claim",
+      "note": "contributor prerequisite, not a runtime claim"
     },
     {
       "path": "PRIVACY.md",
@@ -70,6 +150,16 @@
       "note": "stop claiming unsupported Codex account behaviour; describe provider selection"
     },
     {
+      "path": "SECURITY.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "retain",
+      "evidence": "WP1.35 front-facing docs, WP2 sweep: the scope names isolation between Claude and Codex accounts in scope (behaviour WP2 implements with one sign-in folder per Codex account) and the Codex CLI itself out of scope; no Codex code path and no unsupported account or history claim",
+      "note": "security scope text, not a runtime claim"
+    },
+    {
       "path": "docs/USER_GUIDE.md",
       "predicates": [
         "P12"
@@ -78,6 +168,26 @@
       "disposition": "replace",
       "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md",
       "note": "provider selection, account vs identity, managed vs external Codex homes, recovery"
+    },
+    {
+      "path": "docs/wp2/hello-codex-spec.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "added",
+      "evidence": "WP2 Hello Codex UX spec, updated to what commit 6f built and its review round 1 fixed: status, page 4 v2, the Codex restart wording, the Codex-only variants, decisions 1 and 3, the replay places, AC8 amended, and each copy and vignette change made for truth; its acceptance criteria are real tests in tests/unit/renderer/hello-codex.acceptance.test.ts; no Codex code path (WP1.70)",
+      "note": "spec text, not a user-facing claim"
+    },
+    {
+      "path": "docs/wp2/plan.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "added",
+      "evidence": "WP2 plan document: maps each planned Codex adapter test (tests/wp1/cli-discovery.test.ts and siblings) to its requirement; no Codex code path (WP1.70)",
+      "note": "plan text, not a user-facing claim"
     },
     {
       "path": "package.json",
@@ -130,9 +240,9 @@
         "P14"
       ],
       "category": "RESUME-PICKER",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 resume picker UNCHANGED; tests/unit/scripts/codex-resume-picker.test.ts",
-      "note": "runs inside the PTY and reads CODEX_HOME from its env, so a managed realm is honoured without change"
+      "disposition": "replace",
+      "evidence": "WP1.68 resume picker ADAPTED in WP2 commit 4: it runs only the executable the launch proved (CCC_CODEX_EXECUTABLE, never a PATH lookup), never through a shell option, resumes only a UUID read from a transcript, and prints transcript text without control characters; tests/unit/scripts/codex-resume-picker.test.ts (lib), tests/unit/providers/codex/spawn.test.ts (the executable handed over), WP1.38",
+      "note": "re-dispositioned in WP2 commit 4 (was retain); still reads CODEX_HOME from its env, so the realm is honoured"
     },
     {
       "path": "scripts/lib/codex-resume-picker-lib.js",
@@ -141,9 +251,9 @@
         "P14"
       ],
       "category": "RESUME-PICKER",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); WP1.68 resume picker UNCHANGED; tests/unit/scripts/codex-resume-picker.test.ts",
-      "note": "rollout parsing library behind the picker"
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: launchTarget (the cmd.exe /s route, as spawn.ts codexCmdExeTarget) and isResumeId added; buildResumeArgs resumes only a UUID; parsing unchanged; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68, WP1.38)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "scripts/readme-shots/stage/content.js",
@@ -224,18 +334,19 @@
       "note": "readCodexAccountEmail deleted (decodes tokens from auth.json, prohibited by design 9.2); readClaudeAccountEmail unchanged",
       "adaptsTests": [
         "tests/unit/main/account-identity.test.ts"
-      ]
+      ],
+      "resolved": true,
+      "resolvedEvidence": "WP1.57 landed in WP2 commit 6g: readCodexAccountEmail (the auth.json token decoder) deleted, so the file no longer names Codex; Claude cases green in tests/unit/main/account-identity.test.ts; no production string (literals, and + chains and templates folded where every part is constant) names auth.json except realm-folders.ts's one CODEX_AUTH_FILE constant, used only as the path an isAbsent probe checks: tests/wp1/legacy-codex-retired.test.ts"
     },
     {
       "path": "src/main/account-web/claude-cli-auth.ts",
       "predicates": [
-        "P04",
         "P14"
       ],
       "category": "OTHER",
       "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": "Claude-only; mentions Codex in a comment"
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the status shape gains notChecked (Claude Code only), set when the CLI is not asked because Claude Code is off; tests/unit/main/probes-provider-off.test.ts",
+      "note": "Claude-only; mentions Codex in a comment (corrected in WP2 commit 6g: Codex sign-in is judged by `codex login status`, never by reading the credential file)"
     },
     {
       "path": "src/main/atomic-write.ts",
@@ -341,13 +452,13 @@
       "path": "src/main/codex-review-mcp-tool.ts",
       "predicates": [
         "P01",
-        "P06",
+        "P04",
         "P14"
       ],
       "category": "REVIEW-MCP",
       "disposition": "move",
-      "evidence": "tests/unit/main/codex-review-mcp-tool.test.ts adapted (install/auth gate resolves the provider-default Codex realm); exec/ACL cases retained (WP1.57)",
-      "note": "the install/auth gate and codex exec env resolve the Codex provider-default account realm through the package entry point instead of readCodexAuthStatus() on the global home; review logic unchanged",
+      "evidence": "tests/unit/main/codex-review-mcp-tool.test.ts rewritten by WP2 commit 5a (the review runs on a prepared review launch: reviewer default else provider default, lease released after the run, refusals mapped, request on stdin); its path-containment, git-repo guard and session-binding cases are kept, and the exec cases (argv, stdin, deadline, exit and redaction) moved with the exec to the Codex reviewer adapter in tests/wp1/cli-discovery.test.ts (WP1.57); WP2 commit 6g: the reply to a session that cannot use the tool names Settings, Accounts and Settings, General, Built-in Tools (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a review refuses at run time once the reviewing provider is off; tests/unit/main/review-provider-off.test.ts",
+      "note": "WP2 commit 5a: the review no longer runs through runCodexStreaming/readCodexAuthStatus; the accounts service prepares a review launch (kind review, local) and the Codex package reviewer adapter (src/main/providers/codex/review.ts) runs one isolated codex exec",
       "adaptsTests": [
         "tests/unit/main/codex-review-mcp-tool.test.ts"
       ]
@@ -373,7 +484,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "delete",
-      "evidence": "unreachability pinned by tests/wp1/codex-characterization.test.ts C9 (no production reader of getCodexSpawnIdentityMap on the base); binding capture covered by tests/wp1/launch-handoff.test.ts (WP1.38, WP1.57)",
+      "evidence": "WP1.57 deleted in WP2 commit 6g: its unreachability was pinned on the base by the C9 characterization (docs/wp1/baseline-2026-09-19.md), retired with the file; its absence (no module, import or symbol anywhere in src) is pinned by tests/wp1/legacy-codex-retired.test.ts; binding capture at spawn covered by tests/wp1/launch-handoff.test.ts (WP1.38)",
       "note": "write-only spawn identity map fed by the deleted auth.json decoder",
       "adaptsTests": [
         "tests/unit/main/codex-spawn-identity.test.ts"
@@ -388,9 +499,9 @@
         "P14"
       ],
       "category": "REVIEW-MCP",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); conductor-mcp-server suites in docs/wp1/baseline-test-inventory.json",
-      "note": "source gating is runtime-package scope; the config.toml heal call passes the external-default realm path (call-site only)"
+      "disposition": "replace",
+      "evidence": "WP2 commits 5a, 5b and 6: codex_review is offered per connection only while the built-in tools and the Codex review switch are on, Codex is on and a Codex review could be prepared now, and a Codex session is offered claude_review instead (offeredReviewTool); a connection's provider is the one its credential was issued to (issueMcpSessionToken), no longer read from the URL (parseSourceFromUrl is gone) (WP1.57); tests/unit/main/conductor-mcp-server-source-filter.test.ts, tests/unit/main/conductor-mcp-review-switches.test.ts, tests/unit/main/conductor-mcp-provider-binding.test.ts; a review never outlives its session; tests/unit/main/codex-review-session-abort.test.ts",
+      "note": "source gating is runtime-package scope; the config.toml heal is called at server start and stop with no argument: src/main/providers/codex/mcp-config.ts resolves the external default home itself"
     },
     {
       "path": "src/main/config-manager.ts",
@@ -421,7 +532,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33)",
+      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the switch-off rule counts provider-in-use.ts and the version probe is handed the launch rule; tests/unit/main/provider-in-use.test.ts; WP2 final fixes: a settings save tells the accounts service in its own try (a failing watchdog update never skips it), and that call looks for the CLI of a provider the save turned on (WP1.17, WP1.60); tests/unit/main/settings-saved-accounts-wiring.test.ts, tests/wp1/cli-discovery.test.ts",
       "note": "concrete provider registration and handler registration move to the single main composition root; index.ts calls it"
     },
     {
@@ -454,7 +565,7 @@
       ],
       "category": "AUTH",
       "disposition": "delete",
-      "evidence": "WP1.57: zero production imports and zero reachable CODEX_* handlers at the candidate (tests/wp1/legacy-codex-gate.test.ts, tests/wp1/dependency-boundaries.test.ts); base dispatch pinned by tests/wp1/codex-characterization.test.ts C4 so the retirement is deliberate; replacement = provider-neutral setup/account IPC (tests/wp1/provider-ipc.test.ts)",
+      "evidence": "WP1.57 deleted in WP2 commit 6g: tests/wp1/legacy-codex-retired.test.ts pins the module gone, no relative import naming it, no identifier or key that is one of the four retired channel keys, no string (folded where constant) that is one of the four codex:* channels, and no codex: channel built at run time; the deep-import ratchet in tests/wp1/dependency-boundaries.test.ts lost its allowlist entry; the base dispatch was pinned by the C4 characterization until this deletion (docs/wp1/baseline-2026-09-19.md), retired with it; replacement = the provider-neutral Accounts IPC (tests/wp1/provider-ipc.test.ts)",
       "note": "singleton Codex auth IPC retired"
     },
     {
@@ -478,8 +589,8 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/wp1/launch-handoff.test.ts asserts the binding fields at the IPC boundary (WP1.38, WP1.42); existing codexOptions superRefine cases retained",
-      "note": "pty:spawn schema gains the provider-neutral binding (providerAccountId/authRealmId/identityId); codexOptions validation unchanged"
+      "evidence": "tests/wp1/launch-handoff.test.ts asserts the binding fields at the IPC boundary (WP1.38, WP1.42); existing codexOptions superRefine cases retained; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): pty:spawn and the SSH Launch Claude refuse a provider that is off, the legacy CLI installs for a Claude launch only, and the install tab gets no command-button secrets; tests/unit/main/pty-spawn-provider-off.test.ts",
+      "note": "WP2 commit 4: pty:spawn takes the Codex account as providerAccountId (+ a per-launch acknowledgeRealmOnly), Codex only; the Codex model is bounded; codexLaunch is main-internal; a Codex SSH spawn is refused first; the launch is prepared by the accounts service and handed to pty-manager with its lease, the wait registered with pty-manager (beginSpawnPreparation). authRealmId/identityId are resolved by the service, never sent"
     },
     {
       "path": "src/main/logging/should-register-run.ts",
@@ -513,6 +624,36 @@
       "note": ""
     },
     {
+      "path": "src/main/provider-accounts.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 runtime for the provider-neutral accounts service: the one secret store, the lease registry, the registered packages and the saved settings (three-way preference from each package's enablement data, owner-enabled experimental capabilities); runs the one-time Codex default-home adoption after the legacy reconcile; covered by tests/wp1/setup-journal-recovery.test.ts (WP1.47), tests/wp1/consumer-leases.test.ts (WP1.46), tests/wp1/provider-ipc.test.ts (WP1.42); WP2 commit 6g: discoverProvidersAtStart, the one background look for each switched-on provider's CLI at start (WP1.17); tests/wp1/cli-discovery.test.ts",
+      "note": "created by WP2; replaces the singleton Codex account IPC once the renderer moves to providerAccounts (commit 5)"
+    },
+    {
+      "path": "src/main/provider-in-use.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): what runs a provider's CLI without an account lease (Claude Code's sessions, cloud agents, Insights, Sentinel, an accepted SSH Launch Claude), composed for the switch-off rule; tests/unit/main/provider-in-use.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
+    },
+    {
+      "path": "src/main/providers/claude/discovery.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b: Claude Code CLI discovery for the reviewer that serves Codex sessions (resolve, version floor 2.1.278 through the runner, file identity, re-verify) (tests/wp1/claude-reviewer.test.ts \"proving the Claude Code executable\"; tests/wp1/fake-cli.test.ts) (WP1.17, WP1.38)",
+      "note": "created by WP2 commit 5b; mentions Codex only as the session a Claude review serves"
+    },
+    {
       "path": "src/main/providers/claude/index.ts",
       "predicates": [
         "P14"
@@ -521,6 +662,36 @@
       "disposition": "retain",
       "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
       "note": ""
+    },
+    {
+      "path": "src/main/providers/claude/legacy-store.ts",
+      "predicates": [
+        "P05"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "Claude package keeps only its own legacy writes by provider id; no Codex code path; covered by tests/wp1/claude-legacy-store.test.ts (WP1.4)",
+      "note": "provider-id filter inside the Claude package"
+    },
+    {
+      "path": "src/main/providers/claude/review-launch.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b: the review-only Claude launch (kinds review) in the reviewer account profile home, prepared by the accounts service for a Codex session claude_review (tests/wp1/claude-reviewer.test.ts; tests/wp1/launch-handoff.test.ts \"a Claude review launch\") (WP1.38, WP1.46)",
+      "note": "created by WP2 commit 5b"
+    },
+    {
+      "path": "src/main/providers/claude/review.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b adapter: one isolated claude -p --restricted per review for a Codex session, constant argv, request on stdin, depth guard, the reviewer account held as a credential consumer, run through the CLI runner (tests/wp1/claude-reviewer.test.ts; tests/wp1/fake-cli.test.ts \"the Claude reviewer against a fake Claude CLI\") (WP1.38, WP1.46)",
+      "note": "created by WP2 commit 5b"
     },
     {
       "path": "src/main/providers/claude/spawn.ts",
@@ -539,7 +710,7 @@
       ],
       "category": "OTHER",
       "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); the file changed since the base for WP2's per-provider MCP credential, in the WP2 final fixes for the single-quoted tmux target, and in the WP2 T24 fix for End's sudo probe and its marker (parseEndSudoSentinel), the in-container kill under sh -c instead of bash -c, and its in-container script taken from the shared stop script (containerSessionStopScript); none of them Codex code",
       "note": ""
     },
     {
@@ -553,23 +724,87 @@
       "note": ""
     },
     {
-      "path": "src/main/providers/codex/auth.ts",
+      "path": "src/main/providers/codex/auth-operations.ts",
       "predicates": [
         "P01",
         "P04",
-        "P06",
-        "P07",
         "P09",
         "P14"
       ],
       "category": "AUTH",
-      "disposition": "replace",
-      "evidence": "WP1.57 legacy-retirement gate (zero production imports of getCodexHome/readCodexAuthStatus/parseChatgptPlanFromJwt at the candidate); replacement covered by tests/wp1/codex-auth-adapter.test.ts (WP1.20-WP1.25, WP1.62)",
-      "note": "realm-explicit login/status/logout/test-connection rebuilt inside the Codex package; runCodexProcess/runCodexStreaming retained package-internal (key-via-stdin + redaction assertions carried over from auth-login.test.ts) and take an explicit allowlisted env; getCodexHome, readCodexAuthStatus and parseChatgptPlanFromJwt deleted (auth.json/token parsing prohibited, design 9.2)",
-      "adaptsTests": [
-        "tests/unit/providers/codex/auth.test.ts",
-        "tests/unit/providers/codex/auth-login.test.ts"
-      ]
+      "disposition": "added",
+      "evidence": "new WP2 Codex sign-in, status and logout operations: the realm record looked up by an injected port and its home derived by the package, which must exist at its canonical path and is locked by file identity; the proven executable re-verified before every run; sign-in refused over an existing sign-in or into an external realm, one browser sign-in at a time, a managed .env refused; the API key taken single-use, validated and written only to stdin; machine-readable result codes; output redacted per stream; covered by tests/wp1/codex-auth-adapter.test.ts and tests/wp1/fake-cli.test.ts (WP1.20, WP1.22, WP1.49, WP1.62)",
+      "note": "created by WP2; replaces the legacy codexLoginWithApiKey/codexLoginChatgpt/codexLoginDeviceAuth/codexLogout/codexTestConnection in auth.ts once the accounts service and renderer slices retire those callers"
+    },
+    {
+      "path": "src/main/providers/codex/auth.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "delete",
+      "evidence": "WP1.57 deleted in WP2 commit 6g: the auth.json status reader, the JWT decoder and the singleton login, logout and test-connection runs went with the retired codex:* IPC, their only caller, and its exported getCodexHome went once telemetry.ts required the realm's sessions folder (tests/unit/providers/codex/telemetry.test.ts: no folder, nothing watched, no CODEX_HOME fallback); no relative import names the module and no production string (literals, and + chains and templates folded where every part is constant) names auth.json except realm-folders.ts's one CODEX_AUTH_FILE constant, used only as the path an isAbsent probe checks: tests/wp1/legacy-codex-retired.test.ts; the replacement sign-in, status and logout are covered by tests/wp1/codex-auth-adapter.test.ts (WP1.20-WP1.25, WP1.62)",
+      "note": "re-dispositioned in WP2 commit 6g round 1 (was replace): realm-explicit login/status/logout live in the Codex package (auth-operations.ts); readCodexAuthStatus and parseChatgptPlanFromJwt deleted (auth.json/token parsing prohibited, design 9.2); its tests are deleted with it and recorded on their own rows"
+    },
+    {
+      "path": "src/main/providers/codex/cli-contract.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 Codex adapter module: the pure version and login-status parsers the WP1.62 fake-CLI integration will drive; parsers covered now by tests/wp1/cli-discovery.test.ts and tests/wp1/codex-auth-adapter.test.ts (WP1.17)",
+      "note": "created by WP2"
+    },
+    {
+      "path": "src/main/providers/codex/cli-env.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 Codex adapter module: the allowlisted setup/auth subprocess environment (D3); covered by tests/wp1/env-allowlist.test.ts (WP1.38)",
+      "note": "created by WP2"
+    },
+    {
+      "path": "src/main/providers/codex/cli-runner.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 Codex CLI runner: constant argv per operation, allowlisted env, Windows shim through absolute cmd.exe, a kill limited to the run's own cmd/node/codex chain that settles once it lands; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.62)",
+      "note": "created by WP2; replaces the legacy runCodexProcess/runCodexStreaming in auth.ts once the auth slice lands"
+    },
+    {
+      "path": "src/main/providers/codex/discovery.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new WP2 Codex discovery: resolve, canonicalise, prove the version, record the executable identity and re-verify it; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.49)",
+      "note": "created by WP2"
+    },
+    {
+      "path": "src/main/providers/codex/enablement.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P14"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "new WP2 data-only statement of where Codex on/off is saved (codexEnabled; absent = not answered yet) read by the accounts service through the package contract instead of a provider-name condition; covered by tests/wp1/setup-journal-recovery.test.ts (WP1.47) and tests/wp1/fault-isolation.test.ts (WP1.59)",
+      "note": "created by WP2; the renderer codexEnabled gates are retired with the legacy Codex surfaces"
     },
     {
       "path": "src/main/providers/codex/index.ts",
@@ -582,8 +817,19 @@
       ],
       "category": "LAUNCH",
       "disposition": "move",
-      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66)",
-      "note": "becomes the Codex package public entry point; CodexProvider (session parity surface) retained for the runtime work package; auth/setup/realm operations exported alongside"
+      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts",
+      "note": "becomes the Codex package public entry point; CodexProvider (session parity surface) retained for the runtime work package, its two PATH lookups refused; auth/setup/realm operations exported alongside"
+    },
+    {
+      "path": "src/main/providers/codex/install-recipes.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new WP2 Codex adapter module: code-defined install and update recipes; covered by tests/wp1/install-recipes.test.ts (WP1.18, WP1.32)",
+      "note": "created by WP2"
     },
     {
       "path": "src/main/providers/codex/mcp-config.ts",
@@ -594,12 +840,9 @@
         "P14"
       ],
       "category": "GLOBAL-HOME",
-      "disposition": "move",
-      "evidence": "tests/unit/providers/codex/mcp-config.test.ts adapted: explicit realm-path argument replaces the private getCodexHome (WP1.57, WP1.68)",
-      "note": "private duplicate getCodexHome() replaced by an explicit realm-path parameter; the config.toml heal runs only against the external-default realm",
-      "adaptsTests": [
-        "tests/unit/providers/codex/mcp-config.test.ts"
-      ]
+      "disposition": "retain",
+      "evidence": "unchanged since the WP1 base (6bafcc33): the config.toml heal strips the managed conductor block that builds before U6 wrote into the Codex home the app inherited (CODEX_HOME, else ~/.codex), resolved by its own private getCodexHome. That is the external default home (src/main/providers/codex/realm-paths.ts), the only place those builds wrote the block; a managed home never held it, and no launch reads this file. Pinned by tests/unit/providers/codex/mcp-config.test.ts, also unchanged (WP1.57, WP1.68)",
+      "note": "the change planned here (an explicit realm-path parameter in place of the private getCodexHome) was not made; the heal runs at MCP server start and stop, called with no argument from src/main/conductor-mcp-server.ts"
     },
     {
       "path": "src/main/providers/codex/permissions.ts",
@@ -623,6 +866,43 @@
       "note": "later work package"
     },
     {
+      "path": "src/main/providers/codex/process-env.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new WP2 Codex helper: the login-shell PATH on macOS/Linux so an npm-installed CLI finds node under the allowlisted env; covered by tests/wp1/fake-cli.test.ts (WP1.17)",
+      "note": "created by WP2"
+    },
+    {
+      "path": "src/main/providers/codex/realm-folders.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 managed Codex account folders: the resources directory and the external home canonicalised; the external home refused on any overlap with the managed tree by canonical path and file identity, and whenever it cannot be checked; a pending setup's home created before sign-in as a real owner-only (POSIX) folder with links and reparse points refused; an abandoned setup's home removed only after proving it is inside the managed root, holds no stored sign-in and only plain files and folders on one volume, under the realm lock sign-in, sign-out and status share; covered by tests/wp1/codex-realm-folders.test.ts and tests/wp1/codex-realm-isolation.test.ts (WP1.28, WP1.30, WP1.45; the fake-CLI half of WP1.10)",
+      "note": "created by WP2; Windows ACL hardening deferred with the registry (aicc_planning #103)"
+    },
+    {
+      "path": "src/main/providers/codex/realm-paths.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 Codex adapter module: realm home from the registry grammar only; covered by tests/wp1/realm-paths.test.ts (WP1.28)",
+      "note": "created by WP2"
+    },
+    {
       "path": "src/main/providers/codex/resume-picker.ts",
       "predicates": [
         "P01",
@@ -635,6 +915,18 @@
       "note": "deploys the picker script; the picker reads CODEX_HOME from the PTY env, so a managed realm works unchanged"
     },
     {
+      "path": "src/main/providers/codex/review.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5a adapter: one isolated codex exec per review from the launch the accounts service prepared (realm environment, proven executable), request on stdin, depth guard strips the requesting session Conductor bearer and id, runs through the CLI runner (tests/wp1/cli-discovery.test.ts \"the Codex reviewer (WP2 5a)\"; tests/unit/main/codex-review-mcp-tool.test.ts) (WP1.38, WP1.42)",
+      "note": "created by WP2 commit 5a; replaces the legacy runCodexStreaming review path"
+    },
+    {
       "path": "src/main/providers/codex/spawn.ts",
       "predicates": [
         "P01",
@@ -645,7 +937,7 @@
       "category": "LAUNCH",
       "disposition": "move",
       "evidence": "WP1.68 outcomes: PTY launch flags UNCHANGED and authenticated per-spawn MCP UNCHANGED (pinned by tests/wp1/codex-characterization.test.ts C3 and tests/unit/providers/codex/spawn.test.ts); realm env ADAPTED (tests/wp1/launch-handoff.test.ts, WP1.38, WP1.2); executable identity WP1.17/WP1.49 (tests/wp1/cli-discovery.test.ts)",
-      "note": "resolveCodexBinary retained behind the package entry point, probe aligned with src/main/login-shell.ts (one login-shell rule for probes and launch, as #617 did for Claude) and bound to the executable identity record; buildCodexSpawn takes the validated realm from the launch binding (CODEX_HOME set last, known provider credential vars stripped per decision D3) instead of an implicit global home; CONDUCTOR_MCP_TOKEN is kept by the launch env policy",
+      "note": "resolveCodexBinary is unchanged (its own $SHELL -l probe on macOS and Linux, where on Windows) and is now only discovery's lookup: discovery binds what it finds to the executable identity record and proves it under the login shell's PATH (process-env.ts, through src/main/login-shell.ts), and a session runs only that proven executable; buildCodexSpawn takes the prepared launch (the executable, the realm env with CODEX_HOME set last, the known provider credential variables stripped per decision D3) instead of an implicit global home; CONDUCTOR_MCP_TOKEN is kept by the launch env policy",
       "adaptsTests": [
         "tests/unit/providers/codex/spawn.test.ts"
       ]
@@ -660,7 +952,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "move",
-      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case",
+      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
       "note": "watchAndClaimRollout takes the sessions directory of the launch binding realm instead of getCodexHome(); parsing and claim logic unchanged",
       "adaptsTests": [
         "tests/unit/providers/codex/telemetry.test.ts"
@@ -687,6 +979,17 @@
       "disposition": "added",
       "evidence": "main composition root; tests/wp1/dependency-boundaries.test.ts R3 (WP1.66), tests/wp1/provider-conformance.test.ts",
       "note": "the only main module importing both concrete packages"
+    },
+    {
+      "path": "src/main/providers/core/external-default-migration.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 provider-neutral adoption, at most once per provider, of a provider own default sign-in (Codex ~/.codex): its own interrupted reservation (deterministic ids no legacy profile can own) is dropped first and by every marker write; an undecided preference asks first and runs nothing; off, no usable CLI or no answer records skipped with a reason; otherwise journal then status in that realm; signed in -> a realm-only external account with an unverified private identity and the marker in one transaction; signed out -> reservation dropped and marker none together; single-flight per provider; covered by tests/wp1/migration-codex.test.ts (WP1.43); WP2 commit 6g: its discovery can be the caller's own (deps.discover), so the accounts service runs one discovery per provider at a time and records its answer (WP1.17); tests/wp1/cli-discovery.test.ts",
+      "note": "created by WP2; replaces the legacy global Codex account model for existing users once the accounts service calls it at start"
     },
     {
       "path": "src/main/providers/core/package.ts",
@@ -720,8 +1023,20 @@
       "resolvedEvidence": "WP1.66 slice 1, adapted in place: the registry implementation now lives in src/main/providers/core/registry.ts and this file re-exports the core entry point, naming no provider; kept in the core scope of tests/wp1/dependency-boundaries.test.ts R1"
     },
     {
+      "path": "src/main/providers/review-support.ts",
+      "predicates": [
+        "P09",
+        "P14"
+      ],
+      "category": "AUTH",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5b: the reviewer environment, redaction and reply bounding moved unchanged out of the Codex reviewer so both reviewers apply the same rules (tests/wp1/cli-discovery.test.ts \"the Codex reviewer (WP2 5a)\"; tests/wp1/claude-reviewer.test.ts) (WP1.38)",
+      "note": "created by WP2 commit 5b from src/main/providers/codex/review.ts; beside provider core (core imports only core, shared and Node built-ins)"
+    },
+    {
       "path": "src/main/providers/types.ts",
       "predicates": [
+        "P04",
         "P05",
         "P07",
         "P14"
@@ -729,20 +1044,20 @@
       "category": "LAUNCH",
       "disposition": "replace",
       "evidence": "type-level change exercised by tests/wp1/launch-handoff.test.ts (WP1.38)",
-      "note": "SpawnOptions gains the provider-neutral binding fields"
+      "note": "WP2 commit 4: SpawnOptions gains realmLaunch (the Codex session's prepared launch: executable, realm env, sessions folder), telemetry opts gain sessionsDir, buildSpawnCommand may return a verbatim commandLine (the cmd.exe /s route)"
     },
     {
       "path": "src/main/pty-manager.ts",
       "predicates": [
+        "P04",
         "P05",
-        "P06",
         "P07",
         "P14"
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "Claude env shape pinned by tests/wp1/claude-characterization.test.ts C1 and tests/unit/pty-spawn-env.test.ts (both retained as protection, WP1.54); binding/lease behaviour by tests/wp1/launch-handoff.test.ts and tests/wp1/consumer-leases.test.ts (WP1.38, WP1.42, WP1.46)",
-      "note": "both local branches resolve the selected/provider-default account binding, validate it, acquire a lease and hand the exact realm env to the provider spawn; Claude keeps withProfileHome; the Codex branch sets CODEX_HOME from the realm; Codex identity capture removed"
+      "evidence": "Claude env shape pinned by tests/wp1/claude-characterization.test.ts C1 and tests/unit/pty-spawn-env.test.ts (both retained as protection, WP1.54); binding/lease behaviour by tests/wp1/launch-handoff.test.ts and tests/wp1/consumer-leases.test.ts (WP1.38, WP1.42, WP1.46); WP2 commit 6g: the Codex spawn identity re-export removed with codex-spawn-identity.ts (tests/wp1/legacy-codex-retired.test.ts, WP1.57); the WP2 final fixes changed comments only (the codex_review registration comment states the per-connection conditions main offers the tool on, and the End comment names the quoted tmux target it kills); the WP2 T24 fix, not Codex code, changed End: endSshRemoteDetailed resolves a detailed result, reads its target the moment it is called, and reads the End sudo marker from the exec output to report container-needs-sudo when a rootful container's sudo needs a password End does not hold (tests/unit/main/ssh-end-remote-password.test.ts)",
+      "note": "WP2 commit 4: the Codex branch runs only from the prepared launch (executable, realm env with CODEX_HOME, sessions folder) and holds its account lease until its process ends; the binding and lease are taken in pty:spawn through the accounts service. The Claude branch is unchanged (withProfileHome); running Claude sessions are counted for a Claude switch-off. Codex identity capture removed"
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -752,9 +1067,9 @@
         "P14"
       ],
       "category": "LAUNCH",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); sanitize-restored-spawn-options suites",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: the Codex model bound (CODEX_MODEL_RE, shared with the pty:spawn schema) and its fail-open repair for a restored session of any provider; tests/unit/main/sanitize-restored-spawn-options.test.ts, tests/wp1/launch-handoff.test.ts (WP1.42)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "src/main/session-resume-enrich.ts",
@@ -803,9 +1118,9 @@
         "P14"
       ],
       "category": "TOKENOMICS",
-      "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4 (plan A13): carries the Codex accounts' realm folders to the worker (open + set-codex-realm-dirs); tests/unit/tokenomics/tk-supervisor.test.ts, tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "src/main/tokenomics/tk-types.ts",
@@ -823,9 +1138,9 @@
         "P14"
       ],
       "category": "TOKENOMICS",
-      "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4 (plan A13): the open message gains codexRealmSessionsDirs and a set-codex-realm-dirs message; tests/unit/tokenomics/tk-supervisor.test.ts, tests/unit/native/tokenomics-worker-ingest.native.test.ts (WP1.2)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "src/main/tokenomics/tokenomics-service.ts",
@@ -846,7 +1161,7 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "as tokenomics-service.ts: tests/wp1/tokenomics-realm-discovery.test.ts (owner decision D10, WP1.2, WP1.5)",
+      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): the worker walks and watches ~/.codex/sessions plus every folder it is handed, reading each rollout once -- tests/unit/native/tokenomics-worker-ingest.native.test.ts (CI native suite); the folder list itself by tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2, WP1.5)",
       "note": "walks the list of sessions directories it is handed; parsing unchanged"
     },
     {
@@ -866,24 +1181,22 @@
         "P02",
         "P07",
         "P08",
-        "P09",
         "P14"
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green",
+      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/main/pty-spawn-provider-off.test.ts",
       "note": "codex block replaced by the provider-neutral providers/accounts API; codexReview block retained"
     },
     {
       "path": "src/renderer/App.tsx",
       "predicates": [
-        "P03",
         "P07",
         "P11"
       ],
       "category": "ACCOUNT",
       "disposition": "replace",
-      "evidence": "boot refresh covered by tests/wp1/provider-store.test.ts (WP1.57)",
+      "evidence": "boot refresh through the provider-neutral Accounts store (tests/unit/renderer/provider-accounts-store.test.ts, WP1.57); WP2 commit 6g: the codexAccountStore refresh is removed and app:openSettings opens Settings, Accounts for the retired Codex tab id (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 commit 6e review fix: \"Use Codex only\" on either setup screen hands the run to the Codex setup page, through setup-handoff.ts (WP1.34); tests/unit/renderer/setup-codex-only.test.tsx; WP2 commit 6f: hosts the Codex introduction's one-time takeover (last in the boot chain, after any open dialog) and its replay, and opens New saved config with Codex chosen for \"Start a Codex session\" (WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the boot-chain decision comes from bootChain, and \"Start a Codex session\" is held while the resume prompt waits (WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6g round 1: its app:openSettings listener is openSettingsHandler, driven with real events (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 visual fixes (VM audit 2026-09-25): the app behind the onboarding pages and the Hello Codex takeover or replay is inert while they cover the window (not while the pages step aside for a terminal), and the close dialogs and the Closing overlay paint on the top layer above them (WP1.34, WP1.6); tests/unit/renderer/onboarding-focus-trap.test.tsx; tests/unit/renderer/window-close-dialogs.test.tsx",
       "note": "boot refresh goes through the provider-neutral store instead of codexAccountStore"
     },
     {
@@ -898,6 +1211,16 @@
       "note": "model catalogue is a later work package"
     },
     {
+      "path": "src/renderer/components/AccountsPanel.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "replace",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the Claude card offers \"Add an account\" when it lists none and no add while Claude Code is off (claudeCodeOn, from the Codex introduction's module, is the one test of Claude Code being on), and its notes use --text-muted (WP1.39, WP1.60 enable/disable); tests/unit/renderer/accounts-panel-claude-card.test.tsx; WP2 final fixes (VM capture at 7a3245ba): an inactive account's email, \"setup incomplete\" and the primary and inactive chips use --text-muted, not --color-overlay0, which is not Codex code (WP1.33); tests/unit/renderer/token-contrast.test.ts; the account rename field draws the strong keyboard focus ring and its placeholder is --text-muted, which is not Codex code (WP1.33); tests/unit/renderer/settings-select-focus.test.ts; the colour swatches, Remove account and Add an account draw the strong focus ring in place of a faint one, a selected swatch shows its selection as a box-shadow so the ring is not overridden, and the swatches' focus ring sits outside that one so a focused selected swatch shows both, which is not Codex code (WP1.33); tests/unit/renderer/settings-select-focus.test.ts",
+      "note": "matches P11 only through the claudeCodeOn import; no legacy Codex code"
+    },
+    {
       "path": "src/renderer/components/AiUsagePopover.tsx",
       "predicates": [
         "P05",
@@ -905,7 +1228,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -927,7 +1250,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); the file changed since the base only for #618, an unrelated SSH scroll fix; reads settings.codexEnabled and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -936,8 +1259,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 final fixes: the page mounts the Claude review card beside the Codex one and names Claude review among the tools a stopped server takes down (WP1.6); tests/unit/renderer/conductor-mcp-page.test.ts, tests/unit/renderer/codex-review-sub-tool.test.ts; the header reads \"Running on port <n>\" (WP2 final fixes, VM capture at 38cbc9d7); tests/unit/renderer/conductor-mcp-page.test.ts",
       "note": ""
     },
     {
@@ -946,8 +1269,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: the Ask card is disabled with the reason while Claude Code is off (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx; WP2 commit 6f: \"Show the Codex introduction\" on the Codex Provider card replays it without marking it seen (WP1.36); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the replay link is offered only once Codex is set up (WP1.36); tests/unit/renderer/hello-codex.acceptance.test.ts",
       "note": ""
     },
     {
@@ -967,9 +1290,19 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: every Run button is disabled with the reason while Claude Code is off, and the store refuses as well (WP1.2); tests/unit/renderer/claude-off-headless.test.tsx",
       "note": ""
+    },
+    {
+      "path": "src/renderer/components/LaunchAckConfirm.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts",
+      "note": "the per-launch confirm for an unverified sign-in; the provider is named in its copy"
     },
     {
       "path": "src/renderer/components/LogsButton.tsx",
@@ -979,7 +1312,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -990,7 +1323,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1035,8 +1368,8 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-dialog-tokens.test.tsx adapted + account-selection cases in tests/wp1/launch-handoff.test.ts (WP1.38)",
-      "note": "Codex sessions choose a provider account from the neutral store; enablement read from the neutral registry; codexOptions form unchanged",
+      "evidence": "tests/unit/renderer/session-dialog-tokens.test.tsx adapted (WP1.38); WP2 commit 6c: the Codex account picker, its choice saved as the config's providerAccountId (WP1.38, WP1.42); tests/unit/renderer/session-dialog-codex-account.test.tsx; WP2 commit 6e review fix: the Claude Code choice is disabled with the reason while Claude Code is off, and a new config starts on a provider that is on (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx; WP2 commit 6f: a new config can open on the Codex card (initialProvider), for the Codex introduction's \"Start a Codex session\" (WP1.2); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6g: the Codex-off note is the launch reason naming Settings, Accounts, and the Codex fields link only to Settings, Accounts (WP1.6); tests/unit/renderer/session-dialog-codex-account.test.tsx",
+      "note": "Codex sessions choose a provider account from the Accounts snapshot; each provider's on/off is read from its saved switch (settings.claudeEnabled, settings.codexEnabled); codexOptions form unchanged",
       "adaptsTests": [
         "tests/unit/renderer/session-dialog-tokens.test.tsx"
       ]
@@ -1045,14 +1378,13 @@
       "path": "src/renderer/components/SessionDialog/CodexFormFields.tsx",
       "predicates": [
         "P01",
-        "P03",
         "P07",
         "P11"
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-dialog-tokens.test.tsx adapted (WP1.41)",
-      "note": "install/auth warnings come from the Codex renderer descriptor view model instead of codexAccountStore"
+      "evidence": "tests/unit/renderer/session-dialog-tokens.test.tsx adapted (WP1.41); WP2 commit 6g: the CLI-missing banner reads main's discovery from the Accounts snapshot instead of codexAccountStore and links to Settings, Accounts (WP1.7); tests/unit/renderer/session-dialog-codex-account.test.tsx; WP2 commit 6g round 1: the banner appears in an open dialog once start-up discovery says the CLI is missing (WP1.7); tests/unit/renderer/session-dialog-codex-account.test.tsx",
+      "note": "the CLI-missing and too-old notes come from main's discovery in the Accounts snapshot (providerAccountsStore, utils/launchAccount.ts) instead of codexAccountStore"
     },
     {
       "path": "src/renderer/components/SessionDialog/ProviderSegmentedControl.tsx",
@@ -1060,9 +1392,9 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 6g: its Codex-off copy names Settings, Accounts instead of the retired Codex tab (WP1.6); no pointer to the retired tab anywhere in src, pinned by the source sweep in tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "note": "re-dispositioned in WP2 commit 6g (was retain); the component has no production consumer (the session dialog draws its own provider cards)"
     },
     {
       "path": "src/renderer/components/SessionHeader.tsx",
@@ -1071,8 +1403,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6c: a Codex session's header has the Restart menu (Restart, Restart and pick a conversation) (WP1.42); tests/unit/renderer/session-header-restart-menu.test.tsx; WP2 provider-off enforcement (WP1.60 enable/disable): the Claude Code pill says Claude Code is off or was not checked, never signed out; tests/unit/renderer/claude-code-not-checked.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1083,29 +1415,39 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); the file changed since the base only for #618, an unrelated SSH scroll fix, and in the WP2 final fixes, a corrected comment on the codex_review usage poll; reads settings.codexEnabled and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
       "path": "src/renderer/components/SettingsPage.tsx",
       "predicates": [
         "P05",
-        "P10",
         "P11"
       ],
       "category": "SETUP",
       "disposition": "replace",
-      "evidence": "tests/wp1/settings-providers.test.tsx in all three provider modes (WP1.6, WP1.7, WP1.60)",
-      "note": "the codex tab becomes the provider setup/enablement surface driven by descriptors"
+      "evidence": "WP2 commit 6g: the Codex tab is retired; its on/off switch, status, install commands and sign-in live in Settings, Accounts (tests/unit/renderer/accounts-surface.test.tsx, tests/unit/renderer/providers-card-install-commands.test.tsx), and a deep link naming the retired tab opens Accounts (tests/unit/renderer/settings-codex-tab-retired.test.tsx) (WP1.6, WP1.7); WP2 commit 6g round 1: openSettingsHandler, the app:openSettings listener, tested with real events (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 final fixes (VM capture at 38cbc9d7): every select and text field draws the strong keyboard focus ring, not Codex code (WP1.33); tests/unit/renderer/settings-select-focus.test.ts; WP2 final fixes (VM capture at 7a3245ba): the small grey helper text uses --text-muted and the selected tab's wash is 8%, so both clear 4.5:1, which is not Codex code (WP1.33); tests/unit/renderer/token-contrast.test.ts; the two text fields' placeholders are --text-muted, which is not Codex code (WP1.33); tests/unit/renderer/token-contrast.test.ts; the shortcut capture boxes draw the strong focus ring and the tabs rail its inset form, which is not Codex code (WP1.33); tests/unit/renderer/settings-select-focus.test.ts, tests/unit/renderer/token-contrast.test.ts",
+      "note": "the Codex tab is replaced by the Providers card in Settings, Accounts, driven by the Accounts snapshot (the renderer provider descriptors are consumed by no surface); WP1.6, WP1.7 and WP1.60 stay planned in traceability"
+    },
+    {
+      "path": "src/renderer/components/SetupDialog.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e: first-run setup lets a Codex-only user continue without Claude Code (WP1.2); tests/unit/renderer/setup-codex-only.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the CLI setup terminal says why main refused it; tests/unit/renderer/setup-cli-provider-off.test.tsx; WP2 visual fixes (VM audit 2026-09-25): each setup screen opens with focus on its primary control, the Claude CLI setup terminal takes the focus, and Retry has it again after a failed check (WP1.1, WP1.2); tests/unit/renderer/onboarding-initial-focus.test.tsx",
+      "note": "existing dialog adapted: \"Use Codex only\" when the Claude CLI is missing"
     },
     {
       "path": "src/renderer/components/Sidebar.tsx",
       "predicates": [
-        "P05"
+        "P05",
+        "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6f (review round 1): the New config shortcut is held while the Codex introduction covers the shell (its one-time takeover or a replay), as it is while onboarding is due; the sidebar reads settings.codexEnabled and the provider labels through the compatibility shadow as before (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1115,9 +1457,11 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
-      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: the Codex-only launch gate is replaced by the one provider-neutral rule (isConfigLaunchBlocked): a config cannot launch while its own provider is off, Claude Code included, and the reason names that provider (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
+      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope",
+      "resolved": true,
+      "resolvedEvidence": "WP2 commit 6e review fix: the empty-state launch cards ask the provider-neutral rule and word the reason per provider, and the file no longer names Codex (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx"
     },
     {
       "path": "src/renderer/components/TerminalView.tsx",
@@ -1129,11 +1473,8 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-launch.test.ts adapted (WP1.38)",
-      "note": "account-choice gate becomes provider-neutral so a Codex launch can pick among active Codex accounts",
-      "adaptsTests": [
-        "tests/unit/renderer/session-launch.test.ts"
-      ]
+      "evidence": "WP2 commit 6c: a Codex launch runs on the session's saved Codex account or the Codex default, resolved by utils/launchAccount.ts and sent as providerAccountId, with this launch's acknowledgement where the account needs one (WP1.38, WP1.42, WP1.45); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 commit 6e: a transient install tab runs its command once; a Restart opens a plain shell (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session, and nothing is asked first while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "note": "the Claude profile picker (shouldGateAccountChoice) stays Claude-only; a Codex launch resolves its own account through utils/launchAccount.ts"
     },
     {
       "path": "src/renderer/components/codex/CodexSettingsTab.tsx",
@@ -1147,8 +1488,8 @@
       ],
       "category": "SETUP",
       "disposition": "delete",
-      "evidence": "replaced by descriptor-driven provider setup inside Settings + the neutral Accounts surface: tests/wp1/settings-providers.test.tsx, tests/wp1/accounts-surface.test.tsx (WP1.39, WP1.66); tests/e2e/codex-settings-section.spec.ts adapted",
-      "note": "its API-key modal is replaced by the non-retained secret-entry control (WP1.22)",
+      "evidence": "WP1.39 / WP1.6 deleted in WP2 commit 6g, replaced by Settings, Accounts: the Providers card Codex row (on/off switch with Beta, status and version, Check again) and the Codex accounts (sign in with ChatGPT, a device code or an API key sent only through the secret channel; sign out): tests/unit/renderer/accounts-surface.test.tsx, tests/unit/renderer/providers-card-check-again.test.tsx; its install hint moved to the same row: tests/unit/renderer/providers-card-install-commands.test.tsx; no Codex tab, and a deep link naming it opens Accounts: tests/unit/renderer/settings-codex-tab-retired.test.tsx; tests/e2e/codex-settings-section.spec.ts adapted; its Test connection is Check sign-in on each account row (the provider status check in that account's realm, single-flight): tests/unit/renderer/accounts-surface.test.tsx, tests/unit/renderer/provider-accounts-store.test.ts, tests/wp1/account-lifecycle.test.ts",
+      "note": "its API-key modal is replaced by the non-retained secret-entry control (WP1.22); its OPENAI_API_KEY warning is obsolete (a Codex session runs with ambient OpenAI keys removed, C3 in tests/wp1/codex-characterization.test.ts); its ~/.codex/config.toml note is dropped (managed realms have their own homes); dropped on purpose: the ChatGPT plan it showed (\"Logged in via ChatGPT plus\") came only from decoding auth.json, which design 9.2 forbids, and `codex login status` does not say it; and signing in to this computer's own ~/.codex from the app (an external realm refuses sign-in): a signed-out or expired row for it now says \"Run codex login in a terminal, then Check sign-in.\"",
       "adaptsTests": [
         "tests/e2e/codex-settings-section.spec.ts"
       ]
@@ -1162,7 +1503,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1176,15 +1517,36 @@
       "note": ""
     },
     {
+      "path": "src/renderer/components/conductor-mcp/ClaudeReviewSubTool.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "added",
+      "evidence": "WP2 final fixes: the Conductor MCP page's Claude review card, offered to local Codex sessions, with the state main offers claude_review on and why not (WP1.6); tests/unit/renderer/codex-review-sub-tool.test.ts, tests/unit/renderer/conductor-mcp-page.test.ts",
+      "note": "created by WP2"
+    },
+    {
       "path": "src/renderer/components/conductor-mcp/CodexReviewSubTool.tsx",
       "predicates": [
         "P01",
         "P11"
       ],
       "category": "REVIEW-MCP",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); tests/unit/renderer/codex-review-sub-tool.test.ts",
-      "note": "static informational card"
+      "disposition": "replace",
+      "evidence": "WP2 commit 6g: the card says Codex review runs while Codex is on (Settings, Accounts) and Codex review is on (Settings, General, Built-in Tools) (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 final fixes: the card shows whether main offers codex_review now, by the conditions main asks (the built-in tools and the Codex review switch on, Codex on, a Codex account that can review), and why not, never a fixed Available (WP1.6); tests/unit/renderer/codex-review-sub-tool.test.ts",
+      "note": "re-dispositioned in WP2 commit 6g (was retain); a live status card built on ReviewSubToolCard.tsx"
+    },
+    {
+      "path": "src/renderer/components/conductor-mcp/ReviewSubToolCard.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "added",
+      "evidence": "WP2 final fixes: reviewSubToolState, whether main offers a review tool now by the conditions main's createServer asks (offeredReviewTool), and the card both review cards share (WP1.6); tests/unit/renderer/codex-review-sub-tool.test.ts",
+      "note": "created by WP2; its P05 hit is the codexEnabled field of the settings it reads"
     },
     {
       "path": "src/renderer/components/logs/LogEmptyState.tsx",
@@ -1194,8 +1556,73 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/components/settings/CodeReviewTools.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "REVIEW-MCP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx; WP2 final fixes: the Claude Code off message names the way back, built by the shared providerOffMessage (WP1.6); tests/unit/renderer/code-review-tools.test.tsx",
+      "note": "Settings, Built-in Tools: Codex review and Claude review rows; ~/.codex appears only in copy"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/AccountsSurface.tsx",
+      "predicates": [
+        "P05"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "a provider-name comparison chooses which section a provider gets; no Codex code path"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/AddProviderAccountDialog.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b add-account and sign-in-again dialogs for managed accounts (WP1.39, WP1.25: an expired sign-in is actionable); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6e: opened from onboarding's Codex setup page at the chosen method, above the page (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "note": "the API key goes only through the one-way secret channel; nothing keeps it"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/ManagedAccountsSection.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g: Check sign-in in each account menu, its answer on the row, not on a blocked account (WP1.10); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g round 1: a check's answer goes once the record moves on (sign-in state, block, lifecycle) and on Sign in again or This is still my account; a signed-out or expired row for this computer's own home says to run codex login, then Check sign-in (WP1.10); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g: a check's answer never shows on a blocked row, whichever lands first (WP1.10); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "rows, menu and pending setups for managed (Codex) accounts"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/ProvidersCard.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6e: Check again for a provider whose CLI is missing, could not be checked or is too old (WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx; WP2 commit 6f: \"Show the Codex introduction\" on the Codex row replays it without marking it seen (WP1.39); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the replay link is offered only once Codex is set up (WP1.39); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6g: the install or update commands for a CLI not found or too old, to copy, where the retired Codex tab had its install hint (WP1.41); tests/unit/renderer/providers-card-install-commands.test.tsx; WP2 commit 6g round 1: Check again on a row main has not looked at yet, commands only once discovery says they are needed, a script note when main sends none, the Copied timer cleared on unmount (WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx, tests/unit/renderer/providers-card-install-commands.test.tsx; WP2 commit 6g: an unchecked row reads Check now (WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx",
+      "note": "provider on/off and status; the Beta tag names Codex"
+    },
+    {
+      "path": "src/renderer/components/settings/accounts/accounts-ui.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 visual fixes (VM audit 2026-09-25): the reviewer line is not shown for a provider that is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/accounts-panel-claude-card.test.tsx",
+      "note": "shared badges, status text, row menu and reviewer line"
     },
     {
       "path": "src/renderer/components/sidebar/Badges.tsx",
@@ -1205,7 +1632,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour: the session type badges render as before; WP2 (37876e4f) drew their glyphs as CodexGlyph and ClaudeGlyph and added ProviderMark, the same mark sized for Settings, Accounts; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1215,8 +1642,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: the Codex-only launch gate is replaced by the one provider-neutral rule (isConfigLaunchBlocked): a config cannot launch while its own provider is off, Claude Code included, and the reason names that provider (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1236,8 +1663,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: the Codex-only launch gate is replaced by the one provider-neutral rule (isConfigLaunchBlocked): a config cannot launch while its own provider is off, Claude Code included, and the reason names that provider (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1247,7 +1674,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "evidence": "no account/auth/setup logic; its Codex mentions (two comments) are unchanged; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); since the base, and neither of them Codex code: the WP2 final fixes changed the retargeted dialog's kill-session hint to the exact, quoted tmux target the app creates, and the WP2 T24 fix makes Remove send End without waiting for it (End goes out before the card is dropped) and routes End's result to the End notice (tests/unit/renderer/remote-resumable-section.test.tsx)",
       "note": ""
     },
     {
@@ -1258,7 +1685,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1285,6 +1712,16 @@
       "note": "codex_review usage subscription; channels retained"
     },
     {
+      "path": "src/renderer/hooks/useKeyboardShortcuts.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6f review round 1: the global shortcuts are suppressed while the Codex introduction's takeover or replay is open, as they are while onboarding is due (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "note": ""
+    },
+    {
       "path": "src/renderer/hooks/useLaunchConfig.ts",
       "predicates": [
         "P05",
@@ -1293,11 +1730,8 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/use-launch-config.test.tsx adapted (WP1.38)",
-      "note": "launch-blocked reads neutral provider enablement; binding attached at launch",
-      "adaptsTests": [
-        "tests/unit/renderer/use-launch-config.test.tsx"
-      ]
+      "evidence": "the launch rule reads each config's own provider switch from the saved settings (settings.claudeEnabled, settings.codexEnabled: the saved on/off that main also reads as each package's enablement key) and, since WP2 commit 6e review fix, also blocks a Claude config while Claude Code is off, never a terminal-only one, wording the reason per provider (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx; WP2 commit 6c: a Codex config's account binding rides to the session it launches (buildLaunchSession) (WP1.38, WP1.42); tests/unit/renderer/launch-account.test.ts; WP2 commit 6g: CODEX_OFF_LAUNCH_REASON names Settings, Accounts (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 final fixes: both launch reasons are built by the shared providerOffMessage. tests/unit/renderer/use-launch-config.test.tsx is unchanged since the WP1 base",
+      "note": "launch-blocked reads the saved provider switches, not the registry; the binding is attached at launch"
     },
     {
       "path": "src/renderer/hooks/useSwitchAccount.ts",
@@ -1307,7 +1741,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1316,8 +1750,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e review fix: Ask Conductor starts, revives and types into nothing while Claude Code is off, and every entry point shows it disabled with the reason (WP1.2); tests/unit/renderer/ask-conductor-launch.test.ts",
       "note": ""
     },
     {
@@ -1328,7 +1762,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1338,7 +1772,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1349,8 +1783,18 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/onboarding/AssistantsStep.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e provider selection page (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-assistants-step.test.tsx; WP2 visual fixes (VM audit 2026-09-25): the cards are an ARIA radio group (one Tab stop, arrow keys, disabled cards skipped), Continue has the focus on entry and again after a failed save, and the column fits the page (WP1.1, WP1.2); tests/unit/renderer/onboarding-assistants-radiogroup.test.tsx; tests/unit/renderer/onboarding-initial-focus.test.tsx; tests/unit/renderer/onboarding-layout-contract.test.ts",
+      "note": "Which assistants will you use?"
     },
     {
       "path": "src/renderer/onboarding/BuiltinToolsStep.tsx",
@@ -1359,9 +1803,22 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6 (a switch per review direction): the Code review card is now Codex review, for Claude sessions and blocked while Codex is off, beside a Claude review card for Codex sessions that stays a live switch with a note while Codex is off; the Codex-off note points at Settings, Accounts (WP1.6); tests/unit/renderer/onboarding-review-tools.test.tsx; WP2 final fixes: Built-in Tools spelled as the Settings section is",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+    },
+    {
+      "path": "src/renderer/onboarding/CodexSetupStep.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e Codex setup page: discovery, install recipes, sign-in, this computer's sign-in (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 commit 6e review fix: Run in a terminal only for a recipe main sent a line for, typing that line exactly, one install at a time (WP1.18); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 commit 6e review round 2: the page runs this computer's one-time sign-in check itself after the choice and maps each answer honestly: settled F2 d, Use this sign-in only for a sign-in found, otherwise the sign-in choices with the reason (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 visual fixes (VM audit 2026-09-25): focus follows the page's primary control in each state (install command, sign-in method, Recommended new account, Next), never taken from a control the user is on (WP1.2); tests/unit/renderer/onboarding-initial-focus.test.tsx; WP2 final fixes: a Codex newer than tested reads \"Newer than the versions this app was tested with; it will still be used\" (WP1.17); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 final fixes (VM capture at 38cbc9d7): the newer-than-tested row wears the amber caution badge, as Settings, Accounts shows the same state (WP1.17); tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "note": "replaces the legacy Codex onboarding pages in the flow"
     },
     {
       "path": "src/renderer/onboarding/CodexSignInStep.tsx",
@@ -1373,7 +1830,7 @@
       ],
       "category": "SETUP",
       "disposition": "delete",
-      "evidence": "replaced by the descriptor-driven authentication step: tests/wp1/onboarding-provider-steps.test.ts, tests/wp1/codex-auth-adapter.test.ts (WP1.20-WP1.22)",
+      "evidence": "WP1.20-WP1.22 deleted in WP2 commit 6g, replaced by the Codex setup page sign-in (tests/unit/renderer/onboarding-codex-setup.test.tsx) over the realm-explicit sign-in operations (tests/wp1/codex-auth-adapter.test.ts); not in the flow (tests/unit/renderer/onboarding-registry.test.ts, tests/unit/renderer/onboarding-provider-flow.test.tsx); a stored codexSignIn stamp re-runs nothing (tests/unit/renderer/onboarding-gate.test.ts, WP1.34)",
       "note": ""
     },
     {
@@ -1387,7 +1844,7 @@
       ],
       "category": "SETUP",
       "disposition": "delete",
-      "evidence": "replaced by the provider-selection step + per-provider setup states: tests/wp1/onboarding-provider-steps.test.ts (WP1.1-WP1.3, WP1.34)",
+      "evidence": "WP1.1-WP1.3 / WP1.34 deleted in WP2 commit 6g, replaced by the assistants page (tests/unit/renderer/onboarding-assistants-step.test.tsx) and the Codex setup page install, update and sign-in states (tests/unit/renderer/onboarding-codex-setup.test.tsx); not in the flow (tests/unit/renderer/onboarding-registry.test.ts); a stored codex stamp re-runs nothing (tests/unit/renderer/onboarding-gate.test.ts)",
       "note": ""
     },
     {
@@ -1401,6 +1858,19 @@
       "note": ""
     },
     {
+      "path": "src/renderer/onboarding/HelloCodex.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P10",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6f: the Hello Codex pages, the onboarding page after Codex setup, and the one-time takeover and replay outside onboarding (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the takeover at the shared z-50 under the close dialogs, keys left to a dialog open above it, keys ignored while arming and when auto-repeated, page 1 Back in onboarding, a replay while still due stamps, and \"Start a Codex session\" held behind the resume prompt (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 visual fixes (VM audit 2026-09-25): Tab stays inside it through the onboarding shell, helloCodexShowing is the host's render rule that App makes the app behind inert on, the close dialogs paint above the takeover on the top layer, and its column fits the page (WP1.34, WP1.6); tests/unit/renderer/onboarding-focus-trap.test.tsx; tests/unit/renderer/window-close-dialogs.test.tsx; tests/unit/renderer/onboarding-layout-contract.test.ts",
+      "note": ""
+    },
+    {
       "path": "src/renderer/onboarding/OnboardingHarness.tsx",
       "predicates": [
         "P05",
@@ -1409,7 +1879,7 @@
       ],
       "category": "SETUP",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/onboarding-gate.test.ts adapted; tests/wp1/onboarding-provider-steps.test.ts (WP1.34)",
+      "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6e review fix: an upgrader who chose \"Use Codex only\" on the version-change setup screen is handed the Codex setup page once, in that run (WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6f: the Codex introduction follows the Codex setup page wherever that page is shown, when due, and its \"Start a Codex session\" is handed to App when the run ends (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the Codex introduction's page 1 Back returns to Codex setup unstamped (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 visual fixes (VM audit 2026-09-25): it tells App when its pages step aside for a terminal and come back, so the app behind is inert only while they cover the window (WP1.34); tests/unit/renderer/onboarding-focus-trap.test.tsx",
       "note": "provider-selection + provider setup pages; upgrade step stamped with the actual release version",
       "adaptsTests": [
         "tests/unit/renderer/onboarding-gate.test.ts"
@@ -1432,8 +1902,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled / provider labels through the compatibility shadow",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6: the recap names which built-in tools are on, Claude review included, and the Codex row points at Settings, Accounts (WP1.6); tests/unit/renderer/onboarding-review-tools.test.tsx, tests/unit/renderer/onboarding-transparency-recap.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1442,8 +1912,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "user-facing copy only, no account/auth/setup logic; WP2 commit 6e changed the hint from \"We'll get to Claude next\" to name the assistants choice that follows, since a Codex-only run never meets Claude (WP1.1, WP1.2); WP2 visual fixes (VM audit 2026-09-25), re-dispositioned because it changed: the opening line names no Claude when Claude Code is off or was missing at setup, and \"Let's go\" has the focus on entry (WP1.1, WP1.2); tests/unit/renderer/onboarding-welcome-copy.test.tsx; tests/unit/renderer/onboarding-initial-focus.test.tsx",
       "note": ""
     },
     {
@@ -1453,7 +1923,41 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); its Codex mention is unchanged; the WP2 final fixes respelled one title Built-in Tools, as the Settings section is",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/gate.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6e: fresh-install-only steps never reach upgraders (WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "note": "existing gate adapted; Codex named in a comment"
+    },
+    {
+      "path": "src/renderer/onboarding/hello-codex-open.ts",
+      "predicates": [
+        "P01",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6f review round 1: whether the Codex introduction is open outside onboarding, and the replay request, in a module with no store imports so the global shortcuts can read it (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/hello-codex.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6f: Hello Codex, the Codex introduction: when it is due (Codex on, found, not refused, one vouched-for signed-in account), its seen stamp, the replay and takeover state, and the copy as data with the Claude review line read from the build (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: with Claude Code off (a Codex-only install) no line claims Claude sessions or Claude reviews, and the Claude review line needs both the build and Claude Code on; external sign-ins excluded outright (WP1.2, WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts",
       "note": ""
     },
     {
@@ -1462,8 +1966,30 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6f: carries the Hello Codex introduction's styles (the .hc-* rules), semantic tokens defined in both themes, reduced motion honoured (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6g: the dead rules of the retired Codex question and sign-in page removed (WP1.34); tests/unit/renderer/onboarding-registry.test.ts; WP2 visual fixes (VM audit 2026-09-25): the page columns (Hello Codex's included) fit their scroll container at narrow widths, the Welcome mark keeps its size, and the showcase eyebrow uses --brand for 4.5:1 in the light theme (WP1.34); tests/unit/renderer/onboarding-layout-contract.test.ts; tests/unit/renderer/token-contrast.test.ts; WP2 final fixes (VM capture at 38cbc9d7): the Set up Codex link uses --brand for 4.5:1 in the light theme, and a caution badge (.badge.warn, amber) marks a Codex newer than tested (WP1.34, WP1.17); tests/unit/renderer/token-contrast.test.ts, tests/unit/renderer/onboarding-codex-setup.test.tsx; and every onboarding badge (.badge, .ma-badge, .rn-badge, .hc-badge, the \"New in this release\" badge) clears 4.5:1 in both themes: the azure ones draw with --brand over an 8% wash of it, the pending grey with --text-secondary; the approval and option pills take the same --brand wash, and the assistants Beta pill a solid --brand fill, so it clears on a selected card too; the unused .pill.rec rule is removed (WP1.34); tests/unit/renderer/token-contrast.test.ts",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/provider-choice.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e provider choice rules (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "note": "pure"
+    },
+    {
+      "path": "src/renderer/onboarding/save-provider-choice.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e saves the provider choice through main and settings (WP1.6); tests/unit/renderer/onboarding-assistants-step.test.tsx; WP2 commit 6e review fix: only registry-unavailable counts as no answer; an internal failure is returned (WP1.6); tests/unit/renderer/onboarding-assistants-step.test.tsx; WP2 final fixes: a save that does not land returns persist-failed and the page does not move on, whether main agreed or could not answer (WP1.6); tests/unit/renderer/onboarding-assistants-step.test.tsx",
       "note": ""
     },
     {
@@ -1475,6 +2001,16 @@
       "disposition": "retain",
       "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
       "note": ""
+    },
+    {
+      "path": "src/renderer/onboarding/setup-handoff.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e App setup wiring: \"Use Codex only\" on either setup screen hands the run to the Codex setup page; the harness gate; the start-up Claude CLI step (WP1.2, WP1.34); tests/unit/renderer/setup-codex-only.test.tsx",
+      "note": "pure wiring App routes through"
     },
     {
       "path": "src/renderer/onboarding/showcase-pages.ts",
@@ -1490,15 +2026,15 @@
       "path": "src/renderer/onboarding/steps.ts",
       "predicates": [
         "P05",
-        "P10",
         "P11"
       ],
       "category": "SETUP",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/onboarding-registry.test.ts updated deliberately (WP1.34)",
-      "note": "codex/codexSignIn steps replaced by providerSelect + per-provider setup steps",
+      "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6f: helloCodex, fresh-install only and never a setup step, straight after codexSetup (WP1.34); tests/unit/renderer/onboarding-registry.test.ts",
+      "note": "codex/codexSignIn steps replaced by the assistants choice (assistants) and the Codex setup page (codexSetup); the Claude Code pages follow the choice",
       "adaptsTests": [
-        "tests/unit/renderer/onboarding-registry.test.ts"
+        "tests/unit/renderer/onboarding-registry.test.ts",
+        "tests/unit/renderer/onboarding-gate.test.ts"
       ]
     },
     {
@@ -1542,11 +2078,21 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-persistence-codex-review.test.ts adapted + binding restore case in tests/wp1/launch-handoff.test.ts (WP1.38)",
+      "evidence": "WP2 commit 6c: a reopened Codex session keeps its account binding (providerAccountId, never a launch acknowledgement) and saves it again; a Claude session never carries one (WP1.38, WP1.42); tests/unit/renderer/session-persistence-restore.test.ts; WP2 commit 6e: a transient install tab is never saved, so a later start never runs it again (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
       "note": "saved sessions carry the provider-account binding so restore resolves an exact realm",
       "adaptsTests": [
-        "tests/unit/renderer/session-persistence-codex-review.test.ts"
+        "tests/unit/renderer/session-persistence-restore.test.ts"
       ]
+    },
+    {
+      "path": "src/renderer/stores/appMetaStore.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6f: helloCodexSeenVersion, the Codex introduction's seen stamp; presence means seen, so an upgrade never shows it again (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the stamp's meaning, a replay left while still due included (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "note": ""
     },
     {
       "path": "src/renderer/stores/codexAccountStore.ts",
@@ -1560,7 +2106,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "delete",
-      "evidence": "WP1.57: zero production imports at the candidate (tests/wp1/dependency-boundaries.test.ts); replaced by provider-neutral identity/account stores + the Codex renderer adapter (tests/wp1/provider-store.test.ts)",
+      "evidence": "WP1.57 deleted in WP2 commit 6g: zero production imports, pinned by tests/wp1/legacy-codex-retired.test.ts; replaced by the provider-neutral Accounts store (tests/unit/renderer/provider-accounts-store.test.ts) and the Codex renderer adapter",
       "note": "singleton Codex account store retired",
       "adaptsTests": [
         "tests/unit/stores/codexAccountStore.test.ts"
@@ -1573,9 +2119,21 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 6c: a config carries the Codex account it runs under (providerAccountId, an opaque registry id; Codex only) (WP1.38, WP1.42); tests/unit/renderer/session-dialog-codex-account.test.tsx, tests/unit/renderer/launch-account.test.ts",
+      "note": "its other Codex mentions are the codexOptions field and its type"
+    },
+    {
+      "path": "src/renderer/stores/providerAccountsStore.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b provider accounts store (WP1.39); tests/unit/renderer/provider-accounts-store.test.ts; WP2 commit 6e: the discover (Check again) and installRecipes actions (WP1.18, WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx; WP2 commit 6g: checkSignIn (the existing refreshStatus IPC: the provider status check in the account realm, recorded, never vouching), canOfferCheckSignIn and signInCheckText (WP1.10); tests/unit/renderer/provider-accounts-store.test.ts, tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g round 1: externalSignInHint (WP1.10); tests/unit/renderer/provider-accounts-store.test.ts; WP2 final fixes: a Codex newer than tested reads \"newer than the versions this app was tested with; it will still be used\", which is what happens (WP1.17); tests/unit/renderer/provider-accounts-store.test.ts; WP2 final fixes: a Providers switch whose settings save does not land returns persist-failed and the row says so (saveProviderSwitch: the save resolves false, it does not throw) (WP1.6); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "the snapshot, action wrappers and pure selectors; ~/.codex appears only as display copy"
     },
     {
       "path": "src/renderer/stores/sessionStore.ts",
@@ -1584,9 +2142,9 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 6c: a session carries its Codex account (providerAccountId), copied from its config, never a launch acknowledgement (WP1.38, WP1.42); tests/unit/renderer/launch-account.test.ts, tests/unit/renderer/session-persistence-restore.test.ts; WP2 commit 6e: a transient tab (a confirmed install command) is never saved and runs its command once (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
+      "note": "its other Codex mentions are the codexOptions field, the reasoning-effort label and the retired enableCodexReview flag"
     },
     {
       "path": "src/renderer/stores/settingsStore.ts",
@@ -1595,9 +2153,9 @@
         "P11"
       ],
       "category": "SETUP",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
-      "note": "codexEnabled stays as the durable preference and compatibility shadow, mirrored from the provider registry"
+      "disposition": "replace",
+      "evidence": "WP2 commit 6: claudeReview, the Claude review switch beside codexReview (WP1.6); tests/unit/renderer/code-review-tools.test.tsx; WP2 commit 6e: claudeEnabled, Claude Code's saved on/off, absent meaning on (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx",
+      "note": "codexEnabled and claudeEnabled are the saved on/off switches themselves: main reads them as each package's enablement key (src/main/providers/codex/enablement.ts, src/main/providers/claude/enablement.ts) and holds a switch made in Settings, Accounts until the saved value reads back"
     },
     {
       "path": "src/renderer/stores/tipsStore.ts",
@@ -1617,7 +2175,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "evidence": "a colour token only for Codex (--chart-codex, the Codex model family's chart colour, unchanged), no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); the WP2 final fixes added the strong keyboard focus ring (.focus-ring-strong) for switches and the Settings selects, which is not Codex code (tests/unit/renderer/token-contrast.test.ts); the light --ob-bright (the light end of the onboarding button gradient) is a mid azure so every point of the gradient clears 4.5:1 under the label, which is not Codex code (tests/unit/renderer/token-contrast.test.ts); and its inset form (.focus-ring-strong-inset) for the Settings tabs rail, where an outside ring would be clipped, and its outset form (.focus-ring-strong-outset) for the account colour swatches, outside a selected swatch's own ring, which is not Codex code (tests/unit/renderer/token-contrast.test.ts)",
       "note": "chart colour token for the Codex model family"
     },
     {
@@ -1629,7 +2187,7 @@
       ],
       "category": "DOCS",
       "disposition": "replace",
-      "evidence": "WP1.35 sweep; tips suites in docs/wp1/baseline-test-inventory.json",
+      "evidence": "WP1.35 sweep; tips suites in docs/wp1/baseline-test-inventory.json; WP1.35 WP2 commit 6g: the Codex sessions tip points at Settings, Accounts; tests/unit/renderer/settings-codex-tab-retired.test.tsx",
       "note": "tips for the provider setup surface"
     },
     {
@@ -1638,37 +2196,53 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 6g: the Codex step's Auth line and tip point at Settings, Accounts (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "note": "re-dispositioned in WP2 commit 6g (was retain)"
     },
     {
       "path": "src/renderer/types/electron.d.ts",
       "predicates": [
         "P07",
         "P08",
-        "P09",
         "P11"
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57)",
+      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57); WP2 commit 6g: the codex API typing removed (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "codex API typing replaced by the provider-neutral API typing"
+    },
+    {
+      "path": "src/renderer/utils/bootGates.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "SETUP",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6f: the Codex introduction's one-time takeover takes the last turn in the boot chain, after every gate and the due waits (WP1.34, WP1.6); tests/unit/renderer/boot-gates.test.ts; tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: bootChain, App's whole decision, so the takeover's two answers are tested as App uses them (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "note": ""
+    },
+    {
+      "path": "src/renderer/utils/launchAccount.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts; WP2 commit 6e: a too-old CLI points at Check again in Settings, Accounts, which refreshes the executable launches run (WP1.41); tests/unit/renderer/launch-account.test.ts; WP2 commit 6g: providerCliMissingText, the session dialog's CLI-missing banner in the Providers card's own words (WP1.41); tests/unit/renderer/session-dialog-codex-account.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): providerOffForLaunch: a launch main refuses asks nothing first; tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "note": "picker options, launch plan, refusal wording, the restart default per provider"
     },
     {
       "path": "src/renderer/utils/sessionLaunch.ts",
       "predicates": [
-        "P04",
         "P05",
         "P11"
       ],
       "category": "LAUNCH",
-      "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-launch.test.ts adapted (WP1.38)",
-      "note": "shouldGateAccountChoice/canSwitchAccountForSession no longer exclude Codex",
-      "adaptsTests": [
-        "tests/unit/renderer/session-launch.test.ts"
-      ]
+      "disposition": "retain",
+      "evidence": "unchanged observable behaviour: shouldGateAccountChoice and canSwitchAccountForSession still exclude Codex, deliberately. They are the Claude profile picker and Switch Account; a Codex launch runs on the Codex account its config names, resolved by src/renderer/utils/launchAccount.ts (tests/unit/renderer/launch-account.test.ts, tests/unit/renderer/terminalview-account-launch.test.tsx). The code is unchanged since the WP1 base; the WP2 final fixes corrected two comments (the retired ~/.codex remark, which is why P04 no longer matches). tests/unit/renderer/session-launch.test.ts is unchanged (WP1.33, WP1.38)",
+      "note": ""
     },
     {
       "path": "src/shared/app-knowledge.ts",
@@ -1679,7 +2253,7 @@
       ],
       "category": "DOCS",
       "disposition": "replace",
-      "evidence": "WP1.35/WP1.36 documentation sweep; app-knowledge suites in docs/wp1/baseline-test-inventory.json",
+      "evidence": "WP1.35/WP1.36 documentation sweep; app-knowledge suites in docs/wp1/baseline-test-inventory.json; WP2 commit 6g (WP1.35/WP1.36): the Codex section and the troubleshooting section point at Settings, Accounts, and the troubleshooting section names Check sign-in; tests/unit/renderer/settings-codex-tab-retired.test.tsx",
       "note": "feature guide + Ask Conductor knowledge for provider setup, identity vs account, managed vs external Codex homes; known-issues entry for D10"
     },
     {
@@ -1709,7 +2283,7 @@
       ],
       "category": "OTHER",
       "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); the WP2 T24 fix added the shared in-container stop script and the stop command the End notice shows, and exported the entry nonce rule for End to reuse, none of them Codex code",
       "note": ""
     },
     {
@@ -1720,7 +2294,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/legacy-codex-gate.test.ts (WP1.57): CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION absent at the candidate",
+      "evidence": "tests/wp1/legacy-codex-retired.test.ts (WP1.57): no identifier or key is CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION and no string (folded where constant) is one of the four codex:* channels anywhere in the app source (removed in WP2 commit 6g); the tree gate is tests/wp1/legacy-codex-gate.test.ts",
       "note": "Codex auth channels retired; provider-neutral channels added; codex-review channels retained"
     },
     {
@@ -1775,6 +2349,16 @@
       "note": "names CODEX_HOME as the worked example of a variable declared both ambient and owned"
     },
     {
+      "path": "src/shared/providers/registry.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "provider-neutral registry names the Codex realm kind and grammar; no legacy Codex code path; covered by tests/wp1/account-registry-uniqueness.test.ts (WP1.45)",
+      "note": "new WP2 registry"
+    },
+    {
       "path": "src/shared/types.ts",
       "predicates": [
         "P07",
@@ -1782,7 +2366,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42)",
+      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts",
       "note": "binding/identity types added; CodexOptions retained"
     },
     {
@@ -1790,11 +2374,12 @@
       "predicates": [
         "P01",
         "P05",
+        "P07",
         "P13"
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: adapted to account binding; part of the e2e gate (WP1.2, docs/wp1/evidence/mode-matrix.md)",
+      "evidence": "WP1.58: adapted to account binding; part of the e2e gate (WP1.2, docs/wp1/evidence/mode-matrix.md); WP2 visual fixes (VM audit 2026-09-25): it drives the current UI (Saved, + New, Config) and never skips; it seeds one managed Codex account through the registry transitions and asserts the created config is provider codex, on this computer, bound to that account (the added P07 hit is its codexOptions assertion); the app instance sees the fake Codex at the pinned version, never the host's (WP1.58, WP1.2); tests/e2e/helpers/fake-codex.ts",
       "note": ""
     },
     {
@@ -1805,8 +2390,21 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: adapted to the provider setup surface; part of the e2e gate (docs/wp1/evidence/mode-matrix.md)",
+      "evidence": "WP1.58: adapted in WP2 commit 6g to Settings, Accounts (no Codex tab; the Codex row of the Providers card with its status); part of the e2e gate (docs/wp1/evidence/mode-matrix.md)",
       "note": ""
+    },
+    {
+      "path": "tests/e2e/helpers/fake-codex.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25), round 2: the e2e fake Codex CLI, the observable contract of the wp1 fake (tests/wp1/fake-cli.test.ts) cut to --version at the pinned version and login status, behind the same npm .cmd shim; put first on the app instance's PATH with every real Codex taken off it, so the adapted e2e never depends on the host's Codex (WP1.58, WP1.2); tests/e2e/codex-session-creation.spec.ts",
+      "note": "P04: the instance gets a CODEX_HOME of its own, never ~/.codex; P09: the fake refuses an ambient OPENAI_API_KEY, as the wp1 fake does"
     },
     {
       "path": "tests/e2e/session-dialog-permutations.spec.ts",
@@ -1814,8 +2412,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58: two copy assertions follow the session dialog's Codex notes, now \"Codex can't run over SSH in this release\" and \"Codex runs on this computer only\" (WP2 commit 6c; WP1.2); every case otherwise unchanged; adapted in place: tests/e2e/session-dialog-permutations.spec.ts",
       "note": ""
     },
     {
@@ -1916,13 +2514,12 @@
       "path": "tests/integration/codex-cli-compat.test.ts",
       "predicates": [
         "P01",
-        "P06",
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "existing flag-drift test (listed in docs/wp1/baseline-test-inventory.json); WP2 commit 5a derives its assertions from the Codex reviewer argv (cli-runner review operation) instead of the retired buildArgv, and asserts the stdin prompt contract; must stay green on the merge candidate (WP1.33)",
+      "note": "WP2 commit 5a: the -o/--output-last-message and -C/--cd assertions were for the retired review path and are gone; every flag the reviewer passes is asserted"
     },
     {
       "path": "tests/unit/channel-rules-store.test.ts",
@@ -1951,7 +2548,7 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its cases and assertions are unchanged since the WP1 base. WP1 (#619) replaced its fixed microtask wait with a bounded wait for the project gate and composes the providers first, and WP2 added only a mock of the launch gate answering on (every provider on), so it still tests the cancel path; the gate itself is tested in tests/unit/main/cloud-agent-provider-off.test.ts; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -1962,7 +2559,7 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its cases and assertions are unchanged since the WP1 base; its mock of src/main/codex-review-mcp-tool.ts gained the functions WP2 added there (registerClaudeReviewTool, abortSessionReviews, cancelReviewRequest), which it does not test; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -2018,7 +2615,9 @@
       "category": "TEST",
       "disposition": "replace",
       "evidence": "WP1.58: Claude cases retained; Codex auth.json cases removed with the decoder; adapted in place: tests/unit/main/account-identity.test.ts",
-      "note": ""
+      "note": "",
+      "resolved": true,
+      "resolvedEvidence": "WP1.58 landed in WP2 commit 6g: the Codex auth.json cases were removed with the decoder and the file no longer names Codex; the Claude cases stay in tests/unit/main/account-identity.test.ts"
     },
     {
       "path": "tests/unit/main/canvas-mcp-tool.test.ts",
@@ -2057,7 +2656,7 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its cases and assertions are unchanged since the WP1 base; its mock of src/main/conductor-mcp-server.ts gained registerClaudeReviewSession (WP2 commit 5b), which it does not test; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -2067,7 +2666,7 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its cases and assertions are unchanged since the WP1 base; its mock of src/main/conductor-mcp-server.ts gained registerClaudeReviewSession (WP2 commit 5b), which it does not test; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -2094,14 +2693,26 @@
       "path": "tests/unit/main/codex-review-mcp-tool.test.ts",
       "predicates": [
         "P01",
-        "P06",
+        "P04",
         "P09",
         "P13"
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: install/auth gate cases adapted to realm resolution; exec/ACL cases retained; adapted in place: tests/unit/main/codex-review-mcp-tool.test.ts",
+      "evidence": "WP1.58: rewritten in WP2 commit 5a with the move to a prepared review launch: the install and sign-in gate cases became the prepared-launch refusals (an unverified sign-in, no account, Codex off, accounts not ready); the argv, tmpfile, stream-timeout, exit-code and temp-folder cleanup cases went with the exec, now the Codex reviewer adapter tested in tests/wp1/cli-discovery.test.ts; the path-containment, git-repo guard and session-binding cases are kept; WP2 5a and 5b added the lease, cancel and session-close cases and the claude_review tool cases; adapted in place: tests/unit/main/codex-review-mcp-tool.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the suite gained a mock of the launch gate answering on; the run-time refusal is tested in tests/unit/main/review-provider-off.test.ts",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/codex-review-session-abort.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 commit 5a test (tests/unit/main/codex-review-session-abort.test.ts): unregistering a session from codex_review stops its in-flight reviews (and only its own), releasing their reviewer leases (WP1.38)",
+      "note": "created by WP2 commit 5a"
     },
     {
       "path": "tests/unit/main/codex-review-usage.test.ts",
@@ -2133,8 +2744,29 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its cases and assertions are unchanged since the WP1 base; one comment now names parseCccSessionIdFromUrl instead of the retired parseSourceFromUrl; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-provider-binding.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 regression for the per-spawn MCP (WP1.68): a connection's tool set follows the provider its session's credential was issued to; tests/unit/main/conductor-mcp-provider-binding.test.ts",
+      "note": "Codex appears as the provider name the test issues a credential to; no Codex code path"
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-review-switches.test.ts",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6 regression for the per-spawn MCP review tools (WP1.68): each review direction follows its own Settings switch over real SSE and streamable HTTP connections; tests/unit/main/conductor-mcp-review-switches.test.ts",
+      "note": "codexEnabled and the Codex session appear as test settings and the provider a credential is issued to; no Codex code path"
     },
     {
       "path": "tests/unit/main/conductor-mcp-server-source-filter.test.ts",
@@ -2143,8 +2775,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58: the parseSourceFromUrl cases went with the function (a connection's provider is the one its credential was issued to: tests/unit/main/conductor-mcp-provider-binding.test.ts); the offeredReviewTool and serveStatelessMcp cases were added (WP2 commits 5a, 5b, 6); the parseCccSessionIdFromUrl cases are kept; adapted in place: tests/unit/main/conductor-mcp-server-source-filter.test.ts",
       "note": ""
     },
     {
@@ -2168,6 +2800,16 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/install-tab-command-secrets.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 the transient Install/Update Codex tab's shell gets none of the command-button secrets while an ordinary shell still does (WP1.2); tests/unit/main/install-tab-command-secrets.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the comment on what the isolation is (not a boundary against a script running as the same user) is pinned by the same tests; tests/unit/main/install-tab-command-secrets.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
+    },
+    {
       "path": "tests/unit/main/path-utils-home.test.ts",
       "predicates": [
         "P13"
@@ -2176,6 +2818,30 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/provider-in-use.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a switch-off of Claude Code is refused while a cloud agent, an Insights run, a Sentinel run or an SSH Launch Claude runs, and Codex is not held by them; tests/unit/main/provider-in-use.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
+    },
+    {
+      "path": "tests/unit/main/provider-launch-gate.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 main's one launch rule, answered by the real accounts service from the saved settings: Claude Code absent means on, Codex absent means not answered yet (launches, as prepareLaunch always allowed), off refuses, an unreadable setting refuses, and the renderer's launch rule agrees on every combination (WP1.60 enable/disable); tests/unit/main/provider-launch-gate.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): plus: a probe asks the same rule but is not logged, and the tab line reads the refusal once; tests/unit/main/provider-launch-gate.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -2187,6 +2853,18 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/pty-handlers-command-secrets.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "existing pty:spawn strip suite; WP2 commit 4 added the codexLaunch case: a renderer-sent launch is stripped and a Codex spawn with no accounts service is refused (WP1.38, WP1.42; tests/wp1/launch-handoff.test.ts, tests/wp1/launch-handoff-pty.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the suite gained a mock of the launch gate answering on; the refusal is tested in tests/unit/main/pty-spawn-provider-off.test.ts",
+      "note": "baseline pty:spawn strip suite; WP2 commit 4 added the codexLaunch case (re-dispositioned: it changed)"
     },
     {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
@@ -2205,8 +2883,19 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its cases and assertions are unchanged since the WP1 base; its mock of src/main/conductor-mcp-server.ts gained registerClaudeReviewSession (WP2 commit 5b), which it does not test; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/pty-spawn-provider-off.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 pty:spawn and the SSH flow Launch Claude refuse a launch of a provider that is off before anything starts (new launch, restored session, Restart, Ask Conductor, SSH, reattach, Codex) while a terminal-only session still starts (WP1.60 enable/disable); tests/unit/main/pty-spawn-provider-off.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): plus: an accepted shell-only SSH Launch Claude counts as Claude in use, and the legacy CLI installs for a Claude launch only; tests/unit/main/pty-spawn-provider-off.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
     },
     {
       "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
@@ -2214,9 +2903,20 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58 (WP1 #619, the Claude project gate): a managed spawn is now deferred by the project-settings gate as well as the refresh wait, so the positive control was rewritten for a managed spawn and a new one pins an unmanaged spawn as still synchronous; its Codex mentions (the rc.15 Codex review it credits) are unchanged (WP1.16); adapted in place: tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/review-provider-off.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 codex_review and claude_review refuse at run time once the reviewing provider is off, before any diff, lease or reviewer CLI (WP1.60 enable/disable); tests/unit/main/review-provider-off.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): plus: each refusal reads once and plainly; tests/unit/main/review-provider-off.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
     },
     {
       "path": "tests/unit/main/sanitize-restored-spawn-options.test.ts",
@@ -2225,9 +2925,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: existing cases retained, Codex model repair cases added; tests/unit/main/sanitize-restored-spawn-options.test.ts (WP1.42)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
@@ -2245,8 +2945,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58: its mock of src/main/conductor-mcp-server.ts gained registerClaudeReviewSession (WP2 commit 5b), which it does not test; the WP2 final fixes changed five assertions to the single-quoted tmux target ('=ccc-<sid>'), a functional SSH fix for zsh remotes, and no case name; the WP2 T24 fix changed one assertion (the container kill runs under sh -c, no longer bash -c), let its execFile mock return stdout, and added eleven cases in two new groups (a rootful container with no saved sudo password: nine; End reads its target when it is called: two), 23 cases to 34; no existing case name changed and its Codex mention is unchanged; adapted in place: tests/unit/main/ssh-end-remote-password.test.ts",
       "note": ""
     },
     {
@@ -2256,7 +2956,7 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its cases and their names are unchanged since the WP1 base; the WP2 final fixes made its sh availability probe try three times and report why it failed (a runner that really has no sh still fails, and says why), so the availability case asserts the probe's reason instead of a bare yes; its Codex mentions (the rc.15 Codex review it credits) are unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -2346,9 +3046,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: existing cases retained, the realm-folder case added (indexed beside ~/.codex, followed on change, each rollout read once); tests/unit/native/tokenomics-worker-ingest.native.test.ts (WP1.2; CI native suite)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "tests/unit/pr600-r1-lifetime.test.ts",
@@ -2376,8 +3076,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58 (WP1 #619, the Claude project gate): the project-gate cases were added (a managed refusal is written to the terminal and exits; the resume target's folder is gated; an unmanaged spawn is not gated) and the synchronous-refusal control now names an unmanaged spawn; its Codex mentions (the PR600 Codex finding it credits) are unchanged; adapted in place: tests/unit/pr600-r3-fresh-wait.test.ts",
       "note": ""
     },
     {
@@ -2398,9 +3098,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "replace",
-      "evidence": "WP1.58 mapping: key-via-stdin-not-argv and stderr redaction carried into tests/wp1/codex-auth-adapter.test.ts (WP1.22, WP1.51)",
-      "note": ""
+      "disposition": "delete",
+      "evidence": "WP1.58 mapping: deleted in WP2 commit 6g with the singleton login/logout functions it tested (their only caller was the retired codex:* IPC); key-via-stdin and never in argv or env, output redaction and logout in the selected realm re-asserted by tests/wp1/codex-auth-adapter.test.ts (WP1.22, WP1.23, WP1.51)",
+      "note": "re-dispositioned in WP2 commit 6g (was replace)"
     },
     {
       "path": "tests/unit/providers/codex/auth.test.ts",
@@ -2413,7 +3113,7 @@
       ],
       "category": "TEST",
       "disposition": "delete",
-      "evidence": "WP1.58 mapping: getCodexHome/JWT/readCodexAuthStatus removed; installed/version/authMode reporting re-asserted by tests/wp1/codex-auth-adapter.test.ts",
+      "evidence": "WP1.58 mapping: the module is deleted (WP2 commit 6g): the JWT decoder and readCodexAuthStatus are gone, and the module's exported getCodexHome with them (src/main/providers/codex/mcp-config.ts keeps a private one for its config.toml heal) (the realm sessions folder is required: tests/unit/providers/codex/telemetry.test.ts); installed/version reporting re-asserted by tests/wp1/cli-discovery.test.ts and sign-in state by tests/wp1/codex-auth-adapter.test.ts",
       "note": ""
     },
     {
@@ -2425,8 +3125,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "replace",
-      "evidence": "WP1.58/WP1.68: explicit realm-path argument; heal cases retained; adapted in place: tests/unit/providers/codex/mcp-config.test.ts",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged since the WP1 base: the heal cases, run against CODEX_HOME set to a temporary folder; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -2473,7 +3173,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: cases retained; realm-env cases added (tests/wp1/launch-handoff.test.ts)",
+      "evidence": "WP1.58: cases retained; realm-env cases added (tests/wp1/launch-handoff.test.ts); WP2 final fixes: the resolveBinary case now asserts that CodexProvider refuses both PATH lookups, and resolveCodexBinary, the discovery lookup, keeps its cases (WP1.17)",
       "note": ""
     },
     {
@@ -2486,7 +3186,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.68: getCodexHome mock replaced by an explicit sessions-dir argument; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts",
+      "evidence": "WP1.58/WP1.68: every watch is handed its realm sessions folder (the auth-module mock is gone with the module, WP2 commit 6g); a watch with no folder reads nothing even with CODEX_HOME pointing at a matching transcript; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts",
       "note": ""
     },
     {
@@ -2552,6 +3252,40 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/accounts-panel-claude-card.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the Claude card's add button wording, no add while Claude Code is off, readable notes, and no reviewer line for a provider that is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/accounts-panel-claude-card.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/accounts-snapshot-harness.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts",
+      "note": "fixture snapshots name Codex accounts"
+    },
+    {
+      "path": "tests/unit/renderer/accounts-surface.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "note": "fixture snapshots name Codex accounts"
+    },
+    {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
       "predicates": [
         "P13"
@@ -2584,6 +3318,40 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/boot-gates.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP2 commit 6f: the Codex introduction takeover joins the exhaustive sweep and gets its own cases as the last gate (WP1.34); tests/unit/renderer/boot-gates.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/claude-off-launch.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e review fix: with Claude Code off no config launches Claude (a terminal-only one still does), the reason names the provider, and the New session dialog offers only a provider that is on (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/code-review-tools.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P08",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx",
+      "note": "fixture snapshots name Codex accounts and the preload surface"
+    },
+    {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
       "predicates": [
         "P01",
@@ -2609,12 +3377,14 @@
       "path": "tests/unit/renderer/codex-review-sub-tool.test.ts",
       "predicates": [
         "P01",
+        "P04",
+        "P05",
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping: WP2 commit 7 reworded the Codex review card to the real conditions the tool is offered under, and the WP2 final fixes made the card show the state main offers codex_review on (the built-in tools and the Codex review switch on, Codex on, a Codex account that can review) and added the Claude review card; both are tested here, with their Off and Unavailable states and the reason each gives (WP1.6); tests/unit/renderer/codex-review-sub-tool.test.ts; WP2 final fixes: a case pins that each status pill draws with its contrast-pinned semantic token",
+      "note": "its P04 and P05 hits are fixture data (providers.codex, codexEnabled, and the ~/.codex sign-in the no-reviewer reason names)"
     },
     {
       "path": "tests/unit/renderer/command-bar-layout.test.ts",
@@ -2632,8 +3402,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58: one case added in WP2 commit 6e review fix, Ask Conductor disabled with the reason while Claude Code is off (WP1.2); every existing case unchanged; adapted in place: tests/unit/renderer/command-dialog-capabilities.test.tsx",
       "note": ""
     },
     {
@@ -2686,8 +3456,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58: the page now has five sub-tool cards, the Claude review card included, and the \"Available\" case is about host transfer, since the review cards follow their own conditions (WP2 final fixes; WP1.6); adapted in place: tests/unit/renderer/conductor-mcp-page.test.ts; the header case pins \"Running on port 19333\" (WP2 final fixes)",
       "note": ""
     },
     {
@@ -2700,6 +3470,19 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6f: the Hello Codex acceptance criteria AC1-AC13 as real tests (the gate, the onboarding page, the takeover, the stamp, replay, the pages, tokens, copy, focus and motion); AC14 stays pending for commit 7's guidance (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: a Codex-only install, the close dialogs above the takeover, arming and repeats, global shortcuts, page 1 Back, the resume prompt hold, and AC8 amended (WP1.2, WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "note": "created with the Hello Codex spec (2026-09-24)"
     },
     {
       "path": "tests/unit/renderer/insights-codex-empty.test.ts",
@@ -2721,6 +3504,18 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/launch-account.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts",
+      "note": "fixture snapshots name Codex accounts"
     },
     {
       "path": "tests/unit/renderer/launch-always-new.test.tsx",
@@ -2809,6 +3604,60 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/onboarding-assistants-radiogroup.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the assistants page follows the ARIA radio group pattern, one Tab stop and arrow keys, disabled cards skipped (WP1.1, WP1.2); tests/unit/renderer/onboarding-assistants-radiogroup.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-assistants-step.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e provider selection page (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-assistants-step.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e Codex setup page (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the install tab options now carry noCommandSecrets; tests/unit/main/install-tab-command-secrets.test.ts; WP2 final fixes: the newer-than-tested row wears the amber caution badge (WP1.17); tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-flow-stubs.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e onboarding flow test helpers (WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "note": "helper, not a test"
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-focus-trap.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): Tab stays on the onboarding pages and on the Hello Codex takeover and replay, the app behind is inert while they cover the window, and the close dialogs above keep their keys (WP1.34, WP1.6); tests/unit/renderer/onboarding-focus-trap.test.tsx",
+      "note": ""
+    },
+    {
       "path": "tests/unit/renderer/onboarding-gate.test.ts",
       "predicates": [
         "P05",
@@ -2817,7 +3666,39 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.34: gate cases for the provider steps; adapted in place: tests/unit/renderer/onboarding-gate.test.ts",
+      "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6f: helloCodex joins the Codex and fresh-install-only pages (WP1.34); tests/unit/renderer/onboarding-gate.test.ts; WP2 commit 6g: stored stamps for the retired codex and codexSignIn pages re-run nothing (WP1.34); tests/unit/renderer/onboarding-gate.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-initial-focus.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): first-run setup, Welcome, the assistants page and Set up Codex open with focus on their primary control, the CLI setup terminal takes it, and Retry and Continue get it back after a failed action (WP1.1, WP1.2, WP1.34); tests/unit/renderer/onboarding-initial-focus.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-layout-contract.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the Welcome mark keeps its size, and the onboarding page columns, Hello Codex's and the assistants page's included, fit their scroll container at narrow widths (WP1.34); tests/unit/renderer/onboarding-layout-contract.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e page list per provider choice, upgraders never asked (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx",
       "note": ""
     },
     {
@@ -2829,8 +3710,19 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.34: frozen step table updated deliberately for providerSelect + per-provider setup steps; adapted in place: tests/unit/renderer/onboarding-registry.test.ts",
+      "evidence": "WP1.58/WP1.34: frozen step table updated deliberately for providerSelect + per-provider setup steps; adapted in place: tests/unit/renderer/onboarding-registry.test.ts; WP2 commit 6f: helloCodex in the frozen table, the conditional steps and the fresh-install-only steps (WP1.34); tests/unit/renderer/onboarding-registry.test.ts",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-review-tools.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6d onboarding built-in tools and transparency list both review tools (WP1.68); tests/unit/renderer/onboarding-review-tools.test.tsx; WP2 commit 6g: the legacy CodexStep case left with CodexStep (WP1.34); tests/unit/renderer/onboarding-review-tools.test.tsx",
+      "note": "Codex appears as the provider a review tool needs"
     },
     {
       "path": "tests/unit/renderer/onboarding-transparency-recap.test.tsx",
@@ -2838,9 +3730,52 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58: the recap label it reads is now spelled Built-in Tools, as the Settings section is (WP2 final fixes); every case otherwise unchanged; adapted in place: tests/unit/renderer/onboarding-transparency-recap.test.tsx",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-welcome-copy.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the Welcome line names no Claude when Claude Code is off (the saved setting or main's switch) or was missing at setup (WP1.2); tests/unit/renderer/onboarding-welcome-copy.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/provider-accounts-store.test.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6b provider accounts store (WP1.39); tests/unit/renderer/provider-accounts-store.test.ts",
+      "note": "fixture snapshots name Codex accounts"
+    },
+    {
+      "path": "tests/unit/renderer/providers-card-check-again.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e Providers card Check again (WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx; WP2 commit 6g round 1: an unchecked row offers Check again (WP1.41); tests/unit/renderer/providers-card-check-again.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/providers-card-install-commands.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6g: the Providers card install and update commands, where the retired Codex tab had its install hint (WP1.41); tests/unit/renderer/providers-card-install-commands.test.tsx; WP2 commit 6g round 1: no commands while unchecked, then the install commands once main says missing; the script-note fallback; the Copied timer (WP1.41); tests/unit/renderer/providers-card-install-commands.test.tsx",
+      "note": "uses the Codex recipes as main returns them"
     },
     {
       "path": "tests/unit/renderer/quick-start-panel.test.tsx",
@@ -2871,8 +3806,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.58: the retargeted dialog's kill-session hint is now the exact, quoted tmux target '=ccc-<safeSid>' (WP2 final fixes), and one case was added: a session id with characters outside [A-Za-z0-9_-] is named as main names the session; the WP2 T24 fix added two cases (an End that reports Claude may remain in a container raises the End notice; Remove calls End before it drops the entry and saves the session state) and changed no existing assertion, 40 baseline cases to 43; its Codex mention (codexEnabled in the settings fixture) is unchanged; adapted in place: tests/unit/renderer/remote-resumable-section.test.tsx",
       "note": ""
     },
     {
@@ -2894,6 +3829,20 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-codex-account.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c session dialog account picker (WP1.42); tests/unit/renderer/session-dialog-codex-account.test.tsx; WP2 commit 6g: the CLI-missing banner and the Codex-off note point at Settings, Accounts (WP1.6, WP1.7); tests/unit/renderer/session-dialog-codex-account.test.tsx; WP2 commit 6g round 1: the banner follows the snapshot from no answer to missing (WP1.7); tests/unit/renderer/session-dialog-codex-account.test.tsx",
+      "note": "drives the real session dialog with the Codex card"
     },
     {
       "path": "tests/unit/renderer/session-dialog-credentials.test.tsx",
@@ -2939,13 +3888,23 @@
     {
       "path": "tests/unit/renderer/session-dialog-tokens.test.tsx",
       "predicates": [
-        "P03",
         "P13"
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: codexAccountStore mock replaced by the descriptor view model; adapted in place: tests/unit/renderer/session-dialog-tokens.test.tsx",
+      "evidence": "WP1.58: the codexAccountStore mock is gone (WP2 commit 6g); the Codex banner case seeds the Accounts snapshot instead; adapted in place: tests/unit/renderer/session-dialog-tokens.test.tsx",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-header-restart-menu.test.tsx",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "note": "Codex sessions get the two restarts"
     },
     {
       "path": "tests/unit/renderer/session-launch.test.ts",
@@ -2953,8 +3912,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "replace",
-      "evidence": "WP1.58: Codex exclusion cases inverted (Codex launches gate on account choice, WP1.38); adapted in place: tests/unit/renderer/session-launch.test.ts",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged since the WP1 base: its Codex cases still assert that the Claude profile picker and Switch Account never apply to a Codex session, which stays true; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -2974,9 +3933,20 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "replace",
-      "evidence": "WP1.58: restore cases carry the provider-account binding (WP1.38); adapted in place: tests/unit/renderer/session-persistence-codex-review.test.ts",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged since the WP1 base; the Codex account binding a restored session keeps is pinned in tests/unit/renderer/session-persistence-restore.test.ts instead (WP1.42); must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-persistence-restore.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: adapted to the account binding, the saved session carries its Codex account through restore (WP1.42); tests/unit/renderer/session-persistence-restore.test.ts",
+      "note": "existing test extended in WP2 6c; Codex appears as the provider of a fixture session"
     },
     {
       "path": "tests/unit/renderer/session-persistence-resume.test.ts",
@@ -3040,6 +4010,30 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6g: no Codex settings tab, a deep link naming it opens Settings, Accounts, and every pointer to it names Settings, Accounts (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "note": "the retired tab id and its old pointer spellings appear only as the things it forbids"
+    },
+    {
+      "path": "tests/unit/renderer/setup-codex-only.test.tsx",
+      "predicates": [
+        "P01",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e first-run setup without Claude (WP1.2); tests/unit/renderer/setup-codex-only.test.tsx",
+      "note": ""
+    },
+    {
       "path": "tests/unit/renderer/sidebar-config-edit-guard-entry-points.test.tsx",
       "predicates": [
         "P05",
@@ -3079,8 +4073,21 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its assertions are unchanged since the WP1 base; its settingsStore mock gained one entry, DEFAULT_CONDUCTOR_TOOLS, in WP2 (fa2b2acf) because the Codex introduction module reads it at load; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session; no sign-in question, account picker or Connecting card while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "note": "drives the real TerminalView launch path"
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",
@@ -3088,9 +4095,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25), re-dispositioned because it changed: its assertions are unchanged and blocks were added: the onboarding showcase eyebrow read from onboarding.css at 4.5:1 on --surface-base and over the page glow in both themes, and (WP2 final fixes, VM capture at 38cbc9d7) the Conductor MCP status pills, the strong keyboard focus ring, the Set up Codex link and caution badge, and every onboarding badge and badge-like pill: every rule in onboarding.css naming one is read (later duplicates, descendant contexts, media queries and braces inside strings included; nesting it cannot read fails) and must be measured or exempt, the selected assistants card included (WP1.33), and (VM capture at 7a3245ba) the text on every onboarding gradient, at every stop and between them, every gradient rule measured or exempt and a badge fill that is a gradient measured the same way, the page header breadcrumb, the selected Settings tab, and no --color-overlay0 text in Settings, the Accounts panel or the page header; every declaration these checks read goes through one reader, which splits on the ; outside parentheses and strings, reads a space before the colon and fails on a property declared twice in one rule; and the text drawn in --ob-bright (the What's New section heads, the Hello Codex prompt marks) is measured on what is behind it; and the Settings tabs' inset focus ring against the rail, and the colour swatches' focus ring clearing a selected swatch's own ring (WP1.33); tests/unit/renderer/token-contrast.test.ts",
+      "note": "WP2 commit 6g: a comment no longer names the retired Codex settings tab as a live user of the brand-15%-on-raised pairing; no assertion changed; the visual fixes (2026-09-25) and the final fixes added blocks and changed none of the existing assertions"
     },
     {
       "path": "tests/unit/renderer/tokenomicspage-formatting.test.ts",
@@ -3103,14 +4110,24 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/transient-terminal.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 commit 6e an install command runs once and is never restored (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the install tab options now carry noCommandSecrets; tests/unit/main/install-tab-command-secrets.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/renderer/use-launch-config.test.tsx",
       "predicates": [
         "P05",
         "P13"
       ],
       "category": "TEST",
-      "disposition": "replace",
-      "evidence": "WP1.58: enablement read from the neutral registry (WP1.38); adapted in place: tests/unit/renderer/use-launch-config.test.tsx",
+      "disposition": "retain",
+      "evidence": "existing test retained unchanged since the WP1 base: it mocks settings.codexEnabled on, the saved switch the launch rule still reads; the provider-off rule is pinned by tests/unit/renderer/claude-off-launch.test.tsx and the account binding a launch carries by tests/unit/renderer/launch-account.test.ts (WP1.38); must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -3134,15 +4151,25 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/window-close-dialogs.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25), round 2: the window-close dialogs and the Closing overlay paint above the onboarding pages and the Hello Codex takeover and replay, nothing else paints at or above that layer, and both close dialogs keep Tab inside themselves (WP1.34, WP1.6); tests/unit/renderer/window-close-dialogs.test.tsx",
+      "note": ""
+    },
+    {
       "path": "tests/unit/scripts/codex-resume-picker.test.ts",
       "predicates": [
         "P01",
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: existing cases retained (buildResumeArgs now given a UUID), launchTarget and isResumeId cases added; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "tests/unit/scripts/release-gate.test.ts",
@@ -3173,8 +4200,10 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: electronAPI fake gains providers/accounts blocks, codex block removed (tests/wp1/provider-store.test.ts)",
-      "note": ""
+      "evidence": "WP1.58: the electronAPI fake's codex block is removed with the bridge (WP2 commit 6g); renderer suites that need the Accounts API mock it per file (tests/unit/renderer/accounts-surface.test.tsx)",
+      "note": "",
+      "resolved": true,
+      "resolvedEvidence": "WP1.58 landed in WP2 commit 6g: the fake no longer names Codex; tests/wp1/legacy-codex-retired.test.ts asserts it carries no codex block"
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
@@ -3184,7 +4213,7 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "retained: its cases and assertions are unchanged since the WP1 base; its mock of src/main/codex-review-mcp-tool.ts gained the functions WP2 added there (registerClaudeReviewTool, abortSessionReviews, cancelReviewRequest), which it does not test; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
     },
     {
@@ -3199,7 +4228,7 @@
       ],
       "category": "TEST",
       "disposition": "delete",
-      "evidence": "WP1.58 mapping: tests/wp1/provider-store.test.ts covers status refresh and login/logout round-trips",
+      "evidence": "WP1.58 mapping: the store is deleted (WP2 commit 6g); snapshot refresh and pushes by tests/unit/renderer/provider-accounts-store.test.ts; sign-in and sign-out round trips through the Accounts surface by tests/unit/renderer/accounts-surface.test.tsx and through IPC by tests/wp1/provider-ipc.test.ts",
       "note": "store deleted"
     },
     {
@@ -3228,9 +4257,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": ""
+      "disposition": "replace",
+      "evidence": "WP2 commit 4: existing cases retained, the realm-folder hand-over case added; tests/unit/tokenomics/tk-supervisor.test.ts (WP1.2)",
+      "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "tests/unit/tokenomics/tk-worker-transport.test.ts",

@@ -5,7 +5,7 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/ident
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useSettingsStore } from '../stores/settingsStore'
 import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
-import { CODEX_OFF_LAUNCH_REASON } from '../hooks/useLaunchConfig'
+import { launchBlockedReason, launchBlockedTag, useLaunchGateSettings } from '../hooks/useLaunchConfig'
 
 interface Props {
   configs: TerminalConfig[]
@@ -22,7 +22,9 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
   // Shortcuts are user-rebindable; show the live bindings, not the defaults.
   const userShortcuts = useSettingsStore((s) => s.settings.keyboardShortcuts)
   const sc = { ...DEFAULT_SHORTCUTS, ...(userShortcuts || {}) }
-  const codexOff = useSettingsStore((s) => s.settings.codexEnabled === false)
+  // Both providers' switches, subscribed: a card whose provider is off cannot
+  // launch (the one rule, isConfigLaunchBlocked, worded per provider).
+  const launchGate = useLaunchGateSettings()
   const hasConfigs = configs.length > 0
   const pinned = configs.filter((c) => c.pinned)
   const launchers = (pinned.length > 0 ? pinned : configs).slice(0, 6)
@@ -46,7 +48,8 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
             <div className="grid grid-cols-2 gap-2 mb-4">
               {launchers.map((c) => {
                 const color = resolveIdentityColor(c.identityColorKey ?? bucketLegacyColorToKey(c.color), theme)
-                const launchBlocked = codexOff && c.provider === 'codex'
+                const blockedReason = launchBlockedReason(c, launchGate)
+                const launchBlocked = blockedReason !== undefined
                 return (
                   <button
                     key={c.id}
@@ -58,11 +61,11 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
                         ? 'flex items-center gap-2 px-3 py-2 rounded-lg border border-surface1 opacity-50 cursor-not-allowed text-left'
                         : 'flex items-center gap-2 px-3 py-2 rounded-lg border border-surface1 hover:border-surface2 hover:bg-surface0/40 transition-colors text-left focus-ring'
                     }
-                    title={launchBlocked ? CODEX_OFF_LAUNCH_REASON : `Launch ${c.label}`}
+                    title={blockedReason ?? `Launch ${c.label}`}
                   >
                     <span className="w-2 h-2 rounded-[2px] shrink-0" style={{ backgroundColor: color }} aria-hidden />
                     <span className="text-xs text-text truncate">{c.label}</span>
-                    {launchBlocked && <span className="text-[9px] text-overlay0 shrink-0">Codex off</span>}
+                    {launchBlocked && <span className="text-[9px] text-overlay0 shrink-0">{launchBlockedTag(c)}</span>}
                   </button>
                 )
               })}

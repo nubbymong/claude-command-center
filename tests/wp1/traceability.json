@@ -55,7 +55,9 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/migration-claude.test.ts",
-        "tests/wp1/claude-characterization.test.ts"
+        "tests/wp1/claude-characterization.test.ts",
+        "tests/wp1/claude-legacy-store.test.ts",
+        "tests/wp1/registry-fs-port.test.ts"
       ],
       "evidence": [
         "docs/wp1/baseline-2026-09-19.md"
@@ -86,7 +88,7 @@
       "title": "Settings can add the previously unselected provider later",
       "kind": "automated",
       "tests": [
-        "tests/wp1/settings-providers.test.tsx"
+        "tests/unit/renderer/accounts-surface.test.tsx"
       ],
       "evidence": [],
       "status": "planned",
@@ -98,8 +100,8 @@
       "title": "Settings refuses to disable the last enabled provider",
       "kind": "automated",
       "tests": [
-        "tests/wp1/settings-providers.test.tsx",
-        "tests/wp1/provider-installation-state.test.ts"
+        "tests/unit/renderer/accounts-surface.test.tsx",
+        "tests/wp1/fault-isolation.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -208,7 +210,7 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/account-lifecycle.test.ts",
-        "tests/wp1/accounts-surface.test.tsx"
+        "tests/unit/renderer/accounts-surface.test.tsx"
       ],
       "evidence": [],
       "status": "planned",
@@ -224,7 +226,7 @@
       "tests": [
         "tests/wp1/account-lifecycle.test.ts",
         "tests/wp1/consumer-leases.test.ts",
-        "tests/wp1/accounts-surface.test.tsx"
+        "tests/unit/renderer/accounts-surface.test.tsx"
       ],
       "evidence": [],
       "status": "planned",
@@ -240,7 +242,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/cli-discovery.test.ts",
-        "tests/wp1/provider-conformance.test.ts"
+        "tests/wp1/provider-conformance.test.ts",
+        "tests/wp1/claude-reviewer.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -257,7 +260,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/install-recipes.test.ts",
-        "tests/wp1/setup-surface.test.tsx"
+        "tests/unit/renderer/onboarding-codex-setup.test.tsx",
+        "tests/unit/renderer/providers-card-install-commands.test.tsx"
       ],
       "evidence": [],
       "status": "planned",
@@ -299,7 +303,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/codex-auth-adapter.test.ts",
-        "tests/wp1/capability-registry.test.ts"
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/setup-journal-recovery.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -312,14 +317,15 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/codex-auth-adapter.test.ts",
-        "tests/wp1/secret-entry.test.tsx",
-        "tests/wp1/secret-scan.test.ts"
+        "tests/unit/renderer/accounts-surface.test.tsx",
+        "tests/wp1/secret-scan.test.ts",
+        "tests/wp1/secret-channel.test.ts"
       ],
       "evidence": [],
       "status": "planned",
       "currentTests": [
-        "tests/unit/providers/codex/auth-login.test.ts",
-        "tests/wp1/codex-characterization.test.ts"
+        "tests/wp1/codex-auth-adapter.test.ts",
+        "tests/wp1/secret-channel.test.ts"
       ]
     },
     {
@@ -340,7 +346,7 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/account-lifecycle.test.ts",
-        "tests/wp1/accounts-surface.test.tsx"
+        "tests/unit/renderer/accounts-surface.test.tsx"
       ],
       "evidence": [],
       "status": "planned",
@@ -378,7 +384,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/migration-interruption.test.ts",
-        "tests/wp1/registry-store.test.ts"
+        "tests/wp1/registry-store.test.ts",
+        "tests/wp1/registry-fs-port.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -391,7 +398,9 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/realm-paths.test.ts",
-        "tests/wp1/provider-core.test.ts"
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/codex-realm-folders.test.ts",
+        "tests/wp1/codex-realm-isolation.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -406,12 +415,14 @@
       "title": "Secret scanning of logs, IPC captures and test artifacts finds no seeded secret",
       "kind": "automated",
       "tests": [
-        "tests/wp1/secret-scan.test.ts"
+        "tests/wp1/secret-scan.test.ts",
+        "tests/wp1/provider-ipc.test.ts"
       ],
       "evidence": [],
       "status": "planned",
       "currentTests": [
-        "tests/unit/providers/codex/auth-login.test.ts"
+        "tests/wp1/provider-ipc.test.ts",
+        "tests/wp1/secret-scan.test.ts"
       ]
     },
     {
@@ -419,13 +430,15 @@
       "title": "Windows ACL and Unix mode tests prove owner-only realm protection",
       "kind": "ci",
       "tests": [
-        "tests/wp1/realm-paths.test.ts"
+        "tests/wp1/realm-paths.test.ts",
+        "tests/wp1/codex-realm-folders.test.ts",
+        "tests/wp1/codex-realm-isolation.test.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/ci-matrix.md"
       ],
       "status": "planned",
-      "reason": "ACL/mode semantics are platform-native; the tests are automated but must execute on each OS runner, so the evidence is the CI matrix run",
+      "reason": "ACL/mode semantics are platform-native; the tests are automated but must execute on each OS runner, so the evidence is the CI matrix run. In WP2 slice 3d the managed Codex folders prove the Unix half: owner-only 0700, refused where it cannot be set. The Windows half is deliberately deferred while the shared ACL primitive is investigated (aicc_planning #103), and those tests assert that no permission change is made on Windows.",
       "currentTests": [
         "tests/unit/harden-dir-acl-windows.test.ts",
         "tests/unit/credential-file-mode-hardening.test.ts"
@@ -482,7 +495,7 @@
       "title": "Onboarding registry/version-gate tests prove fresh-install and upgrade steps appear exactly once",
       "kind": "automated",
       "tests": [
-        "tests/wp1/onboarding-provider-steps.test.ts"
+        "tests/unit/renderer/onboarding-provider-flow.test.tsx"
       ],
       "evidence": [],
       "status": "planned",
@@ -547,7 +560,10 @@
         "tests/wp1/provider-core.test.ts",
         "tests/wp1/managed-launch.test.ts",
         "tests/wp1/authority-manifest.test.ts",
-        "tests/wp1/startup-manifest-boundary.test.ts"
+        "tests/wp1/startup-manifest-boundary.test.ts",
+        "tests/wp1/launch-handoff-pty.test.ts",
+        "tests/wp1/claude-reviewer.test.ts",
+        "tests/wp1/review-profile-home.test.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/claude-settings-isolation-2026-09-21.md"
@@ -566,7 +582,7 @@
       "title": "Accounts is one provider-neutral surface; global identity fields are not duplicated as provider settings",
       "kind": "automated",
       "tests": [
-        "tests/wp1/accounts-surface.test.tsx"
+        "tests/unit/renderer/accounts-surface.test.tsx"
       ],
       "evidence": [],
       "status": "planned",
@@ -579,7 +595,7 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/identity-registry.test.ts",
-        "tests/wp1/accounts-surface.test.tsx"
+        "tests/unit/renderer/accounts-surface.test.tsx"
       ],
       "evidence": [],
       "status": "planned",
@@ -591,9 +607,8 @@
       "title": "Setup and Accounts consume the typed capability registry; experimental/unknown stay off unless owner-enabled and labelled",
       "kind": "automated",
       "tests": [
-        "tests/wp1/capability-registry.test.ts",
-        "tests/wp1/setup-surface.test.tsx",
         "tests/wp1/provider-core.test.ts",
+        "tests/unit/renderer/accounts-surface.test.tsx",
         "tests/wp1/provider-conformance.test.ts"
       ],
       "evidence": [],
@@ -607,7 +622,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/launch-handoff.test.ts",
-        "tests/wp1/provider-core.test.ts"
+        "tests/wp1/provider-core.test.ts",
+        "tests/wp1/provider-ipc.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -645,7 +661,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/account-registry-uniqueness.test.ts",
-        "tests/wp1/launch-handoff.test.ts"
+        "tests/wp1/launch-handoff.test.ts",
+        "tests/wp1/codex-realm-folders.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -657,7 +674,9 @@
       "title": "Concurrent launch vs deactivate/archive/disable proves atomic leases; crash recovery clears only stale leases",
       "kind": "automated",
       "tests": [
-        "tests/wp1/consumer-leases.test.ts"
+        "tests/wp1/consumer-leases.test.ts",
+        "tests/wp1/launch-handoff.test.ts",
+        "tests/wp1/launch-handoff-pty.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -683,7 +702,7 @@
       "title": "Downgrade, legacy Claude metadata modification and re-upgrade reconcile without losing neutral links or silently choosing a conflicting value",
       "kind": "automated",
       "tests": [
-        "tests/wp1/rollback-reupgrade.test.ts"
+        "tests/wp1/migration-claude.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -799,7 +818,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/legacy-codex-gate.test.ts",
-        "tests/wp1/dependency-boundaries.test.ts"
+        "tests/wp1/dependency-boundaries.test.ts",
+        "tests/wp1/legacy-codex-retired.test.ts"
       ],
       "evidence": [
         "tests/wp1/legacy-codex-ledger.json"
@@ -990,7 +1010,9 @@
         "tests/wp1/traceability.test.ts"
       ],
       "evidence": [
-        "tests/wp1/traceability.json"
+        "tests/wp1/traceability.json",
+        "docs/wp2/plan.md",
+        "docs/wp2/hello-codex-spec.md"
       ],
       "status": "planned",
       "currentTests": [],

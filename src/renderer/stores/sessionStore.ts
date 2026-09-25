@@ -37,6 +37,12 @@ export interface Session {
    *  cleared the moment the spawn is issued, and is NEVER persisted -- see the
    *  allowlist in session-persistence.ts. */
   askPrompt?: string
+  /** A tab the app opened for one job (commandTerminal: an install command
+   *  the user confirmed). Never saved or restored with the session set, and
+   *  its terminal-only command runs ONCE: consumed at the first spawn, so a
+   *  Restart opens a plain shell instead of running it again unasked. Set once
+   *  at creation; never changes. */
+  transient?: boolean
   label: string
   /** User-assigned "work name" for this session, editable while it's open and
    *  persisted by id across restarts (until the session is closed in CCC).
@@ -191,6 +197,11 @@ export interface Session {
    *  here. Renderer-only, not persisted. */
   sshRemoteAccount?: string
   codexOptions?: CodexOptions
+  /** WP2: the provider account this Codex session runs under, copied from
+   *  its config (an opaque registry id). Absent = the provider default. The
+   *  per-launch acknowledgement an unverified sign-in needs is never kept
+   *  here: each launch asks (see stores/launchAckStore.ts). */
+  providerAccountId?: string
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead
   // of the global `enabledByDefault`. Shape lives in shared/github-types.ts.

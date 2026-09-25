@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 43110,
   mcpSessionToken: (sid: string) => 'ab'.repeat(32) + '-' + sid.length, // deterministic, hex-ish
+  issueMcpSessionToken: (sid: string) => 'ab'.repeat(32) + '-' + sid.length,
 }))
 vi.mock('../../src/main/hooks/session-hooks-writer', () => ({ buildHooksBlock: () => null }))
 

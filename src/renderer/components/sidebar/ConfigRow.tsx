@@ -4,13 +4,14 @@ import { SessionTypeBadge, SshReattachBadge, TransportBadge } from './Badges'
 import { configIsPersistent, containerNameOf, resolveTransportBadge } from './transportBadge'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
-import { useSettingsStore } from '../../stores/settingsStore'
 import {
-  CODEX_OFF_LAUNCH_REASON,
   alreadyRunningLaunchCopy,
   cannotSelectCopy,
   flattenPopoverCopy,
   isMultiSpawnLaunchBlocked,
+  launchBlockedReason,
+  launchBlockedTag,
+  useLaunchGateSettings,
 } from '../../hooks/useLaunchConfig'
 import {
   DELETE_WHILE_RUNNING_REASON,
@@ -71,11 +72,13 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
   // identity.
   const theme = useResolvedTheme()
   const chipColour = resolveIdentityColor(config.identityColorKey ?? bucketLegacyColorToKey(config.color), theme)
-  // Codex configs can't launch while the Codex master is off (user decision
-  // 2026-07-02): mark the row disabled with the reason instead of a dead play
-  // button. Reactive so flipping the master in Settings updates rows live.
-  const codexOff = useSettingsStore((s) => s.settings.codexEnabled === false)
-  const launchBlocked = codexOff && config.provider === 'codex'
+  // A config can't launch while its provider is switched off (Codex: user
+  // decision 2026-07-02; Claude Code: a Codex-only install, WP2): mark the row
+  // disabled with the reason, naming that provider, instead of a dead play
+  // button. The one rule (isConfigLaunchBlocked), reactive so flipping either
+  // switch in Settings updates rows live.
+  const blockedReason = launchBlockedReason(config, useLaunchGateSettings())
+  const launchBlocked = blockedReason !== undefined
 
   const typeKind = config.shellOnly ? 'shell' : (config.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'
 
@@ -181,9 +184,10 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
       {launchBlocked && (
         <span
           className="text-[9px] text-overlay0 border border-surface1 rounded-full px-1.5 shrink-0"
-          title={CODEX_OFF_LAUNCH_REASON}
+          title={blockedReason}
+          data-testid="config-row-provider-off"
         >
-          Codex off
+          {launchBlockedTag(config)}
         </span>
       )}
       {/* Transport badge stays at the tail — the type leads the row. Three-way:
@@ -215,7 +219,7 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           onLaunch={(n) => onLaunchMany?.(n)}
           onCountChange={(n) => onSpawnCountChange?.(n)}
           disabled={launchBlocked}
-          disabledReason={launchBlocked ? CODEX_OFF_LAUNCH_REASON : undefined}
+          disabledReason={blockedReason}
           testId="config-row-multi-spawn"
         />
       )}
@@ -250,8 +254,8 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           className="absolute top-0 h-full pointer-events-none"
           style={{ right: '100%', width: HOVER_STRIP_FADE_PX, background: HOVER_STRIP_FADE }}
         />
-        {/* The plain play button. Three states now: Codex-off (inert, as
-            before), Multi-Spawn-blocked (inert, but it EXPLAINS itself and
+        {/* The plain play button. Three states now: provider-off (inert, as
+            before, titled with the reason), Multi-Spawn-blocked (inert, but it EXPLAINS itself and
             offers the way out), and normal. A Multi Spawn config has no play
             button here at all — its ×N control is the launch. */}
         {!spawnControlShown && (spawnBlocked ? (
@@ -280,7 +284,7 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
                 ? 'p-1 rounded text-overlay0/50 cursor-not-allowed'
                 : 'p-1 rounded hover:bg-surface1 text-overlay1 hover:text-text focus-ring'
             }
-            title={launchBlocked ? CODEX_OFF_LAUNCH_REASON : 'Launch'}
+            title={blockedReason ?? 'Launch'}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><polygon points="3,1 10,6 3,11" /></svg>
           </button>

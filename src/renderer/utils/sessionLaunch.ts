@@ -8,10 +8,12 @@ import type { ProviderId } from '../../shared/types'
  * Whether a session launch should pop the multi-account picker
  * (AccountLaunchGate) before spawning.
  *
- * Account isolation is a CLAUDE-only concept: each Claude account gets a
- * private `~/.claude` home via `withProfileHome`. Codex auth lives in
- * `~/.codex` and is NOT profile-scoped, and an SSH session runs under the
- * REMOTE host's own login, so neither must ever show the Claude account picker.
+ * This picker is the CLAUDE profile picker: each Claude account gets a
+ * private `~/.claude` home via `withProfileHome`. A Codex session runs on the
+ * Codex account its config names (or the Codex default), each in its own
+ * Codex home, resolved at launch by utils/launchAccount.ts, and an SSH
+ * session runs under the REMOTE host's own login, so neither must ever show
+ * the Claude account picker.
  * The old gate checked only `shellOnly` + a session record + `profileCount >= 2`
  * and so fired for Codex (BUG-1) and SSH (BUG-13) sessions whenever a second
  * Claude account profile existed. Provider- + SSH-gating fixes that.
@@ -31,8 +33,8 @@ export function shouldGateAccountChoice(opts: {
  * Whether the mid-session "Switch Account" control applies to a session (the
  * Sidebar context menu + the SessionStatusStrip pill). Same rule as the launch
  * gate minus the launch-only conditions: account profiles are LOCAL Claude only,
- * so Codex (own OpenAI login) and SSH (remote host's login) sessions can never
- * switch a local CCC profile even when 2+ profiles exist (BUG-13).
+ * so Codex (its own Codex account) and SSH (remote host's login) sessions can
+ * never switch a local CCC profile even when 2+ profiles exist (BUG-13).
  */
 export function canSwitchAccountForSession(opts: {
   provider?: ProviderId

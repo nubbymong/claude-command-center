@@ -77,6 +77,10 @@ export interface TerminalConfig {
   provider: ProviderId
   claudeOptions?: ClaudeOptions
   codexOptions?: CodexOptions
+  /** WP2: the provider account a session of this config runs under (Codex
+   *  only) -- an opaque registry id, never a path or a credential. Absent =
+   *  the provider default at launch. */
+  providerAccountId?: string
   // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   model?: string

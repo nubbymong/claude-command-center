@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react'
 
+// A disabled control cannot take focus, so it is never the first or last
+// stop: counting one there meant Tab from the last ENABLED control never
+// wrapped and focus left the modal.
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 /**
  * Traps Tab / Shift+Tab focus inside `containerRef` while `active` is true,
  * auto-focuses the first focusable element on mount, and restores focus to
@@ -8,7 +14,7 @@ import { useEffect, useRef } from 'react'
  * their dialog.
  *
  * Only focusable elements inside the container are considered
- * (button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])).
+ * (enabled button, input, select and textarea; a[href]; [tabindex]:not([tabindex="-1"])).
  * If the container has no focusable children the hook is a no-op.
  *
  * Use on any modal-style surface (role="dialog" aria-modal="true") so
@@ -28,7 +34,7 @@ export function useFocusTrap(
     if (!container) return
 
     const firstFocusable = container.querySelector<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      FOCUSABLE,
     )
     firstFocusable?.focus()
 
@@ -42,7 +48,7 @@ export function useFocusTrap(
       }
       if (e.key !== 'Tab') return
       const focusables = container.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        FOCUSABLE,
       )
       if (focusables.length === 0) return
       const first = focusables[0]

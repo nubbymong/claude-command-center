@@ -34,6 +34,8 @@ const h = vi.hoisted(() => ({
   }>,
   execFiles: [] as Array<{ bin: string; args: string[] }>,
   execFileError: null as Error | null,
+  // What the fake exec prints on stdout, from its argv (null: nothing).
+  execFileStdout: null as ((args: string[]) => string) | null,
   // Every log line the module emits, flattened — the "never logged" thesis is
   // asserted against this (adversarial pass: it was claimed and unasserted).
   logs: [] as string[],
@@ -60,7 +62,7 @@ vi.mock('child_process', async (importOriginal) => ({
   execSync: () => '',
   execFile: (bin: string, args: string[], _opts: unknown, cb?: (err: Error | null, stdout: string, stderr: string) => void) => {
     h.execFiles.push({ bin, args })
-    queueMicrotask(() => cb?.(h.execFileError, '', ''))
+    queueMicrotask(() => cb?.(h.execFileError, h.execFileStdout ? h.execFileStdout(args) : '', ''))
     return { unref: () => {} }
   },
 }))
@@ -99,6 +101,7 @@ vi.mock('../../../src/main/logging/logging-service', () => ({
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 0,
   registerCodexReviewSession: () => {},
+  registerClaudeReviewSession: () => {},
   unregisterCodexReviewSession: () => {},
 }))
 vi.mock('../../../src/main/providers', () => ({
@@ -151,7 +154,8 @@ vi.mock('../../../src/main/account-profiles', async (importOriginal) => ({
   backupProfileHomeToCanonical: () => {},
 }))
 
-const { endSshRemote, _setSshTargetForTest } = await import('../../../src/main/pty-manager')
+const { endSshRemote, endSshRemoteDetailed, killPty, _setSshTargetForTest } = await import('../../../src/main/pty-manager')
+const { buildContainerKillCommand, buildRemoteTmuxKillCommand } = await import('../../../src/main/providers/claude/ssh-shim')
 
 const lastPty = (): FakePty => h.ptySpawns[h.ptySpawns.length - 1]
 
@@ -159,6 +163,7 @@ beforeEach(() => {
   h.ptySpawns.length = 0
   h.execFiles.length = 0
   h.execFileError = null
+  h.execFileStdout = null
   h.logs.length = 0
 })
 
@@ -176,7 +181,7 @@ describe('endSshRemote (#572)', () => {
     expect(h.execFiles).toHaveLength(1)
     const args = h.execFiles[0].args
     expect(args).toContain('BatchMode=yes')
-    expect(args.join(' ')).toContain('kill-session -t =ccc-sid-key')
+    expect(args.join(' ')).toContain("kill-session -t '=ccc-sid-key'")
   })
 
   it('password target: runs under a PTY without BatchMode, answers ONE glued prompt, resolves completed', async () => {
@@ -312,12 +317,13 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     expect(h.ptySpawns).toHaveLength(0)
     expect(h.execFiles).toHaveLength(1)
     const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
-    expect(remote).toContain("podman exec ccc-test bash -c '")
+    // `sh -c` since the WP2 T24 fix round: every container has sh, not bash.
+    expect(remote).toContain("podman exec ccc-test sh -c '")
     // The marker pattern is ANCHORED to the whole filename: a bare
     // `settings-<sid>` is an unanchored pkill PREFIX match that would also kill
     // a co-tenant session's claude in the same container.
     expect(remote).toContain('pkill -f "/settings-sid-ctr-key\\.json"')
-    expect(remote).toContain('kill-session -t =ccc-sid-ctr-key')
+    expect(remote).toContain("kill-session -t '=ccc-sid-ctr-key'")
     // ORDERING IS LOAD-BEARING: the tmux teardown drops the exec client the
     // container kill travels through, so the in-container claude must die
     // first or the kill never lands (and T20's measurement races).
@@ -328,7 +334,7 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     _setSshTargetForTest('sid-host-rt', { username: 'u', host: 'hH', port: 22, runtime: { type: 'host' } })
     await expect(endSshRemote('sid-host-rt')).resolves.toBe('completed')
     const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
-    expect(remote).toContain('kill-session -t =ccc-sid-host-rt')
+    expect(remote).toContain("kill-session -t '=ccc-sid-host-rt'")
     expect(remote).not.toContain('exec ')
     expect(remote).not.toContain('pkill')
   })
@@ -362,7 +368,7 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     expect(remote).toContain('sudo -n podman exec ccc-test')
     expect(remote).not.toContain('-S')
     // The tmux kill still runs — a blocked sudo prompt would have starved it.
-    expect(remote).toContain('kill-session -t =ccc-sid-ctr-sudo-nopw')
+    expect(remote).toContain("kill-session -t '=ccc-sid-ctr-sudo-nopw'")
   })
 
   // THE T21 SHAPE: password host + rootful container = two prompts, in order.
@@ -413,7 +419,7 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
     const remote = h.execFiles[0].args[h.execFiles[0].args.length - 1]
     expect(remote).not.toContain('podman')
     expect(remote).not.toContain('rm -rf /')
-    expect(remote).toContain('kill-session -t =ccc-sid-ctr-bad')
+    expect(remote).toContain("kill-session -t '=ccc-sid-ctr-bad'")
   })
 
   // ── ADR-009: prompt routing is by SHAPE, never by arrival position ─────────
@@ -509,5 +515,174 @@ describe('endSshRemote — container runtime (#572 one hop deeper)', () => {
       expect(line).not.toContain('sshhunter2')
       expect(line).not.toContain('sudohunter2')
     }
+  })
+})
+
+// Live T24 (2026-09-25): a ROOTFUL container whose sudo password was typed at
+// the entry prompt and never saved. End's separate in-container stop can only
+// try sudo without a password; it used to fail silently while End said
+// completed, and Claude kept running in the container. The kill segment now
+// asks sudo first and prints this End's sentinel on a line of its own when
+// sudo cannot run the engine without a password, then attempts the kill
+// regardless; End resolves 'container-needs-sudo' with where Claude may still
+// be running.
+//
+// Mutation to prove these can fail: stop passing the probe nonce to
+// buildContainerKillCommand in endSshRemoteDetailed, or stop reading the
+// output in `settle` -- End then resolves completed again.
+describe('endSshRemote -- rootful container with no saved sudo password (T24)', () => {
+  const ROOTFUL = { type: 'container', engine: 'podman', container: 'ccc-test', sudo: true } as const
+  const remoteOf = (args: string[]): string => args[args.length - 1]
+  /** The nonce this End put in its command (`printf '\n%s_%s\n' <PREFIX> <nonce>`). */
+  const nonceOf = (remote: string): string => {
+    const m = remote.match(/printf '\\n%s_%s\\n' CCC_END_SUDO_NEEDED ([a-z0-9]+);/)
+    expect(m, 'the End command carries the sudo probe').not.toBeNull()
+    return m![1]
+  }
+  /** The same, without asserting: '' when there is no probe (used inside the
+   *  fake exec, where a throw would hang End instead of failing the test). */
+  const nonceIn = (remote: string): string => remote.match(/printf '\\n%s_%s\\n' CCC_END_SUDO_NEEDED ([a-z0-9]+);/)?.[1] ?? ''
+  const other = (n: string): string => n.replace(/./g, (c) => (c === '0' ? '1' : '0'))
+
+  it('key host: the sentinel in the exec output resolves container-needs-sudo, with the container details', async () => {
+    h.execFileStdout = (args) => `\nCCC_END_SUDO_NEEDED_${nonceIn(remoteOf(args))}\n`
+    _setSshTargetForTest('sid-t24-key', { username: 'u', host: 'rocky.lan', port: 22, runtime: ROOTFUL })
+    await expect(endSshRemoteDetailed('sid-t24-key')).resolves.toEqual({
+      outcome: 'container-needs-sudo',
+      container: { engine: 'podman', name: 'ccc-test', host: 'rocky.lan' },
+    })
+    // No prompt to answer, so still the BatchMode exec; and the host tmux kill
+    // and the sidecar cleanup still ride the same command.
+    expect(h.ptySpawns).toHaveLength(0)
+    const remote = remoteOf(h.execFiles[0].args)
+    expect(remote).toContain("kill-session -t '=ccc-sid-t24-key'")
+    expect(remote).toContain('rm -f ~/.claude/settings-sid-t24-key.json')
+    expect(remote.indexOf('CCC_END_SUDO_NEEDED')).toBeLessThan(remote.indexOf('kill-session'))
+    // The in-container kill is attempted after the probe whatever it said
+    // (with `sudo -n` it fails fast where a password is needed), and before
+    // the host tmux kill.
+    const killAt = remote.indexOf("sudo -n podman exec ccc-test sh -c '")
+    expect(killAt).toBeGreaterThan(remote.indexOf('CCC_END_SUDO_NEEDED'))
+    expect(killAt).toBeLessThan(remote.indexOf('kill-session'))
+    // Exactly the composition ssh-end-remote-shell-compat.test.ts runs through
+    // each real host shell.
+    expect(remote).toBe(`${buildContainerKillCommand('sid-t24-key', ROOTFUL, { sudoProbeNonce: nonceOf(remote) })}; ${buildRemoteTmuxKillCommand('sid-t24-key')}`)
+  })
+
+  it('the plain outcome API says it too', async () => {
+    h.execFileStdout = (args) => `noise\r\nCCC_END_SUDO_NEEDED_${nonceIn(remoteOf(args))}\r\n`
+    _setSshTargetForTest('sid-t24-plain', { username: 'u', host: 'rocky.lan', port: 22, runtime: ROOTFUL })
+    await expect(endSshRemote('sid-t24-plain')).resolves.toBe('container-needs-sudo')
+  })
+
+  it('no sentinel (sudo could elevate, so the kill ran) resolves completed', async () => {
+    h.execFileStdout = () => ''
+    _setSshTargetForTest('sid-t24-ok', { username: 'u', host: 'rocky.lan', port: 22, runtime: ROOTFUL })
+    await expect(endSshRemoteDetailed('sid-t24-ok')).resolves.toEqual({ outcome: 'completed' })
+  })
+
+  it('ignores a sentinel with another nonce, a truncated or extended one, and the command text itself', async () => {
+    const lookalikes: Array<(n: string) => string> = [
+      (n) => `CCC_END_SUDO_NEEDED_${other(n)}\n`,
+      (n) => `CCC_END_SUDO_NEEDED_${n.slice(0, -2)}\n`,
+      (n) => `CCC_END_SUDO_NEEDED_${n}0\n`,
+      (n) => `XCCC_END_SUDO_NEEDED_${n}\n`,
+      (n) => `printf '\\n%s_%s\\n' CCC_END_SUDO_NEEDED ${n}\n`,
+    ]
+    for (const [i, print] of lookalikes.entries()) {
+      h.execFileStdout = (args) => print(nonceIn(remoteOf(args)))
+      _setSshTargetForTest(`sid-t24-lookalike-${i}`, { username: 'u', host: 'rocky.lan', port: 22, runtime: ROOTFUL })
+      await expect(endSshRemote(`sid-t24-lookalike-${i}`), `lookalike ${i}`).resolves.toBe('completed')
+      // Not vacuous: this End did carry the probe the lookalike imitates.
+      nonceOf(remoteOf(h.execFiles[h.execFiles.length - 1].args))
+    }
+  })
+
+  it('an exec that failed but printed the sentinel still reports it (the more useful message)', async () => {
+    h.execFileError = new Error('ssh: exit 255')
+    h.execFileStdout = (args) => `CCC_END_SUDO_NEEDED_${nonceIn(remoteOf(args))}\n`
+    _setSshTargetForTest('sid-t24-err', { username: 'u', host: 'rocky.lan', port: 22, runtime: ROOTFUL })
+    await expect(endSshRemote('sid-t24-err')).resolves.toBe('container-needs-sudo')
+  })
+
+  it('password host (PTY): the sentinel is read through ConPTY-glued escapes', async () => {
+    _setSshTargetForTest('sid-t24-pw', { username: 'nm', host: 'rocky.lan', port: 22, password: 'ssh-pw', runtime: ROOTFUL })
+    const p = endSshRemoteDetailed('sid-t24-pw')
+    const fake = lastPty()
+    const nonce = nonceOf(remoteOf(fake.args))
+    fake.data!("\x1b[?25lnm@rocky.lan's password: ")
+    expect(fake.writes).toEqual(['ssh-pw\r'])
+    fake.data!('\r\n')
+    // The token split by a colour reset, and wrapped in cursor show/hide.
+    fake.data!(`\x1b[?25lCCC_END_SUDO_\x1b[0mNEEDED_${nonce}\x1b[?25h\r\n`)
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toEqual({ outcome: 'container-needs-sudo', container: { engine: 'podman', name: 'ccc-test', host: 'rocky.lan' } })
+    expect(h.logs.some((l) => l.includes('ssh-pw'))).toBe(false)
+  })
+
+  // The sentinel is read from EVERYTHING the PTY printed, not from the chunk
+  // that happened to arrive last. Mutation to prove this can fail: in
+  // endSshRemoteDetailed's onData, change `output = (output + d).slice(-CAP)`
+  // to `output = d.slice(-CAP)`.
+  it('password host (PTY): a sentinel split across two chunks, then a repaint chunk, then exit, still resolves container-needs-sudo', async () => {
+    _setSshTargetForTest('sid-t24-split', { username: 'nm', host: 'rocky.lan', port: 22, password: 'ssh-pw', runtime: ROOTFUL })
+    const p = endSshRemoteDetailed('sid-t24-split')
+    const fake = lastPty()
+    const nonce = nonceOf(remoteOf(fake.args))
+    fake.data!("nm@rocky.lan's password: ")
+    expect(fake.writes).toEqual(['ssh-pw\r'])
+    fake.data!('\r\n')
+    fake.data!('\r\nCCC_END_SUDO_NEE')
+    fake.data!(`DED_${nonce}\r\n`)
+    // ConPTY repaints after the output: cursor, colour and title sequences only.
+    fake.data!('\x1b[?25h\x1b[0m\x1b]0;rocky.lan\x07\x1b[H')
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toEqual({ outcome: 'container-needs-sudo', container: { engine: 'podman', name: 'ccc-test', host: 'rocky.lan' } })
+  })
+
+  it('a saved sudo password keeps the prompt path: no probe, and no sentinel is looked for', async () => {
+    _setSshTargetForTest('sid-t24-saved', { username: 'u', host: 'hS', port: 22, runtime: ROOTFUL, sudoPassword: 'sudo-secret' })
+    const p = endSshRemote('sid-t24-saved')
+    const fake = lastPty()
+    expect(remoteOf(fake.args)).not.toContain('CCC_END_SUDO_NEEDED')
+    fake.data!('password:')
+    expect(fake.writes).toEqual(['sudo-secret\r'])
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toBe('completed')
+  })
+
+  it('a rootless container never probes sudo', async () => {
+    _setSshTargetForTest('sid-t24-rootless', { username: 'u', host: 'hR', port: 22, runtime: { ...ROOTFUL, sudo: false } })
+    await expect(endSshRemote('sid-t24-rootless')).resolves.toBe('completed')
+    expect(remoteOf(h.execFiles[0].args)).not.toContain('sudo')
+  })
+})
+
+// The renderer no longer waits for End before tearing the local session down:
+// it sends the End call, then the pty kill, and one renderer's IPC messages
+// reach main in order. That is only safe because End reads its target the
+// moment it is called, before anything yields: killPty drops the target.
+//
+// Mutation to prove this can fail: make endSshRemoteDetailed read its target
+// after a yield (an `async` function that starts with `await Promise.resolve()`).
+describe('endSshRemoteDetailed reads its target when it is called', () => {
+  const remoteOf = (args: string[]): string => args[args.length - 1]
+
+  it('End then killPty in the same tick: the exec is still dispatched, to the live target', async () => {
+    _setSshTargetForTest('sid-order-end-first', { username: 'u', host: 'hO', port: 22, runtime: { type: 'container', engine: 'podman', container: 'ccc-test' } })
+    const p = endSshRemoteDetailed('sid-order-end-first')
+    killPty('sid-order-end-first')
+    await expect(p).resolves.toEqual({ outcome: 'completed' })
+    expect(h.execFiles).toHaveLength(1)
+    const remote = remoteOf(h.execFiles[0].args)
+    expect(remote).toContain("kill-session -t '=ccc-sid-order-end-first'")
+    expect(remote).toContain("podman exec ccc-test sh -c '")
+  })
+
+  it('control: killPty first leaves End nothing to end (no-target, no exec)', async () => {
+    _setSshTargetForTest('sid-order-kill-first', { username: 'u', host: 'hO', port: 22 })
+    killPty('sid-order-kill-first')
+    await expect(endSshRemoteDetailed('sid-order-kill-first')).resolves.toEqual({ outcome: 'no-target' })
+    expect(h.execFiles).toHaveLength(0)
   })
 })

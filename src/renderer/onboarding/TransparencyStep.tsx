@@ -63,13 +63,18 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
   const pickChannel = (channel: UpdateChannel) => save({ updateChannel: channel, updateChannelChosen: true })
 
   const email = profiles.find((p) => p.isPrimary)?.accountEmail || profiles[0]?.accountEmail || globalEmail
-  const toolGates = [
-    settings.conductorTools?.vision !== false,
-    settings.conductorTools?.codexReview !== false && settings.codexEnabled !== false,
-    settings.conductorTools?.hostTransfer !== false,
-    settings.conductorTools?.canvas !== false,
+  // Each tool that can reach a session, named so the recap discloses which
+  // ones are on. Codex review needs Codex on; Claude review counts by its own
+  // switch (it answers Codex sessions whenever there are any).
+  const toolGates: [string, boolean][] = [
+    ['Vision', settings.conductorTools?.vision !== false],
+    ['Codex review', settings.conductorTools?.codexReview !== false && settings.codexEnabled !== false],
+    ['Claude review', settings.conductorTools?.claudeReview !== false],
+    ['Host screenshots', settings.conductorTools?.hostTransfer !== false],
+    ['Agent Canvas', settings.conductorTools?.canvas !== false],
   ]
-  const toolCount = toolGates.filter(Boolean).length
+  const toolsOn = toolGates.filter(([, on]) => on).map(([name]) => name)
+  const toolCount = toolsOn.length
   const themeLabel = settings.theme === 'system' ? 'System' : settings.theme === 'light' ? 'Light' : 'Dark'
 
   const channel = settings.updateChannel === 'beta' ? 'beta' : 'stable'
@@ -99,16 +104,16 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     {
       icon: SPARK,
       label: 'Codex (Beta)',
-      value: settings.codexEnabled !== false ? 'On' : 'Off (Settings → Codex)',
+      value: settings.codexEnabled !== false ? 'On' : 'Off (Settings, Accounts)',
     },
     {
       icon: GEAR,
-      label: 'Built-in tools',
+      label: 'Built-in Tools',
       // Counted from the gate list above so adding a tool can never leave this
       // reading "3 of 3" while four are advertised.
       value:
         settings.conductorToolsEnabled !== false
-          ? `On: ${toolCount} of ${toolGates.length} tools`
+          ? `On: ${toolCount} of ${toolGates.length} tools${toolCount ? ` (${toolsOn.join(', ')})` : ''}`
           : 'Off (Settings → General)',
     },
     {

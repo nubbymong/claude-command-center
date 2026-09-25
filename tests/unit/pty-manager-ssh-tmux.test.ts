@@ -342,7 +342,7 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
   it('detachable default (undefined) still wraps in tmux on tmux=path', () => {
     driveToClaudeWrite('s-detach-default', 'setup ok {NONCE} tmux=path\r\n')
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
-    expect((claudeWrite![0] as string)).toContain('has-session -t =ccc-s-detach-default')
+    expect((claudeWrite![0] as string)).toContain("has-session -t '=ccc-s-detach-default'")
   })
 
   it('wraps claudeCmd in the tmux has-session wrapper when the setup sentinel reports tmux=path (tier 1, found on PATH)', () => {
@@ -676,7 +676,7 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     // `command tmux` against our session.
     const launch = claudeWrite![0] as string
     expect(launch.startsWith(`if ${STAGED_TMUX_BIN_EXPR} has-session`)).toBe(true)
-    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -t =ccc-s-f1-wrong-nonce mouse off`)
+    expect(launch).not.toContain(`${ON_PATH_TMUX_BIN_EXPR} set-option -t '=ccc-s-f1-wrong-nonce' mouse off`)
   })
 
   // #242 finding F1(a), round-2 correction, BLOCKER. The round-2 reviewer's
@@ -2020,8 +2020,8 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     // Item 6: a LIVE reattach (`attach -t X` before its `|| <fresh>` backstop)
     // carries no --continue -- relaunching a running claude would be wrong.
     // Every fresh-create (the attach fallback AND the else) resumes with it.
-    expect(written).toContain('attach -t =ccc-s-reconnect-tmux || ')
-    expect(written).not.toMatch(/attach -t =ccc-s-reconnect-tmux --continue/)
+    expect(written).toContain("attach -t '=ccc-s-reconnect-tmux' || ")
+    expect(written).not.toMatch(/attach -t '=ccc-s-reconnect-tmux' --continue/)
     const creates = written.split('new-session -s ccc-s-reconnect-tmux ').slice(1)
     expect(creates.length).toBe(2)
     for (const c of creates) expect(c.startsWith(`'`)).toBe(true)
@@ -2153,7 +2153,7 @@ describe('killPty / gracefulExitPty — a tmux-persistent remote is DETACHED, ne
   it('killPty on a tmux-PERSISTENT SSH session writes NO in-band `rm` into the live Claude pane (detach only)', () => {
     driveToClaudeWrite('s-persist-close', 'setup ok {NONCE} tmux=path\r\n')
     // Confirm the launch actually wrapped in tmux (so the session is persistent).
-    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t =ccc-s-persist-close'))).toBe(true)
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes("has-session -t '=ccc-s-persist-close'"))).toBe(true)
     writeMock.mockClear()
     killPty('s-persist-close')
     // The destructive `rm -f ~/.claude/...` would land in Claude's composer and
@@ -2240,8 +2240,10 @@ describe('endSshRemote target lifecycle — survives a drop, cleared on delibera
     } as never)
     const t = _getSshTargetForTest('s-endtarget-legacy')
     expect(t?.runtime).toEqual({ type: 'container', engine: 'docker', container: 'ccc-test', mode: 'exec', sudo: true })
+    // `sh -c` since the WP2 T24 fix round (the kill script runs in any
+    // container, with or without bash).
     expect(buildContainerKillCommand('s-endtarget-legacy', t?.runtime)).toContain(
-      "docker exec ccc-test bash -c '",
+      "docker exec ccc-test sh -c '",
     )
     killPty('s-endtarget-legacy')
   })
@@ -2336,7 +2338,7 @@ describe('spawnPty SSH branch — wrapped-launch watchdog falls back to the bare
     driveToWrappedLaunch('s-wd-refused', win)
     // Precondition: the launch really was tmux-wrapped (and announced as
     // persistent) before the refusal arrives.
-    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t =ccc-s-wd-refused'))).toBe(true)
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes("has-session -t '=ccc-s-wd-refused'"))).toBe(true)
     expect(sends.some((s) => s.channel === 'ssh:sessionInfo:s-wd-refused' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === true)).toBe(true)
     writeMock.mockClear()
     sends.length = 0

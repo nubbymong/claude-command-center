@@ -247,3 +247,18 @@ describe('restoreSavedSessions -- the restore does NOT land', () => {
     expect(d.pingAllDetachedHosts).not.toHaveBeenCalled()
   })
 })
+
+describe('restoreSavedSessions -- the Codex account binding (WP2 commit 6)', () => {
+  it("a reopened Codex session keeps its providerAccountId, and saves it again; a Claude session never carries one", async () => {
+    const { buildSessionState } = await import('../../../src/renderer/session-persistence')
+    const codex = saved({ id: 'cx', provider: 'codex', codexOptions: { permissionsPreset: 'standard' }, providerAccountId: 'acc-work' })
+    const claude = saved({ id: 'cl', providerAccountId: 'acc-stray' })
+    await restoreSavedSessions(state([codex, claude]), ref(), deps())
+    const s = useSessionStore.getState()
+    expect(s.getSession('cx')!.providerAccountId).toBe('acc-work')
+    expect(s.getSession('cl')!.providerAccountId).toBeUndefined()
+    const again = buildSessionState().sessions
+    expect(again.find((x) => x.id === 'cx')!.providerAccountId).toBe('acc-work')
+    expect(again.find((x) => x.id === 'cl')!.providerAccountId).toBeUndefined()
+  })
+})

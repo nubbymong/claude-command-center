@@ -102,7 +102,10 @@ export const DEFAULT_TYPOGRAPHY: TypographySettings = {
  *  filters a tool group on the conductor MCP server's tool list. */
 export interface ConductorToolsSettings {
   vision: boolean
+  /** Claude sessions may ask Codex for a review (codex_review). */
   codexReview: boolean
+  /** Codex sessions may ask Claude for a review (claude_review). */
+  claudeReview: boolean
   hostTransfer: boolean
   canvas: boolean
 }
@@ -110,6 +113,7 @@ export interface ConductorToolsSettings {
 export const DEFAULT_CONDUCTOR_TOOLS: ConductorToolsSettings = {
   vision: true,
   codexReview: true,
+  claudeReview: true,
   hostTransfer: true,
   canvas: true,
 }
@@ -207,10 +211,14 @@ export interface AppSettings {
    *  tool groups the server registers. Absent = on (pre-upgrade configs). */
   conductorToolsEnabled?: boolean
   conductorTools?: ConductorToolsSettings
-  /** "Do you use Codex?" (onboarding / Settings -> Codex). Absent = never
+  /** Codex on/off (onboarding's assistants page / the Providers card in
+   *  Settings, Accounts). Absent = never
    *  answered (existing installs keep full behaviour); false disables Codex
    *  surfaces incl. the codex_review built-in tool. Codex support is Beta. */
   codexEnabled?: boolean
+  /** Claude Code on/off, saved (main reads it as the Claude package's
+   *  enablement key). Absent = on: Claude-only users change nothing. */
+  claudeEnabled?: boolean
   localMachineName: string
   /** Usage buckets the user has HIDDEN from the status line, by label (e.g.
    *  "Fable"). Denylist model so the set stays dynamic: a new bucket shows by
