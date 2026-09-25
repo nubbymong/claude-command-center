@@ -607,12 +607,8 @@ obligations fall on later slices:
     user's accounts would let it route project text to another account's
     organisation. Held for the owner.
   - The review stays bound to the session's project directory, as before.
-  - Codex's read-only sandbox restricts writes and network, not reads; this
-    is unchanged from the shipped tool and stays a known limit.
-- **Held for the owner:** how far a reviewer is isolated from its realm's
-  own Codex configuration (a change in review behaviour, on Windows in
-  particular), and the reviewer's environment beyond the Conductor
-  variables. Details are with the owner.
+- **Held for the owner:** two further reviewer decisions. Details are with
+  the owner.
 - **Real-process proof (2026-09-24, Windows VM; CI runs it on all three
   platforms):** `tests/wp1/fake-cli.test.ts` sends a review through the real
   runner, npm shim and cmd.exe. The request arrives on stdin byte for byte
