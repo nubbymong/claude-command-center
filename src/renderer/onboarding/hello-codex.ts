@@ -161,8 +161,8 @@ export function helloCodexPages(opts: HelloCodexCopyInputs): HelloCodexPage[] {
     review.push(
       { lead: 'A separate reviewer, not another session.', rest: 'Each review starts its own one-off reviewer: read-only, in this project, and nothing is saved as a conversation. It never uses one of your open sessions, and it cannot ask for a review of its own.' },
       opts.claudeReview
-        ? { lead: 'You stay in control.', rest: 'Each direction has its own switch in Settings, General, Built-in tools, and the reviewer accounts are set in Settings, Accounts.' }
-        : { lead: 'You stay in control.', rest: 'Codex review has its own switch in Settings, General, Built-in tools, and the Codex reviewer account is set in Settings, Accounts.' },
+        ? { lead: 'You stay in control.', rest: 'Each direction has its own switch in Settings, General, Built-in Tools, and the reviewer accounts are set in Settings, Accounts.' }
+        : { lead: 'You stay in control.', rest: 'Codex review has its own switch in Settings, General, Built-in Tools, and the Codex reviewer account is set in Settings, Accounts.' },
     )
   }
   return [
@@ -207,7 +207,7 @@ export function helloCodexPages(opts: HelloCodexCopyInputs): HelloCodexPage[] {
       heading: 'Code review',
       tagline: 'Ask the other provider for a second opinion.',
       points: review,
-      where: opts.claudeOn ? 'any session; Settings, General, Built-in tools; Settings, Accounts' : 'Settings, Accounts',
+      where: opts.claudeOn ? 'any session; Settings, General, Built-in Tools; Settings, Accounts' : 'Settings, Accounts',
     },
     {
       id: 'differences',

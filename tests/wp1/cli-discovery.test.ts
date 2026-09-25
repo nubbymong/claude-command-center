@@ -1106,6 +1106,139 @@ describe('discovery at start (WP1.17; WP2 commit 6g)', () => {
   })
 })
 
+describe('Check again runs no CLI for a provider that is off (WP1.17; WP1.60 enable/disable)', () => {
+  const codexView = (h: Awaited<ReturnType<typeof harness>>) => h.service.snapshot().providers.find((p) => p.providerId === 'codex')!
+  const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
+
+  it('a provider that is off is refused as off and nothing is looked for; one not decided yet is still looked for', async () => {
+    const off = await harness({ preference: { codex: 'off' } })
+    expect(await off.service.discover('codex')).toMatchObject({ ok: false, code: 'provider-disabled' })
+    expect(off.discoveries()).toBe(0)
+    expect(codexView(off).discoveryState).toBe('unchecked')
+    // A user who never answered keeps working as before (isEnabled).
+    const undecided = await harness({ preference: { codex: 'undecided' } })
+    expect(await undecided.service.discover('codex')).toMatchObject({ ok: true, installation: { discoveryState: 'found' } })
+    expect(undecided.discoveries()).toBe(1)
+  })
+
+  it('a saved on/off that cannot be read now refuses as the launch rule does, and nothing is looked for', async () => {
+    const h = await harness({ preference: { codex: () => { throw new Error('unreadable') } } })
+    // Check again is on Settings, Accounts: the reply says what happened, not where to look.
+    expect(await h.service.discover('codex')).toMatchObject({
+      ok: false, code: 'provider-state-unknown', message: 'This app could not read its settings file, so it did not check Codex. Try again, or restart the app.',
+    })
+    expect(h.discoveries()).toBe(0)
+  })
+
+  it('at start, an "on" read earlier is no answer once the saved on/off cannot be read', async () => {
+    let readable = true
+    const h = await harness({ preference: { codex: () => { if (!readable) throw new Error('unreadable'); return 'on' } } })
+    expect(h.service.isEnabled('codex')).toBe(true) // the last value read is "on"
+    readable = false
+    // Its own check, not only discover's gate: discover is never even asked.
+    const asked = vi.spyOn(h.service, 'discover')
+    h.service.discoverAtStart()
+    await settle()
+    expect(asked).not.toHaveBeenCalled()
+    expect(h.discoveries()).toBe(0)
+  })
+})
+
+describe('turning a provider on looks for its CLI once the switch is saved (WP1.17; WP1.60 enable/disable)', () => {
+  const codexView = (h: Awaited<ReturnType<typeof harness>>) => h.service.snapshot().providers.find((p) => p.providerId === 'codex')!
+  const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
+
+  it('a switch-on that is never saved runs no CLI, however often it is made', async () => {
+    const h = await harness({ preference: { codex: () => 'off' } })
+    for (let i = 0; i < 5; i++) expect((await h.service.setProviderEnabled('codex', true)).ok).toBe(true)
+    await settle()
+    expect(h.discoveries()).toBe(0)
+  })
+
+  it('the saved switch going from off to on looks once, and the Providers row then shows what it found; later saves do not look again', async () => {
+    let saved: 'off' | 'on' = 'off'
+    const h = await harness({ preference: { codex: () => saved } })
+    h.service.settingsChanged() // a save while it is off
+    await settle()
+    expect(h.discoveries()).toBe(0)
+    // The Providers switch: main agrees, then the renderer saves the setting.
+    expect((await h.service.setProviderEnabled('codex', true)).ok).toBe(true)
+    saved = 'on'
+    h.service.settingsChanged()
+    await settle()
+    expect(h.discoveries()).toBe(1)
+    expect(codexView(h)).toMatchObject({ enabled: true, discoveryState: 'found', version: '0.155.1' })
+    h.service.settingsChanged()
+    h.service.settingsChanged()
+    await settle()
+    expect(h.discoveries()).toBe(1)
+    // Off, then on again, is a new switch-on: looked for once more.
+    saved = 'off'
+    h.service.settingsChanged()
+    saved = 'on'
+    h.service.settingsChanged()
+    await settle()
+    expect(h.discoveries()).toBe(2)
+  })
+
+  it('a provider never looked for is looked for when a save finds it on', async () => {
+    const h = await harness({ preference: { codex: () => 'on' } })
+    h.service.settingsChanged()
+    await settle()
+    expect(h.discoveries()).toBe(1)
+  })
+
+  it('a save whose settings cannot be read now looks for nothing, even after an "on" was read', async () => {
+    let saved: 'off' | 'on' | 'unreadable' = 'off'
+    const h = await harness({ preference: { codex: () => { if (saved === 'unreadable') throw new Error('unreadable'); return saved } } })
+    h.service.settingsChanged() // recorded off
+    saved = 'on'
+    h.service.snapshot() // read "on" (the last value read), with no save seen
+    saved = 'unreadable'
+    h.service.settingsChanged()
+    await settle()
+    expect(h.discoveries()).toBe(0)
+  })
+
+  it('a saved "on" that a switch-off made here overrides looks for nothing', async () => {
+    let saved: 'off' | 'on' = 'off'
+    const h = await harness({ preference: { codex: () => saved } })
+    h.service.settingsChanged() // recorded off
+    saved = 'on' // the file reads on, but no save told the service
+    expect((await h.service.setProviderEnabled('codex', false)).ok).toBe(true)
+    h.service.settingsChanged()
+    await settle()
+    expect(h.discoveries()).toBe(0)
+    expect(h.service.isEnabled('codex')).toBe(false)
+  })
+
+  it('a provider already on is not looked for again by a switch-on, and a review being prepared meanwhile still runs', async () => {
+    const hold = { on: false, release: () => {} }
+    const held = new Promise<void>((r) => { hold.release = r })
+    const h = await harness({ preference: { codex: () => 'on' }, beforeDiscovery: async () => { if (hold.on) await held } })
+    const a = await addCodexAccount(h)
+    const looked = h.discoveries()
+    expect(looked).toBeGreaterThan(0)
+    // Hold the review between its account checks and its use of the proven CLI.
+    let letReviewOn!: () => void
+    const reviewGate = new Promise<void>((r) => { letReviewOn = r })
+    const launch = h.codex.launch as { prepare: (realm: never) => Promise<unknown> }
+    const prepare = launch.prepare
+    launch.prepare = async (realm) => { await reviewGate; return prepare(realm) }
+    hold.on = true
+    const review = h.service.prepareLaunch({ kind: 'review', providerId: 'codex', ownerId: 'r' })
+    await settle()
+    // "Yes, I use Codex", the assistants page, the Providers switch: on again.
+    expect((await h.service.setProviderEnabled('codex', true)).ok).toBe(true)
+    h.service.settingsChanged()
+    await settle()
+    letReviewOn()
+    expect(await review).toMatchObject({ ok: true, reviewer: 'provider-default', binding: { providerAccountId: a } })
+    expect(h.discoveries()).toBe(looked)
+    hold.release()
+  })
+})
+
 describe('one discovery per provider at a time (WP1.17; WP2 commit 6g)', () => {
   const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
   /** A discovery that can be held in flight: the package has cleared its

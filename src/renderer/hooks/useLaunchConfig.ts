@@ -5,6 +5,7 @@ import { TerminalConfig } from '../stores/configStore'
 import { generateId } from '../utils/id'
 import { markSessionForResumePicker } from '../utils/resumePicker'
 import { isClaudeOff, CLAUDE_OFF_LAUNCH_REASON } from '../lib/claudeOff'
+import { providerOffMessage } from '../../shared/providers'
 
 /** What the launch rule reads of a config. */
 export type LaunchGateConfig = Pick<TerminalConfig, 'provider' | 'shellOnly'>
@@ -68,7 +69,7 @@ export function useLaunchGateSettings(): LaunchGateSettings {
 }
 
 /** The reason shown for a Codex config blocked because Codex is off. */
-export const CODEX_OFF_LAUNCH_REASON = 'Codex is off. Turn it on in Settings, Accounts to launch this config.'
+export const CODEX_OFF_LAUNCH_REASON = providerOffMessage('Codex', 'to launch this config')
 
 /**
  * Allow Multi Spawn (phase 4) — THE rule, in one place.
@@ -192,8 +193,8 @@ export function buildLaunchSession(config: TerminalConfig, opts?: LaunchSessionO
     disableAutoMemory: config.claudeOptions?.disableAutoMemory,
     // Launch must carry the indexing opt-out or the spawn never sees it
     // (pre-2.1.0-beta.5 bug: this path dropped it, so the toggle was inert
-    // for sidebar launches). enableCodexReview is retired — the tool is
-    // authorised globally now, not per config.
+    // for sidebar launches). enableCodexReview is retired: there is no
+    // per-config opt-in (see ClaudeOptions.enableCodexReview).
     loggingEnabled: config.claudeOptions?.loggingEnabled,
     provider: config.provider,
     profileId: config.profileId,

@@ -358,7 +358,7 @@ describe('ready to sign in', () => {
 
   it('a CLI newer than tested is usable, with a warning', async () => {
     await render(snap({ version: '0.157.0', compatibility: 'too-new' }))
-    expect(byTest('codex-setup-version')!.textContent).toContain('Newer than the versions this app was tested with')
+    expect(byTest('codex-setup-version')!.textContent).toContain('Newer than the versions this app was tested with; it will still be used')
     expect(byTest('codex-setup-sign-in')).not.toBeNull()
   })
 

@@ -220,4 +220,22 @@ describe('Continue saves the choice the way the Providers switch does', () => {
     expect(saved.claudeEnabled).toBe(false)
     expect(saved.codexEnabled).toBe(true)
   })
+
+  it('a save that does not land is shown and nothing moves on, whether main agreed or could not answer (WP2 final fixes)', async () => {
+    // The config save answers false (it did not land): updateSettings RESOLVES false, it does not throw.
+    configSave.mockResolvedValue(false)
+    try {
+      for (const answer of [{ ok: true } as Answer, { ok: false, code: 'registry-unavailable', message: 'The account list is not available right now.' } as Answer]) {
+        setEnabled.mockReset()
+        setEnabled.mockResolvedValue(answer)
+        onNext.mockReset()
+        await render()
+        await continueWith('codex')
+        expect(onNext).not.toHaveBeenCalled()
+        expect(byTest('assistants-error')?.textContent).toContain('The change could not be saved.')
+      }
+    } finally {
+      configSave.mockResolvedValue(true)
+    }
+  })
 })

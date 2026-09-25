@@ -112,6 +112,7 @@ const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
   'unsupported': 'This provider does not offer that here.',
   'capability-disabled': 'That is not available for this provider yet.',
   'provider-disabled': 'This provider is turned off.',
+  'provider-state-unknown': 'This app could not read whether this provider is on, so nothing was started.',
   'last-provider': 'At least one provider must stay on.',
   'consumers': 'Sessions or operations are using this account.',
   'busy': 'Something else is using this account right now; try again when it finishes.',
@@ -197,6 +198,9 @@ export class AccountsService {
   private readonly unrecordedSignIns = new Map<string, CredentialClass | undefined>()
   /** Discoveries running now, by provider (discoverOnce joins one). */
   private readonly discoveries = new Map<ProviderId, Promise<DiscoveryResult>>()
+  /** Each provider's saved on/off as the last settings save read it
+   *  (discoverSwitchedOn): an off-to-on save is looked for once. */
+  private readonly savedAtLastChange = new Map<ProviderId, ProviderPreference>()
   /** Status checks running now, by account (refreshStatus joins one). */
   private readonly statusChecks = new Map<string, Promise<AccountsResult<{ state: KnownAuthState }>>>()
   private opSeq = 0
@@ -426,7 +430,31 @@ export class AccountsService {
    *  saved on/off may have, and it wins over an in-memory switch, so the
    *  snapshot is published again with what the service now answers. */
   settingsChanged(): void {
+    this.discoverSwitchedOn()
     this.changed()
+  }
+
+  /** A provider whose SAVED on/off has just become on is looked for once,
+   *  here: the saved setting is what main reads, so a switch-on that is
+   *  never saved (or whose save fails) starts nothing. Only when the save
+   *  turned it on from off, or it was never looked for: a provider already
+   *  on keeps the proof its sessions and reviews run on (a new discovery
+   *  clears it while it runs). A saved value that cannot be read now is no
+   *  answer (the launch rule). */
+  private discoverSwitchedOn(): void {
+    let packages: readonly ProviderPackage[]
+    try { packages = this.deps.packages() } catch { return }
+    for (const p of packages) {
+      try {
+        const before = this.savedAtLastChange.get(p.id)
+        const saved = this.savedPreference(p.id)
+        if (!saved.fresh) continue
+        this.savedAtLastChange.set(p.id, saved.pref)
+        if (!p.setup || saved.pref !== 'on' || this.preferenceFrom(p.id, saved) !== 'on') continue
+        if (this.installations.has(p.id) && before !== 'off') continue
+        void this.discoverOnce(p)
+      } catch { /* one provider never stops another */ }
+    }
   }
 
   private log(m: string): void {
@@ -504,6 +532,12 @@ export class AccountsService {
   async discover(providerId: ProviderId): Promise<AccountsResult<{ installation: ProviderInstallationView }>> {
     const p = this.pkg(providerId)
     if (!p?.setup) return failure('unsupported')
+    // Discovery runs the provider's CLI, so the launch rule decides, as for
+    // every process a provider starts: off refuses, and so does a saved on/off
+    // that cannot be read now (no answer is never a yes).
+    const refused = this.launchRefusal(p.id)
+    // Check again is on Settings, Accounts itself: say what happened, not where to look.
+    if (refused) return refused.code === 'provider-off' ? failure('provider-disabled') : failure('provider-state-unknown', `This app could not read its settings file, so it did not check ${p.displayName}. Try again, or restart the app.`)
     await this.discoverOnce(p)
     return { ok: true, installation: this.installationView(p) }
   }
@@ -512,14 +546,18 @@ export class AccountsService {
    *  provider that is switched on and has a discovery step, so Settings,
    *  Accounts and the session dialog say whether it is installed without
    *  a click. Fire and forget: nothing waits for it, a failure lands in the
-   *  snapshot as it does for Check again, and a provider that is off or has
-   *  not been decided is not looked for (nor one already looked for). */
+   *  snapshot as it does for Check again, and a provider that is off, has
+   *  not been decided, or whose saved on/off cannot be read now is not
+   *  looked for (nor one already looked for). */
   discoverAtStart(): void {
     let packages: readonly ProviderPackage[]
     try { packages = this.deps.packages() } catch { return }
     for (const p of packages) {
       try {
-        if (!p.setup || this.installations.has(p.id) || this.preferenceOf(p.id) !== 'on') continue
+        if (!p.setup || this.installations.has(p.id)) continue
+        // A fresh read only: the last value read is no answer for starting a CLI.
+        const saved = this.savedPreference(p.id)
+        if (!saved.fresh || this.preferenceFrom(p.id, saved) !== 'on') continue
         void this.discover(p.id).catch(() => { /* discover records its own failures */ })
       } catch { /* one provider never stops another */ }
     }
@@ -549,10 +587,9 @@ export class AccountsService {
     }
     const store = this.currentStore()
     const r = store ? await store.exclusive(apply) : apply()
-    if (r.ok) {
-      this.changed()
-      if (enabled) void this.discover(providerId)
-    }
+    // A switch-on starts no CLI here: the save that records it looks for the
+    // CLI (settingsChanged), so a switch-on never saved starts nothing.
+    if (r.ok) this.changed()
     return r
   }
 

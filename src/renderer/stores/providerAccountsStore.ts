@@ -85,6 +85,20 @@ export function savedOff(settings: { claudeEnabled?: boolean; codexEnabled?: boo
   return settings[PROVIDER_ENABLED_SETTING[providerId]] === false
 }
 
+/** A save that did not land: said as such, never as a success. */
+export const PERSIST_FAILED: AccountsResult = { ok: false, code: 'persist-failed', message: 'The change could not be saved.' }
+
+/** Write a provider's saved on/off. True only once the save has landed:
+ *  updateSettings RESOLVES false when the config save fails (config-saver),
+ *  and may also throw. */
+export async function saveProviderSwitch(providerId: ProviderId, enabled: boolean): Promise<boolean> {
+  try {
+    return (await useSettingsStore.getState().updateSettings({ [PROVIDER_ENABLED_SETTING[providerId]]: enabled })) !== false
+  } catch {
+    return false
+  }
+}
+
 export const providerAccountActions = {
   setEnabled: (providerId: ProviderId, enabled: boolean) => call(() => api().setEnabled(providerId, enabled)),
   /** Look for the provider's CLI again. Main keeps what it finds as the
@@ -107,12 +121,7 @@ export const providerAccountActions = {
   switchProvider: async (providerId: ProviderId, enabled: boolean): Promise<AccountsResult> => {
     const r = await call(() => api().setEnabled(providerId, enabled))
     if (!r.ok) return r
-    try {
-      await useSettingsStore.getState().updateSettings({ [PROVIDER_ENABLED_SETTING[providerId]]: enabled })
-    } catch {
-      return { ok: false, code: 'persist-failed', message: 'The change could not be saved.' }
-    }
-    return r
+    return (await saveProviderSwitch(providerId, enabled)) ? r : PERSIST_FAILED
   },
   beginSetup: (req: BeginSetupRequest) => call<{ accountId: string }>(() => api().beginSetup(req)),
   issueSecretHandle: (accountId: string) => call<{ handle: string }>(() => api().issueSecretHandle(accountId)),
@@ -437,7 +446,7 @@ export function providerStatus(p: ProviderInstallationView): { text: string; ton
       switch (p.compatibility) {
         case 'supported': return { text: `${named} - ready`, tone: 'ok' }
         case 'too-old': return { text: `${named} is too old for this app; update it`, tone: 'warn' }
-        case 'too-new': return { text: `${named} is newer than this app supports`, tone: 'warn' }
+        case 'too-new': return { text: `${named} is newer than the versions this app was tested with; it will still be used`, tone: 'warn' }
         case 'unsupported': return { text: `${named} is not supported here`, tone: 'warn' }
         default: return { text: `${named} found`, tone: 'muted' }
       }

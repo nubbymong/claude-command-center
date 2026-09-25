@@ -173,3 +173,24 @@ describe('composition roots (WP1.66)', () => {
     expect(composedRendererProviderIds()).toEqual([...PROVIDER_IDS])
   })
 })
+
+describe('Codex declares what it implements (WP1.17, WP1.18)', () => {
+  it('discovery and install recipes are supported on every package; realm isolation stays unknown while no realms operation backs it', () => {
+    const bare = createCodexPackage()
+    const wired = createCodexPackage({ realms: { lookup: async () => ({ ok: false }), mkdirSecure: () => {} } })
+    for (const pkg of [bare, wired]) {
+      expect(typeof pkg.setup?.discover).toBe('function')
+      expect(typeof pkg.setup?.installRecipes).toBe('function')
+      expect(pkg.capabilities['cli.discovery'].state).toBe('supported')
+      expect(pkg.capabilities['install.recipes'].state).toBe('supported')
+      // Isolation runs through the prepared launch and the realm folders; the
+      // contract backs the key with realms.realmEnvPatch, which Codex lacks.
+      expect(pkg.realms).toBeUndefined()
+      expect(pkg.capabilities['realm.isolated'].state).toBe('unknown')
+      expect(packageRegistrationProblem(pkg)).toBeNull()
+    }
+    expect(bare.realmFolders).toBeUndefined()
+    expect(wired.realmFolders).toBeDefined()
+    expect(wired.launch?.kinds).toEqual(['session', 'review'])
+  })
+})

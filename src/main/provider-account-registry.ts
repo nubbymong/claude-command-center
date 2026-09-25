@@ -187,8 +187,3 @@ export async function reconcileLegacyAccountStores(): Promise<Array<{ providerId
   }
   return out
 }
-
-export function _resetAccountRegistryForTest(): void {
-  store = null
-  storeResourcesDir = null
-}

@@ -402,7 +402,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
       <>
         <CheckRow tone="ok" testId="codex-setup-found">{install.version ? `Codex ${install.version} found` : 'Codex found'}</CheckRow>
         <CheckRow tone={install.tooNew ? 'warn' : 'ok'} testId="codex-setup-version">
-          {install.tooNew ? 'Newer than the versions this app was tested with; it should still work' : 'Version supported'}
+          {install.tooNew ? 'Newer than the versions this app was tested with; it will still be used' : 'Version supported'}
         </CheckRow>
       </>
     )

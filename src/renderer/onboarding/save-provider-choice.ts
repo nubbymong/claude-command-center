@@ -1,7 +1,7 @@
 // WP2 commit 6e: saving which assistants the user runs. Kept apart from
 // provider-choice.ts, which stays free of store imports for steps.ts.
 import type { AccountsResult, ProviderId } from '../../shared/providers'
-import { providerAccountActions, PROVIDER_ENABLED_SETTING } from '../stores/providerAccountsStore'
+import { providerAccountActions, saveProviderSwitch, PERSIST_FAILED } from '../stores/providerAccountsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { choiceSettings, CODEX_ONLY_SETTINGS, type AssistantsChoice, type FirstRunOutcome } from './provider-choice'
 
@@ -32,11 +32,7 @@ export async function saveAssistantsChoice(choice: AssistantsChoice): Promise<Ac
     const r = await providerAccountActions.switchProvider(id, on[id])
     if (r.ok) continue
     if (!NO_ANSWER.has(r.code)) return r
-    try {
-      await useSettingsStore.getState().updateSettings({ [PROVIDER_ENABLED_SETTING[id]]: on[id] })
-    } catch {
-      return { ok: false, code: 'persist-failed', message: 'The change could not be saved.' }
-    }
+    if (!(await saveProviderSwitch(id, on[id]))) return PERSIST_FAILED
   }
   return { ok: true }
 }

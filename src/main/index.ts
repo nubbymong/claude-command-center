@@ -674,11 +674,13 @@ if (!gotTheLock) {
     }
     registerConfigHandlers({
       // #266 MAJOR-2: unticking the watchdog must tear down RUNNING watchers.
+      // Each in its own try: a failure in one never skips the other.
       onSettingsSaved: () => {
-        getWatchdogManager()?.applySettings()
+        try { getWatchdogManager()?.applySettings() } catch (err) { logError('[main] watchdog settings apply failed:', err) }
         // WP2 6d: a provider's saved on/off may have changed (the Providers
-        // switch, onboarding, Settings): the accounts snapshot says so now.
-        getAccountsService()?.settingsChanged()
+        // switch, onboarding, Settings): the accounts snapshot says so now, and
+        // a provider the save turned on is looked for.
+        try { getAccountsService()?.settingsChanged() } catch (err) { logError('[main] accounts settings change failed:', err) }
       },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->

@@ -18,7 +18,7 @@ import { providerOffMessage } from '../../shared/providers'
 export const CLAUDE_OFF = providerOffMessage('Claude Code')
 
 /** The reason on a config that cannot launch because Claude Code is off. */
-export const CLAUDE_OFF_LAUNCH_REASON = 'Claude Code is off. Turn it on in Settings, Accounts to launch this config.'
+export const CLAUDE_OFF_LAUNCH_REASON = providerOffMessage('Claude Code', 'to launch this config')
 
 /** The reason Ask Conductor cannot open: it is a Claude session. */
 export const ASK_CLAUDE_OFF = 'Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.'

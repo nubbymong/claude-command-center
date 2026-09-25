@@ -12,6 +12,7 @@ import { useClickOutside } from '../../hooks/useClickOutside'
 import { persistSessionState } from '../../session-persistence'
 import { describeDetachedAge, filterLiveEntries, pairDetachedEntry } from '../../utils/detachedRemotes'
 import { describeDestination, effectiveRuntimeOf } from '../../../shared/detached-destination'
+import { tmuxExactTarget } from '../../../shared/ssh-tmux-persistence'
 import { displayLiveness, type EntryDisplayLiveness } from '../../utils/detachedRemotesLiveness'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { resolveAccountColourKey, resolveAccountNameByEmail } from '../../../shared/account-chip-color'
@@ -166,7 +167,7 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
   }, [removeEntry])
 
   /** Reattach: the ORIGINAL session id + reconnect, so the tmux target
-   *  `ccc-<sessionId>` matches again and TerminalView spawns a reconnect. The
+   *  `ccc-<safeSid>` matches again and TerminalView spawns a reconnect. The
    *  registry entry is consumed by the resume — it is live now, not detached. */
   const resume = useCallback((entry: DetachedRemote, config: TerminalConfig) => {
     const id = reattach(config, { sessionId: entry.sessionId, reconnect: true })
@@ -464,7 +465,7 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
           label={modal.entry.label || modal.entry.sessionId}
           was={describeDestination(modal.entry)}
           now={describeConfigDestination(modal.config)}
-          tmuxTarget={`ccc-${modal.entry.sessionId}`}
+          tmuxTarget={tmuxExactTarget(modal.entry.sessionId)}
           onRemove={() => {
             const e = modal.entry
             setModal(null)

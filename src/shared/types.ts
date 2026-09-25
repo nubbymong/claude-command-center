@@ -131,8 +131,10 @@ export interface ClaudeOptions {
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
   agentIds?: string[]
-  /** RETIRED 2.1.0-beta.5 (was v1.5 P6): codex_review is authorised globally now —
-   *  every local Claude session registers, gated by the global Codex master switch.
+  /** RETIRED 2.1.0-beta.5 (was v1.5 P6): no per-config opt-in. Every local
+   *  Claude session with a real project folder registers for codex_review, and
+   *  main offers the tool per connection while the built-in tools and the Codex
+   *  review switch are on, Codex is on and a Codex account can run the review.
    *  The field remains only so stored configs round-trip; nothing reads it. */
   enableCodexReview?: boolean
   /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined / true = on).

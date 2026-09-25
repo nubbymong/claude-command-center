@@ -1,4 +1,4 @@
-// WP2 commit 6 (F8, F9 cards 1-4): Settings, General, Built-in tools, the
+// WP2 commit 6 (F8, F9 cards 1-4): Settings, General, Built-in Tools, the
 // "Code review" group. One switch per direction: Codex reviewing for Claude
 // sessions, Claude reviewing for Codex sessions. Each switch is live only
 // while that review could actually run (the main process offers the tool on
@@ -6,6 +6,7 @@
 // A disabled switch never rewrites the stored choice.
 import React from 'react'
 import type { AccountsSnapshot, ProviderId, ReviewReadinessView } from '../../../shared/providers'
+import { providerOffMessage } from '../../../shared/providers'
 import { useSettingsStore, DEFAULT_CONDUCTOR_TOOLS } from '../../stores/settingsStore'
 import { useProviderAccountsStore, providerView, reviewerLine, reviewerNotice, accountDisplayName, savedOff } from '../../stores/providerAccountsStore'
 import ToggleSwitch from '../github/config/ToggleSwitch'
@@ -81,7 +82,7 @@ export function reviewToolView(snapshot: AccountsSnapshot | null, tool: ReviewTo
   if (!ctx.masterOn) return { disabled: true, message: null, reviewer: null, notice: null }
   const p = providerView(snapshot, id)
   if (savedOff(ctx.settings, id) || (p !== undefined && !p.enabled)) {
-    return { disabled: true, message: isCodex ? 'Codex is off. Turn it on in Settings, Accounts.' : 'Claude Code is off.', reviewer: null, notice: null }
+    return { disabled: true, message: providerOffMessage(isCodex ? 'Codex' : 'Claude Code'), reviewer: null, notice: null }
   }
   // No snapshot: still waiting for the first answer, or the main process
   // has no account service to give one.

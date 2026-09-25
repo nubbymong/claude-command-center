@@ -238,7 +238,7 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-codex.jpg',
   },
   {
-    // WP2 (2.1.1): code review in both directions, and the Built-in tools
+    // WP2 (2.1.1): code review in both directions, and the Built-in Tools
     // switch for each. Pinned at 2.1.1 for the reason given on the Providers
     // and Accounts card above.
     id: 'code-review',
@@ -250,14 +250,14 @@ export const trainingSteps: TrainingStep[] = [
     highlights: [
       'From a Claude session, ask for a **Codex review**; from a Codex session, ask for a **Claude review**',
       'Reviews use the **reviewer default**, or the default account when none is set -- choose it with **Make reviewer** in Settings, Accounts',
-      'Each direction has **its own switch** in Settings, General, Built-in tools, naming the account reviews will use and, when a review cannot run, why',
+      'Each direction has **its own switch** in Settings, General, Built-in Tools, naming the account reviews will use and, when a review cannot run, why',
       'A sign-in that must be confirmed at each launch cannot review, so the Codex sign-in already on this computer never does: add a Codex account for that',
       'Offered only while a review could run, in local sessions only, and skipped when the working directory is missing or is your home folder',
       'On macOS, Claude reviews use your normal Claude sign-in',
     ],
     howToTrigger: [
       { label: 'Ask', value: 'In a session: "get a Codex review" or "get a Claude review"' },
-      { label: 'Switches', value: 'Settings, General -> Built-in tools -> Code review' },
+      { label: 'Switches', value: 'Settings, General -> Built-in Tools -> Code review' },
       { label: 'Reviewer', value: 'Settings, Accounts -> Make reviewer' },
     ],
     proTip:
@@ -265,11 +265,11 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       '**Codex review** from Claude sessions, **Claude review** from Codex sessions',
       'A separate **read-only** reviewer on your **reviewer account**',
-      'One **switch per direction** in Settings, General, Built-in tools',
+      'One **switch per direction** in Settings, General, Built-in Tools',
     ],
     // No dedicated capture of the Code review switches exists yet; the shell
     // shot is the same neutral stand-in the Ask Conductor card uses. (Future
-    // capture: step-code-review.jpg / Settings, General, Built-in tools.)
+    // capture: step-code-review.jpg / Settings, General, Built-in Tools.)
     screenshotFilename: 'v2-shell-hero.jpg',
   },
   {

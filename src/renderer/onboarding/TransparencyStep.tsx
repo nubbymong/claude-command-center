@@ -108,7 +108,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     },
     {
       icon: GEAR,
-      label: 'Built-in tools',
+      label: 'Built-in Tools',
       // Counted from the gate list above so adding a tool can never leave this
       // reading "3 of 3" while four are advertised.
       value:

@@ -303,6 +303,15 @@ describe('Providers card', () => {
     expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (3).')
   })
 
+  it('says the change was not saved when the settings save does not land (it resolves false; it does not throw)', async () => {
+    updateSettings.mockResolvedValueOnce(false as never)
+    render(snapshot())
+    await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
+    await flush()
+    expect(pa.setEnabled).toHaveBeenCalledWith('codex', false)
+    expect(q('provider-error-codex')?.textContent).toBe('The change could not be saved.')
+  })
+
   it("shows another refusal's own message", async () => {
     pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
     render(snapshot())

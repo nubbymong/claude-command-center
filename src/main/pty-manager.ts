@@ -462,8 +462,9 @@ const sshTmuxWrappedBySession = new Set<string>()
 /**
  * SSH tmux enhancement (item 4): deliberately END a persistent remote session.
  * Opens a fresh, non-interactive ssh exec (buildSshExecArgs) that runs
- * buildRemoteTmuxKillCommand -- `tmux kill-session -t ccc-<sid>` (both
- * host-authored tmux-bin forms) plus sidecar cleanup -- then exits. Fire-and-
+ * buildRemoteTmuxKillCommand -- `tmux kill-session -t '=ccc-<sid>'` through
+ * each host-authored tmux location (PATH, both Homebrew prefixes, /usr/bin,
+ * the staged ~/.claude/bin/tmux) plus sidecar cleanup -- then exits. Fire-and-
  * forget with a bounded lifetime; the caller kills the local PTY separately.
  *
  * A no-op when we have no target for the session (never an SSH session, or
@@ -4593,12 +4594,16 @@ function spawnPtyResolved(
       // without a respawn), so the strip/card/statusline follow the new account.
       startWatchingAccountIdentity(sessionId, resolvedProfileId)
 
-      // codex_review is authorised globally (2 Aug decision): every LOCAL Claude
-      // session registers. Availability is still governed at tool-registration
-      // time by the global Codex master + conductor tool toggles
-      // (conductor-mcp-server createServer), and SSH sessions never reach this
-      // branch, so the tool keeps running only against paths that exist on this
-      // machine. The per-config enableCodexReview flag is retired (ignored).
+      // Every LOCAL Claude session with a real project folder REGISTERS for
+      // codex_review here; registering does not offer the tool. Whether it is
+      // offered is decided per MCP connection (offeredReviewTool, called from
+      // conductor-mcp-server createServer): the Conductor tools master and the
+      // codex_review switch (Settings, General, Built-in tools) must be on,
+      // Codex must be enabled, and a Codex review must be preparable now (the
+      // accounts service's reviewReady: the provider on and a reviewer account
+      // ready). SSH sessions never reach this branch, so the tool only ever
+      // runs against paths that exist on this machine. The per-config
+      // enableCodexReview flag is retired (ignored).
       //
       // SECURITY (adversarial review, #188): register the ACTUAL launch cwd
       // (`claudeCwd`, post-resume-override) — not the pre-override `resolvedCwd`

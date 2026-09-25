@@ -7,6 +7,8 @@
 // dispatchSSHStatuslineUpdate → fanOutStatusline) delivers
 // `statusline:update` events for the session's own id — the exact signal the
 // renderer's statusline row waits on ("pending" until the first one lands).
+// Lanes assert claudeRan: an update carrying claude's own fields, not just the
+// host-setup handshake's account-only updates (see CLAUDE_ONLY_FIELDS).
 //
 // The matrix is split into one *.live.ts file PER TARGET HOST so vitest can run
 // the lanes in parallel (distinct hosts share no remote state); combos against
@@ -17,14 +19,26 @@
 // vi.mock note: these mocks register at harness-import time, BEFORE the
 // dynamic `await import` calls below pull in pty-manager — the same ordering
 // the original single-file pack relied on.
-import { vi } from 'vitest'
-import { readFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { vi, afterAll } from 'vitest'
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, copyFileSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const scratch = mkdtempSync(join(tmpdir(), 'ccc-live-'))
 export const settingsState: { value: Record<string, unknown> } = { value: {} }
+
+// The app DATA directory for this run only. getDataDirectory (data-paths.ts)
+// takes CCC_E2E_DATA_DIR ahead of the registry and the per-platform default,
+// and the debug logger resolves its folder from it lazily, on its first write.
+// Mocking the config and resources directories (below) did not cover it, so
+// every live run appended to the machine's REAL `AI Code Conductor/debug/app.log`
+// (seen on the VM run at a7419119). Set here, before the dynamic imports below
+// load any src/main module. Each lane file runs in its own forked worker
+// (vitest.live.config.ts), so the variable stays in that worker and the
+// processes it starts.
+const dataDir = mkdtempSync(join(tmpdir(), 'ccc-live-data-'))
+process.env.CCC_E2E_DATA_DIR = dataDir
 vi.mock('electron', () => ({
   BrowserWindow: class {},
   nativeTheme: { shouldUseDarkColors: true, on: () => {} },
@@ -55,6 +69,29 @@ const { startStatuslineWatcher } = await import('../../src/main/statusline-watch
 export const { startConductorMcpServer, stopConductorMcpServer } = await import('../../src/main/conductor-mcp-server')
 registerProvider(new ClaudeProvider())
 
+// Remove this run's data directory when the lane file finishes. The logger is
+// closed first (and given a moment to flush) so its open stream neither holds
+// nor truncates app.log. With CCC_LIVE_DUMP set, app.log is kept beside the
+// per-test pane dumps (report below), since it is where End-path and setup
+// failures are recorded. The exit hook is a best-effort second pass for a log
+// line written after this hook ran.
+const { closeDebugLogger } = await import('../../src/main/debug-logger')
+const removeDataDir = (): void => {
+  try { closeDebugLogger() } catch { /* not open */ }
+  try { rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) } catch { /* best effort */ }
+}
+afterAll(async () => {
+  try { closeDebugLogger() } catch { /* not open */ }
+  await new Promise((r) => setTimeout(r, 500))
+  const dumpDir = process.env.CCC_LIVE_DUMP
+  const appLog = join(dataDir, 'debug', 'app.log')
+  if (dumpDir && existsSync(appLog)) {
+    try { copyFileSync(appLog, join(dumpDir, `app-${process.pid}.log`)) } catch { /* diagnostics only */ }
+  }
+  removeDataDir()
+})
+process.once('exit', removeDataDir)
+
 /** Per-lane MCP port: base (env CCC_LIVE_MCP_PORT or 43199) + lane offset. */
 export const makeLivePort = (offset: number) => Number(process.env.CCC_LIVE_MCP_PORT ?? 43199) + offset
 
@@ -80,6 +117,27 @@ export function makeWin() {
 }
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export const updates = (ev: Captured[]) => ev.filter((e) => e.channel === 'statusline:update').map((e) => e.payload as { sessionId?: string })
+/** Statusline fields that ONLY claude's own statusLine input produces. The
+ *  remote shim builds them from the JSON claude pipes to it (model, cost,
+ *  context window: SSH_STATUSLINE_SHIM, ssh-shim.ts). The shared account and
+ *  usage gather never sets any of them, and the setup script's first-connect
+ *  priming run of the shim gets no claude input, so the host-setup handshake
+ *  on its own delivers updates WITHOUT them (account, usage buckets, rate
+ *  limits). That is how the Mac T6 run at a7419119 passed while claude never
+ *  started: two handshake updates (account only) satisfied "an update arrived
+ *  for this sid". An update carrying one of these proves claude ran. */
+const CLAUDE_ONLY_FIELDS = [
+  'model', 'contextWindowSize', 'contextUsedPercent', 'contextRemainingPercent',
+  'costUsd', 'totalDurationMs', 'inputTokens', 'outputTokens', 'linesAdded', 'linesRemoved',
+] as const
+/** This session's statusline updates that came from claude itself. */
+export const claudeTicks = (ev: Captured[], sid: string) => updates(ev).filter((u) => {
+  if (u.sessionId !== sid) return false
+  const p = u as Record<string, unknown>
+  return CLAUDE_ONLY_FIELDS.some((k) => p[k] !== undefined && p[k] !== null)
+})
+/** The "claude actually ran for this session" assertion every lane uses. */
+export const claudeRan = (ev: Captured[], sid: string) => claudeTicks(ev, sid).length > 0
 export const states = (ev: Captured[], sid: string) => ev.filter((e) => e.channel === `ssh:flowState:${sid}`).map((e) => (e.payload as { state: string }).state)
 // The 2026-08-27 Pi incident's signature: a stage sentinel that PARSED but
 // with a corrupted capture (ConPTY-glued escapes -> `unsafe-path` /
@@ -98,8 +156,10 @@ export const stripPane = (p: string) => p
   .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')
 const TRUST_RE = /trustthisfolder|Doyoutrust/i
 
-/** Connect, auto-launch claude at the overlay point, capture until 2 statusline
- *  updates (or the cap), return the captured window.
+/** Connect, auto-launch claude at the overlay point, capture until 2 of
+ *  claude's OWN statusline ticks (claudeTicks: the setup handshake's updates
+ *  do not count, or they could end the capture before claude ever ticked), or
+ *  the cap, and return the captured window.
  *
  *  Nudge (ON by default since the lane split): claude re-runs its statusLine
  *  command on CONVERSATION state changes, never on mere repaints — proven live
@@ -162,7 +222,7 @@ export async function runSession(sid: string, entry: HostEntry, opts: { detachab
         writePty(sid, '\r')
       }
     }
-    const ticks = updates(w.events).filter((u) => u.sessionId === sid).length
+    const ticks = claudeTicks(w.events, sid).length
     if (nudgeOn && !nudged && !trustPending && Date.now() - launchedAt > 12_000 && ticks < 2) {
       nudged = true
       resizePty(sid, 121, 30) // spawn default is 120x30 — one-column wiggle
@@ -188,7 +248,7 @@ export function report(label: string, w: ReturnType<typeof makeWin>, sid: string
       : '-'
     console.log(`${label} payload: account=${last.accountEmail ?? '-'} buckets=${buckets} 5h=${last.rateLimitCurrent ?? '-'} wk=${last.rateLimitWeekly ?? '-'}`)
   }
-  console.log(`${label}: updates=${u.length} sids=${JSON.stringify([...new Set(u.map((x) => x.sessionId))])} wrapped=${p.includes('has-session')} states=${JSON.stringify([...new Set(states(w.events, sid))])} paneLen=${p.length}`)
+  console.log(`${label}: updates=${u.length} claudeTicks=${claudeTicks(w.events, sid).length} sids=${JSON.stringify([...new Set(u.map((x) => x.sessionId))])} wrapped=${p.includes('has-session')} states=${JSON.stringify([...new Set(states(w.events, sid))])} paneLen=${p.length}`)
   // Stripped pane tail — where claude actually IS when the capture ends.
   const stripped = stripPane(p).replace(/\r/g, '')
   console.log(`${label} pane-tail: ${JSON.stringify(stripped.slice(-350))}`)

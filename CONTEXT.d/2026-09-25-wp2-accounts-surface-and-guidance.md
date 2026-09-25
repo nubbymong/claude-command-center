@@ -45,6 +45,33 @@ in the two 2026-09-24 entries.
   README, `docs/USER_GUIDE.md`, `PRIVACY.md`, and the documentation sweep
   record `docs/wp1/evidence/release-qualification.md`. AC14 of the Hello Codex
   spec is now a real test.
+- **Visual fixes (`4561e643`).** Keyboard focus, layering and layout found by
+  the VM visual run (onboarding pages, Hello Codex, the close dialogs).
+- **Final fix batch (after the whole-branch reviews).** The WP1 retirement
+  ledger now states what the branch did, row by row (rows that claimed a
+  change on an unchanged file, or "unchanged" on a changed test, are
+  corrected), and every baseline test whose test names changed carries a
+  mapping; the traceability manifest points at the tests that exist, with a
+  check that a missing path is never a wrong pointer. A provider's CLI is
+  looked for only while the provider is on: Check again refuses while it is
+  off or while its saved on/off cannot be read, and turning a provider on
+  looks for the CLI once, when the switch is saved (never again for a
+  provider already on). A Providers switch whose save does not land says so.
+  Two unused Codex session methods refuse instead of looking Codex up on
+  PATH. The Codex capability declarations match the package (discovery and
+  install recipes supported). The Conductor MCP page shows whether Codex
+  review and the new Claude review card are offered now, and why not. A Codex
+  newer than tested says it will still be used. User-facing text spells
+  "Built-in Tools" as the Settings section does (code comments and older
+  records are not all changed). The Resume card's hint names the remote tmux
+  session as the app creates it, as an exact, quoted target.
+- **SSH with tmux to a host whose login shell is zsh.** zsh is the macOS
+  default, but the fix covers any such host. Claude now starts there: zsh
+  read the remote session name as a command and stopped the start line, and
+  End did not close that remote session or remove its files; the remote
+  session name is now quoted. The live SSH harness changed with it: every
+  lane that launches Claude now requires Claude to have run, and the harness
+  no longer writes to the machine's real app data folder.
 
 ### Decisions
 
@@ -65,9 +92,23 @@ in the two 2026-09-24 entries.
 ### Open
 
 - `docs/wp1/evidence/release-qualification.md` holds the documentation sweep
-  only; the release-run record (WP1.37, WP1.73) and the e2e mode matrix
-  (`docs/wp1/evidence/mode-matrix.md`) come from the VM and CI qualification
-  run.
+  only; the release-run record (WP1.37, WP1.73) comes from the VM and CI
+  qualification run.
+- `docs/wp1/evidence/mode-matrix.md` records the VM e2e run on `5a3e0278`
+  (its 4 gate tests pass). It is partial: WP1.1 and WP1.60 stay planned (the
+  upgrade, restart, enable/disable and real-launch modes are not in it), and
+  the final head is to be run again before merge.
+- Traceability still names tests and records that are not written yet (the
+  mode-matrix, pinned-source, fake-keyring, migration-interruption, rollback
+  and re-authentication staging tests; the real-CLI, keyring, CI, rollback,
+  packaged and skip records; the fake CLI oracle), and the e2e spec
+  `tests/e2e/onboarding-provider-select.spec.ts` that WP1.1 names.
+- The config.toml heal (`src/main/providers/codex/mcp-config.ts`): the
+  adaptation planned in `docs/wp2/plan.md` step 4 (an explicit realm path in
+  place of its own resolver) was not done. The heal still targets the Codex
+  home the app inherited, the only place older builds wrote the block, so its
+  ledger row is `retain`. Owner decision pending: keep it as it is, or do the
+  adaptation.
 - Training screenshots that still show the retired Settings Codex tab or its
   pointer need a recapture (listed in the release-qualification record).
 - The SSH live matrix is still to run before merge.

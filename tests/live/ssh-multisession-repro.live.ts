@@ -5,14 +5,19 @@
 // claude/tmux" by running two sessions at once (distinct ids, as the app does per
 // launch) and reporting, per session, whether it reached `claude-running` and
 // whether its pane shows the tmux wrapper / claude UI. On-demand only.
-import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { readFileSync, existsSync, mkdtempSync, appendFileSync, writeFileSync } from 'node:fs'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
+import { readFileSync, existsSync, mkdtempSync, appendFileSync, writeFileSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const scratch = mkdtempSync(join(tmpdir(), 'ccc-repro-'))
 const settingsState: { value: Record<string, unknown> } = { value: {} }
+// A throwaway app DATA directory, so the debug logger never appends to the
+// machine's real app.log (same isolation as statusline-harness.ts). Set before
+// the dynamic imports below load any src/main module.
+const dataDir = mkdtempSync(join(tmpdir(), 'ccc-repro-data-'))
+process.env.CCC_E2E_DATA_DIR = dataDir
 vi.mock('electron', () => ({
   BrowserWindow: class {},
   nativeTheme: { shouldUseDarkColors: true, on: () => {} },
@@ -32,6 +37,12 @@ const { spawnPty, killPty, getSshFlow, writePty } = await import('../../src/main
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 registerProvider(new ClaudeProvider())
+const { closeDebugLogger } = await import('../../src/main/debug-logger')
+afterAll(async () => {
+  try { closeDebugLogger() } catch { /* not open */ }
+  await new Promise((r) => setTimeout(r, 500))
+  try { rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) } catch { /* best effort */ }
+})
 
 interface HostEntry { host: string; username: string; port?: number }
 const hostsPath = process.env.CCC_LIVE_HOSTS ?? join(process.cwd(), 'tests', 'live', 'hosts.local.json')

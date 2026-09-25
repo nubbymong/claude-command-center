@@ -708,15 +708,15 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
     const cmd = buildRemoteTmuxKillCommand('sess-1')
     // Targets the tmux session name, mirroring buildTmuxLaunchCommand — with
     // tmux's `=` EXACT-match prefix (see the exactness case below).
-    expect(cmd).toContain('kill-session -t =ccc-sess-1')
+    expect(cmd).toContain("kill-session -t '=ccc-sess-1'")
     // Tries PATH + both Homebrew prefixes (macOS non-login exec has a minimal
     // PATH, so `command -v tmux` alone would miss /opt/homebrew/bin) + system +
     // the CCC-staged tier-2 binary.
-    expect(cmd).toContain('tmux kill-session -t =ccc-sess-1')
-    expect(cmd).toContain('/opt/homebrew/bin/tmux kill-session -t =ccc-sess-1')
-    expect(cmd).toContain('/usr/local/bin/tmux kill-session -t =ccc-sess-1')
-    expect(cmd).toContain('/usr/bin/tmux kill-session -t =ccc-sess-1')
-    expect(cmd).toContain('"$HOME/.claude/bin/tmux" kill-session -t =ccc-sess-1')
+    expect(cmd).toContain("tmux kill-session -t '=ccc-sess-1'")
+    expect(cmd).toContain("/opt/homebrew/bin/tmux kill-session -t '=ccc-sess-1'")
+    expect(cmd).toContain("/usr/local/bin/tmux kill-session -t '=ccc-sess-1'")
+    expect(cmd).toContain("/usr/bin/tmux kill-session -t '=ccc-sess-1'")
+    expect(cmd).toContain(`"$HOME/.claude/bin/tmux" kill-session -t '=ccc-sess-1'`)
     // Removes the two per-session sidecars.
     expect(cmd).toContain('rm -f ~/.claude/settings-sess-1.json ~/.claude/mcp-sess-1.json')
     // Every step best-effort; the whole exec still exits 0.
@@ -724,7 +724,7 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
   })
   it('sanitizes a session id with shell metacharacters into the -t argument', () => {
     const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
-    expect(cmd).toContain('kill-session -t =ccc-a_b_c__x_')
+    expect(cmd).toContain("kill-session -t '=ccc-a_b_c__x_'")
     // No raw metacharacter reaches the target token.
     expect(cmd).not.toContain('ccc-a;b')
   })
@@ -744,7 +744,7 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
     const cmd = buildRemoteTmuxKillCommand('a')
     const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
     expect(operands.length).toBe(5)
-    for (const t of operands) expect(t).toBe('=ccc-a')
+    for (const t of operands) expect(t).toBe("'=ccc-a'")
     // The pre-fix form is GONE: no `-t` operand is the bare name that tmux
     // would widen to a prefix/fnmatch search.
     expect(cmd).not.toMatch(/kill-session -t ccc-a(\s|$)/)
@@ -754,7 +754,7 @@ describe('buildRemoteTmuxKillCommand (item 4)', () => {
     const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
     const operands = [...cmd.matchAll(/kill-session -t (\S+)/g)].map((m) => m[1])
     expect(operands.length).toBeGreaterThan(0)
-    for (const t of operands) expect(t).toMatch(/^=ccc-[A-Za-z0-9_-]+$/)
+    for (const t of operands) expect(t).toMatch(/^'=ccc-[A-Za-z0-9_-]+'$/)
   })
 })
 

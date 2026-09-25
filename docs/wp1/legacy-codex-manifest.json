@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-25T06:36:45.674Z",
-  "head": "5a3e02781d43b5ea2883d39a2f0590f77be1cab5",
-  "tree": "298c4524373570db5352e15a2cf4bf6feab16ee6",
+  "generatedAt": "2026-09-25T09:42:45.736Z",
+  "head": "32bb276996590332070a6f4b608da3004235ce6a",
+  "tree": "99dcfc1a709eb8fd06a00c96718ef7c8c752e58e",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2293,
+  "trackedFileCount": 2298,
   "excludedFileCount": 376,
-  "scannedFileCount": 1917,
+  "scannedFileCount": 1922,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 357,
-  "pathDigest": "6d9c687e504a90596f570feffe2df65dd9bb5de9380ad81441fdb4021e45b2b8",
+  "matchedPathCount": 359,
+  "pathDigest": "878a08ae13d44392230a00ca7985c6778b8eb7d2d817ced8028a79658f2639bf",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -182,7 +182,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 126
+      "lineCount": 124
     },
     {
       "path": "package.json",
@@ -593,7 +593,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 157
+      "lineCount": 161
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -759,7 +759,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 116
+      "lineCount": 117
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -1016,7 +1016,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 16
+      "lineCount": 18
     },
     {
       "path": "src/renderer/components/SettingsPage.tsx",
@@ -1068,12 +1068,27 @@
       "lineCount": 2
     },
     {
+      "path": "src/renderer/components/conductor-mcp/ClaudeReviewSubTool.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 3
+    },
+    {
       "path": "src/renderer/components/conductor-mcp/CodexReviewSubTool.tsx",
       "predicates": [
         "P01",
         "P11"
       ],
-      "lineCount": 8
+      "lineCount": 6
+    },
+    {
+      "path": "src/renderer/components/conductor-mcp/ReviewSubToolCard.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "lineCount": 7
     },
     {
       "path": "src/renderer/components/logs/LogEmptyState.tsx",
@@ -1207,7 +1222,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 24
+      "lineCount": 25
     },
     {
       "path": "src/renderer/hooks/useSwitchAccount.ts",
@@ -1534,7 +1549,6 @@
     {
       "path": "src/renderer/utils/sessionLaunch.ts",
       "predicates": [
-        "P04",
         "P05",
         "P11"
       ],
@@ -1627,7 +1641,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 20
+      "lineCount": 21
     },
     {
       "path": "tests/e2e/codex-session-creation.spec.ts",
@@ -2155,7 +2169,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 198
+      "lineCount": 205
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
@@ -2234,7 +2248,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 108
+      "lineCount": 111
     },
     {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
@@ -2304,9 +2318,11 @@
       "path": "tests/unit/renderer/codex-review-sub-tool.test.ts",
       "predicates": [
         "P01",
+        "P04",
+        "P05",
         "P13"
       ],
-      "lineCount": 6
+      "lineCount": 45
     },
     {
       "path": "tests/unit/renderer/command-bar-layout.test.ts",
@@ -2478,7 +2494,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 45
+      "lineCount": 46
     },
     {
       "path": "tests/unit/renderer/onboarding-codex-setup.test.tsx",

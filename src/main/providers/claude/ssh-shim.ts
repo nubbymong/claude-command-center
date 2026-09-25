@@ -3,6 +3,7 @@ import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-s
 import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 import { SHIM_GATHER_JS, SHIM_STATUS_URL_JS } from './statusline-gather'
 import { CONTAINER_NAME_RE, readContainerName } from '../../../shared/container-command'
+import { quoteArgForShell } from '../../../shared/shell-quote'
 import type { SshRuntime } from '../../../shared/types'
 
 /**
@@ -720,7 +721,21 @@ export function buildRemoteTmuxKillCommand(sessionId: string): string {
   // takes a NAME, where a leading `=` would become part of the name itself —
   // see buildTmuxLaunchCommand (ssh-tmux.ts), which keeps the two apart for
   // exactly this reason.
-  const target = `=ccc-${safeSid}`
+  //
+  // SINGLE-QUOTED (WP2 final fix batch, the Mac T6 live run): sshd runs this
+  // line with the remote account's own shell (`<shell> -c '<line>'`), and zsh
+  // (the macOS default) expands an unquoted word that begins with `=` to the
+  // path of the command it names (its EQUALS option). `-t =ccc-<sid>` failed
+  // with `zsh:1: ccc-<sid> not found`, which aborts the whole line, so neither
+  // the kill nor the sidecar `rm` ran. Single quotes are literal in the
+  // POSIX-family shells (sh, bash, dash, zsh), so tmux receives the same
+  // `=ccc-<sid>` bytes from each. Same quoting as buildTmuxLaunchCommand. This
+  // command is POSIX shell throughout (`;` lists, `2>/dev/null`, `"$HOME"`):
+  // endSshRemote sends it whatever the remote OS, and on a Windows remote
+  // (cmd.exe, which keeps single quotes) it does nothing useful, exactly as
+  // before this quoting. A Windows launch is never tmux-wrapped, so there is
+  // no tmux session there to end.
+  const target = quoteArgForShell(`=ccc-${safeSid}`, false)
   // The kill runs over a SEPARATE, NON-LOGIN ssh exec (endSshRemote), whose PATH
   // is minimal — `command -v tmux` alone MISSES a Homebrew tmux on macOS
   // (/opt/homebrew/bin is added only by a login shell), which would orphan the

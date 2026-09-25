@@ -311,7 +311,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 </div>
               </Section>
 
-              {/* Built-in tools (conductor MCP) -- the recovery surface for the
+              {/* Built-in Tools (conductor MCP) -- the recovery surface for the
                   onboarding p6 master ("switch them on anytime in Settings"). */}
               <BuiltinToolsSection settings={settings} save={save} onOpenAccounts={() => setActiveTab('accounts')} />
 
@@ -1325,7 +1325,7 @@ function FontSizeTab({ settings, save }: {
 }
 
 /**
- * Settings, General, Built-in tools: the conductor MCP master, the simple
+ * Settings, General, Built-in Tools: the conductor MCP master, the simple
  * per-tool switches, and the Code review group (one switch per review
  * direction, each live only while that review could run). The master off
  * makes everything below it inert.

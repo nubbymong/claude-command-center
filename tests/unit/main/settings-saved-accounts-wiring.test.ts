@@ -17,4 +17,12 @@ describe('settings save -> accounts snapshot wiring', () => {
     // The watchdog still gets its call too.
     expect(body).toMatch(/getWatchdogManager\(\)\?\.applySettings\(\)/)
   })
+
+  it('each call has its own try, so a watchdog failure never skips the accounts service (WP2 final fixes)', () => {
+    // main/index.ts runs only in the booted app, so the wiring is pinned by its text, as above.
+    const start = indexSource.indexOf('onSettingsSaved:')
+    const body = indexSource.slice(start, indexSource.indexOf('})', start))
+    expect(body).toMatch(/try \{ getWatchdogManager\(\)\?\.applySettings\(\) \} catch \(err\) \{ logError\(/)
+    expect(body).toMatch(/try \{ getAccountsService\(\)\?\.settingsChanged\(\) \} catch \(err\) \{ logError\(/)
+  })
 })

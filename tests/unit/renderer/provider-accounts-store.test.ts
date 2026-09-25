@@ -213,7 +213,7 @@ describe('row text', () => {
     [{ discoveryState: 'missing' as const }, 'Codex was not found on this computer', 'warn'],
     [{ discoveryState: 'invalid' as const }, 'Codex was found but did not run as expected', 'warn'],
     [{ discoveryState: 'error' as const }, 'Codex could not be checked', 'warn'],
-    [{ compatibility: 'too-new' as const }, 'Codex 0.155.1 is newer than this app supports', 'warn'],
+    [{ compatibility: 'too-new' as const }, 'Codex 0.155.1 is newer than the versions this app was tested with; it will still be used', 'warn'],
     [{ compatibility: 'unsupported' as const }, 'Codex 0.155.1 is not supported here', 'warn'],
     [{ compatibility: 'unknown' as const }, 'Codex 0.155.1 found', 'muted'],
     [{ enabled: false }, 'Off', 'muted'],

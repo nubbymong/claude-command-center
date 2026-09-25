@@ -265,7 +265,7 @@ Linux may ask for administrator rights; CCC never elevates on its own.
   sign-in you confirm at each launch cannot review, so this computer's own
   Codex sign-in never does. On macOS, Claude reviews use your normal Claude
   sign-in.
-- Each direction has its own switch in **Settings → General → Built-in tools →
+- Each direction has its own switch in **Settings → General → Built-in Tools →
   Code review**: *Codex review* (Claude sessions can ask Codex) and *Claude
   review* (Codex sessions can ask Claude). Each row names the account reviews
   will use and, when a review cannot run, says why. Changes there or in

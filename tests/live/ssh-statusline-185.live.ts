@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import {
   hosts, makeWin, makeLivePort, runSession, report, killRemoteTmux, sleep,
-  updates, endSshRemote, killPty, settingsState,
+  claudeRan, endSshRemote, killPty, settingsState,
   startConductorMcpServer, stopConductorMcpServer,
 } from './statusline-harness'
 
@@ -26,7 +26,7 @@ describe('SSH statusline matrix — 185 key lane (LIVE, on-demand)', () => {
     await endSshRemote(sid)
     killPty(sid)
     killRemoteTmux(e, sid)
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 
   itIf(hosts.linuxKey)('key + tmux reattach: statusline still updates after reconnect', async () => {
@@ -34,7 +34,7 @@ describe('SSH statusline matrix — 185 key lane (LIVE, on-demand)', () => {
     const sid = `lv2${Date.now().toString(36)}`
     const w1 = await runSession(sid, e)
     report('T2a first connect', w1, sid)
-    const firstOk = updates(w1.events).some((u) => u.sessionId === sid)
+    const firstOk = claudeRan(w1.events, sid)
     killPty(sid) // drop the local PTY; the remote tmux session survives
     await sleep(3000)
     const w2 = await runSession(sid, e, { win: makeWin(), nudge: true })
@@ -43,7 +43,7 @@ describe('SSH statusline matrix — 185 key lane (LIVE, on-demand)', () => {
     killPty(sid)
     killRemoteTmux(e, sid)
     expect(firstOk).toBe(true)
-    expect(updates(w2.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w2.events, sid)).toBe(true)
   }, 480_000)
 
   itIf(hosts.linuxKey)('key + NO tmux (detachable off): statusline via /dev/tty-or-pts', async () => {
@@ -52,6 +52,6 @@ describe('SSH statusline matrix — 185 key lane (LIVE, on-demand)', () => {
     const w = await runSession(sid, e, { detachable: false })
     report('T3 key no-tmux', w, sid)
     killPty(sid)
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 })

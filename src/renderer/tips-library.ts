@@ -545,7 +545,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'How the Conductor MCP server injects into Claude settings',
         title: 'Conductor MCP Registration',
-        body: 'The Conductor MCP server hosts four sub-tools (Vision, Codex review, Host transfer, Agent Canvas) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review`, `fetch_host_screenshot` and the `canvas_*` tools)\n\nA local Codex session reaches the same server through its own per-session setting, and is offered `claude_review` rather than `codex_review`, so each assistant can ask the other for a review.\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
+        body: 'The Conductor MCP server hosts five sub-tools (Vision, Codex review, Claude review, Host transfer, Agent Canvas) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review`, `fetch_host_screenshot` and the `canvas_*` tools)\n\nA local Codex session reaches the same server through its own per-session setting, and is offered `claude_review` rather than `codex_review`, so each assistant can ask the other for a review.\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
       },
     },
   },
@@ -996,10 +996,10 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Ask the other assistant to review your work',
         title: 'Code Review, Both Ways',
-        body: 'From a Claude session, ask for a **Codex review**; from a Codex session, ask for a **Claude review**. Each review is a separate, one-off, read-only reviewer in the session\'s project, on your reviewer account -- never one of your open sessions.\n\nEach direction has **its own switch** in **Settings, General, Built-in tools**, under Code review. Each row names the account reviews will use and, when a review cannot run, says why.\n\nChanges there or in Settings, Accounts apply to sessions started after them.',
+        body: 'From a Claude session, ask for a **Codex review**; from a Codex session, ask for a **Claude review**. Each review is a separate, one-off, read-only reviewer in the session\'s project, on your reviewer account -- never one of your open sessions.\n\nEach direction has **its own switch** in **Settings, General, Built-in Tools**, under Code review. Each row names the account reviews will use and, when a review cannot run, says why.\n\nChanges there or in Settings, Accounts apply to sessions started after them.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
-        focusHint: 'Settings, General -- Built-in tools, Code review',
+        focusHint: 'Settings, General -- Built-in Tools, Code review',
       },
     },
   },

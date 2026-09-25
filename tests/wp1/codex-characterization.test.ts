@@ -4,7 +4,9 @@
 // retirement of the singleton auth IPC, the global-home resolvers and the
 // write-only spawn identity map is provably deliberate. They describe what the
 // base does; they do not endorse it. C3's "CODEX_HOME is never set" was
-// INVERTED by WP1.38 (WP2 commit 4) and is marked as such.
+// INVERTED by WP1.38 (WP2 commit 4) and is marked as such, and so was C2's
+// "resumeCommand runs the codex found on PATH" (WP2 final fixes: a Codex
+// launch runs only the executable its managed launch proved).
 //
 // C4 (the codex:* auth IPC dispatch, whose "the API key travels as an ordinary
 // IPC payload field" WP1.22 inverted) and C9 (the write-only spawn identity
@@ -132,11 +134,17 @@ describe('C2: CodexProvider class contract on the base', () => {
     await expect(p.listHistorySessions()).resolves.toEqual([])
     await expect(p.configureMcpServer({ name: 'conductor', url: 'http://localhost:1/mcp' })).resolves.toBeUndefined()
   })
-  it('resumeCommand is `codex resume <id>` on the resolved binary and throws when codex is missing', () => {
+  // INVERTED (WP2 final fixes): on the base this was `codex resume <id>` on
+  // the codex found on PATH. Nothing called it; a Codex launch now runs only
+  // the executable its managed launch proved, so it refuses and looks
+  // nothing up, found or not.
+  it('INVERTED: resumeCommand refuses and never resolves the codex on PATH', () => {
+    vi.mocked(execSync).mockClear()
     const p = new CodexProvider()
-    expect(p.resumeCommand('abc')).toEqual({ cmd: '/mock/path/codex', args: ['resume', 'abc'] })
+    expect(() => p.resumeCommand('abc')).toThrow(/not used for Codex: launches go through the managed launch/)
     vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
-    expect(() => p.resumeCommand('abc')).toThrow(/not found on PATH/)
+    expect(() => p.resumeCommand('abc')).toThrow(/not used for Codex: launches go through the managed launch/)
+    expect(execSync).not.toHaveBeenCalled()
   })
   it('detectUiRunning recognises the Codex TUI escape sequence and not a plain prompt (WP1.68 TUI detection)', () => {
     const p = new CodexProvider()

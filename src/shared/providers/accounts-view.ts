@@ -191,6 +191,7 @@ export type AccountsFailureCode =
   | 'unsupported'              // the provider does not offer this here
   | 'capability-disabled'      // unknown, or experimental and not enabled
   | 'provider-disabled'
+  | 'provider-state-unknown'   // the saved on/off could not be read: nothing that starts a process runs
   | 'last-provider'            // at least one provider stays enabled
   | 'consumers'                // sessions or operations hold it: `consumers` says how many
   | 'busy'                     // a sign-in or another change holds it
@@ -270,7 +271,6 @@ export interface LogoutRequest { accountId: string; acknowledgeExternal?: boolea
 export interface SetLifecycleRequest { accountId: string; lifecycle: AccountLifecycle; acknowledgeExternal?: boolean }
 export interface UpdateIdentityRequest { identityId: string; friendlyName?: string | null; colourKey?: string; groupId?: string | null }
 export interface SecretDeposit { handle: string; secret: string }
-export interface ReconcileSignInRequest { accountId: string }
 export interface ResolveConflictRequest { identityId: string; field: IdentityConflict['field']; providerId: ProviderId; legacyId: string; keep: 'registry' | 'legacy' }
 /** `accountId: null` clears the choice: reviews then use the provider default. */
 export interface SetReviewerDefaultRequest { providerId: ProviderId; accountId: string | null }

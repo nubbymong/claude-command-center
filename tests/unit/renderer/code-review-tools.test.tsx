@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Settings, General, Built-in tools: the Code review group (WP2 commit 6,
+ * Settings, General, Built-in Tools: the Code review group (WP2 commit 6,
  * F8 and the switch states of F9).
  *
  * Verifies, for each review direction: the switch is live only while that
@@ -11,7 +11,7 @@
  * reviewer line names the reviewer or the default, never a refused account;
  * Claude review stays usable with a note while Codex is off; the cleared-
  * reviewer notices; the switches' accessible names and descriptions; the
- * group note and callout; and that Built-in tools hosts the group.
+ * group note and callout; and that Built-in Tools hosts the group.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
@@ -228,7 +228,7 @@ describe('Code review switches: off and cannot run', () => {
       setup(setupArgs)
       renderTools()
       expect(sw('claudeReview').disabled).toBe(true)
-      expect(message('claudeReview')).toBe('Claude Code is off.')
+      expect(message('claudeReview')).toBe('Claude Code is off. Turn it on in Settings, Accounts.')
       await act(async () => { sw('claudeReview').click() })
       expect(updateSettings).not.toHaveBeenCalled()
     }
@@ -350,7 +350,7 @@ describe('reviewToolView', () => {
   })
 })
 
-describe('Built-in tools section', () => {
+describe('Built-in Tools section', () => {
   it('hosts the Code review group instead of a single "Code review" checkbox, and the master disables it', () => {
     setup()
     const save = vi.fn()

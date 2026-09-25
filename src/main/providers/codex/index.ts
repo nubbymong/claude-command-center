@@ -55,12 +55,18 @@ export {
 } from './realm-folders'
 export type { CodexRealmFsPort, CodexFsEntry, CodexRealmLocks, CodexFolderLookup, CodexRealmFolderDeps, CodexRootsResult } from './realm-folders'
 
+/** Why the two session-contract methods a Codex launch never uses refuse: a
+ *  Codex session runs only the executable its managed launch proved (the
+ *  accounts service's prepared launch), never one looked up on PATH here. */
+const CODEX_MANAGED_LAUNCH_ONLY = 'not used for Codex: launches go through the managed launch'
+
 export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const
   readonly displayName = 'Codex'
 
+  /** Required by the session contract; refuses (CODEX_MANAGED_LAUNCH_ONLY). */
   resolveBinary(_legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null {
-    return resolveCodexBinary()
+    throw new Error(`resolveBinary is ${CODEX_MANAGED_LAUNCH_ONLY}`)
   }
 
   buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string } {
@@ -87,14 +93,15 @@ export class CodexProvider implements SessionProvider {
     return []
   }
 
-  resumeCommand(sessionId: string): { cmd: string; args: string[] } {
-    const r = resolveCodexBinary()
-    if (!r) throw new Error('Codex CLI not found on PATH')
-    return { cmd: r.cmd, args: ['resume', sessionId] }
+  /** Required by the session contract; refuses. A Codex resume is the resume
+   *  picker, which runs the executable the launch proved. */
+  resumeCommand(_sessionId: string): { cmd: string; args: string[] } {
+    throw new Error(`resumeCommand is ${CODEX_MANAGED_LAUNCH_ONLY}`)
   }
 
   async configureMcpServer(_cfg: { name: string; url: string }): Promise<void> {
-    // P3 + P7.7.5 wire the conductor MCP entry into ~/.codex/config.toml
+    // No-op: a Codex session is handed the conductor MCP server per spawn
+    // (buildCodexSpawn), never through a config file.
   }
 
   async deployResumePickerScript(resourcesDir: string): Promise<void> {
@@ -104,22 +111,24 @@ export class CodexProvider implements SessionProvider {
 
 /** What the pinned Codex CLI supports through this app, stated honestly
  *  (design 7.3). A key is `supported` only once this package exposes the
- *  operation behind it (registration enforces that), so the setup/auth/realm
- *  keys stay `unknown` until the Codex adapter slice wires them; the notes
- *  record what the provider itself offers. Version constants: pinned
- *  reference 0.155.1; 0.153.4 is the minimum only if the D7 conformance,
- *  realm-isolation and real-binary evidence passes. */
+ *  operation behind it (registration enforces that). The setup keys are
+ *  backed on every package (setup.discover, setup.installRecipes); the auth
+ *  keys need the registry's realms, so they stay `unknown` here and
+ *  codexWiredCapabilities declares them once the composition root wires
+ *  those. Version constants: pinned reference 0.155.1; 0.153.4 is the
+ *  minimum only if the D7 conformance, realm-isolation and real-binary
+ *  evidence passes. */
 export const CODEX_PINNED_VERSION = CODEX_PINNED_CLI_VERSION
 export const CODEX_MINIMUM_VERSION_CANDIDATE = CODEX_MIN_SUPPORTED_VERSION
 export const codexCapabilities: ProviderCapabilities = {
-  'cli.discovery': { state: 'unknown', note: 'discovery is wired on the package (setup.discover); declared supported once the setup surface calls it' },
-  'install.recipes': { state: 'unknown', note: 'recipes are code-defined (npm everywhere, Homebrew on macOS; install scripts shown only); declared supported once the recipe runner lands' },
+  'cli.discovery': { state: 'supported', note: 'codex --version in a throwaway home under the allowlisted environment (setup.discover); run at start, by Check again in Settings, Accounts and by the Codex setup page' },
+  'install.recipes': { state: 'supported', note: 'code-defined recipes (npm everywhere, Homebrew on macOS); a package-manager recipe runs only in a visible terminal tab after the user confirms its line; the install scripts are shown and copied, never run' },
   'auth.browser': { state: 'unknown', note: 'codex login (ChatGPT); wired in the Codex adapter slice' },
   'auth.device': { state: 'unknown', note: 'codex login --device-auth, labelled beta by the provider; wired in the Codex adapter slice' },
   'auth.apiKey': { state: 'unknown', note: 'codex login --with-api-key over a one-shot non-TTY stdin pipe, never an argument; wired in the Codex adapter slice' },
   'auth.status': { state: 'unknown', note: 'codex login status; wired in the Codex adapter slice' },
   'auth.logout': { state: 'unknown', note: 'codex logout in the selected realm; wired in the Codex adapter slice' },
-  'realm.isolated': { state: 'unknown', note: 'one CODEX_HOME per managed account; file and keyring credentials are scoped by it in the pinned source; wired in the Codex adapter slice' },
+  'realm.isolated': { state: 'unknown', note: 'isolation is implemented without this key: once the registry\'s realms are wired, each managed account has its own CODEX_HOME folder (realmFolders), set by the prepared launch (launch.prepare) and every CLI run in that realm; file and keyring credentials are scoped by it in the pinned source. The contract backs this key with realms.realmEnvPatch, which this package does not expose, so it stays unknown' },
   'account.labelFields': { state: 'unsupported', note: 'login status exposes no stable subject; external homes are realm-only' },
   'account.usage': { state: 'unsupported', note: 'declared for later work' },
   'session.launch': { state: 'supported' },

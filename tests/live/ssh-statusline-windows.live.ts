@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import {
   hosts, makeLivePort, runSession, report,
-  updates, killPty, settingsState,
+  claudeRan, killPty, settingsState,
   startConductorMcpServer, stopConductorMcpServer,
 } from './statusline-harness'
 
@@ -22,6 +22,6 @@ describe('SSH statusline matrix — windows lane (LIVE, on-demand)', () => {
     const w = await runSession(sid, e, { nudge: true })
     report('T7 windows', w, sid)
     killPty(sid)
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 })

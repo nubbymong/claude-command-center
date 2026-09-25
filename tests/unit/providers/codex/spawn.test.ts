@@ -84,13 +84,21 @@ describe('CodexProvider', () => {
     expect(p.displayName).toBe('Codex')
   })
 
-  it('resolveBinary returns a cmd path when codex is found', () => {
-    const r = new CodexProvider().resolveBinary()
+  it('resolveCodexBinary (the discovery lookup) returns a cmd path when codex is found', () => {
+    const r = resolveCodexBinary()
     expect(r).not.toBeNull()
     expect(r?.cmd).toMatch(/codex/i)
   })
 
-  it('resolveBinary returns null when codex is not on PATH', () => {
+  it('resolveBinary and resumeCommand refuse without looking anything up: a Codex launch runs only what its managed launch proved', () => {
+    vi.mocked(execSync).mockClear()
+    const p = new CodexProvider()
+    expect(() => p.resolveBinary()).toThrow(/^resolveBinary is not used for Codex: launches go through the managed launch$/)
+    expect(() => p.resumeCommand('abc')).toThrow(/^resumeCommand is not used for Codex: launches go through the managed launch$/)
+    expect(execSync).not.toHaveBeenCalled()
+  })
+
+  it('resolveCodexBinary returns null when codex is not on PATH', () => {
     vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
     const r = resolveCodexBinary()
     expect(r).toBeNull()

@@ -26,9 +26,11 @@ export interface ProviderLaunchRefused {
   refused: ProviderLaunchRefusal
 }
 
-/** "Claude Code is off. Turn it on in Settings, Accounts." */
-export function providerOffMessage(displayName: string): string {
-  return `${displayName} is off. Turn it on in Settings, Accounts.`
+/** "Claude Code is off. Turn it on in Settings, Accounts." With a purpose,
+ *  what turning it on is for: "... in Settings, Accounts to launch this
+ *  config." Every provider-off sentence is built here. */
+export function providerOffMessage(displayName: string, purpose?: string): string {
+  return `${displayName} is off. Turn it on in Settings, Accounts${purpose ? ` ${purpose}` : ''}.`
 }
 
 /** Main could not read the provider's on/off, so nothing was started. */

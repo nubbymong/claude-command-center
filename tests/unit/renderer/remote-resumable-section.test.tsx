@@ -601,10 +601,20 @@ describe('Remote Resumable — retargeted saved config (#54)', () => {
     expect(dialog).toBeTruthy()
     expect(dialog!.textContent).toMatch(/mong@pi\.local/)          // was
     expect(dialog!.textContent).toMatch(/mong@other\.box:2222/)    // now (non-default port shown)
-    expect(dialog!.textContent).toMatch(/tmux kill-session -t ccc-det-1/)
+    // The exact-match target, quoted for any shell (zsh expands an unquoted `=word`).
+    expect(dialog!.textContent).toContain("tmux kill-session -t '=ccc-det-1'")
     expect(q('[data-testid="rr-retargeted-remove"]')).toBeTruthy()
     expect(q('[data-testid="rr-dead-start-new"]')).toBeNull()      // no resume, no start-new
     expect(addSession).not.toHaveBeenCalled()
+  })
+
+  it('names the tmux session as main creates it: every character outside [A-Za-z0-9_-] becomes _', async () => {
+    useDetachedRemotesStore.setState({ entries: [entry({ sessionId: 'det 1;x$y', port: 22, runtime: { type: 'host' } })] })
+    await mountThen({})
+    await click(cards()[0])
+    const text = q('[data-testid="rr-retargeted-dialog"]')!.textContent ?? ''
+    expect(text).toContain("tmux kill-session -t '=ccc-det_1_x_y'")
+    expect(text).not.toContain('det 1;x$y)')
   })
 
   it('Remove from the dialog forgets the card WITHOUT ending through the edited config', async () => {

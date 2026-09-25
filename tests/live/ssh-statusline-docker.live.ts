@@ -21,7 +21,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
   hosts, makeLivePort, runSession, report, pane, states, makeWin, spawnPty, getSshFlow, writePty, resizePty, stripPane,
-  updates, misParsedStageFail, endSshRemote, killPty, settingsState, sleep,
+  claudeRan, misParsedStageFail, endSshRemote, killPty, settingsState, sleep,
   startConductorMcpServer, stopConductorMcpServer,
 } from './statusline-harness'
 
@@ -81,7 +81,7 @@ describe('SSH statusline matrix — docker lane (LIVE, on-demand)', () => {
     await sleep(4000)
     const afterEnd = claudeCountInContainer(false, sid)
     expect(misParsedStageFail(w.events, sid)).toEqual([])
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
     expect(inContainer).toBeGreaterThan(0)
     expect(afterEnd).toBe(0)
   }, 360_000)
@@ -98,7 +98,7 @@ describe('SSH statusline matrix — docker lane (LIVE, on-demand)', () => {
     await endSshRemote(sid)
     killPty(sid)
     expect(misParsedStageFail(w.events, sid)).toEqual([])
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 360_000)
 
   // Persistence for containers is FORCED OFF in the product for now: the hop-2
@@ -121,7 +121,7 @@ describe('SSH statusline matrix — docker lane (LIVE, on-demand)', () => {
     // Bare launch: no tmux wrap markers in the pane…
     expect(paneText.includes('has-session')).toBe(false)
     // …and the statusline still ticks from inside the container.
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 360_000)
 })
 
@@ -233,8 +233,9 @@ async function withZshLoginShell<T>(users: string[], body: () => Promise<T>): Pr
   }
 }
 
-/** After claude-running: wait for the first statusline tick, nudging the way
- *  runSession does (a trust prompt is answered; an idle claude is poked). */
+/** After claude-running: wait for claude's first OWN statusline tick
+ *  (claudeRan), nudging the way runSession does (a trust prompt is answered;
+ *  an idle claude is poked). */
 async function awaitFirstTick(w: ReturnType<typeof makeWin>, sid: string, cap: number): Promise<void> {
   const t0 = Date.now()
   let nudged = false
@@ -252,7 +253,7 @@ async function awaitFirstTick(w: ReturnType<typeof makeWin>, sid: string, cap: n
         writePty(sid, '\r')
       }
     }
-    if (updates(w.events).some((u) => u.sessionId === sid)) return
+    if (claudeRan(w.events, sid)) return
     if (!nudged && !trustPending && Date.now() - t0 > 12_000) {
       nudged = true
       resizePty(sid, 121, 30)
@@ -313,7 +314,7 @@ describe('rc.16 R1 -- a zsh host: the `%` prompt is never captured, so only the 
       // The launch happened on the SECOND attempt's proven shell: the setup went
       // out after that attempt started, never before.
       expect(paneText.indexOf('base64 -d')).toBeGreaterThan(pane1)
-      expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+      expect(claudeRan(w.events, sid)).toBe(true)
       // End must clear the in-container claude, as T20 asserts for rootless.
       await sleep(4000)
       expect(claudeCountInContainer(true, sid)).toBe(0)
@@ -336,7 +337,7 @@ describe('rc.16 R1 -- a zsh host: the `%` prompt is never captured, so only the 
         expect(inAt).toBeGreaterThan(0)
         expect(paneText.slice(0, inAt)).toMatch(ZSH_PROMPT_THEN_ENTRY_RE) // the entry was typed at a `%` prompt
         expect(flowInfos(w.events, sid)).toContain('inner')
-        expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+        expect(claudeRan(w.events, sid)).toBe(true)
       } finally {
         try { await endSshRemote(sid) } catch { /* nothing launched, or the link is gone */ }
         killPty(sid)

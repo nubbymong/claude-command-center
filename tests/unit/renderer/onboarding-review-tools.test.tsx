@@ -58,7 +58,7 @@ const card = (title: string): HTMLElement => {
   return el
 }
 
-describe('Built-in tools step', () => {
+describe('Built-in Tools step', () => {
   const renderStep = () => act(() => { root.render(React.createElement(BuiltinToolsStep, { onNext: () => {}, onBack: () => {} })) })
 
   it('lists Claude review beside Codex review, each with its own direction', () => {
@@ -115,7 +115,7 @@ describe('Built-in tools step', () => {
 describe('Transparency recap', () => {
   const renderStep = () => act(() => { root.render(React.createElement(TransparencyStep, { onNext: () => {}, onBack: () => {} })) })
   const toolsValue = () => {
-    const c = [...container.querySelectorAll('.gh-card')].find((x) => x.querySelector('.gh-t')?.textContent === 'Built-in tools')
+    const c = [...container.querySelectorAll('.gh-card')].find((x) => x.querySelector('.gh-t')?.textContent === 'Built-in Tools')
     return c?.querySelector('.gh-d')?.textContent ?? ''
   }
 

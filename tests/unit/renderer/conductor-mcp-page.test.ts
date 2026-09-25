@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 /**
  * P7.4 regression: ConductorMcpPage renders the umbrella header
- * + every sub-tool card (Vision, Agent Canvas, Codex review, Host
- * transfer). Each sub-tool card is independent -- the page does not
- * gate codex_review or host transfer on browser state.
+ * + every sub-tool card (Vision, Agent Canvas, Codex review, Claude review,
+ * Host transfer). Each sub-tool card is independent -- the page does not
+ * gate the review tools or host transfer on browser state; the review cards
+ * follow their own conditions (tests/unit/renderer/codex-review-sub-tool.test.ts).
  *
  * The Agent Canvas card landed with the canvas phases; this file is the
  * only place that pins it to the *page*, so a card that stops being
@@ -65,16 +66,17 @@ describe('ConductorMcpPage umbrella (P7.4)', () => {
     expect(text).toContain('19333')
   })
 
-  it('renders all four sub-tool cards', () => {
+  it('renders all five sub-tool cards', () => {
     act(() => { root.render(React.createElement(ConductorMcpPage)) })
     const text = container.textContent ?? ''
     expect(text).toContain('Vision (browser automation)')
     expect(text).toContain('Agent Canvas')
     expect(text).toContain('Codex review (Claude-driven)')
+    expect(text).toContain('Claude review (Codex-driven)')
     expect(text).toContain('Host transfer')
   })
 
-  it('shows codex_review and host transfer as Available even when browser is stopped', () => {
+  it('shows host transfer as Available even when browser is stopped', () => {
     act(() => { root.render(React.createElement(ConductorMcpPage)) })
     const html = container.innerHTML
     expect(html).toContain('Available')
@@ -90,6 +92,7 @@ describe('ConductorMcpPage umbrella (P7.4)', () => {
       expect(text).toContain('Conductor MCP server is not running')
       expect(text).toContain('Vision')
       expect(text).toContain('Codex review')
+      expect(text).toContain('Claude review')
       expect(text).toContain('host transfer')
       expect(text).toContain('Agent Canvas')
     } finally {

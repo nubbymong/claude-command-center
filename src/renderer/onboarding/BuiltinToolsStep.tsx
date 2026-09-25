@@ -136,7 +136,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
             <div className="sl-offnote">
               <div className="off-ic">{GEAR}</div>
               <div>
-                <b>Built-in tools are off.</b>
+                <b>Built-in Tools are off.</b>
                 <span>
                   Switch them on anytime in <b>Settings → General</b>.
                 </span>
@@ -150,7 +150,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
           ← Back
         </button>
         <div className="feat-onoff">
-          <span className="oo-lbl">Built-in tools</span>
+          <span className="oo-lbl">Built-in Tools</span>
           <button className={master ? 'oo-btn on' : 'oo-btn'} onClick={() => setMaster(true)} type="button">
             On
           </button>
