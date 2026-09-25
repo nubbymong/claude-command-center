@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - SSH sessions with tmux now start Claude on a host whose login shell is zsh, the macOS default: zsh read the remote session name as a command and stopped the start line. For the same reason, End did not close that remote session or remove its files; now it does.
+- Ending a session in a container that needs sudo, when the session started without the sudo password saved in the config (it was typed at the prompt), no longer reports success while Claude keeps running inside the container. End still ends the remote session and removes its files on the host, then says Claude may still be running in that container and shows a command, to run on the host, that stops Claude and removes its files in the container. To let End do it itself, save the sudo password in the config (Edit, then in Runtime enter the Sudo password with Save password left ticked); that applies to sessions started after you save it.
+- End now also stops Claude in a container that has no bash (a minimal image), and closing several sessions at once (the ones selected with Ctrl-click, or Cmd-click on a Mac, or Close all sessions in a group or section) ends a container session the way closing its tab does. Before, both left Claude running inside the container.
 
 ## [2.1.1-beta.1] - 2026-09-16
 

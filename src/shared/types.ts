@@ -313,6 +313,35 @@ export interface DetachedRemoteLiveness {
 }
 
 /**
+ * What ending an SSH remote session did (`ssh:endRemote`, endSshRemote):
+ *   - 'completed'            the End exec ran to the end.
+ *   - 'failed'               it could not connect, or timed out.
+ *   - 'no-target'            main had no connection for the session.
+ *   - 'container-needs-sudo' the host tmux session and the session's files on
+ *                            the host were ended, but Claude may still be
+ *                            running inside a rootful container: sudo could
+ *                            not run the container engine without a password,
+ *                            and End holds none (none was saved in the
+ *                            config when the session started). The
+ *                            in-container kill was still attempted with
+ *                            `sudo -n` (which never prompts), so it may have
+ *                            worked where sudo allows that exec without a
+ *                            password; hence "may".
+ */
+export type SshEndRemoteOutcome = 'completed' | 'failed' | 'no-target' | 'container-needs-sudo'
+
+/** The `ssh:endRemote` result. `container` is set only with
+ *  'container-needs-sudo': where Claude may still be running (the engine and
+ *  container name the End path validated, and the SSH host it dialled). The
+ *  host is display-only, never part of a command; the renderer's reader
+ *  (readSshEndRemoteResult) leaves it out when it cannot be shown as one plain
+ *  token, and the notice then says "the SSH host". */
+export interface SshEndRemoteResult {
+  outcome: SshEndRemoteOutcome
+  container?: { engine: 'docker' | 'podman'; name: string; host?: string }
+}
+
+/**
  * SSH Persistent — TIER 1 reachability result for one HOST (`ssh:pingHost`).
  *
  * `reachable` means the box answered an ICMP echo, or accepted a TCP connection

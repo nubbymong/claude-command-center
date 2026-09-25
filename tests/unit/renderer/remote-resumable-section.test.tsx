@@ -74,6 +74,7 @@ const { useDetachedLivenessStore, resetDetachedLiveness } = await import('../../
 const { useHostReachabilityStore, isHostPingArmed, resetHostReachability } = await import('../../../src/renderer/stores/hostReachability')
 const { useConfigStore } = await import('../../../src/renderer/stores/configStore')
 const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+const { useSshEndNoticeStore } = await import('../../../src/renderer/stores/sshEndNoticeStore')
 
 /* ── fixtures ─────────────────────────────────────────────────────────────── */
 
@@ -435,6 +436,47 @@ describe('Remote Resumable — context menu', () => {
     await rightClick(cards()[0])
     await click(q('[data-testid="rr-ctx-remove"]'))
     expect(endRemote).toHaveBeenCalledWith({ sessionId: 'det-1', configId: 'cfg-1' })
+    expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
+  })
+
+  // Live T24 (2026-09-25): End can SAY that Claude may still be running in a
+  // rootful container (sudo wanted a password nobody saved). Remove raises the
+  // one End notice with the stop command, and does not wait for End to drop
+  // the card. Mutation to prove this can fail: call endRemote directly again
+  // instead of endRemoteAndReport in removeRemote.
+  it('an End that reports Claude may remain in a container raises the End notice', async () => {
+    useSshEndNoticeStore.setState({ notices: [] })
+    useDetachedRemotesStore.setState({ entries: [entry()] })
+    endRemote.mockResolvedValue({ outcome: 'container-needs-sudo', container: { engine: 'podman', name: 'ccc-test', host: 'box' } } as never)
+    await mountThen({ liveness: { 'det-1': 'live' } })
+    await rightClick(cards()[0])
+    await click(q('[data-testid="rr-ctx-remove"]'))
+    await act(async () => { await Promise.resolve() })
+    expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
+    expect(useSshEndNoticeStore.getState().notices.map((n) => n.command)).toEqual([
+      `sudo podman exec ccc-test sh -c '` +
+      String.raw`rm -f ~/.claude/settings-det-1.json ~/.claude/mcp-det-1.json ~/.claude/ccc-status-det-1.url 2>/dev/null; exec pkill -f "/settings-det-1\.json"` +
+      `'`,
+    ])
+    useSshEndNoticeStore.setState({ notices: [] })
+  })
+
+  // End is not awaited any more, so the ORDER is the contract: main reads the
+  // End target as the call arrives, so End must go out before the entry is
+  // dropped and the session state is saved. Mutation to prove this can fail:
+  // move the endRemoteAndReport call after dropEntry in removeRemote.
+  it('Remove calls End before it drops the entry and saves the session state', async () => {
+    useDetachedRemotesStore.setState({ entries: [entry()] })
+    let entriesAtEnd = -1
+    endRemote.mockImplementationOnce(async () => { entriesAtEnd = useDetachedRemotesStore.getState().entries.length })
+    await mountThen({ liveness: { 'det-1': 'live' } })
+    persistSessionState.mockClear()
+    await rightClick(cards()[0])
+    await click(q('[data-testid="rr-ctx-remove"]'))
+    expect(endRemote).toHaveBeenCalledTimes(1)
+    expect(entriesAtEnd).toBe(1)
+    expect(persistSessionState).toHaveBeenCalled()
+    expect(endRemote.mock.invocationCallOrder[0]).toBeLessThan(persistSessionState.mock.invocationCallOrder[0])
     expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
   })
 

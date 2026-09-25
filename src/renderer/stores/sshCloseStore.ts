@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { useSessionStore } from './sessionStore'
+import { useSessionStore, type Session } from './sessionStore'
 import { useWebviewStore } from './webviewStore'
 import { useDetachedRemotesStore } from './detachedRemotesStore'
 import { killSessionPty } from '../ptyTracker'
@@ -7,6 +7,7 @@ import { buildDetachedRemote } from '../utils/detachedRemotes'
 import { persistSessionState } from '../session-persistence'
 import { effectiveSshRuntime } from '../components/sidebar/transportBadge'
 import { isContainerRuntime } from '../../shared/container-command'
+import { endRemoteAndReport } from './sshEndNoticeStore'
 
 // SSH tmux enhancement (item 4): a one-slot store for the "you're closing a
 // PERSISTENT remote session" confirmation. Any close call site (tab close,
@@ -95,27 +96,36 @@ export function requestCloseSession(sessionId: string): void {
   // post-command it parses) -- not `isContainerSsh`, which also accepts the
   // badge-only `dockerContainer` hint and would spawn an end exec for a
   // session that never took the container hop.
-  if (session && session.sessionType === 'ssh' && isContainerRuntime(effectiveSshRuntime(session.sshConfig))) {
-    try {
-      void Promise.resolve(window.electronAPI?.ssh?.endRemote?.({ sessionId, configId: session.configId })).catch(() => {})
-    } catch {
-      /* preload not available (tests, early boot) -- the tab still closes */
-    }
-  }
+  endContainerSessionRemote(session)
   killSessionPty(sessionId)
   forgetSessionBrowserProfile(sessionId)
   store.removeSession(sessionId)
 }
 
-/** "End remote": kill the remote tmux session + sidecars over a separate ssh
- *  exec, then tear down the local tab. */
-export async function endRemoteAndClose(sessionId: string): Promise<void> {
-  try {
-    await window.electronAPI.ssh.endRemote(sessionId)
-  } catch {
-    // Best-effort — even if the end exec couldn't be dispatched, still close the
-    // local tab (the remote at worst detaches, exactly the pre-enhancement path).
+/**
+ * The container branch of closing a session, shared by requestCloseSession
+ * (above) and every bulk close (closeSessionBatch: the Sidebar's multi-select
+ * Close and the section and group Close all): for an SSH session whose claude
+ * runs inside a container, End the remote. No-op for every other session.
+ * Call it BEFORE killSessionPty: main reads the End target as the call
+ * arrives, and the kill drops it. A rootful container whose sudo needs a
+ * password makes End report that Claude may still be running there;
+ * endRemoteAndReport shows that notice.
+ */
+export function endContainerSessionRemote(session: Session | undefined): void {
+  if (session && session.sessionType === 'ssh' && isContainerRuntime(effectiveSshRuntime(session.sshConfig))) {
+    endRemoteAndReport(session.id, { sessionId: session.id, configId: session.configId })
   }
+}
+
+/** "End remote": kill the remote tmux session + sidecars over a separate ssh
+ *  exec, then tear down the local tab. The End call is not awaited: main reads
+ *  its target as the call arrives (before the local kill below), and its result
+ *  only matters when it needs the user, which endRemoteAndReport shows. Best-
+ *  effort: even if the End exec cannot be dispatched, the local tab still
+ *  closes (the remote at worst detaches, exactly the pre-enhancement path). */
+export async function endRemoteAndClose(sessionId: string): Promise<void> {
+  endRemoteAndReport(sessionId, sessionId)
   // SSH Persistent (Phase 1 lifecycle): the remote is being ended, so drop any
   // left-running registry entry for this id — it must never be offered for
   // reattach again. No-op when the id was never registered (the common case:

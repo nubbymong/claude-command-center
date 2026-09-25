@@ -33,6 +33,11 @@
       "evidence": "WP1.38: WP1 (#619) added legacyCliPin, the enabled and valid legacy CLI pin with whether it is installed, which the PTY and cloud-agent launch paths read; the existing cases are kept; tests/unit/legacy-version-security.test.ts"
     },
     {
+      "path": "tests/unit/main/end-remote-detached-fallback.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the WP2 T24 fix (End says when Claude may still be running in a rootful container) renamed its pty-manager mock to endSshRemoteDetailed, the function the ssh:endRemote handler now calls (every existing assertion reads the same mock under the new name), and added four cases in a new group: the handler resolves with the End result, passes an ordinary outcome through, still refuses an invalid payload before End runs, and calls End synchronously, before it yields; 21 baseline cases to 25; tests/unit/main/end-remote-detached-fallback.test.ts"
+    },
+    {
       "path": "tests/unit/profile-consumers.test.ts",
       "disposition": "replace",
       "evidence": "WP1.16: WP2 commit 5b (bb0b7ab9) added holdProfileForRun, the hold a Claude review takes on its profile: held at once with nothing in flight, held while a refresh is waited out so no new rotation starts, its bound counted from after the wait, and released at once on a cancel during the wait; the existing cases are kept; tests/unit/profile-consumers.test.ts"
@@ -40,7 +45,7 @@
     {
       "path": "tests/unit/providers/claude/ssh-shim.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.57: WP2 (fe23694c, each session's MCP credential recorded with the provider it is issued to, replacing the retired source query parameter) added one case, the session's own token baked into the Windows remote MCP URL; the WP2 final fixes changed assertions (the single-quoted tmux target) but no case name; the existing cases are kept; tests/unit/providers/claude/ssh-shim.test.ts"
+      "evidence": "WP1.57: WP2 (fe23694c, each session's MCP credential recorded with the provider it is issued to, replacing the retired source query parameter) added one case, the session's own token baked into the Windows remote MCP URL; the WP2 final fixes changed assertions (the single-quoted tmux target) but no case name; the WP2 T24 fix changed one assertion, the rootless container kill pin, from bash -c to sh -c, added one comment and edited one, and changed no case name; the existing cases are kept; tests/unit/providers/claude/ssh-shim.test.ts"
     },
     {
       "path": "tests/unit/pty-shell-only-profile-hold.test.ts",
@@ -61,6 +66,11 @@
       "path": "tests/unit/renderer/bottom-bar.test.ts",
       "disposition": "replace",
       "evidence": "WP1.2: WP2 commit 6e review fix (ca441e86) added one case: with Claude Code off the bottom bar shows no Claude CLI indicator and never asks for the CLI; the existing cases are kept; tests/unit/renderer/bottom-bar.test.ts"
+    },
+    {
+      "path": "tests/unit/renderer/close-session-batch.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the WP2 T24 fix makes a bulk close run a container session's End before its local kill (endContainerSessionRemote), so the first case was renamed to 'ends a container remote, kills the PTY, forgets the browser profile, then drops the record -- in that order, once per id', every order assertion now starts with that step, and one case was added (the container branch gets the session record, or nothing for an id the store no longer has); 2 baseline cases to 3; tests/unit/renderer/close-session-batch.test.ts"
     },
     {
       "path": "tests/unit/renderer/sidebar-dock-tips.test.tsx",
@@ -675,7 +685,7 @@
       ],
       "category": "OTHER",
       "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); the file changed since the base for WP2's per-provider MCP credential and, in the WP2 final fixes, the single-quoted tmux target, neither of them Codex code",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); the file changed since the base for WP2's per-provider MCP credential, in the WP2 final fixes for the single-quoted tmux target, and in the WP2 T24 fix for End's sudo probe and its marker (parseEndSudoSentinel), the in-container kill under sh -c instead of bash -c, and its in-container script taken from the shared stop script (containerSessionStopScript); none of them Codex code",
       "note": ""
     },
     {
@@ -1021,7 +1031,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "Claude env shape pinned by tests/wp1/claude-characterization.test.ts C1 and tests/unit/pty-spawn-env.test.ts (both retained as protection, WP1.54); binding/lease behaviour by tests/wp1/launch-handoff.test.ts and tests/wp1/consumer-leases.test.ts (WP1.38, WP1.42, WP1.46); WP2 commit 6g: the Codex spawn identity re-export removed with codex-spawn-identity.ts (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 final fixes, comments only: the codex_review registration comment states the per-connection conditions main offers the tool on, and the End comment names the quoted tmux target it kills",
+      "evidence": "Claude env shape pinned by tests/wp1/claude-characterization.test.ts C1 and tests/unit/pty-spawn-env.test.ts (both retained as protection, WP1.54); binding/lease behaviour by tests/wp1/launch-handoff.test.ts and tests/wp1/consumer-leases.test.ts (WP1.38, WP1.42, WP1.46); WP2 commit 6g: the Codex spawn identity re-export removed with codex-spawn-identity.ts (tests/wp1/legacy-codex-retired.test.ts, WP1.57); the WP2 final fixes changed comments only (the codex_review registration comment states the per-connection conditions main offers the tool on, and the End comment names the quoted tmux target it kills); the WP2 T24 fix, not Codex code, changed End: endSshRemoteDetailed resolves a detailed result, reads its target the moment it is called, and reads the End sudo marker from the exec output to report container-needs-sudo when a rootful container's sudo needs a password End does not hold (tests/unit/main/ssh-end-remote-password.test.ts)",
       "note": "WP2 commit 4: the Codex branch runs only from the prepared launch (executable, realm env with CODEX_HOME, sessions folder) and holds its account lease until its process ends; the binding and lease are taken in pty:spawn through the accounts service. The Claude branch is unchanged (withProfileHome); running Claude sessions are counted for a Claude switch-off. Codex identity capture removed"
     },
     {
@@ -1639,7 +1649,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); its Codex mentions (two comments) are unchanged; the WP2 final fixes changed only the retargeted dialog's kill-session hint, to the exact, quoted tmux target the app creates (tests/unit/renderer/remote-resumable-section.test.tsx)",
+      "evidence": "no account/auth/setup logic; its Codex mentions (two comments) are unchanged; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); since the base, and neither of them Codex code: the WP2 final fixes changed the retargeted dialog's kill-session hint to the exact, quoted tmux target the app creates, and the WP2 T24 fix makes Remove send End without waiting for it (End goes out before the card is dropped) and routes End's result to the End notice (tests/unit/renderer/remote-resumable-section.test.tsx)",
       "note": ""
     },
     {
@@ -2248,7 +2258,7 @@
       ],
       "category": "OTHER",
       "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); the WP2 T24 fix added the shared in-container stop script and the stop command the End notice shows, and exported the entry nonce rule for End to reuse, none of them Codex code",
       "note": ""
     },
     {
@@ -2911,7 +2921,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: its mock of src/main/conductor-mcp-server.ts gained registerClaudeReviewSession (WP2 commit 5b), which it does not test; the WP2 final fixes changed five assertions to the single-quoted tmux target ('=ccc-<sid>'), a functional SSH fix for zsh remotes; no case name changed and its Codex mention is unchanged; adapted in place: tests/unit/main/ssh-end-remote-password.test.ts",
+      "evidence": "WP1.58: its mock of src/main/conductor-mcp-server.ts gained registerClaudeReviewSession (WP2 commit 5b), which it does not test; the WP2 final fixes changed five assertions to the single-quoted tmux target ('=ccc-<sid>'), a functional SSH fix for zsh remotes, and no case name; the WP2 T24 fix changed one assertion (the container kill runs under sh -c, no longer bash -c), let its execFile mock return stdout, and added eleven cases in two new groups (a rootful container with no saved sudo password: nine; End reads its target when it is called: two), 23 cases to 34; no existing case name changed and its Codex mention is unchanged; adapted in place: tests/unit/main/ssh-end-remote-password.test.ts",
       "note": ""
     },
     {
@@ -3772,7 +3782,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: the retargeted dialog's kill-session hint is now the exact, quoted tmux target '=ccc-<safeSid>' (WP2 final fixes), and one case was added: a session id with characters outside [A-Za-z0-9_-] is named as main names the session; its Codex mention (codexEnabled in the settings fixture) is unchanged; adapted in place: tests/unit/renderer/remote-resumable-section.test.tsx",
+      "evidence": "WP1.58: the retargeted dialog's kill-session hint is now the exact, quoted tmux target '=ccc-<safeSid>' (WP2 final fixes), and one case was added: a session id with characters outside [A-Za-z0-9_-] is named as main names the session; the WP2 T24 fix added two cases (an End that reports Claude may remain in a container raises the End notice; Remove calls End before it drops the entry and saves the session state) and changed no existing assertion, 40 baseline cases to 43; its Codex mention (codexEnabled in the settings fixture) is unchanged; adapted in place: tests/unit/renderer/remote-resumable-section.test.tsx",
       "note": ""
     },
     {

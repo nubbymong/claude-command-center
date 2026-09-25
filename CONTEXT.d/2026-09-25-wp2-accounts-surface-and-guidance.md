@@ -80,7 +80,44 @@ in the two 2026-09-24 entries.
   upstream gap. T11 first failed on an environmental precondition: Claude
   Code's own setup dialog on the Rocky test host held the reattached
   session. It passed once that dialog was dismissed on the test host, which
-  is recorded as a test precondition, not an app fix. T24 fails (see Open).
+  is recorded as a test precondition, not an app fix. T24 failed on a real
+  gap in End, fixed below; its lane needs a re-run.
+- **End in a rootful container with no saved sudo password (T24).** When
+  the sudo password was typed at the prompt rather than saved, End's
+  in-container stop could only try sudo without a password, failed
+  silently, and End reported completed while Claude kept running in the
+  container. End now asks first whether sudo can run the container engine
+  without a password; when it cannot, it prints a one-time marker on a line
+  of its own that End reads, and reports a distinct outcome
+  (`container-needs-sudo`). The in-container stop is still attempted either
+  way (without a password it fails fast; where sudo allows it, it works), and
+  the host tmux session and the session's files on the host are still ended.
+  The probe's own redirections run inside `sh -c`, so outside quotes the
+  line uses only `;`, `||`, `2>/dev/null` and single quotes, meant to parse
+  in every host login shell a container session can have: sh, bash, dash,
+  zsh, fish, and tcsh/csh at parity with the line before. What was run: a
+  shell test (`ssh-end-remote-shell-compat.test.ts`) ran the line through
+  bash, sh and dash only, in WSL; zsh first runs in that test on the macOS
+  CI runner and on the Rocky lanes (T24, T25, on a zsh login shell); fish
+  and tcsh/csh are reasoned from their grammar and have not been run
+  anywhere yet. The app then shows one notice, on top of every other dialog
+  and not dismissible by a stray key or click (an arming delay on the
+  monotonic clock, held-key repeats ignored, focus kept on it while it
+  shows): Claude may still be running in that container, the exact command
+  that stops it (the same in-container script End runs, file removal and
+  anchored pkill, with a sudo that asks for the password) to copy, and
+  where to save the sudo password in the config (Edit, Runtime, Sudo
+  password, with Save password left ticked) so End can do it in sessions
+  started after that. Known issues and the changelog say the same. The T24
+  lane now expects that outcome and runs the shown command.
+- **End in a container without bash, and bulk close of container sessions.**
+  End's in-container stop ran under `bash -c`, so in a container without
+  bash it failed silently and Claude kept running; it now runs under
+  `sh -c`, which every container a session can enter has. Closing several
+  sessions at once (selected with Ctrl-click, or Cmd-click on a Mac, or
+  with Close all in a group or section) only closed them locally, so a
+  container session's Claude was left running in the container; it now
+  gets the same End as closing its tab.
 
 ### Decisions
 
@@ -120,8 +157,10 @@ in the two 2026-09-24 entries.
   adaptation.
 - Training screenshots that still show the retired Settings Codex tab or its
   pointer need a recapture (listed in the release-qualification record).
-- T24 (live SSH, rootful container): when the sudo password was typed in
-  the terminal rather than saved in the config, End cannot stop Claude inside
-  the container (its separate kill cannot use sudo), yet reports the End as
-  completed. The code predates this change. Owner decision pending on the
-  fix.
+- T24 (live SSH, rootful container, sudo password typed rather than saved):
+  End now reports that Claude may still be running in the container and
+  shows the command that stops it, instead of reporting completed (owner
+  decision 2026-09-25, "honest End now"; see What landed). Still open: the
+  T24 lane re-run on Rocky (with T20 and T21, whose in-container stop now
+  runs under `sh -c`), and End stopping it without a saved password (out of
+  scope by that decision).

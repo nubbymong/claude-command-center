@@ -782,10 +782,13 @@ describe('buildContainerKillCommand (#572 in-container orphan)', () => {
     }
   })
 
+  // The script runs under `sh -c` (WP2 T24 fix round; it was `bash -c`, which
+  // a container without bash could not run): this shape changed ON PURPOSE,
+  // and only there.
   it('rootless podman: engine exec + marker-scoped kill + sidecar removal, exit-0 tail', () => {
     const cmd = buildContainerKillCommand('lv20abc', rootless)
     expect(cmd).toBe(
-      "podman exec ccc-test bash -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json ~/.claude/ccc-status-lv20abc.url 2>/dev/null; exec pkill -f \"/settings-lv20abc\\.json\"' 2>/dev/null; true"
+      "podman exec ccc-test sh -c 'rm -f ~/.claude/settings-lv20abc.json ~/.claude/mcp-lv20abc.json ~/.claude/ccc-status-lv20abc.url 2>/dev/null; exec pkill -f \"/settings-lv20abc\\.json\"' 2>/dev/null; true"
     )
     // No sudo anywhere for a rootless container.
     expect(cmd).not.toContain('sudo')
@@ -870,7 +873,7 @@ describe('buildContainerKillCommand (#572 in-container orphan)', () => {
     const killAt = cmd.indexOf('pkill -f "/settings-lv20abc\\.json"')
     expect(rmAt).toBeGreaterThan(-1)
     expect(killAt).toBeGreaterThan(rmAt)
-    // `exec` replaces the shell image, so the marker-bearing `bash -c` cmdline
+    // `exec` replaces the shell image, so the marker-bearing `sh -c` cmdline
     // is GONE before pkill scans /proc — procps never signals its own pid.
     // Measured on the real container: the naive `pkill; rm; true` ordering
     // exits 143 (self-SIGTERM) with the sidecars left behind.

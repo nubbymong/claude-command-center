@@ -222,8 +222,9 @@ export interface ElectronAPI {
      *  main has no captured target for it, so it rebuilds the connection from
      *  the SAVED config named by `configId` (host/user/port + that config's own
      *  keychain secrets). Passing ids is the whole of the caller's power — the
-     *  host is never named here, and neither is the tmux session. */
-    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
+     *  host is never named here, and neither is the tmux session. Resolves
+     *  with what End did once its exec finishes (SshEndRemoteResult). */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<import('../shared/types').SshEndRemoteResult>
     /** SSH Persistent (resume liveness): ask main whether a config's detached
      *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
     checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../shared/types').DetachedRemoteLiveness>

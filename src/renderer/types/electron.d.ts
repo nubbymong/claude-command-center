@@ -276,8 +276,9 @@ export interface ElectronAPI {
     onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
     /** END a remote session. A bare id for a LIVE one (main holds its spawn
      *  target); `{ sessionId, configId }` for a DETACHED one, which main
-     *  reconnects to from the SAVED config (Phase 3.5). */
-    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
+     *  reconnects to from the SAVED config (Phase 3.5). Resolves with what End
+     *  did once its exec finishes; read it with readSshEndRemoteResult. */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<import('../../shared/types').SshEndRemoteResult>
     /** SSH Persistent (resume liveness): ask main whether a config's detached
      *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
     checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../../shared/types').DetachedRemoteLiveness>

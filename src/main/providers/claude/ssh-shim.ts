@@ -2,8 +2,9 @@ import crypto from 'node:crypto'
 import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
 import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 import { SHIM_GATHER_JS, SHIM_STATUS_URL_JS } from './statusline-gather'
-import { CONTAINER_NAME_RE, readContainerName } from '../../../shared/container-command'
+import { CONTAINER_NAME_RE, ENTRY_NONCE_RE, readContainerName, containerSessionStopScript } from '../../../shared/container-command'
 import { quoteArgForShell } from '../../../shared/shell-quote'
+import { stripAnsiForSentinel } from '../../ansi-strip'
 import type { SshRuntime } from '../../../shared/types'
 
 /**
@@ -783,7 +784,7 @@ export function buildRemoteTmuxKillCommand(sessionId: string): string {
  *
  * 1. `rm` FIRST, then `exec pkill` — NOT `pkill; rm; true`.
  *    `pkill -f` matches against the whole /proc cmdline of every process in the
- *    container, and the `bash -c '<script>'` we are running IS such a process:
+ *    container, and the `sh -c '<script>'` we are running IS such a process:
  *    its cmdline spells the marker (in the pattern AND in the rm's paths), so
  *    the obvious ordering makes the shell SIGTERM itself before the rm runs.
  *    Measured on the real container: `exec_exit=143`, sidecars left behind.
@@ -791,11 +792,21 @@ export function buildRemoteTmuxKillCommand(sessionId: string): string {
  *    matches. So the sidecar removal happens first, and the pkill is `exec`'d,
  *    replacing the shell image: procps' pkill never signals its own pid, and
  *    after the exec there is no marker-bearing shell left to match. Re-measured:
- *    `exec_exit=0`, claude dead, both sidecars removed.
+ *    `exec_exit=0`, claude dead, both sidecars removed. (Measured under
+ *    `bash -c`; the same holds for any `sh`, whose `exec` replaces it just the
+ *    same.) The script itself is containerSessionStopScript
+ *    (shared/container-command.ts), the one builder the End notice's stop
+ *    command uses too.
  *    (Known limitation, not engineered for: a container run with `--pid=host`
  *    would let this pkill see the host-side shell running this very command.
  *    CCC never creates containers, and the shape is unchanged for every normal
  *    PID-namespaced container.)
+ *
+ *    `sh -c`, not `bash -c` (WP2 T24 fix round): a container without bash (a
+ *    `runtime.shell: 'sh'` image, Alpine for one) failed the exec, the error
+ *    was swallowed, End said completed and Claude kept running. The entry
+ *    already runs its wrapper under `sh -c` (composeContainerEntryCommand), so
+ *    `sh` exists in every container a session can have.
  *
  * 2. `sudo -S -p password:` — the CUSTOM PROMPT is load-bearing.
  *    The ssh exec gets no remote tty (buildSshExecArgs passes no `-t`), so a
@@ -817,13 +828,48 @@ export function buildRemoteTmuxKillCommand(sessionId: string): string {
  * instead of blocking on a prompt nobody will answer — which would also starve
  * the tmux kill that runs after this in the same remote command.
  *
+ * 3. Rootful with no saved sudo password: End must SAY when it could not
+ *    elevate (live T24, 2026-09-25: the password was typed at the entry
+ *    prompt, never saved, so this kill ran `sudo -n`, sudo refused, the
+ *    failure was swallowed, End reported completed and Claude kept running
+ *    in the container). With `sudoProbeNonce` the segment is
+ *
+ *      sh -c 'sudo -n <engine> --version >/dev/null 2>&1' || printf '\n%s_%s\n' CCC_END_SUDO_NEEDED <nonce>; <the kill>; true
+ *
+ *    The probe asks whether sudo can run the engine without a password; when
+ *    it cannot, printf prints the End sudo sentinel (END_SUDO_SENTINEL_PREFIX
+ *    + `_` + the nonce) on a line of its own (the format starts with a
+ *    newline, so the token always begins a line), which endSshRemote reads
+ *    (parseEndSudoSentinel) and reports as 'container-needs-sudo'. The kill is
+ *    then ALWAYS attempted, byte-for-byte the no-probe `sudo -n` form: it
+ *    fails fast where sudo wants a password, and a host whose sudoers allows
+ *    `<engine> exec` without one but not `<engine> --version` still has
+ *    Claude stopped (End then says Claude "may" still be running, which stays
+ *    true). The probe's own redirections run inside `sh -c` (every host has a
+ *    POSIX sh), so outside the quotes the segment uses only what the rest of
+ *    the End line already used plus `||`: `;` lists, `2>/dev/null` and single
+ *    quotes. That is what keeps the line parsing in every host login shell a
+ *    container session can have: the POSIX family (sh, bash, dash, zsh), fish
+ *    (fish 3 has `||`, but no `if ...; then ...; fi`, which failed the WHOLE
+ *    End line there) and tcsh/csh (where `>/dev/null 2>&1` outside quotes is
+ *    a parse error, "Ambiguous output redirect", that also failed the whole
+ *    line; csh reads `2>/dev/null` its own way, as it always has for this
+ *    line). ssh-end-remote-shell-compat.test.ts runs the line through each of
+ *    these shells that the test runner has installed. The format string
+ *    and its two arguments are separate words, so the joined token appears
+ *    only in printf's output, never in the command text, and the per-End
+ *    nonce keeps static remote output (a banner, an rc file) from producing
+ *    it. Nothing prompts and nothing blocks, so the host tmux kill and the
+ *    sidecar cleanup after this segment still run. Without a valid nonce the
+ *    segment is the plain `sudo -n` form above.
+ *
  * Returns '' when the runtime is not a container, so callers can compose with a
  * plain truthiness check.
  */
 export function buildContainerKillCommand(
   sessionId: string,
   runtime: SshRuntime | undefined,
-  opts?: { hasSudoPassword?: boolean }
+  opts?: { hasSudoPassword?: boolean; sudoProbeNonce?: string }
 ): string {
   if (!runtime || runtime.type !== 'container') return ''
   // Type-guarded read (adversarial review, ADR-009): this runs from
@@ -834,10 +880,12 @@ export function buildContainerKillCommand(
   const name = readContainerName(runtime)
   if (!CONTAINER_NAME_RE.test(name)) return ''
   const engine = runtime.engine === 'podman' ? 'podman' : 'docker'
-  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
-  // The marker as it appears in the in-container claude argv. `settings-` is a
-  // host-authored literal; safeSid is the only free value and is sanitized.
-  const marker = `settings-${safeSid}`
+  // The in-container script comes from containerSessionStopScript
+  // (shared/container-command.ts), which sanitises the id with the same rule
+  // as every per-session remote file name. The marker it kills by is the one
+  // in the in-container claude argv, `settings-<safeSid>`; `settings-` is a
+  // host-authored literal and safeSid is the only free value.
+  //
   // The pkill PATTERN is the marker ANCHORED to the whole filename (adversarial
   // review, 2026-09-01 — MAJOR, the container-side sibling of the tmux `=` fix
   // above).
@@ -858,18 +906,48 @@ export function buildContainerKillCommand(
   // nothing for a hostile id to smuggle in. Double-quoted (not single) because
   // the whole inner script is already inside single quotes for the remote shell;
   // inside double quotes `\.` passes through to pkill verbatim.
-  const killPattern = `"/${marker}\\.json"`
+  //
+  // The status-URL sidecar (ADR-009 token custody) is removed there too. Its
+  // name does NOT contain the `settings-<safeSid>` pkill marker, so removing it
+  // cannot change which processes the `exec pkill` matches.
+  const inner = containerSessionStopScript(sessionId)
   const sudo = runtime.sudo ? (opts?.hasSudoPassword ? 'sudo -S -p password: ' : 'sudo -n ') : ''
   // stderr is kept ONLY when a sudo prompt has to reach the matcher (see 2 above).
   const quiet = runtime.sudo && opts?.hasSudoPassword ? '' : ' 2>/dev/null'
-  // The status-URL sidecar (ADR-009 token custody) is removed here too. Its
-  // name does NOT contain the `settings-<safeSid>` pkill marker, so adding it
-  // cannot change which processes the `exec pkill` below matches.
-  const inner = `rm -f ~/.claude/${marker}.json ~/.claude/mcp-${safeSid}.json ~/.claude/ccc-status-${safeSid}.url 2>/dev/null; exec pkill -f ${killPattern}`
   // No `-it`: this is a one-shot kill over a non-interactive exec, not a shell.
-  // The inner script is single-quoted for the remote shell and, by the charset
-  // rules above, cannot contain a quote to break out with.
-  return `${sudo}${engine} exec ${name} bash -c '${inner}'${quiet}; true`
+  // `sh -c`, never `bash -c` (see 1 above). The inner script is single-quoted
+  // for the remote shell and, by the charset rules above, cannot contain a
+  // quote to break out with.
+  const kill = `${sudo}${engine} exec ${name} sh -c '${inner}'${quiet}`
+  const nonce = opts?.sudoProbeNonce
+  if (runtime.sudo && !opts?.hasSudoPassword && typeof nonce === 'string' && ENTRY_NONCE_RE.test(nonce)) {
+    // See 3 above: say when sudo cannot run the engine without a password,
+    // then attempt the kill regardless.
+    return `sh -c 'sudo -n ${engine} --version >/dev/null 2>&1' || printf '\\n%s_%s\\n' ${END_SUDO_SENTINEL_PREFIX} ${nonce}; ${kill}; true`
+  }
+  return `${kill}; true`
+}
+
+/** The fixed half of the End sudo sentinel (buildContainerKillCommand, 3). The
+ *  per-End nonce is checked against ENTRY_NONCE_RE (shared/container-command):
+ *  randomId() is lowercase hex, and anything else is refused rather than
+ *  quoted, so it can ride the End line as a bare word and a RegExp part. */
+export const END_SUDO_SENTINEL_PREFIX = 'CCC_END_SUDO_NEEDED'
+
+/**
+ * Did the End exec print THIS End's sudo sentinel? `output` is everything the
+ * exec wrote (stdout, or the PTY stream with the password exchange in it).
+ * Escapes are stripped first (ConPTY glues cursor and title sequences into
+ * remote output, the RC9 lesson), and the token is matched anywhere, with a
+ * non-word character or the end of the text on each side: never end-anchored,
+ * never tied to a line start. A different or partial nonce does not match, and
+ * neither does the command text itself, where the prefix and the nonce are
+ * separate words.
+ */
+export function parseEndSudoSentinel(output: string, nonce: string): boolean {
+  if (!ENTRY_NONCE_RE.test(nonce)) return false
+  const re = new RegExp(`(?<![A-Za-z0-9_])${END_SUDO_SENTINEL_PREFIX}_${nonce}(?![A-Za-z0-9_])`)
+  return re.test(stripAnsiForSentinel(output))
 }
 
 /**

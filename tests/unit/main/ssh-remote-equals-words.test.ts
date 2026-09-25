@@ -367,17 +367,21 @@ describe('the End command (a separate ssh exec, parsed by the remote account`s s
   })
 
   it('has no unquoted =word for any session id, alone or behind a container kill', () => {
-    const runtimes: Array<{ runtime: SshRuntime; hasSudoPassword: boolean }> = [
+    const runtimes: Array<{ runtime: SshRuntime; hasSudoPassword: boolean; sudoProbeNonce?: string }> = [
       { runtime: { type: 'container', engine: 'podman', container: 'ccc-test' }, hasSudoPassword: false },
       { runtime: { type: 'container', engine: 'docker', container: 'ccc-test', sudo: true }, hasSudoPassword: true },
       { runtime: { type: 'container', engine: 'docker', container: 'ccc-test', sudo: true }, hasSudoPassword: false },
+      // T24: rootful with no saved sudo password, as End sends it (the sudo
+      // probe and its sentinel printf around the kill).
+      { runtime: { type: 'container', engine: 'podman', container: 'ccc-test', sudo: true }, hasSudoPassword: false, sudoProbeNonce: 'a1b2c3d4e5f60718a1b2c3d4' },
     ]
     for (const sessionId of SESSION_IDS) {
       const kill = buildRemoteTmuxKillCommand(sessionId)
       expect(bareEqualsWords(kill), sessionId).toEqual([])
       for (const t of tmuxTargets(kill)) expect(t.value.startsWith('=ccc-'), sessionId).toBe(true)
       for (const r of runtimes) {
-        const containerKill = buildContainerKillCommand(sessionId, r.runtime, { hasSudoPassword: r.hasSudoPassword })
+        const containerKill = buildContainerKillCommand(sessionId, r.runtime, { hasSudoPassword: r.hasSudoPassword, sudoProbeNonce: r.sudoProbeNonce })
+        if (r.sudoProbeNonce) expect(containerKill).toContain('CCC_END_SUDO_NEEDED')
         expect(containerKill).not.toBe('')
         // The composition endSshRemote (pty-manager.ts) sends.
         expect(bareEqualsWords(`${containerKill}; ${kill}`), `${sessionId} ${JSON.stringify(r)}`).toEqual([])

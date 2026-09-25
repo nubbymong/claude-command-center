@@ -16,10 +16,10 @@ export { parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel } 
 import { randomId } from '../shared/id'
 import {
   composeRuntimeCommand, composeContainerEntryCommand, parseDockerPostCommand, isContainerRuntime,
-  isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand,
+  isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand, readContainerName,
 } from '../shared/container-command'
 import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
-import type { SshRuntime, DetachedRemoteLiveness } from '../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
@@ -35,7 +35,7 @@ import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
-import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
+import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort, issueMcpSessionToken } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
@@ -489,7 +489,23 @@ const sshTmuxWrappedBySession = new Set<string>()
  * third-party leak (adversarial pass, 2026-08-30).
  *
  * Returns the outcome so callers that care (the live matrix) can await it;
- * the IPC caller stays fire-and-forget.
+ * endSshRemoteDetailed returns it with the container details the renderer
+ * shows. The IPC handler resolves with that result, and its renderer callers
+ * never wait on it before tearing the local session down: the target is read
+ * synchronously when End is called (the first line of endSshRemoteDetailed,
+ * before anything yields), so a local kill that arrives after the End call
+ * cannot lose it.
+ *
+ * ROOTFUL CONTAINER, NO SAVED SUDO PASSWORD (live T24, 2026-09-25): the
+ * in-container kill can only try `sudo -n`, which cannot elevate where sudo
+ * wants a password (a password typed at the entry prompt is never saved), and
+ * it used to fail silently while End said completed, leaving Claude running in
+ * the container. The kill segment now asks sudo first and prints a sentinel
+ * carrying a per-End nonce when sudo cannot run the engine without a password
+ * (buildContainerKillCommand, point 3), then attempts the kill regardless;
+ * this function reads the sentinel off the exec's output and resolves
+ * 'container-needs-sudo', and the renderer tells the user the command that
+ * stops it. The host tmux kill and the sidecar cleanup still run.
  *
  * CONTAINER RUNTIME (#572, one hop deeper -- live-proven by T20,
  * ssh-statusline-docker.live.ts, 2026-08-31): when the session's runtime is a
@@ -562,7 +578,13 @@ const END_REMOTE_SUDO_PROMPT_RE = /^password:\s*$/
  * one shape it must not swallow is already excluded above.
  */
 const END_REMOTE_SSH_PROMPT_RE = /password[:?]\s*$/i
-export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<'completed' | 'failed' | 'no-target'> {
+/** Output kept for the sudo sentinel: the End exec prints a handful of lines. */
+const END_REMOTE_OUTPUT_CAP = 64 * 1024
+export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<SshEndRemoteOutcome> {
+  return endSshRemoteDetailed(sessionId, fallbackTarget).then((r) => r.outcome)
+}
+
+export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndTarget): Promise<SshEndRemoteResult> {
   // Phase 3.5 — the DETACHED case. `sshTargetBySession` is captured at spawn and
   // dropped by killPty, and "Leave running" IS a killPty: so for every remote in
   // the resume registry the map is empty, and before this the End IPC resolved
@@ -575,10 +597,26 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
   // WINS: it carries the session's real runtime and the credentials it actually
   // authed with, which is strictly better evidence than the config on disk.
   const target = sshTargetBySession.get(sessionId) ?? fallbackTarget
-  if (!target) return Promise.resolve('no-target')
+  if (!target) return Promise.resolve({ outcome: 'no-target' })
   const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
   const hasSudoPassword = Boolean(target.sudoPassword)
-  const containerKill = buildContainerKillCommand(sessionId, target.runtime, { hasSudoPassword })
+  // A rootful container with no saved sudo password: the kill segment probes
+  // sudo and prints this End's sentinel when it cannot elevate (see above).
+  const sudoProbeNonce = target.runtime?.sudo && !hasSudoPassword ? randomId() : undefined
+  const containerKill = buildContainerKillCommand(sessionId, target.runtime, { hasSudoPassword, sudoProbeNonce })
+  const probing = Boolean(containerKill && sudoProbeNonce)
+  /** The result for a finished exec: its own outcome, unless this End's sudo
+   *  sentinel is in what it printed. */
+  const settle = (outcome: 'completed' | 'failed', output: string): SshEndRemoteResult => {
+    if (probing && target.runtime && parseEndSudoSentinel(output, sudoProbeNonce!)) {
+      logWarn(`[ssh] ${sessionId}: end-remote may not have stopped Claude inside the container: sudo needs a password and End holds none for this session`)
+      return {
+        outcome: 'container-needs-sudo',
+        container: { engine: target.runtime.engine === 'podman' ? 'podman' : 'docker', name: readContainerName(target.runtime), host: target.host },
+      }
+    }
+    return { outcome }
+  }
   // Container kill FIRST, then the host tmux kill + sidecar cleanup.
   const remoteCommand = containerKill
     ? `${containerKill}; ${buildRemoteTmuxKillCommand(sessionId)}`
@@ -613,19 +651,22 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
     return new Promise((resolve) => {
       let settled = false
       let child: pty.IPty | null = null
+      // Everything the exec printed (bounded), for the sudo sentinel.
+      let output = ''
       const done = (r: 'completed' | 'failed', why: string): void => {
         if (settled) return
         settled = true
         clearTimeout(deadline)
         try { child?.kill() } catch { /* already gone */ }
-        logInfo(`[ssh] ${sessionId}: end-remote (password) ${r} (${why})`)
-        resolve(r)
+        const result = settle(r, output)
+        logInfo(`[ssh] ${sessionId}: end-remote (password) ${result.outcome} (${why})`)
+        resolve(result)
       }
       const deadline = setTimeout(() => done('failed', 'timeout'), END_REMOTE_PASSWORD_TIMEOUT_MS)
       try {
         // Argv build INSIDE the executor's try (adversarial pass): a sync throw
-        // here must resolve 'failed' like every other failure, not escape as an
-        // exception into a fire-and-forget IPC caller.
+        // here must resolve 'failed' like every other failure, never reject
+        // the End promise the IPC handler returns and the live lanes await.
         const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
         child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
       } catch (err) {
@@ -638,6 +679,7 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
       // sudo prompt follows it) and none can be replayed.
       let tail = ''
       child.onData((d) => {
+        output = (output + d).slice(-END_REMOTE_OUTPUT_CAP)
         // Bounded rolling tail; the prompt always sits at the end of it.
         tail = (tail + d).slice(-2048)
         // `settled` too (adversarial pass): after the timeout killed the child,
@@ -680,17 +722,17 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
     try {
       const args = buildSshExecArgs(target, remoteCommand, os.platform())
       logInfo(`[ssh] ${sessionId}: ending remote session (tmux kill-session + sidecar cleanup over a separate exec)`)
-      const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err) => {
+      const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
         if (err) logInfo(`[ssh] ${sessionId}: end-remote exec exited non-zero (host was already gone, or refused key auth): ${err.message}`)
         else logInfo(`[ssh] ${sessionId}: end-remote exec completed`)
-        resolve(err ? 'failed' : 'completed')
+        resolve(settle(err ? 'failed' : 'completed', typeof stdout === 'string' ? stdout : String(stdout ?? '')))
       })
       // Never let a stuck child keep a handle alive; execFile's own timeout also
       // covers this, but unref so it can't hold the process open.
       try { child.unref() } catch { /* noop */ }
     } catch (err) {
       logError(`[ssh] ${sessionId}: endSshRemote failed to dispatch: ${(err as Error)?.message ?? err}`)
-      resolve('failed')
+      resolve({ outcome: 'failed' })
     }
   })
 }

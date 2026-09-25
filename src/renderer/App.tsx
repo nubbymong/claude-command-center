@@ -44,6 +44,7 @@ import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import SshCloseDialog from './components/SshCloseDialog'
+import SshEndNoticeDialog from './components/SshEndNoticeDialog'
 import SshReattachGoneNotice from './components/SshReattachGoneNotice'
 import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
 import { pingAllDetachedHosts } from './stores/hostReachability'
@@ -1425,6 +1426,12 @@ export default function App() {
             onCancel={() => { setCloseDialog(null); window.electronAPI.window.cancelClose() }}
           />
         )}
+        {/* What End could not do by itself (Claude left running in a rootful
+            container that needs a sudo password): the one surface for it. On
+            the same top layer (WINDOW_CLOSE_Z) and AFTER both close dialogs,
+            so it paints above them and has the keys (it can open while
+            either is showing). */}
+        <SshEndNoticeDialog />
 
         {/* On the top layer with the close dialogs (WINDOW_CLOSE_Z), above
             the onboarding pages and the introduction too. */}

@@ -10,6 +10,7 @@ import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useLaunchConfig, useLaunchSessionAction } from '../../hooks/useLaunchConfig'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { persistSessionState } from '../../session-persistence'
+import { endRemoteAndReport } from '../../stores/sshEndNoticeStore'
 import { describeDetachedAge, filterLiveEntries, pairDetachedEntry } from '../../utils/detachedRemotes'
 import { describeDestination, effectiveRuntimeOf } from '../../../shared/detached-destination'
 import { tmuxExactTarget } from '../../../shared/ssh-tmux-persistence'
@@ -207,11 +208,10 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
     // where it is and how to end it there; Remove only forgets the card.
     if (mightBeLive && pairing.kind !== 'retargeted') {
       const configId = pairing.kind === 'paired' ? pairing.config.id : entry.configId
-      try {
-        await window.electronAPI?.ssh?.endRemote?.({ sessionId: entry.sessionId, configId })
-      } catch {
-        /* best-effort: the remote is at worst still detached, and the card goes */
-      }
+      // Not awaited: main reads the target as the call arrives, and the result
+      // only surfaces when it needs the user (the End notice). Best-effort: the
+      // remote is at worst still detached, and the card goes.
+      endRemoteAndReport(entry.sessionId, { sessionId: entry.sessionId, configId })
     }
     dropEntry(entry.sessionId)
   }, [dropEntry, configs])

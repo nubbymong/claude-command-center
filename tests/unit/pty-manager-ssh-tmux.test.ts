@@ -2240,8 +2240,10 @@ describe('endSshRemote target lifecycle — survives a drop, cleared on delibera
     } as never)
     const t = _getSshTargetForTest('s-endtarget-legacy')
     expect(t?.runtime).toEqual({ type: 'container', engine: 'docker', container: 'ccc-test', mode: 'exec', sudo: true })
+    // `sh -c` since the WP2 T24 fix round (the kill script runs in any
+    // container, with or without bash).
     expect(buildContainerKillCommand('s-endtarget-legacy', t?.runtime)).toContain(
-      "docker exec ccc-test bash -c '",
+      "docker exec ccc-test sh -c '",
     )
     killPty('s-endtarget-legacy')
   })

@@ -315,6 +315,9 @@ export function DialogCallout({ tone = 'neutral', children, testId, className = 
 
 /* ---- escape ---------------------------------------------------------------- */
 
+/** How many surfaces hold Escape right now (useHoldEscape). */
+let escapeHolds = 0
+
 /**
  * Escape closes the dialog. Registered on `window` in the capture phase so it
  * wins over the terminal's own key handling, and so the key does not also
@@ -344,12 +347,16 @@ export function DialogCallout({ tone = 'neutral', children, testId, className = 
  * (neither stopped nor acted on), so a dialog opened later and painted above
  * this one gets it instead. A full-screen surface that registered first needs
  * this, because registering first means hearing Escape first.
+ *
+ * While a surface holds Escape (useHoldEscape), this leaves the key alone
+ * altogether: that surface paints above every dialog and handles it itself.
  */
 export function useDialogEscape(onClose: (() => void) | undefined, enabled = true, when?: () => boolean) {
   React.useEffect(() => {
     if (!enabled || !onClose) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      if (escapeHolds > 0) return
       if (when && !when()) return
       e.stopImmediatePropagation()
       e.preventDefault()
@@ -358,4 +365,22 @@ export function useDialogEscape(onClose: (() => void) | undefined, enabled = tru
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose, enabled, when])
+}
+
+/**
+ * Hold Escape for a surface that paints above EVERY dialog, can open while
+ * any of them is showing, and handles the key itself (the End notice,
+ * SshEndNoticeDialog). While `active`, every useDialogEscape handler leaves
+ * Escape alone. Without it, a dialog opened earlier, and so painted
+ * underneath, would hear Escape first (window listeners run in the order they
+ * were added) and close itself instead of the surface on top. A layout
+ * effect, so the hold is in place in the same commit that shows the surface:
+ * there is no frame in which a dialog underneath can take an Escape.
+ */
+export function useHoldEscape(active: boolean): void {
+  React.useLayoutEffect(() => {
+    if (!active) return
+    escapeHolds += 1
+    return () => { escapeHolds -= 1 }
+  }, [active])
 }

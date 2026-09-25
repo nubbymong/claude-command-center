@@ -32,7 +32,10 @@ const CONTAINER_DIR_RE = /^[A-Za-z0-9_./~-]+$/
 // The entry nonce is interpolated into a shell line (inside single quotes, as a
 // printf ARGUMENT and an env-var VALUE). randomId() is lowercase hex; anything
 // else is refused rather than quoted, so no quoting rule ever has to be right.
-const ENTRY_NONCE_RE = /^[a-z0-9]{8,64}$/
+// The End sudo sentinel's nonce (buildContainerKillCommand, ssh-shim.ts) rides
+// the End line as a bare printf argument and a RegExp part under the same rule,
+// so it checks against this one constant rather than a copy of it.
+export const ENTRY_NONCE_RE = /^[a-z0-9]{8,64}$/
 
 /**
  * Read `runtime.container` as a string, or `undefined` when it is absent.
@@ -251,4 +254,63 @@ export function parseDockerPostCommand(postCommand: string): SshRuntime | null {
     // it always did (the End kill path stores this object).
     ...(shell === 'sh' ? { shell: 'sh' as const } : {}),
   }
+}
+
+/**
+ * The session id as every per-session remote file name carries it: each
+ * character outside [A-Za-z0-9_-] becomes `_` (the rule ssh-shim.ts applies
+ * when it writes `settings-<id>.json`, `mcp-<id>.json` and
+ * `ccc-status-<id>.url`). The one copy of that rule the in-container stop
+ * script below uses, so the kill pattern and the file names cannot disagree.
+ */
+function containerSafeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
+/**
+ * The pkill pattern that names ONE session's Claude inside a container: the
+ * `--settings <dir>/settings-<safeSid>.json` marker in its argv, anchored on
+ * the leading slash and on the escaped `.json`, so one session id never
+ * matches a longer one (`settings-a\.json` does not match `settings-a1b2.json`).
+ * The id is sanitised to [A-Za-z0-9_-], so the escaped dot is the only regex
+ * metacharacter in it.
+ */
+export function containerSessionKillPattern(sessionId: string): string {
+  return `/settings-${containerSafeSessionId(sessionId)}\\.json`
+}
+
+/**
+ * The script that stops ONE session inside its container, run there under
+ * `sh -c`: remove the session's three files, then `exec pkill` the anchored
+ * pattern above. The ONE builder for it: the End path's in-container kill
+ * (buildContainerKillCommand, ssh-shim.ts) and the command the End notice
+ * shows (manualContainerStopCommand) both embed this, so the two cannot
+ * differ. The order is load-bearing (see buildContainerKillCommand, point 1):
+ * the `sh -c` running this has the marker in its own argv, so the files go
+ * first and the pkill is `exec`'d, replacing that shell before pkill scans
+ * the process list. The pattern is double-quoted because callers wrap the
+ * whole script in single quotes; inside double quotes `\.` reaches pkill
+ * unchanged. The id is sanitised, so the script carries no quote of either
+ * kind and nothing the shell would expand.
+ */
+export function containerSessionStopScript(sessionId: string): string {
+  const sid = containerSafeSessionId(sessionId)
+  return `rm -f ~/.claude/settings-${sid}.json ~/.claude/mcp-${sid}.json ~/.claude/ccc-status-${sid}.url 2>/dev/null; exec pkill -f "${containerSessionKillPattern(sessionId)}"`
+}
+
+/**
+ * The command to run on the SSH host to stop this session's Claude inside a
+ * rootful container when End could not: exactly what End's in-container kill
+ * runs (containerSessionStopScript: remove the session's files in the
+ * container, then the anchored pkill), under `sh -c` in the container, with a
+ * plain `sudo` that asks for the password. The script is single-quoted, so
+ * every host shell (sh, bash, dash, zsh, fish) hands it to the engine as one
+ * argument, unchanged. Null when the engine or the container name fails
+ * validation (CONTAINER_NAME_RE): nothing unvalidated is ever offered as a
+ * command to run.
+ */
+export function manualContainerStopCommand(sessionId: string, engine: unknown, containerName: unknown): string | null {
+  if (engine !== 'docker' && engine !== 'podman') return null
+  if (typeof containerName !== 'string' || !CONTAINER_NAME_RE.test(containerName)) return null
+  return `sudo ${engine} exec ${containerName} sh -c '${containerSessionStopScript(sessionId)}'`
 }

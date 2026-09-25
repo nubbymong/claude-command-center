@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
 import { getAccountsService } from '../provider-accounts'
 import { providerLaunchRefusal } from '../provider-launch-gate'
@@ -18,7 +18,7 @@ import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
-import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote } from '../../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote, SshEndRemoteResult } from '../../shared/types'
 import { detachedDestinationAgrees, type SshDestinationSource } from '../../shared/detached-destination'
 import { readDetachedRemotesRegistry } from '../session-state'
 import { pingHost } from '../host-ping'
@@ -904,11 +904,22 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
   // Best-effort throughout: an unknown config, a non-SSH config, an unreachable
   // host and an already-dead session all end the same way — nothing thrown at
   // the renderer, which drops the registry entry regardless.
-  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, payload: unknown) => {
+  //
+  // The invoke resolves with what End did (SshEndRemoteResult) once the exec
+  // finishes; the input is still validated by endRemoteSchema before anything
+  // else runs. End reads its target the moment it is called, here, so the
+  // renderer callers do not wait for this result before tearing the local
+  // session down; they only show the one outcome that needs the user
+  // ('container-needs-sudo', readSshEndRemoteResult + the End notice). That
+  // makes the call below ORDER-SENSITIVE: nothing may yield (no await) before
+  // it, or the renderer's pty kill, sent right after the End call, is handled
+  // first, drops the live target, and End finds nothing to end
+  // (end-remote-detached-fallback.test.ts pins this).
+  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, payload: unknown): Promise<SshEndRemoteResult> => {
     const parsed = endRemoteSchema.parse(payload)
     const sessionId = typeof parsed === 'string' ? parsed : parsed.sessionId
     const configId = typeof parsed === 'string' ? undefined : parsed.configId
-    endSshRemote(sessionId, configId ? endTargetFromSavedConfig(configId, sessionId) : undefined)
+    return endSshRemoteDetailed(sessionId, configId ? endTargetFromSavedConfig(configId, sessionId) : undefined)
   })
 
   // SSH Persistent (resume liveness): is a set of DETACHED `ccc-<sessionId>` tmux
