@@ -66,7 +66,7 @@ function NameField({
           }
         }}
         placeholder="Optional friendly name"
-        className="flex-1 bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+        className="flex-1 bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
       />
     </div>
   )
@@ -88,7 +88,7 @@ function ColourPicker({
   return (
     <div className="flex items-center gap-2 mt-1.5" data-testid={`colour-picker-${profile.id}`}>
       <span className="text-[11px] text-subtext0 w-10 shrink-0">Colour</span>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-3">
         {IDENTITY_COLOR_KEYS.map((key) => {
           const hex = resolveIdentityColor(key, theme)
           const isSelected = key === currentKey
@@ -100,11 +100,10 @@ function ColourPicker({
               aria-label={`Set colour to ${key}${isSelected ? ' (current)' : ''}`}
               aria-pressed={isSelected}
               onClick={() => onPick(key)}
-              className="w-4 h-4 rounded-full transition-transform focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+              className="w-4 h-4 rounded-full transition-transform focus-ring-strong-outset"
               style={{
                 backgroundColor: hex,
-                outline: isSelected ? `2px solid ${hex}` : undefined,
-                outlineOffset: isSelected ? '2px' : undefined,
+                boxShadow: isSelected ? `0 0 0 2px var(--surface-raised), 0 0 0 4px ${hex}` : undefined,
                 transform: isSelected ? 'scale(1.2)' : undefined,
               }}
             />
@@ -205,23 +204,23 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <span
             className="text-sm font-mono truncate"
-            style={{ color: !active ? 'var(--color-overlay0)' : (hasEmail ? 'var(--text-secondary)' : undefined) }}
+            style={{ color: !active ? 'var(--text-muted)' : (hasEmail ? 'var(--text-secondary)' : undefined) }}
             title={hasEmail ? profile.accountEmail : undefined}
           >
             {hasEmail ? (
               middleTruncateEmail(profile.accountEmail)
             ) : (
-              <span className="text-overlay0 italic">setup incomplete</span>
+              <span className="text-[var(--text-muted)] italic">setup incomplete</span>
             )}
           </span>
           {profile.isPrimary && (
-            <span className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1 shrink-0">
+            <span className="text-[10px] text-[var(--text-muted)] border border-overlay0/30 rounded px-1 shrink-0">
               primary
             </span>
           )}
           {!active && (
             <span
-              className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1 shrink-0"
+              className="text-[10px] text-[var(--text-muted)] border border-overlay0/30 rounded px-1 shrink-0"
               data-testid={`inactive-badge-${profile.id}`}
             >
               inactive
@@ -251,7 +250,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
             onClick={handleDelete}
             title="Remove this account from AI Code Conductor"
             data-testid={`delete-profile-${profile.id}`}
-            className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-red/50 shrink-0"
+            className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus-ring-strong shrink-0"
             aria-label="Remove account"
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -372,7 +371,7 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
         <button
           onClick={onAdd}
           data-testid="add-account-btn"
-          className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-surface1 hover:border-blue/50 text-overlay1 hover:text-blue py-2 px-4 text-sm transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+          className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-surface1 hover:border-blue/50 text-overlay1 hover:text-blue py-2 px-4 text-sm transition-colors focus-ring-strong"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />

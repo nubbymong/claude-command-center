@@ -187,9 +187,9 @@ export function AccountWebSession({ profileId, accountName }: Props) {
         <div className="flex-1 min-w-0">
           {cli.notChecked ? <div className="text-[11px] text-text">Code session (not checked)</div> : <div className="text-[11px] text-text">
             Code session {cli.authenticated ? '— signed in' : '— not signed in'}
-            {cli.subscriptionType ? <span className="text-overlay0"> · {cli.subscriptionType}</span> : null}
+            {cli.subscriptionType ? <span className="text-[var(--text-muted)]"> · {cli.subscriptionType}</span> : null}
           </div>}
-          <div className="text-[10px] text-overlay0 leading-snug">
+          <div className="text-[10px] text-[var(--text-muted)] leading-snug">
             {/* WP2: Claude Code is off, so main did not run the CLI to ask. */}
             {cli.notChecked
               ? <span data-testid="account-cli-not-checked">{cli.notChecked}</span>
@@ -212,11 +212,11 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               usage. Defaulting everyone to one of them fails at the identity
               provider rather than here, which is a bad place to find out. */}
           <div className="flex items-center gap-2 mt-1.5">
-            <span className="text-[10px] text-overlay0 shrink-0">Sign-in flow</span>
+            <span className="text-[10px] text-[var(--text-muted)] shrink-0">Sign-in flow</span>
             <select
               value={authMethod}
               onChange={(e) => { void changeAuthMethod(e.target.value as CliAuthMethod) }}
-              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors"
+              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus-ring-strong focus:border-blue/50 transition-colors"
             >
               {CLI_AUTH_METHODS.map((m) => (
                 <option key={m} value={m}>{CLI_AUTH_METHOD_LABELS[m]}</option>
@@ -232,9 +232,9 @@ export function AccountWebSession({ profileId, accountName }: Props) {
         <div className="flex-1 min-w-0">
           <div className="text-[11px] text-text">
             claude.ai web session — {web.status === 'active' ? 'signed in' : web.status === 'expired' ? 'expired' : 'not signed in'}
-            {web.accountEmail ? <span className="text-overlay0"> · {web.accountEmail}</span> : null}
+            {web.accountEmail ? <span className="text-[var(--text-muted)]"> · {web.accountEmail}</span> : null}
           </div>
-          <div className="text-[10px] text-overlay0 leading-snug">
+          <div className="text-[10px] text-[var(--text-muted)] leading-snug">
             {web.status === 'active'
               ? `Acquired ${fmt(web.acquiredAt)}${web.expiresAt ? `, expires ${fmt(web.expiresAt)}` : ''}.`
               : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens a window to sign in.'}
@@ -247,35 +247,35 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               partition. A per-account choice made before this became global is
               honoured until the global is set (resolveSignInOpenTarget). */}
           <div className="flex items-center gap-2 mt-1.5">
-            <span className="text-[10px] text-overlay0 shrink-0">Open claude.ai sign-in in</span>
+            <span className="text-[10px] text-[var(--text-muted)] shrink-0">Open claude.ai sign-in in</span>
             <select
               value={resolvedSignInTarget}
               disabled={busy}
               onChange={(e) => { changeSignInTarget(e.target.value as ClaudeWebTarget) }}
-              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors disabled:opacity-40"
+              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus-ring-strong focus:border-blue/50 transition-colors disabled:opacity-40"
               data-testid="web-sign-in-mode"
             >
               <option value="window">Sign-in window (default)</option>
               <option value="pane">Internal browser pane</option>
             </select>
-            <span className="text-[10px] text-overlay0">All accounts{resolvedSignInTarget === 'pane' ? ' — signs in inside a session’s browser pane' : ''}</span>
+            <span className="text-[10px] text-[var(--text-muted)]">All accounts{resolvedSignInTarget === 'pane' ? ' — signs in inside a session’s browser pane' : ''}</span>
           </div>
 
           {/* The artifacts twin: where "Open artifacts" goes — the Artifacts
               button and the session menu both follow this one global choice.
               Also settable from the button's right-click. Default unchanged. */}
           <div className="flex items-center gap-2 mt-1.5">
-            <span className="text-[10px] text-overlay0 shrink-0">Open artifacts in</span>
+            <span className="text-[10px] text-[var(--text-muted)] shrink-0">Open artifacts in</span>
             <select
               value={artifactsTarget}
               onChange={(e) => { changeArtifactsTarget(e.target.value as ClaudeWebTarget) }}
-              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors"
+              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus-ring-strong focus:border-blue/50 transition-colors"
               data-testid="artifacts-open-target"
             >
               <option value="window">Separate window (default)</option>
               <option value="pane">In-app browser pane</option>
             </select>
-            <span className="text-[10px] text-overlay0">All accounts</span>
+            <span className="text-[10px] text-[var(--text-muted)]">All accounts</span>
           </div>
 
           {/* SSO ONLY, and only when there is a genuine CHOICE (#439: more than
@@ -289,18 +289,18 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               launcher's not-silent fallback already says what ran. */}
           {authMethod === 'sso' && detectedBrowsers.length > 1 && (
             <div className="flex items-center gap-2 mt-1.5">
-              <span className="text-[10px] text-overlay0 shrink-0">Sign-in browser</span>
+              <span className="text-[10px] text-[var(--text-muted)] shrink-0">Sign-in browser</span>
               <select
                 value={authBrowser}
                 disabled={busy}
                 onChange={(e) => { void changeAuthBrowser(e.target.value as AuthBrowser) }}
-                className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors disabled:opacity-40"
+                className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus-ring-strong focus:border-blue/50 transition-colors disabled:opacity-40"
               >
                 {AUTH_BROWSERS.map((b) => (
                   <option key={b} value={b}>{AUTH_BROWSER_LABELS[b]}</option>
                 ))}
               </select>
-              <span className="text-[10px] text-overlay0">
+              <span className="text-[10px] text-[var(--text-muted)]">
                 {authBrowser === 'edge' ? 'Handles SSO without an extension' : 'Needs your policy’s SSO extension'}
               </span>
             </div>

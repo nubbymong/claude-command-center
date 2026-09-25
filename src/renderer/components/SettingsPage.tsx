@@ -203,7 +203,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     value={settings.defaultWorkingDirectory}
                     onChange={e => save({ defaultWorkingDirectory: e.target.value })}
                     placeholder="Leave empty for home directory"
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
                   />
                 </Field>
                 <Field label="Local Machine Name">
@@ -211,7 +211,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     value={settings.localMachineName}
                     onChange={e => save({ localMachineName: e.target.value })}
                     placeholder="e.g. Desktop, Laptop"
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
                   />
                 </Field>
                 <Field label="Update Channel">
@@ -249,7 +249,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Show intelligent tips
-                  <span className="text-[10px] text-overlay0">(the tip row in the sidebar, under Ask Conductor)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(the tip row in the sidebar, under Ask Conductor)</span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-2">
                   <input
@@ -259,7 +259,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Show Ask Conductor
-                  <span className="text-[10px] text-overlay0">(The button at the bottom of the sidebar)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(The button at the bottom of the sidebar)</span>
                 </label>
                 {/* Sessions panel (the two-mode left panel, design pass
                     2026-08-24; supersedes the #362 layout picker). One choice:
@@ -286,7 +286,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Disable Claude Code dynamic workflows
-                  <span className="text-[10px] text-overlay0">(applies to new sessions; CC fans out up to 1000 subagents per workflow)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(applies to new sessions; CC fans out up to 1000 subagents per workflow)</span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
@@ -297,7 +297,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Index conversation logs
-                    <span className="block text-[10px] text-overlay0">The Conductor indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">The Conductor indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
                   </span>
                 </label>
                 <div className="flex items-center gap-2 mt-1">
@@ -307,7 +307,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   >
                     Clear index
                   </button>
-                  <span className="text-[10px] text-overlay0">(removes the app's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(removes the app's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
                 </div>
               </Section>
 
@@ -325,7 +325,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Enable Sentinel
-                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.</span>
                   </span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
@@ -336,7 +336,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Auto-open findings panel
-                  <span className="text-[10px] text-overlay0">(When an analysis completes with open findings)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(When an analysis completes with open findings)</span>
                 </label>
                 <Field label="Analysis account">
                   <select
@@ -356,7 +356,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       </option>
                     ))}
                   </select>
-                  <span className="block text-[10px] text-overlay0 mt-1">
+                  <span className="block text-[10px] text-[var(--text-muted)] mt-1">
                     The account Sentinel's background analysis runs under. Switch it if that account hits its usage limit. Applies to the next analysis or Re-run.
                   </span>
                 </Field>
@@ -372,13 +372,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Session Watchdog (auto-retry on rate limit / overload)
-                    <span className="block text-[10px] text-overlay0">Auto-types a retry message into a session's terminal after a rate-limit reset, an overload/server-error backoff, or a flagged-safeguard clears. Off by default. Applies to newly launched sessions.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Auto-types a retry message into a session's terminal after a rate-limit reset, an overload/server-error backoff, or a flagged-safeguard clears. Off by default. Applies to newly launched sessions.</span>
                   </span>
                 </label>
                 {settings.watchdog?.enabled === true && (
                   <>
                     <div className="pl-6 pt-1" data-testid="watchdog-checks">
-                      <div className="text-[10px] text-overlay0 mb-1">
+                      <div className="text-[10px] text-[var(--text-muted)] mb-1">
                         Which checks may auto-type. Each session can switch these for itself from its right-click menu; changing them here sets what a newly launched session starts with.
                       </div>
                       {([
@@ -409,7 +409,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                             />
                             <span>
                               {label}
-                              <span className="block text-[10px] text-overlay0">{hint}</span>
+                              <span className="block text-[10px] text-[var(--text-muted)]">{hint}</span>
                             </span>
                           </label>
                         )
@@ -448,14 +448,14 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                         }}
                         className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus-ring-strong focus:border-blue/50 transition-colors"
                       />
-                      <span className="block text-[10px] text-overlay0 mt-1">Flags a watched session in the services view when its provider stops streaming for this long. Status only — never triggers a retry. 0 turns it off.</span>
+                      <span className="block text-[10px] text-[var(--text-muted)] mt-1">Flags a watched session in the services view when its provider stops streaming for this long. Status only — never triggers a retry. 0 turns it off.</span>
                     </Field>
                   </>
                 )}
               </Section>
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
-                <p className="text-[11px] text-overlay0 leading-relaxed">
+                <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
                   Terminal font, size and line height moved to the Font &amp; Size tab.
                 </p>
                 <Field label="Cursor Style">
@@ -491,7 +491,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     GPU rendering
-                    <span className="block text-[10px] text-overlay0">Draws terminals on the GPU, which is faster with several busy sessions. ON by default. The GPU renderer shares one cache of character images across every open terminal; when one session rebuilds that cache, each other session now redraws its own view the way a window resize does, so the text no longer drops out. If you ever do see characters go missing while backgrounds stay, press Ctrl+Alt+G to save a diagnostic (an event log plus a screenshot) and send it over. Turn this off to fall back to the plain renderer. Applies to terminals opened after the change.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Draws terminals on the GPU, which is faster with several busy sessions. ON by default. The GPU renderer shares one cache of character images across every open terminal; when one session rebuilds that cache, each other session now redraws its own view the way a window resize does, so the text no longer drops out. If you ever do see characters go missing while backgrounds stay, press Ctrl+Alt+G to save a diagnostic (an event log plus a screenshot) and send it over. Turn this off to fall back to the plain renderer. Applies to terminals opened after the change.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
@@ -503,7 +503,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Classic terminal copy/paste
-                    <span className="block text-[10px] text-overlay0">Disables Claude&apos;s mouse mode so selection + right-click copy/paste work the classic way: select text then right-click to copy; right-click with nothing selected to paste. Trade-off: you lose Claude&apos;s click-to-expand and scroll-inside-Claude; xterm scrollback + native selection take over. Changes apply to newly-launched sessions.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Disables Claude&apos;s mouse mode so selection + right-click copy/paste work the classic way: select text then right-click to copy; right-click with nothing selected to paste. Trade-off: you lose Claude&apos;s click-to-expand and scroll-inside-Claude; xterm scrollback + native selection take over. Changes apply to newly-launched sessions.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
@@ -515,7 +515,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Clickable question options (Claude Code)
-                    <span className="block text-[10px] text-overlay0">Claude Code 2.1.195+ renders its multiple-choice questions as clickable targets. Off by default: stray clicks in the terminal could select an answer, so answers stay keyboard-only (type the option number or arrow + Enter); wheel scroll is unaffected. Applies to newly-launched sessions.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Claude Code 2.1.195+ renders its multiple-choice questions as clickable targets. Off by default: stray clicks in the terminal could select an answer, so answers stay keyboard-only (type the option number or arrow + Enter); wheel scroll is unaffected. Applies to newly-launched sessions.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
@@ -527,10 +527,10 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Disable background tasks
-                    <span className="block text-[10px] text-overlay0">Stops a stray Ctrl+B (or /bg) from detaching a session into a background agent and stranding your conversation. On by default. Turn off only if you deliberately use Claude Code background agents. Applies to newly-launched sessions.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">Stops a stray Ctrl+B (or /bg) from detaching a session into a background agent and stranding your conversation. On by default. Turn off only if you deliberately use Claude Code background agents. Applies to newly-launched sessions.</span>
                   </span>
                 </label>
-                <p className="text-[11px] text-overlay0 mt-2 leading-relaxed">
+                <p className="text-[11px] text-[var(--text-muted)] mt-2 leading-relaxed">
                   Terminal settings apply to new terminals. Restart sessions for changes to take effect.
                 </p>
               </Section>
@@ -543,12 +543,12 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       onClick={() => save({ debugMode: !settings.debugMode })}
                       label="Verbose Logging"
                     />
-                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-blue' : 'text-overlay0'}`}>
+                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-blue' : 'text-[var(--text-muted)]'}`}>
                       {settings.debugMode ? 'ON' : 'OFF'}
                     </span>
                   </div>
                 </Field>
-                <p className="text-[11px] text-overlay0 mt-1 leading-relaxed">
+                <p className="text-[11px] text-[var(--text-muted)] mt-1 leading-relaxed">
                   Logs PTY input/output, session events, and IPC calls to app.log. Persists across updates.
                 </p>
                 <button
@@ -560,7 +560,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
               </Section>
 
               <Section title="Advanced" icon={<path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
-                <p className="text-[11px] text-overlay0 mb-2 leading-relaxed">
+                <p className="text-[11px] text-[var(--text-muted)] mb-2 leading-relaxed">
                   Re-display the account attribution banner on the Tokenomics page if you previously dismissed it.
                 </p>
                 <button
@@ -590,7 +590,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     <option value="ask">Ask each time — pick the account when a session resumes</option>
                   </select>
                 </Field>
-                <p className="text-[11px] text-overlay0 mt-1">
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
                   Only matters when you have two or more accounts. Applies when the app restarts and restores your sessions.
                 </p>
               </Section>
@@ -657,7 +657,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Build</span>
-                  <span className="text-xs text-overlay0 font-mono tabular-nums">
+                  <span className="text-xs text-[var(--text-muted)] font-mono tabular-nums">
                     {/* #384: commit short sha first, then the build time. */}
                     {shortSha(__BUILD_SHA__)} · {formatBuildTime(__BUILD_TIME__)}
                   </span>
@@ -671,7 +671,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   >
                     View full changelog
                   </button>
-                  <span className="text-[11px] text-overlay0">|</span>
+                  <span className="text-[11px] text-[var(--text-muted)]">|</span>
                   <button
                     onClick={() => setShowTraining(true)}
                     className="text-[11px] text-blue hover:text-blue/80 transition-colors"
@@ -751,7 +751,7 @@ function StatusLineTab({
         <Toggle on={statusLineEnabled} onClick={() => setMaster(!statusLineEnabled)} label="Status line" />
         <div className="min-w-0">
           <div className="text-sm text-text leading-tight">Show the status line</div>
-          <div className="text-[11px] text-overlay0 leading-tight">
+          <div className="text-[11px] text-[var(--text-muted)] leading-tight">
             Live usage, cost and limits beneath every session. When off, only the session controls remain.
           </div>
         </div>
@@ -774,7 +774,7 @@ function StatusLineTab({
           <div className="rounded-lg border border-surface0/80 overflow-hidden">
             <StatusLinePreview sl={sl} />
           </div>
-          <p className="text-[11px] text-overlay0 mt-2">
+          <p className="text-[11px] text-[var(--text-muted)] mt-2">
             Toggle elements below to see how the status line changes.
           </p>
         </div>
@@ -802,7 +802,7 @@ function StatusLineTab({
                 />
                 <div className="min-w-0">
                   <div className="text-sm text-text leading-tight">{label}</div>
-                  <div className="text-[11px] text-overlay0 leading-tight">{description}</div>
+                  <div className="text-[11px] text-[var(--text-muted)] leading-tight">{description}</div>
                 </div>
               </div>
             ))}
@@ -848,7 +848,7 @@ function BucketToggleCard({ title, subtitle, labels, hidden, onToggle }: {
     <div className="settings-card overflow-hidden">
       <div className="px-4 py-2.5 border-b settings-divider">
         <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">{title}</h3>
-        <p className="text-[11px] text-overlay0 mt-0.5">{subtitle}</p>
+        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{subtitle}</p>
       </div>
       <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
         {labels.map((label) => (
@@ -889,14 +889,14 @@ function UsageBucketToggles(): React.ReactElement | null {
 
   if (labels === null) {
     return (
-      <div className="settings-card px-4 py-3 text-[11px] text-overlay0">
+      <div className="settings-card px-4 py-3 text-[11px] text-[var(--text-muted)]">
         Loading your current usage limits…
       </div>
     )
   }
   if (labels.length === 0) {
     return (
-      <div className="settings-card px-4 py-3 text-[11px] text-overlay0">
+      <div className="settings-card px-4 py-3 text-[11px] text-[var(--text-muted)]">
         Per-limit toggles appear here once your usage limits load (start a session or open the account usage view once).
       </div>
     )
@@ -931,7 +931,7 @@ function FooterDisplayCard(): React.ReactElement {
     <div className="settings-card overflow-hidden">
       <div className="px-4 py-2.5 border-b settings-divider">
         <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Multi-account footer style</h3>
-        <p className="text-[11px] text-overlay0 mt-0.5">
+        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
           Minimal replaces each account&apos;s bars with traffic-light dots -- one for usage (the worse of your
           time windows) and one per model -- and shows the account&apos;s name instead of its email where you
           have set one. Green under 70%, amber to 89%, red at 90% and above: the same points the bars change
@@ -1085,7 +1085,7 @@ export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?
   const statusColor =
     status === 'up-to-date' ? 'text-green' :
     status === 'available' ? 'text-yellow' :
-    'text-overlay0'
+    'text-[var(--text-muted)]'
 
   // Once a check finds an update, the primary button BECOMES the install action
   // — previously this screen only printed "Update available" and left the user to
@@ -1118,12 +1118,12 @@ export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?
           <span className={`text-xs ${statusColor}`}>{statusText}</span>
         )}
         {(status === 'up-to-date' || status === 'available') && (
-          <span className="text-[10px] text-overlay0" title="Installed version and release channel">
+          <span className="text-[10px] text-[var(--text-muted)]" title="Installed version and release channel">
             Installed: {formatInstalledVersion(__APP_VERSION__, channel)}
           </span>
         )}
         {updateFound && !installing && (
-          <span className="text-[10px] text-overlay0">Restarts the app; open sessions are saved.</span>
+          <span className="text-[10px] text-[var(--text-muted)]">Restarts the app; open sessions are saved.</span>
         )}
       </div>
     </Field>
@@ -1227,13 +1227,13 @@ function FontSizeTab({ settings, save }: {
         >
           The quick brown fox jumps over the lazy dog
         </div>
-        <p className="text-[11px] text-overlay0 leading-relaxed">
+        <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
           Size scales the whole app together. The terminal keeps its own font below.
         </p>
       </Section>
 
       <Section title="Regions" icon={<><rect x="2" y="2.5" width="5" height="4" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /><rect x="9" y="2.5" width="5" height="4" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /><rect x="2" y="9" width="12" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /></>}>
-        <p className="text-[11px] text-overlay0 leading-relaxed -mt-1 mb-1">
+        <p className="text-[11px] text-[var(--text-muted)] leading-relaxed -mt-1 mb-1">
           Nudge a part of the UI relative to the global size. 100% follows global. For example, set Status bars below 100% to keep them smaller than the rest.
         </p>
         {TYPOGRAPHY_REGIONS.map((r) => {
@@ -1245,7 +1245,7 @@ function FontSizeTab({ settings, save }: {
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm text-text leading-tight">{r.label}</div>
-                  <div className="text-[10px] text-overlay0 leading-tight">{r.hint}</div>
+                  <div className="text-[10px] text-[var(--text-muted)] leading-tight">{r.hint}</div>
                 </div>
                 {overridden && (
                   <button onClick={() => resetRegion(r.key)} className="text-[11px] text-blue hover:text-blue/80 transition-colors shrink-0">
@@ -1276,7 +1276,7 @@ function FontSizeTab({ settings, save }: {
       </Section>
 
       <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
-        <p className="text-[11px] text-overlay0 leading-relaxed -mt-1">
+        <p className="text-[11px] text-[var(--text-muted)] leading-relaxed -mt-1">
           The terminal is independent of the UI scale above and keeps its own font.
         </p>
         <Field label="Font Family">
@@ -1347,7 +1347,7 @@ export function BuiltinToolsSection({ settings, save, onOpenAccounts }: {
         />
         <span>
           Give sessions the built-in tools (conductor MCP)
-          <span className="block text-[10px] text-overlay0">A local helper registered per session (Claude, Codex, local and SSH). Applies to new sessions.</span>
+          <span className="block text-[10px] text-[var(--text-muted)]">A local helper registered per session (Claude, Codex, local and SSH). Applies to new sessions.</span>
         </span>
       </label>
       <div
@@ -1462,9 +1462,9 @@ export function TabsRail({ activeTab, onChange }: { activeTab: SettingsTab; onCh
           <button
             key={tab.id}
             onClick={() => onChange(tab.id)}
-            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring-strong-inset"
             style={{
-              background: active ? 'color-mix(in srgb, var(--color-blue) 15%, transparent)' : 'transparent',
+              background: active ? 'color-mix(in srgb, var(--color-blue) 8%, transparent)' : 'transparent',
               color: active ? 'var(--color-blue)' : 'var(--text-secondary)',
               borderLeft: `2px solid ${active ? 'var(--color-blue)' : 'transparent'}`,
             }}
@@ -1514,7 +1514,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
             ref={inputRef}
             tabIndex={0}
             data-shortcut-capture
-            className="px-2.5 py-1 bg-crust border border-blue/50 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center outline-none animate-pulse"
+            className="px-2.5 py-1 bg-crust border border-blue/50 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center focus-ring-strong animate-pulse"
             onKeyDown={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -1540,7 +1540,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
             ref={testRef}
             tabIndex={0}
             data-shortcut-capture
-            className="px-2.5 py-1 bg-crust border border-green/40 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center outline-none"
+            className="px-2.5 py-1 bg-crust border border-green/40 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center focus-ring-strong"
             onKeyDown={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -1571,7 +1571,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
             </button>
             <button
               onClick={() => setTesting(true)}
-              className="px-1.5 py-1 rounded-md text-[10px] bg-surface0/40 text-overlay0 hover:text-overlay1 transition-colors border border-transparent hover:border-surface0/60"
+              className="px-1.5 py-1 rounded-md text-[10px] bg-surface0/40 text-[var(--text-muted)] hover:text-text transition-colors border border-transparent hover:border-surface0/60"
               title="Test this shortcut"
             >
               Test

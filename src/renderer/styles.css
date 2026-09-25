@@ -265,7 +265,10 @@
   /* Onboarding harness — brand blue, light values (darkened for contrast on
      the light substrate, same treatment as --accent and the effort ramp). */
   --ob: #1668c4;
-  --ob-bright: #2f9bff;
+  /* The light end of the button gradient (.cta, .run, the tour's Next) sits
+     under the near-white label, so it is a mid azure, not a bright one: every
+     point of the gradient clears 4.5:1 (token-contrast.test.ts). */
+  --ob-bright: #145db0;
   --ob-deep: #10508f;
   --ob-soft: rgba(22,104,196,.10);
   --ob-line: rgba(22,104,196,.5);
@@ -378,6 +381,24 @@ input[type="range"] {
 .focus-ring-strong:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+/* The same ring drawn just inside the control, for one that runs edge to edge
+   in a scrolling container (the Settings tabs rail, on --surface-panel), where
+   a ring outside it would be clipped at the container's sides. A band of the
+   rail's own surface inside the ring sets it off from a selected tab's tint,
+   as the gap does for the outside form. */
+.focus-ring-strong-inset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 4px var(--surface-panel);
+}
+/* The same ring further out, for a control that draws its own ring to show
+   it is selected (the account colour swatches: a 2px gap and a 2px ring, as
+   a box-shadow). The focus ring sits outside that one, set off by another 2px
+   gap, so a focused selected swatch shows both rings. */
+.focus-ring-strong-outset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
 }
 /* Active rail icon glow (eased). */
 .rail-active {
