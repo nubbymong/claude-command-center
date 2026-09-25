@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-25T00:54:18.541Z",
-  "head": "fa2b2acfb1782fe94dcaa51f8e0b284b0dfaf7a7",
-  "tree": "fee5bae5a4ad66259aa8ca493446d4dae30eb90e",
+  "generatedAt": "2026-09-25T02:42:24.047Z",
+  "head": "ee9a122f113419d9c822a3bfc126bdb0bf9bd697",
+  "tree": "b078fecd87238a46499e6deb3a28350c33ddd1a2",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2263,
+  "trackedFileCount": 2279,
   "excludedFileCount": 373,
-  "scannedFileCount": 1890,
+  "scannedFileCount": 1906,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 342,
-  "pathDigest": "5faa63aa02e690b74afe552150e2c4a88adfdddbccf87721fa6f90899948caef",
+  "matchedPathCount": 348,
+  "pathDigest": "d31e04329d2e908ef74f95d2d5f5395b25960c34870a676bdf2a8c48851c8af5",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -437,7 +437,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 57
+      "lineCount": 58
     },
     {
       "path": "src/main/logging/should-register-run.ts",
@@ -463,6 +463,13 @@
     },
     {
       "path": "src/main/provider-accounts.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/main/provider-in-use.ts",
       "predicates": [
         "P14"
       ],
@@ -1035,7 +1042,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 30
+      "lineCount": 32
     },
     {
       "path": "src/renderer/components/command-bar/chips.tsx",
@@ -1881,11 +1888,36 @@
       "lineCount": 3
     },
     {
+      "path": "tests/unit/main/install-tab-command-secrets.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
       "path": "tests/unit/main/path-utils-home.test.ts",
       "predicates": [
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/main/provider-in-use.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "lineCount": 10
+    },
+    {
+      "path": "tests/unit/main/provider-launch-gate.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "lineCount": 38
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -1919,11 +1951,27 @@
       "lineCount": 2
     },
     {
+      "path": "tests/unit/main/pty-spawn-provider-off.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "lineCount": 15
+    },
+    {
       "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
       "predicates": [
         "P13"
       ],
       "lineCount": 4
+    },
+    {
+      "path": "tests/unit/main/review-provider-off.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 17
     },
     {
       "path": "tests/unit/main/sanitize-restored-spawn-options.test.ts",
@@ -2699,10 +2747,11 @@
       "path": "tests/unit/renderer/terminalview-account-launch.test.tsx",
       "predicates": [
         "P04",
+        "P05",
         "P07",
         "P13"
       ],
-      "lineCount": 64
+      "lineCount": 81
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",

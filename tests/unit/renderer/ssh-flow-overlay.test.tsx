@@ -311,3 +311,33 @@ describe('SshFlowOverlay with Claude Code switched off', () => {
     expect(launched()).toHaveBeenCalledWith('s1')
   })
 })
+
+// WP2: main refuses "Launch Claude" on its own while Claude Code is off
+// (src/main/provider-launch-gate.ts) -- a switch flipped after this overlay
+// last rendered. The refusal is said where the Claude-off reason is, and the
+// overlay stays usable (no stuck busy state).
+describe("SshFlowOverlay when main refuses the launch", () => {
+  const OFF = 'Claude Code is off. Turn it on in Settings, Accounts.'
+  const btn = (id: string) => container.querySelector(`[data-testid="${id}"]`) as HTMLButtonElement | null
+
+  it('says why, and Launch Claude is clickable again', async () => {
+    ;(globalThis as any).window.electronAPI.ssh.launchClaude = vi.fn(async () => ({ refused: { code: 'provider-off', providerId: 'claude', message: OFF } }))
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~' })
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: SSH_ENTRY.INNER }) })
+    expect(container.querySelector('[data-testid="ssh-claude-off"]')).toBeNull()
+    await act(async () => { btn('ssh-launch-claude')!.click() })
+    expect((globalThis as any).window.electronAPI.ssh.launchClaude).toHaveBeenCalledWith('s1')
+    expect(container.querySelector('[data-testid="ssh-claude-off"]')!.textContent).toBe(OFF)
+    expect(btn('ssh-launch-claude')!.disabled).toBe(false)
+  })
+
+  it('an accepted launch says nothing of the kind', async () => {
+    ;(globalThis as any).window.electronAPI.ssh.launchClaude = vi.fn(async () => undefined)
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~' })
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: SSH_ENTRY.INNER }) })
+    await act(async () => { btn('ssh-launch-claude')!.click() })
+    expect(container.querySelector('[data-testid="ssh-claude-off"]')).toBeNull()
+  })
+})

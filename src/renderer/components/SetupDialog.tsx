@@ -15,6 +15,7 @@ import {
   DIALOG_LABEL_STYLE,
 } from './ui/Dialog'
 import { noteClaudeMissingAtSetup, type FirstRunOutcome } from '../onboarding/provider-choice'
+import { launchRefusalOf } from '../../shared/providers'
 
 interface Props {
   /** `{ codexOnly: true }` when the user continued without Claude Code
@@ -181,7 +182,11 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
       // Spawn CLI setup PTY (listeners already subscribed above)
       const cols = term.cols
       const rows = term.rows
-      window.electronAPI.setup.spawnCliSetup(cols, rows).then(() => {
+      window.electronAPI.setup.spawnCliSetup(cols, rows).then((started) => {
+        // Main refuses this Claude Code terminal while Claude Code is off:
+        // said here, and Skip for now goes on without it.
+        const refusal = launchRefusalOf(started)
+        if (refusal) { term.writeln(refusal.message); return }
         setPtySpawned(true)
       })
     }

@@ -23,6 +23,13 @@ export function spentCommand(opts: TerminalOptions | undefined): TerminalOptions
  * launch cannot resume it, and TerminalView consumes the command at its first
  * spawn, so a Restart opens a plain shell. The user confirmed ONE run.
  *
+ * `noCommandSecrets`: the tab's shell gets none of the command-button secrets
+ * every other local shell gets as environment variables. The command is a
+ * third party's install script, so the secrets are left out of the
+ * environment it inherits. That keeps them out of its way; it is not a
+ * boundary against a script running as the same user. It stays on the tab's
+ * options, so a Restart's plain shell goes without them too.
+ *
  * Returns the new session id.
  */
 export function openCommandTerminal(opts: { label: string; command: string }): string {
@@ -42,7 +49,7 @@ export function openCommandTerminal(opts: { label: string; command: string }): s
     transient: true,
     // The stored shape of a terminal-only session (see SessionDialog).
     provider: 'claude',
-    terminalOptions: { command: opts.command, elevated: false },
+    terminalOptions: { command: opts.command, elevated: false, noCommandSecrets: true },
   })
   return id
 }

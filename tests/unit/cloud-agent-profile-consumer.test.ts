@@ -4,6 +4,9 @@
 // account, and an agent could start mid-rotation and read the old file. The
 // manager now holds the profile for the child's life and waits out a rotation.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+// Every provider is on here: main's launch rule has its own suites
+// (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
+vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
 import { composeProviders } from '../../src/main/providers/compose'
 import * as fs from 'fs'
 import * as os from 'os'

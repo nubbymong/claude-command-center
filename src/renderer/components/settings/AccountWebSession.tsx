@@ -38,7 +38,7 @@ interface Props {
 }
 
 type Web = { status: 'none' | 'active' | 'expired'; accountEmail?: string | null; acquiredAt?: number; expiresAt?: number | null }
-type Cli = { authenticated: boolean; subscriptionType?: string; expiresAt?: number; email?: string; orgName?: string; error?: string }
+type Cli = { authenticated: boolean; subscriptionType?: string; expiresAt?: number; email?: string; orgName?: string; error?: string; notChecked?: string }
 
 const fmt = (ms?: number | null): string =>
   typeof ms === 'number' && ms > 0 ? new Date(ms).toLocaleString() : 'unknown'
@@ -185,12 +185,15 @@ export function AccountWebSession({ profileId, accountName }: Props) {
       <div className="flex items-start gap-2">
         <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${dot(cli.authenticated)}`} />
         <div className="flex-1 min-w-0">
-          <div className="text-[11px] text-text">
+          {cli.notChecked ? <div className="text-[11px] text-text">Code session (not checked)</div> : <div className="text-[11px] text-text">
             Code session {cli.authenticated ? '— signed in' : '— not signed in'}
             {cli.subscriptionType ? <span className="text-overlay0"> · {cli.subscriptionType}</span> : null}
-          </div>
+          </div>}
           <div className="text-[10px] text-overlay0 leading-snug">
-            {cli.authenticated
+            {/* WP2: Claude Code is off, so main did not run the CLI to ask. */}
+            {cli.notChecked
+              ? <span data-testid="account-cli-not-checked">{cli.notChecked}</span>
+              : cli.authenticated
               ? <>
                   {cli.email ? <>Signed in as <span className="text-subtext0">{cli.email}</span>. </> : null}
                   {cli.orgName ? <>{cli.orgName}. </> : null}

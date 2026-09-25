@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "5faa63aa02e690b74afe552150e2c4a88adfdddbccf87721fa6f90899948caef",
-  "manifestHead": "fa2b2acfb1782fe94dcaa51f8e0b284b0dfaf7a7",
+  "manifestPathDigest": "d31e04329d2e908ef74f95d2d5f5395b25960c34870a676bdf2a8c48851c8af5",
+  "manifestHead": "ee9a122f113419d9c822a3bfc126bdb0bf9bd697",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -235,7 +235,7 @@
       ],
       "category": "OTHER",
       "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the status shape gains notChecked (Claude Code only), set when the CLI is not asked because Claude Code is off; tests/unit/main/probes-provider-off.test.ts",
       "note": "Claude-only; mentions Codex in a comment (corrected in WP2 commit 6g: Codex sign-in is judged by `codex login status`, never by reading the credential file)"
     },
     {
@@ -347,7 +347,7 @@
       ],
       "category": "REVIEW-MCP",
       "disposition": "move",
-      "evidence": "tests/unit/main/codex-review-mcp-tool.test.ts rewritten by WP2 commit 5a (the review runs on a prepared review launch: reviewer default else provider default, lease released after the run, refusals mapped, request on stdin); exec/ACL/path/git-guard cases retained (WP1.57); WP2 commit 6g: the reply to a session that cannot use the tool names Settings, Accounts and Settings, General, Built-in Tools (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "evidence": "tests/unit/main/codex-review-mcp-tool.test.ts rewritten by WP2 commit 5a (the review runs on a prepared review launch: reviewer default else provider default, lease released after the run, refusals mapped, request on stdin); exec/ACL/path/git-guard cases retained (WP1.57); WP2 commit 6g: the reply to a session that cannot use the tool names Settings, Accounts and Settings, General, Built-in Tools (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a review refuses at run time once the reviewing provider is off; tests/unit/main/review-provider-off.test.ts",
       "note": "WP2 commit 5a: the review no longer runs through runCodexStreaming/readCodexAuthStatus; the accounts service prepares a review launch (kind review, local) and the Codex package reviewer adapter (src/main/providers/codex/review.ts) runs one isolated codex exec",
       "adaptsTests": [
         "tests/unit/main/codex-review-mcp-tool.test.ts"
@@ -422,7 +422,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts)",
+      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the switch-off rule counts provider-in-use.ts and the version probe is handed the launch rule; tests/unit/main/provider-in-use.test.ts",
       "note": "concrete provider registration and handler registration move to the single main composition root; index.ts calls it"
     },
     {
@@ -479,7 +479,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/wp1/launch-handoff.test.ts asserts the binding fields at the IPC boundary (WP1.38, WP1.42); existing codexOptions superRefine cases retained",
+      "evidence": "tests/wp1/launch-handoff.test.ts asserts the binding fields at the IPC boundary (WP1.38, WP1.42); existing codexOptions superRefine cases retained; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): pty:spawn and the SSH Launch Claude refuse a provider that is off, the legacy CLI installs for a Claude launch only, and the install tab gets no command-button secrets; tests/unit/main/pty-spawn-provider-off.test.ts",
       "note": "WP2 commit 4: pty:spawn takes the Codex account as providerAccountId (+ a per-launch acknowledgeRealmOnly), Codex only; the Codex model is bounded; codexLaunch is main-internal; a Codex SSH spawn is refused first; the launch is prepared by the accounts service and handed to pty-manager with its lease, the wait registered with pty-manager (beginSpawnPreparation). authRealmId/identityId are resolved by the service, never sent"
     },
     {
@@ -522,6 +522,16 @@
       "disposition": "added",
       "evidence": "new WP2 runtime for the provider-neutral accounts service: the one secret store, the lease registry, the registered packages and the saved settings (three-way preference from each package's enablement data, owner-enabled experimental capabilities); runs the one-time Codex default-home adoption after the legacy reconcile; covered by tests/wp1/setup-journal-recovery.test.ts (WP1.47), tests/wp1/consumer-leases.test.ts (WP1.46), tests/wp1/provider-ipc.test.ts (WP1.42); WP2 commit 6g: discoverProvidersAtStart, the one background look for each switched-on provider's CLI at start (WP1.17); tests/wp1/cli-discovery.test.ts",
       "note": "created by WP2; replaces the singleton Codex account IPC once the renderer moves to providerAccounts (commit 5)"
+    },
+    {
+      "path": "src/main/provider-in-use.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): what runs a provider's CLI without an account lease (Claude Code's sessions, cloud agents, Insights, Sentinel, an accepted SSH Launch Claude), composed for the switch-off rule; tests/unit/main/provider-in-use.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
     },
     {
       "path": "src/main/providers/claude/discovery.ts",
@@ -1068,7 +1078,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57)",
+      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/main/pty-spawn-provider-off.test.ts",
       "note": "codex block replaced by the provider-neutral providers/accounts API; codexReview block retained"
     },
     {
@@ -1309,7 +1319,7 @@
       ],
       "category": "SETUP",
       "disposition": "replace",
-      "evidence": "WP2 commit 6e: first-run setup lets a Codex-only user continue without Claude Code (WP1.2); tests/unit/renderer/setup-codex-only.test.tsx",
+      "evidence": "WP2 commit 6e: first-run setup lets a Codex-only user continue without Claude Code (WP1.2); tests/unit/renderer/setup-codex-only.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the CLI setup terminal says why main refused it; tests/unit/renderer/setup-cli-provider-off.test.tsx",
       "note": "existing dialog adapted: \"Use Codex only\" when the Claude CLI is missing"
     },
     {
@@ -1346,7 +1356,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "tests/unit/renderer/session-launch.test.ts adapted (WP1.38); WP2 commit 6e: a transient install tab runs its command once; a Restart opens a plain shell (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
+      "evidence": "tests/unit/renderer/session-launch.test.ts adapted (WP1.38); WP2 commit 6e: a transient install tab runs its command once; a Restart opens a plain shell (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session, and nothing is asked first while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "account-choice gate becomes provider-neutral so a Codex launch can pick among active Codex accounts",
       "adaptsTests": [
         "tests/unit/renderer/session-launch.test.ts"
@@ -2067,7 +2077,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57); WP2 commit 6g: the codex API typing removed (tests/wp1/legacy-codex-retired.test.ts, WP1.57)",
+      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57); WP2 commit 6g: the codex API typing removed (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "codex API typing replaced by the provider-neutral API typing"
     },
     {
@@ -2088,7 +2098,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts; WP2 commit 6e: a too-old CLI points at Check again in Settings, Accounts, which refreshes the executable launches run (WP1.41); tests/unit/renderer/launch-account.test.ts; WP2 commit 6g: providerCliMissingText, the session dialog's CLI-missing banner in the Providers card's own words (WP1.41); tests/unit/renderer/session-dialog-codex-account.test.tsx",
+      "evidence": "WP2 commit 6c account binding at launch: the session names its account and an unverified sign-in is acknowledged per launch (WP1.42, WP1.45); tests/unit/renderer/launch-account.test.ts; WP2 commit 6e: a too-old CLI points at Check again in Settings, Accounts, which refreshes the executable launches run (WP1.41); tests/unit/renderer/launch-account.test.ts; WP2 commit 6g: providerCliMissingText, the session dialog's CLI-missing banner in the Providers card's own words (WP1.41); tests/unit/renderer/session-dialog-codex-account.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): providerOffForLaunch: a launch main refuses asks nothing first; tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "picker options, launch plan, refusal wording, the restart default per provider"
     },
     {
@@ -2228,7 +2238,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42)",
+      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts",
       "note": "binding/identity types added; CodexOptions retained"
     },
     {
@@ -2396,7 +2406,7 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the suite gained only a mock of the launch gate answering on (every provider on), so it still tests the cancel path; the gate itself is tested in tests/unit/main/cloud-agent-provider-off.test.ts",
       "note": ""
     },
     {
@@ -2547,7 +2557,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: install/auth gate cases adapted to realm resolution; exec/ACL cases retained; adapted in place: tests/unit/main/codex-review-mcp-tool.test.ts",
+      "evidence": "WP1.58: install/auth gate cases adapted to realm resolution; exec/ACL cases retained; adapted in place: tests/unit/main/codex-review-mcp-tool.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the suite gained a mock of the launch gate answering on; the run-time refusal is tested in tests/unit/main/review-provider-off.test.ts",
       "note": ""
     },
     {
@@ -2648,6 +2658,16 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/install-tab-command-secrets.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 the transient Install/Update Codex tab's shell gets none of the command-button secrets while an ordinary shell still does (WP1.2); tests/unit/main/install-tab-command-secrets.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the comment on what the isolation is (not a boundary against a script running as the same user) is pinned by the same tests; tests/unit/main/install-tab-command-secrets.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
+    },
+    {
       "path": "tests/unit/main/path-utils-home.test.ts",
       "predicates": [
         "P13"
@@ -2656,6 +2676,30 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/provider-in-use.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a switch-off of Claude Code is refused while a cloud agent, an Insights run, a Sentinel run or an SSH Launch Claude runs, and Codex is not held by them; tests/unit/main/provider-in-use.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
+    },
+    {
+      "path": "tests/unit/main/provider-launch-gate.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 main's one launch rule, answered by the real accounts service from the saved settings: Claude Code absent means on, Codex absent means not answered yet (launches, as prepareLaunch always allowed), off refuses, an unreadable setting refuses, and the renderer's launch rule agrees on every combination (WP1.60 enable/disable); tests/unit/main/provider-launch-gate.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): plus: a probe asks the same rule but is not logged, and the tab line reads the refusal once; tests/unit/main/provider-launch-gate.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -2677,7 +2721,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "existing pty:spawn strip suite; WP2 commit 4 added the codexLaunch case: a renderer-sent launch is stripped and a Codex spawn with no accounts service is refused (WP1.38, WP1.42; tests/wp1/launch-handoff.test.ts, tests/wp1/launch-handoff-pty.test.ts)",
+      "evidence": "existing pty:spawn strip suite; WP2 commit 4 added the codexLaunch case: a renderer-sent launch is stripped and a Codex spawn with no accounts service is refused (WP1.38, WP1.42; tests/wp1/launch-handoff.test.ts, tests/wp1/launch-handoff-pty.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the suite gained a mock of the launch gate answering on; the refusal is tested in tests/unit/main/pty-spawn-provider-off.test.ts",
       "note": "baseline pty:spawn strip suite; WP2 commit 4 added the codexLaunch case (re-dispositioned: it changed)"
     },
     {
@@ -2701,6 +2745,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/pty-spawn-provider-off.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 pty:spawn and the SSH flow Launch Claude refuse a launch of a provider that is off before anything starts (new launch, restored session, Restart, Ask Conductor, SSH, reattach, Codex) while a terminal-only session still starts (WP1.60 enable/disable); tests/unit/main/pty-spawn-provider-off.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): plus: an accepted shell-only SSH Launch Claude counts as Claude in use, and the legacy CLI installs for a Claude launch only; tests/unit/main/pty-spawn-provider-off.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
+    },
+    {
       "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
       "predicates": [
         "P13"
@@ -2709,6 +2764,17 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/review-provider-off.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 codex_review and claude_review refuse at run time once the reviewing provider is off, before any diff, lease or reviewer CLI (WP1.60 enable/disable); tests/unit/main/review-provider-off.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): plus: each refusal reads once and plainly; tests/unit/main/review-provider-off.test.ts",
+      "note": "created by WP2 (main refuses every launch of a provider that is off)"
     },
     {
       "path": "tests/unit/main/sanitize-restored-spawn-options.test.ts",
@@ -3402,7 +3468,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 commit 6e Codex setup page (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "evidence": "WP2 commit 6e Codex setup page (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the install tab options now carry noCommandSecrets; tests/unit/main/install-tab-command-secrets.test.ts",
       "note": ""
     },
     {
@@ -3807,12 +3873,13 @@
       "path": "tests/unit/renderer/terminalview-account-launch.test.tsx",
       "predicates": [
         "P04",
+        "P05",
         "P07",
         "P13"
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session; no sign-in question, account picker or Connecting card while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "drives the real TerminalView launch path"
     },
     {
@@ -3842,7 +3909,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 commit 6e an install command runs once and is never restored (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
+      "evidence": "WP2 commit 6e an install command runs once and is never restored (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the install tab options now carry noCommandSecrets; tests/unit/main/install-tab-command-secrets.test.ts",
       "note": ""
     },
     {

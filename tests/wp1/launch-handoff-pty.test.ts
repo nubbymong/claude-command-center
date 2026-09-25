@@ -150,6 +150,8 @@ vi.mock('../../src/main/legacy-version-manager', () => ({
 vi.mock('../../src/main/credential-store', () => ({ loadCredential: () => { h.credentialLoads++; return null } }))
 vi.mock('../../src/main/provider-accounts', () => ({
   getAccountsService: () => ({
+    // Every provider is on here (main's launch rule, provider-launch-gate.ts).
+    launchRefusal: () => null,
     remoteLaunchRefusal: () => ({ ok: false, code: 'unsupported', message: 'Codex runs on this computer only in this release; it is not available in SSH sessions.' }),
     prepareLaunch: (input: Record<string, unknown>) => { h.prepareCalls++; return h.prepare ? h.prepare(input) : Promise.resolve({ ok: false, code: 'not-found', message: 'no account' }) },
   }),

@@ -414,6 +414,10 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
     vi.doMock('../../src/main/pty-manager', () => ({ resolveClaudeForPty: () => ({ cmd: 'claude-resolved', args: [] }) }))
     vi.doMock('../../src/main/claude-cli-probe', () => ({ probeClaudeCli: async () => ({ installed: true, probe: 'x' }) }))
     vi.doMock('../../src/main/data-paths', () => ({ getDataDirectory: () => home, getResourcesDirectory: () => home, setDataDirectory() {}, setResourcesDirectory() {}, isDataDirFromRegistry: () => true }))
+    // WP2: Claude Code is on here. The setup terminal asks main's launch rule
+    // first (provider-launch-gate.ts), which its own suites cover; this pins
+    // the PTY shape the base had.
+    vi.doMock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
     vi.resetModules()
   })
   afterEach(() => {

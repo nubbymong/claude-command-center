@@ -30,6 +30,9 @@ vi.mock('../../../src/main/config-manager', () => ({
 }))
 const vault: Record<string, string> = {}
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => vault[k] ?? null }))
+// Every provider is on here: main's launch rule has its own suite
+// (pty-spawn-provider-off.test.ts); these tests are about the credentials.
+vi.mock('../../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
 
 const { registerPtyHandlers } = await import('../../../src/main/ipc/pty-handlers')
 registerPtyHandlers(() => ({} as never))

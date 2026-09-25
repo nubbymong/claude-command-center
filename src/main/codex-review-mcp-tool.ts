@@ -14,6 +14,8 @@ import { z } from 'zod'
 import { tryGetProviderPackage } from './providers/core'
 import type { AccountsService, ProviderReviewOperations, ReviewUsage, ReviewRunResult } from './providers/core'
 import { getAccountsService } from './provider-accounts'
+import { providerLaunchRefusal } from './provider-launch-gate'
+import type { ProviderId, ProviderLaunchRefusal } from '../shared/providers'
 import { recordReview } from './codex-review-usage'
 import { logInfo } from './debug-logger'
 import { emitCodexReviewComplete } from './channel-emitters'
@@ -147,6 +149,10 @@ export interface ReviewToolDeps {
   accounts: () => Pick<AccountsService, 'prepareLaunch'> | null
   reviewer: () => ProviderReviewOperations | undefined
   diff?: (input: { cwd: string; mode: 'working' | 'range'; range?: string; signal?: AbortSignal }) => Promise<ReviewDiffResult>
+  /** Main's one launch rule (provider-launch-gate.ts), asked when a review
+   *  RUNS: the tool may have been offered while the reviewing provider was
+   *  on. Absent, the real rule is asked. */
+  launchRefusal?: (providerId: ProviderId) => ProviderLaunchRefusal | null
 }
 
 const defaultReviewDeps: ReviewToolDeps = {
@@ -334,6 +340,12 @@ async function runReview(
   // the session this review serves runs on this computer. An unverified
   // sign-in is refused: an agent cannot give the per-launch acknowledgement
   // a person must give.
+  //
+  // First, main's one launch rule (provider-launch-gate.ts): the tool was
+  // offered while the reviewing provider was on, but a call that arrives
+  // after it was switched off starts nothing -- no diff, no lease, no CLI.
+  const launchRefused = (deps.launchRefusal ?? providerLaunchRefusal)(spec.providerId)
+  if (launchRefused) return { isError: true, text: `${name} review is unavailable. ${launchRefused.message}` }
   const accounts = deps.accounts()
   const reviewer = deps.reviewer()
   if (!accounts || !reviewer || (spec.needsDiff && !deps.diff)) {

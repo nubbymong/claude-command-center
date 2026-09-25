@@ -45,6 +45,38 @@ async function headlessRunner(): Promise<typeof import('../claude-headless')> {
   return import('../claude-headless')
 }
 
+/** Sentinel's Claude runs in flight: a version check and the analysis that
+ *  may follow it, counted from the launch check to the end. */
+let claudeRuns = 0
+
+/** WP2: Sentinel's Claude runs in flight, which are Claude Code in use for
+ *  the switch-off rule (provider-in-use.ts). */
+export function sentinelClaudeRunsInFlight(): number {
+  return claudeRuns
+}
+
+/** WP2: main's one launch rule (provider-launch-gate.ts) for a Sentinel
+ *  Claude run, and, when it may run, the run counted as Claude Code in use
+ *  in the same step, so a switch-off cannot slip between the check and the
+ *  count. `probe`: the check at start that nobody asked for, which is not
+ *  logged when skipped. Lazy for the same reason as headlessRunner (the
+ *  accounts graph is heavy). */
+async function beginClaudeRun(opts: { probe: boolean }): Promise<{ refused: string } | { end: () => void }> {
+  const gate = await import('../provider-launch-gate')
+  const refusal = opts.probe ? gate.providerProbeRefusal('claude') : gate.providerLaunchRefusal('claude')
+  if (refusal) return { refused: refusal.message }
+  claudeRuns++
+  let ended = false
+  return { end: () => { if (!ended) { ended = true; claudeRuns-- } } }
+}
+
+/** The launch rule again, for a later step of a run already counted. A
+ *  refusal is the reason, in plain words; null means Claude Code may run. */
+async function claudeLaunchRefusal(): Promise<string | null> {
+  const { providerLaunchRefusal } = await import('../provider-launch-gate')
+  return providerLaunchRefusal('claude')?.message ?? null
+}
+
 /**
  * Home for Sentinel's headless spawns, resolved FRESH per run so a Settings
  * change applies to the next analysis. User-selected analysis account
@@ -112,7 +144,14 @@ export async function sentinelStartupCheck(): Promise<void> {
   // probe's fail-open return below. It reads the live article when the network
   // allows and falls back to the shipped snapshot when it does not (review S1).
   await runModelCoverageCheck()
+  let run: { end: () => void } | null = null
   try {
+    // Claude Code switched off: nothing below runs, not even the --version
+    // probe (no one asked for it, and a probe never runs for a provider that
+    // is off). The coverage check above needs no CLI and has run.
+    const begun = await beginClaudeRun({ probe: true })
+    if ('refused' in begun) { logInfo('[sentinel] Claude Code may not run now; skipping the version check'); return }
+    run = begun
     const { spawnClaudeHeadless } = await headlessRunner()
     const res = await spawnClaudeHeadless(['--version'], 15000, undefined, (await analysisHome()).home)
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
@@ -124,6 +163,8 @@ export async function sentinelStartupCheck(): Promise<void> {
     await analyzeVersionChange(last, version)
   } catch (err) {
     state?.setAnalyzing(false, (err as Error).message)         // fail-open, always
+  } finally {
+    run?.end()
   }
 }
 
@@ -141,6 +182,14 @@ async function analyzeVersionChange(last: string, version: string): Promise<void
     // finding. Findings are reserved for actual severe breaking changes now.
     if (currentAnalysis === ac) currentAnalysis = null
     state.setAnalyzing(false, 'Changelog unavailable (offline?). Use Re-run in the Sentinel panel.')
+    return
+  }
+  // The analysis is a Claude Code run: not started once Claude Code has been
+  // switched off while the changelog was fetched.
+  const refused = await claudeLaunchRefusal()
+  if (refused) {
+    if (currentAnalysis === ac) currentAnalysis = null
+    state.setAnalyzing(false, refused)
     return
   }
   const { spawnClaudeHeadless } = await headlessRunner()
@@ -170,7 +219,13 @@ async function analyzeVersionChange(last: string, version: string): Promise<void
  */
 export async function sentinelRerun(): Promise<void> {
   if (!state) return
+  let run: { end: () => void } | null = null
   try {
+    // Asked for by the user, and still refused while Claude Code is off: the
+    // panel says why (WP2, provider-launch-gate.ts).
+    const begun = await beginClaudeRun({ probe: false })
+    if ('refused' in begun) { state.setAnalyzing(false, begun.refused); return }
+    run = begun
     const { spawnClaudeHeadless } = await headlessRunner()
     const res = await spawnClaudeHeadless(['--version'], 15000, undefined, (await analysisHome()).home)
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
@@ -179,6 +234,8 @@ export async function sentinelRerun(): Promise<void> {
     await analyzeVersionChange(last, version)
   } catch (err) {
     state?.setAnalyzing(false, (err as Error).message)
+  } finally {
+    run?.end()
   }
 }
 

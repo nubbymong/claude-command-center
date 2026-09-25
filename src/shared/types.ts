@@ -156,6 +156,13 @@ export interface TerminalOptions {
   hasSecretArg?: boolean
   /** Run the terminal elevated (gsudo on Windows, sudo elsewhere). */
   elevated?: boolean
+  /** Leave the command-button secrets (their env vars) out of this shell's
+   *  environment. Set only by the transient install/update tab
+   *  (commandTerminal.ts), whose install script is a third party's: it keeps
+   *  the secrets out of that script's way, not a boundary against a script
+   *  running as the same user. It can only take secrets away, so main
+   *  honours it as sent. */
+  noCommandSecrets?: boolean
 }
 
 export interface CodexOptions {

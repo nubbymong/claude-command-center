@@ -10,7 +10,8 @@ import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useConductorMcpStore } from '../stores/conductorMcpStore'
-import { useAccountAuthStore } from '../stores/accountAuthStore'
+import { useAccountAuthStore, claudeCodeNotChecked } from '../stores/accountAuthStore'
+import { useClaudeOff } from '../lib/claudeOff'
 import SessionDialog, { type SessionDialogLaunchAck } from './SessionDialog'
 import { grantLaunchAcknowledgement } from '../stores/launchAckStore'
 import { requestCloseSession } from '../stores/sshCloseStore'
@@ -143,6 +144,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   // refreshes both. Fetched when a session context menu opens — not polled, since
   // the Claude Code check is a heavy subprocess.
   const authByProfile = useAccountAuthStore((s) => s.byProfile)
+  // WP2: while Claude Code is off (or main did not check), the menu offers no
+  // Claude Code sign-in and says why (claudeCodeNotChecked).
+  const claudeOffForMenu = useClaudeOff()
   const refreshWebSessions = React.useCallback(async (profileId?: string, force = false) => {
     if (!profileId) return
     await useAccountAuthStore.getState().refresh(profileId, { force })
@@ -1648,6 +1652,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               !!actionProfileId && authByProfile[actionProfileId]?.web === 'active'
             }
             codeSignedIn={!!actionProfileId && (s.provider ?? 'claude') === 'claude' && authByProfile[actionProfileId]?.cliAuthed === true}
+            codeNotChecked={actionProfileId ? claudeCodeNotChecked(authByProfile[actionProfileId], claudeOffForMenu) ?? undefined : undefined}
             onOpenArtifacts={
               actionProfileId
                 ? () => {

@@ -13,6 +13,7 @@
 import type { AccountsSnapshot, AccountView, Compatibility, ProviderId } from '../../shared/providers'
 import { accountDisplayName, providerStatus, providerView, useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { formatSpawnError } from './sessionLaunch'
+import { isConfigLaunchBlocked } from '../hooks/useLaunchConfig'
 
 /**
  * Something the user has to do in Accounts, as a sentence whose own words
@@ -46,6 +47,15 @@ export const SIGNED_IN_ELSEWHERE_TEXT = noticeText(SIGNED_IN_ELSEWHERE)
  *  picker (useRestartSession's `pickConversation`). */
 export function restartPicksConversation(provider: ProviderId | undefined): boolean {
   return (provider ?? 'claude') !== 'codex'
+}
+
+/** WP2: whether a launch of this provider is one main refuses because the
+ *  provider is off -- the account list says so, or the saved setting does
+ *  (the renderer's launch rule). A launch like that asks the user nothing
+ *  (no sign-in confirmation, no account picker): it goes to main, and the
+ *  tab shows main's reason. */
+export function providerOffForLaunch(providerId: ProviderId, snapshot: AccountsSnapshot | null): boolean {
+  return providerView(snapshot, providerId)?.enabled === false || isConfigLaunchBlocked({ provider: providerId, shellOnly: false })
 }
 
 /** Whether a launch on this account needs its own acknowledgement. */

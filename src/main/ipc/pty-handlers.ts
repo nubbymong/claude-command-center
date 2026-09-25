@@ -1,8 +1,9 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, SSHOptions, SshEndTarget } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
 import { getAccountsService } from '../provider-accounts'
+import { providerLaunchRefusal } from '../provider-launch-gate'
 import type { AccountLease } from '../providers/core'
 import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
@@ -124,6 +125,24 @@ export const MAIN_INTERNAL_SPAWN_FIELDS = ['refreshAwaited', 'projectGate', 'pro
  *  never shares an owner with the one it replaces. */
 let codexLaunchSeq = 0
 
+/** WP2: shell-only SSH sessions, by id (spawned as such by pty:spawn), and
+ *  those among them whose "Launch Claude" main accepted. pty-manager
+ *  registers a shell-only session with no provider, and types `claude` into
+ *  it later (after setup and staging, up to minutes), so without this a
+ *  switch-off in that window would be accepted with Claude about to start.
+ *  An accepted launch counts as Claude in use until the session's PTY is
+ *  gone (pruned when counted), it is killed, or the id is spawned again. */
+const sshShellSessions = new Set<string>()
+const sshClaudeLaunches = new Set<string>()
+
+/** Shell-only SSH sessions whose "Launch Claude" was accepted and whose PTY
+ *  is still running: Claude in use there, for the switch-off rule
+ *  (provider-in-use.ts). */
+export function countSshClaudeLaunches(): number {
+  for (const id of sshClaudeLaunches) if (!isSessionWritable(id)) sshClaudeLaunches.delete(id)
+  return sshClaudeLaunches.size
+}
+
 export const spawnOptionsSchema = z.object({
   cwd: z.string().optional(),
   cols: z.number().int().positive().optional(),
@@ -141,6 +160,13 @@ export const spawnOptionsSchema = z.object({
     args: z.string().max(4096).optional(),
     hasSecretArg: z.boolean().optional(),
     elevated: z.boolean().optional(),
+    // The transient install/update tab (commandTerminal.ts) asks for NONE of
+    // the command-button secrets: they are left out of the environment its
+    // install script inherits. That keeps them out of the script's way; it is
+    // not a boundary against a script running as the same user. A renderer
+    // can only ask for fewer secrets with it, never more, so honouring what it
+    // sends is safe.
+    noCommandSecrets: z.boolean().optional(),
   }).optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
@@ -519,7 +545,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     rows?: number
     ssh?: RendererSSHOptions
     shellOnly?: boolean
-    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean; noCommandSecrets?: boolean }
     /** Main-process only — resolved from the OS keychain below and explicitly
      *  cleared from whatever the renderer sent. Never accepted from outside. */
     terminalSecret?: string
@@ -570,6 +596,33 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     const win = getWindow()
     if (!win) throw new Error('No window available')
 
+    // WP2: main refuses every launch of a provider that is switched off
+    // (provider-launch-gate.ts), before anything is installed, prepared,
+    // leased or spawned. This is the one path a new launch, a restored
+    // session, a Restart, Ask Conductor and a multi-spawn all take
+    // (TerminalView's spawn), and the one an SSH session that runs Claude on
+    // the remote takes -- a reattach included: its ladder starts a fresh
+    // `claude --continue` when the remote session is gone, which main cannot
+    // know beforehand, so it is refused too (the remote session is left
+    // running, to reattach once the provider is on). A shell-only SSH
+    // session's "Launch Claude" is refused at SSH_FLOW_LAUNCH_CLAUDE below.
+    // Answered, never thrown: the renderer says why in the tab and keeps the
+    // session.
+    //
+    // The boundary: a terminal-only session runs no provider and is never
+    // refused. It runs whatever the user types, `claude` included; that is the
+    // user's own command in their own shell, not a launch the app starts.
+    const launchProvider = options?.shellOnly ? null : (options?.provider ?? 'claude')
+    if (launchProvider) {
+      const refused = providerLaunchRefusal(launchProvider)
+      if (refused) return { started: false as const, refused }
+    }
+    // A new spawn of this id replaces whatever ran under it before: an
+    // accepted SSH "Launch Claude" of the old PTY no longer counts.
+    sshClaudeLaunches.delete(sessionId)
+    if (options?.shellOnly && options.ssh) sshShellSessions.add(sessionId)
+    else sshShellSessions.delete(sessionId)
+
     // WP2: a Codex spawn that is to run on another machine is refused HERE,
     // before anything is installed, loaded or leased for it -- by the
     // provider's `session.ssh` capability, not its name (Codex runs on this
@@ -586,7 +639,9 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // legacy CLI install -- is registered with pty-manager for the wait, so a
     // close, a sweep or a newer spawn of this session supersedes it (see
     // beginSpawnPreparation). A spawn that awaits nothing goes straight on.
-    const legacyInstall = !!(options?.legacyVersion?.enabled && options.legacyVersion.version && !isVersionInstalled(options.legacyVersion.version))
+    // The legacy pin is a Claude Code CLI: installed only for a Claude launch
+    // the gate above let through, never for a shell or a Codex session.
+    const legacyInstall = launchProvider === 'claude' && !!(options?.legacyVersion?.enabled && options.legacyVersion.version && !isVersionInstalled(options.legacyVersion.version))
     const preparation = codexSession || legacyInstall ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
     let codexLease: AccountLease | undefined
     try {
@@ -669,8 +724,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       // PC, and decrypting for it would be for nothing). A shell with no config
       // (Ask Conductor's partner) still gets the Global ones: a Global button runs
       // in every session it can run in (ADR-018 D5), and without this it would
-      // type a reference to nothing. (ADR-009 pass on #386.)
-      if (options?.shellOnly && !options.ssh) {
+      // type a reference to nothing. (ADR-009 pass on #386.) Except the
+      // transient install/update tab, which asks for none
+      // (terminalOptions.noCommandSecrets): the install script it runs is a
+      // third party's, so the secrets are left out of the environment it
+      // inherits. That keeps them out of its way; it is not a boundary against
+      // a script running as the same user. Asking can only take secrets away,
+      // so it is honoured as sent.
+      if (options?.shellOnly && !options.ssh && options.terminalOptions?.noCommandSecrets !== true) {
         const secrets = collectCommandSecrets(readConfig('commands'), options.configId, loadCredential)
         if (Object.keys(secrets).length > 0) resolvedOptions = { ...resolvedOptions, commandSecrets: secrets }
       }
@@ -785,6 +846,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.on('pty:kill', (_event, sessionId: string) => {
     killPty(sessionId)
+    sshClaudeLaunches.delete(sessionId)
+    sshShellSessions.delete(sessionId)
     // #580: nothing left to deliver a queued canvas marker to. Logged loudly if
     // any were still held, because that is a verdict the agent never heard.
     forgetCanvasMarkers(sessionId)
@@ -800,8 +863,18 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     getSshFlow(sessionId)?.runPostCommand()
   })
 
+  // "Launch Claude" on the remote starts Claude: a shell-only SSH session's
+  // one way to it (pty:spawn never refuses a shell), and a manual-flow Claude
+  // session's retry. Refused while Claude Code is off, before the flow writes
+  // anything; answered, so the overlay says why. Once accepted for a
+  // shell-only session, it counts as Claude in use (countSshClaudeLaunches)
+  // in the same step as the check, so a switch-off cannot slip in before the
+  // flow types `claude`. A Claude session is counted by pty-manager already.
   ipcMain.handle(IPC.SSH_FLOW_LAUNCH_CLAUDE, async (_event, sessionId: string) => {
     sessionIdSchema.parse(sessionId)
+    const refused = providerLaunchRefusal('claude')
+    if (refused) return { refused }
+    if (sshShellSessions.has(sessionId)) sshClaudeLaunches.add(sessionId)
     getSshFlow(sessionId)?.launchClaude()
   })
 

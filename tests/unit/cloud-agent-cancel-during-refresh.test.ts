@@ -11,6 +11,9 @@
 // EVERY pre-spawn await and, if it was cancelled or removed, releases the hold,
 // deletes the prompt file, broadcasts and returns without spawning.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+// Every provider is on here: main's launch rule has its own suites
+// (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
+vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
 import { composeProviders } from '../../src/main/providers/compose'
 import fs from 'node:fs'
 import os from 'node:os'

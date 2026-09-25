@@ -28,7 +28,7 @@ import { listenForSpawnEnd, reportSpawnEnd } from '../utils/spawnEndNotice'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice } from '../utils/sessionLaunch'
-import { resolveLaunchAccount, launchStep, accountsSnapshotWhenLoaded, describeLaunchFailure, type LaunchAccountFields, type LaunchAccountPlan, type LaunchFailureContext, type LaunchStep } from '../utils/launchAccount'
+import { resolveLaunchAccount, launchStep, accountsSnapshotWhenLoaded, describeLaunchFailure, providerOffForLaunch, type LaunchAccountFields, type LaunchAccountPlan, type LaunchFailureContext, type LaunchStep } from '../utils/launchAccount'
 import { createSpawnExitHold, type SpawnExitHold, type SpawnOutcome } from '../utils/spawnExitHold'
 import { useProviderAccountsStore, providerView } from '../stores/providerAccountsStore'
 import { useLaunchAckStore, consumeLaunchAcknowledgement } from '../stores/launchAckStore'
@@ -53,6 +53,8 @@ import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { noteActivityGrace } from '../stores/activeStore'
 import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
+import { launchRefusalOf, refusedTabText } from '../../shared/providers'
+import { isConfigLaunchBlocked, useLaunchGateSettings } from '../hooks/useLaunchConfig'
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
@@ -134,6 +136,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const attentionAckedRef = useRef(false)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
   const isScrolledUpRef = useRef(false)
+  /** Main refused this view's launch because its provider is off: an SSH
+   *  tab then shows the reason in its terminal, not a "Connecting..." card
+   *  for a connection that was never made. A Restart remounts the view. */
+  const [launchRefused, setLaunchRefused] = useState(false)
+  /** The renderer's own launch rule says this tab's provider is off: an SSH
+   *  tab for it never shows the "Connecting..." card at all (main refuses
+   *  its launch, and the terminal says why), not even until main answers. */
+  const launchGateSettings = useLaunchGateSettings()
+  const providerOffHere = !shellOnly && isConfigLaunchBlocked({ provider: provider ?? 'claude', shellOnly }, launchGateSettings)
   /** The live repainter, so effects outside the init effect can ask for a
    *  repaint — see the tab-activation repaint below. */
   const repainterRef = useRef<StaleGlyphRepainter | null>(null)
@@ -904,6 +915,17 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           const launchCodex = async (resolvedProfileId: string | undefined) => {
             const snapshot = await accountsSnapshotWhenLoaded()
             if (disposed) return
+            // WP2: Codex is off: no question about a sign-in for a launch main
+            // refuses anyway. It goes straight to main, whose refusal the tab
+            // then shows (a restored session asking first, then saying "not
+            // confirmed", hid the real reason).
+            // The session's own account still rides along (never an
+            // acknowledgement): should main already have Codex on, the bound
+            // session runs on its account, not the default.
+            if (providerOffForLaunch('codex', snapshot)) {
+              startSpawn(resolvedProfileId, session?.providerAccountId ? { providerAccountId: session.providerAccountId } : {}, {})
+              return
+            }
             const plan = resolveLaunchAccount(snapshot, 'codex', session?.providerAccountId)
             // Used up by this launch whatever it turns out to need, so a
             // dialog's tick never lingers for a later one.
@@ -999,6 +1021,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt, isAsk: session?.kind === 'ask', ...account })
               .then((result) => {
                 const nothingStarted = !!result && typeof result === 'object' && result.started === false
+                // WP2: main refused the launch because its provider is off
+                // (provider-launch-gate.ts) -- a restored session, a Restart
+                // or a new launch alike, since all of them spawn here. It is
+                // said in this tab in main's own words, and the session is
+                // kept: its exact-conversation restore target, consumed above,
+                // goes back on the record, so a Restart once the provider is
+                // on resumes the same conversation.
+                const refusal = nothingStarted ? launchRefusalOf(result) : null
+                if (refusal && resume && (!disposed || isCurrentSpawn(sessionId, spawnToken))) {
+                  updateSession(sessionId, { resumeUuid: resume.uuid, resumeCwd: resume.cwd })
+                }
+                const endText = refusal ? refusedTabText(refusal) : CANCELLED_TEXT
+                if (refusal && !disposed) setLaunchRefused(true)
                 // A torn-down view settles nothing for a session a Restart
                 // gave to its replacement (the store record, the spawn tracker
                 // and the live PTY are the new view's). Only while this spawn
@@ -1007,14 +1042,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 // spawn -- does it report a start that ended with nothing.
                 if (disposed) {
                   if (!nothingStarted && isCurrentSpawn(sessionId, spawnToken)) markLive()
-                  if (nothingStarted) endSpawnElsewhere(spawnToken, `\r\n\x1b[90m${CANCELLED_TEXT}\x1b[0m`)
+                  if (nothingStarted) endSpawnElsewhere(spawnToken, `\r\n\x1b[90m${endText}\x1b[0m`)
                   return
                 }
                 // Settled with a PTY: an exit held meanwhile was the replaced
                 // run's, and is dropped. Main starting nothing (a preparation
                 // closed or swept meanwhile) ends the start here instead.
                 if (!nothingStarted) markLive()
-                settleOwnStart(nothingStarted ? 'nothing-started' : 'started', CANCELLED_TEXT)
+                settleOwnStart(nothingStarted ? 'nothing-started' : 'started', endText)
               }, (err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled
@@ -1049,7 +1084,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // Consume the predetermined flag only for eligible sessions so a
           // restart/switch re-spawn skips the gate and uses its chosen account.
           const predetermined = eligible && gate.consumePredetermined(sessionId)
-          const needGate = eligible && !predetermined
+          // WP2: not while Claude Code is off either: no account question for
+          // a launch main refuses anyway; its refusal says why in the tab.
+          const needGate = eligible && !predetermined && !providerOffForLaunch('claude', useProviderAccountsStore.getState().snapshot)
           if (!needGate) {
             doSpawn(session?.profileId)
           } else {
@@ -1682,7 +1719,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           boxShadow: 'inset 16px 0 20px -16px rgba(0,0,0,.5)',
         }}
       />
-      {ssh && (
+      {ssh && !launchRefused && !providerOffHere && (
         <SshFlowOverlay
           sessionId={sessionId}
           hasPostCommand={!!ssh.postCommand || ssh.runtime?.type === 'container'}

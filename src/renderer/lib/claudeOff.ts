@@ -1,5 +1,6 @@
 import { useSettingsStore } from '../stores/settingsStore'
 import { usesClaude, type ProviderChoiceView } from '../onboarding/provider-choice'
+import { providerOffMessage } from '../../shared/providers'
 
 /**
  * Claude Code switched off in Settings, Accounts: the one place the renderer
@@ -12,8 +13,9 @@ import { usesClaude, type ProviderChoiceView } from '../onboarding/provider-choi
  * surface can ask at render time without pulling in what it guards.
  */
 
-/** The reason, wherever Claude Code being off stops something. */
-export const CLAUDE_OFF = 'Claude Code is off. Turn it on in Settings, Accounts.'
+/** The reason, wherever Claude Code being off stops something: main's own
+ *  sentence (a refusal main sends reads the same). */
+export const CLAUDE_OFF = providerOffMessage('Claude Code')
 
 /** The reason on a config that cannot launch because Claude Code is off. */
 export const CLAUDE_OFF_LAUNCH_REASON = 'Claude Code is off. Turn it on in Settings, Accounts to launch this config.'

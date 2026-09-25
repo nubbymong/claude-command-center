@@ -30,14 +30,14 @@ import {
   recordAuthCheck, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount, chooseSessionAccount,
   recordProviderMigration, resolveLaunchBinding, findAccount, findRealm, findIdentity, isLegacyLinked,
   resolveCapability, makeOpaqueId, providerRealmKind, isIdentityColourKey,
-  MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY,
+  MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY, providerOffMessage, providerStateUnknownMessage,
 } from '../../../shared/providers'
 import type {
   ProviderId, ProviderRegistryDoc, RegistryResult, AuthMethod, KnownAuthState, AccountLifecycle, SessionBinding,
   CapabilityKey, CapabilityPlatform, ScopedCapabilityKey, ProviderPreference, SignInMethod, AccountsSnapshot, AccountsFailure,
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
   SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, ExternalDefaultOutcome, CredentialClass,
-  ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView,
+  ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
 } from '../../../shared/providers'
 import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, InstallRecipe } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
@@ -69,9 +69,11 @@ export interface AccountsServiceDeps {
   /** Push an identity edit to the legacy store that mirrors it (Claude's
    *  profiles.json) now, rather than at the next start. */
   reconcileLegacy?: (providerId: ProviderId) => Promise<void>
-  /** Running sessions of a provider that hold no account lease (Claude's,
-   *  until its launch path takes one): a switch-off refuses while any runs.
-   *  A throw counts as running (fail closed). */
+  /** How much of a provider runs holding no account lease -- Claude's
+   *  sessions, until its launch path takes one, and whatever else runs its
+   *  CLI without one (the composition root decides what counts): a
+   *  switch-off refuses while any runs. A throw counts as running (fail
+   *  closed). */
   unleasedSessions?: (providerId: ProviderId) => number
   log?: (message: string) => void
 }
@@ -239,7 +241,11 @@ export class AccountsService {
    *  A read that fails says nothing: it neither clears a switch nor turns a
    *  provider back on (the last value read stands). */
   preferenceOf(providerId: ProviderId): ProviderPreference {
-    const saved = this.savedPreference(providerId)
+    return this.preferenceFrom(providerId, this.savedPreference(providerId))
+  }
+
+  /** preferenceOf, from a saved preference already read. */
+  private preferenceFrom(providerId: ProviderId, saved: { pref: ProviderPreference; fresh: boolean }): ProviderPreference {
     const o = this.enabledOverride.get(providerId)
     if (o === undefined) return saved.pref
     const mine: ProviderPreference = o.enabled ? 'on' : 'off'
@@ -271,6 +277,24 @@ export class AccountsService {
    *  keeps working as before (the migration alone waits for an answer). */
   isEnabled(providerId: ProviderId): boolean {
     return this.preferenceOf(providerId) !== 'off'
+  }
+
+  /** Why a launch of this provider may not start now, or null when it may:
+   *  the one rule every path that starts a provider's CLI for the user asks
+   *  (through src/main/provider-launch-gate.ts), before any process starts.
+   *  The preference in force decides, as isEnabled does: off refuses, while
+   *  on and not-answered-yet do not (a user who never answered keeps
+   *  launching, as prepareLaunch has always allowed). One difference: a
+   *  saved setting that cannot be read NOW refuses. The last value read
+   *  stands for the Accounts surface; for starting a process, no answer is
+   *  never a yes. A provider this app does not know refuses too. */
+  launchRefusal(providerId: ProviderId): ProviderLaunchRefusal | null {
+    const p = this.pkg(providerId)
+    if (!p) return { code: 'provider-state-unknown', providerId, message: providerStateUnknownMessage(String(providerId)) }
+    const saved = this.savedPreference(providerId)
+    if (this.preferenceFrom(providerId, saved) === 'off') return { code: 'provider-off', providerId, message: providerOffMessage(p.displayName) }
+    if (!saved.fresh) return { code: 'provider-state-unknown', providerId, message: providerStateUnknownMessage(p.displayName) }
+    return null
   }
 
   snapshot(): AccountsSnapshot {

@@ -5,7 +5,8 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { sshMappedProfileId } from '../utils/sessionLaunch'
-import { useAccountAuthStore, type AccountAuthStatus } from '../stores/accountAuthStore'
+import { useAccountAuthStore, claudeCodeNotChecked, type AccountAuthStatus } from '../stores/accountAuthStore'
+import { useClaudeOff } from '../lib/claudeOff'
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { BrandMark } from './BrandMark'
@@ -404,9 +405,15 @@ function AccountAuthPillSet({
   // very first render precedes the fetch effect, and a failed first fetch leaves
   // no result either. Never paint "signed out"/"not connected" for unknown: show
   // "…" while pending and "unknown" (error in the tooltip) after a failure.
-  const known = status?.fetchedAt !== undefined
+  // A not-checked answer (WP2) is a known answer too: it has no fetchedAt,
+  // so the next refresh asks again, but its claude.ai half stands.
+  const known = status?.fetchedAt !== undefined || !!status?.cliNotChecked
   const pending = !known && !status?.error
   const cliOk = status?.cliAuthed === true
+  // WP2: Claude Code switched off (or main did not check): the Claude Code
+  // pill says so, never "signed out" -- nothing was asked, so nothing is
+  // known either way.
+  const codeOff = claudeCodeNotChecked(status, useClaudeOff())
   const web = status?.web
   const errorSuffix = status?.error ? ` — could not read status: ${status.error}` : ''
   // A green dot = all good, no word; the word appears only when action is needed
@@ -434,9 +441,9 @@ function AccountAuthPillSet({
       />
       <HeaderPill
         label="Claude Code"
-        tone={codeTone}
-        word={codeWord}
-        title={`Claude Code sign-in for this session's account${errorSuffix}`}
+        tone={codeOff ? 'var(--text-muted)' : codeTone}
+        word={codeOff ? codeOff.word : codeWord}
+        title={codeOff ? `Claude Code sign-in for this session's account was not checked: ${codeOff.reason}` : `Claude Code sign-in for this session's account${errorSuffix}`}
         testId="session-pill-claudecode"
       >
         <button
@@ -510,14 +517,17 @@ function SessionAuthPills({ session }: { session: Session }) {
   const profileId = isSshClaude ? sshProfileId : (session.profileId ?? primary?.id)
   const profile = useAccountProfilesStore((s) => (profileId ? s.profiles.find((p) => p.id === profileId) : undefined))
   const status = useAccountAuthStore((s) => (profileId ? s.byProfile[profileId] : undefined))
+  const claudeOffNow = useClaudeOff()
 
   React.useEffect(() => {
     // This header renders only the ACTIVE session, so mounting/param-change is
     // "on activate". Fetch for a LOCAL Claude session, and for an SSH session
     // whose remote account maps to a local profile (profileId set). Re-fetch when
-    // the session or its (possibly SSH-mapped) account changes.
+    // the session or its (possibly SSH-mapped) account changes -- and (WP2)
+    // when Claude Code is switched off or back on: a not-checked answer is
+    // never cached as an auth result, so switching back on asks again.
     if ((applies || isSshClaude) && !isAsk && profileId) void refresh(profileId)
-  }, [applies, isSshClaude, isAsk, profileId, refresh, session.id])
+  }, [applies, isSshClaude, isAsk, profileId, refresh, session.id, claudeOffNow])
 
   React.useEffect(() => {
     // Identity arrived → forget any recorded shimmer give-up for this session,

@@ -38,6 +38,9 @@ vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: strin
 // WP2: the accounts service a Codex spawn is prepared by; none unless a test sets one.
 const acct = vi.hoisted(() => ({ service: null as null | Record<string, unknown> }))
 vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () => acct.service }))
+// Every provider is on here: main's launch rule has its own suite
+// (pty-spawn-provider-off.test.ts); these tests are about the secrets.
+vi.mock('../../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
 
 const { registerPtyHandlers, MAIN_INTERNAL_SPAWN_FIELDS } = await import('../../../src/main/ipc/pty-handlers')
 registerPtyHandlers(() => ({} as never))

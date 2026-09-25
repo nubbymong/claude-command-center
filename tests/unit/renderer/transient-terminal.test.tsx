@@ -71,7 +71,9 @@ describe('the install tab is transient', () => {
     const s = useSessionStore.getState().sessions.find((x) => x.id === id)!
     expect(s.transient).toBe(true)
     expect(s.shellOnly).toBe(true)
-    expect(s.terminalOptions).toEqual({ command: CMD, elevated: false })
+    // noCommandSecrets: the install script it runs never sees the user's
+    // command-button secrets (install-tab-command-secrets.test.ts).
+    expect(s.terminalOptions).toEqual({ command: CMD, elevated: false, noCommandSecrets: true })
     expect(useSessionStore.getState().activeSessionId).toBe(id)
   })
 
@@ -106,7 +108,7 @@ describe('a Restart does not run the command again', () => {
     act(() => { restart!() })
     const after = useSessionStore.getState().sessions.find((x) => x.id === id)!
     expect(after.terminalOptions?.command).toBeUndefined()
-    expect(after.terminalOptions).toEqual({ elevated: false })
+    expect(after.terminalOptions).toEqual({ elevated: false, noCommandSecrets: true })
     expect(after.shellOnly).toBe(true)
     expect(after.transient).toBe(true)
   })

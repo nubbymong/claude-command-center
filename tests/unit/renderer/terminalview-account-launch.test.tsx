@@ -110,7 +110,11 @@ vi.mock('../../../src/renderer/ptyTracker', () => ({
   clearSpawned: (id: string) => { H.spawned.delete(id); H.tokens.delete(id); H.cleared.push(id) },
   killSessionPty: () => {},
 }))
-vi.mock('../../../src/renderer/components/SshFlowOverlay', () => ({ default: () => null }))
+// A marker, so a test can see whether an SSH tab shows its flow card.
+vi.mock('../../../src/renderer/components/SshFlowOverlay', async () => {
+  const R = await import('react')
+  return { default: () => R.createElement('div', { 'data-testid': 'ssh-flow-overlay' }) }
+})
 vi.mock('../../../src/renderer/utils/resumePicker', () => ({ shouldUseResumePicker: () => false }))
 vi.mock('../../../src/renderer/components/TerminalContextMenu', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/stores/settingsStore', () => {
@@ -647,5 +651,188 @@ describe('WP2 6e: a transient tab (Run in a terminal) runs its command once', ()
     await settle()
     expect(spawn.mock.calls[0][1].terminalOptions).toEqual({ command: CMD, elevated: false })
     expect(optionPatches()).toEqual([])
+  })
+})
+
+// WP2: main refuses every launch of a provider that is switched off
+// (src/main/provider-launch-gate.ts). A restored session and a Restart both
+// reach main through this view's ONE pty:spawn (a restore mounts the view
+// with the saved exact-conversation target; a Restart remounts it), so a
+// refusal is said in the tab, in main's own words plus what to do: no crash,
+// no blank terminal, no retry loop, and the session is kept -- with its
+// restore target back on the record, so a Restart once the provider is on
+// resumes the same conversation. While the renderer already knows the
+// provider is off, nothing is asked first (no sign-in confirmation, no
+// account picker) and an SSH tab shows no "Connecting..." card.
+describe('main refuses a launch because its provider is off', () => {
+  const OFF = 'Claude Code is off. Turn it on in Settings, Accounts.'
+  const OFF_TAB = 'Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.'
+  const CODEX_OFF_TAB = 'Not started. Codex is off. Turn it on in Settings, Accounts, then Restart this tab.'
+  const claudeOff = { started: false, refused: { code: 'provider-off', providerId: 'claude', message: OFF } }
+  const codexOff = { started: false, refused: { code: 'provider-off', providerId: 'codex', message: 'Codex is off. Turn it on in Settings, Accounts.' } }
+  const UUID = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  const claudeSession = (over: Record<string, unknown> = {}) => codexSession({ provider: 'claude', codexOptions: undefined, ...over })
+  const SSH = { host: 'build-box', port: 22, username: 'nick', remotePath: '~' }
+  const mountSsh = (key = 'ssh') => {
+    H.sessionState.sessions = [claudeSession({ sessionType: 'ssh' })]
+    act(() => {
+      root.render(React.createElement(TerminalView as any, { key, sessionId: 's-1', cwd: '~', isActive: true, provider: 'claude', ssh: SSH }))
+    })
+  }
+  const overlay = () => container.querySelector('[data-testid="ssh-flow-overlay"]')
+  let removeSession: ReturnType<typeof vi.fn>
+  let settingsState: { settings: Record<string, unknown> }
+  let profilesState: { profiles: unknown[] }
+  beforeEach(async () => {
+    removeSession = vi.fn()
+    H.sessionState.removeSession = removeSession
+    const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+    const { useAccountProfilesStore } = await import('../../../src/renderer/stores/accountProfilesStore')
+    settingsState = (useSettingsStore as any).getState()
+    profilesState = (useAccountProfilesStore as any).getState()
+  })
+  afterEach(() => {
+    delete settingsState.settings.claudeEnabled
+    delete settingsState.settings.codexEnabled
+    profilesState.profiles = []
+  })
+
+  it('a restored session: pty:spawn carries its restore target; the refusal is said in the tab and the session is kept, target and all', async () => {
+    mount(claudeSession({ resumeUuid: UUID, resumeCwd: 'C:/proj' }))
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].resume).toEqual({ uuid: UUID, cwd: 'C:/proj' })
+    await act(async () => { settles[0].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+    expect(termLines()).not.toContain('Failed to launch')
+    expect(exitedMarks()).toHaveLength(1)
+    // Consumed for the spawn, then put back when main refused it.
+    const targets = H.updates.filter((u) => 'resumeUuid' in u.patch).map((u) => u.patch.resumeUuid)
+    expect(targets).toEqual([undefined, UUID])
+    expect(H.updates.find((u) => u.patch.resumeUuid === UUID)!.patch.resumeCwd).toBe('C:/proj')
+    expect(removeSession).not.toHaveBeenCalled()
+    // No retry loop: one refusal, one spawn.
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('a Restart: the new view spawns through the same pty:spawn, and its refusal is said the same way', async () => {
+    mount(claudeSession())
+    await settle()
+    await act(async () => { settles[0].resolve(undefined) })
+    await restartTo(claudeSession(), 'b')
+    expect(spawn).toHaveBeenCalledTimes(2)
+    await act(async () => { settles[1].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+    expect(exitedMarks()).toHaveLength(1)
+    expect(removeSession).not.toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledTimes(2)
+  })
+
+  it("the state main could not read reads once, plainly, with what to do", async () => {
+    mount(claudeSession())
+    await settle()
+    await act(async () => { settles[0].resolve({ started: false, refused: { code: 'provider-state-unknown', providerId: 'claude', message: 'This app could not read whether Claude Code is on. Check Settings, Accounts.' } }) })
+    await settle()
+    expect(termLines()).toContain('Not started. This app could not read whether Claude Code is on. Check Settings, Accounts, then Restart this tab.')
+  })
+
+  it('a Codex session refused because Codex is off says so, in the same words', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].resolve(codexOff) })
+    await settle()
+    expect(termLines()).toContain(CODEX_OFF_TAB)
+    expect(exitedMarks()).toHaveLength(1)
+    expect(removeSession).not.toHaveBeenCalled()
+  })
+
+  it('a restored Codex session while Codex is off asks no sign-in question: it goes to main, and the tab says Codex is off', async () => {
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', enabled: false, preference: 'off' })] }), loaded: true })
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(0)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].acknowledgeRealmOnly).toBeUndefined()
+    // Its own account still rides along: should main have Codex on already,
+    // the bound session runs on it, never on the default.
+    expect(spawn.mock.calls[0][1].providerAccountId).toBe('acc-local')
+    await act(async () => { settles[0].resolve(codexOff) })
+    await settle()
+    expect(termLines()).toContain(CODEX_OFF_TAB)
+    expect(termLines()).not.toContain('not confirmed')
+  })
+
+  it('an unbound Codex session while Codex is off names no account (the provider default, as before)', async () => {
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', enabled: false, preference: 'off' })] }), loaded: true })
+    mount(codexSession())
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
+    expect(spawn.mock.calls[0][1].acknowledgeRealmOnly).toBeUndefined()
+  })
+
+  it('...while with Codex on, the same session asks first (the control)', async () => {
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(1)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('a Claude session while Claude Code is off opens no account picker, even with several accounts: it goes to main', async () => {
+    profilesState.profiles = [{ id: 'p1' }, { id: 'p2' }]
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'claude', displayName: 'Claude Code', enabled: false, preference: 'off' })] }), loaded: true })
+    mount(claudeSession())
+    await settle()
+    expect(useAccountGateStore.getState().queue).toHaveLength(0)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    await act(async () => { settles[0].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+  })
+
+  it('...while with Claude Code on, several accounts open the picker first (the control)', async () => {
+    profilesState.profiles = [{ id: 'p1' }, { id: 'p2' }]
+    mount(claudeSession())
+    await settle()
+    expect(useAccountGateStore.getState().queue).toHaveLength(1)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('an SSH tab while Claude Code is off never shows the "Connecting..." card, before main answers or after', async () => {
+    settingsState.settings.claudeEnabled = false
+    mountSsh()
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(overlay()).toBeNull()
+    await act(async () => { settles[0].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+    expect(overlay()).toBeNull()
+    expect(removeSession).not.toHaveBeenCalled()
+  })
+
+  it('an SSH tab main refused while the renderer still thought Claude Code was on: the card goes once main answers', async () => {
+    mountSsh()
+    await settle()
+    await act(async () => { settles[0].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+    expect(overlay()).toBeNull()
+  })
+
+  it('an SSH tab with Claude Code on shows its card as before (the control)', async () => {
+    mountSsh()
+    await settle()
+    expect(overlay()).not.toBeNull()
+  })
+
+  it('a nothing-started answer without a refusal still reads as a cancelled launch', async () => {
+    mount(claudeSession())
+    await settle()
+    await act(async () => { settles[0].resolve({ started: false }) })
+    expect(termLines()).toContain('[The launch was cancelled before the session started]')
+    expect(termLines()).not.toContain('Not started.')
   })
 })

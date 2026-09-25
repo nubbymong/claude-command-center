@@ -166,3 +166,33 @@ describe('insights', () => {
     expect(api.insights.run).toHaveBeenCalledTimes(1)
   })
 })
+
+// WP2: main refuses on its own too (src/main/provider-launch-gate.ts) -- a
+// switch flipped after this page last read the setting, or a renderer bug.
+// Its answer is shown the same way as the renderer's own refusal: in the
+// page's banner, with no "failed" status for a run that never started.
+describe("main's own refusal, shown the same way", () => {
+  const refused = { refused: { code: 'provider-off', providerId: 'claude', message: OFF } }
+  beforeEach(() => { claude(true) })
+
+  it('a cloud agent dispatch and a retry main refused: the banner says why, nothing is selected', async () => {
+    api.cloudAgent.dispatch.mockResolvedValueOnce(refused as any)
+    api.cloudAgent.retry.mockResolvedValueOnce(refused as any)
+    await useCloudAgentStore.getState().dispatch({ name: 'n', description: 'd', projectPath: 'C:/p' })
+    expect(useCloudAgentStore.getState().error).toBe(OFF)
+    useCloudAgentStore.setState({ error: null })
+    await useCloudAgentStore.getState().retry('agent-0')
+    expect(useCloudAgentStore.getState().error).toBe(OFF)
+    expect(useCloudAgentStore.getState().selectedAgentId).toBeNull()
+  })
+
+  it('an insights run and a cross-account run main refused: the status is left as it was, the page says why', async () => {
+    api.insights.run.mockResolvedValueOnce(refused as any)
+    await useInsightsStore.getState().startInsights()
+    expect(useInsightsStore.getState()).toMatchObject({ status: 'idle', error: OFF })
+    expect(useInsightsStore.getState().currentRunId).not.toEqual(refused)
+    api.insights.runAll.mockResolvedValueOnce(refused as any)
+    await useInsightsStore.getState().startCrossAccount()
+    expect(useInsightsStore.getState()).toMatchObject({ status: 'idle', error: OFF, batchActive: false })
+  })
+})

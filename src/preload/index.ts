@@ -187,7 +187,7 @@ export interface ElectronAPI {
       providerAccountId?: string
       /** WP2: THIS launch's acknowledgement of an unverified sign-in. */
       acknowledgeRealmOnly?: boolean
-    }) => Promise<{ started: false } | void>
+    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').ProviderLaunchRefused) | void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void
@@ -200,8 +200,9 @@ export interface ElectronAPI {
   ssh: {
     /** Manually trigger the post-connect command stage. */
     runPostCommand: (sessionId: string) => Promise<void>
-    /** Manually trigger the Claude launch stage. */
-    launchClaude: (sessionId: string) => Promise<void>
+    /** Manually trigger the Claude launch stage. Answers a refusal while
+     *  Claude Code is off. */
+    launchClaude: (sessionId: string) => Promise<void | import('../shared/providers').ProviderLaunchRefused>
     /** User opts out of any further auto-writes; PTY is theirs to drive. */
     skip: (sessionId: string) => Promise<void>
     /** One-shot query of the current flow state, used to recover from
@@ -655,12 +656,12 @@ export interface ElectronAPI {
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
     probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
-    spawnCliSetup: (cols: number, rows: number) => Promise<string>
+    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
     killCliSetup: () => Promise<boolean>
   }
   insights: {
-    run: (opts?: { profileId?: string }) => Promise<string>
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
+    run: (opts?: { profileId?: string }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
     getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
@@ -694,11 +695,11 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent>
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent | import('../shared/providers').ProviderLaunchRefused>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
+    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null | import('../shared/providers').ProviderLaunchRefused>
     list: () => Promise<import('../shared/types').CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */
@@ -718,7 +719,7 @@ export interface ElectronAPI {
   cli: {
     check: () => Promise<boolean>
     path: () => Promise<string | null>
-    version: () => Promise<string | null>
+    version: () => Promise<string | null | import('../shared/providers').ProviderLaunchRefused>
   }
   help: {
     workspace: () => Promise<string | null>

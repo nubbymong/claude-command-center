@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, countUnleasedAgentSessions } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -27,7 +27,9 @@ import { getProvider } from './providers'
 import { composeProviders } from './providers/compose'
 import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
 import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart } from './provider-accounts'
-import { probeClaudeCliVersion } from './claude-cli-version'
+import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
+import { providerProbeRefusal } from './provider-launch-gate'
+import { providerUseWithoutLease } from './provider-in-use'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
@@ -518,7 +520,10 @@ if (!gotTheLock) {
     // adoption of a provider's own default sign-in runs after the legacy
     // reconcile, outside the registry lock.
     try {
-      initProviderAccounts({ unleasedSessions: (id) => countUnleasedAgentSessions(id) })
+      // A switch-off is refused while any of the provider runs: its sessions,
+      // and (WP2) for Claude Code its cloud agents, Insights runs, Sentinel
+      // runs and accepted SSH "Launch Claude"s too (provider-in-use.ts).
+      initProviderAccounts({ unleasedSessions: (id) => providerUseWithoutLease(id) })
       // A resources directory chosen after start (first-run setup) moves the
       // registry with it before anything reads or reconciles it.
       onResourcesDirectoryChanged((dir) => { void followResourcesDirectory(dir) })
@@ -536,7 +541,11 @@ if (!gotTheLock) {
     // Probe the Claude CLI version once, in the background. The managed-launch
     // preflight needs it to say which side of the verified floor the user is
     // on, and no launch waits for it: until it answers, the preflight reports
-    // the version as unverified rather than assuming it is fine.
+    // the version as unverified rather than assuming it is fine. The probe
+    // itself skips while Claude Code is switched off (WP2), by main's launch
+    // rule, wired in here because that rule's graph imports the probe's
+    // importers (claude-cli-version.ts, setClaudeCliProbeAllowed).
+    setClaudeCliProbeAllowed(() => providerProbeRefusal('claude') === null)
     void probeClaudeCliVersion()
 
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything

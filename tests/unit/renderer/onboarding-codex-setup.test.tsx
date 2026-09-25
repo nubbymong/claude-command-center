@@ -242,7 +242,8 @@ describe('Codex CLI not found', () => {
     // Transient: never saved or resumed, and its command runs once (transient-terminal.test.tsx).
     expect(s.transient).toBe(true)
     // The line main built (npm.cmd on Windows), never the shown command.
-    expect(s.terminalOptions).toEqual({ command: NPM_INSTALL_LINE, elevated: false })
+    // No command-button secrets in its shell: the install script is a third party's.
+    expect(s.terminalOptions).toEqual({ command: NPM_INSTALL_LINE, elevated: false, noCommandSecrets: true })
     expect(s.terminalOptions!.command).not.toBe(NPM_INSTALL.displayCommand)
     expect(s.label).toBe('Install Codex')
     expect(activeSessionId).toBe(s.id)
@@ -336,7 +337,7 @@ describe('Codex too old', () => {
     expect(byTest(`codex-recipe-run-line-${NPM_UPDATE.id}`)!.textContent).toBe(NPM_UPDATE_LINE)
     await click(`codex-recipe-confirm-run-${NPM_UPDATE.id}`)
     const s = useSessionStore.getState().sessions[0]
-    expect(s.terminalOptions).toEqual({ command: NPM_UPDATE_LINE, elevated: false })
+    expect(s.terminalOptions).toEqual({ command: NPM_UPDATE_LINE, elevated: false, noCommandSecrets: true })
     expect(s.label).toBe('Update Codex')
   })
 })

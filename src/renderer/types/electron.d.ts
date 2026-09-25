@@ -214,7 +214,7 @@ export interface ElectronAPI {
       }
       shellOnly?: boolean
       elevated?: boolean
-      terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+      terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean; noCommandSecrets?: boolean }
       configId?: string
       configLabel?: string
       loggingEnabled?: boolean
@@ -257,7 +257,7 @@ export interface ElectronAPI {
       /** Resolves `{ started: false }` when main started nothing for this
        *  request: its launch was cancelled or superseded while it was being
        *  prepared. Anything else means the spawn went ahead. */
-    }) => Promise<void | { started: false }>
+    }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').ProviderLaunchRefused)>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void
@@ -269,7 +269,7 @@ export interface ElectronAPI {
   }
   ssh: {
     runPostCommand: (sessionId: string) => Promise<void>
-    launchClaude: (sessionId: string) => Promise<void>
+    launchClaude: (sessionId: string) => Promise<void | import('../../shared/providers').ProviderLaunchRefused>
     skip: (sessionId: string) => Promise<void>
     getState: (sessionId: string) => Promise<{ state: string; info?: string }>
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
@@ -597,7 +597,7 @@ export interface ElectronAPI {
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
     probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
-    spawnCliSetup: (cols: number, rows: number) => Promise<string>
+    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
     killCliSetup: () => Promise<boolean>
   }
   diagnostics: {
@@ -642,9 +642,9 @@ export interface ElectronAPI {
     gracefulExit: () => Promise<boolean>
   }
   insights: {
-    run: (opts?: { profileId?: string }) => Promise<string>
+    run: (opts?: { profileId?: string }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
     /** Cross-account roll-up: runs every targeted account, then synthesizes one report. */
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>
@@ -685,11 +685,11 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent | import('../../shared/providers').ProviderLaunchRefused>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<CloudAgent | null>
+    retry: (id: string) => Promise<CloudAgent | null | import('../../shared/providers').ProviderLaunchRefused>
     list: () => Promise<CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */
@@ -709,7 +709,7 @@ export interface ElectronAPI {
   cli: {
     check: () => Promise<boolean>
     path: () => Promise<string | null>
-    version: () => Promise<string | null>
+    version: () => Promise<string | null | import('../../shared/providers').ProviderLaunchRefused>
   }
   help: {
     workspace: () => Promise<string | null>

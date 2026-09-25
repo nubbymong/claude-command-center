@@ -11,6 +11,7 @@ import { ensureHelpWorkspace } from '../help-workspace'
 import { getResourcesDirectory } from './setup-handlers'
 import { defaultLoginShell } from '../login-shell'
 import { IPC } from '../../shared/ipc-channels'
+import { providerProbeRefusal } from '../provider-launch-gate'
 
 export function registerCliHandlers(): void {
   // Windows: tries native .exe then npm .cmd via 'where'
@@ -57,7 +58,11 @@ export function registerCliHandlers(): void {
   })
 
   // Onboarding "Find Claude": run `claude --version` on demand (user-approved).
+  // WP2: it runs the Claude CLI, so not while Claude Code is switched off:
+  // the answer says why instead (the consent card shows it).
   ipcMain.handle(IPC.CLI_VERSION, async () => {
+    const refused = providerProbeRefusal('claude')
+    if (refused) return { refused }
     try {
       const res = await spawnClaudeHeadless(['--version'], 10000)
       return parseClaudeVersion(res.stdout) ?? parseClaudeVersion(res.stderr) ?? null

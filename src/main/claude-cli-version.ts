@@ -39,6 +39,25 @@ let cached: string | null = null
 let inFlight: Promise<string | null> | null = null
 let lastFailureAt = 0
 
+/** WP2: whether a probe may run the Claude CLI now. No probe runs while
+ *  Claude Code is switched off: not the one at start, and not the one a
+ *  launch path starts on demand (ensureClaudeCliVersion, from the managed
+ *  launch preflight). Set at start from main's launch rule
+ *  (provider-launch-gate.ts, providerProbeRefusal); injected rather than
+ *  imported because that rule's accounts graph imports this module's
+ *  importers. Until it is set, probes run as they always have. */
+let probeAllowed: () => boolean = () => true
+
+export function setClaudeCliProbeAllowed(allowed: () => boolean): void {
+  probeAllowed = allowed
+}
+
+/** Whether a probe may run the Claude CLI now (setClaudeCliProbeAllowed). An
+ *  answer that throws is a no. */
+export function claudeCliProbeAllowed(): boolean {
+  try { return probeAllowed() === true } catch { return false }
+}
+
 /** How long after a FAILED probe `ensureClaudeCliVersion` declines to try again.
  *
  *  `probeClaudeCli()` coalesces only while a probe is in flight; it caches
@@ -299,6 +318,10 @@ function runVersionProbe(): Promise<string | null> {
  */
 export function probeClaudeCliVersion(): Promise<string | null> {
   if (inFlight) return inFlight
+  // Claude Code switched off: no probe runs, and nothing is recorded -- not a
+  // version and not a failure -- so the first probe once it is back on runs
+  // at once, with no backoff to wait out.
+  if (!claudeCliProbeAllowed()) return Promise.resolve(null)
   const run = runVersionProbe().then((v) => {
     if (v) cached = v
     else lastFailureAt = Date.now()
@@ -334,6 +357,7 @@ export function _resetClaudeCliVersionForTest(): void {
   inFlight = null
   lastFailureAt = 0
   probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS
+  probeAllowed = () => true
 }
 
 /** Test-only: a shorter probe timeout, so a real-process test can prove a hung

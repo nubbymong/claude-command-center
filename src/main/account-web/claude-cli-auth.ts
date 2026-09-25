@@ -52,6 +52,9 @@ export interface ClaudeCliAuthStatus {
   source?: 'cli-status' | 'credential-file'
   /** Set when nothing could be determined. */
   error?: string
+  /** WP2: the CLI was not asked because Claude Code is switched off (or its
+   *  on/off could not be read): the reason, in plain words. */
+  notChecked?: string
 }
 
 /**
