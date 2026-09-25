@@ -178,6 +178,9 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
       term.open(container)
       fitAddon.fit()
       resizeObserver.observe(container)
+      // The terminal is what the user works in on this screen (its button
+      // waits for it), so it takes the focus, not the page body.
+      term.focus()
 
       // Spawn CLI setup PTY (listeners already subscribed above)
       const cols = term.cols
@@ -201,6 +204,22 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
       fitAddonRef.current = null
     }
   }, [step, cliProbe?.installed])
+
+  // The "not installed" screen's primary button, Retry, has the focus each
+  // time a check ends on that screen: when it opens (it only ever opens when
+  // a check ends), and after Retry's own check, while which Retry is disabled
+  // and the focus it had falls to the page body. A control the user moved to
+  // keeps it.
+  const missingPanelRef = useRef<HTMLDivElement>(null)
+  const wasProbing = useRef(false)
+  useEffect(() => {
+    if (probing) { wasProbing.current = true; return }
+    if (!wasProbing.current) return
+    wasProbing.current = false
+    const at = document.activeElement
+    if (at && at !== document.body) return
+    missingPanelRef.current?.querySelector<HTMLButtonElement>('[data-testid="setup-cli-retry"]')?.focus()
+  }, [probing])
 
   const handleBrowseData = async () => {
     const result = await window.electronAPI.setup.selectDataDir()
@@ -260,10 +279,17 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   // user has no way to diagnose. The ways out are: install it and Retry, go
   // Back and quit, or (WP2) "Use Codex only", which turns Claude Code off
   // rather than pretending it is there.
+  //
+  // Each screen's primary button takes focus when the screen opens, rather
+  // than leaving it on the page body: Continue by autoFocus, Retry when the
+  // check that opens this screen ends (above). The screens are keyed so each
+  // is mounted afresh: they share their frame, and without a key React would
+  // reuse one screen's footer button for the next (Retry, say, becoming step
+  // 1's Continue after Back) and autoFocus would not run again.
   if (step === 2 && cliProbe && !cliProbe.installed) {
     return (
-      <DialogOverlay style={OPAQUE_BACKDROP}>
-        <DialogPanel width="w-[672px]" labelledBy="setup-cli-missing-title">
+      <DialogOverlay key="setup-cli-missing" style={OPAQUE_BACKDROP}>
+        <DialogPanel width="w-[672px]" labelledBy="setup-cli-missing-title" panelRef={missingPanelRef}>
           <DialogBody className="space-y-4">
             <SetupHero
               titleId="setup-cli-missing-title"
@@ -358,10 +384,11 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     )
   }
 
-  // Step 2: Claude CLI Setup
+  // Step 2: Claude CLI Setup. Its primary button waits for the terminal
+  // below, which is what the user works in here, so no button is focused.
   if (step === 2) {
     return (
-      <DialogOverlay style={OPAQUE_BACKDROP}>
+      <DialogOverlay key="setup-cli" style={OPAQUE_BACKDROP}>
         <DialogPanel width="w-[672px]" labelledBy="setup-cli-title">
           <DialogBody>
             <SetupHero
@@ -425,7 +452,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
 
   // Step 1: Directory selection
   return (
-    <DialogOverlay style={OPAQUE_BACKDROP}>
+    <DialogOverlay key="setup-dirs" style={OPAQUE_BACKDROP}>
       <DialogPanel width="w-[576px]" labelledBy="setup-welcome-title">
         <DialogBody className="space-y-5">
           <SetupHero
@@ -510,7 +537,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
         <DialogFooter>
           {/* Was a purple fill with the same font-size-not-a-colour trap as
               step 2's Finish button. */}
-          <DialogButton variant="primary" size="md" onClick={handleContinue}>
+          <DialogButton variant="primary" size="md" onClick={handleContinue} autoFocus testId="setup-continue">
             Continue
           </DialogButton>
         </DialogFooter>

@@ -30,7 +30,7 @@ const pty = { onData: vi.fn(() => () => {}), onExit: vi.fn(() => () => {}), writ
 
 const lines = vi.hoisted(() => [] as string[])
 vi.mock('@xterm/xterm', () => ({
-  Terminal: class { cols = 80; rows = 24; loadAddon() {} open() {} write() {} writeln(s: string) { lines.push(s) } onData() {} dispose() {} },
+  Terminal: class { cols = 80; rows = 24; loadAddon() {} open() {} focus() {} write() {} writeln(s: string) { lines.push(s) } onData() {} dispose() {} },
 }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))
 

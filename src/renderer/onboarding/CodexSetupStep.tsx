@@ -153,12 +153,13 @@ function Recipe({ recipe, onRun, busyReason }: {
             onClick={() => setConfirming(true)}
             disabled={confirming || !!busyReason}
             title={busyReason}
+            data-autofocus=""
             data-testid={`codex-recipe-run-${recipe.id}`}
           >
             Run in a terminal
           </button>
         ) : (
-          <button className="cx-btn" type="button" onClick={copy} data-testid={`codex-recipe-copy-${recipe.id}`}>
+          <button className="cx-btn" type="button" onClick={copy} data-autofocus="" data-testid={`codex-recipe-copy-${recipe.id}`}>
             {copied ? 'Copied' : 'Copy'}
           </button>
         )}
@@ -364,8 +365,8 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
   const onlyShared = done && signedIn.every((a) => a.external || a.unverified)
   const methods = provider ? SIGN_IN_METHODS.filter((m) => provider.signInMethods[m]?.enabled) : []
 
-  const addNew = (testId: string) => (
-    <button className="cx-opt" type="button" onClick={() => setDialog({})} disabled={busy} data-testid={testId}>
+  const addNew = (testId: string, primary: boolean) => (
+    <button className="cx-opt" type="button" onClick={() => setDialog({})} disabled={busy} data-autofocus={primary ? '' : undefined} data-testid={testId}>
       <span>
         <span className="cx-opt-t">Add a new Codex account <span className="cx-rec">Recommended</span></span>
         <span className="cx-opt-d">Its own sign-in folder; can be your reviewer</span>
@@ -375,6 +376,9 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
   )
 
   let body: ReactNode
+  // Which of the page's states is showing: the page's primary control (the
+  // one marked data-autofocus) differs by state, so focus follows it.
+  let view: string = install.kind
   if (install.kind === 'unavailable') {
     body = <p className="cx-muted" data-testid="codex-setup-unavailable">The account list is not available right now. You can set up Codex later in Settings, Accounts.</p>
   } else if (install.kind === 'checking') {
@@ -417,6 +421,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     const checkingThisComputer = thisComputer.kind === 'unchecked' && (thisComputerCheck === 'running' || canCheckThisComputer)
     if (done && onlyShared) {
       const shared = signedIn[0]
+      view = 'done-shared'
       body = (
         <div data-testid="codex-setup-done">
           {thisComputerCallout(shared.providerLabel)}
@@ -426,10 +431,11 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
               <span className="cx-opt-d">{SHARED_NOTE}</span>
             </span>
           </div>
-          {addNew('codex-setup-add-new')}
+          {addNew('codex-setup-add-new', false)}
         </div>
       )
     } else if (done) {
+      view = 'done'
       body = (
         <div data-testid="codex-setup-done">
           {versionRow}
@@ -439,6 +445,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
         </div>
       )
     } else if (checkingThisComputer) {
+      view = 'checking-this-computer'
       body = (
         <div data-testid="codex-setup-checking-this-computer">
           {versionRow}
@@ -446,6 +453,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
         </div>
       )
     } else if (thisComputer.kind === 'found' && provider?.enabled) {
+      view = 'adopt'
       body = (
         <div data-testid="codex-setup-adopt">
           {thisComputerCallout()}
@@ -456,7 +464,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
             </span>
             <span className="cx-chev" aria-hidden />
           </button>
-          {addNew('codex-setup-add-new')}
+          {addNew('codex-setup-add-new', true)}
         </div>
       )
     } else {
@@ -473,6 +481,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
           : null
       const lookAgain = !!provider?.enabled
         && ((thisComputer.kind === 'not-found' && thisComputer.checkAgain) || (failed && said.kind !== 'note'))
+      view = 'sign-in'
       body = (
         <div data-testid="codex-setup-sign-in">
           {versionRow}
@@ -492,6 +501,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
                 className={i === 0 ? 'cx-choice primary' : 'cx-choice'}
                 type="button"
                 onClick={() => setDialog({ method: m })}
+                data-autofocus={i === 0 ? '' : undefined}
                 data-testid={`codex-setup-method-${m}`}
               >
                 <b>{copy.title}</b>
@@ -506,9 +516,32 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
 
   const needsCli = install.kind === 'missing' || install.kind === 'update'
 
+  // Focus goes to the page's primary control, the first enabled one marked
+  // data-autofocus (an install or update command's button, else Check again;
+  // the first sign-in method; the Recommended new account; Next; Skip for now
+  // when the account list is not there), when the page opens, when its state
+  // moves on (a check finished, a sign-in landed), when the add-account dialog
+  // closes and when the user comes back from the terminal. Only while nothing
+  // has focus (the page body): a control the user is on keeps it, and nothing
+  // is taken from under the add-account dialog.
+  const pageRef = useRef<HTMLDivElement>(null)
+  const recipesLoaded = recipes !== undefined
+  useEffect(() => {
+    if (dialog) return
+    // Not found or too old: the commands are the primary, so wait for them
+    // rather than settle on Check again a moment before they arrive.
+    if (needsCli && !recipesLoaded) return
+    const at = document.activeElement
+    if (at && at !== document.body) return
+    // The page's own section: this page's body and its footer.
+    const scope = pageRef.current?.parentElement
+    const primary = Array.from(scope?.querySelectorAll<HTMLButtonElement>('[data-autofocus]') ?? []).find((el) => !el.disabled)
+    primary?.focus()
+  }, [view, needsCli, recipesLoaded, dialog, returns])
+
   return (
     <>
-      <div className="p2">
+      <div className="p2" ref={pageRef}>
         <div className="p2-inner" data-testid="codex-setup">
           <h2 className="h2">Set up Codex</h2>
           {body}
@@ -522,14 +555,14 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
         {onBack && <button className="back" onClick={onBack} type="button" data-testid="codex-setup-back">← Back</button>}
         <span className="cx-foot-actions">
           {needsCli && (
-            <button className="back" type="button" onClick={() => { void checkAgain() }} disabled={checking} data-testid="codex-setup-check-again">
+            <button className="back" type="button" onClick={() => { void checkAgain() }} disabled={checking} data-autofocus="" data-testid="codex-setup-check-again">
               {checking ? 'Checking...' : 'Check again'}
             </button>
           )}
           {done ? (
-            <button className="cta" onClick={onNext} type="button" data-testid="codex-setup-next">Next →</button>
+            <button className="cta" onClick={onNext} type="button" data-autofocus="" data-testid="codex-setup-next">Next →</button>
           ) : (
-            <button className="skip" onClick={onNext} type="button" data-testid="codex-setup-skip">Skip for now →</button>
+            <button className="skip" onClick={onNext} type="button" data-autofocus={install.kind === 'unavailable' ? '' : undefined} data-testid="codex-setup-skip">Skip for now →</button>
           )}
         </span>
       </div>

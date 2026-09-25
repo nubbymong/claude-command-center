@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import './onboarding.css'
 import { OnboardingShell } from './OnboardingShell'
+import { otherDialogOpen } from './contain-focus'
 import { ProviderMark } from '../components/sidebar/Badges'
 import { DialogOverlay, useDialogEscape } from '../components/ui/Dialog'
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
@@ -11,7 +12,7 @@ import { usePaneOcclusionStore } from '../stores/paneOcclusionStore'
 import {
   CLAUDE_REVIEW_SHIPS, HELLO_CODEX_ARM_MS, HELLO_CODEX_PAGE_COUNT, claudeCodeOn, helloCodexPages, helloCodexComparison,
   helloCodexDue, helloCodexTakeoverReady, markHelloCodexSeen, useHelloCodexStore,
-  type HelloCodexCopyInputs, type HelloCodexPage, type HelloCodexPageId,
+  type HelloCodexCopyInputs, type HelloCodexOpen, type HelloCodexPage, type HelloCodexPageId,
 } from './hello-codex'
 
 /**
@@ -33,8 +34,10 @@ import {
  * for a short while after the takeover opens (HELLO_CODEX_ARM_MS) and while
  * another dialog is open above it: that dialog gets them. Focus lands on the
  * primary button on entry, and the primary button stays the same element on
- * every page so focus stays on it. With reduced motion, pages cut instead of
- * slide.
+ * every page so focus stays on it. Tab stays inside the page: all three
+ * places render it in OnboardingShell, which keeps Tab in (contain-focus.ts),
+ * and App makes the app behind the takeover and a replay inert. With reduced
+ * motion, pages cut instead of slide.
  */
 
 export type HelloCodexOutcome = 'done' | 'skip' | 'start'
@@ -48,30 +51,6 @@ function prefersReducedMotion(): boolean {
   } catch {
     return false
   }
-}
-
-/** Is the element actually rendered? Page tabs and sessions stay mounted
- *  while hidden (an ancestor with display: none, App.tsx), so a dialog left
- *  open in one is in the DOM but not on screen. Walks the ancestors rather
- *  than asking for client rects, which a test DOM cannot give. */
-function rendered(el: Element): boolean {
-  for (let n: Element | null = el; n; n = n.parentElement) {
-    if ((n as HTMLElement).hidden) return false
-    const cs = window.getComputedStyle(n)
-    if (cs.display === 'none' || cs.visibility === 'hidden') return false
-  }
-  return true
-}
-
-/** Is another dialog open, other than the one `own` belongs to? Any rendered
- *  dialog backdrop or modal that neither contains `own` nor sits inside it.
- *  Such a dialog was opened after this page and paints above it (the close
- *  dialogs do), so its keys are its own. One left open in a hidden page tab
- *  or session does not count. */
-function otherDialogOpen(own: Element | null): boolean {
-  if (typeof document === 'undefined') return false
-  return Array.from(document.querySelectorAll('[data-dialog-overlay], [aria-modal="true"]'))
-    .some((el) => (!own || !(el === own || el.contains(own) || own.contains(el))) && rendered(el))
 }
 
 /** `backticks` in the copy become code. */
@@ -380,7 +359,7 @@ export function HelloCodex({
         <div
           key={ix}
           className={`p2-inner sc-page hc-page${slideClass}`}
-          style={{ width: 'min(1060px, 95vw)' }}
+          style={{ width: 'min(1060px, 100%)' }}
           data-testid="hc-page"
           data-ux-id={`hc-page-${pages[ix].id}`}
           data-transition={transition}
@@ -502,9 +481,17 @@ export function HelloCodexHost({ gatesClear, takeoverTurn, onStartSession }: {
   }, [due, open, gatesClear, overlays])
 
   const close = () => useHelloCodexStore.getState().close()
+  if (!helloCodexShowing(open, takeoverTurn)) return null
   if (open === 'replay') return <HelloCodexTakeover replay onClose={close} onStartSession={onStartSession} />
-  if (open === 'takeover' && takeoverTurn) return <HelloCodexTakeover onClose={close} onStartSession={onStartSession} />
-  return null
+  return <HelloCodexTakeover onClose={close} onStartSession={onStartSession} />
+}
+
+/** Is the takeover or a replay on screen? HelloCodexHost's render rule: a
+ *  replay whenever one is open, the takeover on its turn in the boot chain.
+ *  App makes the app behind it inert on exactly this, so the two can never
+ *  disagree. */
+export function helloCodexShowing(open: HelloCodexOpen, takeoverTurn: boolean): boolean {
+  return open === 'replay' || (open === 'takeover' && takeoverTurn)
 }
 
 /**

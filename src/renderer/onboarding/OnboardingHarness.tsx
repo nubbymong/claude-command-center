@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import './onboarding.css'
 import { OnboardingShell } from './OnboardingShell'
@@ -268,15 +268,21 @@ const PAGES: BuiltStep[] = [
  *   them instead. The Codex introduction follows it when due (WP2 commit 6f).
  * @param onComplete `extra` is passed only when a page asked for something
  *   after the run: Hello Codex's "Start a Codex session".
+ * @param onAsideChange Told whenever the pages step aside for a terminal a
+ *   page opened, and come back (and false when the harness goes away): App
+ *   makes the app behind the pages inert only while they are showing, since
+ *   that terminal is the user's while they are aside.
  */
 export function OnboardingHarness({
   onComplete,
   whatsNewOnly = false,
   codexSetupOnly = false,
+  onAsideChange,
 }: {
   onComplete: (startTour: boolean, extra?: OnboardingCompleteExtra) => void
   whatsNewOnly?: boolean
   codexSetupOnly?: boolean
+  onAsideChange?: (aside: boolean) => void
 }) {
   // The page list for THIS run, fixed at mount, and which of them carry the
   // "New" badge. Not recomputed per render: the pages write the very settings
@@ -315,6 +321,10 @@ export function OnboardingHarness({
   // is exactly as they left it when they come back.
   const [aside, setAside] = useState(false)
   const [returns, setReturns] = useState(0)
+  const onAsideChangeRef = useRef(onAsideChange)
+  onAsideChangeRef.current = onAsideChange
+  useEffect(() => { onAsideChangeRef.current?.(aside) }, [aside])
+  useEffect(() => () => onAsideChangeRef.current?.(false), [])
   const idx = Math.max(0, pages.findIndex((p) => p.id === cursor))
   const step = pages[idx]
   const applicable = (p: BuiltStep | undefined) => !!p && (!p.when || p.when())

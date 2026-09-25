@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-25T03:58:52.914Z",
-  "head": "accec3c218aa4ab5d8984c16f498d66416ec8416",
-  "tree": "f6494d6811d066fcad5a4977e651c33a79217df1",
+  "generatedAt": "2026-09-25T06:36:45.674Z",
+  "head": "5a3e02781d43b5ea2883d39a2f0590f77be1cab5",
+  "tree": "298c4524373570db5352e15a2cf4bf6feab16ee6",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2283,
-  "excludedFileCount": 375,
-  "scannedFileCount": 1908,
+  "trackedFileCount": 2293,
+  "excludedFileCount": 376,
+  "scannedFileCount": 1917,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 348,
-  "pathDigest": "d31e04329d2e908ef74f95d2d5f5395b25960c34870a676bdf2a8c48851c8af5",
+  "matchedPathCount": 357,
+  "pathDigest": "6d9c687e504a90596f570feffe2df65dd9bb5de9380ad81441fdb4021e45b2b8",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -168,7 +168,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 75
+      "lineCount": 77
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -860,7 +860,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 42
+      "lineCount": 44
     },
     {
       "path": "src/renderer/codex-models.ts",
@@ -869,6 +869,13 @@
         "P11"
       ],
       "lineCount": 7
+    },
+    {
+      "path": "src/renderer/components/AccountsPanel.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 1
     },
     {
       "path": "src/renderer/components/AiUsagePopover.tsx",
@@ -1280,7 +1287,7 @@
         "P10",
         "P11"
       ],
-      "lineCount": 69
+      "lineCount": 72
     },
     {
       "path": "src/renderer/onboarding/OnboardingHarness.tsx",
@@ -1311,7 +1318,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 3
+      "lineCount": 5
     },
     {
       "path": "src/renderer/onboarding/WhatsNewV2Step.tsx",
@@ -1498,7 +1505,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 41
+      "lineCount": 44
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -1627,9 +1634,10 @@
       "predicates": [
         "P01",
         "P05",
+        "P07",
         "P13"
       ],
-      "lineCount": 17
+      "lineCount": 64
     },
     {
       "path": "tests/e2e/codex-settings-section.spec.ts",
@@ -1638,6 +1646,16 @@
         "P13"
       ],
       "lineCount": 11
+    },
+    {
+      "path": "tests/e2e/helpers/fake-codex.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "lineCount": 36
     },
     {
       "path": "tests/e2e/session-dialog-permutations.spec.ts",
@@ -2194,6 +2212,14 @@
       "lineCount": 4
     },
     {
+      "path": "tests/unit/renderer/accounts-panel-claude-card.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "lineCount": 10
+    },
+    {
       "path": "tests/unit/renderer/accounts-snapshot-harness.ts",
       "predicates": [
         "P04",
@@ -2440,6 +2466,13 @@
       "lineCount": 3
     },
     {
+      "path": "tests/unit/renderer/onboarding-assistants-radiogroup.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 15
+    },
+    {
       "path": "tests/unit/renderer/onboarding-assistants-step.test.tsx",
       "predicates": [
         "P05",
@@ -2464,6 +2497,14 @@
       "lineCount": 3
     },
     {
+      "path": "tests/unit/renderer/onboarding-focus-trap.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "lineCount": 27
+    },
+    {
       "path": "tests/unit/renderer/onboarding-gate.test.ts",
       "predicates": [
         "P05",
@@ -2471,6 +2512,20 @@
         "P13"
       ],
       "lineCount": 61
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-initial-focus.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 31
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-layout-contract.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 2
     },
     {
       "path": "tests/unit/renderer/onboarding-provider-flow.test.tsx",
@@ -2504,6 +2559,14 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-welcome-copy.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "lineCount": 6
     },
     {
       "path": "tests/unit/renderer/provider-accounts-store.test.ts",
@@ -2758,7 +2821,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 1
+      "lineCount": 2
     },
     {
       "path": "tests/unit/renderer/tokenomicspage-formatting.test.ts",
@@ -2795,6 +2858,13 @@
         "P13"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "tests/unit/renderer/window-close-dialogs.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 16
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker.test.ts",

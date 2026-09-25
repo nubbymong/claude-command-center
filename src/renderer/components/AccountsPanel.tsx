@@ -16,6 +16,7 @@ import { Section } from './SettingsPage'
 import { AccountWebSession } from './settings/AccountWebSession'
 import { AccountIsolationNotice } from './settings/AccountIsolationNotice'
 import { useProviderAccountsStore, providerAccountActions, accountForLegacyId, canOfferMakeReviewer, showsReviewerBadge, accountFailureText } from '../stores/providerAccountsStore'
+import { claudeCodeOn } from '../onboarding/hello-codex'
 import { ProviderMark } from './sidebar/Badges'
 import { Pill, MutedLine, ErrorLine, RowButton, ReviewerLineBlock } from './settings/accounts/accounts-ui'
 
@@ -305,6 +306,14 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
 
 export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
   const profiles = useAccountProfilesStore((s) => s.profiles)
+  // Claude Code on (claudeCodeOn: the saved setting says so, absent meaning
+  // on, and main has not switched it off). While it is off no Claude session
+  // starts, so an account added then could not be used: the card offers no
+  // add and says how to turn it on instead, as the other providers' cards do
+  // (ManagedAccountsSection).
+  const claudeEnabled = useSettingsStore((s) => s.settings.claudeEnabled)
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
+  const claudeOn = claudeCodeOn({ claudeEnabled }, snapshot)
 
   // On open, reconcile any "setup incomplete" account: the user's /login may have
   // finished after the live add-account poll's window, so re-read each empty
@@ -345,16 +354,20 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
         ))}
       </div>
 
-      {/* Add another account. Windows-only: on macOS Claude Code keeps its
+      {/* Add an account. Windows-only: on macOS Claude Code keeps its
           OAuth token in the login Keychain, which per-profile HOME redirection
           cannot isolate, so added accounts would silently share one login
-          (Mac readiness review 2026-07-02). */}
+          (Mac readiness review 2026-07-02). "Another" only when there is one
+          already. The notes are --text-muted: --color-overlay0 measured 2.1:1
+          (dark) and 3.2:1 (light) on this card (VM audit 2026-09-25). */}
       {window.electronPlatform === 'darwin' ? (
-        <p className="mt-3 text-[11px] text-overlay0 leading-relaxed rounded-lg border border-dashed border-surface1 py-2 px-4">
+        <p className="mt-3 text-[11px] leading-relaxed rounded-lg border border-dashed border-surface1 py-2 px-4" style={{ color: 'var(--text-muted)' }} data-testid="accounts-mac-note">
           Multiple accounts are not available on macOS yet: Claude Code stores its sign-in
           token in the macOS Keychain, which is shared across the whole app, so added
           accounts could not be kept separate. Your single account works exactly as normal.
         </p>
+      ) : !claudeOn ? (
+        <MutedLine testId="provider-off-note-claude" className="mt-3">Turn Claude Code on to add an account.</MutedLine>
       ) : (
         <button
           onClick={onAdd}
@@ -364,13 +377,13 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
-          Add another account
+          {profiles.length === 0 ? 'Add an account' : 'Add another account'}
         </button>
       )}
 
 
       {/* Informational note - no em dashes */}
-      <p className="text-[11px] text-overlay0 leading-relaxed mt-2">
+      <p className="text-[11px] leading-relaxed mt-2" style={{ color: 'var(--text-muted)' }} data-testid="accounts-claude-note">
         The email is the account; the name is just a friendly label for you. Signing in or
         out of an added account never touches the others or your default, and memory,
         settings and history stay shared. You pick which account a session runs under when

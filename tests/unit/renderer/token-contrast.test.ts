@@ -221,3 +221,43 @@ describe('contrast — #458: muted text and the status-pill recipe', () => {
     expect(wash('#000000', 0.5, '#ffffff')).toBe('#808080')
   })
 })
+
+/* ---- the onboarding showcase eyebrow (VM audit 2026-09-25) --------------- */
+
+describe('contrast: the showcase eyebrow on the onboarding pages', () => {
+  // The page counter above the heading, on Hello Codex and on the release
+  // notes' feature showcase: 11px copy, so 4.5:1. Its colour was --ob, which measured
+  // 4.32:1 on the light theme's --surface-base. The colour is READ from
+  // onboarding.css, so the rule is what moves the test.
+  const OB_CSS = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/onboarding/onboarding.css'), 'utf8')
+  const rule = OB_CSS.match(/\.ob-root \.sc-eyebrow \{([^}]*)\}/)?.[1] ?? ''
+  const colourToken = rule.match(/(?:^|;)\s*color:\s*var\(--([a-z0-9-]+)\)/)?.[1]
+
+  /** `--ob-soft: rgba(r,g,b,a)` in the Nth theme block: the onboarding
+   *  page's background glow (.glow), which the eyebrow can sit over. */
+  function obSoft(occurrence: number): { hex: string; alpha: number } {
+    const all = [...CSS.matchAll(/--ob-soft\s*:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/g)]
+    if (all.length !== 2) throw new Error(`--ob-soft defined ${all.length} times in styles.css; expected exactly dark + light`)
+    const m = all[occurrence]
+    const hex = '#' + [m[1], m[2], m[3]].map((c) => Number(c).toString(16).padStart(2, '0')).join('')
+    return { hex, alpha: Number(m[4]) }
+  }
+
+  it('reads the eyebrow colour out of onboarding.css, and it is a token', () => {
+    expect(rule, '.sc-eyebrow rule exists').not.toBe('')
+    expect(colourToken, '.sc-eyebrow colour is a var(--token)').toBeTruthy()
+  })
+
+  it('clears 4.5:1 on --surface-base, and over the page glow at its strongest, both themes', () => {
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      const fg = token(colourToken!, mode)
+      const base = token('surface-base', mode)
+      const flat = contrast(fg, base)
+      expect(flat, `${name}: --${colourToken} (${fg}) on --surface-base (${base}) = ${flat.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+      const glow = obSoft(mode)
+      const tinted = wash(glow.hex, glow.alpha, base)
+      const r = contrast(fg, tinted)
+      expect(r, `${name}: --${colourToken} (${fg}) over the glow (${tinted}) = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+    }
+  })
+})

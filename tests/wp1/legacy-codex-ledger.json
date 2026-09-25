@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "d31e04329d2e908ef74f95d2d5f5395b25960c34870a676bdf2a8c48851c8af5",
-  "manifestHead": "accec3c218aa4ab5d8984c16f498d66416ec8416",
+  "manifestPathDigest": "6d9c687e504a90596f570feffe2df65dd9bb5de9380ad81441fdb4021e45b2b8",
+  "manifestHead": "5a3e02781d43b5ea2883d39a2f0590f77be1cab5",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1089,7 +1089,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "replace",
-      "evidence": "boot refresh through the provider-neutral Accounts store (tests/unit/renderer/provider-accounts-store.test.ts, WP1.57); WP2 commit 6g: the codexAccountStore refresh is removed and app:openSettings opens Settings, Accounts for the retired Codex tab id (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 commit 6e review fix: \"Use Codex only\" on either setup screen hands the run to the Codex setup page, through setup-handoff.ts (WP1.34); tests/unit/renderer/setup-codex-only.test.tsx; WP2 commit 6f: hosts the Codex introduction's one-time takeover (last in the boot chain, after any open dialog) and its replay, and opens New saved config with Codex chosen for \"Start a Codex session\" (WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the boot-chain decision comes from bootChain, and \"Start a Codex session\" is held while the resume prompt waits (WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6g round 1: its app:openSettings listener is openSettingsHandler, driven with real events (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "evidence": "boot refresh through the provider-neutral Accounts store (tests/unit/renderer/provider-accounts-store.test.ts, WP1.57); WP2 commit 6g: the codexAccountStore refresh is removed and app:openSettings opens Settings, Accounts for the retired Codex tab id (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 commit 6e review fix: \"Use Codex only\" on either setup screen hands the run to the Codex setup page, through setup-handoff.ts (WP1.34); tests/unit/renderer/setup-codex-only.test.tsx; WP2 commit 6f: hosts the Codex introduction's one-time takeover (last in the boot chain, after any open dialog) and its replay, and opens New saved config with Codex chosen for \"Start a Codex session\" (WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the boot-chain decision comes from bootChain, and \"Start a Codex session\" is held while the resume prompt waits (WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6g round 1: its app:openSettings listener is openSettingsHandler, driven with real events (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 visual fixes (VM audit 2026-09-25): the app behind the onboarding pages and the Hello Codex takeover or replay is inert while they cover the window (not while the pages step aside for a terminal), and the close dialogs and the Closing overlay paint on the top layer above them (WP1.34, WP1.6); tests/unit/renderer/onboarding-focus-trap.test.tsx; tests/unit/renderer/window-close-dialogs.test.tsx",
       "note": "boot refresh goes through the provider-neutral store instead of codexAccountStore"
     },
     {
@@ -1102,6 +1102,16 @@
       "disposition": "retain",
       "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/renderer/codex-models.test.ts",
       "note": "model catalogue is a later work package"
+    },
+    {
+      "path": "src/renderer/components/AccountsPanel.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "replace",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the Claude card offers \"Add an account\" when it lists none and no add while Claude Code is off (claudeCodeOn, from the Codex introduction's module, is the one test of Claude Code being on), and its notes use --text-muted (WP1.39, WP1.60 enable/disable); tests/unit/renderer/accounts-panel-claude-card.test.tsx",
+      "note": "matches P11 only through the claudeCodeOn import; no legacy Codex code"
     },
     {
       "path": "src/renderer/components/AiUsagePopover.tsx",
@@ -1319,7 +1329,7 @@
       ],
       "category": "SETUP",
       "disposition": "replace",
-      "evidence": "WP2 commit 6e: first-run setup lets a Codex-only user continue without Claude Code (WP1.2); tests/unit/renderer/setup-codex-only.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the CLI setup terminal says why main refused it; tests/unit/renderer/setup-cli-provider-off.test.tsx",
+      "evidence": "WP2 commit 6e: first-run setup lets a Codex-only user continue without Claude Code (WP1.2); tests/unit/renderer/setup-codex-only.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the CLI setup terminal says why main refused it; tests/unit/renderer/setup-cli-provider-off.test.tsx; WP2 visual fixes (VM audit 2026-09-25): each setup screen opens with focus on its primary control, the Claude CLI setup terminal takes the focus, and Retry has it again after a failed check (WP1.1, WP1.2); tests/unit/renderer/onboarding-initial-focus.test.tsx",
       "note": "existing dialog adapted: \"Use Codex only\" when the Claude CLI is missing"
     },
     {
@@ -1486,7 +1496,7 @@
       ],
       "category": "OTHER",
       "disposition": "added",
-      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 visual fixes (VM audit 2026-09-25): the reviewer line is not shown for a provider that is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/accounts-panel-claude-card.test.tsx",
       "note": "shared badges, status text, row menu and reviewer line"
     },
     {
@@ -1661,7 +1671,7 @@
       ],
       "category": "SETUP",
       "disposition": "added",
-      "evidence": "WP2 commit 6e provider selection page (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-assistants-step.test.tsx",
+      "evidence": "WP2 commit 6e provider selection page (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-assistants-step.test.tsx; WP2 visual fixes (VM audit 2026-09-25): the cards are an ARIA radio group (one Tab stop, arrow keys, disabled cards skipped), Continue has the focus on entry and again after a failed save, and the column fits the page (WP1.1, WP1.2); tests/unit/renderer/onboarding-assistants-radiogroup.test.tsx; tests/unit/renderer/onboarding-initial-focus.test.tsx; tests/unit/renderer/onboarding-layout-contract.test.ts",
       "note": "Which assistants will you use?"
     },
     {
@@ -1685,7 +1695,7 @@
       ],
       "category": "SETUP",
       "disposition": "added",
-      "evidence": "WP2 commit 6e Codex setup page: discovery, install recipes, sign-in, this computer's sign-in (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 commit 6e review fix: Run in a terminal only for a recipe main sent a line for, typing that line exactly, one install at a time (WP1.18); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 commit 6e review round 2: the page runs this computer's one-time sign-in check itself after the choice and maps each answer honestly: settled F2 d, Use this sign-in only for a sign-in found, otherwise the sign-in choices with the reason (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx",
+      "evidence": "WP2 commit 6e Codex setup page: discovery, install recipes, sign-in, this computer's sign-in (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 commit 6e review fix: Run in a terminal only for a recipe main sent a line for, typing that line exactly, one install at a time (WP1.18); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 commit 6e review round 2: the page runs this computer's one-time sign-in check itself after the choice and maps each answer honestly: settled F2 d, Use this sign-in only for a sign-in found, otherwise the sign-in choices with the reason (WP1.2); tests/unit/renderer/onboarding-codex-setup.test.tsx; WP2 visual fixes (VM audit 2026-09-25): focus follows the page's primary control in each state (install command, sign-in method, Recommended new account, Next), never taken from a control the user is on (WP1.2); tests/unit/renderer/onboarding-initial-focus.test.tsx",
       "note": "replaces the legacy Codex onboarding pages in the flow"
     },
     {
@@ -1735,7 +1745,7 @@
       ],
       "category": "SETUP",
       "disposition": "added",
-      "evidence": "WP2 commit 6f: the Hello Codex pages, the onboarding page after Codex setup, and the one-time takeover and replay outside onboarding (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the takeover at the shared z-50 under the close dialogs, keys left to a dialog open above it, keys ignored while arming and when auto-repeated, page 1 Back in onboarding, a replay while still due stamps, and \"Start a Codex session\" held behind the resume prompt (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "evidence": "WP2 commit 6f: the Hello Codex pages, the onboarding page after Codex setup, and the one-time takeover and replay outside onboarding (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the takeover at the shared z-50 under the close dialogs, keys left to a dialog open above it, keys ignored while arming and when auto-repeated, page 1 Back in onboarding, a replay while still due stamps, and \"Start a Codex session\" held behind the resume prompt (WP1.34, WP1.6); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 visual fixes (VM audit 2026-09-25): Tab stays inside it through the onboarding shell, helloCodexShowing is the host's render rule that App makes the app behind inert on, the close dialogs paint above the takeover on the top layer, and its column fits the page (WP1.34, WP1.6); tests/unit/renderer/onboarding-focus-trap.test.tsx; tests/unit/renderer/window-close-dialogs.test.tsx; tests/unit/renderer/onboarding-layout-contract.test.ts",
       "note": ""
     },
     {
@@ -1747,7 +1757,7 @@
       ],
       "category": "SETUP",
       "disposition": "replace",
-      "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6e review fix: an upgrader who chose \"Use Codex only\" on the version-change setup screen is handed the Codex setup page once, in that run (WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6f: the Codex introduction follows the Codex setup page wherever that page is shown, when due, and its \"Start a Codex session\" is handed to App when the run ends (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the Codex introduction's page 1 Back returns to Codex setup unstamped (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6e review fix: an upgrader who chose \"Use Codex only\" on the version-change setup screen is handed the Codex setup page once, in that run (WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6f: the Codex introduction follows the Codex setup page wherever that page is shown, when due, and its \"Start a Codex session\" is handed to App when the run ends (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the Codex introduction's page 1 Back returns to Codex setup unstamped (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 visual fixes (VM audit 2026-09-25): it tells App when its pages step aside for a terminal and come back, so the app behind is inert only while they cover the window (WP1.34); tests/unit/renderer/onboarding-focus-trap.test.tsx",
       "note": "provider-selection + provider setup pages; upgrade step stamped with the actual release version",
       "adaptsTests": [
         "tests/unit/renderer/onboarding-gate.test.ts"
@@ -1780,8 +1790,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy only, no account/auth/setup logic; WP2 commit 6e changed the hint from \"We'll get to Claude next\" to name the assistants choice that follows, since a Codex-only run never meets Claude (WP1.1, WP1.2)",
+      "disposition": "replace",
+      "evidence": "user-facing copy only, no account/auth/setup logic; WP2 commit 6e changed the hint from \"We'll get to Claude next\" to name the assistants choice that follows, since a Codex-only run never meets Claude (WP1.1, WP1.2); WP2 visual fixes (VM audit 2026-09-25), re-dispositioned because it changed: the opening line names no Claude when Claude Code is off or was missing at setup, and \"Let's go\" has the focus on entry (WP1.1, WP1.2); tests/unit/renderer/onboarding-welcome-copy.test.tsx; tests/unit/renderer/onboarding-initial-focus.test.tsx",
       "note": ""
     },
     {
@@ -1835,7 +1845,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6f: carries the Hello Codex introduction's styles (the .hc-* rules), semantic tokens defined in both themes, reduced motion honoured (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6g: the dead rules of the retired Codex question and sign-in page removed (WP1.34); tests/unit/renderer/onboarding-registry.test.ts",
+      "evidence": "WP2 commit 6f: carries the Hello Codex introduction's styles (the .hc-* rules), semantic tokens defined in both themes, reduced motion honoured (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6g: the dead rules of the retired Codex question and sign-in page removed (WP1.34); tests/unit/renderer/onboarding-registry.test.ts; WP2 visual fixes (VM audit 2026-09-25): the page columns (Hello Codex's included) fit their scroll container at narrow widths, the Welcome mark keeps its size, and the showcase eyebrow uses --brand for 4.5:1 in the light theme (WP1.34); tests/unit/renderer/onboarding-layout-contract.test.ts; tests/unit/renderer/token-contrast.test.ts",
       "note": ""
     },
     {
@@ -2246,11 +2256,12 @@
       "predicates": [
         "P01",
         "P05",
+        "P07",
         "P13"
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: adapted to account binding; part of the e2e gate (WP1.2, docs/wp1/evidence/mode-matrix.md)",
+      "evidence": "WP1.58: adapted to account binding; part of the e2e gate (WP1.2, docs/wp1/evidence/mode-matrix.md); WP2 visual fixes (VM audit 2026-09-25): it drives the current UI (Saved, + New, Config) and never skips; it seeds one managed Codex account through the registry transitions and asserts the created config is provider codex, on this computer, bound to that account (the added P07 hit is its codexOptions assertion); the app instance sees the fake Codex at the pinned version, never the host's (WP1.58, WP1.2); tests/e2e/helpers/fake-codex.ts",
       "note": ""
     },
     {
@@ -2263,6 +2274,19 @@
       "disposition": "replace",
       "evidence": "WP1.58: adapted in WP2 commit 6g to Settings, Accounts (no Codex tab; the Codex row of the Providers card with its status); part of the e2e gate (docs/wp1/evidence/mode-matrix.md)",
       "note": ""
+    },
+    {
+      "path": "tests/e2e/helpers/fake-codex.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25), round 2: the e2e fake Codex CLI, the observable contract of the wp1 fake (tests/wp1/fake-cli.test.ts) cut to --version at the pinned version and login status, behind the same npm .cmd shim; put first on the app instance's PATH with every real Codex taken off it, so the adapted e2e never depends on the host's Codex (WP1.58, WP1.2); tests/e2e/codex-session-creation.spec.ts",
+      "note": "P04: the instance gets a CODEX_HOME of its own, never ~/.codex; P09: the fake refuses an ambient OPENAI_API_KEY, as the wp1 fake does"
     },
     {
       "path": "tests/e2e/session-dialog-permutations.spec.ts",
@@ -3110,6 +3134,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/accounts-panel-claude-card.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the Claude card's add button wording, no add while Claude Code is off, readable notes, and no reviewer line for a provider that is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/accounts-panel-claude-card.test.tsx",
+      "note": ""
+    },
+    {
       "path": "tests/unit/renderer/accounts-snapshot-harness.ts",
       "predicates": [
         "P04",
@@ -3449,6 +3484,16 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/onboarding-assistants-radiogroup.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the assistants page follows the ARIA radio group pattern, one Tab stop and arrow keys, disabled cards skipped (WP1.1, WP1.2); tests/unit/renderer/onboarding-assistants-radiogroup.test.tsx",
+      "note": ""
+    },
+    {
       "path": "tests/unit/renderer/onboarding-assistants-step.test.tsx",
       "predicates": [
         "P05",
@@ -3482,6 +3527,17 @@
       "note": "helper, not a test"
     },
     {
+      "path": "tests/unit/renderer/onboarding-focus-trap.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): Tab stays on the onboarding pages and on the Hello Codex takeover and replay, the app behind is inert while they cover the window, and the close dialogs above keep their keys (WP1.34, WP1.6); tests/unit/renderer/onboarding-focus-trap.test.tsx",
+      "note": ""
+    },
+    {
       "path": "tests/unit/renderer/onboarding-gate.test.ts",
       "predicates": [
         "P05",
@@ -3491,6 +3547,26 @@
       "category": "TEST",
       "disposition": "replace",
       "evidence": "WP2 commit 6e: onboarding provider selection and the Codex setup page replace the legacy \"Do you use Codex?\" and Codex sign-in pages in the flow (WP1.1, WP1.2, WP1.3, WP1.34); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 commit 6f: helloCodex joins the Codex and fresh-install-only pages (WP1.34); tests/unit/renderer/onboarding-gate.test.ts; WP2 commit 6g: stored stamps for the retired codex and codexSignIn pages re-run nothing (WP1.34); tests/unit/renderer/onboarding-gate.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-initial-focus.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): first-run setup, Welcome, the assistants page and Set up Codex open with focus on their primary control, the CLI setup terminal takes it, and Retry and Continue get it back after a failed action (WP1.1, WP1.2, WP1.34); tests/unit/renderer/onboarding-initial-focus.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-layout-contract.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the Welcome mark keeps its size, and the onboarding page columns, Hello Codex's and the assistants page's included, fit their scroll container at narrow widths (WP1.34); tests/unit/renderer/onboarding-layout-contract.test.ts",
       "note": ""
     },
     {
@@ -3536,6 +3612,17 @@
       "category": "TEST",
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/onboarding-welcome-copy.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25): the Welcome line names no Claude when Claude Code is off (the saved setting or main's switch) or was missing at setup (WP1.2); tests/unit/renderer/onboarding-welcome-copy.test.tsx",
       "note": ""
     },
     {
@@ -3888,9 +3975,9 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
-      "note": "WP2 commit 6g: a comment no longer names the retired Codex settings tab as a live user of the brand-15%-on-raised pairing; no assertion changed"
+      "disposition": "replace",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; WP2 visual fixes (VM audit 2026-09-25), re-dispositioned because it changed: its assertions are unchanged and one block was added, the onboarding showcase eyebrow read from onboarding.css at 4.5:1 on --surface-base and over the page glow in both themes (WP1.33); tests/unit/renderer/token-contrast.test.ts",
+      "note": "WP2 commit 6g: a comment no longer names the retired Codex settings tab as a live user of the brand-15%-on-raised pairing; no assertion changed; the visual fixes (2026-09-25) added one block, the onboarding showcase eyebrow, and changed none of the existing assertions"
     },
     {
       "path": "tests/unit/renderer/tokenomicspage-formatting.test.ts",
@@ -3941,6 +4028,16 @@
       "category": "TEST",
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/window-close-dialogs.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25), round 2: the window-close dialogs and the Closing overlay paint above the onboarding pages and the Hello Codex takeover and replay, nothing else paints at or above that layer, and both close dialogs keep Tab inside themselves (WP1.34, WP1.6); tests/unit/renderer/window-close-dialogs.test.tsx",
       "note": ""
     },
     {

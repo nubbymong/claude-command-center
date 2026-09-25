@@ -48,6 +48,22 @@ export const dialogSegStyle = (selected: boolean, disabled?: boolean): React.CSS
 
 /* ---- overlay --------------------------------------------------------------- */
 
+/**
+ * The top layer: the window-close dialogs (CloseDialog, SshCloseDialog) and
+ * the "Closing..." overlay. Closing the window can be asked for from anywhere,
+ * including from under the surfaces that cover the whole window: the
+ * onboarding pages (`.ob-root`, z-index 100), the dialogs opened over them
+ * (z-[110]) and the introduction's takeover and replay (z-50). A close dialog
+ * painted underneath one of those was invisible and still held the focus, so
+ * a blind Enter saved the sessions and quit (VM audit 2026-09-25). Nothing
+ * else in the app's HTML paints above this layer, and the native panes (the
+ * in-app browser and the claude.ai account view, which main paints above all
+ * HTML) are hidden while any of the three shows: each holds the occlusion
+ * flag itself (useOccludesNativePanes), because an `absolute` overlay does
+ * not. Both are pinned in window-close-dialogs.test.tsx.
+ */
+export const WINDOW_CLOSE_Z = 'z-[200]'
+
 export interface DialogOverlayProps {
   children: React.ReactNode
   /** `fixed` covers the window (default); `absolute` covers the nearest positioned ancestor. */

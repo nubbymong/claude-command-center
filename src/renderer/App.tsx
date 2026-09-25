@@ -11,7 +11,7 @@ import AgentCanvasPane from './components/AgentCanvasPane'
 import LogsPane from './components/LogsPane'
 import { PaneFade } from './components/PaneFade'
 import { useWebviewStore } from './stores/webviewStore'
-import { usePaneOcclusionStore } from './stores/paneOcclusionStore'
+import { usePaneOcclusionStore, useOccludesNativePanes } from './stores/paneOcclusionStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
 import { setupCanvasListener } from './stores/canvasStore'
 import { setupCanvasReviewListener } from './stores/canvasReviewStore'
@@ -48,7 +48,7 @@ import SshReattachGoneNotice from './components/SshReattachGoneNotice'
 import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
 import { pingAllDetachedHosts } from './stores/hostReachability'
 import { probeGoneSessions } from './stores/livenessStore'
-import { DialogOverlay } from './components/ui/Dialog'
+import { DialogOverlay, WINDOW_CLOSE_Z } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
@@ -62,7 +62,7 @@ import { useAppMetaStore } from './stores/appMetaStore'
 import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
-import { HelloCodexHost, useHeldCodexSessionStart } from './onboarding/HelloCodex'
+import { HelloCodexHost, helloCodexShowing, useHeldCodexSessionStart } from './onboarding/HelloCodex'
 import { useHelloCodexStore } from './onboarding/hello-codex'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
 import { finishSetup, harnessRun, cliSetupAtStart } from './onboarding/setup-handoff'
@@ -277,6 +277,16 @@ export default function App() {
   // WP2 commit 6f: the Codex introduction's takeover, once HelloCodexHost has
   // latched it open, takes the last turn in the boot chain (pickBootGate).
   const helloCodexTakeoverOpen = useHelloCodexStore((s) => s.open === 'takeover')
+  // What the introduction has open (the takeover or a replay), and whether
+  // the onboarding pages have stepped aside for a terminal they opened: the
+  // two things that decide whether the app behind the window-covering
+  // surfaces is inert (appCovered, below).
+  const helloCodexOpen = useHelloCodexStore((s) => s.open)
+  const [onboardingAside, setOnboardingAside] = useState(false)
+  // The "Closing..." overlay (rendered below) is on the top layer with the
+  // close dialogs; the native panes, which main paints above all HTML, hide
+  // while it shows. Its DialogOverlay is `absolute`, which holds no flag.
+  useOccludesNativePanes(isClosing)
   // Its "Start a Codex session", held while the resume prompt is unanswered
   // (New saved config outranks that prompt, and a launch would autosave over
   // the restore set it is asking about).
@@ -1251,6 +1261,13 @@ export default function App() {
   // whether every gate above it has had its turn and whether it is its turn.
   const boot = bootChain(bootGateState)
   const bootGate = boot.gate
+  // The onboarding pages (unless they stepped aside for a terminal they
+  // opened) and the introduction's takeover or replay cover the whole
+  // window. Behind them the app is inert: no Tab stop, click or screen
+  // reader reaches the title bar, sidebar or sessions they hide (VM audit,
+  // 2026-09-25: Tab walked out of the pages into hidden controls). The
+  // dialogs that open above them (the close dialogs) are outside it.
+  const appCovered = (bootGate === 'onboarding' && !onboardingAside) || helloCodexShowing(helloCodexOpen, boot.helloCodexTurn)
 
   return (
     <ErrorBoundary>
@@ -1262,6 +1279,7 @@ export default function App() {
           <OnboardingHarness
             whatsNewOnly={whatsNewOnly}
             codexSetupOnly={harness.codexSetupOnly}
+            onAsideChange={setOnboardingAside}
             onComplete={(startTour, extra) => {
               // The settle already stamped this run (the harness unmounts on
               // this render). Clear the notes-only arm explicitly: unlike the
@@ -1389,8 +1407,8 @@ export default function App() {
             is open; it renders on its own turn (bootGate 'helloCodex'). A
             replay from the Feature Guide or Settings, Accounts shows here
             too, and writes the seen stamp only if the page was still due.
-            Rendered BEFORE the close dialogs below, at the same z-50 as
-            they are (or lower), so they paint above it. */}
+            Rendered BEFORE the close dialogs below, at z-50; they are on the
+            top layer (WINDOW_CLOSE_Z), so they paint above it. */}
         <HelloCodexHost
           gatesClear={boot.helloCodexGatesClear}
           takeoverTurn={boot.helloCodexTurn}
@@ -1408,8 +1426,10 @@ export default function App() {
           />
         )}
 
+        {/* On the top layer with the close dialogs (WINDOW_CLOSE_Z), above
+            the onboarding pages and the introduction too. */}
         {isClosing && (
-          <DialogOverlay position="absolute" dim={0.9}>
+          <DialogOverlay position="absolute" z={WINDOW_CLOSE_Z} dim={0.9} testId="closing-overlay">
             <div className="text-center">
               <div className="text-2xl font-mono mb-4 animate-pulse" style={{ color: 'var(--brand)' }}>
                 {isUpdating ? 'Updating...' : 'Closing...'}
@@ -1420,43 +1440,49 @@ export default function App() {
             </div>
           </DialogOverlay>
         )}
-        <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
-        <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} onShowTip={() => setShowTipCard((v) => !v)} />
-          <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
-            {/* One tab strip for the whole main window: session tabs + any open
-                page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so
-                a page is a peer of a session, never a full-pane takeover. */}
-            <TabBar
-              activeView={view}
-              openPageTabs={openPageTabs}
-              onActivateSession={activateSessionTab}
-              onActivatePage={(v) => setView(v)}
-              onClosePage={closePageTab}
-            />
-            <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
-              {/* The live app is always what's behind — the first-config flow is
-                  the REAL SessionDialog rendered as an overlay (below), so the
-                  user sees the workbench while creating their first session.
-                  (The old full-column GuidedConfigView is retired.) */}
-              {renderSessions()}
-              {/* Every open page tab is kept mounted and display-toggled, so
-                  switching to a session and back preserves its state — the same
-                  discipline the session list uses to keep PTYs alive. */}
-              {openPageTabs.map((v) => (
-                <div key={`page-pane:${v}`} className="flex-1 flex flex-col min-h-0" style={{ display: view === v ? 'flex' : 'none' }}>
-                  {renderPage(v)}
-                </div>
-              ))}
-            </div>
-          </main>
-        </div>
-        {/* Runtime footer spans the FULL app width (under the sidebar too) so
-            CLI/version sits at the absolute bottom-left of the app -- a global
-            status bar, distinct from the per-session statusline strip which
-            lives above the command rows inside the terminal column. */}
-        <div className="titlebar-no-drag shrink-0">
-          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={handleUpdateRequested} />
+        {/* The app behind the window-covering surfaces (appCovered): inert
+            while one of them shows. display: contents, so the layout is
+            exactly what it was; the dialogs above them are siblings, not
+            inside it. */}
+        <div className="contents" inert={appCovered} data-testid="app-behind">
+          <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+          <div className="flex flex-1 overflow-hidden">
+            <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} onShowTip={() => setShowTipCard((v) => !v)} />
+            <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
+              {/* One tab strip for the whole main window: session tabs + any open
+                  page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so
+                  a page is a peer of a session, never a full-pane takeover. */}
+              <TabBar
+                activeView={view}
+                openPageTabs={openPageTabs}
+                onActivateSession={activateSessionTab}
+                onActivatePage={(v) => setView(v)}
+                onClosePage={closePageTab}
+              />
+              <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
+                {/* The live app is always what's behind — the first-config flow is
+                    the REAL SessionDialog rendered as an overlay (below), so the
+                    user sees the workbench while creating their first session.
+                    (The old full-column GuidedConfigView is retired.) */}
+                {renderSessions()}
+                {/* Every open page tab is kept mounted and display-toggled, so
+                    switching to a session and back preserves its state — the same
+                    discipline the session list uses to keep PTYs alive. */}
+                {openPageTabs.map((v) => (
+                  <div key={`page-pane:${v}`} className="flex-1 flex flex-col min-h-0" style={{ display: view === v ? 'flex' : 'none' }}>
+                    {renderPage(v)}
+                  </div>
+                ))}
+              </div>
+            </main>
+          </div>
+          {/* Runtime footer spans the FULL app width (under the sidebar too) so
+              CLI/version sits at the absolute bottom-left of the app -- a global
+              status bar, distinct from the per-session statusline strip which
+              lives above the command rows inside the terminal column. */}
+          <div className="titlebar-no-drag shrink-0">
+            <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={handleUpdateRequested} />
+          </div>
         </div>
         {bootGate === 'training' && (
           <TrainingWalkthrough

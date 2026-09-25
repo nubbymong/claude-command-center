@@ -50,7 +50,11 @@
 .ob-root .hero { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 10px 24px; text-align: center; }
 .ob-root .hero > :first-child { margin-top: auto; }
 .ob-root .hero > :last-child { margin-bottom: auto; }
-.ob-root .mark { width: 70px; height: 70px; margin-bottom: 6px; filter: drop-shadow(0 4px 16px var(--ob-soft)); }
+/* flex-shrink: 0 because .hero is a column that scrolls when its content is
+   taller than the window: the text cannot shrink below its lines, but the mark
+   (an SVG) could, and at 1280x720 it was squeezed to 7px (VM audit 2026-09-25).
+   The hero scrolls instead. */
+.ob-root .mark { width: 70px; height: 70px; flex-shrink: 0; margin-bottom: 6px; filter: drop-shadow(0 4px 16px var(--ob-soft)); }
 .ob-root .mark line { stroke: var(--ob); stroke-width: 3.2; stroke-linecap: round; }
 .ob-root .word { font-family: var(--serif); font-weight: 600; font-size: 58px; line-height: 1; letter-spacing: -.01em; margin: 0; }
 .ob-root .sub { margin: 9px 0 0; font-size: 14px; letter-spacing: .42em; text-transform: uppercase; color: var(--text-secondary); font-weight: 500; padding-left: .42em; }
@@ -113,7 +117,13 @@
    collapse to 0 so scrolling reaches the TOP (justify-content: center clips
    both ends unreachably — the classic centred-flex overflow trap). */
 .ob-root .p2 { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 10px 24px; }
-.ob-root .p2-inner { width: min(680px, 94vw); margin-top: auto; margin-bottom: auto; }
+/* Width contract (VM audit 2026-09-25): never wider than .p2's content box.
+   The pages used to size to a share of the WINDOW (min(Npx, 95vw), 94vw
+   here), which plus .p2's 24px side padding, and its scrollbar, is wider than
+   the window on a narrow one: a horizontal scrollbar under every page. A
+   percentage is of the space actually left. max-width holds it for the pages
+   that set their own width inline, too. */
+.ob-root .p2-inner { width: min(680px, 100%); max-width: 100%; margin-top: auto; margin-bottom: auto; }
 .ob-root .h2 { font-family: var(--serif); font-size: 34px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 8px; text-align: center; }
 .ob-root .p2-sub { font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); text-align: center; margin: 0 auto 22px; max-width: 60ch; }
 .ob-root .checkrow { display: flex; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); margin-bottom: 10px; }
@@ -300,9 +310,9 @@
 
 /* PAGE 4 — status line (mock terminal scene + spotlit strip + switch columns).
    Same overflow contract as .p2 (see there): single inner child, auto-margin
-   centring, scrolls when taller than the viewport. */
+   centring, scrolls when taller than the viewport. Same width contract too. */
 .ob-root .sl-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 10px 24px; }
-.ob-root .sl-inner { width: min(1140px, 97vw); margin-top: auto; margin-bottom: auto; }
+.ob-root .sl-inner { width: min(1140px, 100%); max-width: 100%; margin-top: auto; margin-bottom: auto; }
 .ob-root .sl-sub { font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); text-align: center; margin: 0 auto 18px; max-width: 66ch; }
 .ob-root .sl-scene { position: relative; border: 1px solid var(--border-subtle); border-radius: 14px; overflow: hidden; background: #0a0f16; }
 .ob-root .sl-spot { position: absolute; left: 50%; bottom: 0; width: 78%; height: 330px; transform: translateX(-50%); background: radial-gradient(52% 100% at 50% 100%, var(--ob-soft) 0%, rgba(0,0,0,0) 70%); pointer-events: none; z-index: 0; }
@@ -392,7 +402,10 @@
 /* showcase page layout */
 .ob-root .sc-page { display: flex; gap: 40px; align-items: center; }
 .ob-root .sc-copy { flex: 0 0 340px; }
-.ob-root .sc-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--ob); font-weight: 700; margin-bottom: 10px; }
+/* The eyebrow is 11px copy, so it needs 4.5:1. --ob measured 4.32:1 on the
+   light theme's base (VM audit 2026-09-25); --brand is the same blue in the
+   dark theme and a deeper one in the light (token-contrast.test.ts). */
+.ob-root .sc-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--brand); font-weight: 700; margin-bottom: 10px; }
 .ob-root .sc-h { font-size: 30px; font-weight: 650; letter-spacing: -.4px; line-height: 1.15; color: var(--text-primary); margin: 0; }
 .ob-root .sc-tagline { color: var(--text-secondary); font-size: 15px; margin: 10px 0 0; line-height: 1.45; }
 .ob-root .sc-points { margin-top: 20px; display: flex; flex-direction: column; gap: 11px; }
@@ -503,7 +516,7 @@
 
 /* The rename/roadmap page (#525, canvas-designed v6 2026-08-26): brand
    lockup over the labelled roadmap band. Tokens only; .rn- namespace. */
-.ob-root .rn-page { width: min(1060px, 95vw); text-align: center; }
+.ob-root .rn-page { width: min(1060px, 100%); max-width: 100%; text-align: center; }
 .ob-root .rn-lead { font-size: 17px; color: var(--text-secondary); font-weight: 500; letter-spacing: .01em; }
 .ob-root .rn-lead b { color: var(--text-primary); font-weight: 650; }
 .ob-root .rn-lockup { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 14px 0 6px; }

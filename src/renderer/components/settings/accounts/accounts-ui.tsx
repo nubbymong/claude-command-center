@@ -79,12 +79,15 @@ export function RowButton({ children, onClick, disabled, testId, title }: { chil
  * The reviewer line under a provider's section header: which account this
  * provider's code reviews use, and why, plus a cleared-reviewer notice when
  * the app had to drop an earlier choice. Nothing when the provider does not
- * review here.
+ * review here, and nothing while it is off: no review runs on a provider
+ * that is off, so which account "reviews use" is not a thing to say (VM
+ * audit 2026-09-25: the Claude card said "No account can run code reviews
+ * yet" with Claude Code off).
  */
 export function ReviewerLineBlock({ providerId }: { providerId: ProviderId }) {
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const line = reviewerLine(snapshot, providerId)
-  if (!line) return null
+  if (!line || providerView(snapshot, providerId)?.enabled === false) return null
   const platform = typeof window !== 'undefined' ? window.electronPlatform : ''
   const notice = reviewerNotice(snapshot, providerId, platform)
   const macClaude = providerId === 'claude' && platform === 'darwin' && !!providerView(snapshot, 'claude')?.review
