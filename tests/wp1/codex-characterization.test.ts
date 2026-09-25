@@ -3,14 +3,16 @@
 // docs/wp1/baseline-2026-09-19.md). These pin observable inputs/outputs so the
 // retirement of the singleton auth IPC, the global-home resolvers and the
 // write-only spawn identity map is provably deliberate. They describe what the
-// base does; they do not endorse it. Two assertions below are scheduled to be
-// INVERTED by WP1 and are marked as such (see the baseline record): C3's
-// "CODEX_HOME is never set" (inverted by WP1.38 -- done in WP2 commit 4) and C4's "the API key
-// travels as an ordinary IPC payload field" (inverted by WP1.22). The file is
-// retired with the code it characterizes (ledger, WP1.57 / WP1.58).
+// base does; they do not endorse it. C3's "CODEX_HOME is never set" was
+// INVERTED by WP1.38 (WP2 commit 4) and is marked as such.
+//
+// C4 (the codex:* auth IPC dispatch, whose "the API key travels as an ordinary
+// IPC payload field" WP1.22 inverted) and C9 (the write-only spawn identity
+// map) were retired with the code they characterized in WP2 commit 6g
+// (ledger, WP1.57 / WP1.58): that code is deleted, and its absence is pinned
+// by tests/wp1/legacy-codex-retired.test.ts. What remains here characterizes
+// code that is still in use.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { execFileSync } from 'node:child_process'
-import { resolve } from 'node:path'
 
 vi.mock('os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('os')>()
@@ -31,26 +33,11 @@ vi.mock('../../src/main/conductor-mcp-server', () => ({
 vi.mock('../../src/main/config-manager', () => ({ readConfig: () => ({ conductorToolsEnabled: true }) }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 
-const handlers = new Map<string, (...a: any[]) => any>()
-vi.mock('electron', () => ({ ipcMain: { handle: (ch: string, fn: (...a: any[]) => any) => handlers.set(ch, fn) } }))
-const auth = vi.hoisted(() => ({
-  readCodexAuthStatus: vi.fn(async (..._a: unknown[]) => ({ installed: true, version: '0.0.0', authMode: 'none', hasOpenAiApiKeyEnv: false })),
-  codexLoginWithApiKey: vi.fn(async (_k: string) => ({ ok: true })),
-  codexLoginChatgpt: vi.fn(async () => ({ ok: true, browserUrl: 'https://example.test/chatgpt' })),
-  codexLoginDeviceAuth: vi.fn(async () => ({ ok: true, deviceCode: 'DEVCODE1' })),
-  codexLogout: vi.fn(async () => ({ ok: false })),
-  codexTestConnection: vi.fn(async () => ({ ok: true, message: 'Logged in' })),
-}))
-vi.mock('../../src/main/providers/codex/auth', () => auth)
-
 import * as osMod from 'os'
 import { execSync } from 'child_process'
-import { IPC } from '../../src/shared/ipc-channels'
 import { CodexProvider } from '../../src/main/providers/codex'
 import { buildCodexSpawn } from '../../src/main/providers/codex/spawn'
-import { registerCodexHandlers } from '../../src/main/ipc/codex-handlers'
 
-const ROOT = resolve(__dirname, '..', '..')
 const codexOptions = { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' } as const
 
 // The launch FLAGS (-m, model_reasoning_effort, --sandbox, --ask-for-approval)
@@ -155,76 +142,5 @@ describe('C2: CodexProvider class contract on the base', () => {
     const p = new CodexProvider()
     expect(p.detectUiRunning('$ ')).toBe(false)
     expect(p.detectUiRunning('\x1b[?2026h\x1b[?1004h')).toBe(true)
-  })
-})
-
-describe('C4: registerCodexHandlers dispatch on the base (singleton, implicit global home)', () => {
-  const invoke = (ch: string, ...args: any[]) => handlers.get(ch)!({} as any, ...args)
-  beforeEach(() => { handlers.clear(); vi.clearAllMocks(); registerCodexHandlers() })
-
-  it('registers exactly the four singleton channels', () => {
-    expect([...handlers.keys()].sort()).toEqual([IPC.CODEX_LOGIN, IPC.CODEX_LOGOUT, IPC.CODEX_STATUS, IPC.CODEX_TEST_CONNECTION].sort())
-  })
-  it('status resolves the implicit global home (no realm argument) and returns the status object', async () => {
-    const r = await invoke(IPC.CODEX_STATUS)
-    expect(auth.readCodexAuthStatus).toHaveBeenCalledTimes(1)
-    expect(auth.readCodexAuthStatus.mock.calls[0]).toEqual([])
-    expect(r).toEqual({ installed: true, version: '0.0.0', authMode: 'none', hasOpenAiApiKeyEnv: false })
-  })
-  it('rejects a malformed login payload with a structured error and calls no login', async () => {
-    for (const bad of [undefined, null, {}, { mode: 'magic' }, { mode: 'api-key', apiKey: '' }, { mode: 'api-key', apiKey: 'k'.repeat(501) }]) {
-      const r = await invoke(IPC.CODEX_LOGIN, bad)
-      expect(r.ok).toBe(false)
-      expect(String(r.error)).toMatch(/Invalid parameters/)
-    }
-    expect(auth.codexLoginWithApiKey).not.toHaveBeenCalled()
-    expect(auth.codexLoginChatgpt).not.toHaveBeenCalled()
-    expect(auth.codexLoginDeviceAuth).not.toHaveBeenCalled()
-  })
-  it('[to be inverted by WP1.22] api-key mode requires apiKey and receives it as an ordinary IPC payload field', async () => {
-    expect(await invoke(IPC.CODEX_LOGIN, { mode: 'api-key' })).toEqual({ ok: false, error: 'apiKey required' })
-    expect(auth.codexLoginWithApiKey).not.toHaveBeenCalled()
-    expect(await invoke(IPC.CODEX_LOGIN, { mode: 'api-key', apiKey: 'sk-test-characterization' })).toEqual({ ok: true })
-    expect(auth.codexLoginWithApiKey).toHaveBeenCalledWith('sk-test-characterization')
-    expect(auth.codexLoginChatgpt).not.toHaveBeenCalled()
-    expect(auth.codexLoginDeviceAuth).not.toHaveBeenCalled()
-  })
-  it('chatgpt mode dispatches only to the ChatGPT login and returns its result', async () => {
-    expect(await invoke(IPC.CODEX_LOGIN, { mode: 'chatgpt' })).toEqual({ ok: true, browserUrl: 'https://example.test/chatgpt' })
-    expect(auth.codexLoginChatgpt).toHaveBeenCalledTimes(1)
-    expect(auth.codexLoginDeviceAuth).not.toHaveBeenCalled()
-    expect(auth.codexLoginWithApiKey).not.toHaveBeenCalled()
-  })
-  it('device mode dispatches only to the device login and returns its result', async () => {
-    expect(await invoke(IPC.CODEX_LOGIN, { mode: 'device' })).toEqual({ ok: true, deviceCode: 'DEVCODE1' })
-    expect(auth.codexLoginDeviceAuth).toHaveBeenCalledTimes(1)
-    expect(auth.codexLoginChatgpt).not.toHaveBeenCalled()
-    expect(auth.codexLoginWithApiKey).not.toHaveBeenCalled()
-  })
-  it('logout and testConnection delegate and return the delegate result unchanged', async () => {
-    expect(await invoke(IPC.CODEX_LOGOUT)).toEqual({ ok: false })
-    expect(await invoke(IPC.CODEX_TEST_CONNECTION)).toEqual({ ok: true, message: 'Logged in' })
-    expect(auth.codexLogout).toHaveBeenCalledTimes(1)
-    expect(auth.codexTestConnection).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('C9: the Codex spawn identity map is write-only on the base (proof for its deletion, WP1.57)', () => {
-  const grep = (pattern: string) => {
-    try {
-      return execFileSync('git', ['-C', ROOT, 'grep', '-n', '-E', pattern, '--', 'src'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
-    } catch (e: any) {
-      if (e.status === 1) return [] // no match
-      throw e
-    }
-  }
-  it('getCodexSpawnIdentityMap has no production reader beyond its definition and the pty-manager re-export', () => {
-    const hits = grep('getCodexSpawnIdentityMap').filter((l) => !/^src\/main\/codex-spawn-identity\.ts:/.test(l))
-    expect(hits.every((l) => /^src\/main\/pty-manager\.ts:\d+:.*(import|export)/.test(l)), hits.join('\n')).toBe(true)
-    expect(hits.some((l) => /getCodexSpawnIdentityMap\(/.test(l))).toBe(false)
-  })
-  it('readCodexAccountEmail is consumed only by the spawn identity module', () => {
-    const hits = grep('readCodexAccountEmail\\(').filter((l) => !/^src\/main\/account-identity\.ts:/.test(l))
-    expect([...new Set(hits.map((l) => l.split(':')[0]))]).toEqual(['src/main/codex-spawn-identity.ts'])
   })
 })

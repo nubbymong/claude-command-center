@@ -6,7 +6,9 @@
  * is too old (or unsupported) gets "Check again", which asks main to look
  * for the CLI again (discover); main's answer arrives with the snapshot it
  * pushes, and its proven executable is replaced by that check. A ready or
- * turned-off provider has no such button.
+ * turned-off provider has no such button. WP2 commit 6g: a provider main
+ * has not looked for yet ("not checked yet") gets the same button, reading
+ * "Check now".
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -76,10 +78,20 @@ describe('Providers card: Check again', () => {
     expect(offersCheckAgain(codex({ discoveryState: 'found', compatibility: 'unsupported' }))).toBe(true)
   })
 
-  it('a ready, newer-than-tested, unchecked or turned-off provider has none', async () => {
+  it('a provider main has not looked for yet gets the same button, reading "Check now" (6g), and a click looks', async () => {
+    expect(offersCheckAgain(codex({ discoveryState: 'unchecked', version: undefined }))).toBe(true)
+    expect(offersCheckAgain(codex({ enabled: false, discoveryState: 'unchecked' }))).toBe(false)
+    await render(codex({ discoveryState: 'unchecked', version: undefined }))
+    expect(byTest('provider-status-codex')!.textContent).toBe('Codex: not checked yet')
+    const btn = byTest('provider-check-again-codex')!
+    expect(btn.textContent).toBe('Check now')
+    await act(async () => { btn.click() })
+    expect(pa.discover).toHaveBeenCalledWith('codex')
+  })
+
+  it('a ready, newer-than-tested or turned-off provider has none', async () => {
     expect(offersCheckAgain(codex({}))).toBe(false)
     expect(offersCheckAgain(codex({ compatibility: 'too-new' }))).toBe(false)
-    expect(offersCheckAgain(codex({ discoveryState: 'unchecked' }))).toBe(false)
     expect(offersCheckAgain(codex({ enabled: false, discoveryState: 'missing' }))).toBe(false)
     await render(codex({}))
     expect(byTest('provider-check-again-codex')).toBeNull()

@@ -173,11 +173,11 @@ export const trainingSteps: TrainingStep[] = [
     ],
     howToTrigger: [
       { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex' },
-      { label: 'Auth', value: 'Settings -> Codex -> Login' },
+      { label: 'Auth', value: 'Settings, Accounts: add a Codex account' },
       { label: 'Model', value: 'Edit the Codex config -> model' },
     ],
     proTip:
-      'Login once via Settings -> Codex; subsequent Codex sessions reuse the same auth. Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
+      'Sign in once per Codex account in Settings, Accounts; each Codex session runs under the account its config picks (the default unless you choose another). Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
     bullets: [
       '**Provider per session** -- Claude OR Codex, picked at New Session time',
       '**gpt-5 series** model dropdown plus **permissions presets** in the toolbar',

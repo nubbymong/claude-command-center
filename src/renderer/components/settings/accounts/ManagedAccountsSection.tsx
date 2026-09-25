@@ -3,14 +3,14 @@
 // setups an interruption left behind, what the app found about the
 // provider's own sign-in on this computer, and Add account. While the
 // provider is off, the accounts are listed but not managed.
-import React, { useState } from 'react'
-import type { AccountView, AccountsResult, AccountsSnapshot, PendingSetupView, ProviderId, ProviderInstallationView } from '../../../../shared/providers'
+import React, { useEffect, useRef, useState } from 'react'
+import type { AccountView, AccountsResult, AccountsSnapshot, KnownAuthState, PendingSetupView, ProviderId, ProviderInstallationView } from '../../../../shared/providers'
 import type { IdentityColorKey } from '../../../../shared/identity-colors'
 import { resolveIdentityColor } from '../../../../shared/identity-colors'
 import {
   useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, canOfferMakeReviewer,
   showsReviewerBadge, accountFailureText, accountState, signInMethodLabel, externalHomeLabel, canOfferSignInAgain,
-  canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption,
+  canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption, canOfferCheckSignIn, signInCheckText, externalSignInHint,
 } from '../../../stores/providerAccountsStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
 import { ProviderMark } from '../../sidebar/Badges'
@@ -59,6 +59,7 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
   const [error, setError] = useState<string | null>(null)
   const [ack, setAck] = useState<ExternalAck | null>(null)
   const [signingInAgain, setSigningInAgain] = useState(false)
+  const [checked, setChecked] = useState<KnownAuthState | null>(null)
   const id = account.id
   const manageable = provider.enabled
   const name = accountDisplayName(snapshot, account)
@@ -66,6 +67,9 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
   const method = signInMethodLabel(account, provider)
   const state = accountState(account)
   const blocked = account.operationalState === 'blocked'
+  // This computer's own sign-in is the provider CLI's to make: the app never
+  // signs in to it, so a signed-out or expired one says how to fix it.
+  const externalHint = manageable ? externalSignInHint(account, provider) : null
   const cannotReview = account.external || account.unverified
   const identity = snapshot.identities.find((i) => i.id === account.identityId)
   const tint = identity ? resolveIdentityColor(identity.colourKey as IdentityColorKey, theme) : 'var(--text-secondary)'
@@ -73,9 +77,39 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
   const run = async (op: () => Promise<AccountsResult>) => {
     setBusy(true)
     setError(null)
+    setChecked(null)
     const r = await op()
     setBusy(false)
     if (!r.ok) setError(accountFailureText(r, account))
+  }
+
+  // A check's answer stands only while the record agrees with it: once the
+  // recorded sign-in state moves on (a Sign in again that worked, a sign-out)
+  // or the account is blocked, it is stale; so is it once the account's
+  // lifecycle changes. The answer can land before the snapshot that records
+  // it, so it is dropped only on a change, never for merely being ahead.
+  useEffect(() => {
+    setChecked((c) => (c !== null && (c !== account.lastKnownAuthState || account.operationalState === 'blocked') ? null : c))
+  }, [account.lastKnownAuthState, account.operationalState])
+  const lifecycleSeen = useRef(account.lifecycle)
+  useEffect(() => {
+    if (lifecycleSeen.current === account.lifecycle) return
+    lifecycleSeen.current = account.lifecycle
+    setChecked(null)
+  }, [account.lifecycle])
+
+  // "Check sign-in" (6g: what Test connection did in the retired Codex
+  // settings tab, per account): the provider's own status check in this
+  // account's realm. Its answer is shown here; the row's state follows the
+  // snapshot main pushes once it has recorded it.
+  const checkSignIn = async () => {
+    setBusy(true)
+    setError(null)
+    setChecked(null)
+    const r = await providerAccountActions.checkSignIn(id)
+    setBusy(false)
+    if (r.ok) setChecked(r.state)
+    else setError(accountFailureText(r, account))
   }
 
   const items: MenuItem[] = []
@@ -90,7 +124,10 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
     // Only when it is not signed in now: the provider never logs in over a
     // realm that still is, so the offer would do nothing but check.
     if (canOfferSignInAgain(account)) {
-      items.push({ key: 'sign-in-again', label: 'Sign in again', onSelect: () => { setError(null); setSigningInAgain(true) } })
+      items.push({ key: 'sign-in-again', label: 'Sign in again', onSelect: () => { setError(null); setChecked(null); setSigningInAgain(true) } })
+    }
+    if (canOfferCheckSignIn(account, provider)) {
+      items.push({ key: 'check-sign-in', label: 'Check sign-in', onSelect: () => { void checkSignIn() } })
     }
     if (account.lastKnownAuthState !== 'signed-out' && provider.logout.enabled) {
       items.push({
@@ -151,6 +188,10 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
         </div>
         <div className="flex flex-col items-start gap-1 min-w-0">
           <StatusText tone={state.tone} testId={`account-state-${id}`}>{state.text}</StatusText>
+          {/* Never on a blocked row, whichever lands first: the answer or the
+              snapshot that blocked the account. */}
+          {checked && !blocked && <MutedLine testId={`account-checked-${id}`}>{signInCheckText(checked)}</MutedLine>}
+          {externalHint && <MutedLine testId={`account-external-hint-${id}`}>{externalHint}</MutedLine>}
           {blocked && manageable && (
             <RowButton onClick={() => { void run(() => providerAccountActions.reconcileSignIn(id)) }} disabled={busy} testId={`account-reconcile-${id}`}>
               This is still my account

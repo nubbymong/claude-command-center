@@ -12,7 +12,7 @@ import {
   selectProviderAccounts, accountDisplayName, reviewerLine, canOfferMakeReviewer, reviewerNotice, showsReviewerBadge,
   accountState, providerStatus, accountFailureText, accountForLegacyId, ACCOUNT_NAME_FALLBACK,
   signInAgainMethods, canOfferMakeInactive, canOfferMakeActive, canOfferArchive,
-  PROVIDER_ENABLED_SETTING, savedOff,
+  PROVIDER_ENABLED_SETTING, savedOff, canOfferCheckSignIn, signInCheckText, externalSignInHint,
 } from '../../../src/renderer/stores/providerAccountsStore'
 // Main's own record of where Codex's on/off is saved (type-only imports: no
 // main-process code runs here).
@@ -256,6 +256,33 @@ describe('menu offers that mirror the registry', () => {
     expect(canOfferArchive(parked)).toBe(true)
     expect(canOfferArchive(work)).toBe(false)
     expect(canOfferArchive({ ...parked, legacyLinked: true })).toBe(false)
+  })
+  it('offers Check sign-in only where the provider can check now, never on a blocked or archived account (WP2 commit 6g)', () => {
+    const p = snapshot().providers[1]
+    expect(canOfferCheckSignIn(work, p)).toBe(true)
+    expect(canOfferCheckSignIn(parked, p)).toBe(true)
+    expect(canOfferCheckSignIn({ ...work, operationalState: 'blocked' }, p)).toBe(false)
+    expect(canOfferCheckSignIn({ ...work, lifecycle: 'archived' }, p)).toBe(false)
+    expect(canOfferCheckSignIn(work, { ...p, enabled: false })).toBe(false)
+    expect(canOfferCheckSignIn(work, { ...p, status: { enabled: false, labelExperimental: false } })).toBe(false)
+  })
+  it("says a check's answer in the row's words, for every state", () => {
+    expect(signInCheckText('signed-in')).toBe('Checked just now: signed in.')
+    expect(signInCheckText('signed-out')).toBe('Checked just now: signed out.')
+    expect(signInCheckText('expired')).toBe('Checked just now: the sign-in has expired.')
+    expect(signInCheckText('unsupported')).toBe("Checked just now: this sign-in can't be checked here.")
+    expect(signInCheckText('error')).toBe("Checked just now: the sign-in couldn't be read.")
+    expect(signInCheckText('unknown')).toBe('Checked just now: no clear answer.')
+  })
+  it("tells a signed-out or expired external row how to sign in, and no other row (WP2 commit 6g)", () => {
+    const codex = snapshot().providers[1]
+    const hint = 'Run codex login in a terminal, then Check sign-in.'
+    expect(externalSignInHint({ ...local, lastKnownAuthState: 'signed-out' }, codex)).toBe(hint)
+    expect(externalSignInHint({ ...local, lastKnownAuthState: 'expired' }, codex)).toBe(hint)
+    expect(externalSignInHint(local, codex)).toBeNull()
+    expect(externalSignInHint({ ...local, lastKnownAuthState: 'signed-out', operationalState: 'blocked' }, codex)).toBeNull()
+    expect(externalSignInHint({ ...work, lastKnownAuthState: 'signed-out' }, codex)).toBeNull()
+    expect(externalSignInHint({ ...local, lastKnownAuthState: 'signed-out' }, snapshot().providers[0])).toBeNull() // no command known
   })
 })
 

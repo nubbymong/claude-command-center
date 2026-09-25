@@ -322,8 +322,8 @@
       "evidence": [],
       "status": "planned",
       "currentTests": [
-        "tests/unit/providers/codex/auth-login.test.ts",
-        "tests/wp1/codex-characterization.test.ts"
+        "tests/wp1/codex-auth-adapter.test.ts",
+        "tests/wp1/secret-channel.test.ts"
       ]
     },
     {
@@ -419,7 +419,8 @@
       "evidence": [],
       "status": "planned",
       "currentTests": [
-        "tests/unit/providers/codex/auth-login.test.ts"
+        "tests/wp1/provider-ipc.test.ts",
+        "tests/wp1/secret-scan.test.ts"
       ]
     },
     {
@@ -816,7 +817,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/legacy-codex-gate.test.ts",
-        "tests/wp1/dependency-boundaries.test.ts"
+        "tests/wp1/dependency-boundaries.test.ts",
+        "tests/wp1/legacy-codex-retired.test.ts"
       ],
       "evidence": [
         "tests/wp1/legacy-codex-ledger.json"

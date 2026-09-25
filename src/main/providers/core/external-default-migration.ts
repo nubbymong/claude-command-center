@@ -72,6 +72,10 @@ export interface ExternalDefaultMigrationDeps {
   /** Read afresh at each step. A throw counts as undecided. */
   preference(providerId: ProviderId): ProviderPreference
   log?(message: string): void
+  /** The provider's discovery as its caller runs it (the accounts service
+   *  runs one per provider at a time and records its answer); absent, the
+   *  package's own `setup.discover`. */
+  discover?(): ReturnType<NonNullable<ProviderPackage['setup']>['discover']>
 }
 
 /** A fixed colour. "Unverified" is carried by the account's identity
@@ -207,7 +211,7 @@ async function migrate(pkg: ProviderPackage, deps: ExternalDefaultMigrationDeps)
   if (adopted(store.current())) return answer('registered', 'already-done')
 
   let found: Awaited<ReturnType<typeof setup.discover>> | null = null
-  try { found = await setup.discover() } catch { found = null }
+  try { found = await (deps.discover ? deps.discover() : setup.discover()) } catch { found = null }
   if (!found || found.state !== 'found') {
     const reason: ProviderMigrationSkipReason = found?.state === 'missing' ? 'no-cli' : found?.state === 'invalid' ? 'cli-unsupported' : 'unavailable'
     return answer('skipped', 'skipped', reason)

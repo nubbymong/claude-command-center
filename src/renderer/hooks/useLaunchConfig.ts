@@ -68,7 +68,7 @@ export function useLaunchGateSettings(): LaunchGateSettings {
 }
 
 /** The reason shown for a Codex config blocked because Codex is off. */
-export const CODEX_OFF_LAUNCH_REASON = 'Codex is off. Enable it in Settings → Codex to launch this config.'
+export const CODEX_OFF_LAUNCH_REASON = 'Codex is off. Turn it on in Settings, Accounts to launch this config.'
 
 /**
  * Allow Multi Spawn (phase 4) — THE rule, in one place.

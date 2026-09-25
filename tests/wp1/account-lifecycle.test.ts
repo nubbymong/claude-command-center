@@ -609,3 +609,78 @@ describe('signing an existing account in again (WP2 6b)', () => {
     expect((await first).ok).toBe(true)
   })
 })
+
+describe('Check sign-in is single-flight per account (WP1.10; WP2 commit 6g)', () => {
+  /** A harness whose `login status` can be held open; otherwise it answers
+   *  from the fake CLI's own sign-in record. */
+  async function gated() {
+    const ctl = { hold: false, release: () => {} }
+    const gate = new Promise<void>((r) => { ctl.release = r })
+    let signedIn: Map<string, unknown> | undefined
+    const h = await harness({
+      script: {
+        'login status': async (r) => {
+          if (ctl.hold) await gate
+          return signedIn?.has(r.home.toLowerCase())
+            ? { exitCode: 0, stderr: 'Logged in using ChatGPT\n' }
+            : { exitCode: 1, stderr: 'Not logged in\n' }
+        },
+      },
+    })
+    signedIn = h.signedIn
+    return { h, ctl, statusRuns: () => h.args().filter((x) => x === 'login status').length }
+  }
+  const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
+
+  it('checks asked for while one runs join it: one CLI run, one lease, one answer; a later check runs again', async () => {
+    const { h, ctl, statusRuns } = await gated()
+    const a = await addCodexAccount(h)
+    const before = statusRuns()
+    ctl.hold = true
+    const p1 = h.service.refreshStatus({ accountId: a })
+    const p2 = h.service.refreshStatus({ accountId: a })
+    const p3 = h.service.refreshStatus({ accountId: a })
+    await settle()
+    expect(statusRuns() - before).toBe(1)
+    expect(h.leases.describe(a).operation).toBe(1)
+    ctl.release()
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3])
+    expect(r1).toEqual({ ok: true, state: 'signed-in' })
+    expect(r2).toBe(r1)
+    expect(r3).toBe(r1)
+    expect(h.leases.describe(a).operation).toBe(0)
+    ctl.hold = false
+    expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-in' })
+    expect(statusRuns() - before).toBe(2)
+  })
+
+  it('another account checks on its own, alongside', async () => {
+    const { h, ctl, statusRuns } = await gated()
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    const before = statusRuns()
+    ctl.hold = true
+    const pa = h.service.refreshStatus({ accountId: a })
+    const pb = h.service.refreshStatus({ accountId: b })
+    await settle()
+    expect(statusRuns() - before).toBe(2)
+    ctl.release()
+    expect(await pa).toEqual({ ok: true, state: 'signed-in' })
+    expect(await pb).toEqual({ ok: true, state: 'signed-in' })
+  })
+})
+
+describe('a status check that rejects frees its single-flight entry (WP1.10; WP2 commit 6g)', () => {
+  it('the next check runs a fresh CLI call instead of joining the rejected one', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h)
+    const statusRuns = () => h.args().filter((x) => x === 'login status').length
+    const svc = h.service as unknown as { runStatusCheck: (i: { accountId: string }) => Promise<unknown> }
+    svc.runStatusCheck = async () => { throw new Error('boom') }
+    await expect(h.service.refreshStatus({ accountId: a })).rejects.toThrow('boom')
+    delete (svc as { runStatusCheck?: unknown }).runStatusCheck // back to the class method
+    const before = statusRuns()
+    expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-in' })
+    expect(statusRuns() - before).toBe(1)
+  })
+})

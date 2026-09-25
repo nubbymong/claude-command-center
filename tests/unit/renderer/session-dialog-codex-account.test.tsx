@@ -41,6 +41,8 @@ import { useProviderAccountsStore } from '../../../src/renderer/stores/providerA
 import { snapshot, provider, work, old, local } from './accounts-snapshot-harness'
 import LaunchAckConfirm, { LAUNCH_ACK_ARM_MS } from '../../../src/renderer/components/LaunchAckConfirm'
 import { useLaunchAckStore } from '../../../src/renderer/stores/launchAckStore'
+import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
+import { CODEX_OFF_LAUNCH_REASON } from '../../../src/renderer/hooks/useLaunchConfig'
 
 let container: HTMLDivElement
 let root: Root
@@ -268,6 +270,63 @@ describe('F9: what holds a new Codex config back', () => {
     expect(card('Connection', 'SSH').disabled).toBe(true)
     expect(container.querySelector('[data-testid="codex-local-note"]')!.textContent).toBe('Codex runs on this computer only in this release.')
     expect(container.textContent!.match(/this computer only/g)).toHaveLength(1)
+  })
+})
+
+describe('WP2 commit 6g: the Codex settings tab is gone; the dialog points at Settings, Accounts', () => {
+  const openedTabs = (click: () => void): unknown[] => {
+    const opened = vi.fn()
+    window.addEventListener('app:openSettings', opened as EventListener)
+    try { click() } finally { window.removeEventListener('app:openSettings', opened as EventListener) }
+    return opened.mock.calls.map((c) => (c[0] as CustomEvent).detail)
+  }
+
+  it('a Codex CLI main did not find says so in its own words, and its link opens Settings, Accounts', () => {
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', discoveryState: 'missing', version: undefined })] }), loaded: true })
+    newCodexConfig()
+    const box = container.querySelector('[data-testid="codex-cli-missing"]')!
+    expect(box.textContent).toBe('Codex was not found on this computer. Open Settings, Accounts to install it or check again.')
+    const link = container.querySelector('[data-testid="codex-cli-missing-open-accounts"]') as HTMLButtonElement
+    expect(openedTabs(() => act(() => { link.click() }))).toEqual([{ tab: 'accounts' }])
+  })
+
+  it('a CLI that did not run, or could not be checked, gets the same pointer; a found one, or no answer yet, gets none', () => {
+    for (const [state, text] of [['invalid', 'Codex was found but did not run as expected'], ['error', 'Codex could not be checked']] as const) {
+      useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', discoveryState: state })] }), loaded: true })
+      newCodexConfig()
+      expect(container.querySelector('[data-testid="codex-cli-missing"]')!.textContent).toBe(`${text}. Open Settings, Accounts to install it or check again.`)
+      act(() => { root.unmount() })
+      root = createRoot(container)
+    }
+    // A found CLI says nothing. So does no answer yet: an unchecked CLI may
+    // well be installed (main looks at start only for a Codex switched on;
+    // an undecided one waits for Check now or an operation, 6g).
+    useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true })
+    newCodexConfig()
+    expect(container.querySelector('[data-testid="codex-cli-missing"]')).toBeNull()
+  })
+
+  it('WP2 commit 6g: the banner appears in the open dialog as soon as main\'s start-up discovery says the CLI is missing', () => {
+    useProviderAccountsStore.setState({ snapshot: null, loaded: false })
+    newCodexConfig()
+    expect(container.querySelector('[data-testid="codex-cli-missing"]')).toBeNull()
+    act(() => { useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', discoveryState: 'unchecked', version: undefined })] }), loaded: true }) })
+    expect(container.querySelector('[data-testid="codex-cli-missing"]')).toBeNull()
+    act(() => { useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', discoveryState: 'missing', version: undefined })] }), loaded: true }) })
+    expect(container.querySelector('[data-testid="codex-cli-missing"]')!.textContent).toBe('Codex was not found on this computer. Open Settings, Accounts to install it or check again.')
+  })
+
+  it('Codex switched off: the card is disabled and the note is the launch reason, pointing at Settings, Accounts', () => {
+    const saved = useSettingsStore.getState().settings
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, codexEnabled: false } })
+    try {
+      render()
+      expect(card('Provider', 'Codex').disabled).toBe(true)
+      expect(CODEX_OFF_LAUNCH_REASON).toBe('Codex is off. Turn it on in Settings, Accounts to launch this config.')
+      expect(container.querySelector('[data-testid="codex-off-note"]')!.textContent).toBe(CODEX_OFF_LAUNCH_REASON)
+    } finally {
+      useSettingsStore.setState({ settings: saved })
+    }
   })
 })
 

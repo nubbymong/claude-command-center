@@ -130,6 +130,12 @@ export const providerAccountActions = {
    *  once the user has said they use the provider. */
   runMigration: (providerId: ProviderId) => call<{ outcome: ExternalDefaultOutcome }>(() => api().runMigration(providerId)),
   reconcileSignIn: (accountId: string) => call<{ state: KnownAuthState }>(() => api().reconcileSignIn(accountId)),
+  /** "Check sign-in": asks the provider, in the account's own realm, whether
+   *  it is signed in now (for Codex, `codex login status`), and records the
+   *  answer as the account's last known state. It vouches for nothing: a
+   *  realm that now holds another kind of credential is blocked, as every
+   *  check does, and only "This is still my account" clears that. */
+  checkSignIn: (accountId: string) => call<{ state: KnownAuthState }>(() => api().refreshStatus(accountId)),
   resolveConflict: (req: ResolveConflictRequest) => call(() => api().resolveConflict(req)),
   setReviewerDefault: (req: SetReviewerDefaultRequest) => call(() => api().setReviewerDefault(req)),
 }
@@ -379,6 +385,40 @@ export function accountState(account: Pick<AccountView, 'operationalState' | 'la
     case 'unsupported': return { text: "Can't check the sign-in here", tone: 'muted' }
     default: return { text: 'Not checked yet', tone: 'muted' }
   }
+}
+
+/** "Check sign-in" is offered on an account the provider can check now: the
+ *  provider is on and its status check is enabled, and the account is not
+ *  blocked (a blocked one gets "This is still my account", which checks and
+ *  vouches). */
+export function canOfferCheckSignIn(account: Pick<AccountView, 'operationalState' | 'lifecycle'>, provider: Pick<ProviderInstallationView, 'enabled' | 'status'>): boolean {
+  return provider.enabled && provider.status.enabled && account.operationalState !== 'blocked' && account.lifecycle !== 'archived'
+}
+
+/** What a "Check sign-in" answered, as its row says it. */
+export function signInCheckText(state: KnownAuthState): string {
+  switch (state) {
+    case 'signed-in': return 'Checked just now: signed in.'
+    case 'signed-out': return 'Checked just now: signed out.'
+    case 'expired': return 'Checked just now: the sign-in has expired.'
+    case 'unsupported': return "Checked just now: this sign-in can't be checked here."
+    case 'error': return "Checked just now: the sign-in couldn't be read."
+    default: return 'Checked just now: no clear answer.'
+  }
+}
+
+/** The command that signs in to a provider's own home on this computer, where
+ *  the provider has one; the app never signs in there itself (external
+ *  realms refuse sign-in). */
+const EXTERNAL_SIGN_IN_COMMAND: Readonly<Partial<Record<ProviderId, string>>> = Object.freeze({ codex: 'codex login' })
+
+/** What a signed-out or expired row for the provider's own home on this
+ *  computer says to do, or null when there is nothing to say. */
+export function externalSignInHint(account: Pick<AccountView, 'external' | 'lastKnownAuthState' | 'operationalState'>, provider: Pick<ProviderInstallationView, 'providerId'>): string | null {
+  if (!account.external || account.operationalState === 'blocked') return null
+  if (account.lastKnownAuthState !== 'signed-out' && account.lastKnownAuthState !== 'expired') return null
+  const command = EXTERNAL_SIGN_IN_COMMAND[provider.providerId]
+  return command ? `Run ${command} in a terminal, then Check sign-in.` : null
 }
 
 /** A provider's machine status as the Providers card says it

@@ -13,7 +13,6 @@ import { formatInstalledVersion } from '../utils/versionLabel'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import CopilotMeterSettings from './settings/CopilotMeterSettings'
 import { isSentinelEnabled } from '../../shared/sentinel-enabled'
-import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import { CustomCommandsTab } from './settings/CustomCommandsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
@@ -31,8 +30,33 @@ declare const __BUILD_TIME__: string
 declare const __BUILD_SHA__: string
 declare const __APP_VERSION__: string
 
-export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'commands', 'hooks', 'about'] as const
+export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'commands', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
+
+/** Tab ids that no longer exist, and the tab that replaced each. The Codex
+ *  tab (WP2 commit 6g) became the Codex row of Settings, Accounts: its on/off
+ *  switch, its status and install commands, and its accounts. */
+const RETIRED_SETTINGS_TABS: Readonly<Record<string, SettingsTab>> = Object.freeze({ codex: 'accounts' })
+
+/** The tab a deep link opens: a current tab id as it is, a retired one as the
+ *  tab that replaced it, anything else none (Settings opens where it was). */
+export function resolveSettingsTab(tab: unknown): SettingsTab | null {
+  if (typeof tab !== 'string') return null
+  if ((SETTINGS_TAB_IDS as readonly string[]).includes(tab)) return tab as SettingsTab
+  return Object.prototype.hasOwnProperty.call(RETIRED_SETTINGS_TABS, tab) ? RETIRED_SETTINGS_TABS[tab] : null
+}
+
+/** The app:openSettings listener App registers: Settings opens, on the tab
+ *  the event names as resolveSettingsTab reads it (a retired tab opens the
+ *  one that replaced it; a malformed detail opens none). */
+export function openSettingsHandler(deps: { openTab: (tab: SettingsTab) => void; showSettings: () => void }): (e: Event) => void {
+  return (e: Event) => {
+    const detail = (e as CustomEvent).detail as { tab?: unknown } | null | undefined
+    const tab = resolveSettingsTab(detail?.tab)
+    if (tab) deps.openTab(tab)
+    deps.showSettings()
+  }
+}
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -41,7 +65,6 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'uifont', label: 'Font & Size' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'github', label: 'GitHub' },
-  { id: 'codex', label: 'Codex' },
   { id: 'commands', label: 'Custom Commands' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'about', label: 'About' }
@@ -618,8 +641,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
           )}
 
           {activeTab === 'github' && <GitHubConfigTab />}
-
-          {activeTab === 'codex' && <CodexSettingsTab />}
 
           {activeTab === 'commands' && <CustomCommandsTab />}
 

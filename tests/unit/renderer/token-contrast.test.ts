@@ -140,10 +140,12 @@ describe('contrast — #458: muted text and the status-pill recipe', () => {
   // strip (brand 12%) — and those all clear at their ACTUAL strengths in
   // both themes (danger@16% raised 4.93 dark, brand@12% raised 4.51 dark).
   // Raised/overlay are still not in this list because pinning them at the
-  // generic 14/15% strengths would fail on ONE pre-existing case out of
-  // #458's scope: CodexSettingsTab's brand-15%-on-raised button, 4.27:1 in
-  // dark — fixing that means brightening dark --brand, the app's identity
-  // colour, which is an owner call. Extend the list when that lands.
+  // generic 14/15% strengths fails on one pairing out of #458's scope: brand
+  // at 15% on raised, 4.27:1 in dark. Its one known user, the Codex settings
+  // tab's sign-in button, was retired with that tab (WP2 commit 6g), but the
+  // pairing itself still fails at that strength, so pinning raised needs
+  // dark --brand brightened (the app's identity colour, an owner call) or the
+  // pin taken at the strengths raised actually uses. Extend the list then.
   const WASH_SURFACES = ['surface-chrome', 'surface-panel', 'surface-stage', 'surface-stage-gutter']
 
   it('reads real values out of styles.css, not a copy', () => {

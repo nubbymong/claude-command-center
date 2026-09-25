@@ -102,6 +102,9 @@ export interface HarnessOpts {
   unleasedSessions?: (providerId: ProviderId) => number
   /** The Claude reviewer's ports (WP2 5b): absent, Claude has no launch. */
   claudeReview?: ClaudeReviewPorts
+  /** Awaited at the start of every Codex CLI discovery (WP2 6g): a test
+   *  holds a discovery in flight with it. */
+  beforeDiscovery?: () => Promise<void> | void
 }
 
 export const claudeSnapshot = (legacyId: string, over: Partial<LegacyAccountSnapshot> = {}): LegacyAccountSnapshot => ({
@@ -172,6 +175,7 @@ export async function harness(o: HarnessOpts = {}) {
     hostHome: { env: {}, homeDir: USER },
     discoveryDeps: async (): Promise<CodexDiscoveryDeps> => {
       discoveries++
+      await o.beforeDiscovery?.()
       return {
         resolve: () => (state.cli ? EXE : null), realpath: (p) => p, stat: () => STAT,
         run: async () => ({ exitCode: 0, stdout: 'codex-cli 0.155.1\n', stderr: '', timedOut: false, truncated: false }),

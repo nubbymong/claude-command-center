@@ -614,24 +614,6 @@ export interface ElectronAPI {
     resolveConflict: (req: ResolveConflictRequest) => Promise<AccountsResult>
     setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<AccountsResult>
   }
-  codex: {
-    status: () => Promise<{
-      installed: boolean
-      version: string | null
-      authMode: 'chatgpt' | 'api-key' | 'none'
-      planType?: string
-      accountId?: string
-      hasOpenAiApiKeyEnv: boolean
-    }>
-    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
-      ok: boolean
-      browserUrl?: string
-      deviceCode?: string
-      error?: string
-    }>
-    logout: () => Promise<{ ok: boolean }>
-    testConnection: () => Promise<{ ok: boolean; message: string }>
-  }
   github: GitHubBridge
   hooks: HooksBridge
   codexReview: {
@@ -1331,12 +1313,6 @@ const electronAPI: ElectronAPI = {
       identityId: req.identityId, field: req.field, providerId: req.providerId, legacyId: req.legacyId, keep: req.keep,
     }),
     setReviewerDefault: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: req.providerId, accountId: req.accountId }),
-  },
-  codex: {
-    status: () => ipcRenderer.invoke(IPC.CODEX_STATUS),
-    login: (payload) => ipcRenderer.invoke(IPC.CODEX_LOGIN, payload),
-    logout: () => ipcRenderer.invoke(IPC.CODEX_LOGOUT),
-    testConnection: () => ipcRenderer.invoke(IPC.CODEX_TEST_CONNECTION),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

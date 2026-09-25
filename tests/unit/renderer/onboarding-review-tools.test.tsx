@@ -29,8 +29,6 @@ vi.mock('../../../src/renderer/stores/accountProfilesStore', () => {
 
 const { BuiltinToolsStep } = await import('../../../src/renderer/onboarding/BuiltinToolsStep')
 const { TransparencyStep } = await import('../../../src/renderer/onboarding/TransparencyStep')
-const { CodexStep } = await import('../../../src/renderer/onboarding/CodexStep')
-const { useCodexAccountStore } = await import('../../../src/renderer/stores/codexAccountStore')
 const { useSettingsStore, DEFAULT_SETTINGS, DEFAULT_CONDUCTOR_TOOLS } = await import('../../../src/renderer/stores/settingsStore')
 
 const updateSettings = vi.fn(() => Promise.resolve())
@@ -143,15 +141,5 @@ describe('Transparency recap', () => {
     renderStep()
     const c = [...container.querySelectorAll('.gh-card')].find((x) => x.querySelector('.gh-t')?.textContent === 'Codex (Beta)')
     expect(c?.querySelector('.gh-d')?.textContent).toBe('Off (Settings, Accounts)')
-  })
-})
-
-describe('Codex step', () => {
-  it('points at Settings, Accounts to turn Codex on later', () => {
-    useCodexAccountStore.setState({ installed: false, refresh: vi.fn(() => Promise.resolve()) } as never)
-    setSettings({ codexEnabled: false })
-    act(() => { root.render(React.createElement(CodexStep, { onNext: () => {}, onBack: () => {} })) })
-    expect(container.textContent).toContain('Enable it anytime in Settings, Accounts.')
-    expect(container.textContent).not.toContain('Settings → Codex')
   })
 })

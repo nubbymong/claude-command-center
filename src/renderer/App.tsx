@@ -19,7 +19,7 @@ import { setupCanvasSnapshotHost } from './canvas/canvas-snapshot-host'
 import { useLogsStore } from './stores/useLogsStore'
 import BottomBar from './components/BottomBar'
 import UsageDashboard from './components/UsageDashboard'
-import SettingsPage, { SETTINGS_TAB_IDS, type SettingsTab } from './components/SettingsPage'
+import SettingsPage, { openSettingsHandler, type SettingsTab } from './components/SettingsPage'
 import GlobalLogsView from './components/GlobalLogsView'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
@@ -90,7 +90,6 @@ import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
 import { bootChain } from './utils/bootGates'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
-import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
@@ -205,19 +204,14 @@ export default function App() {
     }
   }, [view, pendingLogsSessionId])
 
-  // Listen for app:openSettings dispatched by CodexFormFields "Open Settings" links.
-  // Switches the active view to Settings and deep-links to the requested tab.
-  // Validates the tab against the allow-list -- a malformed CustomEvent
-  // detail otherwise leaves SettingsPage with no matching tab content.
+  // Listen for app:openSettings (the session dialog's Settings, Accounts
+  // links, the command bar's menus, the status strip). Switches the active
+  // view to Settings and deep-links to the requested tab (openSettingsHandler:
+  // a retired tab id, the Codex settings tab's, opens the tab that replaced
+  // it, and a malformed CustomEvent detail opens none, since SettingsPage
+  // would otherwise have no matching tab content).
   useEffect(() => {
-    const onOpenSettings = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { tab?: string } | undefined
-      const tab = detail?.tab
-      if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
-        setPendingSettingsTab(tab as SettingsTab)
-      }
-      setView('settings')
-    }
+    const onOpenSettings = openSettingsHandler({ openTab: setPendingSettingsTab, showSettings: () => setView('settings') })
     window.addEventListener('app:openSettings', onOpenSettings)
     return () => window.removeEventListener('app:openSettings', onOpenSettings)
   }, [])
@@ -660,7 +654,6 @@ export default function App() {
       useGitHubStore.getState().loadConfig()
       useConductorMcpStore.getState().loadConfig()
       useConductorMcpStore.getState().fetchStatus()
-      useCodexAccountStore.getState().refresh()
       useAccountProfilesStore.getState().hydrate()
       // WP2: the provider Accounts snapshot. Its change subscription is
       // armed here once and lives for the renderer's lifetime.

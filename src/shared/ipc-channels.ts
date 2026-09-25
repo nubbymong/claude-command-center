@@ -245,12 +245,6 @@ export const IPC = {
   TOKENOMICS2_INDEX_PROGRESS: 'tokenomics2:indexProgress',
   TOKENOMICS2_INDEX_COMPLETE: 'tokenomics2:indexComplete',
 
-  // Codex (OpenAI)
-  CODEX_STATUS: 'codex:status',
-  CODEX_LOGIN: 'codex:login',
-  CODEX_LOGOUT: 'codex:logout',
-  CODEX_TEST_CONNECTION: 'codex:testConnection',
-
   // Provider accounts (WP2 commit 3): the one provider-neutral Accounts
   // surface. Requests name opaque ids only; replies are views, never paths,
   // tokens, keys or environment values. SECRET is one-way (send, no reply).

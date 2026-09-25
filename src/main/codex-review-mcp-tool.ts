@@ -514,7 +514,7 @@ export function registerCodexReviewTool(
       (args, optedIn, cwd, signal) => runCodexReview(args, optedIn, cwd, deps, signal),
       getOptedIn, getCwdForSession, getBoundSessionId,
       'Codex review unavailable: this MCP connection has no bound Conductor session. Restart the Claude session from inside AI Code Conductor.',
-      'Codex review is not enabled for this session. It is available to local Claude Code sessions with a real project directory when Codex is enabled in Settings → Codex.',
+      'Codex review is not enabled for this session. It is available to local Claude Code sessions with a real project directory while Codex is on (Settings, Accounts) and Codex review is on (Settings, General, Built-in Tools).',
     ),
   )
 }

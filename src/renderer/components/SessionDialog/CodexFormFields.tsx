@@ -1,7 +1,7 @@
 import type { CodexOptions } from '../../stores/configStore'
-import { useCodexAccountStore } from '../../stores/codexAccountStore'
+import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
 import { CODEX_MODELS } from '../../codex-models'
-import { NO_ACCOUNT, type AccountNotice, type AccountOption } from '../../utils/launchAccount'
+import { NO_ACCOUNT, providerCliMissingText, type AccountNotice, type AccountOption } from '../../utils/launchAccount'
 
 /** The "Codex account" field (WP2 commit 6, canvas F6/F9). The dialog works
  *  out what it shows from the Accounts snapshot (utils/launchAccount.ts) and
@@ -31,9 +31,9 @@ export interface CodexAccountFieldProps {
 interface Props {
   value: CodexOptions
   onChange: (next: CodexOptions) => void
-  onOpenSettings: () => void
-  /** Settings, Accounts: where Codex accounts are added and looked after. */
-  onOpenAccounts?: () => void
+  /** Settings, Accounts: where Codex is turned on, installed or checked
+   *  again (the Providers card), and its accounts added and looked after. */
+  onOpenAccounts: () => void
   account?: CodexAccountFieldProps
   /** "Codex 0.150.2 is too old for this app..." when discovery says so. */
   tooOld?: string | null
@@ -52,24 +52,28 @@ const warnBox = { borderColor: 'color-mix(in srgb, var(--status-warning) 40%, tr
 const dangerBox = { borderColor: 'color-mix(in srgb, var(--status-danger) 40%, transparent)', background: 'color-mix(in srgb, var(--status-danger) 9%, transparent)', color: 'var(--status-danger)' }
 const selectCls = 'w-full bg-[var(--surface-base)] border border-[var(--border-strong)] rounded-lg px-2.5 py-1.5 text-[12.5px] text-[var(--text-primary)] outline-none focus-ring'
 
-export function CodexFormFields({ value, onChange, onOpenSettings, onOpenAccounts, account, tooOld }: Props) {
-  const installed = useCodexAccountStore((s) => s.installed)
-  const openAccounts = onOpenAccounts ?? onOpenSettings
+export function CodexFormFields({ value, onChange, onOpenAccounts, account, tooOld }: Props) {
+  // Main's discovery, from the Accounts snapshot: says nothing until the
+  // snapshot has arrived and main has looked for the CLI (at start when
+  // Codex is switched on; an undecided Codex waits for Check now or an
+  // operation that needs the CLI).
+  const cliMissing = useProviderAccountsStore((s) => providerCliMissingText(s.snapshot, 'codex'))
   const noAccount = !!account?.available && account.noAccount
   /** A notice as one sentence whose own words are the link, so "Open
    *  Accounts" never reads twice. */
   const notice = (n: AccountNotice) => (
-    <>{n.lead}{' '}<button type="button" onClick={openAccounts} className="underline">{n.link}</button>{n.tail}</>
+    <>{n.lead}{' '}<button type="button" onClick={onOpenAccounts} className="underline">{n.link}</button>{n.tail}</>
   )
 
   return (
     <div className="space-y-4 my-2">
-      {!installed && !tooOld && (
-        <div className="rounded-[9px] border p-3 text-xs leading-snug" style={warnBox}>
-          Codex CLI is not installed.{' '}
-          <button type="button" onClick={onOpenSettings} className="underline">
-            Open Settings for install instructions
+      {cliMissing && !tooOld && (
+        <div className="rounded-[9px] border p-3 text-xs leading-snug" style={warnBox} data-testid="codex-cli-missing">
+          {cliMissing}.{' '}
+          <button type="button" onClick={onOpenAccounts} className="underline" data-testid="codex-cli-missing-open-accounts">
+            Open Settings, Accounts
           </button>
+          {' '}to install it or check again.
         </div>
       )}
       {tooOld && (

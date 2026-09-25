@@ -26,7 +26,7 @@ import { recordLiveUsageForSession } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders } from './providers/compose'
 import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
-import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory } from './provider-accounts'
+import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart } from './provider-accounts'
 import { probeClaudeCliVersion } from './claude-cli-version'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
@@ -62,7 +62,6 @@ import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
-import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerProviderAccountsHandlers } from './ipc/provider-accounts-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerExeHandlers, stopAllCapturedRuns } from './ipc/exe-handlers'
@@ -526,6 +525,10 @@ if (!gotTheLock) {
       void reconcileLegacyAccountStores()
         .then(() => runStartupProviderMigrations())
         .catch((err) => logError('[main] account start-up work failed:', err))
+        // Then, whatever that did, look for each switched-on provider's CLI
+        // once, in the background (WP2 6g: the retired Codex store's boot
+        // refresh kept Codex's status current; this does, for every provider).
+        .then(() => discoverProvidersAtStart())
     } catch (err) {
       logError('[main] accounts service start failed:', err)
     }
@@ -713,7 +716,6 @@ if (!gotTheLock) {
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
-    registerCodexHandlers()
     registerProviderAccountsHandlers(getWindow, getAccountsService)
     registerCodexReviewHandlers()
     registerExeHandlers()

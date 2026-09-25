@@ -13,6 +13,7 @@ import { codexCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCode
 import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
 import type { CodexDiscoveryDeps, CodexRunResult, CodexRunDeps, CodexProcessEntry } from '../../src/main/providers/codex'
 import { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT } from '../../src/main/providers/codex'
+import { harness, addCodexAccount } from './accounts-harness'
 
 describe('codex --version', () => {
   it('reads the semver from the CLI banner, and nothing else', () => {
@@ -1059,5 +1060,115 @@ describe('the Codex reviewer: ADR-009 confirmation fixes (WP2 5a)', () => {
     const ac = new AbortController()
     ac.abort()
     expect(await ops(f.deps).run({ ...base, signal: ac.signal })).toMatchObject({ ok: false, code: 'cancelled' })
+  })
+})
+
+describe('discovery at start (WP1.17; WP2 commit 6g)', () => {
+  const codexView = (h: Awaited<ReturnType<typeof harness>>) => h.service.snapshot().providers.find((p) => p.providerId === 'codex')!
+  const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
+
+  it('a provider switched on is looked for once, in the background: a missing CLI then reads missing', async () => {
+    const h = await harness({ preference: { codex: 'on' }, cli: false })
+    expect(codexView(h).discoveryState).toBe('unchecked')
+    expect(h.service.discoverAtStart()).toBeUndefined() // returns at once: start-up never waits
+    await settle()
+    expect(codexView(h).discoveryState).toBe('missing')
+    expect(h.discoveries()).toBe(1)
+    h.service.discoverAtStart()
+    await settle()
+    expect(h.discoveries()).toBe(1) // never a second time
+  })
+
+  it('an installed CLI reads found, with its version', async () => {
+    const h = await harness({ preference: { codex: 'on' } })
+    h.service.discoverAtStart()
+    await settle()
+    expect(codexView(h)).toMatchObject({ discoveryState: 'found', version: '0.155.1' })
+  })
+
+  it('a provider that is off, or not decided yet, or whose setting cannot be read, is not looked for', async () => {
+    for (const pref of ['off', 'undecided', () => { throw new Error('unreadable') }] as const) {
+      const h = await harness({ preference: { codex: pref as never } })
+      h.service.discoverAtStart()
+      await settle()
+      expect(h.discoveries(), String(pref)).toBe(0)
+      expect(codexView(h).discoveryState).toBe('unchecked')
+    }
+  })
+
+  it('a discovery that fails lands in the snapshot as an error, and nothing throws', async () => {
+    const h = await harness({ preference: { codex: 'on' } })
+    const setup = h.codex.setup as { discover: () => Promise<unknown> }
+    setup.discover = async () => { throw new Error('boom') }
+    expect(() => h.service.discoverAtStart()).not.toThrow()
+    await settle()
+    expect(codexView(h).discoveryState).toBe('error')
+  })
+})
+
+describe('one discovery per provider at a time (WP1.17; WP2 commit 6g)', () => {
+  const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
+  /** A discovery that can be held in flight: the package has cleared its
+   *  proof by then, as it does at the start of every discovery. */
+  function heldDiscovery() {
+    const ctl = { hold: false, release: () => {} }
+    const gate = new Promise<void>((r) => { ctl.release = r })
+    return { ctl, beforeDiscovery: async () => { if (ctl.hold) await gate } }
+  }
+
+  it('overlapping discover calls (Check again, the start-up look) start one CLI discovery, and every caller gets its answer', async () => {
+    const g = heldDiscovery()
+    const h = await harness({ beforeDiscovery: g.beforeDiscovery })
+    g.ctl.hold = true
+    const a = h.service.discover('codex')
+    const b = h.service.discover('codex')
+    h.service.discoverAtStart()
+    await settle()
+    expect(h.discoveries()).toBe(1)
+    g.ctl.release()
+    const [ra, rb] = await Promise.all([a, b])
+    expect(ra).toMatchObject({ ok: true, installation: { discoveryState: 'found', version: '0.155.1' } })
+    expect(rb).toEqual(ra)
+    expect(h.discoveries()).toBe(1)
+    // Once it has finished, the next one runs afresh.
+    await h.service.discover('codex')
+    expect(h.discoveries()).toBe(2)
+  })
+
+  it('a sign-in and a status check issued while a discovery is in flight wait for it, then run on its proof; none is refused', async () => {
+    const g = heldDiscovery()
+    const h = await harness({ beforeDiscovery: g.beforeDiscovery })
+    const a = await addCodexAccount(h)
+    const begun = await h.service.beginSetup({ providerId: 'codex', method: 'browser' })
+    if (!begun.ok) throw new Error(begun.code)
+    const runsBefore = h.args().length
+    g.ctl.hold = true
+    const again = h.service.discover('codex') // the service record still says found; the package's proof is clear
+    await settle()
+    const status = h.service.refreshStatus({ accountId: a })
+    const signIn = h.service.signIn({ accountId: begun.accountId, method: 'browser' }, 1)
+    await settle()
+    expect(h.args().length).toBe(runsBefore) // nothing ran on a missing proof
+    g.ctl.release()
+    expect(await status).toEqual({ ok: true, state: 'signed-in' })
+    expect(await signIn).toMatchObject({ ok: true })
+    expect((await again).ok).toBe(true)
+    expect(h.discoveries()).toBe(2) // addCodexAccount's, then the held one: the waiters started none
+  })
+
+  it('the start-up migration shares the run: its discovery is the one in flight, and its answer is recorded', async () => {
+    const g = heldDiscovery()
+    const h = await harness({ beforeDiscovery: g.beforeDiscovery })
+    g.ctl.hold = true
+    const check = h.service.discover('codex')
+    await settle()
+    const migrated = h.service.migrateExternalDefault('codex')
+    await settle()
+    expect(h.discoveries()).toBe(1)
+    g.ctl.release()
+    await check
+    expect((await migrated).ok).toBe(true)
+    expect(h.discoveries()).toBe(1)
+    expect(h.service.snapshot().providers.find((p) => p.providerId === 'codex')!.discoveryState).toBe('found')
   })
 })

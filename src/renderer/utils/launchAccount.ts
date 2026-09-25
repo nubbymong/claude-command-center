@@ -11,7 +11,7 @@
 // computer, or any realm-only sign-in -- needs THAT launch's acknowledgement,
 // sent together with the account id it acknowledges. Nothing here stores one.
 import type { AccountsSnapshot, AccountView, Compatibility, ProviderId } from '../../shared/providers'
-import { accountDisplayName, providerView, useProviderAccountsStore } from '../stores/providerAccountsStore'
+import { accountDisplayName, providerStatus, providerView, useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { formatSpawnError } from './sessionLaunch'
 
 /**
@@ -148,6 +148,17 @@ export function providerTooOldText(snapshot: AccountsSnapshot | null, providerId
   const p = providerView(snapshot, providerId)
   if (!p || p.discoveryState !== 'found' || p.compatibility !== 'too-old') return null
   return tooOldText(p)
+}
+
+/** Why a provider that is on has no usable CLI (not found, did not run, or
+ *  could not be checked), in the Providers card's own words; null when the
+ *  CLI was found, is not checked yet, the provider is off, or there is no
+ *  snapshot. Settings, Accounts shows the install commands and Check again. */
+export function providerCliMissingText(snapshot: AccountsSnapshot | null, providerId: ProviderId): string | null {
+  const p = providerView(snapshot, providerId)
+  if (!p || !p.enabled) return null
+  if (p.discoveryState !== 'missing' && p.discoveryState !== 'invalid' && p.discoveryState !== 'error') return null
+  return providerStatus(p).text
 }
 
 export interface LaunchAccountPlan {

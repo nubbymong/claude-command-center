@@ -31,6 +31,26 @@ describe('deriveOnboarding', () => {
     expect(deriveOnboarding(meta, { codexEnabled: true }).due).toBe(false)
   })
 
+  it('WP2 commit 6g: stored stamps for the retired codex and codexSignIn pages re-run nothing and break nothing', () => {
+    // A 2.1.0 user's completedSteps still names the two legacy Codex pages
+    // (their files are deleted in 6g). The registry has no such ids, so the
+    // stamps are inert: nothing is made due, no page by those ids is ever
+    // listed, and the release notes for the next build list none.
+    const retired = ['codex', 'codexSignIn']
+    expect(ALL_IDS.filter((id) => retired.includes(id))).toEqual([])
+    const completedSteps = { ...stampedExcept(['assistants', 'codexSetup', 'helloCodex']), codex: '2.1.0', codexSignIn: '2.1.0' }
+    const meta = { onboardingCompletedVersion: ONBOARDING_VERSION, onboardingAppVersion: '2.1.0', completedSteps }
+    for (const settings of [{}, { codexEnabled: true }, { codexEnabled: false }, { claudeEnabled: false, codexEnabled: true }]) {
+      const d = deriveOnboarding(meta, settings)
+      expect(d.due, JSON.stringify(settings)).toBe(false)
+      expect(d.steps.map((s) => s.id).filter((id) => retired.includes(id))).toEqual([])
+      expect(stepsNewSince('2.1.0', settings).map((s) => s.id).filter((id) => retired.includes(id))).toEqual([])
+    }
+    expect(shouldReonboardForVersion(meta, '2.1.1')).toBe(false)
+    // And a fresh walk (a forced re-onboard) lists neither.
+    expect(deriveOnboarding({}, { codexEnabled: true }).steps.map((s) => s.id).filter((id) => retired.includes(id))).toEqual([])
+  })
+
   it('v1->v2 updater (populated legacy meta, no onboarding fields) -> full flow', () => {
     // A real v1 AppMeta carries setupVersion/lastSeenVersion/commandsSeeded but NO completedSteps/
     // onboardingCompletedVersion; deriveOnboarding must ignore the legacy fields and run the full flow.

@@ -193,6 +193,10 @@ export class AccountsService {
    *  refreshStatus, reconcileSignIn). In memory only: a restart forgets it,
    *  and the record is then what it was before (a rare write failure). */
   private readonly unrecordedSignIns = new Map<string, CredentialClass | undefined>()
+  /** Discoveries running now, by provider (discoverOnce joins one). */
+  private readonly discoveries = new Map<ProviderId, Promise<DiscoveryResult>>()
+  /** Status checks running now, by account (refreshStatus joins one). */
+  private readonly statusChecks = new Map<string, Promise<AccountsResult<{ state: KnownAuthState }>>>()
   private opSeq = 0
   private subscribedStore: AccountRegistryStore | null = null
   private unsubscribeStore: (() => void) | null = null
@@ -427,10 +431,46 @@ export class AccountsService {
   }
 
   /** Ensure the provider's CLI has been proven this run: its auth operations
-   *  run only the executable discovery last proved. */
+   *  run only the executable discovery last proved. A discovery in flight is
+   *  waited for first: the package clears its proof while one runs, so an
+   *  operation started meanwhile would otherwise be refused on a record that
+   *  still says found. */
   private async ensureDiscovered(p: ProviderPackage): Promise<void> {
-    if (this.installations.get(p.id)?.state === 'found' || !p.setup) return
-    await this.discover(p.id)
+    if (!p.setup) return
+    const running = this.discoveries.get(p.id)
+    if (running) {
+      await running
+      return
+    }
+    if (this.installations.get(p.id)?.state === 'found') return
+    await this.discoverOnce(p)
+  }
+
+  /** One discovery per provider at a time: a caller while one runs joins it,
+   *  so what this service records (`installations`) and what the package
+   *  proved come from the same run, whoever asked (Check again, the start-up
+   *  look, an operation, the start-up migration). */
+  private discoverOnce(p: ProviderPackage): Promise<DiscoveryResult> {
+    const running = this.discoveries.get(p.id)
+    if (running) return running
+    const setup = p.setup
+    const run = (async (): Promise<DiscoveryResult> => {
+      let d: DiscoveryResult
+      try {
+        if (!setup) throw new Error('no discovery step')
+        d = await setup.discover()
+      } catch {
+        d = { state: 'error', compatibility: 'unknown', checkedAt: Date.now() }
+      }
+      this.installations.set(p.id, d)
+      this.changed()
+      return d
+    })()
+    const tracked: Promise<DiscoveryResult> = run.finally(() => {
+      if (this.discoveries.get(p.id) === tracked) this.discoveries.delete(p.id)
+    })
+    this.discoveries.set(p.id, tracked)
+    return tracked
   }
 
   // -------------------------------------------------------------------------
@@ -440,11 +480,25 @@ export class AccountsService {
   async discover(providerId: ProviderId): Promise<AccountsResult<{ installation: ProviderInstallationView }>> {
     const p = this.pkg(providerId)
     if (!p?.setup) return failure('unsupported')
-    let d: DiscoveryResult
-    try { d = await p.setup.discover() } catch { d = { state: 'error', compatibility: 'unknown', checkedAt: Date.now() } }
-    this.installations.set(providerId, d)
-    this.changed()
+    await this.discoverOnce(p)
     return { ok: true, installation: this.installationView(p) }
+  }
+
+  /** Once at start, after the service is up: look for the CLI of every
+   *  provider that is switched on and has a discovery step, so Settings,
+   *  Accounts and the session dialog say whether it is installed without
+   *  a click. Fire and forget: nothing waits for it, a failure lands in the
+   *  snapshot as it does for Check again, and a provider that is off or has
+   *  not been decided is not looked for (nor one already looked for). */
+  discoverAtStart(): void {
+    let packages: readonly ProviderPackage[]
+    try { packages = this.deps.packages() } catch { return }
+    for (const p of packages) {
+      try {
+        if (!p.setup || this.installations.has(p.id) || this.preferenceOf(p.id) !== 'on') continue
+        void this.discover(p.id).catch(() => { /* discover records its own failures */ })
+      } catch { /* one provider never stops another */ }
+    }
   }
 
   /** Main's side of turning a provider on or off (A4): checked here, under
@@ -914,7 +968,19 @@ export class AccountsService {
     return r
   }
 
-  async refreshStatus(input: { accountId: string }): Promise<AccountsResult<{ state: KnownAuthState }>> {
+  /** The provider's status check on one account, recorded. Single-flight
+   *  per account: a check asked for while one runs joins it, so a burst of
+   *  "Check sign-in" clicks starts one CLI process and holds one lease. */
+  refreshStatus(input: { accountId: string }): Promise<AccountsResult<{ state: KnownAuthState }>> {
+    const key = String(input?.accountId)
+    const running = this.statusChecks.get(key)
+    if (running) return running
+    const check = this.runStatusCheck(input).finally(() => { this.statusChecks.delete(key) })
+    this.statusChecks.set(key, check)
+    return check
+  }
+
+  private async runStatusCheck(input: { accountId: string }): Promise<AccountsResult<{ state: KnownAuthState }>> {
     const ctx = this.accountContext(input.accountId)
     if ('ok' in ctx) return ctx
     const a = findAccount(ctx.doc, input.accountId)!
@@ -1316,7 +1382,11 @@ export class AccountsService {
     if (!this.capability(p, 'auth.status').enabled) return failure('capability-disabled')
     const store = this.currentStore()
     if (!store) return failure('registry-unavailable')
-    const outcome = await migrateExternalDefaultRealm(p, { store, preference: (id) => this.preferenceOf(id), log: (m) => this.log(m) })
+    // Its discovery is this service's one run per provider, never a second
+    // one overlapping another caller's.
+    const outcome = await migrateExternalDefaultRealm(p, {
+      store, preference: (id) => this.preferenceOf(id), log: (m) => this.log(m), discover: () => this.discoverOnce(p),
+    })
     this.migrationRuns.set(providerId, outcome)
     this.changed()
     return { ok: true, outcome }

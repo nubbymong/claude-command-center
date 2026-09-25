@@ -13,7 +13,6 @@
 
 import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join } from 'path'
-import { getCodexHome } from './auth'
 import { computeCodexCostUsd } from './pricing'
 import type { StatuslineData } from '../../../shared/types'
 import type { TelemetrySource } from '../types'
@@ -279,16 +278,17 @@ const claimed = new Set<string>()
  * Windows) so the exact-string match works correctly.
  *
  * `sessionsDir` (WP2): the transcript folder of the realm the session runs in.
- * A session passes its own; the default (the ambient home's) is for callers
- * that have no realm.
+ * Required (WP2 commit 6g): there is no fallback to the ambient home, which
+ * would claim another account's transcript. Without one nothing is watched.
  */
 export function watchAndClaimRollout(
   sessionId: string,
   sessionCwd: string,
   spawnTimestamp: number,
   onUpdate: (sl: StatuslineData) => void,
-  sessionsDir: string = join(getCodexHome(), 'sessions'),
+  sessionsDir: string,
 ): TelemetrySource {
+  if (typeof sessionsDir !== 'string' || !sessionsDir) return { stop() {} }
   // NOTE: dateDir is bound to today's UTC date at call time; it will not follow
   // midnight UTC rollover (sessions started before midnight won't be found after).
   // Known limitation -- fix by re-computing dateDir on each poll tick.

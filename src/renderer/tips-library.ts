@@ -944,7 +944,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Run OpenAI Codex sessions beside Claude',
         title: 'Codex Sessions',
-        body: 'A saved config does not have to run Claude Code. Switch **Settings > Codex** on, and the session dialog grows a provider choice: **Claude** or **Codex**, with its own account and its own sign-in.\n\nEverything else is the same session model you already use -- tabs, notes, commands, logs -- so a Codex session sits in the sidebar next to a Claude one and behaves like it.\n\n**Tokenomics counts Codex too**, so the spend comparison is in one place rather than two. Local sessions only for now: SSH configs stay on Claude.',
+        body: 'A saved config does not have to run Claude Code. Turn Codex on and add a Codex account in **Settings, Accounts**, and the session dialog lets a config pick **Codex** instead of **Claude**, with the Codex account it runs under and that account\'s own sign-in.\n\nEverything else is the same session model you already use -- tabs, notes, commands, logs -- so a Codex session sits in the sidebar next to a Claude one and behaves like it.\n\n**Tokenomics counts Codex too**, so the spend comparison is in one place rather than two. Local sessions only for now: SSH configs stay on Claude.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
       },

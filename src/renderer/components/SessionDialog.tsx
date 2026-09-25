@@ -15,7 +15,7 @@ import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, O
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { accountFieldState, defaultAccountId, providerTooOldText, accountEmail } from '../utils/launchAccount'
 import { ClaudeGlyph, CodexGlyph } from './sidebar/Badges'
-import { CLAUDE_OFF_LAUNCH_REASON } from '../hooks/useLaunchConfig'
+import { CLAUDE_OFF_LAUNCH_REASON, CODEX_OFF_LAUNCH_REASON } from '../hooks/useLaunchConfig'
 
 /** The one launch the dialog's ticked "launch with the sign-in already on
  *  this computer" covers: the caller grants it to the session it starts
@@ -129,8 +129,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   // field. Discarding a half-filled config on one keypress with no confirm and
   // no undo is worse than not having the shortcut. Cancel is the way out.
 
-  // Codex master ("Do you use Codex?"): with it off, Codex configs can't launch,
-  // so the card renders disabled with a pointer to Settings → Codex.
+  // Codex's on/off (the Providers card in Settings, Accounts): with it off,
+  // Codex configs can't launch, so the card renders disabled with a pointer
+  // to Settings, Accounts.
   const codexDisabled = useSettingsStore((s) => s.settings.codexEnabled === false)
   // Claude Code off (a Codex-only install, WP2): Claude configs can't launch
   // (isConfigLaunchBlocked), so the Claude card renders disabled the same way,
@@ -762,7 +763,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
             <p className="text-[11px] text-[var(--status-danger)] mt-1.5" data-testid="codex-ssh-note">{CODEX_SSH_TEXT}</p>
           )}
           {codexDisabled && sessionType !== 'ssh' && (
-            <p className="text-[11px] text-[var(--text-muted)] mt-1.5">Codex is off — enable it in Settings → Codex to use it here.</p>
+            <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="codex-off-note">{CODEX_OFF_LAUNCH_REASON}</p>
           )}
           {claudeDisabled && (
             <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="claude-off-note">{CLAUDE_OFF_LAUNCH_REASON}</p>
@@ -1285,9 +1286,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         if (next.model !== undefined) setCodexModel(next.model)
                         if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
                         if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
-                      }}
-                      onOpenSettings={() => {
-                        window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'codex' } }))
                       }}
                       onOpenAccounts={() => {
                         window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'accounts' } }))

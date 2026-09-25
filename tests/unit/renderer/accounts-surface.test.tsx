@@ -354,10 +354,144 @@ describe('Codex rows', () => {
   it('offers each account only the actions its state allows', async () => {
     render(snapshot())
     // The default, with other active accounts, is not offered Make inactive (the registry wants another default first).
-    expect(await menuKeys('acc-work')).toEqual(['make-reviewer', 'sign-out'])
-    expect(await menuKeys('acc-personal')).toEqual(['make-default', 'sign-out', 'make-inactive'])
+    expect(await menuKeys('acc-work')).toEqual(['make-reviewer', 'check-sign-in', 'sign-out'])
+    expect(await menuKeys('acc-personal')).toEqual(['make-default', 'check-sign-in', 'sign-out', 'make-inactive'])
+    // Blocked: "This is still my account" is its check (it vouches); no plain check.
     expect(await menuKeys('acc-old')).toEqual(['sign-out', 'make-inactive'])
-    expect(await menuKeys('acc-parked')).toEqual(['sign-out', 'make-active', 'archive'])
+    expect(await menuKeys('acc-parked')).toEqual(['check-sign-in', 'sign-out', 'make-active', 'archive'])
+  })
+
+  // WP2 commit 6g: the retired Codex settings tab's "Test connection", per
+  // account. It runs the provider's own status check in that account's realm
+  // (refreshStatus) and shows the answer on the row; it never vouches.
+  describe('Check sign-in', () => {
+    it('is offered on every account the provider can check, external included, and not on a blocked one', async () => {
+      render(snapshot())
+      for (const id of ['acc-work', 'acc-personal', 'acc-local', 'acc-parked', 'acc-unv', 'acc-refused']) expect(await menuKeys(id), id).toContain('check-sign-in')
+      expect(await menuKeys('acc-old')).not.toContain('check-sign-in')
+    })
+
+    it('is not offered while the provider cannot check a sign-in, or is off', async () => {
+      const codexNoStatus = provider({ providerId: 'codex', displayName: 'Codex', status: { enabled: false, labelExperimental: false } })
+      render(snapshot({ providers: [snapshot().providers[0], codexNoStatus] }))
+      expect(await menuKeys('acc-work')).not.toContain('check-sign-in')
+      unmountNow()
+      // Off: the accounts are listed unmanaged, with no menu at all.
+      render(snapshot({ providers: [snapshot().providers[0], provider({ providerId: 'codex', displayName: 'Codex', enabled: false })] }))
+      expect(q('provider-account-row-acc-work')).toBeTruthy()
+      expect(q('account-menu-btn-acc-work')).toBeNull()
+    })
+
+    it("runs the account's status check, shows its answer on the row, and vouches for nothing", async () => {
+      pa.refreshStatus.mockResolvedValueOnce({ ok: true, state: 'signed-out' } as never)
+      render(snapshot())
+      await click('account-menu-btn-acc-work')
+      await click('account-menu-check-sign-in-acc-work')
+      expect(pa.refreshStatus).toHaveBeenCalledWith('acc-work')
+      expect(pa.reconcileSignIn).not.toHaveBeenCalled()
+      expect(q('account-checked-acc-work')!.textContent).toBe('Checked just now: signed out.')
+      expect(q('account-checked-acc-personal')).toBeNull()
+      pa.refreshStatus.mockResolvedValueOnce({ ok: true, state: 'signed-in' } as never)
+      await click('account-menu-btn-acc-work')
+      await click('account-menu-check-sign-in-acc-work')
+      expect(q('account-checked-acc-work')!.textContent).toBe('Checked just now: signed in.')
+    })
+
+    it('shows why a check could not run in the row error line, and drops the earlier answer', async () => {
+      pa.refreshStatus.mockResolvedValueOnce({ ok: true, state: 'signed-in' } as never)
+      render(snapshot())
+      await click('account-menu-btn-acc-personal')
+      await click('account-menu-check-sign-in-acc-personal')
+      expect(q('account-checked-acc-personal')).toBeTruthy()
+      pa.refreshStatus.mockResolvedValueOnce({ ok: false, code: 'busy', message: 'Something else is using this account right now.' } as never)
+      await click('account-menu-btn-acc-personal')
+      await click('account-menu-check-sign-in-acc-personal')
+      expect(q('account-error-acc-personal')!.textContent!.length).toBeGreaterThan(0)
+      expect(q('account-checked-acc-personal')).toBeNull()
+    })
+
+    it('the answer goes once the record moves on: a sign-in that changes after it, a block, or a lifecycle change', async () => {
+      const push = async (s: ReturnType<typeof snapshot>) => { await act(async () => { useProviderAccountsStore.setState({ snapshot: s, loaded: true }) }); await flush() }
+      const checkWork = async (state: string) => {
+        pa.refreshStatus.mockResolvedValueOnce({ ok: true, state } as never)
+        await click('account-menu-btn-acc-work')
+        await click('account-menu-check-sign-in-acc-work')
+      }
+      render(snapshot())
+      // The answer lands before the snapshot that records it: it stays.
+      await checkWork('signed-out')
+      expect(q('account-checked-acc-work')!.textContent).toBe('Checked just now: signed out.')
+      await push(snapshot({ accounts: [{ ...work, lastKnownAuthState: 'signed-out' }, personal] }))
+      expect(q('account-checked-acc-work')!.textContent).toBe('Checked just now: signed out.')
+      // Signed in again elsewhere (Sign in again worked): the answer is stale.
+      await push(snapshot({ accounts: [work, personal] }))
+      expect(q('account-state-acc-work')!.textContent).toBe('Signed in')
+      expect(q('account-checked-acc-work')).toBeNull()
+      // Blocked by a later check: gone.
+      await checkWork('signed-in')
+      expect(q('account-checked-acc-work')).toBeTruthy()
+      await push(snapshot({ accounts: [{ ...work, operationalState: 'blocked' }, personal] }))
+      expect(q('account-checked-acc-work')).toBeNull()
+      // A lifecycle change: gone.
+      await push(snapshot({ accounts: [work, personal] }))
+      await checkWork('signed-in')
+      expect(q('account-checked-acc-work')).toBeTruthy()
+      await push(snapshot({ accounts: [{ ...work, lifecycle: 'inactive' }, personal] }))
+      expect(q('account-checked-acc-work')).toBeNull()
+    })
+
+    it('never shows an answer on a blocked row, even when the blocking snapshot lands before the answer', async () => {
+      let answer: (v: unknown) => void = () => {}
+      pa.refreshStatus.mockImplementationOnce(() => new Promise((r) => { answer = r }) as never)
+      render(snapshot())
+      await click('account-menu-btn-acc-work')
+      await click('account-menu-check-sign-in-acc-work')
+      await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshot({ accounts: [{ ...work, operationalState: 'blocked' }, personal] }), loaded: true }) })
+      await flush()
+      await act(async () => { answer({ ok: true, state: 'signed-in' }) })
+      await flush()
+      expect(q('account-state-acc-work')!.textContent).toBe('Needs attention: signed in as a different account')
+      expect(q('account-checked-acc-work')).toBeNull()
+    })
+
+    it('Sign in again drops an earlier answer', async () => {
+      const out = { ...personal, lastKnownAuthState: 'signed-out' as const }
+      pa.refreshStatus.mockResolvedValueOnce({ ok: true, state: 'signed-out' } as never)
+      render(snapshot({ accounts: [work, out, old] }))
+      await click('account-menu-btn-acc-personal')
+      await click('account-menu-check-sign-in-acc-personal')
+      expect(q('account-checked-acc-personal')).toBeTruthy()
+      await click('account-menu-btn-acc-personal')
+      await click('account-menu-sign-in-again-acc-personal')
+      expect(q('account-checked-acc-personal')).toBeNull()
+    })
+  })
+
+  // WP2 commit 6g: the app never signs in to this computer's own home (an
+  // external realm refuses sign-in), so a signed-out or expired row for it
+  // says how.
+  describe("this computer's own sign-in", () => {
+    it('a signed-out or expired row says to run codex login in a terminal, then Check sign-in', async () => {
+      for (const st of ['signed-out', 'expired'] as const) {
+        render(snapshot({ accounts: [work, { ...local, lastKnownAuthState: st }] }))
+        expect(q('account-external-hint-acc-local')!.textContent, st).toBe('Run codex login in a terminal, then Check sign-in.')
+        unmountNow()
+      }
+    })
+
+    it('says nothing while it is signed in, for a managed account, for a blocked one, or while Codex is off', async () => {
+      render(snapshot({ accounts: [work, local, { ...personal, lastKnownAuthState: 'signed-out' }] }))
+      expect(q('account-external-hint-acc-local')).toBeNull()
+      expect(q('account-external-hint-acc-personal')).toBeNull()
+      unmountNow()
+      render(snapshot({ accounts: [work, { ...local, lastKnownAuthState: 'signed-out', operationalState: 'blocked' }] }))
+      expect(q('account-external-hint-acc-local')).toBeNull()
+      unmountNow()
+      const off = snapshot({ accounts: [work, { ...local, lastKnownAuthState: 'signed-out' }] })
+      off.providers[1] = { ...off.providers[1], enabled: false }
+      render(off)
+      expect(q('account-external-hint-acc-local')).toBeNull()
+    })
   })
 
   it('offers Make inactive on the default when it is the only active account, and never Make active on a blocked one', async () => {

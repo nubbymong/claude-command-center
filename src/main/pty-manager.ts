@@ -11,7 +11,6 @@ export { _setTmuxArchiveResolverForTest, _downloadAndCacheTmuxArchiveForTest } f
 import { bufferSshLine, bufferSetupLine, clearSshLineBuffer, clearSetupLineBuffer, clearAllSshLineBuffers } from './ssh-line-buffer'
 export { _getSetupLineBufferLenForTest } from './ssh-line-buffer'
 import type { AccountLease } from './providers/core'
-export { captureCodexSpawnIdentity, clearCodexSpawnIdentity, getCodexSpawnIdentityMap } from './codex-spawn-identity'
 export type { TmuxDetectionClass } from './ssh-sentinel-parsers'
 export { parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel } from './ssh-sentinel-parsers'
 import { randomId } from '../shared/id'

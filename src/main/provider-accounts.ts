@@ -113,6 +113,18 @@ export async function runStartupProviderMigrations(): Promise<void> {
   }
 }
 
+/** Once at start: look for the CLI of every provider that is switched on, in
+ *  the background (the service decides which; see discoverAtStart). Without
+ *  it a provider's status reads "not checked yet" until some operation or a
+ *  click on Check again looks. Never throws and never waits. */
+export function discoverProvidersAtStart(): void {
+  try {
+    service?.discoverAtStart()
+  } catch (e) {
+    logError(`[accounts] provider discovery at start threw: ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
 /** The resources directory changed while the app runs (the first-run setup
  *  chooses it after start). The registry's file port captured the old one,
  *  so it is loaded again from the new one, with the same start-up work --

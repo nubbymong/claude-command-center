@@ -2,23 +2,105 @@
 // with its machine status and the on/off switch. At least one provider
 // always stays on; the main process enforces that and this card says so
 // under the switch that tried. A provider whose CLI was not found, could not
-// be checked, or is too old gets "Check again" (6e): a new discovery, which
-// is also the executable later launches and sign-ins run.
-import React, { useState } from 'react'
-import type { ProviderInstallationView } from '../../../../shared/providers'
+// be checked, is too old, or has not been looked for yet gets "Check again"
+// (6e, 6g): a new discovery, which is also the executable later launches and
+// sign-ins run. The same row shows the provider's own install or update
+// commands, to copy, once discovery says they are needed (6g: the retired
+// Codex settings tab's install hint lives here now).
+import React, { useEffect, useRef, useState } from 'react'
+import type { InstallRecipeView, ProviderInstallationView } from '../../../../shared/providers'
 import { useProviderAccountsStore, providerAccountActions, providerStatus } from '../../../stores/providerAccountsStore'
 import { ProviderMark } from '../../sidebar/Badges'
 import ToggleSwitch from '../../github/config/ToggleSwitch'
 import { Section } from '../../SettingsPage'
-import { Pill, StatusText, ErrorLine, RowButton } from './accounts-ui'
+import { Pill, StatusText, ErrorLine, MutedLine, RowButton } from './accounts-ui'
 import { showHelloCodexReplay, codexSetUp } from '../../../onboarding/hello-codex'
 
-/** The CLI is missing, could not be checked, or cannot be used as found:
- *  worth checking again once the user has installed or updated it. */
+/** The CLI is missing, could not be checked, cannot be used as found, or
+ *  has not been looked for yet (main looks once at start, in the
+ *  background, only for a provider switched on): worth checking now. */
 export function offersCheckAgain(p: ProviderInstallationView): boolean {
   if (!p.enabled) return false
-  if (p.discoveryState === 'missing' || p.discoveryState === 'invalid' || p.discoveryState === 'error') return true
+  if (p.discoveryState === 'unchecked' || p.discoveryState === 'missing' || p.discoveryState === 'invalid' || p.discoveryState === 'error') return true
   return p.discoveryState === 'found' && (p.compatibility === 'too-old' || p.compatibility === 'unsupported')
+}
+
+/** Which commands help: install ones when discovery found no usable CLI
+ *  (not found, did not run, could not be checked), update ones when it
+ *  found one that cannot be used as it is. None before discovery has said
+ *  anything: an unchecked CLI may well be installed. */
+export function installPurpose(p: ProviderInstallationView): 'install' | 'update' | null {
+  if (!offersCheckAgain(p) || p.discoveryState === 'unchecked') return null
+  return p.discoveryState === 'found' ? 'update' : 'install'
+}
+
+/** Said for a script recipe that arrives without main's own note. */
+export const SCRIPT_NOTE = 'Shown for you to review and run yourself; the app does not run it.'
+
+/** One command, verbatim as its publisher documents it, to copy. Settings
+ *  shows and copies; running one in a terminal is the Codex setup page's. */
+function RecipeLine({ recipe }: { recipe: InstallRecipeView }) {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const live = useRef(true)
+  useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+      if (timer.current) clearTimeout(timer.current)
+    }
+  }, [])
+  const copy = () => {
+    void navigator.clipboard?.writeText(recipe.displayCommand).then(() => {
+      if (!live.current) return
+      setCopied(true)
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => { timer.current = null; setCopied(false) }, 1500)
+    }).catch(() => { /* clipboard blocked: the command is selectable */ })
+  }
+  const note = recipe.note ?? (recipe.method === 'script' ? SCRIPT_NOTE : undefined)
+  return (
+    <div className="mt-1.5" data-testid={`provider-recipe-${recipe.id}`}>
+      <div className="flex items-center gap-2">
+        <code
+          className="flex-1 min-w-0 border rounded-[6px] px-2 py-1 text-[11.5px] font-mono select-all break-all"
+          style={{ background: 'var(--surface-sunken)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+          data-testid={`provider-recipe-command-${recipe.id}`}
+        >
+          {recipe.displayCommand}
+        </code>
+        <RowButton onClick={copy} testId={`provider-recipe-copy-${recipe.id}`}>{copied ? 'Copied' : 'Copy'}</RowButton>
+      </div>
+      {note && <MutedLine className="mt-0.5" testId={`provider-recipe-note-${recipe.id}`}>{note}</MutedLine>}
+    </div>
+  )
+}
+
+/** The install or update commands main knows for the provider on this
+ *  computer, with where they come from. Asked for once, when the row first
+ *  needs them. A provider with none for the purpose (Claude Code has none
+ *  here), or whose commands could not be read, shows nothing: its status
+ *  line and Check again still say what is wrong. */
+function InstallCommands({ p, purpose }: { p: ProviderInstallationView; purpose: 'install' | 'update' }) {
+  const [recipes, setRecipes] = useState<InstallRecipeView[] | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    void providerAccountActions.installRecipes(p.providerId).then((r) => { if (live) setRecipes(r) })
+    return () => { live = false }
+  }, [p.providerId])
+  const mine = (recipes ?? []).filter((r) => r.purpose === purpose)
+  if (mine.length === 0) return null
+  return (
+    <div className="mt-1.5" data-testid={`provider-${purpose}-commands-${p.providerId}`}>
+      <MutedLine testId={`provider-recipes-source-${p.providerId}`}>
+        {purpose === 'install' ? `Install ${p.displayName}` : `Update ${p.displayName}`}
+        {' '}
+        <span title={mine[0].sourceUrl}>({/readme/i.test(mine[0].sourceUrl) ? `from ${mine[0].publisher}'s README` : `from ${mine[0].publisher}`})</span>
+        {', then Check again.'}
+      </MutedLine>
+      {mine.map((r) => <RecipeLine key={r.id} recipe={r} />)}
+    </div>
+  )
 }
 
 function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean }) {
@@ -26,6 +108,7 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const status = providerStatus(p)
+  const purpose = installPurpose(p)
   const codexReady = useProviderAccountsStore((s) => codexSetUp(s.snapshot))
 
   // The result arrives with the snapshot main pushes after the check.
@@ -64,10 +147,13 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
         {offersCheckAgain(p) && (
           <div className="mt-1">
             <RowButton onClick={() => { void checkAgain() }} disabled={checking} testId={`provider-check-again-${p.providerId}`}>
-              {checking ? 'Checking...' : 'Check again'}
+              {checking ? 'Checking...' : p.discoveryState === 'unchecked' ? 'Check now' : 'Check again'}
             </RowButton>
           </div>
         )}
+        {/* Keyed on the purpose: a CLI that goes from missing to too old
+            reads the commands again, for the update ones. */}
+        {purpose && <InstallCommands key={purpose} p={p} purpose={purpose} />}
         {/* The Codex introduction, replayed (WP2 commit 6f): offered only
             once Codex is set up, since its first page says the account is
             ready. A replay marks it seen only if it was still due. */}
