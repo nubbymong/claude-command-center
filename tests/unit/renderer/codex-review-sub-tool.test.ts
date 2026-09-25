@@ -23,14 +23,17 @@ describe('CodexReviewSubTool (P7.4)', () => {
     container.remove()
   })
 
-  it('renders the Available status + global-availability description', () => {
+  it('renders the Available status + the conditions the tool is offered under', () => {
     act(() => { root.render(React.createElement(CodexReviewSubTool)) })
     const text = container.textContent ?? ''
     expect(text).toContain('Codex review (Claude-driven)')
     expect(text).toContain('Available')
-    // 2.1.0-beta.5: the per-config opt-in is retired — the card describes the
-    // global gate (Codex master switch) instead.
-    expect(text).toContain('every local Claude Code session')
+    // 2.1.0-beta.5 retired the per-config opt-in; WP2 commit 7 states the real
+    // conditions: a local session with a project folder, Codex on, a Codex
+    // account that can review, and the Built-in Tools switch.
+    expect(text).toContain('Offered to local Claude Code sessions with a real project folder')
+    expect(text).toContain('a Codex account there can run reviews')
+    expect(text).toContain('Codex review is on (Settings, General, Built-in Tools)')
     expect(text).toContain('codex_review')
   })
 })

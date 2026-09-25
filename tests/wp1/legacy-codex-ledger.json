@@ -3262,8 +3262,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP2 commit 7 reworded the Codex review card to the real conditions the tool is offered under (a local session with a project folder, Codex on, a Codex account that can review, the Built-in Tools switch); the test now asserts those conditions and was renamed from the global-availability description (WP1.33 mapping); tests/unit/renderer/codex-review-sub-tool.test.ts",
       "note": ""
     },
     {
