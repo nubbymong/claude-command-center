@@ -8,20 +8,25 @@ The ledger also cites WP1.2. Its evidence is `docs/wp1/evidence/real-cli-matrix.
 
 It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest: WP1.60's upgrade, restart, enable/disable and minimum real-launch modes are not covered here (see "Not covered").
 
-**Current record:** commit `38cbc9d71ce549b78a1ee1eff5fab57e2c9f9ddb`, the final WP2 head, with no patch applied. Earlier runs are kept below as history.
+**Current record:** commit `36b83da1d8a34ab34a6f34925336bd51c4290242`, the WP2 head after the accessibility fixes from the VM capture, with no patch applied. Earlier runs are kept below as history.
 
-- Date: 2026-09-25 (VM local clock 03:07:09-03:10:17 PDT).
-- Commit: `38cbc9d71ce549b78a1ee1eff5fab57e2c9f9ddb` (`origin/session/beta/c4d568ce-wp2-codex`).
+- Date: 2026-09-25 (VM local clock 04:31:10-04:33:45 PDT).
+- Commit: `36b83da1d8a34ab34a6f34925336bd51c4290242` (`origin/session/beta/c4d568ce-wp2-codex`).
   - The VM checkout was reset to that full sha and verified against the fetched remote head; it has 0 tracked changes.
-  - `out/main/index.js` was built from it at 02:53:30.
+  - `out/main/index.js` was built from it at 04:22:21.
+- Changes since the previous record (`38cbc9d7`):
+  - `b8999772`: docs.
+  - `ea63ff78`: a unit test.
+  - `36b83da1`: renderer styling. Focus rings, status-pill and badge colours, and the Conductor MCP header copy.
+  - None of them touches `src/main`, the preload or the e2e specs.
 - Machine: Hyper-V VM WinDev2407Eval, Windows 11 Enterprise Evaluation 10.0.22621 (build 22621), 64-bit.
-- Toolchain: Node v24.16.0, Electron 43.7.1, @playwright/test 1.62.1, app 2.1.1-beta.1.
+- Toolchain: Node v24.16.0, Electron 43.7.1, @playwright/test 1.62.1, app 2.1.1-beta.1. The lockfile is unchanged since `38cbc9d7`.
 - Build:
   - `npm ci` exits 255. Its postinstall `electron-rebuild` of node-pty and better-sqlite3 fails with MSB8040, because the Spectre-mitigated libraries are not installed on the VM. Both modules load their shipped N-API win32-x64 prebuilds, so the run is unaffected.
   - `npm ci` left Electron's binary missing, and `node node_modules\electron\install.js` restored it.
   - `npm run build` exited 0.
-- Codex on the machine: the VM's real Codex CLI (`...\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe`) stayed on the runner's PATH, as in the previous record.
-  - The previous record gives its version as 0.142.4. It was not run in this pass, because a Rust CLI may resolve its home through the Windows profile API rather than `USERPROFILE`.
+- Codex on the machine: the VM's real Codex CLI (`...\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe`) stayed on the runner's PATH, as in every earlier record.
+  - An earlier record gives its version as 0.142.4. It was not run here, because a Rust CLI may resolve its home through the Windows profile API rather than `USERPROFILE`.
   - `codex-session-creation` supplies its own fake Codex (`tests/e2e/helpers/fake-codex.ts`).
 - Actor: the VM operator agent (Claude Code), driving the VM over SSH. The runner was launched detached through WMI `Win32_Process.Create`.
 
@@ -29,24 +34,26 @@ It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability mani
 
 The e2e helper's `CCC_E2E_DATA_DIR` isolates the data and resources folders, and `--user-data-dir` isolates Electron. App boot still touches `~/.claude`:
 - the statusline heal at `src/main/index.ts:561`;
-- the stale sidecar sweep at `:876-880` (line numbers at `38cbc9d7`);
+- the stale sidecar sweep at `:876-880`;
 - a session writes `~/.claude/settings-<sid>.json`.
+
+The line numbers are the same at `38cbc9d7` and `36b83da1`.
 
 So every run here also set `USERPROFILE`/`HOME` to a fresh throwaway folder, and cleared `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. No run read or wrote the VM's real `~/.claude`, `~/.codex`, app data or registry.
 
 This run's evidence:
 - **Before and after snapshots are identical:**
-  - Registry: the SHA-256 of `reg query /s` for `HKCU\Software\AI Code Conductor` and its two legacy keys matched.
-  - File counts and newest write times matched for `C:\Users\User\.claude` (520 files, newest 2026-09-24 05:16), `C:\Users\User\.codex` (6472 files, newest 2026-09-24 08:35) and `...\AppData\Local\AI Code Conductor` (169 files, newest `debug\app.log` 2026-09-24 23:52:44).
-- **The final sweep** found 0 files written after 02:50 in those three folders.
-- **The fake home got the writes instead.** It received two `.claude\settings-<sid>.json` session sidecars and a PSReadLine history, so the redirect worked.
-- **Leaked data folders:** the helper could not delete six of its per-launch data folders (EPERM). Windows had not yet released the handles when the helper cleaned up. The operator deleted them, and the fake home, after the run.
+  - Registry: the SHA-256 of `reg query /s` for `HKCU\Software\AI Code Conductor` (84AFE33E30E42D28) and its two legacy keys matched.
+  - File counts and newest write times matched for `C:\Users\User\.claude` (520 files, newest 2026-09-24 05:16), `C:\Users\User\.codex` (6472, newest 2026-09-24 08:35) and `...\AppData\Local\AI Code Conductor` (169, newest `debug\app.log` 2026-09-24 23:52:44).
+- **The final sweep** found 0 files written after 02:50 in those three folders. That window covers every run of the day.
+- **The fake home got the writes instead.** It received two `.claude\settings-<sid>.json` session sidecars and a PSReadLine history.
+- **Leaked data folders:** nine `ccc-e2e-*` folders were left in `%TEMP%`. The helper reported EPERM for seven of them, because Windows had not yet released the handles when it cleaned up. The operator deleted all nine and the fake home after the run.
 - **Spec list:**
   - The run passed the 21 tracked specs explicitly, from `git ls-files tests/e2e/*.spec.ts`.
   - The VM checkout also holds two untracked, VM-local specs (`dock-mark`, `ssh-pi-pills`), and a bare `npx playwright test` would have picked them up.
   - The 21 passed are the whole suite of the commit.
 
-## Full e2e suite at `38cbc9d7` (no patch)
+## Full e2e suite at `36b83da1` (no patch)
 
 Command (PowerShell, repo root, fake home exported first, PATH untouched):
 
@@ -88,27 +95,34 @@ Rest of the suite:
 | terminal-links | 2 | PASS |
 | views | 11 | PASS |
 
-**Totals, all 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky.** Playwright exited 1.
+**Totals, all 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky.** Playwright took 2.5 minutes and exited 1. This is the same result as at `38cbc9d7`.
 
 **The one failure is an environment limit, not a product bug and not a stale spec.**
 - The failing test is `session-dialog-permutations.spec.ts:182` (the terminal-only config runs its command with the secret). It failed on both attempts.
 - Expected: `--token|E2E-SECRET-9f3a`. Received: `ARGV=--token`, with an empty value.
 - Why the value is empty: the secret is kept in `safeStorage` (DPAPI on Windows). `src/main/credential-store.ts:104` refuses to store it when `safeStorage.isEncryptionAvailable()` is false, so `CCC_ARG_SECRET` resolves to nothing.
-- A direct probe, run in this run's own launch context, confirmed the cause.
+- A direct probe, re-run for this record in the same launch context at 04:35, confirmed the cause.
   - The probe was a minimal Electron main script, not the app.
-  - Context: created through WMI from the key-authenticated OpenSSH session, the same fake home, and a throwaway `--user-data-dir`.
+  - Context: created through WMI from the key-authenticated OpenSSH session, a fake home, and a throwaway `--user-data-dir`.
   - The process token's logon group is `NT AUTHORITY\NETWORK`.
   - Result: `isEncryptionAvailable=false`, and `encryptString` threw "Encryption is not available".
 - A key-authenticated SSH logon carries no password-derived credentials, so DPAPI cannot open the user's master key.
 - The spec's expectation is correct. This test needs an interactive desktop logon to count.
-- Its six sibling tests in the same spec pass, including "Terminal only x Local shows the command / arguments / secret fields".
+- Its seven sibling tests in the same spec pass.
 
 ## Modes exercised in the real app (driven, not gating)
 
-Not re-driven at `38cbc9d7`. The rows below were recorded at `5a3e0278` + visual-fixes-r2.patch; the patch's files (`contain-focus.ts`, `fake-codex.ts`, the adapted `codex-session-creation` spec) have since landed in `4561e643`. The last row was recorded at `accec3c2`.
+Not re-driven as a mode matrix at `36b83da1`. The rows below were recorded at `5a3e0278` + visual-fixes-r2.patch; the patch's files (`contain-focus.ts`, `fake-codex.ts`, the adapted `codex-session-creation` spec) have since landed in `4561e643`. The last row was recorded at `accec3c2`.
 
-The driving setup:
-- Playwright `_electron` against `out/main/index.js`, with a fresh isolated data dir and fake home for each run, and the window at the app's minimum 1280x720.
+The VM visual captures at `38cbc9d7` and `36b83da1` drove one more path each, in both themes, recorded in their shot sets rather than here. That path was:
+- Claude found, both assistants;
+- Set up Codex with a newer-than-tested fake Codex (0.157.0);
+- Codex off and on in Settings, Accounts;
+- a Codex account added;
+- the one-time Hello Codex takeover.
+
+The driving setup for the rows below:
+- Playwright `_electron` against `out/main/index.js`, with a fresh isolated data dir and fake home for each run, and the window at the app's minimum.
 - The Codex CLI was the repo's own fake from `tests/wp1/fake-cli.test.ts`: its `FAKE` script and npm-style `.cmd` shim. The only change is that `--version` reads a side file.
 - "Run in a terminal" typed into a fake `npm.cmd`.
 - No real Codex session was launched, and nothing here stands in for `real-cli-matrix.md`.
@@ -127,6 +141,15 @@ Not covered here, for WP1.60's other modes:
 - a minimum launch smoke of a real Codex session.
 
 ## History
+
+### `38cbc9d7` without a patch (2026-09-25, VM local 03:07:09-03:10:17 PDT)
+
+- Same machine, toolchain, build quirks and isolation as the current record.
+  - The before and after snapshots of the real registry, `~/.claude`, `~/.codex` and app data were identical.
+  - Nine `ccc-e2e-*` folders were left, and the helper reported EPERM for seven of them. The earlier write-up of this record said six; seven is the count of distinct folders the helper named.
+- All 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky. The run took 3.1 minutes.
+  - Gate specs (`codex-session-creation` x2, `model-picker`, `codex-settings-section`): 4 passed.
+  - The failure was the DPAPI secret test (`session-dialog-permutations.spec.ts:182`), with the same cause. A direct probe in that launch context (`NT AUTHORITY\NETWORK`) returned `isEncryptionAvailable=false`.
 
 ### `5a3e0278` + visual-fixes-r2.patch (2026-09-25, VM local 2026-09-24 23:02-23:12 PDT)
 
