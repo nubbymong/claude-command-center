@@ -132,6 +132,22 @@ in the two 2026-09-24 entries.
   treats exactly that error (its message, thrown from node-pty's own code)
   as not fatal and writes it to the log file only, like a broken pipe;
   anything else still ends the app as before. The changelog says the same.
+  Confirmed on the VM at `66328f15`: a re-run hit the same race (the
+  suppressed resize is in the app log), the app kept running, and the End
+  notice capture passed 10 of 10 checks with a clean exit.
+- **Front-facing docs name Codex everywhere a user reads.** A sweep of the
+  README, the user guide, SECURITY.md, CONTRIBUTING.md, the package
+  description, the Feature Guide text, the guided tour, tips and Hello Codex
+  against the shipped behaviour. The main gap was upgraders: a 2.x user whose
+  Codex sign-in the app has not taken in yet (no answer about Codex, or the
+  first check found it signed out or could not finish) sees Sign in to Codex
+  first on a Codex config. Every surface now says what to press in the Codex
+  section of Settings, Accounts, keyed on what that section shows, and it is
+  a known issue with its workaround. Also: the Hello Codex condition (it
+  needs a yes about Codex), MCP tool counts, the stale Codex card
+  screenshot (now the shared shell shot until a recapture), known issues
+  browsable in the Feature Guide's Reference, and the device-code sign-in in
+  Hello Codex.
 
 ### Decisions
 

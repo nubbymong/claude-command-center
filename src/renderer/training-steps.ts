@@ -224,7 +224,7 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex -> account' },
       { label: 'Auth', value: 'Settings, Accounts: add a Codex account' },
       { label: 'Reviewer', value: 'Settings, Accounts: account menu -> Make reviewer' },
-      { label: 'Introduction', value: 'Show the Codex introduction, on this card once a Codex account you added is signed in' },
+      { label: 'Introduction', value: 'Show the Codex introduction, on this card once you have said you use Codex and a Codex account you added is signed in' },
     ],
     proTip:
       'Sign in once per Codex account in Settings, Accounts; each Codex session runs under the account its config picks (the default unless you choose another). Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
@@ -235,7 +235,7 @@ export const trainingSteps: TrainingStep[] = [
       '**Restart and pick a conversation** to resume a recent Codex conversation',
       '**Tokenomics** segments Codex spend automatically alongside Claude',
     ],
-    screenshotFilename: 'step-codex.jpg',
+    screenshotFilename: 'v2-shell-hero.jpg',
   },
   {
     // WP2 (2.1.1): code review in both directions, and the Built-in Tools
@@ -280,7 +280,7 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Browser automation via a global MCP server -- every Claude session shares one Chrome instance. Take screenshots, navigate, click, type, and inspect pages without leaving the terminal. Works over SSH too via automatic reverse tunnels.',
     highlights: [
-      '18 browser-vision tools (one of four sub-tools on the Conductor MCP server) exposed to Claude',
+      '18 browser-vision tools (one of five sub-tools on the Conductor MCP server) exposed to Claude',
       'One global Chrome -- all sessions share state, so cookies + login persist',
       'Reverse tunnel auto-injected on SSH connect (-R <port>) -- remote sessions reach the local Conductor MCP server',
       'A dot on the Conductor MCP nav icon shows MCP server health: green = running, red = stopped',
@@ -295,7 +295,7 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       '**Browser automation** via a global MCP server -- all sessions share one browser',
       'Click **Conductor MCP** in the sidebar nav to see the tool server and its browser',
-      '17 vision tools available to Claude: **screenshot, navigate, click, type** and more',
+      '18 vision tools available to Claude: **screenshot, navigate, click, type** and more',
       'Works over **SSH** too -- reverse tunnels connect remote sessions automatically',
     ],
     screenshotFilename: 'step-vision.jpg',

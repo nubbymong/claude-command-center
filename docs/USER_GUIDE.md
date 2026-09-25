@@ -8,7 +8,7 @@ next to your install see [`dev-alongside-prod.md`](./dev-alongside-prod.md).
 
 ## Getting started
 
-1. Install (see README → Install) and launch. On first run, CCC picks a data
+1. Install (see README → Getting started) and launch. On first run, CCC picks a data
    directory and checks that the `claude` CLI is on your PATH. If it is not
    there, install it and press Retry, or choose **Use Codex only** if you only
    use Codex.
@@ -56,7 +56,9 @@ Clear the name (blank + Enter) to revert to the config's label.
 
 CCC isolates accounts per session so you can run different Claude logins side by
 side. Switch a session's account from its sidebar right-click menu → *Switch
-Account*. (macOS runs a single account — see the keychain note in the README.)
+Account*. (On macOS only one Claude account can be used, because Claude Code
+keeps its sign-in in the login Keychain. Codex accounts are not limited this
+way.)
 
 **What that isolation is, exactly.** It keeps the *logins* apart. Each account
 has its own home folder, and a session launched as that account runs in it: its
@@ -115,7 +117,8 @@ row per provider:
   or cannot be used as found;
 - when Codex is missing or too old, the commands to install or update it (see
   [Installing or updating Codex](#installing-or-updating-codex));
-- once a Codex account you added in CCC is signed in, **Show the Codex
+- once you have said you use Codex and a Codex account you added in CCC is
+  signed in, **Show the Codex
   introduction**, which replays the five-page Hello Codex introduction (also
   on the Codex card in the Feature Guide, under Integrations). The Codex
   sign-in already on this computer does not count: with only that one, Hello
@@ -124,6 +127,15 @@ row per provider:
 A fresh install asks **Which assistants will you use?** during setup; an
 upgrade is not asked and keeps its settings. You can change the answer at any
 time on the Providers card.
+
+Coming from an earlier version? The old Settings Codex tab is gone. Its switch
+and install commands are on this Providers card, your Codex accounts are in the
+Codex section below it, and *Test connection* is now **Check sign-in** in each
+account's menu. The ChatGPT plan label is no longer shown. If you never
+answered whether you use Codex, the Codex section shows **Yes, I use Codex**,
+and until you answer the Providers card shows Codex as On, because a Codex you
+never answered about still launches. If your Codex configs say *Sign in to
+Codex first*, see [Known issues with Codex](#known-issues-with-codex).
 
 Codex runs on this computer only in this release: Codex sessions and Codex
 reviews never run over SSH, and the session dialog turns its SSH options off
@@ -185,11 +197,14 @@ Codex section of Settings → Accounts, or on the Set up Codex page):
 **This computer's own sign-in** is the one the Codex CLI uses outside CCC:
 `~/.codex`, or the folder `CODEX_HOME` pointed at when CCC started.
 
-- CCC does not check or use this sign-in until you say you use Codex (it does
+- CCC does not check or use this sign-in until you say you use Codex: by
+  choosing Codex during setup, pressing **Yes, I use Codex** in the Codex
+  section of Settings → Accounts, or switching Codex on after it was off.
+  After switching it back on, press **Use this computer's Codex sign-in**
+  there if it is offered; otherwise CCC checks at its next start. (It does
   read the conversation files Codex writes there for Tokenomics; see
-  [PRIVACY.md](../PRIVACY.md)). Then it asks Codex, once,
-  whether that folder is signed in, and lists it as *This computer's Codex
-  (~/.codex)*. If the check could not run, the row says why and offers
+  [PRIVACY.md](../PRIVACY.md).) The check asks Codex, once, whether that
+  folder is signed in, and lists it as *This computer's Codex (~/.codex)*. If the check could not run, the row says why and offers
   **Check again**; if it found the folder signed out, it offers **Use this
   computer's Codex sign-in** to try again once you have signed in there.
 - Because CCC did not create it, the row reads **Confirm each launch** and
@@ -275,6 +290,16 @@ Linux may ask for administrator rights; CCC never elevates on its own.
 
 ## Known issues with Codex
 
+- **After upgrading, a Codex config can say *Sign in to Codex first* although
+  Codex is signed in on this computer.** CCC has not taken in the sign-in Codex
+  keeps in `~/.codex` yet: it waits for you to say you use Codex, and its one
+  check at start may have found that folder signed out or not finished. Open
+  the Codex section of Settings → Accounts. If *This computer's Codex
+  (~/.codex)* shows **Yes, I use Codex**, press it; if it shows **Use this
+  computer's Codex sign-in** or **Check again**, press that. Once Codex reports
+  that folder signed in, CCC lists it and your Codex configs launch again, with
+  a confirmation at each launch. To launch without confirming, add a Codex
+  account with **Add Codex account** and choose **Make default** on it.
 - **No Codex review while your only Codex sign-in is `~/.codex`.** That sign-in
   is confirmed at each launch, so it never reviews, and Claude sessions are not
   offered Codex review. Add a Codex account in Settings → Accounts, and choose
@@ -300,8 +325,9 @@ find later.
 The README covers these in depth: **Tokenomics** (cost/usage analytics),
 **Memory** dashboard, **Sentinel**, **Conductor MCP** (incl. vision capture),
 **Cloud Agents**, **Codex** provider, **GitHub** PR context, **Combined Mode /
-Draw**, **Snap / Vision**, and **Dynamic workflows**. See README → *Highlights*
-and *The rest of the surface*; Codex accounts and code review are covered above.
+Draw**, **Snap / Vision**, and **Dynamic workflows**. See the README, in
+particular *And the rest of the surface*; Codex accounts and code review are
+covered above.
 
 ## Best practices
 

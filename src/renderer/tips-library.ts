@@ -944,7 +944,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Run OpenAI Codex sessions beside Claude',
         title: 'Codex Sessions',
-        body: 'A saved config does not have to run Claude Code. Turn Codex on and add a Codex account in **Settings, Accounts**, and the session dialog lets a config pick **Codex** instead of **Claude**, with the Codex account it runs under and that account\'s own sign-in.\n\nA Codex session opens as a tab and sits in the sidebar next to a Claude one, with the same notes and command buttons. **Tokenomics counts Codex too**, so the spend comparison is in one place rather than two; the Logs page does not index Codex conversations yet. Local sessions only for now: SSH configs stay on Claude.',
+        body: 'A saved config does not have to run Claude Code. Turn Codex on and add a Codex account in **Settings, Accounts**, and the session dialog lets a config pick **Codex** instead of **Claude Code**, with the Codex account it runs under and that account\'s own sign-in.\n\nA Codex session opens as a tab and sits in the sidebar next to a Claude one, with the same notes and command buttons. **Tokenomics counts Codex too**, so the spend comparison is in one place rather than two; the Logs page does not index Codex conversations yet. Local sessions only for now: SSH configs stay on Claude.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
       },
@@ -1048,7 +1048,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Replay the Codex introduction',
         title: 'Hello Codex, Again',
-        body: 'The five-page Codex introduction shows once, when a Codex account you added in the app is first signed in. To see it again, press **Show the Codex introduction**:\n\n• in the **Feature Guide**, under Integrations, on the Codex card\n• in **Settings, Accounts**, on the Codex row of the Providers card\n\nBoth appear once a Codex account you added in the app is signed in; the Codex sign-in already on this computer does not count.',
+        body: 'The five-page Codex introduction shows once, when you have said you use Codex and a Codex account you added in the app is signed in. To see it again, press **Show the Codex introduction**:\n\n• in the **Feature Guide**, under Integrations, on the Codex card\n• in **Settings, Accounts**, on the Codex row of the Providers card\n\nBoth appear once you have said you use Codex and a Codex account you added in the app is signed in; the Codex sign-in already on this computer does not count.',
         actionLabel: 'Open the Feature Guide',
         actionTarget: 'help',
       },

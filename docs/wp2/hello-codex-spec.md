@@ -144,8 +144,8 @@ Claude review, so the pages say nothing that needs Claude.
     is set.
   - **An existing sign-in.** A sign-in this app did not create (for example
     `~/.codex`) must be confirmed at each launch, and cannot run reviews.
-  - **Sign-in methods.** Sign in with ChatGPT, or with an API key. The key
-    goes to Codex, and this app never stores it.
+  - **Sign-in methods.** Sign in with ChatGPT, a device code or an API key.
+    The key goes to Codex, and this app never stores it.
 - Where: Settings, Accounts.
 - Vignette: an account list showing a Default account, a Reviewer account,
   and this computer's `~/.codex` with "Confirm each launch".

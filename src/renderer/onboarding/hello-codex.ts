@@ -187,7 +187,7 @@ export function helloCodexPages(opts: HelloCodexCopyInputs): HelloCodexPage[] {
         { lead: 'One folder per account.', rest: 'Each account has its own sign-in folder, so sessions never mix identities.' },
         { lead: 'A default, and a reviewer default.', rest: 'New sessions use the default account. Code reviews use the reviewer default, or the default if none is set.' },
         { lead: 'An existing sign-in.', rest: 'A sign-in this app did not create (for example `~/.codex`) must be confirmed at each launch, and cannot run reviews.' },
-        { lead: 'Sign-in methods.', rest: 'Sign in with ChatGPT, or with an API key. The key goes to Codex, and this app never stores it.' },
+        { lead: 'Sign-in methods.', rest: 'Sign in with ChatGPT, a device code or an API key. The key goes to Codex, and this app never stores it.' },
       ],
       where: 'Settings, Accounts',
     },

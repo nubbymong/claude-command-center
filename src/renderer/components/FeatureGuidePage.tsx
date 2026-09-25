@@ -511,11 +511,11 @@ function WhatsNewSection() {
 
 // ── Reference (prose from app-knowledge) ─────────────────────────────────────
 function Reference() {
-  const ids = ['privacy', 'troubleshooting', 'shortcuts']
+  const ids = ['privacy', 'troubleshooting', 'known-issues', 'shortcuts']
   const secs = ids.map((id) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)).filter(Boolean) as { id: string; title: string; body: string }[]
   return (
     <div>
-      <SectionHero eyebrow="Reference" title="Privacy, data and troubleshooting" blurb="The plain-English answers to where your data lives and what to check when something looks off." />
+      <SectionHero eyebrow="Reference" title="Privacy, data, troubleshooting and known issues" blurb="The plain-English answers to where your data lives and what to check when something looks off." />
       {secs.map((s) => (
         <article key={s.id} data-ux-id={`ref-${s.id}`} className="rounded-2xl p-5 mb-4" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
           <h3 className="text-[15px] font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>{s.title}</h3>
