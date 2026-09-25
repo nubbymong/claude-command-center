@@ -99,10 +99,11 @@ in the two 2026-09-24 entries.
   in every host login shell a container session can have: sh, bash, dash,
   zsh, fish, and tcsh/csh at parity with the line before. What was run: a
   shell test (`ssh-end-remote-shell-compat.test.ts`) ran the line through
-  bash, sh and dash only, in WSL; zsh ran it live on the Rocky lanes T24
+  bash, sh and dash in WSL, and on the macOS CI runner at 9eba7983 through
+  bash, sh, dash, zsh, tcsh and csh (18 cases; the 3 skipped are the fish
+  ones, as fish is not installed there); zsh also ran it live on the Rocky lanes T24
   (the probe form) and T25, both on a zsh login shell and both passing at
-  9eba7983, and first runs in that test on the macOS CI runner; fish and
-  tcsh/csh are reasoned from their grammar and have not been run anywhere
+  9eba7983. fish is reasoned from its grammar and has not been run anywhere
   yet. The app then shows one notice, on top of every other dialog
   and not dismissible by a stray key or click (an arming delay on the
   monotonic clock, held-key repeats ignored, focus kept on it while it
@@ -121,6 +122,16 @@ in the two 2026-09-24 entries.
   with Close all in a group or section) only closed them locally, so a
   container session's Claude was left running in the container; it now
   gets the same End as closing its tab.
+- **An SSH session refused at once no longer closes the app (Windows).**
+  Found by the VM notice capture at `229f3d9c`: an SSH session whose
+  ssh.exe exited almost immediately (connection refused) ended the whole
+  app. On Windows node-pty runs a resize queued before the terminal was
+  ready from its data socket's first event; for a process that has already
+  exited that resize throws there, outside every caller's try/catch, and
+  the main process's uncaught-exception handler rethrew it. The handler now
+  treats exactly that error (its message, thrown from node-pty's own code)
+  as not fatal and writes it to the log file only, like a broken pipe;
+  anything else still ends the app as before. The changelog says the same.
 
 ### Decisions
 

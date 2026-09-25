@@ -33,6 +33,11 @@
       "evidence": "WP1.38: WP1 (#619) added legacyCliPin, the enabled and valid legacy CLI pin with whether it is installed, which the PTY and cloud-agent launch paths read; the existing cases are kept; tests/unit/legacy-version-security.test.ts"
     },
     {
+      "path": "tests/unit/main/debug-logger-epipe-loop.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the WP2 fix for an SSH session refused at once on Windows (a resize node-pty queued for a terminal whose process had already exited threw outside every caller and ended the app) added three cases: that error, thrown from node-pty, is written to the log file only and not rethrown; the same message without a node-pty stack frame still rethrows; an ordinary error, even one from node-pty, still rethrows; the existing cases are kept unchanged, 9 baseline cases to 12; tests/unit/main/debug-logger-epipe-loop.test.ts"
+    },
+    {
       "path": "tests/unit/main/end-remote-detached-fallback.test.ts",
       "disposition": "replace",
       "evidence": "WP1.33 mapping, not a WP1 change: the WP2 T24 fix (End says when Claude may still be running in a rootful container) renamed its pty-manager mock to endSshRemoteDetailed, the function the ssh:endRemote handler now calls (every existing assertion reads the same mock under the new name), and added four cases in a new group: the handler resolves with the End result, passes an ordinary outcome through, still refuses an invalid payload before End runs, and calls End synchronously, before it yields; 21 baseline cases to 25; tests/unit/main/end-remote-detached-fallback.test.ts"
