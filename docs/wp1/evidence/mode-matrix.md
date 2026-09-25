@@ -8,17 +8,17 @@ The ledger also cites WP1.2. Its evidence is `docs/wp1/evidence/real-cli-matrix.
 
 It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest: WP1.60's upgrade, restart, enable/disable and minimum real-launch modes are not covered here (see "Not covered").
 
-**Current record:** commit `36b83da1d8a34ab34a6f34925336bd51c4290242`, the WP2 head after the accessibility fixes from the VM capture, with no patch applied. Earlier runs are kept below as history.
+**Current record:** commit `633d37db86e7bfc11a813859a73bdd04a2534e02`, the WP2 head after the second round of accessibility fixes from the VM captures, with no patch applied. Earlier runs are kept below as history.
 
-- Date: 2026-09-25 (VM local clock 04:31:10-04:33:45 PDT).
-- Commit: `36b83da1d8a34ab34a6f34925336bd51c4290242` (`origin/session/beta/c4d568ce-wp2-codex`).
+- Date: 2026-09-25 (VM local clock 06:00:32-06:03:01 PDT).
+- Commit: `633d37db86e7bfc11a813859a73bdd04a2534e02` (`origin/session/beta/c4d568ce-wp2-codex`).
   - The VM checkout was reset to that full sha and verified against the fetched remote head; it has 0 tracked changes.
-  - `out/main/index.js` was built from it at 04:22:21.
-- Changes since the previous record (`38cbc9d7`):
-  - `b8999772`: docs.
-  - `ea63ff78`: a unit test.
-  - `36b83da1`: renderer styling. Focus rings, status-pill and badge colours, and the Conductor MCP header copy.
-  - None of them touches `src/main`, the preload or the e2e specs.
+  - `out/main/index.js` was built from it at 05:49:31.
+- Changes since the previous record (`36b83da1`):
+  - `7a3245ba`: docs.
+  - `633d37db`: renderer styling, in `AccountsPanel`, `PageFrame`, `SettingsPage`, `AccountIsolationNotice`, `AccountWebSession` and `styles.css`. It changes the light onboarding button gradient, gives small grey text the muted token, and puts the strong focus ring on Settings and Accounts controls. It also touches unit tests and the WP1 ledger.
+  - Neither commit touches `src/main`, the preload or the e2e specs.
+- The same build is the source of the one-commit visual evidence set (`shots7`).
 - Machine: Hyper-V VM WinDev2407Eval, Windows 11 Enterprise Evaluation 10.0.22621 (build 22621), 64-bit.
 - Toolchain: Node v24.16.0, Electron 43.7.1, @playwright/test 1.62.1, app 2.1.1-beta.1. The lockfile is unchanged since `38cbc9d7`.
 - Build:
@@ -37,7 +37,7 @@ The e2e helper's `CCC_E2E_DATA_DIR` isolates the data and resources folders, and
 - the stale sidecar sweep at `:876-880`;
 - a session writes `~/.claude/settings-<sid>.json`.
 
-The line numbers are the same at `38cbc9d7` and `36b83da1`.
+The line numbers are the same at `38cbc9d7`, `36b83da1` and `633d37db`.
 
 So every run here also set `USERPROFILE`/`HOME` to a fresh throwaway folder, and cleared `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. No run read or wrote the VM's real `~/.claude`, `~/.codex`, app data or registry.
 
@@ -47,13 +47,13 @@ This run's evidence:
   - File counts and newest write times matched for `C:\Users\User\.claude` (520 files, newest 2026-09-24 05:16), `C:\Users\User\.codex` (6472, newest 2026-09-24 08:35) and `...\AppData\Local\AI Code Conductor` (169, newest `debug\app.log` 2026-09-24 23:52:44).
 - **The final sweep** found 0 files written after 02:50 in those three folders. That window covers every run of the day.
 - **The fake home got the writes instead.** It received two `.claude\settings-<sid>.json` session sidecars and a PSReadLine history.
-- **Leaked data folders:** nine `ccc-e2e-*` folders were left in `%TEMP%`. The helper reported EPERM for seven of them, because Windows had not yet released the handles when it cleaned up. The operator deleted all nine and the fake home after the run.
+- **Leaked data folders:** ten `ccc-e2e-*` folders were left in `%TEMP%`. The helper reported EPERM for seven of them, because Windows had not yet released the handles when it cleaned up. The operator deleted all ten and the fake home after the run.
 - **Spec list:**
   - The run passed the 21 tracked specs explicitly, from `git ls-files tests/e2e/*.spec.ts`.
   - The VM checkout also holds two untracked, VM-local specs (`dock-mark`, `ssh-pi-pills`), and a bare `npx playwright test` would have picked them up.
   - The 21 passed are the whole suite of the commit.
 
-## Full e2e suite at `36b83da1` (no patch)
+## Full e2e suite at `633d37db` (no patch)
 
 Command (PowerShell, repo root, fake home exported first, PATH untouched):
 
@@ -95,13 +95,13 @@ Rest of the suite:
 | terminal-links | 2 | PASS |
 | views | 11 | PASS |
 
-**Totals, all 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky.** Playwright took 2.5 minutes and exited 1. This is the same result as at `38cbc9d7`.
+**Totals, all 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky.** Playwright took 2.3 minutes and exited 1. This is the same result as at `38cbc9d7` and `36b83da1`.
 
 **The one failure is an environment limit, not a product bug and not a stale spec.**
 - The failing test is `session-dialog-permutations.spec.ts:182` (the terminal-only config runs its command with the secret). It failed on both attempts.
 - Expected: `--token|E2E-SECRET-9f3a`. Received: `ARGV=--token`, with an empty value.
 - Why the value is empty: the secret is kept in `safeStorage` (DPAPI on Windows). `src/main/credential-store.ts:104` refuses to store it when `safeStorage.isEncryptionAvailable()` is false, so `CCC_ARG_SECRET` resolves to nothing.
-- A direct probe, re-run for this record in the same launch context at 04:35, confirmed the cause.
+- A direct probe, re-run for this record in the same launch context at 06:03, confirmed the cause.
   - The probe was a minimal Electron main script, not the app.
   - Context: created through WMI from the key-authenticated OpenSSH session, a fake home, and a throwaway `--user-data-dir`.
   - The process token's logon group is `NT AUTHORITY\NETWORK`.
@@ -112,14 +112,14 @@ Rest of the suite:
 
 ## Modes exercised in the real app (driven, not gating)
 
-Not re-driven as a mode matrix at `36b83da1`. The rows below were recorded at `5a3e0278` + visual-fixes-r2.patch; the patch's files (`contain-focus.ts`, `fake-codex.ts`, the adapted `codex-session-creation` spec) have since landed in `4561e643`. The last row was recorded at `accec3c2`.
+Not re-driven as a mode matrix at `633d37db`. The rows below were recorded at `5a3e0278` + visual-fixes-r2.patch; the patch's files (`contain-focus.ts`, `fake-codex.ts`, the adapted `codex-session-creation` spec) have since landed in `4561e643`. The last row was recorded at `accec3c2`.
 
-The VM visual captures at `38cbc9d7` and `36b83da1` drove one more path each, in both themes, recorded in their shot sets rather than here. That path was:
-- Claude found, both assistants;
-- Set up Codex with a newer-than-tested fake Codex (0.157.0);
-- Codex off and on in Settings, Accounts;
-- a Codex account added;
-- the one-time Hello Codex takeover.
+The VM visual captures at `38cbc9d7`, `36b83da1` and `633d37db` drove further paths, in both themes, recorded in their shot sets rather than here. At `633d37db` one build produced the whole set (`shots7`), across five fresh launches:
+- Codex only through onboarding: CLI not found, ready to sign in, the sign-in name dialog, signed in, then Settings, Accounts with Claude Code off.
+- Codex set up after onboarding: the one-time Hello Codex takeover, pages 1-5, and the close dialog over it.
+- Claude found, both assistants, with this computer already signed in to Codex.
+- Claude found, with a newer-than-tested fake Codex (0.157.0): Codex off and on, a Codex account added, the review cards and Code review switches in each state.
+- Claude found, with a seeded Claude profile: the Settings tabs, the account colour swatches, the rename field and the sign-in select, each focused by keyboard.
 
 The driving setup for the rows below:
 - Playwright `_electron` against `out/main/index.js`, with a fresh isolated data dir and fake home for each run, and the window at the app's minimum.
@@ -141,6 +141,16 @@ Not covered here, for WP1.60's other modes:
 - a minimum launch smoke of a real Codex session.
 
 ## History
+
+### `36b83da1` without a patch (2026-09-25, VM local 04:31:10-04:33:45 PDT)
+
+- Same machine, toolchain, build quirks and isolation as the current record.
+  - `out/main/index.js` was built at 04:22:21.
+  - The before and after snapshots of the real registry, `~/.claude`, `~/.codex` and app data were identical.
+  - Nine `ccc-e2e-*` folders were left, and the helper reported EPERM for seven of them.
+- All 21 tracked specs: 77 tests, 76 passed, 1 failed, 0 skipped, 0 flaky. The run took 2.5 minutes.
+  - Gate specs: 4 passed.
+  - The failure was the DPAPI secret test (`session-dialog-permutations.spec.ts:182`), with the same cause. A probe in that launch context at 04:35 (`NT AUTHORITY\NETWORK`) returned `isEncryptionAvailable=false`.
 
 ### `38cbc9d7` without a patch (2026-09-25, VM local 03:07:09-03:10:17 PDT)
 
