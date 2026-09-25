@@ -203,7 +203,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     value={settings.defaultWorkingDirectory}
                     onChange={e => save({ defaultWorkingDirectory: e.target.value })}
                     placeholder="Leave empty for home directory"
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 placeholder:text-overlay0 transition-colors"
                   />
                 </Field>
                 <Field label="Local Machine Name">
@@ -211,7 +211,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     value={settings.localMachineName}
                     onChange={e => save({ localMachineName: e.target.value })}
                     placeholder="e.g. Desktop, Laptop"
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 placeholder:text-overlay0 transition-colors"
                   />
                 </Field>
                 <Field label="Update Channel">
@@ -220,7 +220,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     // updateChannelChosen records that this is a real choice, so the
                     // onboarding recap never pre-selects over the top of it.
                     onChange={(e) => save({ updateChannel: e.target.value as UpdateChannel, updateChannelChosen: true })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
                   >
                     <option value="stable">Stable -- production releases only</option>
                     <option value="beta">Beta -- stable + pre-release builds</option>
@@ -230,7 +230,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   <select
                     value={settings.theme}
                     onChange={(e) => save({ theme: e.target.value as ThemeMode })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
                   >
                     <option value="dark">Dark</option>
                     <option value="light">Light</option>
@@ -268,7 +268,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   <select
                     value={resolveDefaultPanelTab(settings.sessionsPanelDefaultTab)}
                     onChange={(e) => save({ sessionsPanelDefaultTab: e.target.value as PanelTab })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
                     data-ux-id="settings-sessions-panel-default-tab"
                   >
                     <option value="running">Running -- your live sessions (default)</option>
@@ -347,7 +347,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       ? settings.sentinelAccountProfileId ?? ''
                       : ''}
                     onChange={(e) => save({ sentinelAccountProfileId: e.target.value || null })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus-ring-strong focus:border-blue/50 transition-colors"
                   >
                     <option value="">Primary account (default)</option>
                     {sentinelAccountProfiles.map((p) => (
@@ -420,7 +420,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                         type="text"
                         value={settings.watchdog?.retryMessage ?? DEFAULT_WATCHDOG_SETTINGS.retryMessage}
                         onChange={(e) => save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), retryMessage: e.target.value } })}
-                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus:outline-none focus:border-blue/50 transition-colors"
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus-ring-strong focus:border-blue/50 transition-colors"
                       />
                     </Field>
                     <Field label="Max retries">
@@ -432,7 +432,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                           const n = parseInt(e.target.value, 10)
                           save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), maxRetries: Number.isFinite(n) && n > 0 ? n : DEFAULT_WATCHDOG_SETTINGS.maxRetries } })
                         }}
-                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus-ring-strong focus:border-blue/50 transition-colors"
                       />
                     </Field>
                     <Field label="Silence alert (seconds)">
@@ -446,7 +446,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                           const clamped = Number.isFinite(secs) ? Math.max(0, Math.min(3600, secs)) : 0
                           save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), silenceWindowMs: clamped * 1000 } })
                         }}
-                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus-ring-strong focus:border-blue/50 transition-colors"
                       />
                       <span className="block text-[10px] text-overlay0 mt-1">Flags a watched session in the services view when its provider stops streaming for this long. Status only — never triggers a retry. 0 turns it off.</span>
                     </Field>
@@ -583,7 +583,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   <select
                     value={resolveResumeAccountMode(settings.resumeAccountMode)}
                     onChange={(e) => save({ resumeAccountMode: e.target.value as 'ask' | 'auto-last' })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
                     data-ux-id="settings-resume-account-mode"
                   >
                     <option value="auto-last">Auto-resume last — the account it ran under (default)</option>
@@ -1283,7 +1283,7 @@ function FontSizeTab({ settings, save }: {
           <select
             value={terminal.fontFamily}
             onChange={(e) => save({ terminal: { ...terminal, fontFamily: e.target.value } })}
-            className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-48 focus:outline-none focus:border-blue/50 transition-colors"
+            className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-48 focus-ring-strong focus:border-blue/50 transition-colors"
           >
             {['Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New'].map((f) => (
               <option key={f} value={f}>{f}</option>

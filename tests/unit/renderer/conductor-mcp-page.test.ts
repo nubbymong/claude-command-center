@@ -62,8 +62,8 @@ describe('ConductorMcpPage umbrella (P7.4)', () => {
     act(() => { root.render(React.createElement(ConductorMcpPage)) })
     const text = container.textContent ?? ''
     expect(text).toContain('Conductor MCP')
-    expect(text).toContain('Running')
-    expect(text).toContain('19333')
+    expect(text).toContain('Running on port 19333')
+    expect(text).not.toContain('Running -- port')
   })
 
   it('renders all five sub-tool cards', () => {

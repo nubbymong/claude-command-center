@@ -101,7 +101,7 @@ function newer(a: ProviderInstallationView | undefined, b: ProviderInstallationV
 function CheckRow({ tone, children, testId }: { tone: 'ok' | 'warn' | 'pending'; children: ReactNode; testId?: string }) {
   return (
     <div className="checkrow" data-testid={testId}>
-      <div className={tone === 'ok' ? 'badge ok' : tone === 'warn' ? 'badge wait' : 'badge pending'}>{tone === 'ok' ? CHECK : '!'}</div>
+      <div className={tone === 'ok' ? 'badge ok' : tone === 'warn' ? 'badge warn' : 'badge pending'}>{tone === 'ok' ? CHECK : '!'}</div>
       <div className="nm">{children}</div>
     </div>
   )

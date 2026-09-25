@@ -162,6 +162,19 @@ describe('the review cards on the Conductor MCP page', () => {
     expect(reason('codexReview')).toBe('No Codex account can run reviews. Add a Codex account (a sign-in from ~/.codex cannot review).')
   })
 
+  it('each pill draws with its semantic token (the contrast-pinned tones), never a raw palette class', () => {
+    const pill = () => container.querySelector('[data-testid="sub-tool-status"]') as HTMLElement
+    show(CodexReviewSubTool, snapshot({ codex: { review: { ready: false, accountId: local.id, source: 'provider-default' } } }, [local, me]))
+    expect(pill().dataset.tone).toBe('yellow')
+    expect(pill().style.color).toBe('var(--status-warning)')
+    expect(pill().className).not.toMatch(/\b(bg|text)-(yellow|green|red|overlay1)\b/)
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    show(CodexReviewSubTool, snapshot(), { codexEnabled: false })
+    expect(pill().dataset.tone).toBe('overlay1')
+    expect(pill().style.color).toBe('var(--text-secondary)')
+  })
+
   it('the Claude review card: Available for Codex sessions with the conditions it is offered under, and claude_review', () => {
     const text = show(ClaudeReviewSubTool, snapshot())
     expect(text).toContain('Claude review (Codex-driven)')

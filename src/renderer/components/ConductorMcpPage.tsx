@@ -47,7 +47,7 @@ export default function ConductorMcpPage() {
   // state falls into 'Stopped' because the renderer can't observe a bound
   // server until the first status push arrives.
   const statusLabel = serverRunning
-    ? `Running -- port ${mcpPort}`
+    ? `Running on port ${mcpPort}`
     : 'Stopped'
 
   return (

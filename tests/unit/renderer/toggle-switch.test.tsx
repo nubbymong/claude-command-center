@@ -51,9 +51,15 @@ describe('ToggleSwitch', () => {
     expect(onToggle).not.toHaveBeenCalled()
     r.unmount()
   })
-  it('keeps a visible keyboard focus ring (codebase convention)', () => {
-    const r = render(<ToggleSwitch state="on" onToggle={() => {}} label="x" />)
-    expect(r.container.querySelector('button')!.className).toContain('focus-visible:ring-1')
-    r.unmount()
+  it('draws the strong keyboard focus ring on every track state: a 2px full-strength ring set off from the track', () => {
+    // The 1px 50% ring it had was invisible against the blue "on" track (VM
+    // capture at 38cbc9d7); the ring itself is pinned in token-contrast.test.ts.
+    for (const state of ['on', 'off', 'mixed'] as const) {
+      const r = render(<ToggleSwitch state={state} onToggle={() => {}} label="x" />)
+      const cls = r.container.querySelector('button')!.className
+      expect(cls, state).toContain('focus-ring-strong')
+      expect(cls, state).not.toMatch(/focus-visible:ring|focus:outline-none/)
+      r.unmount()
+    }
   })
 })

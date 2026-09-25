@@ -359,6 +359,8 @@ describe('ready to sign in', () => {
   it('a CLI newer than tested is usable, with a warning', async () => {
     await render(snap({ version: '0.157.0', compatibility: 'too-new' }))
     expect(byTest('codex-setup-version')!.textContent).toContain('Newer than the versions this app was tested with; it will still be used')
+    // A caution, in the amber Settings, Accounts shows for the same state; never the blue "wait" badge.
+    expect(byTest('codex-setup-version')!.querySelector('.badge')!.className).toBe('badge warn')
     expect(byTest('codex-setup-sign-in')).not.toBeNull()
   })
 

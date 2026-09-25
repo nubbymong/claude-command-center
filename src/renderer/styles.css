@@ -371,6 +371,14 @@ input[type="range"] {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
 }
+/* The strong form, for small controls whose own fill can hide a ring drawn
+   against it (a switch's blue "on" track, a select): full-strength accent,
+   2px, set off by a 2px gap that shows the surface behind, so it reads on
+   either track state and any surface, in both themes. */
+.focus-ring-strong:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 /* Active rail icon glow (eased). */
 .rail-active {
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 43%, transparent);

@@ -28,12 +28,18 @@
 .ob-root .blogo { width: 22px; height: 22px; }
 .ob-root .blogo line { stroke: var(--ob); stroke-width: 4; stroke-linecap: round; }
 .ob-root .bname { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+/* Badges and pills (this one, .badge, .ma-badge, .rn-badge, .hc-badge, the
+   approval pill, .opt-tag, .as-beta) clear 4.5:1 in both themes, pinned in
+   tests/unit/renderer/token-contrast.test.ts. The azure ones draw with --brand
+   over an 8% wash of it (--ob over --ob-soft measured 4.3:1), or on a solid
+   --brand fill where the pill sits on a tinted card. */
 /* "New in this release" badge — only on a page an upgrader is being shown
    BECAUSE the setting it covers is new in this build (OnboardingShell isNew).
-   Tokens are the existing --ob azure family; nothing new is introduced here,
-   because an undefined custom property fails silently to transparent. */
+   Tokens are existing ones (the --ob azure border, --brand text and wash);
+   nothing new is introduced here, because an undefined custom property fails
+   silently to transparent. */
 .ob-root .ob-new { font-size: 10px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
-  padding: 3px 9px; border-radius: 999px; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); }
+  padding: 3px 9px; border-radius: 999px; color: var(--brand); border: 1px solid var(--ob-line); background: color-mix(in srgb, var(--brand) 8%, transparent); }
 .ob-root .crumbs { margin-left: auto; display: flex; gap: 8px; font-size: 11px; }
 .ob-root .crumb { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border-subtle); color: var(--text-muted); }
 .ob-root .crumb.on { color: var(--text-primary); border-color: var(--ob-line); background: var(--ob-soft); }
@@ -129,14 +135,15 @@
 .ob-root .checkrow { display: flex; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); margin-bottom: 10px; }
 .ob-root .badge { width: 24px; height: 24px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 800; font-size: 13px; }
 .ob-root .badge.ok { background: color-mix(in srgb, var(--status-success) 16%, transparent); color: var(--status-success); }
-.ob-root .badge.wait { background: var(--ob-soft); color: var(--ob); }
-.ob-root .badge.pending { background: rgba(127,127,127,.14); color: var(--text-muted); font-weight: 600; }
+.ob-root .badge.wait { background: color-mix(in srgb, var(--brand) 8%, transparent); color: var(--brand); }
+.ob-root .badge.warn { background: color-mix(in srgb, var(--status-warning) 16%, transparent); color: var(--status-warning); }
+.ob-root .badge.pending { background: rgba(127,127,127,.14); color: var(--text-secondary); font-weight: 600; }
 .ob-root .checkrow .nm { font-size: 14px; font-weight: 600; }
 .ob-root .checkrow .meta { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
 .ob-root .checkrow .meta code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; }
 .ob-root .approve { border: 1px solid var(--ob-line); border-radius: 12px; background: var(--surface-raised); overflow: hidden; margin-bottom: 10px; }
 .ob-root .approve .ah { display: flex; align-items: center; gap: 9px; padding: 12px 15px; border-bottom: 1px solid var(--border-subtle); font-size: 13px; color: var(--text-primary); font-weight: 600; }
-.ob-root .approve .ah .pill { margin-left: auto; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 999px; padding: 3px 9px; }
+.ob-root .approve .ah .pill { margin-left: auto; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); border: 1px solid var(--ob-line); background: color-mix(in srgb, var(--brand) 8%, transparent); border-radius: 999px; padding: 3px 9px; }
 .ob-root .approve .desc { padding: 11px 15px 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
 .ob-root .cmd { margin: 11px 15px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; color: var(--text-primary); background: var(--field); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px 14px; }
 .ob-root .cmd .cm { color: var(--ob); }
@@ -185,7 +192,6 @@
 .ob-root .verdict.danger .v-ic { background: color-mix(in srgb, var(--status-danger) 18%, transparent); color: var(--status-danger); }
 .ob-root .sentinel-note { font-size: 12.5px; line-height: 1.55; color: var(--text-muted); background: var(--surface-raised); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 13px 15px; margin-bottom: 10px; }
 .ob-root .sentinel-note b { color: var(--text-secondary); }
-.ob-root .approve .ah .pill.rec { background: var(--ob); color: var(--ob-on, #04121f); border-color: var(--ob); }
 .ob-root .resultmeta { font-size: 12px; color: var(--text-muted); text-align: center; margin-top: 8px; }
 .ob-root .blockbox { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--status-danger) 35%, transparent); border-radius: 11px; background: color-mix(in srgb, var(--status-danger) 6%, transparent); margin-top: 10px; }
 .ob-root .blockbox .bb-l { flex: 1; display: flex; flex-direction: column; gap: 2px; }
@@ -204,7 +210,7 @@
 .ob-root .ma-addsub { font-size: 11px; color: var(--text-muted); }
 .ob-root .ma-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .ob-root .ma-email { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: var(--text-primary); white-space: nowrap; }
-.ob-root .ma-badge { margin-left: auto; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 999px; padding: 2px 8px; flex: none; }
+.ob-root .ma-badge { margin-left: auto; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--brand); border: 1px solid var(--ob-line); background: color-mix(in srgb, var(--brand) 8%, transparent); border-radius: 999px; padding: 2px 8px; flex: none; }
 /* Switched off in Settings: listed, plainly marked, visibly not in play. */
 .ob-root .ma-row.off { background: transparent; border-style: dashed; }
 .ob-root .ma-row.off .ma-dot { opacity: .4; }
@@ -298,7 +304,7 @@
 .ob-root .opt-t { display: block; font-size: 14px; font-weight: 650; color: var(--text-primary); }
 .ob-root .opt-d { display: block; font-size: 12.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }
 .ob-root .opt-d code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--text-secondary); }
-.ob-root .opt-tag { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 999px; padding: 3px 9px; flex: none; align-self: center; }
+.ob-root .opt-tag { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--brand); border: 1px solid var(--ob-line); background: color-mix(in srgb, var(--brand) 8%, transparent); border-radius: 999px; padding: 3px 9px; flex: none; align-self: center; }
 .ob-root .gh-act { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 4px 0 2px; }
 .ob-root .gh-modes { display: flex; gap: 8px; }
 .ob-root .scopes { display: flex; gap: 8px; align-items: center; justify-content: center; font-size: 11.5px; color: var(--text-muted); flex-wrap: wrap; }
@@ -545,7 +551,7 @@
 .ob-root .rn-tname { font-size: 11.5px; font-weight: 650; color: var(--text-primary); line-height: 1.15; }
 .ob-root .rn-tsub { font-size: 9px; color: var(--text-muted); letter-spacing: .04em; }
 .ob-root .rn-badge { position: absolute; top: -7px; right: 8px; font-size: 8.5px; font-weight: 800; letter-spacing: .06em; border-radius: 5px; padding: 1px 6px; }
-.ob-root .rn-badge.rn-now { color: var(--surface-sunken); background: var(--ob); }
+.ob-root .rn-badge.rn-now { color: var(--surface-sunken); background: var(--brand); }
 .ob-root .rn-badge.rn-beta { color: var(--surface-sunken); background: var(--status-warning); }
 .ob-root .rn-badge.rn-b22 { color: var(--status-warning); background: var(--surface-raised); border: 1px solid color-mix(in srgb, var(--status-warning) 50%, transparent); }
 .ob-root .rn-points { display: flex; justify-content: center; gap: 34px; margin-top: 26px; flex-wrap: wrap; }
@@ -565,7 +571,7 @@
 .ob-root .as-card.sel .as-radio::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--ob); }
 .ob-root .as-marks { display: flex; gap: 6px; margin-bottom: 16px; }
 .ob-root .as-t { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.ob-root .as-beta { font-size: 10.5px; font-weight: 500; padding: 2px 7px; border-radius: 999px; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); }
+.ob-root .as-beta { font-size: 10.5px; font-weight: 500; padding: 2px 7px; border-radius: 999px; color: var(--surface-sunken); border: 1px solid var(--ob-line); background: var(--brand); }
 .ob-root .as-sub { color: var(--text-secondary); font-size: 13px; margin-top: 2px; }
 .ob-root .as-why { color: var(--status-warning); font-size: 12px; margin-top: 8px; }
 .ob-root .as-note { color: var(--text-muted); font-size: 12px; text-align: center; margin: 0; }
@@ -610,7 +616,7 @@
 .ob-root .cx-opt-done { cursor: default; border-color: color-mix(in srgb, var(--status-success) 45%, var(--border-strong)); }
 .ob-root .cx-done-mark { color: var(--status-success); font-weight: 700; }
 .ob-root .cx-link { display: inline-block; margin: -4px 0 10px; padding: 0; border: 0; background: none; font: inherit; font-size: 12px; font-weight: 600;
-  color: var(--ob); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  color: var(--brand); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .ob-root .cx-link:disabled { opacity: .5; cursor: default; }
 .ob-root .cx-rec { font-size: 10.5px; font-weight: 500; padding: 2px 7px; border-radius: 999px; color: var(--status-success);
   border: 1px solid color-mix(in srgb, var(--status-success) 55%, transparent); background: color-mix(in srgb, var(--status-success) 10%, transparent); }
@@ -654,7 +660,7 @@
   background: var(--surface-overlay); color: var(--accent); }
 .ob-root .hc-muted { color: var(--text-muted); font-size: 12px; }
 .ob-root .hc-badge { font-size: 10.5px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-secondary); white-space: nowrap; }
-.ob-root .hc-badge.def { border-color: var(--ob-line); color: var(--ob); background: var(--ob-soft); }
+.ob-root .hc-badge.def { border-color: var(--ob-line); color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, transparent); }
 .ob-root .hc-badge.rev { border-color: color-mix(in srgb, var(--status-info) 50%, transparent); color: var(--status-info); }
 .ob-root .hc-badge.warn { border-color: color-mix(in srgb, var(--status-warning) 50%, transparent); color: var(--status-warning); }
 .ob-root .hc-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px; }

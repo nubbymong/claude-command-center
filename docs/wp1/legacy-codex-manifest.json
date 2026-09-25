@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-25T09:42:45.736Z",
-  "head": "32bb276996590332070a6f4b608da3004235ce6a",
-  "tree": "99dcfc1a709eb8fd06a00c96718ef7c8c752e58e",
+  "generatedAt": "2026-09-25T11:16:39.266Z",
+  "head": "ea63ff78e702f4334a9d58b934a46fd6dd0551c8",
+  "tree": "309c8a0d3599b9019f7006ced7eb8740114eeb08",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2298,
+  "trackedFileCount": 2300,
   "excludedFileCount": 376,
-  "scannedFileCount": 1922,
+  "scannedFileCount": 1924,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -2322,7 +2322,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 45
+      "lineCount": 48
     },
     {
       "path": "tests/unit/renderer/command-bar-layout.test.ts",
@@ -2503,7 +2503,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 171
+      "lineCount": 172
     },
     {
       "path": "tests/unit/renderer/onboarding-flow-stubs.tsx",
@@ -2837,7 +2837,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 2
+      "lineCount": 4
     },
     {
       "path": "tests/unit/renderer/tokenomicspage-formatting.test.ts",
