@@ -72,6 +72,15 @@ in the two 2026-09-24 entries.
   session name is now quoted. The live SSH harness changed with it: every
   lane that launches Claude now requires Claude to have run, and the harness
   no longer writes to the machine's real app data folder.
+- **Live SSH matrix** (from the Windows test VM; 38cbc9d7 for 185, the Pi,
+  the Mac and multi-session, c8079555 for Rocky and WINDOWS_2, with no SSH
+  file changed in between). Pass: T1 to T6 (the Mac lane now with Claude
+  really running), T9 to T15, multi-session, T27, T20, T21, T23, T25, T26,
+  and T7: the Windows remote passes, so it is no longer reported as an
+  upstream gap. T11 first failed on an environmental precondition: Claude
+  Code's own setup dialog on the Rocky test host held the reattached
+  session. It passed once that dialog was dismissed on the test host, which
+  is recorded as a test precondition, not an app fix. T24 fails (see Open).
 
 ### Decisions
 
@@ -94,10 +103,10 @@ in the two 2026-09-24 entries.
 - `docs/wp1/evidence/release-qualification.md` holds the documentation sweep
   only; the release-run record (WP1.37, WP1.73) comes from the VM and CI
   qualification run.
-- `docs/wp1/evidence/mode-matrix.md` records the VM e2e run on `5a3e0278`
-  (its 4 gate tests pass). It is partial: WP1.1 and WP1.60 stay planned (the
-  upgrade, restart, enable/disable and real-launch modes are not in it), and
-  the final head is to be run again before merge.
+- `docs/wp1/evidence/mode-matrix.md` records the VM e2e run on `633d37db`
+  (77 tests, 76 pass; the one failure is the known DPAPI limit under the
+  VM's SSH logon). It is partial: WP1.1 and WP1.60 stay planned (the
+  upgrade, restart, enable/disable and real-launch modes are not in it).
 - Traceability still names tests and records that are not written yet (the
   mode-matrix, pinned-source, fake-keyring, migration-interruption, rollback
   and re-authentication staging tests; the real-CLI, keyring, CI, rollback,
@@ -111,4 +120,8 @@ in the two 2026-09-24 entries.
   adaptation.
 - Training screenshots that still show the retired Settings Codex tab or its
   pointer need a recapture (listed in the release-qualification record).
-- The SSH live matrix is still to run before merge.
+- T24 (live SSH, rootful container): when the sudo password was typed in
+  the terminal rather than saved in the config, End cannot stop Claude inside
+  the container (its separate kill cannot use sudo), yet reports the End as
+  completed. The code predates this change. Owner decision pending on the
+  fix.
