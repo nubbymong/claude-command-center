@@ -81,7 +81,9 @@ in the two 2026-09-24 entries.
   Code's own setup dialog on the Rocky test host held the reattached
   session. It passed once that dialog was dismissed on the test host, which
   is recorded as a test precondition, not an app fix. T24 failed on a real
-  gap in End, fixed below; its lane needs a re-run.
+  gap in End, fixed below. Re-run on Rocky at 9eba7983 (the fix): T20, T21,
+  T23, T24 and T25 all pass; T24's End reported `container-needs-sudo`, and
+  the command it shows, run on the host, left no Claude in the container.
 - **End in a rootful container with no saved sudo password (T24).** When
   the sudo password was typed at the prompt rather than saved, End's
   in-container stop could only try sudo without a password, failed
@@ -97,10 +99,11 @@ in the two 2026-09-24 entries.
   in every host login shell a container session can have: sh, bash, dash,
   zsh, fish, and tcsh/csh at parity with the line before. What was run: a
   shell test (`ssh-end-remote-shell-compat.test.ts`) ran the line through
-  bash, sh and dash only, in WSL; zsh first runs in that test on the macOS
-  CI runner and on the Rocky lanes (T24, T25, on a zsh login shell); fish
-  and tcsh/csh are reasoned from their grammar and have not been run
-  anywhere yet. The app then shows one notice, on top of every other dialog
+  bash, sh and dash only, in WSL; zsh ran it live on the Rocky lanes T24
+  (the probe form) and T25, both on a zsh login shell and both passing at
+  9eba7983, and first runs in that test on the macOS CI runner; fish and
+  tcsh/csh are reasoned from their grammar and have not been run anywhere
+  yet. The app then shows one notice, on top of every other dialog
   and not dismissible by a stray key or click (an arming delay on the
   monotonic clock, held-key repeats ignored, focus kept on it while it
   shows): Claude may still be running in that container, the exact command
@@ -160,7 +163,14 @@ in the two 2026-09-24 entries.
 - T24 (live SSH, rootful container, sudo password typed rather than saved):
   End now reports that Claude may still be running in the container and
   shows the command that stops it, instead of reporting completed (owner
-  decision 2026-09-25, "honest End now"; see What landed). Still open: the
-  T24 lane re-run on Rocky (with T20 and T21, whose in-container stop now
-  runs under `sh -c`), and End stopping it without a saved password (out of
+  decision 2026-09-25, "honest End now"; see What landed). The lane passes
+  at 9eba7983. Still open: End stopping it without a saved password (out of
   scope by that decision).
+- End needs pkill inside the container, for its own stop and for the command
+  the notice shows. Both tested fixture containers on Rocky (rootless and
+  rootful `ccc-test`, built on node:22-bookworm, Debian 12) have it
+  (procps-ng 4.0.2); node:22-bookworm's own layer history installs procps.
+  Slim images often leave procps out; there End's stop fails and Claude may
+  keep running, silently except on the sudo-notice path, where the command
+  shown fails the same way. Recorded as a known limitation (known issues say
+  it, with the workaround) rather than handled in this change.
