@@ -42,7 +42,7 @@ not the supported versions, so it never counts as full. Each result names its
 auth class: AUTHENTICATED (real CLI, signed in), SIGNED-OUT (real CLI, a
 signed-out `CODEX_HOME`), NOT-INSTALLED, or MOCKED (seeded state or the fake
 CLI). Its screenshots are local and gitignored
-(`.ccc-canvas/screens/p2-upgrade-95385267/`), awaiting owner approval; none
+(`.ccc-canvas/screens/p2-upgrade-95385267/`), approved by the owner 2026-09-26; none
 are in the repo.
 
 Packages: **P2** finishes PR #625; **P3** is sessions and usage; **P4** is

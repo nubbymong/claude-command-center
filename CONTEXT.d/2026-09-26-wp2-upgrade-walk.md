@@ -98,7 +98,7 @@ MOCKED (seeded state or the e2e fake CLI).
   owner's ChatGPT sign-in or API key; until then Hello Codex is MOCKED.
 - Screenshots (144 PNGs: dark and light, wide and narrow, e-mail addresses
   anonymised) are local and gitignored in
-  `.ccc-canvas/screens/p2-upgrade-95385267/`, awaiting owner approval; none
+  `.ccc-canvas/screens/p2-upgrade-95385267/`, approved by the owner 2026-09-26; none
   are in the repo.
 - Out of P2 scope: at the narrow window the GitHub button overlaps the partner
   strip's label, on Claude and Codex tabs alike; the layout predates this
