@@ -37,13 +37,17 @@ it wrote, on the used Windows 11 test VM (WINDOWS_1), with real Codex CLIs
 0.142.4 and 0.150.0 (too old) and 0.157.1 (newer than tested). The evidence
 came in three passes: the walk at `c3569b3d` (including the new-config Codex
 launch), the re-verification at `c6dc4b60` (including the standalone Codex
-update) and the final pass at `95385267`. Windows only, not a clean machine, not a signed build and
-not the supported versions, so it never counts as full. Each result names its
-auth class: AUTHENTICATED (real CLI, signed in), SIGNED-OUT (real CLI, a
-signed-out `CODEX_HOME`), NOT-INSTALLED, or MOCKED (seeded state or the fake
-CLI). Its screenshots are local and gitignored
-(`.ccc-canvas/screens/p2-upgrade-95385267/`), approved by the owner 2026-09-26; none
-are in the repo.
+update) and the final pass at `95385267`, followed by the owner's managed
+Codex sign-in on the same build. Windows only, not a clean machine, not a
+signed build and not the supported versions, so it never counts as full. Each
+result names its auth class: AUTHENTICATED (real CLI, signed in: this
+computer's `~/.codex`, or "managed" for a Codex account the app added through
+its own sign-in, in its own folder), SIGNED-OUT (real CLI, a signed-out
+`CODEX_HOME`), NOT-INSTALLED, or MOCKED (seeded state or the fake CLI). Its
+screenshots are local and gitignored: `.ccc-canvas/screens/p2-upgrade-95385267/`,
+approved by the owner 2026-09-26, and the managed sign-in set
+`.ccc-canvas/screens/p2-managed-95385267/` (16 images), awaiting owner
+approval; none are in the repo.
 
 Packages: **P2** finishes PR #625; **P3** is sessions and usage; **P4** is
 agent surfaces and qualification.
@@ -64,7 +68,8 @@ apart from the per-install random value, and identical results.
 
 | Group | Open item | Tracked in |
 |---|---|---|
-| A | A managed Codex account added through the supported sign-in flow on WINDOWS_1, and Hello Codex seen on it. MOCKED only today: no authorised managed test account exists, and by design Hello Codex is not shown after adopting this computer's sign-in (`src/renderer/onboarding/hello-codex.ts`, `docs/wp2/hello-codex-spec.md`) | Rows 4, 13 |
+| A | A managed Codex account added through the supported sign-in flow on WINDOWS_1, and Hello Codex seen on it: DONE 2026-09-26 (the owner's ChatGPT sign-in at `95385267`, AUTHENTICATED managed). By design Hello Codex is not shown after adopting this computer's sign-in (`src/renderer/onboarding/hello-codex.ts`, `docs/wp2/hello-codex-spec.md`) | Rows 4, 9, 13, 23 |
+| A | The owner's approval of the managed sign-in screenshots (`.ccc-canvas/screens/p2-managed-95385267/`, 16 images, local) | This section |
 | A | The owner's acceptance of the evidence gallery: DONE, approved 2026-09-26 | This section |
 | B | macOS and Linux packaged runs | Row 66 |
 | B | A signed Windows packaged run (the walk used an unsigned candidate) | Row 66 |
@@ -84,16 +89,16 @@ apart from the per-install random value, and identical results.
 | 1 | Provider on/off, "not set up" (no launch, review or Codex CLI run until answered), last provider on | VERIFIED | yes, +e2e | partial (Win) | partial (Win) | P2 | E2E on the VM (WINDOWS_1) after the spec fixes: the not-set-up Codex card guard and Codex x SSH pass. Upgrade walk: with a real CLI present an unanswered Codex started nothing; after No, Codex configs and restored tabs were refused with the off wording (AUTHENTICATED); Claude Code off in the Codex-only upgrade (SIGNED-OUT); "not set up" and last provider on MOCKED (seeded; the beta cannot write them). Owed: Real CLI at 0.153.4 and 0.155.1; packaged on a clean machine per OS |
 | 2 | CLI detect and version classes | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Real min, pinned and max per OS. Upgrade walk (Windows): too old at 0.142.4 and 0.150.0, newer than tested at 0.157.1, and not installed; 0.153.4 and 0.155.1 not run |
 | 3 | Install and update | VERIFIED | yes | partial (Win) | partial (Win) | P2, P4 | P4: one real install per OS (macOS, Linux; Homebrew unrun). Done in P2: the update offered follows how the found Codex was installed. Upgrade walk: from the page, the npm install (NOT-INSTALLED) and the npm update from 0.150.0 reached 0.157.1; the standalone 0.142.4 was updated by its own installer line, run by hand as the page says, and Check again found 0.157.1 (AUTHENTICATED) |
-| 4 | Sign-in (browser, API key) | VERIFIED | yes | no | no | P4 | Real login, status and logout per OS. A managed sign-in needs the owner's ChatGPT sign-in or API key (the upgrade walk only opened and cancelled the Add account dialog) |
+| 4 | Sign-in (browser, API key) | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Real API-key sign-in and logout; macOS and Linux. Windows (AUTHENTICATED managed, 0.157.1): the owner's browser sign-in from Set up Codex, Add a new Codex account, made a managed account in its own folder, signed in and default; Check sign-in reports signed in |
 | 5 | Device-code sign-in | VERIFIED off | yes | n/a | no | P2 | None while it is off. Off in the shipped wiring (pinned: `tests/unit/main/codex-unanswered-service.test.ts`, `tests/unit/main/provider-startup-no-adoption.test.ts`); no longer advertised |
 | 6 | Multiple isolated accounts | VERIFIED | yes, +VM | no | no | P4 | Real two-account run; keyring scoping |
 | 7 | Identity rename, recolour, link, unlink, groups after creation | PARTIAL | no | no | no | P3 | Identity editor from every row's chip |
 | 8 | One Accounts surface | PARTIAL | no | no | no | P3 | One row component for both providers |
-| 9 | Launch and resume in the exact account | VERIFIED | yes, +e2e | partial (Win) | partial (Win) | P4 | A managed account's real launch in its realm, and a restored tab keeping it (owner sign-in); per OS. Upgrade walk (AUTHENTICATED, adopted ~/.codex only): a new config, and a beta-saved config launched from its row, ran real Codex 0.157.1 after the per-launch confirmation; a restored tab asked for that confirmation, and a cancelled confirmation, or no account, left it Not started with its reason |
+| 9 | Launch and resume in the exact account | VERIFIED | yes, +e2e | partial (Win) | partial (Win) | P4 | A restored tab keeping a managed account; per OS. Windows (AUTHENTICATED managed): a saved config on the managed account launched real Codex 0.157.1 to its idle prompt with no per-launch confirmation, from Create and from its row (Codex's own first-run sandbox question left for the owner). Upgrade walk (AUTHENTICATED, adopted ~/.codex): a new config, and a beta-saved config launched from its row, ran real Codex 0.157.1 after the per-launch confirmation; a restored tab asked for that confirmation, and a cancelled confirmation, or no account, left it Not started with its reason |
 | 10 | Lifecycle blockers and archive | PARTIAL | no | no | no | P3 | Blocker names each consumer with Go to; Archived list with Restore |
 | 11 | Staged re-authentication (WP1.52) | MISSING | no | no | no | P3 | Build it |
 | 12 | Upgrade: "Do you use Codex?", and the Set up Codex page's read-only check of this computer's sign-in | VERIFIED | yes, +e2e | partial (Win) | partial (Win) | P2 | Done: `tests/e2e/codex-reconfirm-upgrade.spec.ts` on the VM (WINDOWS_1), 3/3 at `21fff8bc`, `c6dc4b60` and `95385267` (Claude-only, Codex-only and both upgraders). Upgrade walk from v2.1.1-beta.1: asked once after the release notes, again if quit unanswered, never after an answer; the check of a signed-in ~/.codex and "Use this sign-in" (AUTHENTICATED, 0.157.1); a signed-out `CODEX_HOME` named on the page (SIGNED-OUT); the check alone added no account. Owed: real runs at 0.153.4 and 0.155.1; the CLI's own scratch writes under `tmp/` in that folder were seen on 0.153.4 and 0.157.1 (0.155.1 unverified) |
-| 13 | Hello Codex, including after the upgrade Yes | VERIFIED | yes, +VM | no | no | P2 | A real managed Codex account (needs the owner's ChatGPT sign-in or API key), then Hello Codex after Yes. Upgrade walk (MOCKED: seeded managed account, fake CLI): shown once, right after Set up Codex; replayed from Settings and the Feature Guide. Never due for an adopted ~/.codex, by design |
+| 13 | Hello Codex, including after the upgrade Yes | VERIFIED | yes, +VM | partial (Win) | partial (Win) | P2 | Per OS. Windows (AUTHENTICATED managed, 0.157.1): after the upgrade Yes and the owner's managed sign-in, shown right after Set up Codex, marked seen, not shown on relaunch; replayed from Accounts (pages 1 to 5) and the Feature Guide. The MOCKED walk (seeded account, fake CLI) matched. Never due for an adopted ~/.codex, by design |
 | 14 | Codex-only mode, no Claude noise | PARTIAL | no | partial (Win) | partial (Win) | P3 | Title-bar Anthropic pills, onboarding steps, showcase, Accounts panel, session dialog. Upgrade walk (Claude Code off, SIGNED-OUT): no Claude install or sign-in demands; still seen: the title-bar Claude.ai pill, the Accounts Claude card's sign-in prompts while Claude Code is off, Ask Conductor saying it runs on Claude Code (row 53), and Hello Codex page 1 saying Codex runs beside Claude |
 | 15 | Owner-run gates (native keyring, credential logins, packaged smoke) | MISSING | no | no | no | P4 | Hosts and timing from the owner |
 | 16 | WP1 traceability | PARTIAL | n/a | n/a | n/a | P4 | Items move from planned to evidenced |
@@ -112,7 +117,7 @@ Tokenomics).
 | 20 | Account chip (strip and sidebar) | MISSING | no | no | no | P3 | Chip from the account's identity |
 | 21 | Multi-account footer | MISSING | no | no | no | P3 | Owner review first; percentages never merged across providers |
 | 22 | Switch the account of a running session | MISSING | no | no | no | P3 | Keep the conversation, as Claude does |
-| 23 | Choose the account at launch | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Real launch with a managed account (owner sign-in); per OS. Upgrade walk (AUTHENTICATED): the new-config picker offered this computer's Codex, Create waited for its launch confirmation, and real Codex 0.157.1 launched |
+| 23 | Choose the account at launch | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Per OS. Windows (AUTHENTICATED managed): the new-config picker defaulted to the managed account with no confirmation box, and real Codex 0.157.1 launched. Upgrade walk (AUTHENTICATED, this computer's Codex): Create waited for its launch confirmation, then real Codex 0.157.1 launched |
 | 24 | Running sessions per account | PARTIAL | no | no | no | P3 | Shown on the account row |
 | 25 | Tokenomics reads managed realms and `~/.codex` | VERIFIED | yes | no | no | P4 | Real rollouts |
 | 26 | Tokenomics per-account attribution and filters | MISSING | no | no | no | P3 | Owner review first |
