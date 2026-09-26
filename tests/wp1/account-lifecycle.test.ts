@@ -129,6 +129,322 @@ describe('the external home (WP1.24, WP1.50)', () => {
   })
 })
 
+// WP1.43 -- owner decisions 2026-09-26 (U1, U2; supersedes design 8.2): nothing
+// adopts the external home at start; its read-only check keeps nothing, signed
+// in or not, and the explicit adoption still works afterwards.
+describe('the read-only check of the external home (Q1.11: Set up Codex says "already signed in" only when it is)', () => {
+  it('asks the home\'s status once and keeps nothing: no account, identity, setup or marker, signed in or not', async () => {
+    const h = await harness()
+    const before = JSON.stringify({ a: h.doc().accounts, i: h.doc().identities, r: h.doc().realms, m: h.doc().migrations })
+    let runs = h.runs.length
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect(await h.service.probeExternalDefault({ providerId: 'codex' })).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.args().slice(runs)).toEqual(['login status'])
+    expect(h.doc().journals).toEqual([])
+    expect(JSON.stringify({ a: h.doc().accounts, i: h.doc().identities, r: h.doc().realms, m: h.doc().migrations })).toBe(before)
+    h.signedIn.delete(EXT_HOME.toLowerCase())
+    runs = h.runs.length
+    expect(await h.service.probeExternalDefault({ providerId: 'codex' })).toEqual({ ok: true, state: 'signed-out' })
+    expect(h.args().slice(runs)).toEqual(['login status'])
+    expect(h.doc().journals).toEqual([])
+    expect(h.doc().accounts.some((x) => x.providerId === 'codex')).toBe(false)
+    expect(h.doc().migrations).toEqual([])
+  })
+
+  it('leaves the explicit adoption free to run afterwards, and holds nothing a switch-off would wait for', async () => {
+    const h = await harness()
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect((await h.service.probeExternalDefault({ providerId: 'codex' })).ok).toBe(true)
+    expect(h.leases.countForProvider('codex')).toBe(0)
+    const id = await withExternal(h)
+    expect(h.doc().accounts.find((x) => x.id === id)).toMatchObject({ identityAssurance: 'realm-only' })
+    expect(h.doc().migrations).toMatchObject([{ providerId: 'codex', step: 'external-default', outcome: 'registered' }])
+  })
+
+  // Polls the event loop until a held CLI run has started (the check waits on it).
+  const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(); i++) await new Promise((r) => setTimeout(r, 0)) }
+  const nothingKept = (h: Awaited<ReturnType<typeof harness>>) => {
+    expect(h.doc().journals).toEqual([])
+    expect(h.doc().realms.some((r) => r.lifecycle === 'pending')).toBe(false)
+    expect(h.doc().accounts.some((x) => x.providerId === 'codex')).toBe(false)
+    expect(h.doc().migrations).toEqual([])
+    expect(h.leases.countForProvider('codex')).toBe(0)
+  }
+
+  it('a check that fails keeps nothing either: no sign-in folder there, or Codex did not answer in time', async () => {
+    const h = await harness()
+    h.folders.dirs.delete(EXT_HOME.toLowerCase())
+    expect(await h.service.probeExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'realm-unavailable' })
+    nothingKept(h)
+    const slow = await harness({ script: { 'login status': () => ({ exitCode: null, timedOut: true }) } })
+    expect(await slow.service.probeExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'timed-out' })
+    expect(slow.args()).toContain('login status')
+    nothingKept(slow)
+  })
+
+  it('is refused while the user has not said they use Codex, and runs no CLI (owner decision 2026-09-26, U1)', async () => {
+    const h = await harness({ preference: { codex: 'undecided' } })
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    const runs = h.runs.length
+    expect(await h.service.probeExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'provider-not-set-up' })
+    expect(h.runs.length).toBe(runs)
+    expect(h.discoveries()).toBe(0)
+    nothingKept(h)
+  })
+
+  it('an adoption while the check runs is refused as a conflict, and works once the check is done', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    let held = true
+    const h = await harness({ script: { 'login status': async () => { if (held) await gate; return { exitCode: 0, stderr: 'Logged in using ChatGPT\n' } } } })
+    const check = h.service.probeExternalDefault({ providerId: 'codex' })
+    await until(() => h.args().includes('login status'))
+    expect(h.doc().journals).toHaveLength(1)
+    expect(await h.service.adoptExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'realm-conflict' })
+    held = false
+    release()
+    expect(await check).toEqual({ ok: true, state: 'signed-in' })
+    nothingKept(h)
+    expect(await h.service.adoptExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: true })
+  })
+
+  it('a check the app closed during leaves a reservation the next start drops; one running now is never dropped (Q1)', async () => {
+    const port = new MemoryPort()
+    // The first run: the check still waits on Codex when the app closes.
+    const first = await harness({ port, script: { 'login status': () => new Promise(() => {}) } })
+    void first.service.probeExternalDefault({ providerId: 'codex' })
+    await until(() => first.args().includes('login status'))
+    expect(first.doc().journals).toHaveLength(1)
+    // The sweep never takes the reservation of a check that is running.
+    await first.service.dropLeftoverExternalReservations()
+    expect(first.doc().journals).toHaveLength(1)
+    // The next start reads the same registry: the reservation reads as in use.
+    const next = await harness({ port })
+    next.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect(next.service.snapshot().pendingSetups).toMatchObject([{ providerId: 'codex', external: true }])
+    expect(await next.service.probeExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'realm-conflict' })
+    // The start-up sweep drops it, and only the record: the home is untouched.
+    await next.service.dropLeftoverExternalReservations()
+    expect(next.service.snapshot().pendingSetups).toEqual([])
+    nothingKept(next)
+    expect(next.signedIn.get(EXT_HOME.toLowerCase())).toBe('chatgpt')
+    expect(await next.service.probeExternalDefault({ providerId: 'codex' })).toEqual({ ok: true, state: 'signed-in' })
+    expect((await next.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
+  })
+
+  it('a sweep queued on the lock behind the check\'s own reservation never takes it', async () => {
+    const port = new MemoryPort()
+    // An earlier run's leftover, so each sweep has work and queues on the lock.
+    const first = await harness({ port, script: { 'login status': () => new Promise(() => {}) } })
+    void first.service.probeExternalDefault({ providerId: 'codex' })
+    await until(() => first.args().includes('login status'))
+    let answer: () => void = () => {}
+    const gate = new Promise<void>((r) => { answer = r })
+    const next = await harness({ port, script: { 'login status': async () => { await gate; return { exitCode: 0, stderr: 'Logged in using ChatGPT\n' } } } })
+    // Hold the lock, then queue: the sweep of the leftover, the check's
+    // reservation write, and a sweep behind that write.
+    const lock: { open?: () => void } = {}
+    const held = next.store.exclusive(() => new Promise<void>((r) => { lock.open = r }))
+    const sweep1 = next.service.dropLeftoverExternalReservations()
+    const check = next.service.probeExternalDefault({ providerId: 'codex' })
+    const sweep2 = next.service.dropLeftoverExternalReservations()
+    await until(() => lock.open !== undefined)
+    lock.open!()
+    await held
+    await sweep1
+    await sweep2
+    await until(() => next.args().includes('login status'))
+    // The check's own reservation stands while it runs.
+    expect(next.doc().journals).toHaveLength(1)
+    answer()
+    expect(await check).toEqual({ ok: true, state: 'signed-in' })
+    nothingKept(next)
+    expect(next.logs.some((l) => l.includes('was not dropped'))).toBe(false)
+  })
+
+  // The service's own in-memory list of the reservations it holds now.
+  const heldIds = (h: Awaited<ReturnType<typeof harness>>) => (h.service as unknown as { externalReservations: Set<string> }).externalReservations
+  it('a reservation write that throws, landed or not, leaves no record and no id shielding one from the sweep', async () => {
+    for (const lands of [true, false]) {
+      const h = await harness()
+      const real = h.store.mutate.bind(h.store)
+      vi.spyOn(h.store, 'mutate').mockImplementationOnce(async (fn) => {
+        if (lands) await real(fn)
+        throw new Error('disk gone')
+      })
+      await expect(h.service.probeExternalDefault({ providerId: 'codex' })).rejects.toThrow('disk gone')
+      expect(heldIds(h).size, String(lands)).toBe(0)
+      nothingKept(h)
+      expect(h.args()).not.toContain('login status')
+    }
+  })
+
+  it('an adoption\'s lease step that throws drops the reservation and its id', async () => {
+    const h = await harness()
+    vi.spyOn(h.leases, 'add').mockImplementationOnce(() => { throw new Error('lease table broken') })
+    await expect(h.service.adoptExternalDefault({ providerId: 'codex' })).rejects.toThrow('lease table broken')
+    expect(heldIds(h).size).toBe(0)
+    nothingKept(h)
+    expect(h.args()).not.toContain('login status')
+    // Nothing stands in the way afterwards.
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect(await h.service.probeExternalDefault({ providerId: 'codex' })).toEqual({ ok: true, state: 'signed-in' })
+  })
+
+  it('an adoption\'s commit that throws, landed or not, leaves no id and no record: the next check and adoption are not refused', async () => {
+    for (const lands of [false, true]) {
+      const h = await harness()
+      h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+      const real = h.store.mutate.bind(h.store)
+      let calls = 0
+      // The reservation's write, then the commit (the second write).
+      vi.spyOn(h.store, 'mutate').mockImplementation(async (fn) => {
+        if (++calls !== 2) return real(fn)
+        if (lands) await real(fn)
+        throw new Error('disk gone')
+      })
+      await expect(h.service.adoptExternalDefault({ providerId: 'codex' })).rejects.toThrow('disk gone')
+      expect(heldIds(h).size, String(lands)).toBe(0)
+      expect(h.doc().journals, String(lands)).toEqual([])
+      expect(h.doc().accounts.filter((x) => x.providerId === 'codex' && x.lifecycle !== 'archived'), String(lands)).toHaveLength(lands ? 1 : 0)
+      if (!lands) {
+        expect(await h.service.probeExternalDefault({ providerId: 'codex' })).toEqual({ ok: true, state: 'signed-in' })
+        expect((await h.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
+      }
+    }
+  })
+
+  it('never blocks switching Codex off, and a check that Codex was switched off during leaves nothing', async () => {
+    // Off while the status runs.
+    let answer: () => void = () => {}
+    const gate = new Promise<void>((r) => { answer = r })
+    const h = await harness({ script: { 'login status': async () => { await gate; return { exitCode: 0, stderr: 'Logged in using ChatGPT\n' } } } })
+    const check = h.service.probeExternalDefault({ providerId: 'codex' })
+    await until(() => h.args().includes('login status'))
+    expect(await h.service.setProviderEnabled('codex', false)).toEqual({ ok: true })
+    answer()
+    expect(await check).toMatchObject({ ok: false, code: 'provider-disabled' })
+    expect(heldIds(h).size).toBe(0)
+    nothingKept(h)
+    // Off while the CLI is still being looked for: the status never runs.
+    let found: () => void = () => {}
+    const looked = new Promise<void>((r) => { found = r })
+    let hold = false
+    const k = await harness({ beforeDiscovery: async () => { if (hold) await looked } })
+    hold = true
+    const early = k.service.probeExternalDefault({ providerId: 'codex' })
+    await until(() => k.doc().journals.length === 1)
+    expect(await k.service.setProviderEnabled('codex', false)).toEqual({ ok: true })
+    found()
+    expect(await early).toMatchObject({ ok: false, code: 'provider-disabled' })
+    expect(k.args()).not.toContain('login status')
+    expect(heldIds(k).size).toBe(0)
+    nothingKept(k)
+  })
+
+  it('a switch-off, or an answer lost, while the check prepares its CLI (the login-shell look-up) starts no CLI and leaves nothing', async () => {
+    for (const how of ['switch-off', 'answer-lost'] as const) {
+      let pref: 'on' | 'undecided' = 'on'
+      const h = await harness({ preference: { codex: () => pref } })
+      let entered = false
+      let go: () => void = () => {}
+      const wait = new Promise<void>((r) => { go = r })
+      const auth = h.codex.auth!
+      const real = auth.status.bind(auth)
+      // The status call is entered, and waits before its CLI would start.
+      vi.spyOn(auth, 'status').mockImplementationOnce(async (realm, opts) => { entered = true; await wait; return real(realm, opts) })
+      const check = h.service.probeExternalDefault({ providerId: 'codex' })
+      await until(() => entered)
+      if (how === 'switch-off') expect(await h.service.setProviderEnabled('codex', false)).toEqual({ ok: true })
+      else { pref = 'undecided'; h.service.settingsChanged() }
+      go()
+      expect(await check, how).toMatchObject({ ok: false, code: how === 'switch-off' ? 'provider-disabled' : 'provider-not-set-up' })
+      expect(h.args(), how).not.toContain('login status')
+      expect(heldIds(h).size, how).toBe(0)
+      nothingKept(h)
+    }
+  })
+
+  it('a switch-off while the check\'s CLI runs stops that run', async () => {
+    let signal: AbortSignal | undefined
+    let answer: () => void = () => {}
+    const gate = new Promise<void>((r) => { answer = r })
+    const h = await harness({ script: { 'login status': async (r) => { signal = r.opts.signal; await gate; return { exitCode: 0, stderr: 'Logged in using ChatGPT\n' } } } })
+    const check = h.service.probeExternalDefault({ providerId: 'codex' })
+    await until(() => signal !== undefined)
+    expect(signal!.aborted).toBe(false)
+    expect(await h.service.setProviderEnabled('codex', false)).toEqual({ ok: true })
+    expect(signal!.aborted).toBe(true)
+    answer()
+    expect(await check).toMatchObject({ ok: false, code: 'provider-disabled' })
+    nothingKept(h)
+  })
+
+  it('a setup of the home\'s own reservation is never finished: not while its check runs, not one an earlier run left', async () => {
+    let answer: () => void = () => {}
+    const gate = new Promise<void>((r) => { answer = r })
+    let first = true
+    const port = new MemoryPort()
+    const h = await harness({ port, script: { 'login status': async () => {
+      if (first) { first = false; await gate }
+      return { exitCode: 0, stderr: 'Logged in using ChatGPT\n' }
+    } } })
+    const check = h.service.probeExternalDefault({ providerId: 'codex' })
+    await until(() => h.args().includes('login status'))
+    const reservation = h.doc().journals[0].accountId
+    const identity = { mode: 'new' as const, colourKey: 'violet' }
+    expect(await h.service.completeSetup({ accountId: reservation, identity })).toMatchObject({ ok: false, code: 'unsupported' })
+    expect(h.service.issueSecretHandle({ accountId: reservation }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    expect(h.doc().accounts.some((x) => x.providerId === 'codex')).toBe(false)
+    // One an earlier run left (the app closed during its check).
+    const next = await harness({ port })
+    const left = next.doc().journals[0].accountId
+    expect(await next.service.completeSetup({ accountId: left, identity })).toMatchObject({ ok: false, code: 'unsupported' })
+    expect(next.doc().accounts.some((x) => x.providerId === 'codex')).toBe(false)
+    answer()
+    expect(await check).toEqual({ ok: true, state: 'signed-in' })
+    nothingKept(h)
+  })
+
+  it('a sweep that runs after the reservation has landed, but before its writer resumes, never takes it', async () => {
+    let answer: () => void = () => {}
+    const gate = new Promise<void>((r) => { answer = r })
+    const h = await harness({ script: { 'login status': async () => { await gate; return { exitCode: 0, stderr: 'Logged in using ChatGPT\n' } } } })
+    // A store whose reservation write lands the record and frees the lock, but
+    // settles for its writer only on a later macrotask: nothing may depend on
+    // the writer resuming before the next holder of the lock runs.
+    const real = h.store.mutate.bind(h.store)
+    let landed: () => void = () => {}
+    const recordLanded = new Promise<void>((r) => { landed = r })
+    let first = true
+    vi.spyOn(h.store, 'mutate').mockImplementation(async (fn) => {
+      if (!first) return real(fn)
+      first = false
+      const r = await real(fn)
+      landed()
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return r
+    })
+    const check = h.service.probeExternalDefault({ providerId: 'codex' })
+    await recordLanded
+    // The lock is free and the record is there: a sweep (a resources-folder
+    // change) runs now, before the check's writer has resumed.
+    expect(h.doc().journals).toHaveLength(1)
+    await h.service.dropLeftoverExternalReservations()
+    expect(h.doc().journals).toHaveLength(1)
+    answer()
+    expect(await check).toEqual({ ok: true, state: 'signed-in' })
+    nothingKept(h)
+  })
+
+  it('the sweep leaves a managed account\'s unfinished setup alone: only the home\'s own reservations go', async () => {
+    const h = await harness()
+    const pending = await h.service.beginSetup({ providerId: 'codex', method: 'browser' }) as { accountId: string }
+    await h.service.dropLeftoverExternalReservations()
+    expect(h.doc().journals.map((j) => j.accountId)).toEqual([pending.accountId])
+  })
+})
+
 describe('Claude accounts keep their own rules', () => {
   it('a Claude account is removed where it was created, and its sign-in is its own', async () => {
     const h = await harness({ claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')] })
@@ -288,7 +604,7 @@ describe('ADR-009 round 1 regressions: archived records, capabilities, setup rac
     }
   })
 
-  it('with status or sign-out not enabled, no path runs them: completion, abandon, archive, reactivation and the start-up adoption refuse', async () => {
+  it('with status or sign-out not enabled, no path runs them: completion, abandon, archive, reactivation and the check of the external home refuse', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
     await addCodexAccount(h, 'B').then((b) => h.service.setDefault({ accountId: b }))
@@ -304,7 +620,8 @@ describe('ADR-009 round 1 regressions: archived records, capabilities, setup rac
       if (key === 'auth.status') {
         expect(await h.service.completeSetup({ accountId: pending.accountId, identity: { mode: 'new', colourKey: 'violet' } })).toMatchObject({ ok: false, code: 'capability-disabled' })
         expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'active' })).toMatchObject({ ok: false, code: 'capability-disabled' })
-        expect(await h.service.migrateExternalDefault('codex')).toMatchObject({ ok: false, code: 'capability-disabled' })
+        expect(await h.service.probeExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'capability-disabled' })
+        expect(await h.service.adoptExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'capability-disabled' })
       }
       expect(h.runs.length, key).toBe(before)
       expect(h.doc().accounts.find((x) => x.id === a)?.lifecycle, key).toBe('inactive')
@@ -437,7 +754,7 @@ describe('ADR-009 coverage: guards the first tests did not reach', () => {
 
   it('the saved settings that cannot be read are no answer: a provider last read as off stays off', async () => {
     vi.resetModules()
-    let read: { value: Record<string, unknown> | null; outcome: string } = { value: { codexEnabled: false }, outcome: 'ok' }
+    let read: { value: Record<string, unknown> | null; outcome: string } = { value: { codexEnabled: false, codexAnswered: true }, outcome: 'ok' }
     vi.doMock('../../src/main/config-manager', () => ({ readConfigChecked: () => read }))
     try {
       const core = await import('../../src/main/providers/core')

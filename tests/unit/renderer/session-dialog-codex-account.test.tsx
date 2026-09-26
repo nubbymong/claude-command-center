@@ -42,7 +42,7 @@ import { snapshot, provider, work, old, local } from './accounts-snapshot-harnes
 import LaunchAckConfirm, { LAUNCH_ACK_ARM_MS } from '../../../src/renderer/components/LaunchAckConfirm'
 import { useLaunchAckStore } from '../../../src/renderer/stores/launchAckStore'
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
-import { CODEX_OFF_LAUNCH_REASON } from '../../../src/renderer/hooks/useLaunchConfig'
+import { CODEX_OFF_LAUNCH_REASON, CODEX_NOT_SET_UP_LAUNCH_REASON } from '../../../src/renderer/hooks/useLaunchConfig'
 
 let container: HTMLDivElement
 let root: Root
@@ -52,6 +52,8 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true })
+  // The user said they use Codex: its configs can launch.
+  useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, codexEnabled: true, codexAnswered: true } })
 })
 afterEach(() => {
   act(() => { root.unmount() })
@@ -327,6 +329,15 @@ describe('WP2 commit 6g: the Codex settings tab is gone; the dialog points at Se
     } finally {
       useSettingsStore.setState({ settings: saved })
     }
+  })
+
+  it('Codex not set up (never answered): the card is disabled the same way, and the note says to set it up', () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    render()
+    expect(card('Provider', 'Codex').disabled).toBe(true)
+    expect(CODEX_NOT_SET_UP_LAUNCH_REASON).toBe('Codex is not set up yet. Set it up in Settings, Accounts to launch this config.')
+    expect(container.querySelector('[data-testid="codex-not-set-up-note"]')!.textContent).toBe(CODEX_NOT_SET_UP_LAUNCH_REASON)
+    expect(container.querySelector('[data-testid="codex-off-note"]')).toBeNull()
   })
 })
 

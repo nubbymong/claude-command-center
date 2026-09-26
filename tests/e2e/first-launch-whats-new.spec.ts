@@ -97,6 +97,10 @@ test.beforeAll(async () => {
       localMachineName: 'e2e-host',
       updateChannel: 'stable',
       updateChannelChosen: true,
+      // The one-time "Do you use Codex?" page (codex-reconfirm-gate) sits
+      // between the notes and resume; answered here, so the notes hand over to
+      // resume as this spec pins.
+      codexAnswered: true,
     }),
   )
   // Retire the legacy GitHub onboarding modal. It sits BETWEEN the harness and

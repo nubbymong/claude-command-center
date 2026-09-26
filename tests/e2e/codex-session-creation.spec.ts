@@ -62,14 +62,17 @@ function ok(r: RegistryResult, step: string): ProviderRegistryDoc {
 }
 
 /** Codex on, one managed Codex account in the registry, and Hello Codex
- *  already seen (its one-time takeover would otherwise cover the window). */
+ *  already seen (its one-time takeover would otherwise cover the window).
+ *  Codex is on only when it is on AND answered (owner decision 2026-09-26: a
+ *  saved on/off without the answer is ignored), so both are saved here rather
+ *  than left to the clean seed. */
 function seedCodexAccount(dataDir: string): void {
   const resources = path.join(dataDir, 'resources')
   const config = path.join(resources, 'CONFIG')
 
   const settingsFile = path.join(config, 'settings.json')
   const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
-  fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, codexEnabled: true }, null, 2))
+  fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, codexEnabled: true, codexAnswered: true }, null, 2))
 
   const metaFile = path.join(config, 'app-meta.json')
   const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'))
@@ -147,7 +150,7 @@ test.describe('Codex saved config (WP2 account binding)', () => {
     await expect(providerCard('claude')).toBeVisible()
     await expect(providerCard('codex')).toBeVisible()
     await expect(providerCard('terminal')).toBeVisible()
-    await expect(provider('codex'), 'Codex is off in this app: the seed turns it on (codexEnabled)').toBeEnabled()
+    await expect(provider('codex'), 'Codex is off in this app: the seed turns it on (codexEnabled with codexAnswered)').toBeEnabled()
 
     // SSH first: the Codex card is greyed, and says why.
     await providerCard('claude').click()

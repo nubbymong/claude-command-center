@@ -42,7 +42,7 @@ const pa = {
   onChanged: vi.fn(() => () => {}),
   discover: vi.fn(),
   installRecipes: vi.fn(async () => RECIPES),
-  runMigration: vi.fn(async () => ({ ok: true, outcome: 'not-signed-in' })),
+  probeExternal: vi.fn(async () => ({ ok: true, state: 'signed-out' })),
   setEnabled: vi.fn(ok),
   adoptExternal: vi.fn(async () => ({ ok: true, accountId: 'acc-ext' })),
 }
@@ -238,10 +238,11 @@ describe('Set up Codex: focus follows the page\'s primary control', () => {
       ...over,
     })
   }
-  // What main recorded about this computer's own sign-in, as main does after
-  // the assistants choice (the fixtures onboarding-codex-setup.test.tsx uses).
-  const marked = (marker: Record<string, unknown>) => ({ externalDefaults: [{ providerId: 'codex' as const, needsConfirmation: false, marker: { at: 1, ...marker } as any }] })
-  const notFoundHere = marked({ outcome: 'none' })
+  // Codex on and nothing standing for this computer's own sign-in, as main has
+  // it after the assistants choice (the fixtures onboarding-codex-setup.test.tsx
+  // uses): the page's own check (probeExternal) finds it signed out unless a
+  // test says otherwise.
+  const notFoundHere = { externalDefaults: [{ providerId: 'codex' as const }] }
   const setupPage = () => <CodexSetupStep onNext={vi.fn()} onBack={vi.fn()} stepAside={vi.fn()} returns={0} />
 
   async function show(s: AccountsSnapshot | null) {
@@ -272,7 +273,8 @@ describe('Set up Codex: focus follows the page\'s primary control', () => {
   })
 
   it('this computer\'s sign-in found: the Recommended new account', async () => {
-    await show(snap({}, marked({ outcome: 'registered' })))
+    pa.probeExternal.mockResolvedValueOnce({ ok: true, state: 'signed-in' })
+    await show(snap({}, notFoundHere))
     expect(byTest('codex-setup-adopt')).not.toBeNull()
     expect(focused()).toBe('codex-setup-add-new')
   })

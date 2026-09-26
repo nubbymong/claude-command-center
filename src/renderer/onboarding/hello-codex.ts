@@ -11,7 +11,7 @@
 // sessions and no Claude reviews).
 import type { AccountsSnapshot } from '../../shared/providers'
 import type { HelloCodexOpen } from './hello-codex-open'
-import { providerView } from '../stores/providerAccountsStore'
+import { providerView, providerAnsweredOn } from '../stores/providerAccountsStore'
 import { DEFAULT_CONDUCTOR_TOOLS } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { runningVersion } from './whats-new-gate'
@@ -47,7 +47,7 @@ export interface HelloCodexMetaView {
 export function codexSetUp(snapshot: AccountsSnapshot | null): boolean {
   if (!snapshot) return false
   const p = providerView(snapshot, 'codex')
-  if (!p || !p.enabled || p.preference !== 'on') return false
+  if (!providerAnsweredOn(p)) return false
   if (p.discoveryState !== 'found') return false
   if (p.compatibility === 'too-old' || p.compatibility === 'unsupported') return false
   return snapshot.accounts.some((a) =>
@@ -187,7 +187,7 @@ export function helloCodexPages(opts: HelloCodexCopyInputs): HelloCodexPage[] {
         { lead: 'One folder per account.', rest: 'Each account has its own sign-in folder, so sessions never mix identities.' },
         { lead: 'A default, and a reviewer default.', rest: 'New sessions use the default account. Code reviews use the reviewer default, or the default if none is set.' },
         { lead: 'An existing sign-in.', rest: 'A sign-in this app did not create (for example `~/.codex`) must be confirmed at each launch, and cannot run reviews.' },
-        { lead: 'Sign-in methods.', rest: 'Sign in with ChatGPT, a device code or an API key. The key goes to Codex, and this app never stores it.' },
+        { lead: 'Sign-in methods.', rest: 'Sign in with ChatGPT or an API key. The key goes to Codex, and this app never stores it.' },
       ],
       where: 'Settings, Accounts',
     },

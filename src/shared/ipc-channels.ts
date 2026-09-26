@@ -273,7 +273,7 @@ export const IPC = {
   PROVIDER_ACCOUNTS_LINK_IDENTITY: 'providerAccounts:linkIdentity',
   PROVIDER_ACCOUNTS_UNLINK_IDENTITY: 'providerAccounts:unlinkIdentity',
   PROVIDER_ACCOUNTS_ADOPT_EXTERNAL: 'providerAccounts:adoptExternal',
-  PROVIDER_ACCOUNTS_RUN_MIGRATION: 'providerAccounts:runMigration',
+  PROVIDER_ACCOUNTS_PROBE_EXTERNAL: 'providerAccounts:probeExternal',
   PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN: 'providerAccounts:reconcileSignIn',
   PROVIDER_ACCOUNTS_RESOLVE_CONFLICT: 'providerAccounts:resolveConflict',
   PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT: 'providerAccounts:setReviewerDefault',

@@ -9,18 +9,28 @@
 // Codex settings tab's install hint lives here now).
 import React, { useEffect, useRef, useState } from 'react'
 import type { InstallRecipeView, ProviderInstallationView } from '../../../../shared/providers'
-import { useProviderAccountsStore, providerAccountActions, providerStatus } from '../../../stores/providerAccountsStore'
+import { useProviderAccountsStore, providerAccountActions, providerStatus, providerNotSetUp } from '../../../stores/providerAccountsStore'
 import { ProviderMark } from '../../sidebar/Badges'
 import ToggleSwitch from '../../github/config/ToggleSwitch'
 import { Section } from '../../SettingsPage'
 import { Pill, StatusText, ErrorLine, MutedLine, RowButton } from './accounts-ui'
 import { showHelloCodexReplay, codexSetUp } from '../../../onboarding/hello-codex'
 
+/** The user has not said whether they use the provider (Codex after an
+ *  update, until they answer: owner decision 2026-09-26). The row never says
+ *  "On" then: main starts nothing of it, not even a look for its CLI. It
+ *  says "Not set up" instead, with the way to set it up: the switch, which
+ *  records the answer. */
+export function notSetUp(p: ProviderInstallationView): boolean {
+  return p.enabled && providerNotSetUp(p)
+}
+
 /** The CLI is missing, could not be checked, cannot be used as found, or
  *  has not been looked for yet (main looks once at start, in the
- *  background, only for a provider switched on): worth checking now. */
+ *  background, only for a provider switched on): worth checking now. Not
+ *  for a provider that is not set up: main does not look for its CLI. */
 export function offersCheckAgain(p: ProviderInstallationView): boolean {
-  if (!p.enabled) return false
+  if (!p.enabled || notSetUp(p)) return false
   if (p.discoveryState === 'unchecked' || p.discoveryState === 'missing' || p.discoveryState === 'invalid' || p.discoveryState === 'error') return true
   return p.discoveryState === 'found' && (p.compatibility === 'too-old' || p.compatibility === 'unsupported')
 }
@@ -120,11 +130,16 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
     if (!r.ok) setError(r.message)
   }
 
+  // Not set up: the switch shows off, and turning it on is the answer.
+  const unset = notSetUp(p)
+  const on = p.enabled && !unset
+
   const toggle = async () => {
     setBusy(true)
     setError(null)
-    // Main first (its refusals stand), then the saved setting.
-    const r = await providerAccountActions.switchProvider(p.providerId, !p.enabled)
+    // Main first (its refusals stand), then the saved setting (and, for a
+    // provider not set up, the answer with it: saveProviderSwitch).
+    const r = await providerAccountActions.switchProvider(p.providerId, !on)
     setBusy(false)
     if (r.ok) return
     if (r.code === 'last-provider') setError('At least one provider stays on.')
@@ -144,6 +159,11 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
           {p.providerId === 'codex' && <Pill tone="beta" testId={`provider-beta-${p.providerId}`}>Beta</Pill>}
         </div>
         <StatusText tone={status.tone} testId={`provider-status-${p.providerId}`}>{status.text}</StatusText>
+        {unset && (
+          <MutedLine testId={`provider-not-set-up-${p.providerId}`}>
+            Turn {p.displayName} on to set it up, then add a {p.displayName} account below.
+          </MutedLine>
+        )}
         {offersCheckAgain(p) && (
           <div className="mt-1">
             <RowButton onClick={() => { void checkAgain() }} disabled={checking} testId={`provider-check-again-${p.providerId}`}>
@@ -165,11 +185,11 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
       </div>
       <div className="flex flex-col items-end gap-1 shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{p.enabled ? 'On' : 'Off'}</span>
+          <span className="text-xs" style={{ color: 'var(--text-secondary)' }} data-testid={`provider-switch-text-${p.providerId}`}>{unset ? 'Not set up' : on ? 'On' : 'Off'}</span>
           <ToggleSwitch
-            state={p.enabled ? 'on' : 'off'}
+            state={on ? 'on' : 'off'}
             onToggle={() => { void toggle() }}
-            label={p.enabled ? `Turn ${p.displayName} off` : `Turn ${p.displayName} on`}
+            label={on ? `Turn ${p.displayName} off` : `Turn ${p.displayName} on`}
             disabled={busy}
           />
         </div>

@@ -106,6 +106,22 @@ describe('reviewSubToolState: the conditions main offers each review tool on', (
       label: 'Available', color: 'green', reason: null, note: 'Only Codex sessions use it; Codex is off.',
     })
   })
+
+  it('the reviewing provider never answered for: Not set up, with the way to set it up, never "no account can review"', () => {
+    const unanswered = snapshot({ codex: { preference: 'undecided', review: { ready: false, accountId: work.id, source: 'provider-default' } } })
+    expect(reviewSubToolState(unanswered, 'codexReview', ctx())).toEqual({
+      label: 'Not set up', color: 'overlay1', reason: 'Codex is not set up yet. Set it up in Settings, Accounts.', note: null,
+    })
+    // Claude review stays offered, with the matching note.
+    expect(reviewSubToolState(unanswered, 'claudeReview', ctx())).toEqual({
+      label: 'Available', color: 'green', reason: null, note: 'Only Codex sessions use it; Codex is not set up.',
+    })
+  })
+
+  it('a Claude Code preference main could not read is never "Not set up": the card follows its review as before', () => {
+    const unread = snapshot({ claude: { preference: 'undecided' } })
+    expect(reviewSubToolState(unread, 'claudeReview', ctx())).toEqual({ label: 'Available', color: 'green', reason: null, note: null })
+  })
 })
 
 describe('the review cards on the Conductor MCP page', () => {
@@ -149,6 +165,14 @@ describe('the review cards on the Conductor MCP page', () => {
     expect(text).not.toContain('Available')
     expect(text).toContain('Off')
     expect(reason('codexReview')).toBe('Codex is off. Turn it on in Settings, Accounts.')
+  })
+
+  it('the Codex review card while the user has not said they use Codex: Not set up and the way to set it up, never Available', () => {
+    const text = show(CodexReviewSubTool, snapshot({ codex: { preference: 'undecided', review: { ready: false, accountId: work.id, source: 'provider-default' } } }))
+    expect(text).toContain('Not set up')
+    expect(text).not.toContain('Available')
+    expect(reason('codexReview')).toBe('Codex is not set up yet. Set it up in Settings, Accounts.')
+    expect((container.querySelector('[data-testid="sub-tool-status"]') as HTMLElement).dataset.tone).toBe('overlay1')
   })
 
   it('the Codex review card with its switch off, or no account that can review, is not Available', () => {

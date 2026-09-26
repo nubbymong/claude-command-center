@@ -70,13 +70,15 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'about', label: 'About' }
 ]
 
+/** With a Codex session in front: these settings apply to it too (one status
+ *  strip for every session), and say which items it cannot fill yet. */
 function StatuslineCodexBanner() {
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === s.activeSessionId))
   const isCodex = (activeSession?.provider ?? 'claude') === 'codex'
   if (!isCodex) return null
   return (
-    <div className="rounded-md bg-yellow/10 border border-yellow/30 p-3 mb-3 text-sm text-yellow">
-      Statusline customisation is Claude-only. Switch to a Claude session to configure.
+    <div className="rounded-md bg-blue/10 border border-blue/30 p-3 mb-3 text-sm text-blue" data-testid="statusline-codex-note">
+      These settings apply to Codex sessions too. A Codex session does not report its account, lines changed or session time yet, so those items do not show for it.
     </div>
   )
 }

@@ -325,6 +325,49 @@ describe('Code review switches: off and cannot run', () => {
   })
 })
 
+describe('Code review switches: not set up (the user has not said they use the provider)', () => {
+  const unanswered = () => snapshot({}, { codex: { preference: 'undecided' } })
+  const NOT_SET_UP = 'Codex is not set up yet. Set it up in Settings, Accounts.'
+
+  it('reviewToolView: Codex review is disabled as not set up, even with a review ready; Claude review stays usable with a note', () => {
+    const ctx = { masterOn: true, platform: 'win32', loaded: true, settings: {} }
+    expect(reviewToolView(unanswered(), 'codexReview', ctx)).toEqual({ disabled: true, message: NOT_SET_UP, reviewer: null, notice: null })
+    expect(reviewToolView(unanswered(), 'claudeReview', ctx)).toMatchObject({ disabled: false, message: null, note: 'Only Codex sessions use it; Codex is not set up.' })
+  })
+
+  it('renders the Codex switch disabled with that reason, never writes, and keeps Claude review live', async () => {
+    setup({ snap: unanswered() })
+    renderTools()
+    expect(sw('codexReview').disabled).toBe(true)
+    expect(message('codexReview')).toBe(NOT_SET_UP)
+    expect(q('review-tool-codexReview-message')!.getAttribute('data-tone')).toBe('plain')
+    expect(q('review-tool-codexReview-reviewer')).toBeNull()
+    await act(async () => { sw('codexReview').click() })
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(sw('claudeReview').disabled).toBe(false)
+    expect(q('review-tool-claudeReview-note')?.textContent).toBe('Only Codex sessions use it; Codex is not set up.')
+  })
+
+  it('off wins over not set up: a saved off, or main\'s off, says off', () => {
+    for (const setupArgs of [{ snap: unanswered(), settings: { codexEnabled: false } }, { snap: snapshot({}, { codex: { enabled: false, preference: 'off' } }) }]) {
+      setup(setupArgs)
+      renderTools()
+      expect(message('codexReview')).toBe('Codex is off. Turn it on in Settings, Accounts.')
+      expect(q('review-tool-claudeReview-note')?.textContent).toBe('Only Codex sessions use it; Codex is off.')
+    }
+  })
+
+  it('a Claude Code preference main could not read is never "not set up": Claude review follows its review as before', () => {
+    const unread = snapshot({}, { claude: { preference: 'undecided' } })
+    const ctx = { masterOn: true, platform: 'win32', loaded: true, settings: {} }
+    expect(reviewToolView(unread, 'claudeReview', ctx)).toMatchObject({ disabled: false, message: null })
+    setup({ snap: unread })
+    renderTools()
+    expect(sw('claudeReview').disabled).toBe(false)
+    expect(message('claudeReview')).toBeUndefined()
+  })
+})
+
 describe('Code review switches: cleared reviewers', () => {
   it('on macOS after a cleared Claude reviewer, says reviews use the normal Claude sign-in and shows the notice', () => {
     setup({ platform: 'darwin', snap: snapshot({ reviewerNotices: [{ providerId: 'claude', message: 'On macOS only the normal sign-in can review.' }] }) })

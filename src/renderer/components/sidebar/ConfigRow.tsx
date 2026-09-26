@@ -77,7 +77,8 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
   // disabled with the reason, naming that provider, instead of a dead play
   // button. The one rule (isConfigLaunchBlocked), reactive so flipping either
   // switch in Settings updates rows live.
-  const blockedReason = launchBlockedReason(config, useLaunchGateSettings())
+  const launchGate = useLaunchGateSettings()
+  const blockedReason = launchBlockedReason(config, launchGate)
   const launchBlocked = blockedReason !== undefined
 
   const typeKind = config.shellOnly ? 'shell' : (config.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'
@@ -187,7 +188,7 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           title={blockedReason}
           data-testid="config-row-provider-off"
         >
-          {launchBlockedTag(config)}
+          {launchBlockedTag(config, launchGate)}
         </span>
       )}
       {/* Transport badge stays at the tail — the type leads the row. Three-way:

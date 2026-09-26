@@ -146,6 +146,9 @@ Claude review, so the pages say nothing that needs Claude.
     `~/.codex`) must be confirmed at each launch, and cannot run reviews.
   - **Sign-in methods.** Sign in with ChatGPT, a device code or an API key.
     The key goes to Codex, and this app never stores it.
+    (Superseded by `docs/wp1/owner-decisions-2026-09-26.md` (U3): device-code
+    sign-in stays off and is not advertised; the shipped copy names ChatGPT
+    and an API key.)
 - Where: Settings, Accounts.
 - Vignette: an account list showing a Default account, a Reviewer account,
   and this computer's `~/.codex` with "Confirm each launch".

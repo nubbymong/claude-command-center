@@ -1110,15 +1110,17 @@ describe('Check again runs no CLI for a provider that is off (WP1.17; WP1.60 ena
   const codexView = (h: Awaited<ReturnType<typeof harness>>) => h.service.snapshot().providers.find((p) => p.providerId === 'codex')!
   const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
 
-  it('a provider that is off is refused as off and nothing is looked for; one not decided yet is still looked for', async () => {
+  it('a provider that is off is refused as off and nothing is looked for; one not decided yet is refused as not set up, and nothing is looked for either', async () => {
     const off = await harness({ preference: { codex: 'off' } })
     expect(await off.service.discover('codex')).toMatchObject({ ok: false, code: 'provider-disabled' })
     expect(off.discoveries()).toBe(0)
     expect(codexView(off).discoveryState).toBe('unchecked')
-    // A user who never answered keeps working as before (isEnabled).
+    // A user who has not answered whether they use Codex has it not set up
+    // (owner decision 2026-09-26): its CLI runs for nothing, a look included.
     const undecided = await harness({ preference: { codex: 'undecided' } })
-    expect(await undecided.service.discover('codex')).toMatchObject({ ok: true, installation: { discoveryState: 'found' } })
-    expect(undecided.discoveries()).toBe(1)
+    expect(await undecided.service.discover('codex')).toMatchObject({ ok: false, code: 'provider-not-set-up', message: 'Codex is not set up yet, so it was not checked. Turn it on first.' })
+    expect(undecided.discoveries()).toBe(0)
+    expect(codexView(undecided).discoveryState).toBe('unchecked')
   })
 
   it('a saved on/off that cannot be read now refuses as the launch rule does, and nothing is looked for', async () => {
@@ -1289,18 +1291,18 @@ describe('one discovery per provider at a time (WP1.17; WP2 commit 6g)', () => {
     expect(h.discoveries()).toBe(2) // addCodexAccount's, then the held one: the waiters started none
   })
 
-  it('the start-up migration shares the run: its discovery is the one in flight, and its answer is recorded', async () => {
+  it('the check of this computer\'s sign-in shares the run: its discovery is the one in flight', async () => {
     const g = heldDiscovery()
     const h = await harness({ beforeDiscovery: g.beforeDiscovery })
     g.ctl.hold = true
     const check = h.service.discover('codex')
     await settle()
-    const migrated = h.service.migrateExternalDefault('codex')
+    const probed = h.service.probeExternalDefault({ providerId: 'codex' })
     await settle()
     expect(h.discoveries()).toBe(1)
     g.ctl.release()
     await check
-    expect((await migrated).ok).toBe(true)
+    expect((await probed).ok).toBe(true)
     expect(h.discoveries()).toBe(1)
     expect(h.service.snapshot().providers.find((p) => p.providerId === 'codex')!.discoveryState).toBe('found')
   })

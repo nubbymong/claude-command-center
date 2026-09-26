@@ -18,6 +18,10 @@
  *     run's version-change setup screen: handed exactly the Codex setup page,
  *     once, alone or inside the run that is due, never the assistants page,
  *     settling nothing on its own, and not again on a later start;
+ *   - and the upgrader who answered Yes on the one-time "Do you use Codex?"
+ *     page after an update, in this run (owner decision 2026-09-26): handed
+ *     the Codex setup page the same way, and Hello Codex after it once a
+ *     Codex account added there is signed in; not on a later start;
  *   - stepping aside for a terminal keeps the page and shows the way back,
  *     and each return is counted for the page.
  */
@@ -50,7 +54,9 @@ const setEnabled = vi.fn(ok)
 const { OnboardingHarness } = await import('../../../src/renderer/onboarding/OnboardingHarness')
 const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
 const { useAppMetaStore } = await import('../../../src/renderer/stores/appMetaStore')
-const { resetProviderChoiceForTests, noteClaudeMissingAtSetup } = await import('../../../src/renderer/onboarding/provider-choice')
+const { resetProviderChoiceForTests, noteClaudeMissingAtSetup, noteCodexChosenOnUpgrade } = await import('../../../src/renderer/onboarding/provider-choice')
+const { useProviderAccountsStore } = await import('../../../src/renderer/stores/providerAccountsStore')
+const { snapshot: accountsSnapshot, work, local, claudeMain } = await import('./accounts-snapshot-harness')
 const settle = await import('../../../src/renderer/onboarding/settle')
 
 let container: HTMLDivElement
@@ -317,6 +323,64 @@ describe('an upgrader who chose "Use Codex only" on the version-change setup scr
     await mount()
     const seen = await walk()
     expect(seen).toEqual(['welcome', 'whatsNewV2Fresh', 'assistants', 'commandBar', 'codexSetup', 'github', 'builtinTools', 'transparency', 'finish'])
+  })
+})
+
+describe('an upgrader who answered Yes on the one-time "Do you use Codex?" page', () => {
+  const answeredYes = () => {
+    useAppMetaStore.setState({ meta: { lastSeenVersion: '2.1.0' } })
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, codexEnabled: true, codexAnswered: true } })
+  }
+  afterEach(() => { useProviderAccountsStore.setState({ snapshot: null, loaded: false }) })
+
+  it('handed the Codex setup page alone, with no Back, and its Next ends the run stamping nothing', async () => {
+    answeredYes()
+    noteCodexChosenOnUpgrade()
+    await mount(false, true)
+    expect(page()).toBe('codexSetup')
+    expect(byTest('stub-back')).toBeNull()
+    await next()
+    expect(onComplete).toHaveBeenCalledWith(false)
+    expect(settle.settleOnboardingFinish).not.toHaveBeenCalled()
+  })
+
+  it('Hello Codex follows the Codex setup page once a Codex account added there is signed in (F)', async () => {
+    answeredYes()
+    noteCodexChosenOnUpgrade()
+    // Codex on (the yes), found, and a managed account signed in.
+    useProviderAccountsStore.setState({ snapshot: accountsSnapshot({ accounts: [claudeMain, work] }), loaded: true })
+    await mount(false, true)
+    expect(page()).toBe('codexSetup')
+    await next()
+    expect(byTest('hello-codex')).not.toBeNull()
+    expect(onComplete).not.toHaveBeenCalled()
+  })
+
+  it('only the sign-in already on this computer: no Hello Codex after the setup page', async () => {
+    answeredYes()
+    noteCodexChosenOnUpgrade()
+    useProviderAccountsStore.setState({ snapshot: accountsSnapshot({ accounts: [claudeMain, local] }), loaded: true })
+    await mount(false, true)
+    await next()
+    expect(byTest('hello-codex')).toBeNull()
+    expect(onComplete).toHaveBeenCalledWith(false)
+  })
+
+  it('with the release notes due: the notes, then the Codex setup page; never the assistants page', async () => {
+    answeredYes()
+    noteCodexChosenOnUpgrade()
+    await mount(true)
+    expect(page()).toBe('whatsNewV2')
+    await next()
+    expect(page()).toBe('codexSetup')
+  })
+
+  it('a later start (the in-memory Yes is gone) is not handed the Codex pages', async () => {
+    answeredYes()
+    await mount(true)
+    expect(page()).toBe('whatsNewV2')
+    await next()
+    expect(onComplete).toHaveBeenCalledWith(false)
   })
 })
 

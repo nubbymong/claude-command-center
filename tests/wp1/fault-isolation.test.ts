@@ -50,7 +50,7 @@ async function codexFailures(h: Harness, managed: string): Promise<Array<[string
   h.folders.fs.mkdir = realMkdir
   await run('archive of an active account', () => h.service.setLifecycle({ accountId: managed, lifecycle: 'archived' }))
   await run('adoption, signed out', () => h.service.adoptExternalDefault({ providerId: 'codex' }))
-  await run('one-time adoption', () => h.service.migrateExternalDefault('codex'))
+  await run('check of this computer\'s sign-in', () => h.service.probeExternalDefault({ providerId: 'codex' }))
   h.port.failWrites = [h.port.writes + 1, h.port.writes + 2, h.port.writes + 3]
   await run('write fails', () => h.service.beginSetup({ providerId: 'codex', method: 'browser' }))
   h.port.failWrites = []
@@ -111,7 +111,13 @@ describe('fault isolation (WP1.59)', () => {
     const h = await harness()
     const codex = h.codex.enablement!
     const claude = h.claude.enablement!
-    expect([true, false, undefined, 'yes', 1].map((v) => providerPreferenceFromSettings(codex, v === undefined ? {} : { codexEnabled: v }))).toEqual(['on', 'off', 'undecided', 'undecided', 'undecided'])
+    // Codex's on/off counts only once answered (codexAnswered: true, owner
+    // decision 2026-09-26); an earlier build's value without it is no answer.
+    expect([true, false, undefined, 'yes', 1].map((v) => providerPreferenceFromSettings(codex, v === undefined ? { codexAnswered: true } : { codexEnabled: v, codexAnswered: true }))).toEqual(['on', 'off', 'undecided', 'undecided', 'undecided'])
+    expect([true, false, undefined].map((v) => providerPreferenceFromSettings(codex, v === undefined ? {} : { codexEnabled: v }))).toEqual(['undecided', 'undecided', 'undecided'])
+    expect(['yes', 1, false, null].map((a) => providerPreferenceFromSettings(codex, { codexEnabled: true, codexAnswered: a }))).toEqual(['undecided', 'undecided', 'undecided', 'undecided'])
+    // An inherited answer is not a saved one.
+    expect(providerPreferenceFromSettings(codex, Object.assign(Object.create({ codexAnswered: true }), { codexEnabled: true }))).toBe('undecided')
     expect([true, false, undefined].map((v) => providerPreferenceFromSettings(claude, v === undefined ? {} : { claudeEnabled: v }))).toEqual(['on', 'off', 'on'])
     // Unreadable settings are no answer, never a yes; no data at all is on.
     expect(providerPreferenceFromSettings(codex, null)).toBe('undecided')

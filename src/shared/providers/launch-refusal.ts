@@ -8,11 +8,13 @@
 // banner, the Insights page -- rather than surfacing as a generic error.
 import type { ProviderId } from '../types'
 
-/** Why a launch was refused: the provider is switched off, or main could not
- *  read whether it is on (no answer is never a yes, for a launch). */
-export type ProviderLaunchRefusalCode = 'provider-off' | 'provider-state-unknown'
+/** Why a launch was refused: the provider is switched off, the user has not
+ *  said yet whether they use it (a provider whose absent value means "not
+ *  answered yet", until they answer: owner decision 2026-09-26), or main
+ *  could not read whether it is on (no answer is never a yes, for a launch). */
+export type ProviderLaunchRefusalCode = 'provider-off' | 'provider-not-set-up' | 'provider-state-unknown'
 
-export const PROVIDER_LAUNCH_REFUSAL_CODES: readonly ProviderLaunchRefusalCode[] = ['provider-off', 'provider-state-unknown']
+export const PROVIDER_LAUNCH_REFUSAL_CODES: readonly ProviderLaunchRefusalCode[] = ['provider-off', 'provider-not-set-up', 'provider-state-unknown']
 
 export interface ProviderLaunchRefusal {
   code: ProviderLaunchRefusalCode
@@ -31,6 +33,13 @@ export interface ProviderLaunchRefused {
  *  config." Every provider-off sentence is built here. */
 export function providerOffMessage(displayName: string, purpose?: string): string {
   return `${displayName} is off. Turn it on in Settings, Accounts${purpose ? ` ${purpose}` : ''}.`
+}
+
+/** "<name> is not set up yet. Set it up in Settings, Accounts." The user has
+ *  not said whether they use the provider, so nothing of it starts. With a
+ *  purpose, what setting it up is for. */
+export function providerNotSetUpMessage(displayName: string, purpose?: string): string {
+  return `${displayName} is not set up yet. Set it up in Settings, Accounts${purpose ? ` ${purpose}` : ''}.`
 }
 
 /** Main could not read the provider's on/off, so nothing was started. */

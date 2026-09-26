@@ -26,7 +26,7 @@ import type {
 import { SIGN_IN_METHODS } from '../../../../shared/providers'
 import { IDENTITY_COLOR_KEYS, resolveIdentityColor, type IdentityColorKey } from '../../../../shared/identity-colors'
 import {
-  useProviderAccountsStore, providerAccountActions, accountDisplayName, signInAgainFailureText, signInAgainMethods,
+  useProviderAccountsStore, providerAccountActions, accountDisplayName, signInAgainFailureText, signInAgainMethods, answerYesIfUnanswered,
 } from '../../../stores/providerAccountsStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
 import {
@@ -370,12 +370,18 @@ export function AddProviderAccountDialog({ provider, resume, initialMethod, over
   const startSignIn = useCallback(async (m: SignInMethod, secretHandle?: string) => {
     setError(null)
     setStep('signing-in')
+    // The yes first, on every way to a sign-in (a resumed setup's, a retry):
+    // main runs no sign-in of a provider the user has not said they use. A
+    // no-op once answered (chooseMethod and submitKey record it before).
+    const yes = await answerYesIfUnanswered(provider.providerId)
+    if (runner.closing()) return
+    if (!yes.ok) { setError(yes.message); setStep('failed'); return }
     const r = await runner.start(m, secretHandle)
     if (!r) return
     if (r.ok && r.state === 'signed-in') { setStep('name'); return }
     setError(r.ok ? 'The sign-in did not finish. Try again, or cancel.' : r.message)
     setStep('failed')
-  }, [runner.start])
+  }, [runner.start, runner.closing, provider.providerId])
 
   // Resuming a browser or device sign-in starts it straight away (once:
   // StrictMode runs effects twice in development).
@@ -390,6 +396,12 @@ export function AddProviderAccountDialog({ provider, resume, initialMethod, over
   const chooseMethod = async (m: SignInMethod) => {
     setBusy(true)
     setError(null)
+    // Adding an account of a provider the user has not answered for is their
+    // yes (owner decision 2026-09-26): recorded first, on and answered. It
+    // never adopts this computer's own sign-in of the provider.
+    const yes = await answerYesIfUnanswered(provider.providerId)
+    if (runner.closing()) return
+    if (!yes.ok) { setBusy(false); setError(yes.message); return }
     const r = await runner.track(providerAccountActions.beginSetup({ providerId: provider.providerId, method: m }))
     // Named at once, so leaving can abandon a setup created meanwhile.
     if (r.ok) runner.accountIdRef.current = r.accountId
@@ -405,6 +417,11 @@ export function AddProviderAccountDialog({ provider, resume, initialMethod, over
     setHasKey(false)
     setBusy(true)
     setError(null)
+    // The yes before the key is handed over (a resumed key setup starts at
+    // this step): a key never waits in main for a sign-in main would refuse.
+    const yes = await answerYesIfUnanswered(provider.providerId)
+    if (runner.closing()) return
+    if (!yes.ok) { setBusy(false); setHasKey(!!keyRef.current?.value); setError(yes.message); return }
     const h = await runner.sendKey(keyRef.current)
     if (runner.closing()) return
     setBusy(false)
@@ -427,6 +444,12 @@ export function AddProviderAccountDialog({ provider, resume, initialMethod, over
       : { mode: 'new', colourKey: colour, ...(name.trim() ? { friendlyName: name.trim() } : {}) }
     setBusy(true)
     setError(null)
+    // A setup resumed at its name (its sign-in finished in an earlier run)
+    // never chose a method or signed in here: its yes is recorded now, before
+    // completeSetup asks the provider (a no-op once answered).
+    const yes = await answerYesIfUnanswered(provider.providerId)
+    if (runner.closing()) return
+    if (!yes.ok) { setBusy(false); setError(yes.message); return }
     const r = await runner.track(providerAccountActions.completeSetup({ accountId, identity }))
     if (r.ok) { runner.done(); return }
     if (runner.closing()) return

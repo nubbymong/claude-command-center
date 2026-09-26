@@ -75,10 +75,16 @@
       "title": "Existing light-Codex upgrade preserves enablement and imports or reports default Codex state",
       "kind": "automated",
       "tests": [
-        "tests/wp1/migration-codex.test.ts",
-        "tests/wp1/tokenomics-realm-discovery.test.ts"
+        "tests/wp1/tokenomics-realm-discovery.test.ts",
+        "tests/unit/main/codex-unanswered-service.test.ts",
+        "tests/unit/main/provider-startup-no-adoption.test.ts",
+        "tests/unit/renderer/codex-reconfirm-gate.test.ts",
+        "tests/unit/renderer/codex-reconfirm-page.test.tsx",
+        "tests/e2e/codex-reconfirm-upgrade.spec.ts"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/wp1/owner-decisions-2026-09-26.md"
+      ],
       "status": "planned",
       "currentTests": [],
       "baseCoverage": "new capability, none on base"
@@ -635,9 +641,14 @@
       "title": "Current-Codex migration covers signed-in/signed-out default home, ambient key, durable/absent preference, interruption and rerun",
       "kind": "automated",
       "tests": [
-        "tests/wp1/migration-codex.test.ts"
+        "tests/wp1/account-lifecycle.test.ts",
+        "tests/unit/main/provider-startup-no-adoption.test.ts",
+        "tests/unit/main/codex-unanswered-service.test.ts",
+        "tests/unit/renderer/onboarding-codex-setup.test.tsx"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/wp1/owner-decisions-2026-09-26.md"
+      ],
       "status": "planned",
       "currentTests": [],
       "baseCoverage": "new capability, none on base"
@@ -1012,7 +1023,8 @@
       "evidence": [
         "tests/wp1/traceability.json",
         "docs/wp2/plan.md",
-        "docs/wp2/hello-codex-spec.md"
+        "docs/wp2/hello-codex-spec.md",
+        "docs/wp2/parity-checklist.md"
       ],
       "status": "planned",
       "currentTests": [],

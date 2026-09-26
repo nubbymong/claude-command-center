@@ -1,8 +1,9 @@
 // WP2 commit 3: the accounts service at runtime. Provider core owns the rules
 // (src/main/providers/core/accounts-service.ts); this module supplies the
 // real settings, the one lease registry, the one secret store and the
-// registered packages, and runs the one-time adoption of a provider's own
-// default sign-in after the legacy reconcile at start.
+// registered packages, and runs the start-up work after the legacy reconcile
+// (never an adoption of a provider's own default sign-in: see
+// runStartupProviderMigrations).
 import { randomBytes } from 'node:crypto'
 import { AccountsService, SecretHandleStore, listProviderPackages } from './providers/core'
 import type { ProviderEnablementSpec } from './providers/core'
@@ -36,11 +37,16 @@ function readSettings(): Record<string, unknown> | null {
 
 /** Three-way, as saved, by the package's own enablement data: true is on,
  *  false is off, absent is what the package says (Codex: not answered yet,
- *  since installation alone is never consent; Claude: on). Unreadable
- *  settings are no answer, never a yes. A package without the data is on. */
+ *  since installation alone is never consent; Claude: on). A package that
+ *  declares an answered key has an answer only once that key is saved true
+ *  (Codex: `codexAnswered`); until then its saved on/off is ignored, and it
+ *  reads as absent (owner decision 2026-09-26: an earlier build's Codex
+ *  setting does not carry over). Unreadable settings are no answer, never a
+ *  yes. A package without the data is on. */
 export function providerPreferenceFromSettings(spec: ProviderEnablementSpec | undefined, settings: Record<string, unknown> | null): ProviderPreference {
   if (!spec) return 'on'
   if (settings === null) return 'undecided'
+  if (spec.answeredKey !== undefined && !(Object.hasOwn(settings, spec.answeredKey) && settings[spec.answeredKey] === true)) return spec.absent
   const v = Object.hasOwn(settings, spec.settingsKey) ? settings[spec.settingsKey] : undefined
   return v === true ? 'on' : v === false ? 'off' : spec.absent
 }
@@ -91,19 +97,22 @@ export function getAccountsService(): AccountsService | null {
   return service
 }
 
-/** The one-time adoption of each provider's own default sign-in, after the
- *  registry load and the legacy reconcile, outside the registry lock. */
+/** The start-up work after the registry load and the legacy reconcile,
+ *  outside the registry lock. It does NOT adopt a provider's own default
+ *  sign-in (Codex's own home folder): that is only
+ *  ever taken in by the user's explicit choice, "Use this sign-in" on the
+ *  Set up Codex page or "Use this computer's Codex sign-in" in Settings,
+ *  Accounts (owner decision 2026-09-26). The one-time start-up adoption that
+ *  ran here is gone. */
 export async function runStartupProviderMigrations(): Promise<void> {
   const s = service
   if (!s) return
-  for (const pkg of listProviderPackages()) {
-    if (!pkg.externalDefaultRealm) continue
-    try {
-      const r = await s.migrateExternalDefault(pkg.id)
-      logInfo(`[accounts] ${pkg.id} external default at start: ${r.ok ? r.outcome : r.code}`)
-    } catch (e) {
-      logError(`[accounts] ${pkg.id} external default at start threw: ${e instanceof Error ? e.message : String(e)}`)
-    }
+  // A check or an adoption of that sign-in that an earlier run left
+  // unfinished is dropped: nothing resumes it, and it would read as in use.
+  try {
+    await s.dropLeftoverExternalReservations()
+  } catch (e) {
+    logError(`[accounts] dropping unfinished checks of a provider's own sign-in threw: ${e instanceof Error ? e.message : String(e)}`)
   }
   // A reviewer choice this platform can never use is cleared, and said so.
   try {
@@ -128,7 +137,7 @@ export function discoverProvidersAtStart(): void {
 /** The resources directory changed while the app runs (the first-run setup
  *  chooses it after start). The registry's file port captured the old one,
  *  so it is loaded again from the new one, with the same start-up work --
- *  the legacy reconcile, then the one-time adoption -- before anything
+ *  the legacy reconcile, then runStartupProviderMigrations -- before anything
  *  reads or reconciles it. The service follows the new store by itself. */
 export async function followResourcesDirectory(resourcesDir: string): Promise<void> {
   const loaded = getAccountRegistryResourcesDir()

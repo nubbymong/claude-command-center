@@ -6,9 +6,9 @@
 // A disabled switch never rewrites the stored choice.
 import React from 'react'
 import type { AccountsSnapshot, ProviderId, ReviewReadinessView } from '../../../shared/providers'
-import { providerOffMessage } from '../../../shared/providers'
+import { providerOffMessage, providerNotSetUpMessage } from '../../../shared/providers'
 import { useSettingsStore, DEFAULT_CONDUCTOR_TOOLS } from '../../stores/settingsStore'
-import { useProviderAccountsStore, providerView, reviewerLine, reviewerNotice, accountDisplayName, savedOff } from '../../stores/providerAccountsStore'
+import { useProviderAccountsStore, providerView, reviewerLine, reviewerNotice, accountDisplayName, savedOff, providerUnanswered, providerNotSetUp } from '../../stores/providerAccountsStore'
 import ToggleSwitch from '../github/config/ToggleSwitch'
 import { ProviderMark } from '../sidebar/Badges'
 import { DialogCallout } from '../ui/Dialog'
@@ -72,7 +72,8 @@ function noReviewMessage(snapshot: AccountsSnapshot, id: ProviderId, review: Rev
 
 /**
  * What a review switch shows. In order: the tools master; the reviewing
- * provider off (saved or live); the account snapshot not here yet; whether a
+ * provider off (saved or live); the account snapshot not here yet; the
+ * reviewing provider not set up (never answered); whether a
  * review could run on the reviewer account now, and why not. A refused
  * account is never named as the reviewer.
  */
@@ -87,10 +88,16 @@ export function reviewToolView(snapshot: AccountsSnapshot | null, tool: ReviewTo
   // No snapshot: still waiting for the first answer, or the main process
   // has no account service to give one.
   if (!snapshot) return { disabled: true, message: ctx.loaded ? 'The account list is not available right now.' : 'Checking accounts...', reviewer: null, notice: null }
-  // Claude review answers Codex sessions: while Codex is off nothing asks,
-  // but the switch keeps its meaning for when it is back on.
+  // The user has not said they use the reviewing provider: it is not set up,
+  // and main offers no review on it (not "no account can review").
+  if (providerNotSetUp(p)) {
+    return { disabled: true, message: providerNotSetUpMessage(isCodex ? 'Codex' : 'Claude Code'), reviewer: null, notice: null }
+  }
+  // Claude review answers Codex sessions: while Codex is off (or not set up)
+  // nothing asks, but the switch keeps its meaning for when it is back on.
   const codexOff = savedOff(ctx.settings, 'codex') || providerView(snapshot, 'codex')?.enabled === false
-  const note = !isCodex && codexOff ? 'Only Codex sessions use it; Codex is off.' : null
+  const codexNotSetUp = providerUnanswered(snapshot, 'codex')
+  const note = isCodex ? null : codexOff ? 'Only Codex sessions use it; Codex is off.' : codexNotSetUp ? 'Only Codex sessions use it; Codex is not set up.' : null
   const notice = reviewerNotice(snapshot, id, ctx.platform)
   const review = p?.review
   if (!review) return { disabled: false, message: null, reviewer: null, notice, note }

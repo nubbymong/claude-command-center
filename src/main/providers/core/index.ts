@@ -3,7 +3,7 @@
 export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
   ProviderManagedLaunchOperations, ProviderRealmFolderOperations, ProviderLaunchOperations, LaunchPreparation, ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewUsage, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
-  DiscoveryResult, InstallRecipe, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthFailureCode, AuthCredentialKind,
+  DiscoveryResult, InstallRecipe, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind,
 } from './package'
 export {
   registerProvider, getProvider, tryGetProvider,
@@ -19,9 +19,8 @@ export type {
   RegistryFsPort, LegacyAccountsPort, RegistryStatus, StoreResult, StoreFailureCode, LegacyReconcileOutcome, AccountRegistryStoreOptions,
 } from './account-registry-store'
 
-// WP2: adopting a provider's own default sign-in once, on upgrade (design 6.3).
-export { migrateExternalDefaultRealm } from './external-default-migration'
-export type { ExternalDefaultMigrationOutcome, ExternalDefaultMigrationDeps, ProviderPreference } from './external-default-migration'
+// The user's on/off for a provider, as the accounts service reads it.
+export type { ProviderPreference } from '../../../shared/providers'
 
 // WP2 commit 3: consumer leases, the one-shot secret channel and the
 // accounts service (design 9.2, 9.3, 11; plan A6, A11).

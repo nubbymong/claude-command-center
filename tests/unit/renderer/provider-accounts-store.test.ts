@@ -12,7 +12,8 @@ import {
   selectProviderAccounts, accountDisplayName, reviewerLine, canOfferMakeReviewer, reviewerNotice, showsReviewerBadge,
   accountState, providerStatus, accountFailureText, accountForLegacyId, ACCOUNT_NAME_FALLBACK,
   signInAgainMethods, canOfferMakeInactive, canOfferMakeActive, canOfferArchive,
-  PROVIDER_ENABLED_SETTING, savedOff, canOfferCheckSignIn, signInCheckText, externalSignInHint,
+  PROVIDER_ENABLED_SETTING, PROVIDER_ANSWERED_SETTING, savedOff, canOfferCheckSignIn, signInCheckText, externalSignInHint,
+  providerNotSetUp, providerUnanswered, providerAnsweredOn,
 } from '../../../src/renderer/stores/providerAccountsStore'
 // Main's own record of where Codex's on/off is saved (type-only imports: no
 // main-process code runs here).
@@ -24,6 +25,12 @@ describe('saved on/off keys', () => {
     // Both keys come from main's own type-only modules.
     expect(PROVIDER_ENABLED_SETTING.codex).toBe(CODEX_ENABLEMENT.settingsKey)
     expect(PROVIDER_ENABLED_SETTING.claude).toBe(CLAUDE_ENABLEMENT.settingsKey)
+  })
+  it('records the answer where main reads it: Codex only (Claude Code has no answer key)', () => {
+    expect(PROVIDER_ANSWERED_SETTING.codex).toBe(CODEX_ENABLEMENT.answeredKey)
+    expect(CODEX_ENABLEMENT.answeredKey).toBe('codexAnswered')
+    expect(PROVIDER_ANSWERED_SETTING.claude).toBeUndefined()
+    expect(CLAUDE_ENABLEMENT.answeredKey).toBeUndefined()
   })
   it('reads a provider as saved off only on an explicit false', () => {
     expect(savedOff({ codexEnabled: false }, 'codex')).toBe(true)
@@ -217,8 +224,29 @@ describe('row text', () => {
     [{ compatibility: 'unsupported' as const }, 'Codex 0.155.1 is not supported here', 'warn'],
     [{ compatibility: 'unknown' as const }, 'Codex 0.155.1 found', 'muted'],
     [{ enabled: false }, 'Off', 'muted'],
+    // Not answered yet (after an update, until the user says): never On, whatever discovery says.
+    [{ preference: 'undecided' as const }, 'Codex is not set up yet', 'muted'],
+    [{ preference: 'undecided' as const, discoveryState: 'unchecked' as const }, 'Codex is not set up yet', 'muted'],
   ])('states a provider %o as its own sentence', (over, text, tone) => {
     expect(providerStatus({ ...snapshot().providers[1], ...over })).toEqual({ text, tone })
+  })
+  it('only a provider whose on/off counts once answered is ever "not set up": a Claude Code preference main could not read is not', () => {
+    const [claude, codex] = snapshot().providers
+    const claudeUnread = { ...claude, preference: 'undecided' as const }
+    const codexUnanswered = { ...codex, preference: 'undecided' as const }
+    expect(providerNotSetUp(claudeUnread)).toBe(false)
+    expect(providerUnanswered({ ...snapshot(), providers: [claudeUnread, codex] }, 'claude')).toBe(false)
+    expect(providerStatus(claudeUnread)).toEqual({ text: 'Claude Code 2.1.281 - ready', tone: 'ok' })
+    expect(providerNotSetUp(codexUnanswered)).toBe(true)
+    expect(providerUnanswered({ ...snapshot(), providers: [claude, codexUnanswered] }, 'codex')).toBe(true)
+    expect(providerNotSetUp(undefined)).toBe(false)
+  })
+  it('"on, as answered": switched on and not waiting for an answer', () => {
+    const codex = snapshot().providers[1]
+    expect(providerAnsweredOn(codex)).toBe(true)
+    expect(providerAnsweredOn({ ...codex, preference: 'undecided' })).toBe(false)
+    expect(providerAnsweredOn({ ...codex, enabled: false, preference: 'off' })).toBe(false)
+    expect(providerAnsweredOn(undefined)).toBe(false)
   })
   it('turns a consumers failure into "in use" with the count, never "sessions"', () => {
     expect(accountFailureText({ ok: false, code: 'consumers', consumers: 2, message: 'x' })).toBe('This account is in use (2).')

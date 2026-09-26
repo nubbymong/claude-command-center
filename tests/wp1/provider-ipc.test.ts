@@ -73,7 +73,7 @@ const CHANNELS: Array<[string, unknown]> = [
   [IPC.PROVIDER_ACCOUNTS_LINK_IDENTITY, { accountId: ACC, identityId: IDN }],
   [IPC.PROVIDER_ACCOUNTS_UNLINK_IDENTITY, { accountId: ACC }],
   [IPC.PROVIDER_ACCOUNTS_ADOPT_EXTERNAL, { providerId: 'codex' }],
-  [IPC.PROVIDER_ACCOUNTS_RUN_MIGRATION, { providerId: 'codex' }],
+  [IPC.PROVIDER_ACCOUNTS_PROBE_EXTERNAL, { providerId: 'codex' }],
   [IPC.PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN, { accountId: ACC }],
   [IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, { identityId: IDN, field: 'friendlyName', providerId: 'claude', legacyId: 'profile-a1', keep: 'registry' }],
   [IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: 'codex', accountId: ACC }],

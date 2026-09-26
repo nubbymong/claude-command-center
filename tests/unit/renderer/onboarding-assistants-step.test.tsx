@@ -140,6 +140,8 @@ describe('Continue saves the choice the way the Providers switch does', () => {
     const s = useSettingsStore.getState().settings
     expect(s.claudeEnabled).toBe(true)
     expect(s.codexEnabled).toBe(true)
+    // The fresh install's answer to "do you use Codex?": the one-time page after an update never asks it.
+    expect(s.codexAnswered).toBe(true)
     expect(onNext).toHaveBeenCalledTimes(1)
   })
 
@@ -160,6 +162,8 @@ describe('Continue saves the choice the way the Providers switch does', () => {
     const s = useSettingsStore.getState().settings
     expect(s.claudeEnabled).toBe(true)
     expect(s.codexEnabled).toBe(false)
+    // A no is an answer too.
+    expect(s.codexAnswered).toBe(true)
   })
 
   it('moves on only once the choice is saved', async () => {

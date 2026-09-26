@@ -34,7 +34,7 @@ import type {
 import type {
   AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest,
   CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
-  ExternalDefaultOutcome, ResolveConflictRequest, SetReviewerDefaultRequest,
+  ResolveConflictRequest, SetReviewerDefaultRequest,
 } from '../shared/providers'
 
 function onChannel<T>(channel: string, cb: (data: T) => void): () => void {
@@ -610,7 +610,9 @@ export interface ElectronAPI {
     linkIdentity: (accountId: string, identityId: string) => Promise<AccountsResult>
     unlinkIdentity: (accountId: string) => Promise<AccountsResult<{ identityId: string }>>
     adoptExternal: (providerId: ProviderId) => Promise<AccountsResult<{ accountId: string }>>
-    runMigration: (providerId: ProviderId) => Promise<AccountsResult<{ outcome: ExternalDefaultOutcome }>>
+    /** Whether this computer's own sign-in of the provider is signed in,
+     *  asked without taking it in (nothing is kept). */
+    probeExternal: (providerId: ProviderId) => Promise<AccountsResult<{ state: KnownAuthState }>>
     /** "This is still my account": clears a blocked account after a fresh check. */
     reconcileSignIn: (accountId: string) => Promise<AccountsResult<{ state: KnownAuthState }>>
     resolveConflict: (req: ResolveConflictRequest) => Promise<AccountsResult>
@@ -1309,7 +1311,7 @@ const electronAPI: ElectronAPI = {
     linkIdentity: (accountId, identityId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_LINK_IDENTITY, { accountId, identityId }),
     unlinkIdentity: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_UNLINK_IDENTITY, { accountId }),
     adoptExternal: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ADOPT_EXTERNAL, { providerId }),
-    runMigration: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RUN_MIGRATION, { providerId }),
+    probeExternal: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_PROBE_EXTERNAL, { providerId }),
     reconcileSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN, { accountId }),
     resolveConflict: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, {
       identityId: req.identityId, field: req.field, providerId: req.providerId, legacyId: req.legacyId, keep: req.keep,

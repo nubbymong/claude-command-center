@@ -6,15 +6,20 @@
  *
  *  - Claude Code: absent means on; `claudeEnabled: false` refuses, in plain
  *    words.
- *  - Codex: absent means not answered yet, which main has always let launch
- *    (prepareLaunch's isEnabled); `codexEnabled: false` refuses.
+ *  - Codex: its saved on/off counts only once the user has answered in this
+ *    model (`codexAnswered: true`, owner decision 2026-09-26). Absent, or an
+ *    earlier build's `codexEnabled` without the answer, is "not answered
+ *    yet", which is now REFUSED as not set up (it used to launch);
+ *    `codexEnabled: false` answered refuses as off.
  *  - A saved setting that cannot be read refuses (fail closed), even when an
  *    earlier read said on; so does an accounts service that does not exist.
  *  - A switch-off made in Settings refuses at once, before the saved setting
  *    catches up.
  *  - The renderer's launch rule (isConfigLaunchBlocked) agrees with main on
- *    every combination of the two saved switches, and its Claude-off sentence
- *    is main's.
+ *    every combination of the two saved switches once Codex is answered, and
+ *    its Claude-off sentence is main's. Unanswered, the renderer sends a Codex
+ *    launch straight to main (providerOffForLaunch: it asks nothing), and
+ *    main refuses it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CLAUDE_ENABLEMENT } from '../../../src/main/providers/claude/enablement'
@@ -74,23 +79,45 @@ describe('providerLaunchRefusal', () => {
     expect(providerLaunchRefusal('codex')?.code).toBe('provider-state-unknown')
   })
 
-  it('a fresh install (no settings file): Claude Code is on, Codex not answered yet -- both launch', () => {
+  it('a fresh install (no settings file): Claude Code is on and launches; Codex is not answered yet, so it is refused as not set up', () => {
     initProviderAccounts()
     disk.settings = 'absent'
     expect(providerLaunchRefusal('claude')).toBeNull()
+    expect(providerLaunchRefusal('codex')).toEqual({
+      code: 'provider-not-set-up', providerId: 'codex', message: 'Codex is not set up yet. Set it up in Settings, Accounts.',
+    })
+  })
+
+  it('an earlier build\'s Codex setting does not count until the user answers: on or off, Codex is not set up', () => {
+    initProviderAccounts()
+    for (const codexEnabled of [true, false]) {
+      disk.settings = { codexEnabled }
+      expect(providerLaunchRefusal('codex')?.code, String(codexEnabled)).toBe('provider-not-set-up')
+      // An answer that is not a plain true is no answer either.
+      disk.settings = { codexEnabled, codexAnswered: 'yes' }
+      expect(providerLaunchRefusal('codex')?.code, String(codexEnabled)).toBe('provider-not-set-up')
+    }
+    // Claude Code has no answer key: its absent value is on, unaffected.
+    disk.settings = { codexEnabled: true }
+    expect(providerLaunchRefusal('claude')).toBeNull()
+    // Answered yes: Codex launches.
+    disk.settings = { codexEnabled: true, codexAnswered: true }
     expect(providerLaunchRefusal('codex')).toBeNull()
+    // Answered, with no on/off saved (a hand-edited file): still not set up.
+    disk.settings = { codexAnswered: true }
+    expect(providerLaunchRefusal('codex')?.code).toBe('provider-not-set-up')
   })
 
   it('claudeEnabled: false refuses Claude Code with the plain sentence, and nothing else', () => {
     initProviderAccounts()
-    disk.settings = { claudeEnabled: false, codexEnabled: true }
+    disk.settings = { claudeEnabled: false, codexEnabled: true, codexAnswered: true }
     expect(providerLaunchRefusal('claude')).toEqual({ code: 'provider-off', providerId: 'claude', message: 'Claude Code is off. Turn it on in Settings, Accounts.' })
     expect(providerLaunchRefusal('codex')).toBeNull()
   })
 
   it('codexEnabled: false refuses Codex with the plain sentence, and nothing else', () => {
     initProviderAccounts()
-    disk.settings = { codexEnabled: false }
+    disk.settings = { codexEnabled: false, codexAnswered: true }
     expect(providerLaunchRefusal('codex')).toEqual({ code: 'provider-off', providerId: 'codex', message: 'Codex is off. Turn it on in Settings, Accounts.' })
     expect(providerLaunchRefusal('claude')).toBeNull()
   })
@@ -106,11 +133,11 @@ describe('providerLaunchRefusal', () => {
 
   it('a switch-off made in Settings refuses at once, before the saved setting catches up', async () => {
     const service = initProviderAccounts()
-    disk.settings = { claudeEnabled: true, codexEnabled: true }
+    disk.settings = { claudeEnabled: true, codexEnabled: true, codexAnswered: true }
     expect((await service.setProviderEnabled('claude', false)).ok).toBe(true)
     expect(providerLaunchRefusal('claude')?.code).toBe('provider-off')
     // ...and once the saved setting reads back off, it still refuses.
-    disk.settings = { claudeEnabled: false, codexEnabled: true }
+    disk.settings = { claudeEnabled: false, codexEnabled: true, codexAnswered: true }
     expect(providerLaunchRefusal('claude')?.code).toBe('provider-off')
   })
 })
@@ -128,7 +155,7 @@ describe('a probe asks the same rule, but only a launch is logged', () => {
 
   it('the probe form answers exactly as the launch form', () => {
     initProviderAccounts()
-    for (const s of [{}, { claudeEnabled: false }, { codexEnabled: false }, 'failed'] as const) {
+    for (const s of [{}, { claudeEnabled: false }, { codexEnabled: false }, { codexEnabled: false, codexAnswered: true }, 'failed'] as const) {
       disk.settings = s as never
       for (const id of ['claude', 'codex'] as const) expect(providerProbeRefusal(id), JSON.stringify(s) + id).toEqual(providerLaunchRefusal(id))
     }
@@ -145,6 +172,10 @@ describe('launchRefusalOf reads a refusal off an IPC answer, and nothing else', 
     const r = { code: 'provider-off', providerId: 'codex', message: 'Codex is off. Turn it on in Settings, Accounts.' }
     expect(launchRefusalOf({ started: false, refused: r })).toEqual(r)
     expect(launchRefusalOf({ refused: r })).toEqual(r)
+    // Not set up yet reaches the tab too, in main's words.
+    const unset = { code: 'provider-not-set-up', providerId: 'codex', message: 'Codex is not set up yet. Set it up in Settings, Accounts.' }
+    expect(launchRefusalOf({ started: false, refused: unset })).toEqual(unset)
+    expect(refusedTabText(unset)).toBe('Not started. Codex is not set up yet. Set it up in Settings, Accounts, then Restart this tab.')
   })
   it('anything else reads as no refusal', () => {
     for (const v of [undefined, null, 'run-1', { started: false }, { id: 'agent-1' }, { refused: null },
@@ -156,14 +187,16 @@ describe('launchRefusalOf reads a refusal off an IPC answer, and nothing else', 
 })
 
 describe("the renderer's launch rule agrees with main's", () => {
-  const values = [undefined, true, false] as const
-  for (const claudeEnabled of values) {
+  // Codex answered (codexAnswered), as every install is once past the
+  // one-time question; the unanswered state is the next test's.
+  const values = [true, false] as const
+  for (const claudeEnabled of [undefined, true, false] as const) {
     for (const codexEnabled of values) {
-      it(`claudeEnabled=${String(claudeEnabled)}, codexEnabled=${String(codexEnabled)}`, () => {
+      it(`claudeEnabled=${String(claudeEnabled)}, codexEnabled=${String(codexEnabled)} (answered)`, () => {
         initProviderAccounts()
-        const saved: Record<string, unknown> = {}
+        const saved: Record<string, unknown> = { codexAnswered: true }
         if (claudeEnabled !== undefined) saved.claudeEnabled = claudeEnabled
-        if (codexEnabled !== undefined) saved.codexEnabled = codexEnabled
+        saved.codexEnabled = codexEnabled
         disk.settings = saved
         for (const provider of ['claude', 'codex'] as const) {
           const main = providerLaunchRefusal(provider) !== null
@@ -173,6 +206,19 @@ describe("the renderer's launch rule agrees with main's", () => {
       })
     }
   }
+
+  it('unanswered, whatever an earlier build saved: main refuses Codex as not set up, and the renderer sends the launch straight to it', async () => {
+    const { providerOffForLaunch } = await import('../../../src/renderer/utils/launchAccount')
+    const service = initProviderAccounts()
+    for (const codexEnabled of [undefined, true, false]) {
+      disk.settings = codexEnabled === undefined ? {} : { codexEnabled }
+      expect(providerLaunchRefusal('codex')?.code, String(codexEnabled)).toBe('provider-not-set-up')
+      // The account list main publishes says so, and a launch asks nothing first.
+      expect(providerOffForLaunch('codex', service.snapshot()), String(codexEnabled)).toBe(true)
+      // Claude Code is unaffected.
+      expect(providerLaunchRefusal('claude')).toBeNull()
+    }
+  })
 
   it("the renderer's Claude-off sentence is main's", () => {
     initProviderAccounts()

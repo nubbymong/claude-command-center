@@ -83,11 +83,11 @@ describe('pickBootGate — the tour and the first-config dialog own turns (#609)
     // input that can produce an unknown value fails here.
     const known = new Set([
       'logsWipe', 'onboarding', 'training', 'guidedTour', 'guidedConfig',
-      'githubOnboarding', 'loggingConsent', 'resume', 'multiSpawnIntro', 'helloCodex',
+      'githubOnboarding', 'codexReconfirm', 'loggingConsent', 'resume', 'multiSpawnIntro', 'helloCodex',
     ])
     const flags = [
       'onboardingDue', 'showTraining', 'showTrainingAll', 'tourActive', 'showGuidedConfig',
-      'showGitHubOnboarding', 'loggingConsentSeen', 'resumePending',
+      'showGitHubOnboarding', 'codexReconfirmDue', 'loggingConsentSeen', 'resumePending',
       'multiSpawnIntroDue', 'helloCodexOpen', 'whatsNewDue', 'trainingDue', 'githubOnboardingDue',
     ] as const
     for (let mask = 0; mask < (1 << flags.length); mask++) {
@@ -246,7 +246,7 @@ describe('pickBootGate: the Codex introduction takeover', () => {
   it('waits for every gate above it, the Multi Spawn page included', () => {
     for (const over of [
       { onboardingDue: true }, { showTraining: true }, { tourActive: true }, { showGuidedConfig: true },
-      { showGitHubOnboarding: true }, { loggingConsentSeen: false }, { resumePending: true }, { multiSpawnIntroDue: true },
+      { showGitHubOnboarding: true }, { codexReconfirmDue: true }, { loggingConsentSeen: false }, { resumePending: true }, { multiSpawnIntroDue: true },
     ] as Partial<BootGateState>[]) {
       const gate = pickBootGate(makeState({ helloCodexOpen: true, ...over }))
       expect(gate, JSON.stringify(over)).not.toBe('helloCodex')

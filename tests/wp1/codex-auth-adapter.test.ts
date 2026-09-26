@@ -824,3 +824,44 @@ describe('the sign-in output redactor', () => {
     expect(() => { r.push('a\nb'); r.flush() }).not.toThrow()
   })
 })
+
+// ADR-009 (C3): a status check can be stopped (AuthStatusOptions.signal).
+// Stopped before its run starts, it is refused as cancelled and no process is
+// started; stopped while it runs, the signal is the runner's (the real runner
+// kills the run on it), and the stopped run's answer is never a state.
+describe('a status check that is stopped', () => {
+  it('stopped before its run starts: refused as cancelled, and no process is started', async () => {
+    const w = world()
+    w.signedIn.set(HOME_A, 'chatgpt')
+    const stop = new AbortController()
+    stop.abort()
+    expect(await w.ops.status(MANAGED, { signal: stop.signal })).toMatchObject({ ok: false, state: 'error', code: 'cancelled' })
+    expect(w.runs).toEqual([])
+  })
+
+  it('stopped while it runs: the run is handed the signal, ends on it, and reports no state', async () => {
+    // As the real runner does: a run whose signal aborts is killed and settles
+    // as cancelled. A run that was never handed the signal answers normally.
+    const w = world({}, { 'login status': (r) => new Promise((resolve) => {
+      const signal = r.opts.signal
+      if (!signal) { setTimeout(() => resolve({ exitCode: 0, stderr: 'Logged in using ChatGPT\n' }), 5); return }
+      signal.addEventListener('abort', () => resolve({ exitCode: null, spawnError: 'cancelled', stopped: 'cancel' }), { once: true })
+    }) })
+    const stop = new AbortController()
+    const check = w.ops.status(MANAGED, { signal: stop.signal })
+    for (let i = 0; i < 100 && w.runs.length === 0; i++) await new Promise((r) => setTimeout(r, 0))
+    expect(argsOf(w.runs)).toEqual(['login status'])
+    stop.abort()
+    const out = await check
+    expect(w.runs[0].opts.signal).toBe(stop.signal)
+    expect(out).toMatchObject({ ok: false, state: 'error' })
+    expect(out.state).not.toBe('signed-in')
+  })
+
+  it('without a signal, a status check runs as before', async () => {
+    const w = world()
+    w.signedIn.set(HOME_A, 'chatgpt')
+    expect(await w.ops.status(MANAGED)).toEqual(SIGNED_IN_ACCOUNT)
+    expect(w.runs[0].opts.signal).toBeUndefined()
+  })
+})

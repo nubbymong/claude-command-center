@@ -31,23 +31,22 @@ import {
   recordProviderMigration, resolveLaunchBinding, findAccount, findRealm, findIdentity, isLegacyLinked,
   resolveCapability, makeOpaqueId, providerRealmKind, isIdentityColourKey,
   MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY, providerOffMessage, providerStateUnknownMessage,
+  providerNotSetUpMessage,
 } from '../../../shared/providers'
 import type {
   ProviderId, ProviderRegistryDoc, RegistryResult, AuthMethod, KnownAuthState, AccountLifecycle, SessionBinding,
   CapabilityKey, CapabilityPlatform, ScopedCapabilityKey, ProviderPreference, SignInMethod, AccountsSnapshot, AccountsFailure,
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
-  SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, ExternalDefaultOutcome, CredentialClass,
+  SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
 } from '../../../shared/providers'
-import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, InstallRecipe } from './package'
+import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, InstallRecipe, ExternalDefaultRealmSpec } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
 import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './consumer-leases'
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
 import type { SecretHandleStore } from './secret-handles'
-import { migrateExternalDefaultRealm } from './external-default-migration'
 import { realmEnvForProvider } from './registry'
 import { recipeRunLine } from './recipe-run-line'
-import type { ExternalDefaultMigrationOutcome } from './external-default-migration'
 
 export interface AccountsServiceDeps {
   /** The registry of the app's CURRENT resources directory, asked afresh
@@ -112,6 +111,7 @@ const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
   'unsupported': 'This provider does not offer that here.',
   'capability-disabled': 'That is not available for this provider yet.',
   'provider-disabled': 'This provider is turned off.',
+  'provider-not-set-up': 'This provider is not set up yet. Set it up in Settings, Accounts.',
   'provider-state-unknown': 'This app could not read whether this provider is on, so nothing was started.',
   'last-provider': 'At least one provider must stay on.',
   'consumers': 'Sessions or operations are using this account.',
@@ -186,8 +186,6 @@ export class AccountsService {
   private readonly installations = new Map<ProviderId, DiscoveryResult>()
   private readonly signIns = new Map<string, SignInRun>()
   private readonly signedInWith = new Map<string, SignInMethod>()
-  // Typed by the shared view union: a core outcome it lacks fails to compile.
-  private readonly migrationRuns = new Map<ProviderId, ExternalDefaultOutcome>()
   /** Reviewer choices cleared at start-up because they can never run here
    *  (clearUnusableReviewerDefaults); shown once, removed by a new choice. */
   private readonly reviewerNotices = new Map<ProviderId, { message: string; store: AccountRegistryStore }>()
@@ -203,6 +201,14 @@ export class AccountsService {
   private readonly savedAtLastChange = new Map<ProviderId, ProviderPreference>()
   /** Status checks running now, by account (refreshStatus joins one). */
   private readonly statusChecks = new Map<string, Promise<AccountsResult<{ state: KnownAuthState }>>>()
+  /** Reservations of a provider's own default home this service holds now
+   *  (externalDefaultStatus), until committed or dropped: the sweep of the
+   *  ones an earlier run left (dropLeftoverExternalReservations) never takes
+   *  one that is running. */
+  private readonly externalReservations = new Set<string>()
+  /** Read-only checks of a provider's own home running now, by provider: a
+   *  switch-off, or an answer lost, stops them (stopChecks). */
+  private readonly checkRuns = new Map<AbortController, ProviderId>()
   private opSeq = 0
   private subscribedStore: AccountRegistryStore | null = null
   private unsubscribeStore: (() => void) | null = null
@@ -241,9 +247,13 @@ export class AccountsService {
   /** The preference in force. A switch made here is held until the saved
    *  setting reads back the same, and it fails closed: a switch-OFF made
    *  here stands until then, whatever else is saved meanwhile; a switch-ON
-   *  made here gives way to any saved "off" and to any other change since.
-   *  A read that fails says nothing: it neither clears a switch nor turns a
-   *  provider back on (the last value read stands). */
+   *  made here gives way to any saved "off" and to any other change since,
+   *  and never stands for a package whose on/off counts only once answered
+   *  (Codex) while the saved setting still reads "not answered yet": the
+   *  user's yes is the saved answer, which the renderer writes right after
+   *  the switch (owner decision 2026-09-26). A read that fails says nothing:
+   *  it neither clears a switch nor turns a provider back on (the last value
+   *  read stands). */
   preferenceOf(providerId: ProviderId): ProviderPreference {
     return this.preferenceFrom(providerId, this.savedPreference(providerId))
   }
@@ -253,7 +263,12 @@ export class AccountsService {
     const o = this.enabledOverride.get(providerId)
     if (o === undefined) return saved.pref
     const mine: ProviderPreference = o.enabled ? 'on' : 'off'
-    if (!saved.fresh) return mine
+    // A switch-on made here is held, but it is not an answer: for a package
+    // whose on/off counts only once answered, while the last value read is
+    // "not answered yet" (read now, or the last read before one failed), it
+    // stays that until the saved yes reads back.
+    const unanswered = o.enabled && saved.pref === 'undecided' && this.pkg(providerId)?.enablement?.answeredKey !== undefined
+    if (!saved.fresh) return unanswered ? 'undecided' : mine
     if (saved.pref === mine) {
       this.enabledOverride.delete(providerId)
       return saved.pref
@@ -263,6 +278,7 @@ export class AccountsService {
       this.enabledOverride.delete(providerId)
       return saved.pref
     }
+    if (unanswered) return 'undecided'
     return mine
   }
 
@@ -277,27 +293,55 @@ export class AccountsService {
     }
   }
 
-  /** Enabled unless explicitly off: an existing user who never answered
-   *  keeps working as before (the migration alone waits for an answer). */
+  /** Not switched off: the Accounts surface can manage the provider's
+   *  accounts, and adding one is how an unanswered user can say yes (the
+   *  renderer saves that yes first). Starting the provider's CLI for the
+   *  user is launchRefusal's rule, which refuses "not answered yet" too. */
   isEnabled(providerId: ProviderId): boolean {
     return this.preferenceOf(providerId) !== 'off'
+  }
+
+  /** Why the provider's CLI may not run for an account now, or null when it
+   *  may. Not switched off (isEnabled) is enough to manage its accounts;
+   *  running its CLI (a sign-in, a status check, a sign-out), or reserving a
+   *  new account for one, starts the provider, so the launch rule decides
+   *  (launchRefusal): off refuses; a saved setting that cannot be read now
+   *  refuses as unknown, never as "not set up" (no answer is never a yes);
+   *  and a provider the user has not said they use refuses as not set up
+   *  (owner decision 2026-09-26: nothing of it starts), which only a package
+   *  whose absent value is "not answered yet" can be on a fresh read. The
+   *  add-account dialog records the yes before it begins a setup, runs a
+   *  sign-in (a resumed setup's too) or finishes one, and the Set up Codex
+   *  page follows a yes; anything else (an account row's Check sign-in, Sign
+   *  out, Sign in again or Discard) is refused until the user answers, as
+   *  off refuses it. */
+  private cliRefusal(providerId: ProviderId): AccountsFailure | null {
+    const refused = this.launchRefusal(providerId)
+    if (!refused) return null
+    if (refused.code === 'provider-off') return failure('provider-disabled')
+    if (refused.code === 'provider-not-set-up') return failure('provider-not-set-up', refused.message)
+    return failure('provider-state-unknown', refused.message)
   }
 
   /** Why a launch of this provider may not start now, or null when it may:
    *  the one rule every path that starts a provider's CLI for the user asks
    *  (through src/main/provider-launch-gate.ts), before any process starts.
-   *  The preference in force decides, as isEnabled does: off refuses, while
-   *  on and not-answered-yet do not (a user who never answered keeps
-   *  launching, as prepareLaunch has always allowed). One difference: a
-   *  saved setting that cannot be read NOW refuses. The last value read
-   *  stands for the Accounts surface; for starting a process, no answer is
-   *  never a yes. A provider this app does not know refuses too. */
+   *  The preference in force decides: off refuses, and so does not answered
+   *  yet (owner decision 2026-09-26: a provider the user has not said they
+   *  use is not set up, so nothing of it starts). Only a package whose
+   *  absent value is "not answered yet" can be unanswered on a fresh
+   *  read; Claude Code's absent value is on, and it is unaffected. A saved
+   *  setting that cannot be read NOW refuses too. The last value read stands
+   *  for the Accounts surface; for starting a process, no answer is never a
+   *  yes. A provider this app does not know refuses too. */
   launchRefusal(providerId: ProviderId): ProviderLaunchRefusal | null {
     const p = this.pkg(providerId)
     if (!p) return { code: 'provider-state-unknown', providerId, message: providerStateUnknownMessage(String(providerId)) }
     const saved = this.savedPreference(providerId)
-    if (this.preferenceFrom(providerId, saved) === 'off') return { code: 'provider-off', providerId, message: providerOffMessage(p.displayName) }
+    const pref = this.preferenceFrom(providerId, saved)
+    if (pref === 'off') return { code: 'provider-off', providerId, message: providerOffMessage(p.displayName) }
     if (!saved.fresh) return { code: 'provider-state-unknown', providerId, message: providerStateUnknownMessage(p.displayName) }
+    if (pref === 'undecided') return { code: 'provider-not-set-up', providerId, message: providerNotSetUpMessage(p.displayName) }
     return null
   }
 
@@ -352,10 +396,8 @@ export class AccountsService {
     }))
     const externalDefaults: ExternalDefaultView[] = packages.filter((p) => p.externalDefaultRealm).map((p) => {
       const m = doc?.migrations.find((x) => x.providerId === p.id && x.step === 'external-default')
-      const view: ExternalDefaultView = { providerId: p.id, needsConfirmation: !m && this.preferenceOf(p.id) === 'undecided' }
+      const view: ExternalDefaultView = { providerId: p.id }
       if (m) view.marker = { outcome: m.outcome, at: m.at, ...(m.reason ? { reason: m.reason } : {}) }
-      const run = this.migrationRuns.get(p.id)
-      if (run) view.lastRun = run
       return view
     })
     return {
@@ -431,7 +473,16 @@ export class AccountsService {
    *  snapshot is published again with what the service now answers. */
   settingsChanged(): void {
     this.discoverSwitchedOn()
+    this.stopChecks()
     this.changed()
+  }
+
+  /** Stops every read-only check of a provider's own home (of this provider,
+   *  or of any) whose CLI may not run now: switched off, not answered, or a
+   *  setting that cannot be read. One still being prepared starts no CLI,
+   *  one running is stopped, and its answer is no answer. */
+  private stopChecks(providerId?: ProviderId): void {
+    for (const [stop, id] of this.checkRuns) if ((providerId === undefined || id === providerId) && this.cliRefusal(id)) stop.abort()
   }
 
   /** A provider whose SAVED on/off has just become on is looked for once,
@@ -501,7 +552,7 @@ export class AccountsService {
   /** One discovery per provider at a time: a caller while one runs joins it,
    *  so what this service records (`installations`) and what the package
    *  proved come from the same run, whoever asked (Check again, the start-up
-   *  look, an operation, the start-up migration). */
+   *  look, an operation). */
   private discoverOnce(p: ProviderPackage): Promise<DiscoveryResult> {
     const running = this.discoveries.get(p.id)
     if (running) return running
@@ -537,7 +588,11 @@ export class AccountsService {
     // that cannot be read now (no answer is never a yes).
     const refused = this.launchRefusal(p.id)
     // Check again is on Settings, Accounts itself: say what happened, not where to look.
-    if (refused) return refused.code === 'provider-off' ? failure('provider-disabled') : failure('provider-state-unknown', `This app could not read its settings file, so it did not check ${p.displayName}. Try again, or restart the app.`)
+    if (refused) {
+      if (refused.code === 'provider-off') return failure('provider-disabled')
+      if (refused.code === 'provider-not-set-up') return failure('provider-not-set-up', `${p.displayName} is not set up yet, so it was not checked. Turn it on first.`)
+      return failure('provider-state-unknown', `This app could not read its settings file, so it did not check ${p.displayName}. Try again, or restart the app.`)
+    }
     await this.discoverOnce(p)
     return { ok: true, installation: this.installationView(p) }
   }
@@ -566,8 +621,11 @@ export class AccountsService {
   /** Main's side of turning a provider on or off (A4): checked here, under
    *  the registry lock that lease acquisition takes, then held in memory as
    *  the authority for new leases until the renderer's saved setting is read
-   *  back. Disabling is refused while anything of the provider runs, or when
-   *  it is the last provider on. */
+   *  back. A switch-on of a provider the user has not answered for counts
+   *  only once that saved answer reads back (preferenceFrom). Disabling is
+   *  refused while anything of the provider runs (a read-only check of its
+   *  own home holds nothing, and never blocks it), or when it is the last
+   *  provider on. */
   async setProviderEnabled(providerId: ProviderId, enabled: boolean): Promise<AccountsResult> {
     const p = this.pkg(providerId)
     if (!p) return failure('not-found')
@@ -580,7 +638,10 @@ export class AccountsService {
       try { unleased = this.deps.unleasedSessions?.(providerId) ?? 0 } catch { unleased = 1 }
       const running = this.deps.leases.countForProvider(providerId) + (Number.isSafeInteger(unleased) && unleased > 0 ? unleased : 0)
       if (running > 0) return failure('consumers', undefined, { consumers: running })
-      const others = this.deps.packages().some((q) => q.id !== providerId && this.isEnabled(q.id))
+      // Another provider that can launch: on, not merely "not off". One the
+      // user has not answered for launches nothing (launchRefusal), so it
+      // never lets the last provider that can be switched off.
+      const others = this.deps.packages().some((q) => q.id !== providerId && this.preferenceOf(q.id) === 'on')
       if (!others) return failure('last-provider')
       this.enabledOverride.set(providerId, { enabled: false, savedAtSet: this.savedPreference(providerId).pref })
       return { ok: true }
@@ -588,7 +649,9 @@ export class AccountsService {
     const store = this.currentStore()
     const r = store ? await store.exclusive(apply) : apply()
     // A switch-on starts no CLI here: the save that records it looks for the
-    // CLI (settingsChanged), so a switch-on never saved starts nothing.
+    // CLI (settingsChanged), so a switch-on never saved starts nothing. A
+    // switch-off stops a read-only check of the provider's home at once.
+    if (r.ok && !enabled) this.stopChecks(providerId)
     if (r.ok) this.changed()
     return r
   }
@@ -625,7 +688,8 @@ export class AccountsService {
   async beginSetup(input: { providerId: ProviderId; method: SignInMethod }): Promise<AccountsResult<{ accountId: string }>> {
     const p = this.pkg(input.providerId)
     if (!p || !this.managesAccounts(p)) return failure('unsupported')
-    if (!this.isEnabled(p.id)) return failure('provider-disabled')
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow
     const refused = this.methodAllowed(p, input.method)
     if (refused) return refused
     const ready = this.ready()
@@ -661,7 +725,12 @@ export class AccountsService {
     const p = this.pkg(j ? j.providerId : existing!.providerId)
     if (!p || !this.managesAccounts(p)) return failure('unsupported')
     if (existing && (existing.lifecycle === 'archived' || findRealm(ready.doc, existing.authRealmId)?.ownership !== 'conductor-managed')) return failure('unsupported')
-    if (!this.isEnabled(p.id)) return failure('provider-disabled')
+    if (j && findRealm(ready.doc, j.realmId)?.ownership !== 'conductor-managed') return failure('unsupported')
+    // The key is for a sign-in, which runs the provider's CLI: taken only
+    // when that sign-in could run (the add-account dialog records the yes
+    // before the key is handed over).
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow
     const refused = this.methodAllowed(p, 'apiKey')
     if (refused) return refused
     const handle = this.deps.secrets.issue({ accountId: input.accountId, senderId })
@@ -692,7 +761,8 @@ export class AccountsService {
     const p = this.pkg(j.providerId)
     const realm = findRealm(ready.doc, j.realmId)
     if (!p || !this.managesAccounts(p) || realm?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
-    if (!this.isEnabled(p.id)) return refuse(failure('provider-disabled'))
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return refuse(notNow)
     const refused = this.methodAllowed(p, input.method)
     if (refused) return refuse(refused)
     const inFlight = this.signIns.get(j.accountId)
@@ -715,12 +785,12 @@ export class AccountsService {
     let result: AuthOperationResult = { ok: false, code: 'not-started' }
     try {
       const leased = await ready.store.exclusive(() => {
-        if (!this.isEnabled(p.id)) return null
+        if (this.cliRefusal(p.id)) return null
         // A completion (or any operation) running on this setup excludes it.
         if (this.deps.leases.countKind(j.accountId, 'operation') > 0) return { ok: false as const, code: 'held' as const }
         return this.deps.leases.add(j.accountId, j.providerId, { kind: 'sign-in', ownerId: j.accountId, webContentsId: senderId })
       })
-      if (leased === null) refusal = failure('provider-disabled')
+      if (leased === null) refusal = this.cliRefusal(p.id) ?? failure('provider-disabled')
       // Never release a lease this call did not create (`existing` is another run's).
       else if (!leased.ok || leased.existing) refusal = failure('busy')
       else {
@@ -805,7 +875,8 @@ export class AccountsService {
     let observedClass: CredentialClass | undefined
     try {
       const leased = await ctx.store.exclusive((): { refused: AccountsFailure } | { added: ReturnType<ConsumerLeaseRegistry['add']> } => {
-        if (!this.isEnabled(p.id)) return { refused: failure('provider-disabled') }
+        const notNow = this.cliRefusal(p.id)
+        if (notNow) return { refused: notNow }
         // Nothing may be using the account while its sign-in is replaced.
         const using = this.deps.leases.count(a.id)
         if (using > 0) return { refused: failure('consumers', undefined, { consumers: using }) }
@@ -891,11 +962,15 @@ export class AccountsService {
     if (!j) return failure('not-found')
     const p = this.pkg(j.providerId)
     if (!p?.auth) return failure('unsupported')
-    if (!this.isEnabled(p.id)) return failure('provider-disabled')
+    // Only a setup of an account this app manages is finished here. The
+    // provider's own default home is taken in by adoptExternalDefault alone
+    // (the user's "Use this sign-in"): its reservation, a check's or an
+    // adoption's, running now or left by an earlier run, is never committed.
+    if (findRealm(ready.doc, j.realmId)?.ownership !== 'conductor-managed' || this.externalReservations.has(j.accountId)) return failure('unsupported')
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow
     if (!this.capability(p, 'auth.status').enabled) return failure('capability-disabled')
     if (this.signIns.has(j.accountId)) return failure('busy')
-    const external = findRealm(ready.doc, j.realmId)?.ownership === 'external-default'
-    if (external && input.identity.mode === 'link') return failure('not-linkable', 'An unverified external sign-in keeps its own identity.')
     if (input.identity.mode === 'new' && !isIdentityColourKey(input.identity.colourKey)) return failure('invalid-value', 'That colour is not available.')
     // Held for the check and the commit: an abandon or a sign-in cannot run
     // meanwhile, and one already running refuses this.
@@ -912,10 +987,10 @@ export class AccountsService {
       // (a setup finished after a restart), so the record keeps a kind of
       // credential the next check can compare.
       const began = SIGN_IN_METHODS.includes(j.method as SignInMethod) ? j.method as SignInMethod : undefined
-      const authMethod = external ? (status.credential === 'api-key' ? 'apiKey' : status.credential === 'account' ? 'external' : 'unknown') : methodFromCredential(status.credential, this.signedInWith.get(j.accountId) ?? began)
+      const authMethod = methodFromCredential(status.credential, this.signedInWith.get(j.accountId) ?? began)
       const committed = await ready.store.mutate((d, t) => chain(d, [
         ...(choice.mode === 'new' ? [(x: ProviderRegistryDoc) => createIdentity(x, { id: identityId, friendlyName: choice.friendlyName, colourKey: choice.colourKey, ...(choice.groupId !== undefined ? { groupId: choice.groupId } : {}) }, t)] : []),
-        (x) => commitAccountSetup(x, j.accountId, { identityId, authMethod, lastKnownAuthState: 'signed-in', identityAssurance: external ? 'realm-only' : 'user-asserted' }, t),
+        (x) => commitAccountSetup(x, j.accountId, { identityId, authMethod, lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted' }, t),
       ]))
       const bad = this.fromStore(committed)
       if (bad) return bad
@@ -942,11 +1017,13 @@ export class AccountsService {
     if (runsCli) {
       // Signing the realm out needs the provider's CLI: the setup is kept
       // (visible, retryable) rather than its folder left unchecked.
-      if (!this.isEnabled(j.providerId)) return failure('provider-disabled')
+      const notNow = this.cliRefusal(j.providerId)
+      if (notNow) return notNow
       if (!this.capability(p!, 'auth.status').enabled || !this.capability(p!, 'auth.logout').enabled) return failure('capability-disabled')
     }
     const release = await ready.store.exclusive((): (() => void) | AccountsFailure => {
-      if (runsCli && !this.isEnabled(j.providerId)) return failure('provider-disabled')
+      const notNow = runsCli ? this.cliRefusal(j.providerId) : null
+      if (notNow) return notNow
       return this.deps.leases.hold(j.accountId, j.providerId) ?? failure('busy')
     })
     if (typeof release !== 'function') return release
@@ -992,7 +1069,8 @@ export class AccountsService {
    *  provider offers it, the account is not archived and its realm is live
    *  (an archived external record names the same home a newer account may
    *  use -- its leases are that account's, not this one's), the provider is
-   *  on, and every capability the operation uses is enabled. */
+   *  on and answered (cliRefusal), and every capability the operation uses
+   *  is enabled. */
   private runnable(
     ctx: { p: ProviderPackage | null; realmActive: boolean },
     a: { lifecycle: AccountLifecycle; providerId: ProviderId },
@@ -1000,18 +1078,20 @@ export class AccountsService {
   ): AccountsFailure | null {
     if (!ctx.p?.auth) return failure('unsupported')
     if (a.lifecycle === 'archived' || !ctx.realmActive) return failure('lifecycle', 'This account is archived; nothing runs on it here.')
-    if (!this.isEnabled(a.providerId)) return failure('provider-disabled')
+    const notNow = this.cliRefusal(a.providerId)
+    if (notNow) return notNow
     for (const c of caps) if (!this.capability(ctx.p, c).enabled) return failure('capability-disabled')
     return null
   }
 
   /** Take an operation lease under the registry lock -- only while the
-   *  provider is on and nothing holds the account (nor, for a setup, a
-   *  sign-in runs on it) -- or say why not. */
+   *  provider is on and answered (cliRefusal) and nothing holds the account
+   *  (nor, for a setup, a sign-in runs on it) -- or say why not. */
   private async operationLease(store: AccountRegistryStore, accountId: string, providerId: ProviderId): Promise<AccountLease | AccountsFailure> {
     const ownerId = `op-${++this.opSeq}`
     return store.exclusive((): AccountLease | AccountsFailure => {
-      if (!this.isEnabled(providerId)) return failure('provider-disabled')
+      const notNow = this.cliRefusal(providerId)
+      if (notNow) return notNow
       if (this.signIns.has(accountId)) return failure('busy')
       const r = this.deps.leases.add(accountId, providerId, { kind: 'operation', ownerId })
       return r.ok ? r.lease : failure('busy')
@@ -1021,8 +1101,10 @@ export class AccountsService {
   /** Take the account exclusively under the registry lock, or say why not. */
   private async exclusiveHold(store: AccountRegistryStore, accountId: string, providerId: ProviderId): Promise<(() => void) | AccountsFailure> {
     const r = await store.exclusive(() => {
-      // Under the lock a switch-off takes: never both.
-      if (!this.isEnabled(providerId)) return failure('provider-disabled')
+      // Under the lock a switch-off takes: never both. What runs under this
+      // hold (a sign-out, an archive's check) runs the CLI: cliRefusal.
+      const notNow = this.cliRefusal(providerId)
+      if (notNow) return notNow
       const release = this.deps.leases.hold(accountId, providerId)
       return release ?? (this.deps.leases.count(accountId) > 0 ? failure('consumers', undefined, { consumers: this.deps.leases.count(accountId) }) : failure('busy'))
     })
@@ -1114,7 +1196,8 @@ export class AccountsService {
   ): Promise<AccountsFailure | null> {
     // Blocked is sticky: an account already blocked stays refused, answer or not.
     const blocked = () => (store.current() && findAccount(store.current()!, accountId)?.operationalState === 'blocked' ? failure('sign-in-changed') : null)
-    if (!this.isEnabled(p.id)) return opts.unansweredBlocks ? failure('provider-disabled') : blocked()
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return opts.unansweredBlocks ? notNow : blocked()
     if (!this.capability(p, 'auth.status').enabled) return opts.unansweredBlocks ? failure('capability-disabled') : blocked()
     await this.ensureDiscovered(p)
     const status = await p.auth!.status({ authRealmId: realmId }).catch((): AuthOperationResult & { state: KnownAuthState } => ({ ok: false, code: 'not-started', state: 'error' }))
@@ -1435,72 +1518,169 @@ export class AccountsService {
   // The provider's own default sign-in (6.3, 9.3)
   // -------------------------------------------------------------------------
 
-  /** The one-time start-up adoption, run again after the user answers. */
-  async migrateExternalDefault(providerId: ProviderId): Promise<AccountsResult<{ outcome: ExternalDefaultMigrationOutcome }>> {
+  /** The status of the provider's own default home, the step "use my existing
+   *  sign-in" and its read-only check share. Refused, before anything is
+   *  reserved or written, unless the provider's CLI may run now (cliRefusal:
+   *  on, answered, and read just now) and it can report status. The run
+   *  needs a realm to run in, so an account and realm are reserved for the
+   *  home first (which also keeps a second run from overlapping it). The
+   *  adoption asks the status under an operation lease, so a switch-off waits
+   *  for it; the read-only check (`readOnly`) holds none, so switching the
+   *  provider off never waits for a check, and whether the CLI may run is
+   *  asked again just before and just after its status runs: a refusal then
+   *  makes its answer no answer, and drops the reservation. An answer comes
+   *  back with that reservation still held, for the caller to commit or
+   *  drop; a failure has dropped it already. Nothing is read from the home's
+   *  files: the provider's CLI answers. */
+  private async externalDefaultStatus(providerId: ProviderId, opts: { readOnly: boolean }): Promise<AccountsFailure | {
+    p: ProviderPackage; spec: ExternalDefaultRealmSpec; store: AccountRegistryStore
+    accountId: string; identityId: string; status: AuthOperationResult & { state: KnownAuthState }; drop: () => Promise<void>
+  }> {
     const p = this.pkg(providerId)
-    if (!p?.externalDefaultRealm) return failure('unsupported')
-    // Nothing is recorded: the start-up run tries again once it can check.
-    if (!this.capability(p, 'auth.status').enabled) return failure('capability-disabled')
-    const store = this.currentStore()
-    if (!store) return failure('registry-unavailable')
-    // Its discovery is this service's one run per provider, never a second
-    // one overlapping another caller's.
-    const outcome = await migrateExternalDefaultRealm(p, {
-      store, preference: (id) => this.preferenceOf(id), log: (m) => this.log(m), discover: () => this.discoverOnce(p),
-    })
-    this.migrationRuns.set(providerId, outcome)
-    this.changed()
-    return { ok: true, outcome }
-  }
-
-  /** The explicit "use my existing sign-in" (and "check again"): status in
-   *  the provider's own default home, and a realm-only account when it is
-   *  signed in. Unverified until the user re-authenticates into a managed
-   *  account; never linked. */
-  async adoptExternalDefault(input: { providerId: ProviderId }): Promise<AccountsResult<{ accountId: string }>> {
-    const p = this.pkg(input.providerId)
     const spec = p?.externalDefaultRealm
     if (!p || !spec || !p.auth || !p.setup) return failure('unsupported')
-    if (!this.isEnabled(p.id)) return failure('provider-disabled')
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow.code === 'provider-not-set-up' ? failure('provider-not-set-up', `${p.displayName} is not set up yet. Say you use ${p.displayName} first, then use this computer's sign-in.`) : notNow
     if (!this.capability(p, 'auth.status').enabled) return failure('capability-disabled')
     const ready = this.ready()
     if ('ok' in ready) return ready
     const accountId = makeOpaqueId('account', this.deps.randomHex())
     const realmId = makeOpaqueId('realm', this.deps.randomHex())
     const identityId = makeOpaqueId('identity', this.deps.randomHex())
-    const begun = await ready.store.mutate((d, t) => beginAccountSetup(d, {
-      accountId, realmId, providerId: p.id, method: 'external', realmKind: spec.kind, ownership: 'external-default', pathRef: EXTERNAL_DEFAULT_PATH_REF,
-    }, t))
-    const bad = this.fromStore(begun)
-    if (bad) return bad.code === 'realm-conflict' ? failure('realm-conflict', 'That sign-in is already registered, or being set up; try again when that finishes.') : bad
+    // Known as this service's own before its write lands: a sweep queued on
+    // the lock behind the write never takes it, whatever order the promises
+    // settle in.
+    this.externalReservations.add(accountId)
+    // The reservation's record goes if it is there (a write or a commit that
+    // threw may or may not have landed), and the id goes either way: a record
+    // left behind is then the next sweep's, never shielded by this id.
     const drop = async () => {
-      const r = await ready.store.mutate((d) => abandonAccountSetup(d, accountId))
-      if (!r.ok) this.log(`an adoption's reservation was not dropped (${r.code}); it shows as a pending setup`)
+      try {
+        const r = await ready.store.mutate((d) => (d.journals.some((j) => j.accountId === accountId) ? abandonAccountSetup(d, accountId) : { ok: true, doc: d }))
+        if (!r.ok) this.log(`a reservation of the provider's own sign-in was not dropped (${r.code}); it shows as a pending setup until the next start drops it`)
+      } finally {
+        this.externalReservations.delete(accountId)
+      }
     }
-    // Held where a provider switch-off sees it, and refused once it is off.
-    const leased = await ready.store.exclusive(() => (this.isEnabled(p.id) ? this.deps.leases.add(accountId, p.id, { kind: 'operation', ownerId: `op-${++this.opSeq}` }) : null))
-    if (!leased?.ok) { await drop(); return failure(leased ? 'busy' : 'provider-disabled') }
-    let status: AuthOperationResult & { state: KnownAuthState }
+    let begun: StoreResult
+    try {
+      begun = await ready.store.mutate((d, t) => beginAccountSetup(d, {
+        accountId, realmId, providerId: p.id, method: 'external', realmKind: spec.kind, ownership: 'external-default', pathRef: EXTERNAL_DEFAULT_PATH_REF,
+      }, t))
+    } catch (e) {
+      await drop().catch(() => undefined)
+      throw e
+    }
+    const bad = this.fromStore(begun)
+    if (bad) {
+      this.externalReservations.delete(accountId)
+      return bad.code === 'realm-conflict' ? failure('realm-conflict', 'That sign-in is already registered, or being set up; try again when that finishes.') : bad
+    }
+    // The adoption's lease: held where a provider switch-off sees it, and
+    // refused once it is off (or no longer answered: cliRefusal). A lease
+    // step that throws drops the reservation too.
+    let lease: AccountLease | null = null
+    if (!opts.readOnly) {
+      let leased: ReturnType<ConsumerLeaseRegistry['add']> | null
+      try {
+        leased = await ready.store.exclusive(() => (this.cliRefusal(p.id) ? null : this.deps.leases.add(accountId, p.id, { kind: 'operation', ownerId: `op-${++this.opSeq}` })))
+      } catch (e) {
+        await drop().catch(() => undefined)
+        throw e
+      }
+      if (!leased?.ok) { await drop(); return leased ? failure('busy') : this.cliRefusal(p.id) ?? failure('provider-disabled') }
+      lease = leased.lease
+    }
+    // The read-only check can be stopped: a switch-off, or an answer lost,
+    // while it is prepared or runs stops its CLI (stopChecks).
+    const stop = opts.readOnly ? new AbortController() : null
+    if (stop) this.checkRuns.set(stop, p.id)
+    let refusedNow: AccountsFailure | null = null
+    let status: AuthOperationResult & { state: KnownAuthState } = { ok: false, code: 'not-started', state: 'error' }
     try {
       await this.discover(p.id)
-      status = await p.auth.status({ authRealmId: realmId })
+      // Asked again just before the CLI runs: switched off (or no longer
+      // answered) meanwhile, it does not run.
+      refusedNow = this.cliRefusal(p.id)
+      if (!refusedNow) status = await p.auth.status({ authRealmId: realmId }, stop ? { signal: stop.signal } : undefined)
     } catch {
       status = { ok: false, code: 'not-started', state: 'error' }
     } finally {
-      leased.lease.release()
+      lease?.release()
+      if (stop) this.checkRuns.delete(stop)
     }
+    // The read-only check held no lease, so a switch-off may have landed
+    // while it ran: its answer is then no answer, and it leaves nothing.
+    if (!refusedNow && opts.readOnly) refusedNow = this.cliRefusal(p.id)
+    if (refusedNow) { await drop(); return refusedNow }
     if (!status.ok) { await drop(); return this.fromAuth(status) }
+    return { p, spec, store: ready.store, accountId, identityId, status, drop }
+  }
+
+  /** Whether the provider's own default home is signed in, asked without
+   *  taking it in: the Set up Codex page asks before it offers "Use this
+   *  sign-in" as signed in. The same status run as the adoption below, and
+   *  nothing is kept: the reservation is always dropped, and no account,
+   *  identity or marker is written. */
+  async probeExternalDefault(input: { providerId: ProviderId }): Promise<AccountsResult<{ state: KnownAuthState }>> {
+    const r = await this.externalDefaultStatus(input.providerId, { readOnly: true })
+    if ('ok' in r) return r
+    await r.drop()
+    return { ok: true, state: r.status.state }
+  }
+
+  /** The explicit "use my existing sign-in" (and "check again"): status in
+   *  the provider's own default home, then a realm-only account when it is
+   *  signed in. Unverified until the user re-authenticates into a managed
+   *  account; never linked. The ONLY way the home is taken in (owner
+   *  decision 2026-09-26: nothing adopts it at start or on its own), and only
+   *  once the user has said they use the provider (externalDefaultStatus). */
+  async adoptExternalDefault(input: { providerId: ProviderId }): Promise<AccountsResult<{ accountId: string }>> {
+    const r = await this.externalDefaultStatus(input.providerId, { readOnly: false })
+    if ('ok' in r) return r
+    const { p, spec, store, accountId, identityId, status, drop } = r
     if (status.state !== 'signed-in') { await drop(); return failure('not-signed-in', 'Your existing sign-in is signed out; sign in to add an account.', { state: status.state }) }
     const authMethod: AuthMethod = status.credential === 'api-key' ? 'apiKey' : status.credential === 'account' ? 'external' : 'unknown'
-    const committed = await ready.store.mutate((d, t) => chain(d, [
-      (x) => createIdentity(x, { id: identityId, friendlyName: spec.identityLabel, colourKey: EXTERNAL_IDENTITY_COLOUR }, t),
-      (x) => commitAccountSetup(x, accountId, { identityId, authMethod, lastKnownAuthState: 'signed-in', identityAssurance: 'realm-only' }, t),
-      // Settles the one-time run too, when it never answered (append-only).
-      (x) => recordProviderMigration(x, { providerId: p.id, step: 'external-default', outcome: 'registered' }, t),
-    ]))
+    let committed: StoreResult
+    try {
+      committed = await store.mutate((d, t) => chain(d, [
+        (x) => createIdentity(x, { id: identityId, friendlyName: spec.identityLabel, colourKey: EXTERNAL_IDENTITY_COLOUR }, t),
+        (x) => commitAccountSetup(x, accountId, { identityId, authMethod, lastKnownAuthState: 'signed-in', identityAssurance: 'realm-only' }, t),
+        // The answer, recorded (append-only): once this account is archived,
+        // Settings, Accounts still knows the home was found signed in (the Set
+        // up Codex page asks Codex again: it never trusts an old answer).
+        (x) => recordProviderMigration(x, { providerId: p.id, step: 'external-default', outcome: 'registered' }, t),
+      ]))
+    } catch (e) {
+      // A commit that threw may still have landed: the reservation's record
+      // goes if it is still there, and the id goes either way (drop).
+      await drop().catch(() => undefined)
+      throw e
+    }
     const notSaved = this.fromStore(committed)
     if (notSaved) { await drop(); return notSaved }
+    // An account stands for the home now: nothing is reserved any more.
+    this.externalReservations.delete(accountId)
     return { ok: true, accountId }
+  }
+
+  /** At start, and when the resources directory changes: drop every
+   *  reservation of a provider's own default home that an earlier run left
+   *  (the app closed while the read-only check or an adoption ran). Nothing
+   *  resumes one (the Accounts surface offers no Resume for it), and while
+   *  it stands the home reads as in use: the Set up Codex page offers
+   *  nothing for it, Settings hides the offer to use it, and the check and
+   *  the adoption are refused as a conflict. Only the record goes: the home
+   *  is the provider's, and nothing of it was written. Never one this
+   *  service holds now. */
+  async dropLeftoverExternalReservations(): Promise<void> {
+    const ready = this.ready()
+    if ('ok' in ready) return
+    const leftover = (d: ProviderRegistryDoc) => d.journals.filter((j) => !this.externalReservations.has(j.accountId) && findRealm(d, j.realmId)?.ownership === 'external-default')
+    if (leftover(ready.doc).length === 0) return
+    // Decided again under the lock, on the document the write applies to.
+    const r = await ready.store.mutate((d) => chain(d, leftover(d).map((j) => (x: ProviderRegistryDoc) => abandonAccountSetup(x, j.accountId))))
+    if (!r.ok) this.log(`reservations of a provider's own sign-in left by an earlier run were not dropped (${r.code})`)
   }
 
   // -------------------------------------------------------------------------
@@ -1541,7 +1721,10 @@ export class AccountsService {
       }
       const b = resolveLaunchBinding(doc, { providerId: input.providerId, providerAccountId: accountId! })
       if (!b.ok) return failure(b.code === 'realm-unavailable' ? 'realm-unavailable' : b.code === 'not-active' ? 'lifecycle' : b.code === 'blocked' ? 'lifecycle' : b.code === 'provider-mismatch' ? 'invalid-request' : b.code, b.message)
-      if (!this.isEnabled(input.providerId)) return failure('provider-disabled')
+      // Under the lock, the launch rule again: off, not answered, or a setting
+      // that cannot be read now refuses, whatever it was when the launch began.
+      const notNow = this.cliRefusal(input.providerId)
+      if (notNow) return notNow
       if (b.realmOnly && input.acknowledgeRealmOnly !== true) return failure('acknowledgement-required', 'This sign-in is unverified: confirm that this launch may use it.')
       // Nothing launches on an account whose sign-in is being replaced (a
       // "sign in again" in flight): its realm changes underneath the launch.
@@ -1580,7 +1763,9 @@ export class AccountsService {
   reviewReady(providerId: ProviderId, memo?: Map<string, PlatformReviewRule>): boolean {
     const p = this.pkg(providerId)
     if (!p?.launch || !p.review || !launchKindsOf(p).includes('review')) return false
-    if (!this.capability(p, 'session.launch').enabled || !this.isEnabled(p.id)) return false
+    // Not offered for a provider the launch rule refuses (off, not answered, or
+    // a setting that cannot be read now): prepareLaunch refuses it.
+    if (!this.capability(p, 'session.launch').enabled || this.cliRefusal(p.id)) return false
     const ready = this.ready()
     if ('ok' in ready) return false
     const chosen = chooseReviewerAccount(ready.doc, p.id)
@@ -1651,7 +1836,11 @@ export class AccountsService {
       if (remote) return remote
     }
     if (!this.capability(p, 'session.launch').enabled) return failure('capability-disabled')
-    if (!this.isEnabled(p.id)) return failure('provider-disabled')
+    // The launch rule (launchRefusal), behind the gate every entry point asks
+    // first: nothing of a provider that is off, not set up, or whose setting
+    // cannot be read now is prepared, and "not set up" says so.
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow
     const ready = this.ready()
     if ('ok' in ready) return ready
     const chosen = input.kind === 'review' ? chooseReviewerAccount(ready.doc, p.id, input.providerAccountId) : chooseSessionAccount(ready.doc, p.id, input.providerAccountId)

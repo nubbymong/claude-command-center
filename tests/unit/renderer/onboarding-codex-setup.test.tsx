@@ -17,13 +17,19 @@
  *   - ready: the version rows and the three sign-in methods, which open the
  *     Accounts surface's own add-account dialog at that method, above the
  *     onboarding page;
- *   - this computer's sign-in (review fix, fixtures as main produces them
- *     after the assistants choice: Codex on, so `needsConfirmation` false):
- *     the page runs the one-time check itself, once, saying it is checking;
- *     a signed-in result lands on canvas F2 d settled; "Use this sign-in"
- *     only for a sign-in main found and no account stands for; every other
- *     answer is the sign-in choices with its reason as a note, and a way to
- *     check again where main can look again;
+ *   - this computer's sign-in (fixtures as main produces them after the
+ *     choice: Codex on): opening the page asks main once, READ-ONLY, whether
+ *     it is signed in (probeExternal: nothing registered, no yes recorded;
+ *     owner decision 2026-09-26), whatever an earlier answer recorded, and
+ *     asks once only (StrictMode, an unmount, a pushed record meanwhile, the
+ *     CLI found later); then offers canvas F2 d as signed in, the sign-in
+ *     choices with a note when it is signed out (its "check again" asks the
+ *     same read-only question, never adopts), nothing when there is no folder
+ *     or Codex cannot check it here, a note when the folder overlaps the
+ *     app's own, and F2 d without the claim when there was no answer; only
+ *     "Use this sign-in" takes it in (main asks its status, then registers),
+ *     landing on F2 d settled, or on the sign-in choices with a note when it
+ *     is signed out (its "check again" is that choice, asked again);
  *   - signed in: done, and Next continues (no Skip);
  *   - the no-registry state says so once; the update list says "update".
  */
@@ -62,7 +68,7 @@ const pa = {
   onChanged: vi.fn(() => () => {}),
   discover: vi.fn(),
   installRecipes: vi.fn(async () => RECIPES),
-  runMigration: vi.fn<(id: string) => Promise<{ ok: boolean; outcome?: string; code?: string; message?: string }>>(),
+  probeExternal: vi.fn<(id: string) => Promise<{ ok: boolean; state?: string; code?: string; message?: string }>>(),
   setEnabled: vi.fn(ok),
   adoptExternal: vi.fn(async () => ({ ok: true, accountId: 'acc-ext' })),
   beginSetup: vi.fn(async () => ({ ok: true, accountId: 'acc-new' })),
@@ -111,8 +117,9 @@ beforeEach(() => {
   // By default the check agrees with the snapshot it was given.
   pa.discover.mockImplementation(async () => ({ ok: true, installation: useProviderAccountsStore.getState().snapshot!.providers[1] }))
   pa.installRecipes.mockResolvedValue(RECIPES)
-  pa.runMigration.mockReset()
-  pa.runMigration.mockResolvedValue({ ok: true, outcome: 'not-signed-in' })
+  // By default the page's read-only check finds this computer's sign-in signed in.
+  pa.probeExternal.mockReset()
+  pa.probeExternal.mockResolvedValue({ ok: true, state: 'signed-in' })
   // The snapshot fetched after a check: by default nothing newer than what the page has.
   pa.snapshot.mockReset()
   pa.snapshot.mockResolvedValue(null)
@@ -384,149 +391,276 @@ describe('ready to sign in', () => {
 })
 
 describe("this computer's Codex sign-in", () => {
-  // After the assistants choice main has Codex on, so it asks for nothing:
-  // no marker yet, and `needsConfirmation` false.
-  const afterChoice = { externalDefaults: [{ providerId: 'codex' as const, needsConfirmation: false }] }
-  const marked = (marker: Record<string, unknown>) => ({ externalDefaults: [{ providerId: 'codex' as const, needsConfirmation: false, marker: { at: 1, ...marker } as any }] })
+  // After the choice (the assistants page, or Yes on the one-time question
+  // after an update) main has Codex on, and nothing recorded.
+  const afterChoice = { externalDefaults: [{ providerId: 'codex' as const }] }
+  const marked = (marker: Record<string, unknown>) => ({ externalDefaults: [{ providerId: 'codex' as const, marker: { at: 1, ...marker } as any }] })
+  // The record main keeps while its own check (or an adoption) of the folder runs.
+  const reservation = { accountId: 'acc-probe', providerId: 'codex' as const, method: 'external' as const, state: 'pending' as const, external: true, createdAt: 1, signingIn: false }
   // As main registers this computer's sign-in: realm-only and unverified, and
   // with no provider label (main never sets one for a Codex account).
   const localAccount = account({ id: 'acc-local', providerId: 'codex', identityId: 'id-ext', external: true, unverified: true, authMethod: 'external', identityAssurance: 'realm-only' })
 
-  it('after the choice, with nothing recorded, the page runs the check itself, once, and says it is checking', async () => {
-    let answer: (v: { ok: boolean; outcome?: string }) => void = () => {}
-    pa.runMigration.mockImplementationOnce(() => new Promise((r) => { answer = r }))
+  it('nothing recorded: the page asks once, read-only, and offers canvas F2 d as signed in; nothing is registered', async () => {
     await render(snap({}, afterChoice))
-    expect(pa.runMigration).toHaveBeenCalledTimes(1)
-    expect(pa.runMigration).toHaveBeenCalledWith('codex')
-    expect(byTest('codex-setup-this-computer-check')!.textContent).toBe("!Checking this computer's Codex sign-in...")
-    // No flash of the sign-in choices while it runs.
-    expect(byTest('codex-setup-sign-in')).toBeNull()
-    expect(byTest('codex-setup-method-browser')).toBeNull()
-    await act(async () => { answer({ ok: true, outcome: 'not-signed-in' }) })
-    await flush()
-    // Asked once, whatever the page renders next.
-    await act(async () => { root.render(<CodexSetupStep onNext={onNext} onBack={onBack} stepAside={stepAside} returns={1} />) })
-    await flush()
-    expect(pa.runMigration).toHaveBeenCalledTimes(1)
-  })
-
-  it('not while the CLI is missing, nor with Codex off, nor once an answer is recorded', async () => {
-    await render(snap({ discoveryState: 'missing', version: undefined }, afterChoice))
-    act(() => { root.unmount() })
-    root = createRoot(container)
-    await render(snap({ enabled: false }, afterChoice))
-    act(() => { root.unmount() })
-    root = createRoot(container)
-    await render(snap({}, marked({ outcome: 'none' })))
-    expect(pa.runMigration).not.toHaveBeenCalled()
-  })
-
-  it("main still wanting the user's yes: the yes first, then the check (the Accounts surface's order)", async () => {
-    pa.runMigration.mockResolvedValueOnce({ ok: true, outcome: 'needs-confirmation' }).mockResolvedValueOnce({ ok: true, outcome: 'not-signed-in' })
-    await render(snap({}, { externalDefaults: [{ providerId: 'codex' as const, needsConfirmation: true }] }))
-    expect(pa.runMigration).toHaveBeenCalledTimes(2)
-    expect(pa.setEnabled).toHaveBeenCalledWith('codex', true)
-    const [first, second] = pa.runMigration.mock.invocationCallOrder
-    expect(first).toBeLessThan(pa.setEnabled.mock.invocationCallOrder[0])
-    expect(pa.setEnabled.mock.invocationCallOrder[0]).toBeLessThan(second)
-  })
-
-  it('a signed-in result lands on the settled F2 d: in use, confirmed at each launch, a new account still Recommended, Next continues', async () => {
-    const after = snap({}, { revision: 2, accounts: [claudeMain, localAccount], ...marked({ outcome: 'registered' }) })
-    pa.runMigration.mockResolvedValueOnce({ ok: true, outcome: 'registered' })
-    pa.snapshot.mockResolvedValue(after)
-    await render(snap({}, afterChoice))
-    expect(byTest('codex-setup-done')).not.toBeNull()
+    expect(pa.probeExternal).toHaveBeenCalledTimes(1)
+    expect(pa.probeExternal).toHaveBeenCalledWith('codex')
+    expect(byTest('codex-setup-adopt')).not.toBeNull()
+    expect(byTest('codex-setup-found')!.textContent).toBe(`${CHECK}Codex 0.155.1 found`)
+    // Claimed signed in only because Codex said so just now.
     expect(byTest('codex-setup-adopt-callout')!.textContent).toBe('iCodex is already signed in on this computer (~/.codex)')
-    const shared = byTest('codex-setup-signed-in-acc-local')!
-    expect(shared.textContent).toContain('Using this sign-in')
-    expect(shared.textContent).toContain('You confirm it at each launch, and it cannot run code reviews')
+    expect(byTest('codex-setup-use-existing')!.textContent).toContain('Use this sign-in')
+    expect(byTest('codex-setup-use-existing')!.textContent).toContain('You confirm it at each launch, and it cannot run code reviews')
     const add = byTest('codex-setup-add-new')!
     expect(add.textContent).toContain('Add a new Codex account')
     expect(add.textContent).toContain('Recommended')
     expect(add.textContent).toContain('Its own sign-in folder; can be your reviewer')
-    // Nothing to use: it is in use.
-    expect(byTest('codex-setup-use-existing')).toBeNull()
-    expect(byTest('codex-setup-skip')).toBeNull()
-    await click('codex-setup-next')
-    expect(onNext).toHaveBeenCalledTimes(1)
+    expect(byTest('codex-setup-skip')!.textContent).toContain('Skip for now')
+    // No adoption, no yes recorded on the user's behalf.
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+    expect(pa.setEnabled).not.toHaveBeenCalled()
   })
 
-  it('"Use this sign-in" only for a sign-in main found that no account stands for now', async () => {
-    await render(snap({}, marked({ outcome: 'registered' })))
-    expect(byTest('codex-setup-adopt-callout')!.textContent).toContain('Codex is already signed in on this computer (~/.codex)')
-    expect(byTest('codex-setup-use-existing')!.textContent).toContain('Use this sign-in')
-    expect(byTest('codex-setup-use-existing')!.textContent).toContain('You confirm it at each launch, and it cannot run code reviews')
-    expect(byTest('codex-setup-add-new')!.textContent).toContain('Recommended')
-    expect(byTest('codex-setup-sign-in')).toBeNull()
-    await click('codex-setup-use-existing')
-    expect(pa.adoptExternal).toHaveBeenCalledWith('codex')
-  })
-
-  it('Add a new Codex account opens the add-account dialog at its methods', async () => {
-    await render(snap({}, marked({ outcome: 'registered' })))
-    await click('codex-setup-add-new')
-    expect(byTest('add-account-step-method')).not.toBeNull()
-    expect(pa.beginSetup).not.toHaveBeenCalled()
-  })
-
-  const answers: Array<[string, Record<string, unknown>, string]> = [
-    ['signed out', { outcome: 'none' }, "When the app first checked, this computer's Codex was signed out."],
-    ['no ~/.codex', { outcome: 'skipped', reason: 'home-missing' }, 'There was no Codex sign-in folder (~/.codex) on this computer when the app first checked.'],
-    ['no CLI', { outcome: 'skipped', reason: 'no-cli' }, 'The Codex CLI was not found when the app first checked.'],
-    ['no answer in time', { outcome: 'skipped', reason: 'unavailable' }, "The app could not check this computer's Codex sign-in when it first tried: it timed out, did not start, or Codex was busy."],
-  ]
-  for (const [what, marker, note] of answers) {
-    it(`${what}: the sign-in choices, the reason as a note, and a way to check again`, async () => {
-      await render(snap({}, marked(marker)))
-      expect(byTest('codex-setup-sign-in')).not.toBeNull()
-      expect(byTest('codex-setup-method-browser')).not.toBeNull()
-      expect(byTest('codex-setup-use-existing')).toBeNull()
-      expect(byTest('codex-setup-adopt-callout')).toBeNull()
-      expect(byTest('codex-setup-adoption-note')!.textContent).toBe(note)
-      expect(byTest('codex-setup-check-this-computer')!.textContent).toBe("Check this computer's sign-in again")
-      await click('codex-setup-check-this-computer')
-      expect(pa.adoptExternal).toHaveBeenCalledWith('codex')
-    })
-  }
-
-  it('checking again and still signed out: says what main said', async () => {
-    pa.adoptExternal.mockResolvedValueOnce({ ok: false, code: 'not-signed-in', message: 'Your existing sign-in is signed out; sign in to add an account.' } as any)
-    await render(snap({}, marked({ outcome: 'none' })))
-    await click('codex-setup-check-this-computer')
-    expect(byTest('codex-setup-error')!.textContent).toBe('Your existing sign-in is signed out; sign in to add an account.')
-  })
-
-  it('a folder that cannot be used here: the note, and no way to check again', async () => {
-    await render(snap({}, marked({ outcome: 'skipped', reason: 'overlap' })))
-    expect(byTest('codex-setup-adoption-note')!.textContent).toContain('overlaps')
-    expect(byTest('codex-setup-check-this-computer')).toBeNull()
-  })
-
-  it('under StrictMode (development): the check runs once, and an answer that records nothing still reaches the sign-in choices', async () => {
-    // retry-later: main answered but recorded no marker, so only the page's
-    // own state moves it on; StrictMode's remount must not leave it stuck on
-    // "Checking..." nor ask twice.
-    pa.runMigration.mockResolvedValueOnce({ ok: true, outcome: 'retry-later' })
+  it('under StrictMode (development) too: the check runs once, and nothing is taken in', async () => {
     useProviderAccountsStore.setState({ snapshot: snap({}, afterChoice), loaded: true })
     await act(async () => {
       root.render(<React.StrictMode><CodexSetupStep onNext={onNext} onBack={onBack} stepAside={stepAside} returns={0} /></React.StrictMode>)
     })
     await flush()
-    expect(pa.runMigration).toHaveBeenCalledTimes(1)
-    expect(byTest('codex-setup-this-computer-check')).toBeNull()
-    expect(byTest('codex-setup-sign-in')).not.toBeNull()
-    expect(byTest('codex-setup-method-browser')).not.toBeNull()
+    expect(pa.probeExternal).toHaveBeenCalledTimes(1)
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+    expect(byTest('codex-setup-adopt')).not.toBeNull()
   })
 
-  it('a check that got no answer: the sign-in choices, said plainly, and a way to check again', async () => {
-    pa.runMigration.mockResolvedValueOnce({ ok: false, code: 'capability-disabled', message: 'x' })
+  it('while the check runs, says so, and offers nothing yet', async () => {
+    pa.probeExternal.mockImplementationOnce(() => new Promise(() => {}))
+    await render(snap({}, afterChoice))
+    expect(byTest('codex-setup-this-computer-check')!.textContent).toContain("Checking this computer's Codex sign-in...")
+    expect(byTest('codex-setup-adopt')).toBeNull()
+    expect(byTest('codex-setup-sign-in')).toBeNull()
+  })
+
+  it('the check finds it signed out: the new-account sign-in, saying so; asking again is the same read-only check, never an adoption', async () => {
+    pa.probeExternal.mockResolvedValueOnce({ ok: true, state: 'signed-out' })
+    await render(snap({}, afterChoice))
+    expect(byTest('codex-setup-use-existing')).toBeNull()
+    expect(byTest('codex-setup-method-browser')).not.toBeNull()
+    expect(byTest('codex-setup-adoption-note')!.textContent).toBe("This computer's Codex sign-in (~/.codex) is signed out.")
+    expect(byTest('codex-setup-check-this-computer')!.textContent).toBe("Check this computer's sign-in again")
+    // Signed in since: asked again, it is offered as signed in, and nothing is taken in.
+    await click('codex-setup-check-this-computer')
+    expect(pa.probeExternal).toHaveBeenCalledTimes(2)
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+    expect(byTest('codex-setup-adopt-callout')!.textContent).toBe('iCodex is already signed in on this computer (~/.codex)')
+  })
+
+  it('asked again and still signed out: says so, the way to ask again stays, and nothing is taken in', async () => {
+    pa.probeExternal.mockResolvedValue({ ok: true, state: 'signed-out' })
+    await render(snap({}, afterChoice))
+    await click('codex-setup-check-this-computer')
+    expect(pa.probeExternal).toHaveBeenCalledTimes(2)
+    expect(byTest('codex-setup-adoption-note')!.textContent).toBe("This computer's Codex sign-in (~/.codex) is signed out.")
+    expect(byTest('codex-setup-check-this-computer')).not.toBeNull()
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+  })
+
+  it('no Codex sign-in folder on this computer: the new-account sign-in alone, nothing offered', async () => {
+    pa.probeExternal.mockResolvedValueOnce({ ok: false, code: 'realm-unavailable', message: 'x' })
     await render(snap({}, afterChoice))
     expect(byTest('codex-setup-sign-in')).not.toBeNull()
-    expect(byTest('codex-setup-adoption-note')!.textContent).toBe("The app could not check this computer's Codex sign-in just now.")
-    expect(byTest('codex-setup-check-this-computer')).not.toBeNull()
-    expect(byTest('codex-setup-this-computer-check')).toBeNull()
+    expect(byTest('codex-setup-use-existing')).toBeNull()
+    expect(byTest('codex-setup-adoption-note')).toBeNull()
+    expect(byTest('codex-setup-check-this-computer')).toBeNull()
   })
+
+  it('no answer from the check: offered without claiming it is signed in', async () => {
+    pa.probeExternal.mockResolvedValueOnce({ ok: false, code: 'timed-out', message: 'Codex did not answer in time.' })
+    await render(snap({}, afterChoice))
+    expect(byTest('codex-setup-adopt-callout')!.textContent).toBe('iThe app could not check whether Codex is signed in on this computer (~/.codex). Use this sign-in checks it again.')
+    expect(byTest('codex-setup-use-existing')).not.toBeNull()
+    expect(byTest('codex-setup-error')).toBeNull()
+  })
+
+  it('no check once a Codex account is signed in, or while a setup of this computer\'s sign-in stands', async () => {
+    const work = account({ id: 'acc-work', providerId: 'codex', identityId: 'id-work', isProviderDefault: true })
+    await render(snap({}, { ...afterChoice, accounts: [claudeMain, work] }))
+    expect(byTest('codex-setup-done')).not.toBeNull()
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    await render(snap({}, { ...afterChoice, pendingSetups: [reservation] }))
+    expect(pa.probeExternal).not.toHaveBeenCalled()
+    expect(byTest('codex-setup-use-existing')).toBeNull()
+  })
+
+  it('unmounted while the check runs: nothing is shown or taken in after, and the page shown again asks afresh', async () => {
+    let answer: (v: { ok: boolean; state?: string }) => void = () => {}
+    pa.probeExternal.mockImplementationOnce(() => new Promise((r) => { answer = r }) as never)
+    await render(snap({}, afterChoice))
+    expect(byTest('codex-setup-checking-this-computer')).not.toBeNull()
+    act(() => { root.unmount() })
+    await act(async () => { answer({ ok: true, state: 'signed-in' }) })
+    await flush()
+    expect(byTest('codex-setup')).toBeNull()
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+    root = createRoot(container)
+    await render(snap({}, afterChoice))
+    expect(pa.probeExternal).toHaveBeenCalledTimes(2)
+    expect(byTest('codex-setup-adopt')).not.toBeNull()
+  })
+
+  it('the record main pushes while its check runs keeps the page on "checking" (never "in use"), and nothing asks twice', async () => {
+    let answer: (v: { ok: boolean; state?: string }) => void = () => {}
+    pa.probeExternal.mockImplementationOnce(() => new Promise((r) => { answer = r }) as never)
+    await render(snap({}, afterChoice))
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snap({}, { ...afterChoice, revision: 2, pendingSetups: [reservation] }) }) })
+    await flush()
+    expect(byTest('codex-setup-this-computer-check')).not.toBeNull()
+    expect(byTest('codex-setup-sign-in')).toBeNull()
+    expect(byTest('codex-setup-adopt')).toBeNull()
+    // The check answers, and the snapshot fetched after it no longer carries the record.
+    pa.snapshot.mockResolvedValueOnce(snap({}, { ...afterChoice, revision: 3 }))
+    await act(async () => { answer({ ok: true, state: 'signed-in' }) })
+    await flush()
+    expect(byTest('codex-setup-adopt-callout')!.textContent).toBe('iCodex is already signed in on this computer (~/.codex)')
+    expect(pa.probeExternal).toHaveBeenCalledTimes(1)
+  })
+
+  it('with the CLI not found at first, the check runs once the CLI is found, and only once', async () => {
+    await render(snap({ discoveryState: 'missing', version: undefined }, afterChoice))
+    expect(pa.probeExternal).not.toHaveBeenCalled()
+    // Installed since: the return from the terminal checks the CLI again.
+    pa.discover.mockResolvedValue({ ok: true, installation: codex({ discoveryState: 'found', version: '0.155.1', compatibility: 'supported', lastCheckedAt: 2 }) })
+    await act(async () => { root.render(<CodexSetupStep onNext={onNext} onBack={onBack} stepAside={stepAside} returns={1} />) })
+    await flush()
+    expect(pa.probeExternal).toHaveBeenCalledTimes(1)
+    expect(byTest('codex-setup-adopt')).not.toBeNull()
+    await act(async () => { root.render(<CodexSetupStep onNext={onNext} onBack={onBack} stepAside={stepAside} returns={2} />) })
+    await flush()
+    expect(pa.probeExternal).toHaveBeenCalledTimes(1)
+  })
+
+  it('not offered while the CLI is missing, with Codex off, or while the user has not said they use Codex', async () => {
+    await render(snap({ discoveryState: 'missing', version: undefined }, afterChoice))
+    expect(byTest('codex-setup-adopt')).toBeNull()
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    await render(snap({ enabled: false }, afterChoice))
+    expect(byTest('codex-setup-use-existing')).toBeNull()
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    await render(snap({ preference: 'undecided' }, afterChoice))
+    expect(byTest('codex-setup-use-existing')).toBeNull()
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+    // Nor is it checked: that would run the Codex CLI.
+    expect(pa.probeExternal).not.toHaveBeenCalled()
+  })
+
+  it('"Use this sign-in" takes it in explicitly: main asks its status, registers it, and the page lands on the settled F2 d', async () => {
+    let answer: (v: { ok: boolean; accountId?: string }) => void = () => {}
+    pa.adoptExternal.mockImplementationOnce(() => new Promise((r) => { answer = r }) as never)
+    await render(snap({}, afterChoice))
+    await click('codex-setup-use-existing')
+    expect(pa.adoptExternal).toHaveBeenCalledTimes(1)
+    expect(pa.adoptExternal).toHaveBeenCalledWith('codex')
+    expect(byTest('codex-setup-use-existing')!.textContent).toContain('Checking this sign-in...')
+    // Main registered it: the snapshot it pushes carries the account.
+    await act(async () => {
+      answer({ ok: true, accountId: 'acc-local' })
+      useProviderAccountsStore.setState({ snapshot: snap({}, { revision: 2, accounts: [claudeMain, localAccount], ...marked({ outcome: 'registered' }) }) })
+    })
+    await flush()
+    expect(byTest('codex-setup-done')).not.toBeNull()
+    expect(byTest('codex-setup-adopt-callout')!.textContent).toBe('iCodex is already signed in on this computer (~/.codex)')
+    const shared = byTest('codex-setup-signed-in-acc-local')!
+    expect(shared.textContent).toContain('Using this sign-in')
+    expect(shared.textContent).toContain('You confirm it at each launch, and it cannot run code reviews')
+    expect(byTest('codex-setup-add-new')!.textContent).toContain('Recommended')
+    expect(byTest('codex-setup-use-existing')).toBeNull()
+    await click('codex-setup-next')
+    expect(onNext).toHaveBeenCalledTimes(1)
+  })
+
+  it('found signed out when the user asked: the new-account sign-in, saying so, and a way to ask again', async () => {
+    pa.adoptExternal.mockResolvedValueOnce({ ok: false, code: 'not-signed-in', message: 'Your existing sign-in is signed out; sign in to add an account.' } as any)
+    await render(snap({}, afterChoice))
+    await click('codex-setup-use-existing')
+    expect(byTest('codex-setup-adopt')).toBeNull()
+    expect(byTest('codex-setup-sign-in')).not.toBeNull()
+    expect(byTest('codex-setup-method-browser')).not.toBeNull()
+    expect(byTest('codex-setup-adoption-note')!.textContent).toBe("This computer's Codex sign-in (~/.codex) is signed out.")
+    expect(byTest('codex-setup-check-this-computer')!.textContent).toBe("Check this computer's sign-in again")
+    await click('codex-setup-check-this-computer')
+    expect(pa.adoptExternal).toHaveBeenCalledTimes(2)
+  })
+
+  it('an explicit attempt that could not finish says why, and the offer stays to try again', async () => {
+    pa.adoptExternal.mockResolvedValueOnce({ ok: false, code: 'timed-out', message: 'Codex did not answer in time.' } as any)
+    await render(snap({}, afterChoice))
+    await click('codex-setup-use-existing')
+    expect(byTest('codex-setup-error')!.textContent).toBe('Codex did not answer in time.')
+    expect(byTest('codex-setup-use-existing')).not.toBeNull()
+    await click('codex-setup-use-existing')
+    expect(pa.adoptExternal).toHaveBeenCalledTimes(2)
+  })
+
+  it('an earlier answer (the user\'s own adoption, its account archived since) is not trusted: the page asks Codex again', async () => {
+    pa.probeExternal.mockResolvedValueOnce({ ok: true, state: 'signed-out' })
+    await render(snap({}, marked({ outcome: 'registered' })))
+    expect(pa.probeExternal).toHaveBeenCalledTimes(1)
+    // Signed out since: never "already signed in".
+    expect(byTest('codex-setup-adopt-callout')).toBeNull()
+    expect(byTest('codex-setup-use-existing')).toBeNull()
+    expect(byTest('codex-setup-adoption-note')!.textContent).toBe("This computer's Codex sign-in (~/.codex) is signed out.")
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    await render(snap({}, marked({ outcome: 'registered' })))
+    expect(pa.probeExternal).toHaveBeenCalledTimes(2)
+    expect(byTest('codex-setup-adopt-callout')!.textContent).toBe('iCodex is already signed in on this computer (~/.codex)')
+    expect(byTest('codex-setup-add-new')!.textContent).toContain('Recommended')
+    await click('codex-setup-use-existing')
+    expect(pa.adoptExternal).toHaveBeenCalledWith('codex')
+  })
+
+  it('Add a new Codex account opens the add-account dialog at its methods, and never adopts', async () => {
+    await render(snap({}, afterChoice))
+    await click('codex-setup-add-new')
+    expect(byTest('add-account-step-method')).not.toBeNull()
+    expect(pa.beginSetup).not.toHaveBeenCalled()
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+  })
+
+  // Only a development build's start-up check could record these: the page
+  // never shows them, and asks Codex itself.
+  for (const marker of [{ outcome: 'none' }, { outcome: 'skipped', reason: 'home-missing' }, { outcome: 'skipped', reason: 'no-cli' }, { outcome: 'skipped', reason: 'unavailable' }, { outcome: 'skipped', reason: 'overlap' }]) {
+    it(`an answer a development build recorded (${Object.values(marker).join(', ')}): the page asks Codex itself, and adopts nothing`, async () => {
+      await render(snap({}, marked(marker)))
+      expect(pa.probeExternal).toHaveBeenCalledTimes(1)
+      expect(byTest('codex-setup-adopt-callout')!.textContent).toBe('iCodex is already signed in on this computer (~/.codex)')
+      expect(byTest('codex-setup-adoption-note')).toBeNull()
+      expect(pa.adoptExternal).not.toHaveBeenCalled()
+    })
+  }
+
+  it('a folder that overlaps the app\'s own: the note, nothing offered, and no way to check again', async () => {
+    pa.probeExternal.mockResolvedValueOnce({ ok: false, code: 'external-overlap', message: 'x' })
+    await render(snap({}, afterChoice))
+    expect(byTest('codex-setup-sign-in')).not.toBeNull()
+    expect(byTest('codex-setup-use-existing')).toBeNull()
+    expect(byTest('codex-setup-adoption-note')!.textContent).toBe("This computer's Codex folder overlaps this app's own account folders, so it cannot be used here.")
+    expect(byTest('codex-setup-check-this-computer')).toBeNull()
+  })
+
+  for (const code of ['capability-disabled', 'provider-disabled', 'provider-not-set-up', 'provider-state-unknown', 'unsupported']) {
+    it(`a check Codex cannot run or use here (${code}): nothing offered, only the new-account sign-in`, async () => {
+      pa.probeExternal.mockResolvedValueOnce({ ok: false, code, message: 'x' })
+      await render(snap({}, afterChoice))
+      expect(byTest('codex-setup-sign-in')).not.toBeNull()
+      expect(byTest('codex-setup-method-browser')).not.toBeNull()
+      expect(byTest('codex-setup-use-existing')).toBeNull()
+      expect(byTest('codex-setup-adoption-note')).toBeNull()
+      expect(byTest('codex-setup-check-this-computer')).toBeNull()
+    })
+  }
 })
 
 describe('signed in', () => {

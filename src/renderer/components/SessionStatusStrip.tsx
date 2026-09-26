@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
+import { usesCodex } from '../onboarding/provider-choice'
 import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
 import { formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
@@ -78,8 +79,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // offers the tool per connection only while the built-in tools and the
   // Codex review switch are on, Codex is on and a Codex account can run the
   // review. The count shows only once a review has run, so this polls
-  // whenever Codex is on and the session could have asked.
-  const codexReviewOn = useSettingsStore((s) => s.settings.codexEnabled !== false)
+  // whenever Codex is on and the session could have asked. On means the user
+  // said yes: an unanswered Codex (no saved value) is not set up, and main
+  // offers no Codex review for it.
+  const codexReviewOn = useSettingsStore((s) => usesCodex(s.settings))
   const codexReviewEligible = codexReviewOn && session?.provider === 'claude' && !session?.shellOnly && session?.sessionType !== 'ssh'
   const codexReview = useCodexReviewUsage(codexReviewEligible ? sessionId : null)
   const { restart } = useRestartSession(session, false)

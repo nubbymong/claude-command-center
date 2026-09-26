@@ -24,13 +24,23 @@
  *                          tour, the sidebar FirstRunCard or the empty state.
  *   6. githubOnboarding  — opened by its own effect 120ms after the gates
  *                          above clear.
- *   7. loggingConsent    — one-time notice. Waits on the *due* predicates so it
+ *   7. codexReconfirm    — "Do you use Codex?", asked once of everyone who
+ *                          updates (owner decision 2026-09-26; see
+ *                          onboarding/codex-reconfirm-gate.ts). After the
+ *                          release notes and the upgrade harness (the `*Due`
+ *                          short-circuit below holds it until they are done),
+ *                          and before everything that uses the app: the resume
+ *                          prompt restores sessions, and a Codex one would only
+ *                          be refused while the question is unanswered. A Yes
+ *                          hands the user to the Codex setup page, which is the
+ *                          harness again (the `onboarding` gate above).
+ *   8. loggingConsent    — one-time notice. Waits on the *due* predicates so it
  *                          doesn't flash for the few hundred ms before a higher
  *                          gate's timer fires and then get swapped out from
  *                          under the user.
- *   8. resume            — "restore your sessions?". Every boot, so it sits
+ *   9. resume            — "restore your sessions?". Every boot, so it sits
  *                          below the one-time surfaces above.
- *   9. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
+ *  10. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
  *                          and both halves of that are deliberate. It must come
  *                          after the release notes, because it is the second
  *                          page of one upgrade story — and the `*Due`
@@ -40,7 +50,7 @@
  *                          copy counts are read from the sessions this start
  *                          brought back; shown first it would count zero and
  *                          claim nothing was resumable.
- *  10. helloCodex       — the one-time Codex introduction (WP2 commit 6f),
+ *  11. helloCodex       — the one-time Codex introduction (WP2 commit 6f),
  *                          outside onboarding. After everything above,
  *                          including the `*Due` short-circuit: it must never
  *                          cover a running setup. bootChain below asks this
@@ -75,6 +85,7 @@ export type BootGate =
   | 'guidedTour'
   | 'guidedConfig'
   | 'githubOnboarding'
+  | 'codexReconfirm'
   | 'loggingConsent'
   | 'resume'
   | 'multiSpawnIntro'
@@ -95,6 +106,9 @@ export interface BootGateState {
   showGuidedConfig?: boolean
   showGitHubOnboarding: boolean
   loggingConsentSeen: boolean
+  /** The one-time "Do you use Codex?" page is due (codexReconfirmDue in
+   *  onboarding/codex-reconfirm-gate.ts). Optional: absent === false. */
+  codexReconfirmDue?: boolean
   /** Saved sessions are waiting on a restore decision. Optional: absent === false. */
   resumePending?: boolean
   /** The Allow Multi Spawn startup page is due this launch — decided once at
@@ -124,6 +138,7 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   if (s.showGuidedConfig) return 'guidedConfig'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
   if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null
+  if (s.codexReconfirmDue) return 'codexReconfirm'
   if (!s.loggingConsentSeen) return 'loggingConsent'
   if (s.resumePending) return 'resume'
   if (s.multiSpawnIntroDue) return 'multiSpawnIntro'

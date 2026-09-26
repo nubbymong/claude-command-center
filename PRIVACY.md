@@ -85,8 +85,15 @@ is not affected by that switch.
   writes it to disk or to a log, and drops it as soon as Codex has it, or after
   two minutes if the sign-in never starts.
 - **Your own Codex folder (`~/.codex`, or the folder `CODEX_HOME` named when
-  the app started) is used only when you confirm it.** The app asks Codex
-  whether that folder is signed in only after you have said you use Codex. A
+  the app started) is checked on the Set up Codex page, and used only when
+  you confirm it.** Once you have said you use Codex, the Set up Codex page
+  asks Codex on its own whether that folder is signed in, so the page can say
+  so; the app takes only Codex's answer, and keeps nothing of it. Asking
+  writes nothing there from the app; the Codex command-line tool keeps its
+  own scratch files in that folder (under `tmp/`) whenever it runs, this
+  check included. The app uses the folder only when you choose to: Use this
+  sign-in on the Set up Codex page, or Use this computer's Codex sign-in in
+  Settings, Accounts. A
   session runs in it only after you confirm that launch, it is never used for
   a code review, and the app never signs in to it; signing out of it asks you
   first. Two things are read regardless: the conversation files in

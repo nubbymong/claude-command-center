@@ -275,8 +275,8 @@ describe('the app behind is inert while a covering surface shows', () => {
   describe('App wiring (source: App is too large to render here)', () => {
     const APP = readFileSync(resolve(__dirname, '../../../src/renderer/App.tsx'), 'utf8').replace(/\r\n/g, '\n')
 
-    it('appCovered is the onboarding pages (unless aside) or Hello Codex on screen', () => {
-      expect(APP).toContain("const appCovered = (bootGate === 'onboarding' && !onboardingAside) || helloCodexShowing(helloCodexOpen, boot.helloCodexTurn)")
+    it('appCovered is the onboarding pages (unless aside), the one-time Codex question, or Hello Codex on screen', () => {
+      expect(APP).toContain("const appCovered = (bootGate === 'onboarding' && !onboardingAside) || bootGate === 'codexReconfirm' || helloCodexShowing(helloCodexOpen, boot.helloCodexTurn)")
       expect(APP).toContain('onAsideChange={setOnboardingAside}')
       expect(APP).toContain('const helloCodexOpen = useHelloCodexStore((s) => s.open)')
     })
@@ -293,7 +293,7 @@ describe('the app behind is inert while a covering surface shows', () => {
       // The wrapper closes right after the bottom bar's own wrapper.
       const after = APP.slice(bottom).split('\n').slice(1, 4).map((l) => l.trim())
       expect(after).toEqual(['</div>', '</div>', "{bootGate === 'training' && ("])
-      for (const dialog of ['<SshCloseDialog />', '<CloseDialog', '<HelloCodexHost', '<OnboardingHarness']) {
+      for (const dialog of ['<SshCloseDialog />', '<CloseDialog', '<HelloCodexHost', '<OnboardingHarness', '<CodexReconfirmPage']) {
         expect(APP.indexOf(dialog), `${dialog} is outside the inert part`).toBeLessThan(open)
       }
       expect(APP.match(/inert=\{/g)!.length, 'one inert site').toBe(1)

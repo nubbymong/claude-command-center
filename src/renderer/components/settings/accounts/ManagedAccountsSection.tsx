@@ -251,29 +251,40 @@ function PendingSetupRow({ setup, manageable, onResume }: { setup: PendingSetupV
   )
 }
 
+/** An explicit "Use this computer's ... sign-in" that could not finish (no
+ *  answer from the provider, as opposed to one that answered "signed out" or
+ *  "cannot be used here"): the button becomes Check again, which is the same
+ *  explicit adoption, asked again. */
+export const ADOPTION_UNFINISHED: ReadonlySet<string> = new Set([
+  'timed-out', 'not-started', 'busy', 'cli-unavailable', 'status-unrecognised', 'internal', 'persist-failed', 'registry-unavailable',
+])
+
 function ExternalAdoptionBlock({ providerId, provider }: { providerId: ProviderId; provider: ProviderInstallationView }) {
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [unfinished, setUnfinished] = useState(false)
   const view = externalAdoption(snapshot, providerId)
   if (view.kind === 'none') return null
+  // The ONLY way this computer's sign-in is taken in: the user's click. Main
+  // asks its status first and registers it only when it is signed in.
   const adopt = async () => {
     setBusy(true)
     setError(null)
     const r = await providerAccountActions.adoptExternal(providerId)
     setBusy(false)
+    setUnfinished(!r.ok && ADOPTION_UNFINISHED.has(r.code))
     if (!r.ok) setError(r.message)
   }
-  // The user's yes: the provider is on by their choice, so the one-time
-  // check runs again now. What it found arrives with the next snapshot.
+  // The user's yes, and only that: it records the answer (the provider on).
+  // It does not look at this computer's sign-in; the offer to use it follows
+  // with the next snapshot, for the user to choose (owner decision 2026-09-26).
   const confirmUse = async () => {
     setBusy(true)
     setError(null)
     const on = await providerAccountActions.switchProvider(providerId, true)
-    if (!on.ok) { setBusy(false); setError(on.message); return }
-    const r = await providerAccountActions.runMigration(providerId)
     setBusy(false)
-    if (!r.ok) setError(r.message)
+    if (!on.ok) setError(on.message)
   }
   return (
     <div className="rounded-[10px] border px-3.5 py-2.5 flex items-center gap-3" style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-panel)' }} data-testid={`external-adoption-${providerId}`}>
@@ -296,7 +307,7 @@ function ExternalAdoptionBlock({ providerId, provider }: { providerId: ProviderI
       )}
       {view.kind === 'offer' && (
         <RowButton onClick={() => { void adopt() }} disabled={busy} testId={`adopt-external-${providerId}`}>
-          {view.action === 'check-again' ? 'Check again' : `Use this computer's ${provider.displayName} sign-in`}
+          {view.action === 'check-again' || unfinished ? 'Check again' : `Use this computer's ${provider.displayName} sign-in`}
         </RowButton>
       )}
     </div>

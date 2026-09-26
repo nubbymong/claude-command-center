@@ -25,7 +25,7 @@ vi.mock('../../../src/main/providers/core', async (orig) => ({
   tryGetProviderPackage: (id: string) => FAKE_PACKAGES.find((p) => p.id === id) ?? null,
 }))
 vi.mock('../../../src/main/config-manager', () => ({
-  readConfigChecked: () => ({ value: { claudeEnabled: true, codexEnabled: true }, outcome: 'ok' }),
+  readConfigChecked: () => ({ value: { claudeEnabled: true, codexEnabled: true, codexAnswered: true }, outcome: 'ok' }),
   readConfig: () => null,
 }))
 vi.mock('../../../src/main/provider-account-registry', async () => {

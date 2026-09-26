@@ -46,7 +46,7 @@
 import path from 'node:path'
 import type { AuthMethod, AuthRealm, KnownAuthState, RealmOwnership } from '../../../shared/providers'
 import type {
-  ProviderAuthOperations, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthFailureCode, AuthCredentialKind, LaunchPreparation,
+  ProviderAuthOperations, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind, LaunchPreparation,
 } from '../core'
 import { redactSecrets } from '../../hooks/hook-payload-redactor'
 import { redactTokens } from '../../github/security/token-redactor'
@@ -245,8 +245,12 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     }
   }
 
-  async function readStatus(r: Ready): Promise<Observed> {
-    const out = await run(r, 'status', { timeoutMs: STATUS_TIMEOUT_MS })
+  async function readStatus(r: Ready, signal?: AbortSignal): Promise<Observed> {
+    // Checked last, just before the run: a check stopped while its
+    // environment was prepared (a login shell's look-up) starts no CLI; one
+    // stopped while it runs is stopped by the runner.
+    if (signal?.aborted) return { ...refuse('cancelled'), state: 'error' }
+    const out = await run(r, 'status', { timeoutMs: STATUS_TIMEOUT_MS, ...(signal ? { signal } : {}) })
     if (isRefusal(out)) return { ...out, state: 'error' }
     if (out.timedOut) return { ...refuse('timed-out'), state: 'error' }
     if (out.spawnError) return { ...refuse('not-started'), state: 'error' }
@@ -318,7 +322,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
       }
     },
 
-    status(realm) {
+    status(realm, opts?: AuthStatusOptions) {
       return guard(async () => {
         const r = await prepare(realm, 'status')
         if (isRefusal(r)) return { ...r, state: 'error' as KnownAuthState }
@@ -326,7 +330,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         const release = holdRealm(r, 'reader')
         if (isRefusal(release)) return { ...release, state: 'error' as KnownAuthState }
         try {
-          const s = await readStatus(r)
+          const s = await readStatus(r, opts?.signal)
           if (s.state === 'error') return s
           return s.state === 'signed-in' ? { ok: true, state: s.state, credential: credentialOf(s.via) } : { ok: true, state: s.state }
         } finally {

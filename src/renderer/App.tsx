@@ -63,6 +63,9 @@ import { useAppMetaStore } from './stores/appMetaStore'
 import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
+import { CodexReconfirmPage } from './onboarding/CodexReconfirmPage'
+import { decideCodexReconfirm, codexAnswered, codexReconfirmDue } from './onboarding/codex-reconfirm-gate'
+import { noteCodexChosenOnUpgrade } from './onboarding/provider-choice'
 import { HelloCodexHost, helloCodexShowing, useHeldCodexSessionStart } from './onboarding/HelloCodex'
 import { useHelloCodexStore } from './onboarding/hello-codex'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
@@ -168,6 +171,13 @@ export default function App() {
    *  release-notes harness has closed, a first install is indistinguishable
    *  from an upgrade. Cleared by either of the page's buttons. */
   const [multiSpawnIntroDue, setMultiSpawnIntroDue] = useState(false)
+  /** "Do you use Codex?", asked once of everyone who updates (owner decision
+   *  2026-09-26; onboarding/codex-reconfirm-gate.ts). Armed ONCE in
+   *  postConfigInit from meta read before anything stamps (a fresh install
+   *  answers in its setup instead); due while unanswered (codexReconfirmDue).
+   *  `shown`: the page is on screen, so only its own answer closes it. */
+  const [codexReconfirmArmed, setCodexReconfirmArmed] = useState(false)
+  const [codexReconfirmShown, setCodexReconfirmShown] = useState(false)
   /** Config ids the grandfathering migration turned on THIS START — the rows
    *  the startup page marks "auto · N copies found". Accumulated because the
    *  page mounts after the migration has already written `true`, at which point
@@ -270,6 +280,10 @@ export default function App() {
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
   const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
+  // Whether "do you use Codex?" has been answered, live: an answer given
+  // before the one-time page's turn (a setup screen's "Use Codex only") means
+  // it never shows.
+  const codexAnsweredNow = useSettingsStore((s) => codexAnswered(s.settings))
   // Reactive onboarding-gate input. MUST be a top-level hook (above the
   // Loading/SetupDialog early returns) — the reactive subscription is what lets
   // the finish step's completion stamp dismiss the harness, but a hook placed
@@ -601,6 +615,20 @@ export default function App() {
       })
       if (introDecision.markSeen) markMultiSpawnIntroSeen()
       if (introDecision.show) setMultiSpawnIntroDue(true)
+
+      // "Do you use Codex?" (owner decision 2026-09-26). From the same pre-stamp
+      // `appMeta` snapshot, for the same reason: a fresh install is told apart
+      // from an upgrade only before the harness stamps. Nothing is stamped here:
+      // the marker is the answer itself (settings.codexAnswered), written only
+      // when the user answers, so an app closed before that asks again.
+      const reconfirm = decideCodexReconfirm({
+        answered: codexAnswered(useSettingsStore.getState().settings),
+        lastSeenVersion: appMeta.lastSeenVersion,
+        lastRunVersion: lastRunVersionOf(appMeta),
+        currentVersion: __APP_VERSION__,
+        channel: useSettingsStore.getState().settings.updateChannel,
+      })
+      if (reconfirm.show) setCodexReconfirmArmed(true)
 
       // Record that THIS build ran — AFTER the decision above has read the
       // previous value, which is the whole point of it. It is the witness
@@ -1251,6 +1279,7 @@ export default function App() {
     showGuidedConfig,
     showGitHubOnboarding,
     loggingConsentSeen: Boolean(loggingConsentSeen),
+    codexReconfirmDue: codexReconfirmDue({ armed: codexReconfirmArmed, shown: codexReconfirmShown, answered: codexAnsweredNow }),
     resumePending: pendingRestore !== null,
     multiSpawnIntroDue,
     helloCodexOpen: helloCodexTakeoverOpen,
@@ -1268,7 +1297,7 @@ export default function App() {
   // reader reaches the title bar, sidebar or sessions they hide (VM audit,
   // 2026-09-25: Tab walked out of the pages into hidden controls). The
   // dialogs that open above them (the close dialogs) are outside it.
-  const appCovered = (bootGate === 'onboarding' && !onboardingAside) || helloCodexShowing(helloCodexOpen, boot.helloCodexTurn)
+  const appCovered = (bootGate === 'onboarding' && !onboardingAside) || bootGate === 'codexReconfirm' || helloCodexShowing(helloCodexOpen, boot.helloCodexTurn)
 
   return (
     <ErrorBoundary>
@@ -1340,6 +1369,23 @@ export default function App() {
               await useAccountProfilesStore.getState().hydrate()
               if (np) useSessionStore.getState().updateSession(newAccountDetected.sessionId, { profileId: np.id })
               setNewAccountDetected(null)
+            }}
+          />
+        )}
+
+        {/* "Do you use Codex?" (bootGates: after the release notes and the
+            upgrade harness, before the rest). Yes hands the user to the Codex
+            setup page: the harness, alone, for that page (codexSetupOnly),
+            which outranks this gate once the answer is saved. */}
+        {bootGate === 'codexReconfirm' && (
+          <CodexReconfirmPage
+            onShown={() => setCodexReconfirmShown(true)}
+            onAnswered={(usesCodex) => {
+              if (usesCodex) {
+                noteCodexChosenOnUpgrade()
+                setCodexSetupHandOff(true)
+              }
+              setCodexReconfirmArmed(false)
             }}
           />
         )}

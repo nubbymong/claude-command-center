@@ -62,7 +62,7 @@ describe('Built-in Tools step', () => {
   const renderStep = () => act(() => { root.render(React.createElement(BuiltinToolsStep, { onNext: () => {}, onBack: () => {} })) })
 
   it('lists Claude review beside Codex review, each with its own direction', () => {
-    setSettings({})
+    setSettings({ codexEnabled: true })
     renderStep()
     const titles = [...container.querySelectorAll('.tool-card .tc-t')].map((t) => t.firstChild?.textContent)
     expect(titles.indexOf('Claude review')).toBe(titles.indexOf('Codex review') + 1)
@@ -87,7 +87,7 @@ describe('Built-in Tools step', () => {
     expect(c.hasAttribute('inert')).toBe(true)
     expect(c.querySelector('.gh-tag')?.textContent).toBe('Codex off')
     expect((c.querySelector('button.tc-sw') as HTMLButtonElement).className).not.toContain('on')
-    expect(c.querySelector('.tc-d')?.textContent).toBe('Code review is powered by Codex, which is turned off. Turn it on from the Codex page, or in Settings, Accounts.')
+    expect(c.querySelector('.tc-d')?.textContent).toBe('Code review is powered by Codex, which is turned off. Turn it on in Settings, Accounts.')
     // Vision is not a Codex tool: never blocked by it.
     expect(card('Vision: see & drive a browser').className).not.toContain('blocked')
   })
@@ -106,9 +106,20 @@ describe('Built-in Tools step', () => {
   })
 
   it('shows no Codex-off note while Codex is on', () => {
-    setSettings({})
+    setSettings({ codexEnabled: true })
     renderStep()
     expect(card('Claude review').querySelector('.tc-note')).toBeNull()
+    expect(card('Codex review').className).not.toContain('blocked')
+  })
+
+  it('blocks Codex review while the user has not said they use Codex (no saved answer), and says it is not set up', () => {
+    setSettings({})
+    renderStep()
+    const c = card('Codex review')
+    expect(c.className).toContain('blocked')
+    expect(c.querySelector('.gh-tag')?.textContent).toBe('Codex not set up')
+    expect(c.querySelector('.tc-d')?.textContent).toBe('Code review is powered by Codex, which is not set up. Set it up in Settings, Accounts.')
+    expect(card('Claude review').querySelector('.tc-note')?.textContent).toBe('Only Codex sessions use it; Codex is not set up.')
   })
 })
 
@@ -120,13 +131,13 @@ describe('Transparency recap', () => {
   }
 
   it('discloses Claude review among the tools that are on', () => {
-    setSettings({})
+    setSettings({ codexEnabled: true })
     renderStep()
     expect(toolsValue()).toBe('On: 5 of 5 tools (Vision, Codex review, Claude review, Host screenshots, Agent Canvas)')
   })
 
   it('leaves Claude review out only when its own switch is off; Codex off leaves out Codex review alone', () => {
-    setSettings({ conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, claudeReview: false } })
+    setSettings({ codexEnabled: true, conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, claudeReview: false } })
     renderStep()
     expect(toolsValue()).toBe('On: 4 of 5 tools (Vision, Codex review, Host screenshots, Agent Canvas)')
     act(() => { root.unmount() })
@@ -136,10 +147,10 @@ describe('Transparency recap', () => {
     expect(toolsValue()).toBe('On: 4 of 5 tools (Vision, Claude review, Host screenshots, Agent Canvas)')
   })
 
-  it('points at Settings, Accounts to turn Codex on', () => {
-    setSettings({ codexEnabled: false })
+  // The recap's own Codex row: onboarding-transparency-recap.test.tsx.
+  it('leaves out Codex review while the user has not answered', () => {
+    setSettings({})
     renderStep()
-    const c = [...container.querySelectorAll('.gh-card')].find((x) => x.querySelector('.gh-t')?.textContent === 'Codex (Beta)')
-    expect(c?.querySelector('.gh-d')?.textContent).toBe('Off (Settings, Accounts)')
+    expect(toolsValue()).toBe('On: 4 of 5 tools (Vision, Claude review, Host screenshots, Agent Canvas)')
   })
 })

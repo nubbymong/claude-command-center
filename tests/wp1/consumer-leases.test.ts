@@ -377,18 +377,27 @@ describe('ADR-009 round 1 regressions: sign-in runs, holds and the provider swit
     let saved: ProviderPreference = 'undecided'
     const h = await harness({ preference: { codex: () => saved } })
     expect((await h.service.setProviderEnabled('codex', true)).ok).toBe(true)
-    expect(h.service.preferenceOf('codex')).toBe('on')
-    // Another writer (the old Codex settings) saves "off": that wins.
+    // Held, but not an answer for Codex (whose on/off counts once answered):
+    // on only once the saved yes reads back (owner decision 2026-09-26).
+    expect(h.service.preferenceOf('codex')).toBe('undecided')
+    // Another writer (the old Codex settings) saves "off" over that unsaved
+    // switch-on: the saved "off" wins.
     saved = 'off'
     expect(h.service.preferenceOf('codex')).toBe('off')
     expect(await h.service.beginSetup({ providerId: 'codex', method: 'browser' })).toMatchObject({ ok: false, code: 'provider-disabled' })
-    expect(await h.service.migrateExternalDefault('codex')).toMatchObject({ ok: true, outcome: 'skipped' })
+    expect(await h.service.adoptExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'provider-disabled' })
     // Switched on here again; the saved setting catches up, and later says off.
     expect((await h.service.setProviderEnabled('codex', true)).ok).toBe(true)
     saved = 'on'
     expect(h.service.preferenceOf('codex')).toBe('on')
     saved = 'off'
     expect(h.service.preferenceOf('codex')).toBe('off')
+    // From "not answered yet", the saved yes is what turns it on.
+    saved = 'undecided'
+    expect((await h.service.setProviderEnabled('codex', true)).ok).toBe(true)
+    expect(h.service.preferenceOf('codex')).toBe('undecided')
+    saved = 'on'
+    expect(h.service.preferenceOf('codex')).toBe('on')
   })
 
   it('a settings save publishes the snapshot again, so a switch-on over a saved "off" shows once the setting catches up (WP2 6d)', async () => {
@@ -418,7 +427,7 @@ describe('ADR-009 confirmation regressions: the switch fails closed, and exclusi
     saved = 'on'
     saved = 'off'
     expect(h.service.preferenceOf('codex')).toBe('off')
-    expect(await h.service.migrateExternalDefault('codex')).toMatchObject({ ok: true, outcome: 'skipped' })
+    expect(await h.service.probeExternalDefault({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'provider-disabled' })
   })
 
   it('an unreadable settings read turns nothing on: the last value read stands, and a switch-off made here stands', async () => {

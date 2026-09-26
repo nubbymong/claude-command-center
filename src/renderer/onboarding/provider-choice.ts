@@ -19,9 +19,20 @@ export function usesClaude(s: ProviderChoiceView): boolean {
   return s.claudeEnabled !== false
 }
 
+/** Codex as the saved settings say it: on or off once the user answered,
+ *  else not answered yet, which every surface reads as "not set up" (main
+ *  starts nothing of it). The settings store drops an earlier build's
+ *  unanswered value at load (migrateCodexAnswer), and every way of answering
+ *  writes the answer with it, so a saved on or off here is an answer. */
+export type CodexPreference = 'on' | 'off' | 'undecided'
+
+export function codexPreference(s: ProviderChoiceView): CodexPreference {
+  return s.codexEnabled === true ? 'on' : s.codexEnabled === false ? 'off' : 'undecided'
+}
+
 /** Codex is in use only once the saved setting turns it on. */
 export function usesCodex(s: ProviderChoiceView): boolean {
-  return s.codexEnabled === true
+  return codexPreference(s) === 'on'
 }
 
 /** Both keys a choice saves. */
@@ -43,8 +54,10 @@ export interface FirstRunOutcome {
   codexOnly?: boolean
 }
 
-/** What "Use Codex only" saves. */
-export const CODEX_ONLY_SETTINGS = Object.freeze(choiceSettings('codex'))
+/** What "Use Codex only" saves: the choice, and that it is an answer to
+ *  "do you use Codex?" (codexAnswered), so an upgrader who chose it is not
+ *  asked again by the one-time page after an update. */
+export const CODEX_ONLY_SETTINGS = Object.freeze({ ...choiceSettings('codex'), codexAnswered: true as const })
 
 /** A start-up with Claude Code turned off never asks for the Claude CLI's
  *  folder trust (the version-change CLI setup step): there is no Claude CLI
@@ -70,7 +83,22 @@ export function claudeWasMissingAtSetup(): boolean {
   return claudeMissingAtSetup
 }
 
+// The one-time "Do you use Codex?" page after an update (codex-reconfirm-gate)
+// was answered yes in this run: that upgrader is handed the Codex setup page
+// next, the way "Use Codex only" hands one over. In memory only, like the
+// flag above: a later start knows nothing of it.
+let codexChosenOnUpgrade = false
+
+export function noteCodexChosenOnUpgrade(): void {
+  codexChosenOnUpgrade = true
+}
+
+export function codexWasChosenOnUpgrade(): boolean {
+  return codexChosenOnUpgrade
+}
+
 /** Tests only. */
 export function resetProviderChoiceForTests(): void {
   claudeMissingAtSetup = false
+  codexChosenOnUpgrade = false
 }

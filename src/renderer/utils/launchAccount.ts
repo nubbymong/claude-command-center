@@ -11,7 +11,7 @@
 // computer, or any realm-only sign-in -- needs THAT launch's acknowledgement,
 // sent together with the account id it acknowledges. Nothing here stores one.
 import type { AccountsSnapshot, AccountView, Compatibility, ProviderId } from '../../shared/providers'
-import { accountDisplayName, providerStatus, providerView, useProviderAccountsStore } from '../stores/providerAccountsStore'
+import { accountDisplayName, providerStatus, providerUnanswered, providerView, useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { formatSpawnError } from './sessionLaunch'
 import { isConfigLaunchBlocked } from '../hooks/useLaunchConfig'
 
@@ -36,6 +36,11 @@ export const SIGNED_IN_ELSEWHERE: AccountNotice = { lead: 'This account signed i
 export const NO_ACCOUNT: AccountNotice = { lead: 'Sign in to Codex first.', link: 'Open Accounts', tail: '.' }
 /** Discovery has no answer about the CLI a launch would run. */
 export const NOT_CHECKED: AccountNotice = { lead: 'This app could not check Codex.', link: 'Open Accounts', tail: '.' }
+/** The user has not said whether they use Codex (after an update, until
+ *  they answer: owner decision 2026-09-26). Main refuses its launches with
+ *  "Codex is not set up yet. Set it up in Settings, Accounts."; where a link
+ *  can be drawn, these words are it. */
+export const NOT_SET_UP: AccountNotice = { lead: 'Codex is not set up yet.', link: 'Open Accounts', tail: ' to set it up.' }
 
 export const noticeText = (n: AccountNotice): string => `${n.lead} ${n.link}${n.tail}`
 export const NEEDS_ATTENTION_TEXT = noticeText(NEEDS_ATTENTION)
@@ -51,11 +56,13 @@ export function restartPicksConversation(provider: ProviderId | undefined): bool
 
 /** WP2: whether a launch of this provider is one main refuses because the
  *  provider is off -- the account list says so, or the saved setting does
- *  (the renderer's launch rule). A launch like that asks the user nothing
- *  (no sign-in confirmation, no account picker): it goes to main, and the
- *  tab shows main's reason. */
+ *  (the renderer's launch rule) -- or because it is not set up (the user has
+ *  not said they use it: providerUnanswered). A launch like that asks the
+ *  user nothing (no sign-in confirmation, no account picker): it goes to
+ *  main, and the tab shows main's reason. */
 export function providerOffForLaunch(providerId: ProviderId, snapshot: AccountsSnapshot | null): boolean {
-  return providerView(snapshot, providerId)?.enabled === false || isConfigLaunchBlocked({ provider: providerId, shellOnly: false })
+  return providerView(snapshot, providerId)?.enabled === false || providerUnanswered(snapshot, providerId)
+    || isConfigLaunchBlocked({ provider: providerId, shellOnly: false })
 }
 
 /** Whether a launch on this account needs its own acknowledgement. */

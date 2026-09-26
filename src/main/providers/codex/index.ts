@@ -283,8 +283,9 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     ...(source && realmFs ? {
       ...withLaunch(createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven })),
       realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks }),
-      // The user's own ~/.codex (or inherited CODEX_HOME), adopted once on
-      // upgrade when signed in: realm-only, never vouched for (design 6.3).
+      // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
+      // the user chooses to use it and it is signed in (owner decision
+      // 2026-09-26): realm-only, never vouched for (design 6.3).
       externalDefaultRealm: CODEX_EXTERNAL_DEFAULT_REALM,
     } : {}),
   }

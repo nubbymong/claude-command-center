@@ -22,6 +22,7 @@ import { grantLaunchAcknowledgement, consumeLaunchAcknowledgement, useLaunchAckS
 import { buildLaunchSession } from '../../../src/renderer/hooks/useLaunchConfig'
 import { buildSessionState } from '../../../src/renderer/session-persistence'
 import { useSessionStore, type Session } from '../../../src/renderer/stores/sessionStore'
+import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
 import type { TerminalConfig } from '../../../src/renderer/stores/configStore'
 import { resolveLaunchBinding, chooseSessionAccount, emptyRegistry, makeOpaqueId, type ProviderRegistryDoc } from '../../../src/shared/providers'
 import { snapshot, provider, work, local } from './accounts-snapshot-harness'
@@ -237,7 +238,11 @@ describe('the binding rides config -> session -> saved session; the acknowledgem
     codexOptions: { permissionsPreset: 'standard' }, providerAccountId: 'acc-local', ...over,
   })
 
-  beforeEach(() => { useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false }) })
+  beforeEach(() => {
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    // The user said they use Codex: its configs launch.
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, codexEnabled: true, codexAnswered: true } })
+  })
 
   it('a Codex config launches a session bound to its account; a Claude config never carries one', () => {
     expect(buildLaunchSession(codexConfig())!.providerAccountId).toBe('acc-local')

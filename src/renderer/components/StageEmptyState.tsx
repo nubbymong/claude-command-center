@@ -65,7 +65,7 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
                   >
                     <span className="w-2 h-2 rounded-[2px] shrink-0" style={{ backgroundColor: color }} aria-hidden />
                     <span className="text-xs text-text truncate">{c.label}</span>
-                    {launchBlocked && <span className="text-[9px] text-overlay0 shrink-0">{launchBlockedTag(c)}</span>}
+                    {launchBlocked && <span className="text-[9px] text-overlay0 shrink-0">{launchBlockedTag(c, launchGate)}</span>}
                   </button>
                 )
               })}

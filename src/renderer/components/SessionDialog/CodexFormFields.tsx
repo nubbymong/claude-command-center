@@ -1,7 +1,7 @@
 import type { CodexOptions } from '../../stores/configStore'
-import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
+import { useProviderAccountsStore, providerUnanswered } from '../../stores/providerAccountsStore'
 import { CODEX_MODELS } from '../../codex-models'
-import { NO_ACCOUNT, providerCliMissingText, type AccountNotice, type AccountOption } from '../../utils/launchAccount'
+import { NO_ACCOUNT, NOT_SET_UP, providerCliMissingText, type AccountNotice, type AccountOption } from '../../utils/launchAccount'
 
 /** The "Codex account" field (WP2 commit 6, canvas F6/F9). The dialog works
  *  out what it shows from the Accounts snapshot (utils/launchAccount.ts) and
@@ -54,11 +54,14 @@ const selectCls = 'w-full bg-[var(--surface-base)] border border-[var(--border-s
 
 export function CodexFormFields({ value, onChange, onOpenAccounts, account, tooOld }: Props) {
   // Main's discovery, from the Accounts snapshot: says nothing until the
-  // snapshot has arrived and main has looked for the CLI (at start when
-  // Codex is switched on; an undecided Codex waits for Check now or an
-  // operation that needs the CLI).
+  // snapshot has arrived and main has looked for the CLI (at start, or on
+  // Check again, and only once Codex is on: main never looks for the CLI of
+  // a Codex the user has not said they use).
   const cliMissing = useProviderAccountsStore((s) => providerCliMissingText(s.snapshot, 'codex'))
-  const noAccount = !!account?.available && account.noAccount
+  // Not set up (the user has not said they use Codex): said instead of the
+  // missing account, with the way to Accounts, where it is set up.
+  const notSetUp = useProviderAccountsStore((s) => providerUnanswered(s.snapshot, 'codex'))
+  const noAccount = !!account?.available && account.noAccount && !notSetUp
   /** A notice as one sentence whose own words are the link, so "Open
    *  Accounts" never reads twice. */
   const notice = (n: AccountNotice) => (
@@ -81,13 +84,18 @@ export function CodexFormFields({ value, onChange, onOpenAccounts, account, tooO
           {tooOld}
         </div>
       )}
+      {notSetUp && (
+        <div className="rounded-[9px] border p-3 text-xs leading-snug" style={warnBox} data-testid="codex-not-set-up">
+          {notice(NOT_SET_UP)}
+        </div>
+      )}
       {noAccount && (
         <div className="rounded-[9px] border p-3 text-xs leading-snug" style={warnBox} data-testid="codex-no-account">
           {notice(NO_ACCOUNT)}
         </div>
       )}
 
-      {account?.available && !noAccount && (
+      {account?.available && !account.noAccount && (
         <div>
           <label className="block text-xs text-[var(--text-secondary)] mb-1" htmlFor="codex-account">Codex account</label>
           <select

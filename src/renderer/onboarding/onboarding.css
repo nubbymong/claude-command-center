@@ -577,6 +577,13 @@
 .ob-root .as-note { color: var(--text-muted); font-size: 12px; text-align: center; margin: 0; }
 @media (max-width: 760px) { .ob-root .as-cards { grid-template-columns: 1fr; } }
 
+/* Do you use Codex? (the one-time page after an update, approved mockup
+   .ccc-canvas/upgrade-codex-confirm.html): the same cards, two of them; No has
+   no provider, so a dashed empty mark in the logo's place. */
+.ob-root .as-cards.as-cards-2 { grid-template-columns: repeat(2, minmax(0, 340px)); justify-content: center; }
+.ob-root .as-mark-none { width: 26px; height: 26px; border-radius: 7px; border: 1.5px dashed var(--border-strong); display: inline-block; flex: none; }
+@media (max-width: 760px) { .ob-root .as-cards.as-cards-2 { grid-template-columns: 1fr; } }
+
 /* Set up Codex (WP2 commit 6e, canvas F2) */
 .ob-root .cx-muted { color: var(--text-muted); font-size: 12px; line-height: 1.5; margin: 0 0 10px; }
 .ob-root .cx-recipes { display: grid; gap: 10px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); padding: 12px; margin-bottom: 10px; }

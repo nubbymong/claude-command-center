@@ -42,7 +42,7 @@ export type { ModelRegistry } from '../../shared/model-registry'
 import type {
   AccountsSnapshot as ProviderAccountsSnapshot, AccountsResult as ProviderAccountsResult, ProviderInstallationView, InstallRecipeView,
   SignInOutputEvent, BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
-  SecretDeposit, KnownAuthState, ProviderId as ProviderAccountsProviderId, ExternalDefaultOutcome, ResolveConflictRequest, SetReviewerDefaultRequest,
+  SecretDeposit, KnownAuthState, ProviderId as ProviderAccountsProviderId, ResolveConflictRequest, SetReviewerDefaultRequest,
 } from '../../shared/providers'
 import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
 export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
@@ -915,7 +915,9 @@ export interface ElectronAPI {
     linkIdentity: (accountId: string, identityId: string) => Promise<ProviderAccountsResult>
     unlinkIdentity: (accountId: string) => Promise<ProviderAccountsResult<{ identityId: string }>>
     adoptExternal: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ accountId: string }>>
-    runMigration: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ outcome: ExternalDefaultOutcome }>>
+    /** Whether this computer's own sign-in of the provider is signed in,
+     *  asked without taking it in (nothing is kept). */
+    probeExternal: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
     /** "This is still my account": clears a blocked account after a fresh check. */
     reconcileSignIn: (accountId: string) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
     resolveConflict: (req: ResolveConflictRequest) => Promise<ProviderAccountsResult>

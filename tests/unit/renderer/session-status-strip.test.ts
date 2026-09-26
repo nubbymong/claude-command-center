@@ -91,6 +91,13 @@ const ptyWrite = vi.fn()
 }
 
 const { default: SessionStatusStrip } = await import('../../../src/renderer/components/SessionStatusStrip')
+const { useSettingsStore: mockedSettings } = await import('../../../src/renderer/stores/settingsStore')
+/** The saved Codex answer the strip reads: true (on), or absent (not set up). */
+function setCodexSaved(on: boolean | undefined): void {
+  const settings = (mockedSettings as any).getState().settings as Record<string, unknown>
+  if (on === undefined) delete settings.codexEnabled
+  else settings.codexEnabled = on
+}
 
 let container: HTMLDivElement
 let root: Root
@@ -109,6 +116,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => { root.unmount() })
   container.remove()
+  // The saved Codex answer is shared module state: back to not set up.
+  setCodexSaved(undefined)
 })
 
 async function render(sessionId: string): Promise<void> {
@@ -165,6 +174,7 @@ describe('SessionStatusStrip -- telemetry', () => {
   })
 
   it('renders the codex-review count when usage record has reviews', async () => {
+    setCodexSaved(true)
     sessionState = {
       activeSessionId: claudeSession.id,
       sessions: [{ ...claudeSession, enableCodexReview: true }],
@@ -179,6 +189,16 @@ describe('SessionStatusStrip -- telemetry', () => {
     })
     await render(claudeSession.id)
     expect(container.textContent).toContain('review 4')
+    expect(mockCodexReview).toHaveBeenCalledWith(claudeSession.id)
+    setCodexSaved(undefined)
+  })
+
+  it('never asks for the codex-review count while Codex is not set up (no saved answer)', async () => {
+    setCodexSaved(undefined)
+    sessionState = { activeSessionId: claudeSession.id, sessions: [{ ...claudeSession, enableCodexReview: true }] }
+    await render(claudeSession.id)
+    expect(mockCodexReview).toHaveBeenCalled()
+    expect(mockCodexReview.mock.calls.every(([id]) => id === null)).toBe(true)
   })
 
   it('renders nothing for an unknown sessionId', async () => {

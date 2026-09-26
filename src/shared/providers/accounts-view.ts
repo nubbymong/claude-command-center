@@ -142,18 +142,15 @@ export interface PendingSetupView {
   signingIn: boolean
 }
 
-/** What a run of the one-time adoption answered (mirrors the core outcome). */
-export type ExternalDefaultOutcome =
-  | 'unsupported' | 'needs-confirmation' | 'registry-unavailable' | 'already-done' | 'registered' | 'not-signed-in' | 'skipped' | 'retry-later'
-
-/** The one-time adoption of a provider's own default sign-in (6.3). */
+/** A provider's own default sign-in on this computer (6.3; Codex's
+ *  ~/.codex). It is taken in only by the user's explicit choice (owner
+ *  decision 2026-09-26). `marker`: the answer recorded when it was, and any
+ *  answer a development build's start-up check recorded. Whether the user
+ *  must first say they use the provider is the provider's own preference
+ *  ("not answered yet"), not this view's. */
 export interface ExternalDefaultView {
   providerId: ProviderId
   marker?: { outcome: ProviderMigrationMarker['outcome']; reason?: ProviderMigrationSkipReason; at: number }
-  /** This run's result, when one ran since the app started. */
-  lastRun?: ExternalDefaultOutcome
-  /** The user must be asked whether they use the provider first. */
-  needsConfirmation: boolean
 }
 
 export type RegistryModeView =
@@ -191,6 +188,7 @@ export type AccountsFailureCode =
   | 'unsupported'              // the provider does not offer this here
   | 'capability-disabled'      // unknown, or experimental and not enabled
   | 'provider-disabled'
+  | 'provider-not-set-up'      // the user has not said they use the provider: nothing of it starts
   | 'provider-state-unknown'   // the saved on/off could not be read: nothing that starts a process runs
   | 'last-provider'            // at least one provider stays enabled
   | 'consumers'                // sessions or operations hold it: `consumers` says how many

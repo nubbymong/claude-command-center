@@ -66,7 +66,7 @@ const pa = {
   setDefault: vi.fn(ok),
   updateIdentity: vi.fn(ok),
   adoptExternal: vi.fn(ok),
-  runMigration: vi.fn(ok),
+  probeExternal: vi.fn(ok),
   reconcileSignIn: vi.fn(ok),
   resolveConflict: vi.fn(ok),
   setReviewerDefault: vi.fn(ok),
@@ -157,7 +157,7 @@ function snapshot(over: Partial<AccountsSnapshot> = {}): AccountsSnapshot {
     groups: [],
     accounts: [work, personal, local, old, parked, unv, refused, gone, claudeMain, claudeHome],
     pendingSetups: [],
-    externalDefaults: [{ providerId: 'codex', needsConfirmation: false }],
+    externalDefaults: [{ providerId: 'codex' }],
     conflicts: [],
     reviewerNotices: [],
     ...over,
@@ -243,7 +243,7 @@ beforeEach(() => {
   pa.abandonSetup.mockImplementation(ok)
   pa.setReviewerDefault.mockImplementation(ok)
   pa.adoptExternal.mockImplementation(ok)
-  pa.runMigration.mockImplementation(ok)
+  pa.probeExternal.mockImplementation(ok)
   pa.beginSetup.mockReset()
   pa.signIn.mockReset()
   pa.completeSetup.mockReset()
@@ -288,11 +288,41 @@ describe('Providers card', () => {
     await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
     expect(pa.setEnabled).toHaveBeenCalledWith('codex', true)
-    expect(updateSettings).toHaveBeenCalledWith({ codexEnabled: true })
+    // A switch the user makes is an answer to "do you use Codex?", saved with it.
+    expect(updateSettings).toHaveBeenCalledWith({ codexEnabled: true, codexAnswered: true })
     expect(pa.setEnabled.mock.invocationCallOrder[0]).toBeLessThan(updateSettings.mock.invocationCallOrder[0])
     await act(async () => { (q('provider-row-claude')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
+    // Claude Code has no answer key.
     expect(updateSettings).toHaveBeenLastCalledWith({ claudeEnabled: false })
+  })
+
+  it('a Codex the user has not answered for never reads On: Not set up, the way to set it up, and the switch records the yes', async () => {
+    const s = snapshot()
+    s.providers[1] = { ...s.providers[1], preference: 'undecided', discoveryState: 'unchecked', version: undefined }
+    render(s)
+    const row = q('provider-row-codex')!
+    expect(q('provider-switch-text-codex')?.textContent).toBe('Not set up')
+    expect(row.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+    expect(q('provider-status-codex')?.textContent).toBe('Codex is not set up yet')
+    expect(q('provider-not-set-up-codex')?.textContent).toBe('Turn Codex on to set it up, then add a Codex account below.')
+    // Main does not look for its CLI while it is not set up: no Check now.
+    expect(q('provider-check-again-codex')).toBeNull()
+    await act(async () => { (row.querySelector('[role="switch"]') as HTMLElement).click() })
+    await flush()
+    expect(pa.setEnabled).toHaveBeenCalledWith('codex', true)
+    expect(updateSettings).toHaveBeenCalledWith({ codexEnabled: true, codexAnswered: true })
+    // Claude Code reads On as before.
+    expect(q('provider-switch-text-claude')?.textContent).toBe('On')
+  })
+
+  it('a Claude Code preference main could not read never reads "Not set up": Claude Code has no answer to give', () => {
+    const s = snapshot()
+    s.providers[0] = { ...s.providers[0], preference: 'undecided' }
+    render(s)
+    expect(q('provider-switch-text-claude')?.textContent).toBe('On')
+    expect(q('provider-not-set-up-claude')).toBeNull()
+    expect(q('provider-status-claude')?.textContent).not.toContain('not set up')
   })
 
   it('says the provider is in use, with the count, when something holds it', async () => {
@@ -1105,63 +1135,78 @@ describe('registry, conflicts, adoption and pending setups', () => {
   })
 
   it('says why the start-up check was skipped, and offers Check again where it got no answer', async () => {
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: false, marker: { outcome: 'skipped', reason: 'unavailable', at: 1 } }] }))
+    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', marker: { outcome: 'skipped', reason: 'unavailable', at: 1 } }] }))
     expect(q('external-adoption-text-codex')?.textContent).toContain('could not check')
     expect(q('adopt-external-codex')?.textContent).toBe('Check again')
     await click('adopt-external-codex')
     expect(pa.adoptExternal).toHaveBeenCalledWith('codex')
     unmountNow()
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: false, marker: { outcome: 'skipped', reason: 'no-answer', at: 1 } }] }))
+    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', marker: { outcome: 'skipped', reason: 'no-answer', at: 1 } }] }))
     expect(q('adopt-external-codex')?.textContent).toBe('Check again')
   })
 
   it("offers to use this computer's sign-in after a signed-out or otherwise skipped check, and explains an overlap without an offer", () => {
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: false, marker: { outcome: 'none', at: 1 } }] }))
+    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', marker: { outcome: 'none', at: 1 } }] }))
     expect(q('external-adoption-text-codex')?.textContent).toContain('signed out')
     expect(q('adopt-external-codex')?.textContent).toBe("Use this computer's Codex sign-in")
     unmountNow()
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: false, marker: { outcome: 'skipped', reason: 'no-cli', at: 1 } }] }))
+    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', marker: { outcome: 'skipped', reason: 'no-cli', at: 1 } }] }))
     expect(q('external-adoption-text-codex')?.textContent).toContain('CLI was not found')
     expect(q('adopt-external-codex')?.textContent).toBe("Use this computer's Codex sign-in")
     unmountNow()
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: false, marker: { outcome: 'skipped', reason: 'overlap', at: 1 } }] }))
+    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', marker: { outcome: 'skipped', reason: 'overlap', at: 1 } }] }))
     expect(q('external-adoption-text-codex')?.textContent).toContain('overlaps')
     expect(q('adopt-external-codex')).toBeNull()
   })
 
-  it('asks whether the user uses Codex, and on yes turns it on, runs the check again, and shows what it found', async () => {
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: true }] }))
+  it('asks whether the user uses Codex, and the yes only records the answer: nothing is checked or adopted', async () => {
+    const unanswered = snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex' }] })
+    unanswered.providers[1] = { ...unanswered.providers[1], preference: 'undecided' }
+    render(unanswered)
     expect(q('adopt-external-codex')).toBeNull()
+    expect(q('external-adoption-text-codex')?.textContent).toBe("Codex is not set up yet. Once you say you use Codex, you can use this computer's Codex sign-in here.")
     expect(q('confirm-uses-codex')?.textContent).toBe('Yes, I use Codex')
     await click('confirm-uses-codex')
     expect(pa.setEnabled).toHaveBeenCalledWith('codex', true)
-    expect(updateSettings).toHaveBeenCalledWith({ codexEnabled: true })
-    expect(pa.runMigration).toHaveBeenCalledWith('codex')
-    expect(pa.setEnabled.mock.invocationCallOrder[0]).toBeLessThan(pa.runMigration.mock.invocationCallOrder[0])
-    expect(updateSettings.mock.invocationCallOrder[0]).toBeLessThan(pa.runMigration.mock.invocationCallOrder[0])
-    // What the check found arrives with the next snapshot.
-    act(() => { useProviderAccountsStore.setState({ snapshot: snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: false, marker: { outcome: 'none', at: 2 } }] }) }) })
+    expect(updateSettings).toHaveBeenCalledWith({ codexEnabled: true, codexAnswered: true })
+    // The sign-in already on this computer is neither checked nor taken in.
+    expect(pa.probeExternal).not.toHaveBeenCalled()
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+    // With Codex on, the next snapshot offers it, for the user to choose.
+    act(() => { useProviderAccountsStore.setState({ snapshot: snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex' }] }) }) })
     expect(q('confirm-uses-codex')).toBeNull()
-    expect(q('external-adoption-text-codex')?.textContent).toContain('signed out')
+    expect(q('adopt-external-codex')?.textContent).toBe("Use this computer's Codex sign-in")
   })
 
-  it('does not run the check when turning the provider on is refused', async () => {
+  it('says what went wrong when turning the provider on is refused, and checks nothing', async () => {
     pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: true }] }))
+    const unanswered = snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex' }] })
+    unanswered.providers[1] = { ...unanswered.providers[1], preference: 'undecided' }
+    render(unanswered)
     await click('confirm-uses-codex')
-    expect(pa.runMigration).not.toHaveBeenCalled()
+    expect(pa.probeExternal).not.toHaveBeenCalled()
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
     expect(q('external-adoption-codex')?.textContent).toContain('The change could not be saved.')
   })
 
-  it('offers nothing before the start-up check settles, while that home is being set up, or once an account stands for it', () => {
-    const skipped = { providerId: 'codex' as const, needsConfirmation: false, marker: { outcome: 'skipped' as const, reason: 'unavailable' as const, at: 1 } }
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: true }] }))
-    expect(q('external-adoption-text-codex')?.textContent).toContain('once you confirm you use Codex')
-    expect(q('adopt-external-codex')).toBeNull()
-    unmountNow()
-    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex', needsConfirmation: false }] }))
-    expect(q('external-adoption-codex')).toBeNull()
-    unmountNow()
+  it("with Codex on and nothing recorded, offers this computer's sign-in with honest text; only the click takes it in, and one that could not finish becomes Check again", async () => {
+    render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex' }] }))
+    expect(q('external-adoption-text-codex')?.textContent).toBe("The app has not looked at this computer's Codex sign-in. It checks it only when you choose to use it.")
+    expect(q('adopt-external-codex')?.textContent).toBe("Use this computer's Codex sign-in")
+    expect(pa.adoptExternal).not.toHaveBeenCalled()
+    pa.adoptExternal.mockResolvedValueOnce({ ok: false, code: 'timed-out', message: 'Codex did not answer in time.' } as never)
+    await click('adopt-external-codex')
+    expect(pa.adoptExternal).toHaveBeenCalledWith('codex')
+    expect(q('external-adoption-codex')?.textContent).toContain('Codex did not answer in time.')
+    expect(q('adopt-external-codex')?.textContent).toBe('Check again')
+    // Signed out is an answer, not an attempt that could not finish.
+    pa.adoptExternal.mockResolvedValueOnce({ ok: false, code: 'not-signed-in', message: 'Your existing sign-in is signed out; sign in to add an account.' } as never)
+    await click('adopt-external-codex')
+    expect(q('adopt-external-codex')?.textContent).toBe("Use this computer's Codex sign-in")
+  })
+
+  it('offers nothing while that home is being set up, or once an account stands for it', () => {
+    const skipped = { providerId: 'codex' as const, marker: { outcome: 'skipped' as const, reason: 'unavailable' as const, at: 1 } }
     const pendingExternal = { accountId: 'acc-ext-pending', providerId: 'codex' as const, method: 'external' as const, state: 'pending' as const, external: true, createdAt: 1, signingIn: false }
     render(snapshot({ accounts: [work], externalDefaults: [skipped], pendingSetups: [pendingExternal] }))
     expect(q('external-adoption-codex')).toBeNull()
@@ -1184,5 +1229,83 @@ describe('registry, conflicts, adoption and pending setups', () => {
     await click('add-account-finish')
     expect(pa.completeSetup).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc-half' }))
     expect(pa.abandonSetup).not.toHaveBeenCalled()
+  })
+
+  // Main refuses a sign-in of a Codex the user has not answered for (as not
+  // set up): resuming one is adding an account, so the yes goes first. Main's
+  // switch pushes the answered snapshot, as it does in the app.
+  const unansweredWith = (setup: object) => {
+    const s = snapshot({ pendingSetups: [setup as never] })
+    s.providers[1] = { ...s.providers[1], preference: 'undecided' }
+    return s
+  }
+  const answeredOnSwitch = (order: string[], s: AccountsSnapshot) => {
+    pa.setEnabled.mockImplementation(async () => {
+      order.push('yes')
+      useProviderAccountsStore.setState({ snapshot: { ...s, revision: 2, providers: [s.providers[0], { ...s.providers[1], preference: 'on' }] } })
+      return { ok: true }
+    })
+  }
+
+  it('resuming a browser sign-in while Codex is not answered records the yes first, then signs in', async () => {
+    const setup = { accountId: 'acc-half', providerId: 'codex' as const, method: 'browser' as const, state: 'pending' as const, external: false, createdAt: 1, signingIn: false }
+    const s = unansweredWith(setup)
+    const order: string[] = []
+    answeredOnSwitch(order, s)
+    pa.signIn.mockImplementation(async () => { order.push('signIn'); return { ok: true, state: 'signed-in' } })
+    render(s)
+    await click('pending-setup-resume-acc-half')
+    expect(order).toEqual(['yes', 'signIn'])
+    expect(pa.setEnabled).toHaveBeenCalledWith('codex', true)
+    expect(updateSettings).toHaveBeenCalledWith({ codexEnabled: true, codexAnswered: true })
+    expect(pa.signIn).toHaveBeenCalledWith({ accountId: 'acc-half', method: 'browser' })
+    expect(q('add-account-step-name')).toBeTruthy()
+  })
+
+  it('resuming an API-key setup while Codex is not answered records the yes before the key is handed over', async () => {
+    const KEY = 'sk-test-DO-NOT-KEEP-77aa'
+    const setup = { accountId: 'acc-key', providerId: 'codex' as const, method: 'apiKey' as const, state: 'pending' as const, external: false, createdAt: 1, signingIn: false }
+    const s = unansweredWith(setup)
+    const order: string[] = []
+    answeredOnSwitch(order, s)
+    pa.issueSecretHandle.mockImplementation(async () => { order.push('handle'); return { ok: true, handle: 'sec-0123456789abcdef0123456789abcdef' } })
+    pa.signIn.mockImplementation(async () => { order.push('signIn'); return { ok: true, state: 'signed-in' } })
+    render(s)
+    await click('pending-setup-resume-acc-key')
+    typeKey(q('add-account-key') as HTMLInputElement, KEY)
+    await click('add-account-key-continue')
+    expect(order).toEqual(['yes', 'handle', 'signIn'])
+    expect(pa.signIn).toHaveBeenCalledWith({ accountId: 'acc-key', method: 'apiKey', secretHandle: 'sec-0123456789abcdef0123456789abcdef' })
+    expect(q('add-account-step-name')).toBeTruthy()
+  })
+
+  it('a new API-key account while Codex is not answered: the yes, then the setup, then the key, then the sign-in', async () => {
+    const s = snapshot()
+    s.providers[1] = { ...s.providers[1], preference: 'undecided' }
+    const order: string[] = []
+    answeredOnSwitch(order, s)
+    pa.beginSetup.mockImplementation(async () => { order.push('begin'); return { ok: true, accountId: 'acc-new' } })
+    pa.issueSecretHandle.mockImplementation(async () => { order.push('handle'); return { ok: true, handle: 'sec-0123456789abcdef0123456789abcdef' } })
+    pa.signIn.mockImplementation(async () => { order.push('signIn'); return { ok: true, state: 'signed-in' } })
+    render(s)
+    await click('add-provider-account-codex')
+    await click('add-account-method-apiKey')
+    typeKey(q('add-account-key') as HTMLInputElement, 'sk-test-DO-NOT-KEEP-99cc')
+    await click('add-account-key-continue')
+    expect(order).toEqual(['yes', 'begin', 'handle', 'signIn'])
+    expect(q('add-account-step-name')).toBeTruthy()
+  })
+
+  it('a yes that could not be saved stops there: no key is handed over and no sign-in runs', async () => {
+    const setup = { accountId: 'acc-key', providerId: 'codex' as const, method: 'apiKey' as const, state: 'pending' as const, external: false, createdAt: 1, signingIn: false }
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
+    render(unansweredWith(setup))
+    await click('pending-setup-resume-acc-key')
+    typeKey(q('add-account-key') as HTMLInputElement, 'sk-test-DO-NOT-KEEP-88bb')
+    await click('add-account-key-continue')
+    expect(pa.issueSecretHandle).not.toHaveBeenCalled()
+    expect(pa.sendSecret).not.toHaveBeenCalled()
+    expect(pa.signIn).not.toHaveBeenCalled()
+    expect(q('add-account-dialog')!.textContent).toContain('The change could not be saved.')
   })
 })

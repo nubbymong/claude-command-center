@@ -87,22 +87,33 @@ async function codexSessionTools(sessionId: string): Promise<string[]> {
   }
 }
 
+// Codex answered on (owner decision 2026-09-26: the saved on counts only with its answer).
+const CODEX_ON = { codexEnabled: true, codexAnswered: true }
+
 describe('each review direction follows its own switch', () => {
   it('Codex review: a Claude session is offered codex_review while it is on, and not once it is off', async () => {
-    settings.value = { codexEnabled: true }
+    settings.value = { ...CODEX_ON }
     expect(await claudeSessionTools('rs-claude-1')).toContain('codex_review')
-    settings.value = { codexEnabled: true, conductorTools: { codexReview: false } }
+    settings.value = { ...CODEX_ON, conductorTools: { codexReview: false } }
     expect(await claudeSessionTools('rs-claude-2')).not.toContain('codex_review')
     // The other direction's switch does not decide it.
-    settings.value = { codexEnabled: true, conductorTools: { claudeReview: false } }
+    settings.value = { ...CODEX_ON, conductorTools: { claudeReview: false } }
     expect(await claudeSessionTools('rs-claude-3')).toContain('codex_review')
     // No Codex account could review now: not offered, whatever the switch says.
-    settings.value = { codexEnabled: true }
+    settings.value = { ...CODEX_ON }
     ready.value = { codex: false }
     try {
       expect(await claudeSessionTools('rs-claude-4')).not.toContain('codex_review')
     } finally {
       ready.value = {}
+    }
+  })
+
+  it('Codex review is not offered while the user has not said they use Codex, even where a review could run', async () => {
+    // Nothing saved, an earlier build's on without the answer, an answered off.
+    for (const [i, saved] of [{}, { codexEnabled: true }, { codexEnabled: false, codexAnswered: true }].entries()) {
+      settings.value = { ...saved }
+      expect(await claudeSessionTools(`rs-claude-unanswered-${i}`), JSON.stringify(saved)).not.toContain('codex_review')
     }
   })
 

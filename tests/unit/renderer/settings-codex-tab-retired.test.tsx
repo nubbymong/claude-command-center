@@ -116,7 +116,9 @@ describe('every pointer to the retired tab now names Settings, Accounts', () => 
 
   it('the Feature Guide: the Codex section and the troubleshooting section', () => {
     const codex = APP_KNOWLEDGE_SECTIONS.find((s) => s.id === 'codex')!
-    expect(codex.body).toContain('in Settings, Accounts: sign in with ChatGPT, a device code or an API key')
+    expect(codex.body).toContain('in Settings, Accounts: sign in with ChatGPT or an API key')
+    // Device-code sign-in is off (experimental upstream): never advertised.
+    expect(codex.body).not.toMatch(/device code/i)
     for (const s of APP_KNOWLEDGE_SECTIONS) expect(`${s.title} ${s.body}`, s.id).not.toMatch(OLD_POINTER)
     expect(APP_KNOWLEDGE_SECTIONS.some((s) => s.body.includes('check the Codex row in Settings, Accounts'))).toBe(true)
     expect(APP_KNOWLEDGE_SECTIONS.some((s) => s.body.includes('Check sign-in, in an account menu, asks Codex again'))).toBe(true)

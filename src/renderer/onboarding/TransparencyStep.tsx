@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useSettingsStore, type UpdateChannel } from '../stores/settingsStore'
+import { codexPreference } from './provider-choice'
 import { useGitHubStore } from '../stores/githubStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { defaultUpdateChannelForVersion } from '../utils/versionLabel'
@@ -64,11 +65,13 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
 
   const email = profiles.find((p) => p.isPrimary)?.accountEmail || profiles[0]?.accountEmail || globalEmail
   // Each tool that can reach a session, named so the recap discloses which
-  // ones are on. Codex review needs Codex on; Claude review counts by its own
-  // switch (it answers Codex sessions whenever there are any).
+  // ones are on. Codex review needs Codex on (the user's yes: with no saved
+  // value, Codex is not set up); Claude review counts by its own switch (it
+  // answers Codex sessions whenever there are any).
+  const codex = codexPreference(settings)
   const toolGates: [string, boolean][] = [
     ['Vision', settings.conductorTools?.vision !== false],
-    ['Codex review', settings.conductorTools?.codexReview !== false && settings.codexEnabled !== false],
+    ['Codex review', settings.conductorTools?.codexReview !== false && codex === 'on'],
     ['Claude review', settings.conductorTools?.claudeReview !== false],
     ['Host screenshots', settings.conductorTools?.hostTransfer !== false],
     ['Agent Canvas', settings.conductorTools?.canvas !== false],
@@ -104,7 +107,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     {
       icon: SPARK,
       label: 'Codex (Beta)',
-      value: settings.codexEnabled !== false ? 'On' : 'Off (Settings, Accounts)',
+      value: codex === 'on' ? 'On' : codex === 'off' ? 'Off (Settings, Accounts)' : 'Not set up (Settings, Accounts)',
     },
     {
       icon: GEAR,

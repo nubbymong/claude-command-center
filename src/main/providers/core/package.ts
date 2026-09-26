@@ -116,6 +116,13 @@ export interface AuthLoginInput {
   signal?: AbortSignal
 }
 
+/** A status check's options. */
+export interface AuthStatusOptions {
+  /** Stops the check: one no longer wanted starts no CLI, and one running
+   *  is stopped (its answer is then an error, never a state). */
+  signal?: AbortSignal
+}
+
 export interface AuthLogoutOptions {
   /** An external realm is shared with other local clients: logging it out
    *  needs the user's explicit acknowledgement of that wider effect (5.4). */
@@ -123,7 +130,7 @@ export interface AuthLogoutOptions {
 }
 
 export interface ProviderAuthOperations {
-  status(realm: RealmRef): Promise<{ state: KnownAuthState } & AuthOperationResult>
+  status(realm: RealmRef, opts?: AuthStatusOptions): Promise<{ state: KnownAuthState } & AuthOperationResult>
   logout(realm: RealmRef, opts?: AuthLogoutOptions): Promise<AuthOperationResult>
   /** Browser/device flows run the genuine CLI in a Conductor surface; the
    *  api-key flow takes a one-shot non-TTY stdin pipe (9.2). Inputs are
@@ -317,10 +324,10 @@ export interface ProviderPackage {
    *  only the registry store calls it. */
   readonly legacyAccounts?: LegacyAccountsPort
   /** Present when the provider has a default sign-in location of its own that
-   *  other local clients share (Codex's ~/.codex), which an upgrade registers
-   *  once, when it is signed in, as a realm-only external account (design
-   *  6.3). Absent: nothing to adopt (Claude's accounts come from its legacy
-   *  store). */
+   *  other local clients share (Codex's ~/.codex), which the user's explicit
+   *  choice registers, when it is signed in, as a realm-only external account
+   *  (design 6.3; never automatically: owner decision 2026-09-26). Absent:
+   *  nothing to adopt (Claude's accounts come from its legacy store). */
   readonly externalDefaultRealm?: ExternalDefaultRealmSpec
   /** Where the user's on/off for this provider is saved, and what no saved
    *  value means (A4): data, so no provider-name condition decides it. */
@@ -332,6 +339,12 @@ export interface ProviderEnablementSpec {
   readonly settingsKey: string
   /** What an absent value means: on, or not answered yet. */
   readonly absent: 'on' | 'undecided'
+  /** A boolean settings key saved `true` when the user answers whether they
+   *  use the provider. When declared, `settingsKey` counts only once it is
+   *  saved: until then the preference is `absent`, whatever an earlier build
+   *  saved (Codex: every user who updates chooses again, owner decision
+   *  2026-09-26). Absent: `settingsKey` alone decides. */
+  readonly answeredKey?: string
 }
 
 export interface ExternalDefaultRealmSpec {

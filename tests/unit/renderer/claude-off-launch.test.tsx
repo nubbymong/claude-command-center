@@ -39,7 +39,7 @@ vi.mock('../../../src/renderer/utils/config-saver', () => ({ saveConfigNow: vi.f
 
 const {
   isConfigLaunchBlocked, launchBlockedReason, launchBlockedTag, buildLaunchSession, useLaunchConfig,
-  CLAUDE_OFF_LAUNCH_REASON, CODEX_OFF_LAUNCH_REASON,
+  CLAUDE_OFF_LAUNCH_REASON, CODEX_OFF_LAUNCH_REASON, CODEX_NOT_SET_UP_LAUNCH_REASON,
 } = await import('../../../src/renderer/hooks/useLaunchConfig')
 const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
@@ -115,7 +115,53 @@ describe('the reason names the provider', () => {
     expect(launchBlockedReason(shell, { claudeEnabled: false })).toBeUndefined()
     expect(launchBlockedReason(cfg(), {})).toBeUndefined()
     expect(launchBlockedTag(cfg())).toBe('Claude Code off')
-    expect(launchBlockedTag(codexCfg)).toBe('Codex off')
+    expect(launchBlockedTag(codexCfg, { codexEnabled: false })).toBe('Codex off')
+  })
+})
+
+describe('a Codex the user has not said they use (owner decision 2026-09-26): not set up, blocked the way off is', () => {
+  const NOT_SET_UP = 'Codex is not set up yet. Set it up in Settings, Accounts to launch this config.'
+
+  it('the rule, the reason and the tag, each in its own words; an answered yes launches', () => {
+    expect(isConfigLaunchBlocked(codexCfg, {})).toBe(true)
+    expect(isConfigLaunchBlocked(codexCfg, { codexEnabled: true })).toBe(false)
+    expect(CODEX_NOT_SET_UP_LAUNCH_REASON).toBe(NOT_SET_UP)
+    expect(launchBlockedReason(codexCfg, {})).toBe(NOT_SET_UP)
+    expect(launchBlockedReason(codexCfg, { codexEnabled: false })).toBe(CODEX_OFF_LAUNCH_REASON)
+    expect(launchBlockedTag(codexCfg, {})).toBe('Codex not set up')
+    // Claude Code is unaffected: its absent value is on.
+    expect(launchBlockedReason(cfg(), {})).toBeUndefined()
+  })
+
+  it('the launch action builds nothing for it, reading the live settings', () => {
+    setProviders({})
+    expect(buildLaunchSession(codexCfg)).toBeNull()
+    setProviders({ codexEnabled: true })
+    expect(buildLaunchSession(codexCfg)).not.toBeNull()
+  })
+
+  it('the surfaces that tag an off config tag it "Codex not set up", and none of them launches it', () => {
+    setProviders({})
+    const onLaunch = vi.fn()
+    act(() => { root.render(<ConfigRow config={codexCfg} onLaunch={onLaunch} onEdit={() => {}} onDelete={() => {}} onContextMenu={() => {}} />) })
+    const tag = container.querySelector('[data-testid="config-row-provider-off"]') as HTMLElement
+    expect(tag.textContent).toBe('Codex not set up')
+    expect(tag.title).toBe(NOT_SET_UP)
+    const play = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title') === NOT_SET_UP) as HTMLButtonElement
+    expect(play.disabled).toBe(true)
+    act(() => { root.render(<StageEmptyState configs={[codexCfg]} onLaunch={onLaunch} onShowAllConfigs={() => {}} onCreateConfig={() => {}} />) })
+    const card = Array.from(container.querySelectorAll('button')).find((b) => b.textContent!.includes('Codex job')) as HTMLButtonElement
+    expect(card.disabled).toBe(true)
+    expect(card.title).toBe(NOT_SET_UP)
+    expect(card.textContent).toContain('Codex not set up')
+    act(() => { card.click() })
+    // Quick Start has no tag for an off config either: disabled, with the reason.
+    act(() => { root.render(<QuickStartPanel configs={[codexCfg]} onLaunch={onLaunch} onContextMenu={() => {}} running={new Map()} />) })
+    const start = container.querySelector('[data-testid="quick-start-start"]') as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+    expect(start.title).toBe(NOT_SET_UP)
+    act(() => { start.click() })
+    expect(onLaunch).not.toHaveBeenCalled()
   })
 })
 

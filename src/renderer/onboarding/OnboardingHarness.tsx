@@ -20,7 +20,7 @@ import { TransparencyStep } from './TransparencyStep'
 import { FinishStep } from './FinishStep'
 import { settleOnboardingFinish, settleWhatsNewOnly } from './settle'
 import { seenVersion } from './whats-new-gate'
-import { usesClaude, usesCodex, claudeWasMissingAtSetup } from './provider-choice'
+import { usesClaude, usesCodex, claudeWasMissingAtSetup, codexWasChosenOnUpgrade } from './provider-choice'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
@@ -95,12 +95,14 @@ const codexChosen = () => usesCodex(useSettingsStore.getState().settings)
 /** WP2: an upgrader who pressed "Use Codex only" on a setup screen in THIS
  *  run (the Claude Code CLI was missing): the version-change screen, or the
  *  first-run screen of a new computer pointed at an existing resources
- *  folder, whose user has run the app before. Upgraders never see the
+ *  folder, whose user has run the app before. Or one who answered Yes on the
+ *  one-time "Do you use Codex?" page after an update in this run
+ *  (CodexReconfirmPage, owner decision 2026-09-26). Upgraders never see the
  *  fresh-install assistants page, so without this they would be left with
  *  Codex on and no way shown to set it up. They are handed the Codex setup
- *  page once, in this run: the flag is in memory only (provider-choice.ts),
+ *  page once, in this run: the flags are in memory only (provider-choice.ts),
  *  so a later start never shows it again, and nothing else is re-run. */
-const codexHandOff = () => isUpgrader() && claudeWasMissingAtSetup() && codexChosen()
+const codexHandOff = () => isUpgrader() && (claudeWasMissingAtSetup() || codexWasChosenOnUpgrade()) && codexChosen()
 
 /** Where the Codex setup page is shown: a fresh install that chose Codex,
  *  and the upgrader handed to it above. */
@@ -262,7 +264,8 @@ const PAGES: BuiltStep[] = [
  *   wall-of-text modal.
  * @param codexSetupOnly The harness opened only to hand an upgrader who chose
  *   "Use Codex only" on a setup screen in this run (first-run or version
- *   change) to the Codex setup page (see codexHandOff): that page alone, no
+ *   change), or Yes on the one-time "Do you use Codex?" page, to the Codex
+ *   setup page (see codexHandOff): that page alone, no
  *   notes, no phases, and nothing stamped when it ends. App sets it only when
  *   neither the full flow nor the notes are due; in those runs the page joins
  *   them instead. The Codex introduction follows it when due (WP2 commit 6f).

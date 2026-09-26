@@ -154,6 +154,9 @@ managed account is the recommended path.
    Tests: cli-discovery, install-recipes, realm-paths, codex-realm-isolation,
    codex-auth-adapter, env-allowlist, fake-cli, codex-pinned-source-contract,
    migration-codex, capability-registry, provider-installation-state.
+   Superseded by `docs/wp1/owner-decisions-2026-09-26.md` (U1, U2): the
+   current-Codex migration and `migration-codex` are retired; nothing adopts
+   `~/.codex` at start.
 3. **Accounts service + IPC + leases.** Add-account journal flow, recovery,
    lifecycle and default rules, logout, identity link/unlink/groups, provider
    enable/disable checks, secret one-shot channel; preload + typings.
@@ -350,6 +353,10 @@ obligations fall on later slices:
   with the same store joins it; one with another store object waits for it
   and then runs its own, so at most twice that bound. Pass the one store
   itself, not a wrapper, and do not add a second wait around it.
+  Superseded by `docs/wp1/owner-decisions-2026-09-26.md` (U1, U2): there is
+  no start-up run. Every upgrader answers "Do you use Codex?"; `~/.codex` is
+  taken in only by "Use this sign-in" or the Settings, Accounts action, after
+  a read-only check that keeps nothing.
 - **Pinned-CLI evidence (from slice 3e's pass):** check whether 0.155.1
   `codex login status` counts a key kept in `CODEX_HOME/.env` as signed in.
   If it does, an adopted external home is signed in by the user's own dotenv

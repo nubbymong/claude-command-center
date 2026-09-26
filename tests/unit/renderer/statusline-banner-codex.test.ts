@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 /**
- * P5.4 regression: Statusline tab shows a provider-aware banner when the active
- * session is Codex, explaining that statusline customisation is Claude-only.
- * The banner is informational; StatusLineTab controls remain visible and functional.
+ * P5.4 regression, corrected in WP2 P2: with a Codex session in front, the
+ * Status Line tab says these settings apply to Codex sessions too (the strip
+ * is one component for every session) and which items a Codex session cannot
+ * fill yet. It never claims the settings are Claude-only. The note is
+ * informational; StatusLineTab controls remain visible and functional.
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -78,13 +80,16 @@ describe('Statusline tab provider-aware banner', () => {
     mockSessions = [{ id: 's-1', provider: 'codex', label: 't', workingDirectory: '/', color: '#89b4fa', sessionType: 'local' }]
     mockActiveSessionId = 's-1'
     act(() => { root.render(React.createElement(SettingsPage, { initialTab: 'statusline' })) })
-    expect(container.textContent).toContain('Statusline customisation is Claude-only')
+    expect(container.querySelector('[data-testid="statusline-codex-note"]')?.textContent).toBe(
+      'These settings apply to Codex sessions too. A Codex session does not report its account, lines changed or session time yet, so those items do not show for it.',
+    )
+    expect(container.textContent).not.toMatch(/Claude-only/)
   })
 
   it('does NOT render the Codex banner when active session is Claude', () => {
     mockSessions = [{ id: 's-1', provider: 'claude', label: 't', workingDirectory: '/', color: '#89b4fa', sessionType: 'local' }]
     mockActiveSessionId = 's-1'
     act(() => { root.render(React.createElement(SettingsPage, { initialTab: 'statusline' })) })
-    expect((container.textContent ?? '')).not.toContain('Statusline customisation is Claude-only')
+    expect(container.querySelector('[data-testid="statusline-codex-note"]')).toBeNull()
   })
 })

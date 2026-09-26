@@ -118,7 +118,8 @@ vi.mock('../../../src/renderer/components/SshFlowOverlay', async () => {
 vi.mock('../../../src/renderer/utils/resumePicker', () => ({ shouldUseResumePicker: () => false }))
 vi.mock('../../../src/renderer/components/TerminalContextMenu', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/stores/settingsStore', () => {
-  const st = { settings: { terminal: {} } }
+  // The user said they use Codex: its sessions launch (a test turns a provider off).
+  const st = { settings: { terminal: {}, codexEnabled: true, codexAnswered: true } }
   return {
     useSettingsStore: Object.assign((sel: any) => sel(st), { getState: () => st }),
     DEFAULT_TERMINAL_SETTINGS: {},
@@ -693,7 +694,7 @@ describe('main refuses a launch because its provider is off', () => {
   })
   afterEach(() => {
     delete settingsState.settings.claudeEnabled
-    delete settingsState.settings.codexEnabled
+    settingsState.settings.codexEnabled = true
     profilesState.profiles = []
   })
 

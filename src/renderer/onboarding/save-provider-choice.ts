@@ -38,6 +38,23 @@ export async function saveAssistantsChoice(choice: AssistantsChoice): Promise<Ac
 }
 
 /**
+ * Save the one-time "Do you use Codex?" answer after an update
+ * (codex-reconfirm-gate.ts): Codex alone, through the same path as the
+ * Providers switch (main decides first, then the saved setting, which also
+ * records that the question was answered: saveProviderSwitch). Claude Code is
+ * left as it is. The same fallback as the assistants page: when main has no
+ * account list yet, the setting is saved on its own, so the page is never
+ * stuck; any other refusal (the last provider on, Codex in use) is returned
+ * and nothing is saved.
+ */
+export async function saveCodexAnswer(usesCodex: boolean): Promise<AccountsResult> {
+  const r = await providerAccountActions.switchProvider('codex', usesCodex)
+  if (r.ok) return r
+  if (!NO_ANSWER.has(r.code)) return r
+  return (await saveProviderSwitch('codex', usesCodex)) ? { ok: true } : PERSIST_FAILED
+}
+
+/**
  * Apply what first-run setup handed back. App calls this once the stores
  * hold the loaded config, so nothing is written over a config that has not
  * been read (a settings file written before the first load would also stop

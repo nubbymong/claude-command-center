@@ -1,4 +1,5 @@
 import { useSettingsStore, DEFAULT_CONDUCTOR_TOOLS, type ConductorToolsSettings } from '../stores/settingsStore'
+import { codexPreference } from './provider-choice'
 
 const GEAR = String.fromCodePoint(0x2699)
 const CHECK = String.fromCodePoint(0x2713)
@@ -57,7 +58,11 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
   const master = useSettingsStore((s) => s.settings.conductorToolsEnabled ?? true)
   // Codex review runs the codex CLI: with Codex off it can't work, so the
   // card shows a disabled state (the stored preference is left untouched).
-  const codexOn = useSettingsStore((s) => s.settings.codexEnabled) !== false
+  // Nor while the user has not said they use Codex (no saved value): Codex
+  // is not set up then, and main offers no Codex review.
+  const codex = useSettingsStore((s) => codexPreference(s.settings))
+  const codexOn = codex === 'on'
+  const codexState = codex === 'off' ? 'off' : 'not set up'
 
   const flip = (k: ToolKey) => {
     void useSettingsStore
@@ -88,14 +93,16 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
                   <div className="tc-body">
                     <div className="tc-t">
                       {t.title}
-                      {(codexBlocked || t.tag) && <span className="gh-tag">{codexBlocked ? 'Codex off' : t.tag}</span>}
+                      {(codexBlocked || t.tag) && <span className="gh-tag">{codexBlocked ? `Codex ${codexState}` : t.tag}</span>}
                     </div>
                     <div className="tc-d">
                       {codexBlocked
-                        ? 'Code review is powered by Codex, which is turned off. Turn it on from the Codex page, or in Settings, Accounts.'
+                        ? codexState === 'off'
+                          ? 'Code review is powered by Codex, which is turned off. Turn it on in Settings, Accounts.'
+                          : 'Code review is powered by Codex, which is not set up. Set it up in Settings, Accounts.'
                         : t.desc}
                     </div>
-                    {codexOffNote && <div className="tc-d tc-note">Only Codex sessions use it; Codex is off.</div>}
+                    {codexOffNote && <div className="tc-d tc-note">Only Codex sessions use it; Codex is {codexState}.</div>}
                   </div>
                   <button
                     className={tools[t.k] && !codexBlocked ? 'tc-sw on' : 'tc-sw'}

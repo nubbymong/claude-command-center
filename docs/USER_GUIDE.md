@@ -117,25 +117,31 @@ row per provider:
   or cannot be used as found;
 - when Codex is missing or too old, the commands to install or update it (see
   [Installing or updating Codex](#installing-or-updating-codex));
-- once you have said you use Codex and a Codex account you added in CCC is
-  signed in, **Show the Codex
+- once you have said you use Codex (see below) and a Codex account you added
+  in CCC is signed in, **Show the Codex
   introduction**, which replays the five-page Hello Codex introduction (also
   on the Codex card in the Feature Guide, under Integrations). The Codex
   sign-in already on this computer does not count: with only that one, Hello
   Codex and its replay stay hidden.
 
-A fresh install asks **Which assistants will you use?** during setup; an
-upgrade is not asked and keeps its settings. You can change the answer at any
-time on the Providers card.
+A fresh install asks **Which assistants will you use?** during setup. You can
+change the answer at any time on the Providers card.
 
-Coming from an earlier version? The old Settings Codex tab is gone. Its switch
-and install commands are on this Providers card, your Codex accounts are in the
-Codex section below it, and *Test connection* is now **Check sign-in** in each
-account's menu. The ChatGPT plan label is no longer shown. If you never
-answered whether you use Codex, the Codex section shows **Yes, I use Codex**,
-and until you answer the Providers card shows Codex as On, because a Codex you
-never answered about still launches. If your Codex configs say *Sign in to
-Codex first*, see [Known issues with Codex](#known-issues-with-codex).
+Coming from an earlier version? After updating, and after the release notes,
+CCC asks you once **Do you use Codex?**: **Yes, set up Codex** or **No, I
+don't use Codex**. Codex now has accounts of its own, so nothing carries over
+from your earlier Codex setting: everyone who updates answers again, and until
+you answer, Codex is *not set up* and nothing of it starts (the Providers card
+says so, and a Codex config says *Codex is not set up yet*). **Yes** turns Codex
+on and opens the **Set up Codex** page, where you add a Codex account, or choose
+**Use this sign-in** for the Codex sign-in already on this computer; that
+sign-in is used only after you choose it. **No** turns Codex off; you can set it
+up later in Settings → Accounts. With Claude Code off, **No** cannot be chosen,
+because one assistant always stays on. Your Claude Code setting is not
+changed. The old Settings Codex tab is gone: its switch and install commands
+are on this Providers card, your Codex accounts are in the Codex section below
+it, and *Test connection* is now **Check sign-in** in each account's menu. The
+ChatGPT plan label is no longer shown.
 
 Codex runs on this computer only in this release: Codex sessions and Codex
 reviews never run over SSH, and the session dialog turns its SSH options off
@@ -183,9 +189,8 @@ Codex section of Settings → Accounts, or on the Set up Codex page):
   (`codex-realms/`), and Codex signs in there, so sessions never mix
   identities. CCC never reads the sign-in Codex keeps in that folder: it asks
   Codex whether the account is signed in.
-- Sign in with ChatGPT (opens your browser), with a device code (for a browser
-  on another device), or with an API key. The key goes to Codex, and CCC never
-  stores it. Then name the account.
+- Sign in with ChatGPT (opens your browser) or with an API key. The key goes
+  to Codex, and CCC never stores it. Then name the account.
 - The menu on each account row has **Make default** (new Codex sessions use it
   unless a config picks another account), **Make reviewer** (code reviews use
   it; with none set, reviews use the default), **Sign in again**, **Check
@@ -197,16 +202,19 @@ Codex section of Settings → Accounts, or on the Set up Codex page):
 **This computer's own sign-in** is the one the Codex CLI uses outside CCC:
 `~/.codex`, or the folder `CODEX_HOME` pointed at when CCC started.
 
-- CCC does not check or use this sign-in until you say you use Codex: by
-  choosing Codex during setup, pressing **Yes, I use Codex** in the Codex
-  section of Settings → Accounts, or switching Codex on after it was off.
-  After switching it back on, press **Use this computer's Codex sign-in**
-  there if it is offered; otherwise CCC checks at its next start. (It does
-  read the conversation files Codex writes there for Tokenomics; see
-  [PRIVACY.md](../PRIVACY.md).) The check asks Codex, once, whether that
-  folder is signed in, and lists it as *This computer's Codex (~/.codex)*. If the check could not run, the row says why and offers
-  **Check again**; if it found the folder signed out, it offers **Use this
-  computer's Codex sign-in** to try again once you have signed in there.
+- CCC never takes this sign-in in on its own. The Set up Codex page asks Codex
+  whether it is signed in, without taking it in, so the page says it is only
+  when it is. CCC uses it only when you choose to: **Use this sign-in** on the
+  Set up Codex page, or **Use this computer's Codex sign-in** in the Codex
+  section of Settings → Accounts
+  (offered once Codex is on; while you have not said whether you use Codex,
+  that section shows **Yes, I use Codex**, which only records your answer).
+  (It does read the conversation files Codex writes there for Tokenomics; see
+  [PRIVACY.md](../PRIVACY.md).) Choosing it asks Codex whether that folder is
+  signed in, and only if it is, lists it as *This computer's Codex
+  (~/.codex)*. If Codex could not answer, the button becomes **Check again**;
+  if the folder is signed out, sign in there first (see below) and choose it
+  again.
 - Because CCC did not create it, the row reads **Confirm each launch** and
   **Cannot run reviews**. Every launch on it asks you to confirm, either with
   the tick in the session dialog or just before the session starts. A code
@@ -232,7 +240,7 @@ to pick one, or `n` for a new one).
 - **Sign in again** appears on a signed-out or expired managed account. It asks
   you to tick *Sign in to the same account as before*, then signs in inside
   that account's own folder with the same kind of sign-in it had before:
-  ChatGPT or a device code again, or an API key again. Close the account's
+  ChatGPT again, or an API key again. Close the account's
   sessions first: an account in use cannot be signed in again.
 - **Needs attention: signed in a different way than before.** A check notices
   when an account is now signed in a different way than the one on record, for
@@ -290,16 +298,6 @@ Linux may ask for administrator rights; CCC never elevates on its own.
 
 ## Known issues with Codex
 
-- **After upgrading, a Codex config can say *Sign in to Codex first* although
-  Codex is signed in on this computer.** CCC has not taken in the sign-in Codex
-  keeps in `~/.codex` yet: it waits for you to say you use Codex, and its one
-  check at start may have found that folder signed out or not finished. Open
-  the Codex section of Settings → Accounts. If *This computer's Codex
-  (~/.codex)* shows **Yes, I use Codex**, press it; if it shows **Use this
-  computer's Codex sign-in** or **Check again**, press that. Once Codex reports
-  that folder signed in, CCC lists it and your Codex configs launch again, with
-  a confirmation at each launch. To launch without confirming, add a Codex
-  account with **Add Codex account** and choose **Make default** on it.
 - **No Codex review while your only Codex sign-in is `~/.codex`.** That sign-in
   is confirmed at each launch, so it never reviews, and Claude sessions are not
   offered Codex review. Add a Codex account in Settings → Accounts, and choose

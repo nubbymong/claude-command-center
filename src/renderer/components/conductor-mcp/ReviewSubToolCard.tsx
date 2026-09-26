@@ -10,11 +10,11 @@ import React from 'react'
 import SubToolCard from './SubToolCard'
 import type { AccountsSnapshot } from '../../../shared/providers'
 import { useSettingsStore, DEFAULT_CONDUCTOR_TOOLS } from '../../stores/settingsStore'
-import { useProviderAccountsStore, providerView, savedOff } from '../../stores/providerAccountsStore'
+import { useProviderAccountsStore, providerView, savedOff, providerNotSetUp } from '../../stores/providerAccountsStore'
 import { reviewToolView, type ReviewToolKey } from '../settings/CodeReviewTools'
 
 export interface ReviewSubToolState {
-  label: 'Available' | 'Off' | 'Unavailable' | 'Checking'
+  label: 'Available' | 'Off' | 'Not set up' | 'Unavailable' | 'Checking'
   color: 'green' | 'yellow' | 'overlay1'
   /** Why the tool is not offered now, and where to change that. */
   reason: string | null
@@ -45,6 +45,8 @@ export function reviewSubToolState(snapshot: AccountsSnapshot | null, tool: Revi
   const provider = providerView(snapshot, id)
   if (savedOff(ctx.settings, id) || provider?.enabled === false) return { label: 'Off', color: 'overlay1', reason: view.message, note: null }
   if (!snapshot && !ctx.loaded) return { label: 'Checking', color: 'overlay1', reason: view.message, note: null }
+  // Never answered: not set up, a plain state like off (reviewToolView says so).
+  if (providerNotSetUp(provider)) return { label: 'Not set up', color: 'overlay1', reason: view.message, note: null }
   if (view.disabled || provider?.review?.ready !== true) {
     return { label: 'Unavailable', color: 'yellow', reason: view.message ?? 'No review can run right now. Check Settings, Accounts.', note: view.note ?? null }
   }

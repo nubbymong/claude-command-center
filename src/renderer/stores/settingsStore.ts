@@ -211,11 +211,20 @@ export interface AppSettings {
    *  tool groups the server registers. Absent = on (pre-upgrade configs). */
   conductorToolsEnabled?: boolean
   conductorTools?: ConductorToolsSettings
-  /** Codex on/off (onboarding's assistants page / the Providers card in
-   *  Settings, Accounts). Absent = never
-   *  answered (existing installs keep full behaviour); false disables Codex
-   *  surfaces incl. the codex_review built-in tool. Codex support is Beta. */
+  /** Codex on/off (onboarding's assistants page, the one-time "Do you use
+   *  Codex?" page after an update, the Providers card in Settings, Accounts,
+   *  or adding a Codex account). Counts only together with `codexAnswered`
+   *  (main ignores it otherwise, and hydrate drops it: migrateCodexAnswer).
+   *  Absent = not answered yet: Codex is not set up, and main refuses its
+   *  launches; false disables Codex surfaces incl. the codex_review built-in
+   *  tool. Codex support is Beta. */
   codexEnabled?: boolean
+  /** The user has answered whether they use Codex, in this model (owner
+   *  decision 2026-09-26): written with `codexEnabled` by every way of
+   *  answering. Absent on every install that updated from a build before
+   *  it: those users are asked again, once (onboarding/codex-reconfirm-gate.ts),
+   *  and nothing carries over from the earlier setting. */
+  codexAnswered?: boolean
   /** Claude Code on/off, saved (main reads it as the Claude package's
    *  enablement key). Absent = on: Claude-only users change nothing. */
   claudeEnabled?: boolean
@@ -489,6 +498,20 @@ export function migrateGpuDefaultOn(settings: AppSettings): { settings: AppSetti
   return { settings: { ...settings, terminal, gpuDefaultOnMigrated: true }, changed: true }
 }
 
+// Owner decision 2026-09-26: every user who updates chooses again whether they
+// use Codex; nothing carries over from the earlier Codex setting. A saved
+// `codexEnabled` without `codexAnswered` was written by a build before that
+// model, so it is dropped here, once: from then on every reader in this
+// process sees the same "not answered yet" a fresh install has, until the
+// user answers (which writes both keys). Main ignores such a value on its own
+// (the Codex package's answeredKey), so its launch rule never depends on this
+// save having landed. Idempotent: with nothing to drop it changes nothing.
+export function migrateCodexAnswer(settings: AppSettings): { settings: AppSettings; changed: boolean } {
+  if (settings.codexAnswered === true || !Object.hasOwn(settings, 'codexEnabled')) return { settings, changed: false }
+  const { codexEnabled: _dropped, ...rest } = settings
+  return { settings: rest as AppSettings, changed: true }
+}
+
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: { ...DEFAULT_SETTINGS },
   isLoaded: false,
@@ -512,8 +535,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     }
     const font = migrateV2Font(merged)
     const gpu = migrateGpuDefaultOn(font.settings)
-    const migrated = gpu.settings
-    if (font.changed || gpu.changed) {
+    const codex = migrateCodexAnswer(gpu.settings)
+    const migrated = codex.settings
+    if (font.changed || gpu.changed || codex.changed) {
       // Persist the one-time migrations (including their guard flags) so they run once.
       saveConfigNow('settings', migrated).catch(() => {})
     }

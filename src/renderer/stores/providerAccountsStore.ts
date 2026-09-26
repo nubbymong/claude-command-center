@@ -11,7 +11,7 @@ import { create } from 'zustand'
 import type {
   AccountsSnapshot, AccountView, AccountsResult, AccountsFailure, ProviderInstallationView, ProviderId,
   BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
-  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, ExternalDefaultOutcome, InstallRecipeView,
+  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import { useSettingsStore } from './settingsStore'
@@ -80,6 +80,16 @@ export const PROVIDER_ENABLED_SETTING: Readonly<Record<ProviderId, 'claudeEnable
   codex: 'codexEnabled',
 })
 
+/** Where the user's ANSWER about a provider is saved, for a provider whose
+ *  on/off counts only once it was given in this model: the same key main
+ *  reads (the package's `enablement.answeredKey`). Codex only: every user
+ *  who updates chooses again, and an earlier build's Codex setting does not
+ *  carry over (owner decision 2026-09-26). Claude Code has none: its absent
+ *  value is on. */
+export const PROVIDER_ANSWERED_SETTING: Readonly<Partial<Record<ProviderId, 'codexAnswered'>>> = Object.freeze({
+  codex: 'codexAnswered',
+})
+
 /** The saved setting says the provider is off. */
 export function savedOff(settings: { claudeEnabled?: boolean; codexEnabled?: boolean }, providerId: ProviderId): boolean {
   return settings[PROVIDER_ENABLED_SETTING[providerId]] === false
@@ -88,15 +98,52 @@ export function savedOff(settings: { claudeEnabled?: boolean; codexEnabled?: boo
 /** A save that did not land: said as such, never as a success. */
 export const PERSIST_FAILED: AccountsResult = { ok: false, code: 'persist-failed', message: 'The change could not be saved.' }
 
-/** Write a provider's saved on/off. True only once the save has landed:
- *  updateSettings RESOLVES false when the config save fails (config-saver),
- *  and may also throw. */
+/** Write a provider's saved on/off, and with it the answer (a switch made by
+ *  the user is always an answer: PROVIDER_ANSWERED_SETTING). True only once
+ *  the save has landed: updateSettings RESOLVES false when the config save
+ *  fails (config-saver), and may also throw. */
 export async function saveProviderSwitch(providerId: ProviderId, enabled: boolean): Promise<boolean> {
+  const answered = PROVIDER_ANSWERED_SETTING[providerId]
   try {
-    return (await useSettingsStore.getState().updateSettings({ [PROVIDER_ENABLED_SETTING[providerId]]: enabled })) !== false
+    return (await useSettingsStore.getState().updateSettings({
+      [PROVIDER_ENABLED_SETTING[providerId]]: enabled,
+      ...(answered ? { [answered]: true } : {}),
+    })) !== false
   } catch {
     return false
   }
+}
+
+/** The user has not said yet whether they use the provider: "not set up".
+ *  Main reads its saved on/off as "not answered yet" (the view's
+ *  preference) and refuses its launches until they do (the launch rule's
+ *  "not set up"). Only a provider whose on/off counts once answered
+ *  (PROVIDER_ANSWERED_SETTING: Codex) can be unanswered: Claude Code's
+ *  absent value is on, so a Claude preference main could not read is the
+ *  settings file's fault, never "not set up". */
+export function providerNotSetUp(p: Pick<ProviderInstallationView, 'providerId' | 'preference'> | undefined): boolean {
+  return p?.preference === 'undecided' && PROVIDER_ANSWERED_SETTING[p.providerId] !== undefined
+}
+
+/** providerNotSetUp, for a provider of the snapshot. */
+export function providerUnanswered(snapshot: AccountsSnapshot | null, providerId: ProviderId): boolean {
+  return providerNotSetUp(providerView(snapshot, providerId))
+}
+
+/** On, as the user answered it: switched on, and not "not answered yet".
+ *  What a surface asks before it offers anything that runs the provider's
+ *  CLI: main refuses the rest (its account operations need the same). */
+export function providerAnsweredOn<T extends Pick<ProviderInstallationView, 'enabled' | 'preference'>>(p: T | undefined): p is T {
+  return !!p?.enabled && p.preference === 'on'
+}
+
+/** Adding an account of a provider the user has not answered for is their
+ *  yes (owner decision 2026-09-26): record it (on, and answered) before the
+ *  account is set up. It never adopts the provider's own sign-in on this
+ *  computer. Nothing to do once answered. */
+export async function answerYesIfUnanswered(providerId: ProviderId): Promise<AccountsResult> {
+  if (!providerUnanswered(useProviderAccountsStore.getState().snapshot, providerId)) return { ok: true }
+  return providerAccountActions.switchProvider(providerId, true)
 }
 
 export const providerAccountActions = {
@@ -134,10 +181,17 @@ export const providerAccountActions = {
   logout: (req: LogoutRequest) => call<{ state: KnownAuthState }>(() => api().logout(req)),
   setLifecycle: (req: SetLifecycleRequest) => call(() => api().setLifecycle(req)),
   setDefault: (accountId: string) => call(() => api().setDefault(accountId)),
+  /** The ONLY way this computer's own sign-in of a provider is taken in
+   *  (Codex's ~/.codex): the user's explicit "Use this sign-in". Main asks
+   *  the provider's status there first and registers it only when it is
+   *  signed in. Nothing adopts it automatically (owner decision 2026-09-26),
+   *  so this store has no action for the old start-up check. */
   adoptExternal: (providerId: ProviderId) => call<{ accountId: string }>(() => api().adoptExternal(providerId)),
-  /** The one-time start-up check of the provider's own sign-in, run again
-   *  once the user has said they use the provider. */
-  runMigration: (providerId: ProviderId) => call<{ outcome: ExternalDefaultOutcome }>(() => api().runMigration(providerId)),
+  /** Whether this computer's own sign-in of a provider is signed in, asked
+   *  WITHOUT taking it in: main runs the same status check as adoptExternal
+   *  and keeps nothing. The Set up Codex page asks it before it offers "Use
+   *  this sign-in" as signed in. */
+  probeExternal: (providerId: ProviderId) => call<{ state: KnownAuthState }>(() => api().probeExternal(providerId)),
   reconcileSignIn: (accountId: string) => call<{ state: KnownAuthState }>(() => api().reconcileSignIn(accountId)),
   /** "Check sign-in": asks the provider, in the account's own realm, whether
    *  it is signed in now (for Codex, `codex login status`), and records the
@@ -277,15 +331,22 @@ export function canOfferArchive(account: AccountView): boolean {
 }
 
 /** What the Accounts surface says about using the provider's own sign-in on
- *  this computer, from the one-time start-up check (docs/wp2/plan.md, the
- *  slice 3e notes). Nothing until that check has settled, while a setup of
- *  that home is pending, or once an account stands for it. A skipped check
- *  says why; "Check again" (the explicit adoption) is offered where the
- *  check could not get an answer. */
+ *  this computer (Codex's ~/.codex). The app never takes it in on its own
+ *  (owner decision 2026-09-26): it is looked at only when the user chooses
+ *  "Use this computer's ... sign-in" (the explicit adoption). Nothing while a
+ *  setup of that home is pending, or once an account stands for it. While
+ *  the user has not said they use the provider, the block asks only that
+ *  (the yes records the answer; it adopts nothing). With the provider on and
+ *  nothing recorded, the offer. A recorded answer says what it found:
+ *  `registered` is the user's own adoption (its account archived since);
+ *  `none` and `skipped` only a development build's start-up check could
+ *  record, before owner decision 2026-09-26, and they are read here so such
+ *  a registry still says something true ("Check again" is the adoption,
+ *  asked again, where that check could not get an answer). */
 export type ExternalAdoptionView =
   | { kind: 'none' }
   | { kind: 'note'; text: string }
-  /** The check waits for the user to say they use the provider. */
+  /** The user has not said they use the provider: ask that first. */
   | { kind: 'confirm'; text: string }
   | { kind: 'offer'; text: string | null; action: 'check-again' | 'use' }
 
@@ -298,11 +359,12 @@ export function externalAdoption(snapshot: AccountsSnapshot | null, providerId: 
   if (snapshot.accounts.some((a) => a.providerId === providerId && a.external && a.lifecycle !== 'archived')) return none
   const name = p.displayName
   const folder = providerId === 'codex' ? ` sign-in folder (~/.codex)` : ' sign-in folder'
+  if (providerNotSetUp(p)) {
+    return { kind: 'confirm', text: `${name} is not set up yet. Once you say you use ${name}, you can use this computer's ${name} sign-in here.` }
+  }
   const m = ext.marker
   if (!m) {
-    if (ext.needsConfirmation) return { kind: 'confirm', text: `This computer's ${name} sign-in is checked once you confirm you use ${name}.` }
-    if (ext.lastRun === 'retry-later') return { kind: 'note', text: `The app could not finish checking this computer's ${name} sign-in; it checks again at the next start.` }
-    return none
+    return { kind: 'offer', text: `The app has not looked at this computer's ${name} sign-in. It checks it only when you choose to use it.`, action: 'use' }
   }
   if (m.outcome === 'registered') return { kind: 'offer', text: null, action: 'use' }
   if (m.outcome === 'none') return { kind: 'offer', text: `When the app first checked, this computer's ${name} was signed out.`, action: 'use' }
@@ -436,6 +498,9 @@ export function externalSignInHint(account: Pick<AccountView, 'external' | 'last
 export function providerStatus(p: ProviderInstallationView): { text: string; tone: StatusTone } {
   const named = p.version ? `${p.displayName} ${p.version}` : p.displayName
   if (!p.enabled) return { text: 'Off', tone: 'muted' }
+  // Not answered yet: never "On". Main starts nothing of it (and does not
+  // look for its CLI) until the user says they use it.
+  if (providerNotSetUp(p)) return { text: `${p.displayName} is not set up yet`, tone: 'muted' }
   switch (p.discoveryState) {
     case 'unchecked': return { text: `${p.displayName}: not checked yet`, tone: 'muted' }
     case 'missing': return { text: `${p.displayName} was not found on this computer`, tone: 'warn' }

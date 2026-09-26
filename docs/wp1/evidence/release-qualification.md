@@ -71,20 +71,20 @@ None of the seven README images (`hero-banner.png`, `shot-sessions.png`,
 | Claim (`PRIVACY.md`) | Code |
 | --- | --- |
 | A managed Codex home is `<resources>/codex-realms/<realmId>` | `src/main/providers/codex/realm-paths.ts:5`, `:19` |
-| The folder is created before any sign-in | `src/main/providers/core/accounts-service.ts:604` (setup prepares the folder first); `src/main/providers/codex/realm-folders.ts:408-429` |
+| The folder is created before any sign-in | `src/main/providers/core/accounts-service.ts:705` (setup prepares the folder first); `src/main/providers/codex/realm-folders.ts:408-429` |
 | The app never opens the sign-in file; it only checks whether it exists before removing an abandoned setup's folder | `src/main/providers/codex/auth-operations.ts:5-6`; `src/main/providers/codex/realm-folders.ts:311`, `:375-376`, `:503-505`; enforced by `tests/wp1/legacy-codex-retired.test.ts` |
 | Sign-in state comes from `codex login status`: signed in with ChatGPT or an API key, no email or token | `src/main/providers/codex/cli-contract.ts:51-66` |
-| The API key reaches Codex only on stdin, from a single-use handle; never logged; dropped after 120 s | `src/main/providers/codex/cli-runner.ts:38-39`, `:583-585`; `src/main/providers/codex/auth-operations.ts:367-381`, `:405`; `src/main/providers/core/secret-handles.ts:1-19`, `:24`, `:97` |
-| `~/.codex` is checked only after the user says they use Codex | `src/main/providers/core/external-default-migration.ts:18-19`, `:200-206` |
-| A launch on `~/.codex` needs that launch's confirmation | `src/main/providers/core/accounts-service.ts:1628-1631` |
-| `~/.codex` never runs a review | `src/main/providers/core/accounts-service.ts:1552` |
-| The app never signs in to `~/.codex`; signing out of it needs a confirmation | `src/main/providers/codex/auth-operations.ts:388`; `src/main/providers/core/accounts-service.ts:1099` |
+| The API key reaches Codex only on stdin, from a single-use handle; never logged; dropped after 120 s | `src/main/providers/codex/cli-runner.ts:38-39`, `:583-585`; `src/main/providers/codex/auth-operations.ts:371-385`, `:409`; `src/main/providers/core/secret-handles.ts:1-19`, `:24`, `:97` |
+| `~/.codex` is checked only after the user says they use Codex | `src/main/providers/core/accounts-service.ts:1542-1543` (the check and the adoption are refused, before anything is reserved, until Codex is answered on), `:1625-1630` (the check keeps nothing: the app writes no record, and nothing in that folder; the Codex CLI keeps its own scratch files there, under `tmp/`, as it does on every run), `:1676-1684` with `src/main/provider-accounts.ts:113` (nothing is taken in at start; a check an earlier run left is dropped); `src/renderer/onboarding/CodexSetupStep.tsx:336-337` (the Set up Codex page asks only once Codex is answered on) |
+| A launch on `~/.codex` needs that launch's confirmation | `src/main/providers/core/accounts-service.ts:1854-1857` |
+| `~/.codex` never runs a review | `src/main/providers/core/accounts-service.ts:1774` |
+| The app never signs in to `~/.codex`; signing out of it needs a confirmation | `src/main/providers/codex/auth-operations.ts:392`; `src/main/providers/core/accounts-service.ts:1219` |
 | Codex transcripts in `~/.codex` and in each account's folder feed Tokenomics | `src/main/tokenomics/tokenomics-service.ts:31`, `:88`, `:97` |
-| The app removes an entry older versions added to Codex's `config.toml`, at tool-server start and stop | `src/main/providers/codex/mcp-config.ts:25-27`, `:85-105`; `src/main/conductor-mcp-server.ts:1612`, `:1627` |
+| The app removes an entry older versions added to Codex's `config.toml`, at tool-server start and stop | `src/main/providers/codex/mcp-config.ts:25-27`, `:85-105`; `src/main/conductor-mcp-server.ts:1615`, `:1630` |
 | Version discovery runs in a throwaway home, never `~/.codex` | `src/main/providers/codex/discovery.ts:12-15` |
-| An environment API key is left out of every Codex launch (known issue) | `src/main/providers/codex/index.ts:168-172` |
-| The transcript switch stops the Logs index only | `src/main/logging/logging-service.ts:52-53`; `src/main/index.ts:826` (Tokenomics starts unconditionally) |
-| Needs attention (S8) is a change in the kind of sign-in (ChatGPT or device code vs API key), not a different person: a check passes no subject, and Codex status reports none; Claude has no status check in this build | `src/main/providers/core/accounts-service.ts:1064-1066`; `src/shared/providers/registry.ts:267-271`, `:730`; `src/main/providers/codex/index.ts:123`; `src/main/providers/claude/index.ts:132` |
+| An environment API key is left out of every Codex launch (known issue) | `src/main/providers/codex/index.ts:177-181` |
+| The transcript switch stops the Logs index only | `src/main/logging/logging-service.ts:52-53`; `src/main/index.ts:828` (Tokenomics starts unconditionally) |
+| Needs attention (S8) is a change in the kind of sign-in (ChatGPT or device code vs API key), not a different person: a check passes no subject, and Codex status reports none; Claude has no status check in this build | `src/main/providers/core/accounts-service.ts:1183-1186`; `src/shared/providers/registry.ts:267-271`, `:730`; `src/main/providers/codex/index.ts:132`; `src/main/providers/claude/index.ts:132` |
 
 ## 3. Release-run record (WP1.37, WP1.73)
 

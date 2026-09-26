@@ -149,12 +149,15 @@ describe('what App saves for it', () => {
     const s = useSettingsStore.getState().settings
     expect(s.claudeEnabled).toBe(false)
     expect(s.codexEnabled).toBe(true)
+    // It answers "do you use Codex?": the one-time page after an update does not ask again.
+    expect(s.codexAnswered).toBe(true)
     await saving
     expect(configSave).toHaveBeenCalledTimes(1)
     const [key, data] = configSave.mock.calls[0] as unknown as [string, Record<string, unknown>]
     expect(key).toBe('settings')
     expect(data.claudeEnabled).toBe(false)
     expect(data.codexEnabled).toBe(true)
+    expect(data.codexAnswered).toBe(true)
   })
 
   it('a plain completion saves nothing', () => {

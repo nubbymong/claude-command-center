@@ -131,7 +131,7 @@ export const trainingSteps: TrainingStep[] = [
       'Turn **Claude Code** or **Codex** on or off; at least one stays on, and a provider cannot be turned off while anything of it is running',
       'A provider that is off starts nowhere: its configs say why, and a tab restored for it reads **Not started** until you turn it back on and Restart the tab',
       'Codex missing or too old? Its row shows the install or update commands to copy, then **Check again**',
-      '**Add Codex account**: sign in with ChatGPT, a device code or an API key, then give it a name, or say it is the same person as an account you already have',
+      '**Add Codex account**: sign in with ChatGPT or an API key, then give it a name, or say it is the same person as an account you already have',
       'Each Codex account has a menu: **Make default**, **Make reviewer**, **Sign in again**, **Check sign-in**, **Sign out**, **Make inactive**, **Archive**',
       'A row reading **Needs attention** is now signed in a different way than before (say, an API key where it had a ChatGPT sign-in); **This is still my account** checks it again and confirms it',
     ],
@@ -146,7 +146,7 @@ export const trainingSteps: TrainingStep[] = [
       '**Providers card** -- Claude Code and Codex on or off, installed or not, and which version',
       'Your **Claude accounts** and **Codex accounts** on one page',
       'A provider that is off **starts nowhere**, and says why',
-      '**Add Codex account** with ChatGPT, a device code or an API key',
+      '**Add Codex account** with ChatGPT or an API key',
     ],
     // No capture of the Accounts page exists yet, and step-security.jpg shows
     // the retired Settings rail, so the neutral shell shot stands in. (Future
@@ -215,7 +215,7 @@ export const trainingSteps: TrainingStep[] = [
       'In this release, Codex sessions and Codex reviews run on this computer only, not over SSH -- the SSH options are off for Codex, and the dialog says why',
       'Each Codex account has its **own sign-in folder**. New sessions use the default account. Code reviews use the reviewer default, or the default if none is set',
       'The Codex sign-in already on this computer can be used too, but it must be confirmed at each launch, and cannot run reviews',
-      'Sign in with ChatGPT, a device code or an API key -- the key goes to Codex, and this app never stores it',
+      'Sign in with ChatGPT or an API key -- the key goes to Codex, and this app never stores it',
       'The session header has a **Restart** menu: Restart for a new conversation, or **Restart and pick a conversation** to resume a recent one',
       'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2; permission presets, model and reasoning effort are set on the Codex config',
       '**Tokenomics** segments Codex spend automatically alongside Claude, per-day and per-model; the Logs page does not index Codex conversations yet',

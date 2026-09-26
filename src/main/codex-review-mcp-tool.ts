@@ -122,6 +122,9 @@ function refusalText(code: string, message: string): string {
       return 'Codex review needs a Codex account: add one in Accounts, then try again.'
     case 'provider-disabled':
       return 'Codex review is unavailable: Codex is turned off in Settings.'
+    case 'provider-not-set-up':
+      // Main's sentence: the user has not said they use Codex, and where to set it up.
+      return `Codex review is unavailable: ${message}`
     default:
       return `Codex review unavailable: ${message}`
   }

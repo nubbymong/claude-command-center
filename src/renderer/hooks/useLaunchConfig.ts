@@ -5,7 +5,8 @@ import { TerminalConfig } from '../stores/configStore'
 import { generateId } from '../utils/id'
 import { markSessionForResumePicker } from '../utils/resumePicker'
 import { isClaudeOff, CLAUDE_OFF_LAUNCH_REASON } from '../lib/claudeOff'
-import { providerOffMessage } from '../../shared/providers'
+import { providerOffMessage, providerNotSetUpMessage } from '../../shared/providers'
+import { codexPreference } from '../onboarding/provider-choice'
 
 /** What the launch rule reads of a config. */
 export type LaunchGateConfig = Pick<TerminalConfig, 'provider' | 'shellOnly'>
@@ -17,11 +18,14 @@ export interface LaunchGateSettings {
 }
 
 /**
- * True when this config cannot launch because its provider is switched off.
- * Single source of truth for every launch surface (rows, pinned panel,
- * empty-state cards) AND the launch action itself.
+ * True when this config cannot launch because its provider is switched off
+ * (or, for Codex, not set up yet). Single source of truth for every launch
+ * surface (rows, pinned panel, empty-state cards) AND the launch action
+ * itself.
  *
- *   - A Codex config, while Codex is off.
+ *   - A Codex config, while Codex is off, or not set up (the user has not
+ *     said they use it: owner decision 2026-09-26; main refuses its launch
+ *     then too).
  *   - A Claude config (no provider means Claude), while Claude Code is off
  *     (a Codex-only install, WP2), EXCEPT a terminal-only config: it runs a
  *     plain shell and no Claude; the Claude provider is only its stored
@@ -35,7 +39,7 @@ export function isConfigLaunchBlocked(
   settings: LaunchGateSettings = useSettingsStore.getState().settings,
 ): boolean {
   const provider = config.provider ?? 'claude'
-  if (provider === 'codex') return settings.codexEnabled === false
+  if (provider === 'codex') return codexPreference(settings) !== 'on'
   // Claude Code's on/off is decided in one place (claudeOff.ts), which every
   // other surface that would start Claude asks too.
   return !config.shellOnly && isClaudeOff(settings)
@@ -52,12 +56,17 @@ export function launchBlockedReason(
   settings: LaunchGateSettings = useSettingsStore.getState().settings,
 ): string | undefined {
   if (!isConfigLaunchBlocked(config, settings)) return undefined
-  return (config.provider ?? 'claude') === 'codex' ? CODEX_OFF_LAUNCH_REASON : CLAUDE_OFF_LAUNCH_REASON
+  if ((config.provider ?? 'claude') !== 'codex') return CLAUDE_OFF_LAUNCH_REASON
+  return codexPreference(settings) === 'off' ? CODEX_OFF_LAUNCH_REASON : CODEX_NOT_SET_UP_LAUNCH_REASON
 }
 
 /** The short tag a blocked config wears beside its name. */
-export function launchBlockedTag(config: LaunchGateConfig): string {
-  return (config.provider ?? 'claude') === 'codex' ? 'Codex off' : 'Claude Code off'
+export function launchBlockedTag(
+  config: LaunchGateConfig,
+  settings: LaunchGateSettings = useSettingsStore.getState().settings,
+): string {
+  if ((config.provider ?? 'claude') !== 'codex') return 'Claude Code off'
+  return codexPreference(settings) === 'off' ? 'Codex off' : 'Codex not set up'
 }
 
 /** Both providers' saved on/off, subscribed: a launch surface re-renders the
@@ -70,6 +79,9 @@ export function useLaunchGateSettings(): LaunchGateSettings {
 
 /** The reason shown for a Codex config blocked because Codex is off. */
 export const CODEX_OFF_LAUNCH_REASON = providerOffMessage('Codex', 'to launch this config')
+
+/** The reason shown for a Codex config blocked because Codex is not set up. */
+export const CODEX_NOT_SET_UP_LAUNCH_REASON = providerNotSetUpMessage('Codex', 'to launch this config')
 
 /**
  * Allow Multi Spawn (phase 4) — THE rule, in one place.

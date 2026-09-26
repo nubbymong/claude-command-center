@@ -100,10 +100,14 @@ function seedCleanConfig(dataDir: string): void {
     fs.mkdirSync(path.join(resources, sub), { recursive: true })
   }
   const config = path.join(resources, 'CONFIG')
-  // loggingConsent: seen; machineName: set.
+  // loggingConsent: seen; machineName: set. codexAnswered: the one-time "Do you
+  // use Codex?" page after an update (codex-reconfirm-gate) is answered, so it
+  // does not cover every test (the seed below reads as an upgrade). Codex's
+  // on/off itself is not saved here; a spec that needs Codex on saves its
+  // own on/off over this file.
   fs.writeFileSync(
     path.join(config, 'settings.json'),
-    JSON.stringify({ loggingConsentSeen: true, localMachineName: 'e2e-host' }, null, 2),
+    JSON.stringify({ loggingConsentSeen: true, localMachineName: 'e2e-host', codexAnswered: true }, null, 2),
   )
   // setupVersion MUST exactly equal the build's __APP_VERSION__ (= package
   // version): App.tsx gates the Claude CLI-setup wizard on

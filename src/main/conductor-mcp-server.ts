@@ -834,6 +834,7 @@ export async function startMcpServer(
       conductorToolsEnabled?: boolean
       conductorTools?: { vision?: boolean; codexReview?: boolean; claudeReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
       codexEnabled?: boolean
+      codexAnswered?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
     const toolOn = (k: 'vision' | 'codexReview' | 'claudeReview' | 'hostTransfer' | 'canvas') =>
@@ -1061,13 +1062,15 @@ export async function startMcpServer(
     // P6.9: codex_review is intentionally NOT advertised to Codex sessions.
     // Codex calling itself would be confusing UX in v1.5; v1.5.x can
     // reconsider if reciprocal review demand surfaces.
-    // Also requires Codex itself to be enabled ("Do you use Codex?" — absent
-    // means yes for pre-onboarding installs): the tool runs the codex CLI.
+    // Also requires the user's yes to "Do you use Codex?": the tool runs the
+    // codex CLI. The saved on counts only with its answer (owner decision
+    // 2026-09-26, the rule main reads the Codex setting by); absent, or not
+    // answered, is "not set up", never on.
     const reviewTool = offeredReviewTool(source, {
       toolsMaster,
       codexReviewOn: toolOn('codexReview'),
       claudeReviewOn: toolOn('claudeReview'),
-      codexEnabled: toolCfg?.codexEnabled !== false,
+      codexEnabled: toolCfg?.codexEnabled === true && toolCfg?.codexAnswered === true,
       // Never lets a readiness check take the other tools down with it.
       codexReviewReady: () => { try { return getAccountsService()?.reviewReady('codex') === true } catch { return false } },
       claudeReviewReady: () => { try { return getAccountsService()?.reviewReady('claude') === true } catch { return false } },

@@ -188,9 +188,11 @@ describe('codex_review tool', () => {
         ['acknowledgement-required', /Add a Codex account in Accounts/],
         ['not-found', /needs a Codex account/],
         ['provider-disabled', /turned off/],
+        ['provider-not-set-up', /^Codex review is unavailable: Codex is not set up yet\. Set it up in Settings, Accounts\.$/],
         ['cli-unavailable', /Codex review unavailable: The CLI moved/],
       ] as const) {
-        h.prepareLaunch.mockResolvedValueOnce({ ok: false, code, message: code === 'cli-unavailable' ? 'The CLI moved.' : 'x' })
+        const message = code === 'cli-unavailable' ? 'The CLI moved.' : code === 'provider-not-set-up' ? 'Codex is not set up yet. Set it up in Settings, Accounts.' : 'x'
+        h.prepareLaunch.mockResolvedValueOnce({ ok: false, code, message })
         const r = await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, optedIn, gitCwd, h.deps)
         expect(r.isError, code).toBe(true)
         expect(r.text, code).toMatch(expected)

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { AccountsSnapshot, AccountView, InstallRecipeView, ProviderInstallationView, SignInMethod } from '../../shared/providers'
+import type { AccountsResult, AccountsSnapshot, AccountView, InstallRecipeView, KnownAuthState, ProviderInstallationView, SignInMethod } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import {
-  useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, externalAdoption,
+  useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, providerAnsweredOn,
 } from '../stores/providerAccountsStore'
 import { AddProviderAccountDialog, methodCopy } from '../components/settings/accounts/AddProviderAccountDialog'
 import { openCommandTerminal } from '../utils/commandTerminal'
@@ -54,41 +54,56 @@ export function signedInCodexAccounts(snapshot: AccountsSnapshot | null): Accoun
 }
 
 /**
- * What the page can say about this computer's own Codex sign-in (~/.codex),
- * from main's one-time check as the snapshot carries it. Main records the
- * check's answer as a marker (external-default-migration.ts): `registered`
- * (found signed in; an account now stands for it, or did), `none` (signed
- * out) or `skipped` with a reason. Only `registered` means a sign-in was
- * found; every other answer is a reason to sign in to a new account.
+ * Whether anything stands for this computer's own Codex sign-in (~/.codex).
+ * The app never takes it in on its own (owner decision 2026-09-26): only the
+ * user's "Use this sign-in" does, which asks Codex for the home's status and
+ * registers it only when it is signed in (adoptExternal).
  *
+ *   - absent: the snapshot names no such sign-in (no account list yet).
  *   - in-use: an account stands for it now, or a setup of it is pending.
- *   - unchecked: no answer recorded yet; the page runs the check itself.
- *   - found: main found it signed in, and no account stands for it now (it
- *     was archived since): "Use this sign-in" (adoptExternal checks again).
- *   - not-found: the answer, as a note; `checkAgain` where adoptExternal can
- *     look again (it asks the CLI for the home's status afresh).
+ *   - free: nothing does. The page asks Codex whether it is signed in,
+ *     without taking it in (probeExternal), before it offers it; and it asks
+ *     whatever an earlier answer recorded. That answer is history (the home
+ *     may be signed out since, its account archived), and the page says
+ *     "already signed in" only when Codex says so now (U2).
  */
-export type ThisComputerSignIn =
-  | { kind: 'in-use' }
-  | { kind: 'unchecked' }
-  | { kind: 'found' }
-  | { kind: 'not-found'; note: string | null; checkAgain: boolean }
+export type ThisComputerSignIn = { kind: 'absent' } | { kind: 'in-use' } | { kind: 'free' }
 
 export function thisComputerSignIn(snapshot: AccountsSnapshot | null): ThisComputerSignIn {
   const ext = snapshot?.externalDefaults.find((e) => e.providerId === 'codex')
-  if (!snapshot || !ext) return { kind: 'not-found', note: null, checkAgain: false }
+  if (!snapshot || !ext) return { kind: 'absent' }
   const standsFor = snapshot.accounts.some((a) => a.providerId === 'codex' && a.external && a.lifecycle !== 'archived')
   if (standsFor || snapshot.pendingSetups.some((s) => s.providerId === 'codex' && s.external)) return { kind: 'in-use' }
-  if (!ext.marker) return { kind: 'unchecked' }
-  if (ext.marker.outcome === 'registered') return { kind: 'found' }
-  const said = externalAdoption(snapshot, 'codex')
-  if (said.kind === 'offer') return { kind: 'not-found', note: said.text, checkAgain: true }
-  if (said.kind === 'note') return { kind: 'not-found', note: said.text, checkAgain: false }
-  return { kind: 'not-found', note: null, checkAgain: false }
+  return { kind: 'free' }
 }
 
-/** Outcomes after which main's registry carries the check's answer. */
-const CHECK_ANSWERED: ReadonlySet<string> = new Set(['registered', 'not-signed-in', 'skipped', 'already-done'])
+/** What the page's read-only check found (probeExternal), as the page acts
+ *  on it: signed-in and signed-out are Codex's answer; no-home, there is no
+ *  Codex sign-in folder there at all; overlap, the folder overlaps this app's
+ *  own account folders, so it cannot be used here; unusable, Codex cannot
+ *  check or use it here (the check is not enabled, Codex is not on or not
+ *  set up, the app could not read whether it is on, or it has no such
+ *  sign-in: "Use this sign-in" would be refused too); unknown, no answer (it timed out, did not start, or
+ *  Codex could not say), so the page offers it without the claim. */
+export type ThisComputerCheck = 'signed-in' | 'signed-out' | 'no-home' | 'overlap' | 'unusable' | 'unknown'
+
+export function thisComputerCheck(r: AccountsResult<{ state: KnownAuthState }>): ThisComputerCheck {
+  if (r.ok) return r.state === 'signed-in' ? 'signed-in' : r.state === 'signed-out' || r.state === 'expired' ? 'signed-out' : 'unknown'
+  switch (r.code) {
+    case 'realm-unavailable': return 'no-home'
+    case 'external-overlap': return 'overlap'
+    case 'capability-disabled':
+    case 'provider-disabled':
+    case 'provider-not-set-up':
+    case 'provider-state-unknown':
+    case 'unsupported': return 'unusable'
+    default: return 'unknown'
+  }
+}
+
+/** Said when the check finds the folder overlaps this app's own: the words
+ *  Settings, Accounts uses for it. */
+const OVERLAP_NOTE = "This computer's Codex folder overlaps this app's own account folders, so it cannot be used here."
 
 /** The newer of two answers for the same provider: main pushes a snapshot
  *  after each check, but the check's own answer can arrive first. */
@@ -220,23 +235,29 @@ function Recipes({ purpose, recipes, onRun, busyReason }: {
 
 /**
  * "Set up Codex" (WP2 commit 6e, canvas F2). Shown when the user chose Codex
- * on the assistants page. Everything it says comes from main: the discovery
- * in the accounts snapshot (checked again on entry), the install recipes,
- * and what the app found about this computer's own Codex sign-in.
+ * on the assistants page, or answered Yes on the one-time "Do you use
+ * Codex?" page after an update. Everything it says comes from main: the
+ * discovery in the accounts snapshot (checked again on entry), the install
+ * recipes, and what is known about this computer's own Codex sign-in.
  *
  *   - Not found: the install recipes, verbatim. A recipe main allows to run
  *     (it sends the line to type, `runLine`) runs in a visible terminal tab
  *     after the user confirms that line, one at a time; any other is shown
  *     and copied, never run. "Check again" looks again.
  *   - Too old: the version found and the update recipe.
- *   - Ready: this computer's own sign-in is checked first (once, by this
- *     page: see below); then sign in to a new Codex account through the
- *     Accounts surface's own add-account dialog, started at the chosen
- *     method, with what the check found as a note.
- *   - This computer's sign-in found signed in and not in use: use it, or
- *     add a new account (Recommended).
+ *   - Ready, and nothing stands for this computer's own sign-in (canvas
+ *     F2 d, approved again for the update page on 2026-09-26): the page asks
+ *     Codex, read-only, whether that sign-in is signed in, then offers "Use
+ *     this sign-in" (as signed in only when Codex said so), or a new account
+ *     of its own (Recommended). The page never registers that sign-in on its
+ *     own: "Use this sign-in" asks Codex for its status and registers it only
+ *     when it is signed in (owner decision 2026-09-26: the sign-in already on
+ *     the computer is only ever taken in by an explicit choice). Found signed
+ *     out, not there, or there but not usable here: sign in to a new Codex
+ *     account through the Accounts surface's own add-account dialog, started
+ *     at the chosen method, with what was found as a note.
  *   - Signed in: done, and Next continues. When the only sign-in is this
- *     computer's own (the check registered it), the settled canvas F2 d:
+ *     computer's own (the user chose to use it), the settled canvas F2 d:
  *     it is in use, confirmed at each launch, and a new account of its own
  *     is still Recommended.
  */
@@ -257,11 +278,17 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
   const [dialog, setDialog] = useState<null | { method?: SignInMethod }>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
-  // This computer's sign-in: asked at most once by this page; `running`
-  // while main checks it, so the page says so instead of flashing the
-  // sign-in choices; `failed` when main gave no answer it could record.
-  const thisComputerAsked = useRef(false)
-  const [thisComputerCheck, setThisComputerCheck] = useState<'idle' | 'running' | 'answered' | 'failed'>('idle')
+  // What the user's own "Use this sign-in" found, when it answered without
+  // registering anything: the sign-in there is signed out. The page then
+  // offers the new-account sign-in, with that as a note.
+  const [adoptAnswer, setAdoptAnswer] = useState<'signed-out' | null>(null)
+  // What the page's own read-only check of this computer's sign-in found
+  // (probeExternal, thisComputerCheck): asked once when nothing stands for
+  // it, and again from "Check this computer's sign-in again" once it was
+  // found signed out (a new round).
+  const [probe, setProbe] = useState<'idle' | 'running' | ThisComputerCheck>('idle')
+  const probeAsked = useRef(false)
+  const [probeRound, setProbeRound] = useState(0)
   // Set in setup as well as cleared in cleanup: StrictMode (development)
   // runs cleanup then setup again with the same refs, and a ref only ever
   // cleared would leave the page believing it had gone away.
@@ -298,36 +325,32 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     return () => { live = false }
   }, [])
 
-  // The one-time check of this computer's own Codex sign-in. At start-up main
-  // runs it only once the user has said whether they use Codex; the
-  // assistants page has just said yes (Codex on), which main does not treat
-  // as a reason to run it again (it asks only while the answer is undecided).
-  // So this page runs it: once Codex is on, the CLI is usable (the check
-  // needs it to answer) and nothing is recorded yet, whatever
-  // `needsConfirmation` says. The check runs first; only if main answers
-  // `needs-confirmation` (it has no durable yes yet) does the page record
-  // the yes and check again, the order the Accounts surface's "Yes, I use
-  // Codex" takes (the yes, then the check). The answer is in main's registry
-  // when the call returns; the snapshot that carries it is fetched, not
-  // waited for.
-  const canCheckThisComputer = install.kind === 'usable' && !!provider?.enabled && thisComputer.kind === 'unchecked' && !thisComputerAsked.current
+  // This computer's own Codex sign-in, when nothing stands for it: asked
+  // once per round, READ-ONLY (probeExternal: Codex's status there, and
+  // nothing kept), so the page can say "already signed in" only when it is,
+  // and does not offer a sign-in that is not there or cannot be used. It is
+  // taken in only by the user's "Use this sign-in" (owner decision
+  // 2026-09-26). Only once Codex is on, as the user answered, and its CLI is
+  // usable (the check runs it), and only when no Codex account is signed in
+  // yet (the page is done then, and has nothing to offer).
+  const canProbe = install.kind === 'usable' && providerAnsweredOn(provider)
+    && thisComputer.kind === 'free' && signedIn.length === 0
   useEffect(() => {
-    // The ref, read here and not only at render: StrictMode runs this effect
-    // twice with the same render's values, and the check must run once.
-    if (!canCheckThisComputer || thisComputerAsked.current) return
-    thisComputerAsked.current = true
-    setThisComputerCheck('running')
+    // The ref, read here: StrictMode runs this effect twice with the same
+    // render's values, and the check must run once.
+    if (!canProbe || probeAsked.current) return
+    probeAsked.current = true
+    setProbe('running')
     void (async () => {
-      let r = await providerAccountActions.runMigration('codex')
-      if (r.ok && r.outcome === 'needs-confirmation') {
-        const on = await providerAccountActions.switchProvider('codex', true)
-        if (on.ok) r = await providerAccountActions.runMigration('codex')
-      }
+      const r = await providerAccountActions.probeExternal('codex')
+      // The check reserved, then released, a record for that folder: wait for
+      // the snapshot that no longer carries it, so the page does not show it
+      // as in use for a moment.
       await useProviderAccountsStore.getState().hydrate()
       if (!mounted.current) return
-      setThisComputerCheck(r.ok && CHECK_ANSWERED.has(r.outcome) ? 'answered' : 'failed')
+      setProbe(thisComputerCheck(r))
     })()
-  }, [canCheckThisComputer])
+  }, [canProbe, probeRound])
 
   // One install at a time: while the tab this page opened is still open, Run
   // is off for the whole page and says where it is running.
@@ -348,15 +371,32 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     stepAside()
   }
 
-  // "Use this sign-in", and "Check this computer's sign-in again": main asks
-  // the CLI for the home's status afresh and registers it only when it is
-  // signed in (adoptExternalDefault), so both are the same call.
+  // "Use this sign-in": the explicit adoption. Main asks Codex for the home's
+  // status first, and registers it only when it is signed in
+  // (adoptExternalDefault). Signed out: the page moves to the new-account
+  // sign-in, saying so. Any other failure is said, and the offer stays to try
+  // again.
   const adopt = async () => {
     setBusy(true)
     setError(null)
     const r = await providerAccountActions.adoptExternal('codex')
+    if (!mounted.current) return
     setBusy(false)
-    if (!r.ok) setError({ code: r.code, message: r.message })
+    if (r.ok) return
+    if (r.code === 'not-signed-in') { setAdoptAnswer('signed-out'); return }
+    setError({ code: r.code, message: r.message })
+  }
+
+  // "Check this computer's sign-in again", once it was found signed out.
+  // After the user's own "Use this sign-in" found it so, it is that choice,
+  // asked again. After the page's own check found it so, it is that check,
+  // asked again, read-only: a link that says "check" never takes the
+  // sign-in in.
+  const checkThisComputerAgain = () => {
+    if (adoptAnswer === 'signed-out') { void adopt(); return }
+    probeAsked.current = false
+    setProbe('idle')
+    setProbeRound((n) => n + 1)
   }
 
   const done = install.kind === 'usable' && signedIn.length > 0
@@ -409,22 +449,35 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     // Canvas F2 d: the callout naming this computer's sign-in, then its use
     // (offered, or settled once an account stands for it) and a new account
     // of its own, Recommended: the better choice, and the only one that can
-    // review code.
-    const thisComputerCallout = (label?: string) => (
+    // review code. `verified`: known to be signed in (an account stands for
+    // it, or the page's check just found it so); otherwise it is offered
+    // without that claim. The email is not shown:
+    // `codex login status` does not report one, and this app never reads
+    // Codex's sign-in files.
+    const thisComputerCallout = (verified: boolean, label?: string) => (
       <div className="cx-callout" data-testid="codex-setup-adopt-callout">
         <span className="cx-callout-i" aria-hidden>i</span>
-        <span>Codex is already signed in on this computer (~/.codex{label ? `, ${label}` : ''})</span>
+        <span>
+          {verified
+            ? `Codex is already signed in on this computer (~/.codex${label ? `, ${label}` : ''})`
+            : 'The app could not check whether Codex is signed in on this computer (~/.codex). Use this sign-in checks it again.'}
+        </span>
       </div>
     )
     const SHARED_NOTE = 'You confirm it at each launch, and it cannot run code reviews'
-    // Nothing recorded yet and the check is about to run, or running.
-    const checkingThisComputer = thisComputer.kind === 'unchecked' && (thisComputerCheck === 'running' || canCheckThisComputer)
+    // Offered: Codex is on as the user answered, nothing stands for this
+    // computer's sign-in, the page's check just found it signed in (or got no
+    // answer either way), and the user has not just found it signed out.
+    const offerThisComputer = providerAnsweredOn(provider) && adoptAnswer === null
+      && thisComputer.kind === 'free' && (probe === 'signed-in' || probe === 'unknown')
+    // The page's check is running, or about to (it starts after this render).
+    const probing = !done && (probe === 'running' || (probe === 'idle' && canProbe))
     if (done && onlyShared) {
       const shared = signedIn[0]
       view = 'done-shared'
       body = (
         <div data-testid="codex-setup-done">
-          {thisComputerCallout(shared.providerLabel)}
+          {thisComputerCallout(true, shared.providerLabel)}
           <div className="cx-opt cx-opt-done" data-testid={`codex-setup-signed-in-${shared.id}`}>
             <span>
               <span className="cx-opt-t"><span className="cx-done-mark" aria-hidden>{CHECK}</span>Using this sign-in</span>
@@ -444,7 +497,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
           ))}
         </div>
       )
-    } else if (checkingThisComputer) {
+    } else if (probing) {
       view = 'checking-this-computer'
       body = (
         <div data-testid="codex-setup-checking-this-computer">
@@ -452,14 +505,15 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
           <CheckRow tone="pending" testId="codex-setup-this-computer-check">Checking this computer's Codex sign-in...</CheckRow>
         </div>
       )
-    } else if (thisComputer.kind === 'found' && provider?.enabled) {
+    } else if (offerThisComputer) {
       view = 'adopt'
       body = (
         <div data-testid="codex-setup-adopt">
-          {thisComputerCallout()}
+          <CheckRow tone="ok" testId="codex-setup-found">{install.version ? `Codex ${install.version} found` : 'Codex found'}</CheckRow>
+          {thisComputerCallout(probe === 'signed-in')}
           <button className="cx-opt" type="button" onClick={() => { void adopt() }} disabled={busy} data-testid="codex-setup-use-existing">
             <span>
-              <span className="cx-opt-t">Use this sign-in</span>
+              <span className="cx-opt-t">{busy ? 'Checking this sign-in...' : 'Use this sign-in'}</span>
               <span className="cx-opt-d">{SHARED_NOTE}</span>
             </span>
             <span className="cx-chev" aria-hidden />
@@ -468,26 +522,24 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
         </div>
       )
     } else {
-      // State c: sign in to a new account, with what the check found as a
-      // note, and (where main can look again) the way to look again.
-      // No answer recorded after the page asked: main's own note when it has
-      // one (it will check again at the next start), else say so plainly.
-      const said = externalAdoption(snapshot, 'codex')
-      const failed = thisComputer.kind === 'unchecked' && thisComputerCheck === 'failed'
-      const note = thisComputer.kind === 'not-found'
-        ? thisComputer.note
-        : failed
-          ? (said.kind === 'note' ? said.text : 'The app could not check this computer\'s Codex sign-in just now.')
-          : null
-      const lookAgain = !!provider?.enabled
-        && ((thisComputer.kind === 'not-found' && thisComputer.checkAgain) || (failed && said.kind !== 'note'))
+      // State c: sign in to a new account, with what was found about this
+      // computer's own sign-in as a note: signed out just now (the page's
+      // check or the user's "Use this sign-in"), with the way to ask again;
+      // or a folder that overlaps this app's own, which cannot be used here.
+      // No Codex sign-in folder there at all, or one Codex cannot check here:
+      // nothing to say, and nothing offered.
+      const signedOutNow = adoptAnswer === 'signed-out' || probe === 'signed-out'
+      const note = signedOutNow
+        ? 'This computer\'s Codex sign-in (~/.codex) is signed out.'
+        : probe === 'overlap' ? OVERLAP_NOTE : null
+      const lookAgain = providerAnsweredOn(provider) && signedOutNow
       view = 'sign-in'
       body = (
         <div data-testid="codex-setup-sign-in">
           {versionRow}
           {note && <p className="cx-muted" data-testid="codex-setup-adoption-note">{note}</p>}
           {lookAgain && (
-            <button className="cx-link" type="button" onClick={() => { void adopt() }} disabled={busy} data-testid="codex-setup-check-this-computer">
+            <button className="cx-link" type="button" onClick={checkThisComputerAgain} disabled={busy} data-testid="codex-setup-check-this-computer">
               {busy ? 'Checking...' : 'Check this computer\'s sign-in again'}
             </button>
           )}
