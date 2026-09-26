@@ -48,6 +48,35 @@ are in the repo.
 Packages: **P2** finishes PR #625; **P3** is sessions and usage; **P4** is
 agent surfaces and qualification.
 
+## P2 acceptance status (2026-09-26)
+
+Every open item is in exactly one group: **A** affects P2 acceptance (owner
+action owed); **B** affects 2.1.1 release parity, not P2; **C** is an unrelated
+baseline defect (pre-existing on beta, reproduced, not fixed in P2, not
+waived). Evidence revision `95385267`; later commits change only help copy no
+screenshot shows, so none was refreshed. Galleries, both local, in
+`.ccc-canvas/screens/p2-upgrade-95385267/`: `acceptance.html` (13 screens, 52
+images, mocked ones stamped) and `gallery.html` (37 screens, 145 images).
+Checks run during the VM wipe window of fixture preparation (from 05:44 VM
+time) were superseded and re-run on fixtures re-prepared with the proven
+junction-safe cleanup (13:40 to 13:57), which gave identical config data,
+apart from the per-install random value, and identical results.
+
+| Group | Open item | Tracked in |
+|---|---|---|
+| A | A managed Codex account added through the supported sign-in flow on WINDOWS_1, and Hello Codex seen on it. MOCKED only today: no authorised managed test account exists, and by design Hello Codex is not shown after adopting this computer's sign-in (`src/renderer/onboarding/hello-codex.ts`, `docs/wp2/hello-codex-spec.md`) | Rows 4, 13 |
+| A | The owner's acceptance of the evidence gallery | This section |
+| B | macOS and Linux packaged runs | Row 66 |
+| B | A signed Windows packaged run (the walk used an unsigned candidate) | Row 66 |
+| B | Real CLI on codex 0.153.4 and 0.155.1 | Rows 1, 2, 12 |
+| B | Claude-only UI for Codex-only users: the title-bar Claude.ai pill, Ask Conductor saying it runs on Claude Code, the Accounts Claude card's sign-in prompts while Claude Code is off, Hello Codex page 1 saying Codex runs beside Claude | Row 14 (P3) |
+| B | Account summary, usage footer and Tokenomics UX, held for the owner's UX review (the next step after P2 acceptance) | Rows 17, 21, 26 |
+| C | At the narrow window the GitHub button overlaps the partner strip label, on Claude and Codex tabs | Row 64 |
+| C | The one-at-a-time Multi Spawn rule is enforced only in the renderer (a UX rule, not a security boundary) | Row 72 |
+| C | Resume replaces the whole tab list while its prompt is non-modal: tabs launched meanwhile drop out of the list while still running, and Refresh can bring them back as duplicates | This section |
+| C | A local Claude spawn that throws after its process starts can leave that process untracked | This section (Claude path) |
+| C | One pre-existing e2e failure, reproduced on beta, routed privately | Row 67 |
+
 ## A. Accounts, identity, setup, onboarding, upgrade, Codex-only
 
 | # | Feature | Status | Mocked | Real CLI | Packaged | Pkg | Still owed |
@@ -65,7 +94,7 @@ agent surfaces and qualification.
 | 11 | Staged re-authentication (WP1.52) | MISSING | no | no | no | P3 | Build it |
 | 12 | Upgrade: "Do you use Codex?", and the Set up Codex page's read-only check of this computer's sign-in | VERIFIED | yes, +e2e | partial (Win) | partial (Win) | P2 | Done: `tests/e2e/codex-reconfirm-upgrade.spec.ts` on the VM (WINDOWS_1), 3/3 at `21fff8bc`, `c6dc4b60` and `95385267` (Claude-only, Codex-only and both upgraders). Upgrade walk from v2.1.1-beta.1: asked once after the release notes, again if quit unanswered, never after an answer; the check of a signed-in ~/.codex and "Use this sign-in" (AUTHENTICATED, 0.157.1); a signed-out `CODEX_HOME` named on the page (SIGNED-OUT); the check alone added no account. Owed: real runs at 0.153.4 and 0.155.1; the CLI's own scratch writes under `tmp/` in that folder were seen on 0.153.4 and 0.157.1 (0.155.1 unverified) |
 | 13 | Hello Codex, including after the upgrade Yes | VERIFIED | yes, +VM | no | no | P2 | A real managed Codex account (needs the owner's ChatGPT sign-in or API key), then Hello Codex after Yes. Upgrade walk (MOCKED: seeded managed account, fake CLI): shown once, right after Set up Codex; replayed from Settings and the Feature Guide. Never due for an adopted ~/.codex, by design |
-| 14 | Codex-only mode, no Claude noise | PARTIAL | no | partial (Win) | partial (Win) | P3 | Title-bar Anthropic pills, onboarding steps, showcase, Accounts panel, session dialog. Upgrade walk (Claude Code off, SIGNED-OUT): no Claude install or sign-in demands; still seen: the title-bar Claude.ai pill, the Accounts Claude card's sign-in prompts while Claude Code is off, and Ask Conductor saying it runs on Claude Code (row 53) |
+| 14 | Codex-only mode, no Claude noise | PARTIAL | no | partial (Win) | partial (Win) | P3 | Title-bar Anthropic pills, onboarding steps, showcase, Accounts panel, session dialog. Upgrade walk (Claude Code off, SIGNED-OUT): no Claude install or sign-in demands; still seen: the title-bar Claude.ai pill, the Accounts Claude card's sign-in prompts while Claude Code is off, Ask Conductor saying it runs on Claude Code (row 53), and Hello Codex page 1 saying Codex runs beside Claude |
 | 15 | Owner-run gates (native keyring, credential logins, packaged smoke) | MISSING | no | no | no | P4 | Hosts and timing from the owner |
 | 16 | WP1 traceability | PARTIAL | n/a | n/a | n/a | P4 | Items move from planned to evidenced |
 
