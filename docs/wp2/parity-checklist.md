@@ -65,7 +65,7 @@ apart from the per-install random value, and identical results.
 | Group | Open item | Tracked in |
 |---|---|---|
 | A | A managed Codex account added through the supported sign-in flow on WINDOWS_1, and Hello Codex seen on it. MOCKED only today: no authorised managed test account exists, and by design Hello Codex is not shown after adopting this computer's sign-in (`src/renderer/onboarding/hello-codex.ts`, `docs/wp2/hello-codex-spec.md`) | Rows 4, 13 |
-| A | The owner's acceptance of the evidence gallery | This section |
+| A | The owner's acceptance of the evidence gallery: DONE, approved 2026-09-26 | This section |
 | B | macOS and Linux packaged runs | Row 66 |
 | B | A signed Windows packaged run (the walk used an unsigned candidate) | Row 66 |
 | B | Real CLI on codex 0.153.4 and 0.155.1 | Rows 1, 2, 12 |
