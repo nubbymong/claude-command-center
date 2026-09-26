@@ -37,7 +37,7 @@ agent surfaces and qualification.
 
 | # | Feature | Status | Mocked | Real CLI | Packaged | Pkg | Still owed |
 |---|---|---|---|---|---|---|---|
-| 1 | Provider on/off, "not set up" (no launch, review or Codex CLI run until answered), last provider on | VERIFIED | yes | no | no | P2 | Real-CLI and packaged runs |
+| 1 | Provider on/off, "not set up" (no launch, review or Codex CLI run until answered), last provider on | VERIFIED | yes, +e2e | no | no | P2 | Real-CLI and packaged runs. E2E on the VM (WINDOWS_1) after the spec fixes: the not-set-up Codex card guard and Codex x SSH pass |
 | 2 | CLI detect and version classes | VERIFIED | yes | no | no | P4 | Real min, pinned and max per OS (the VM has 0.142.4, below the minimum) |
 | 3 | Install and update | VERIFIED | yes | no | no | P4 | One real install per OS |
 | 4 | Sign-in (browser, API key) | VERIFIED | yes | no | no | P4 | Real login, status and logout per OS |
@@ -48,7 +48,7 @@ agent surfaces and qualification.
 | 9 | Launch and resume in the exact account | VERIFIED | yes, +e2e | no | no | P4 | Real launch in the realm; a restored tab keeps its account |
 | 10 | Lifecycle blockers and archive | PARTIAL | no | no | no | P3 | Blocker names each consumer with Go to; Archived list with Restore |
 | 11 | Staged re-authentication (WP1.52) | MISSING | no | no | no | P3 | Build it |
-| 12 | Upgrade: "Do you use Codex?", and the Set up Codex page's read-only check of this computer's sign-in | VERIFIED | yes | no | no | P2 | `tests/e2e/codex-reconfirm-upgrade.spec.ts` on the VM (written, unrun); a real `codex login status` run of the check and of "Use this sign-in"; the CLI's own scratch writes under `tmp/` in that folder were seen on codex 0.153.4 only (0.155.1 unverified) |
+| 12 | Upgrade: "Do you use Codex?", and the Set up Codex page's read-only check of this computer's sign-in | VERIFIED | yes, +e2e | no | no | P2 | Done: `tests/e2e/codex-reconfirm-upgrade.spec.ts` on the VM (WINDOWS_1) at `21fff8bc`, 3/3 pass (Claude-only, Codex-only and both upgraders). Owed: a real `codex login status` run of the check and of "Use this sign-in"; the CLI's own scratch writes under `tmp/` in that folder were seen on codex 0.153.4 only (0.155.1 unverified) |
 | 13 | Hello Codex, including after the upgrade Yes | VERIFIED | yes | no | no | P2 | Walk after Yes on the VM |
 | 14 | Codex-only mode, no Claude noise | PARTIAL | no | no | no | P3 | Title-bar Anthropic pills, onboarding steps, showcase, Accounts panel, session dialog |
 | 15 | Owner-run gates (native keyring, credential logins, packaged smoke) | MISSING | no | no | no | P4 | Hosts and timing from the owner |
@@ -127,7 +127,7 @@ Tokenomics).
 | 64 | Partner terminal wording | PARTIAL | no | no | no | P3 | Use the agent's name |
 | 65 | GitHub session context | PARTIAL | no | no | no | P3 | Read Codex rollouts |
 | 66 | Packaged smoke | PARTIAL | n/a | n/a | no | P4 | Per OS |
-| 67 | E2E mode matrix | PARTIAL | yes, +e2e | no | no | P2, P4 | P2: a VM run at the final head (the last, at `0cb1bf31`, predates P2), with the upgrade case (`codex-reconfirm-upgrade.spec.ts`, written, unrun); P4: restart, enable/disable, a real launch |
+| 67 | E2E mode matrix | PARTIAL | yes, +e2e | no | no | P2, P4 | P2: VM (WINDOWS_1) run at `21fff8bc`: 77/80; two failures in specs this branch changed (`codex-settings-section` Accounts locator, `session-dialog-permutations` Codex x SSH seed after U1), fixed test-side; re-run after the fix: 80/81, both specs and a new not-set-up guard pass, the upgrade case (`codex-reconfirm-upgrade.spec.ts`) 3/3. One pre-existing e2e failure, reproduced on beta, is routed privately (not suppressed, not waived). P4: restart, enable/disable, a real launch |
 | 68 | Insights | OWNER | no | no | no | P4 | A Conductor-native Codex report, or section 19 |
 | 69 | Plan mode | OWNER | no | no | no | P3 | Evidence from the supported CLI versions |
 | 70 | Image paste | UNVERIFIED | no | no | no | P3 | Codex sees the image |

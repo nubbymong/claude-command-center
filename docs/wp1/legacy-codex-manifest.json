@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-26T05:04:11.253Z",
-  "head": "35d33d7077e5c340bf8ca789a80bbcfae8043889",
-  "tree": "04c97449fe03eceb092c1b7f6cd2c933ff485259",
+  "generatedAt": "2026-09-26T09:58:06.695Z",
+  "head": "21fff8bcb7b4155fbb550e986bab743080549191",
+  "tree": "351b3eb08b16f1d1def32235e71bb738910c04af",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,8 +116,8 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2314,
-  "excludedFileCount": 376,
+  "trackedFileCount": 2315,
+  "excludedFileCount": 377,
   "scannedFileCount": 1938,
   "unscopedFileCount": 15,
   "unscoped": [
@@ -140,7 +140,7 @@
   "unscopedMentions": [],
   "unreadable": [],
   "matchedPathCount": 372,
-  "pathDigest": "8102798e062b0615b750b71976a547753f560b73114e1f93f6e48b0eb260943b",
+  "pathDigest": "e6858aed0ada115dacf0d5478087a049921f3b0286986ac20b7e9e5cb22ea2a2",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -1711,7 +1711,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 11
+      "lineCount": 24
     },
     {
       "path": "tests/e2e/first-launch-whats-new.spec.ts",
@@ -1740,9 +1740,10 @@
     {
       "path": "tests/e2e/session-dialog-permutations.spec.ts",
       "predicates": [
+        "P05",
         "P13"
       ],
-      "lineCount": 8
+      "lineCount": 21
     },
     {
       "path": "tests/e2e/session-restore.spec.ts",

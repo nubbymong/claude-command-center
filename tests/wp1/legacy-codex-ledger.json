@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "8102798e062b0615b750b71976a547753f560b73114e1f93f6e48b0eb260943b",
-  "manifestHead": "35d33d7077e5c340bf8ca789a80bbcfae8043889",
+  "manifestPathDigest": "e6858aed0ada115dacf0d5478087a049921f3b0286986ac20b7e9e5cb22ea2a2",
+  "manifestHead": "21fff8bcb7b4155fbb550e986bab743080549191",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -2443,7 +2443,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: adapted in WP2 commit 6g to Settings, Accounts (no Codex tab; the Codex row of the Providers card with its status); part of the e2e gate (docs/wp1/evidence/mode-matrix.md)",
+      "evidence": "WP1.58: adapted in WP2 commit 6g to Settings, Accounts (no Codex tab; the Codex row of the Providers card with its status); on the clean seed (Codex not set up) the New saved config dialog greys the Codex card with its not-set-up note (owner decision U1 2026-09-26); part of the e2e gate (docs/wp1/evidence/mode-matrix.md)",
       "note": ""
     },
     {
@@ -2482,12 +2482,13 @@
     {
       "path": "tests/e2e/session-dialog-permutations.spec.ts",
       "predicates": [
+        "P05",
         "P13"
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: two copy assertions follow the session dialog's Codex notes, now \"Codex can't run over SSH in this release\" and \"Codex runs on this computer only\" (WP2 commit 6c; WP1.2); every case otherwise unchanged; adapted in place: tests/e2e/session-dialog-permutations.spec.ts",
-      "note": ""
+      "evidence": "WP1.58: two copy assertions follow the session dialog's Codex notes, now \"Codex can't run over SSH in this release\" and \"Codex runs on this computer only\" (WP2 commit 6c; WP1.2); the instance now seeds Codex on and answered (an unanswered Codex greys the Codex card, owner decision U1 2026-09-26), and the Codex x SSH case first checks the card is offered, so SSH is what greys it; every case otherwise unchanged; adapted in place: tests/e2e/session-dialog-permutations.spec.ts",
+      "note": "P05: the seed writes codexEnabled (with codexAnswered), as tests/e2e/codex-session-creation.spec.ts does"
     },
     {
       "path": "tests/e2e/session-restore.spec.ts",
