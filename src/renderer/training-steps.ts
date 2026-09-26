@@ -445,11 +445,11 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.4.0',
     section: 'productivity',
     summary:
-      'Run Claude and a regular shell side-by-side in the same session. Useful when you want to watch logs, run quick git commands, or babysit a long-running build without spawning a second session.',
+      'Run Claude or Codex and a regular shell side-by-side in the same session. Useful when you want to watch logs, run quick git commands, or babysit a long-running build without spawning a second session.',
     highlights: [
       'Every session has a partner terminal — no setup, any config type',
       'Opens in the working directory locally, at home over SSH',
-      'Quick command buttons can target Claude or partner explicitly',
+      'Quick command buttons can target the assistant or the partner explicitly',
       'Resize the split bar to favour whichever pane is active',
     ],
     howToTrigger: [
@@ -458,11 +458,11 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Resize', value: 'Drag the vertical bar between panes' },
     ],
     proTip:
-      'Keep a test watcher or dev server running in the partner pane for quick sanity checks while Claude does the heavy lifting in the other pane.',
+      'Keep a test watcher or dev server running in the partner pane for quick sanity checks while the assistant does the heavy lifting in the other pane.',
     bullets: [
-      '**Side-by-side** Claude + regular shell in the same session',
+      '**Side-by-side** Claude or Codex + regular shell in the same session',
       'Always available — **no per-config setup**',
-      '**Quick commands** can target either pane (Claude or Partner)',
+      '**Quick commands** can target either pane (the assistant or Partner)',
     ],
     screenshotFilename: 'step-combined.jpg',
   },

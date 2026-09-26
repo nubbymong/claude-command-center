@@ -30,6 +30,21 @@ Evidence, kept apart on purpose:
 
 "no" in an evidence column is work still owed, not a failure.
 
+"partial (Win)" in Real CLI or Packaged is the P2 upgrade walk of 2026-09-26
+(`CONTEXT.d/2026-09-26-wp2-upgrade-walk.md`): unsigned 2.1.1-beta.2
+candidates, each installed in place over the signed v2.1.1-beta.1 and the data
+it wrote, on the used Windows 11 test VM (WINDOWS_1), with real Codex CLIs
+0.142.4 and 0.150.0 (too old) and 0.157.1 (newer than tested). The evidence
+came in three passes: the walk at `c3569b3d` (including the new-config Codex
+launch), the re-verification at `c6dc4b60` (including the standalone Codex
+update) and the final pass at `95385267`. Windows only, not a clean machine, not a signed build and
+not the supported versions, so it never counts as full. Each result names its
+auth class: AUTHENTICATED (real CLI, signed in), SIGNED-OUT (real CLI, a
+signed-out `CODEX_HOME`), NOT-INSTALLED, or MOCKED (seeded state or the fake
+CLI). Its screenshots are local and gitignored
+(`.ccc-canvas/screens/p2-upgrade-95385267/`), awaiting owner approval; none
+are in the repo.
+
 Packages: **P2** finishes PR #625; **P3** is sessions and usage; **P4** is
 agent surfaces and qualification.
 
@@ -37,20 +52,20 @@ agent surfaces and qualification.
 
 | # | Feature | Status | Mocked | Real CLI | Packaged | Pkg | Still owed |
 |---|---|---|---|---|---|---|---|
-| 1 | Provider on/off, "not set up" (no launch, review or Codex CLI run until answered), last provider on | VERIFIED | yes, +e2e | no | no | P2 | Real-CLI and packaged runs. E2E on the VM (WINDOWS_1) after the spec fixes: the not-set-up Codex card guard and Codex x SSH pass |
-| 2 | CLI detect and version classes | VERIFIED | yes | no | no | P4 | Real min, pinned and max per OS (the VM has 0.142.4, below the minimum) |
-| 3 | Install and update | VERIFIED | yes | no | no | P4 | One real install per OS |
-| 4 | Sign-in (browser, API key) | VERIFIED | yes | no | no | P4 | Real login, status and logout per OS |
+| 1 | Provider on/off, "not set up" (no launch, review or Codex CLI run until answered), last provider on | VERIFIED | yes, +e2e | partial (Win) | partial (Win) | P2 | E2E on the VM (WINDOWS_1) after the spec fixes: the not-set-up Codex card guard and Codex x SSH pass. Upgrade walk: with a real CLI present an unanswered Codex started nothing; after No, Codex configs and restored tabs were refused with the off wording (AUTHENTICATED); Claude Code off in the Codex-only upgrade (SIGNED-OUT); "not set up" and last provider on MOCKED (seeded; the beta cannot write them). Owed: Real CLI at 0.153.4 and 0.155.1; packaged on a clean machine per OS |
+| 2 | CLI detect and version classes | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Real min, pinned and max per OS. Upgrade walk (Windows): too old at 0.142.4 and 0.150.0, newer than tested at 0.157.1, and not installed; 0.153.4 and 0.155.1 not run |
+| 3 | Install and update | VERIFIED | yes | partial (Win) | partial (Win) | P2, P4 | P4: one real install per OS (macOS, Linux; Homebrew unrun). Done in P2: the update offered follows how the found Codex was installed. Upgrade walk: from the page, the npm install (NOT-INSTALLED) and the npm update from 0.150.0 reached 0.157.1; the standalone 0.142.4 was updated by its own installer line, run by hand as the page says, and Check again found 0.157.1 (AUTHENTICATED) |
+| 4 | Sign-in (browser, API key) | VERIFIED | yes | no | no | P4 | Real login, status and logout per OS. A managed sign-in needs the owner's ChatGPT sign-in or API key (the upgrade walk only opened and cancelled the Add account dialog) |
 | 5 | Device-code sign-in | VERIFIED off | yes | n/a | no | P2 | None while it is off. Off in the shipped wiring (pinned: `tests/unit/main/codex-unanswered-service.test.ts`, `tests/unit/main/provider-startup-no-adoption.test.ts`); no longer advertised |
 | 6 | Multiple isolated accounts | VERIFIED | yes, +VM | no | no | P4 | Real two-account run; keyring scoping |
 | 7 | Identity rename, recolour, link, unlink, groups after creation | PARTIAL | no | no | no | P3 | Identity editor from every row's chip |
 | 8 | One Accounts surface | PARTIAL | no | no | no | P3 | One row component for both providers |
-| 9 | Launch and resume in the exact account | VERIFIED | yes, +e2e | no | no | P4 | Real launch in the realm; a restored tab keeps its account |
+| 9 | Launch and resume in the exact account | VERIFIED | yes, +e2e | partial (Win) | partial (Win) | P4 | A managed account's real launch in its realm, and a restored tab keeping it (owner sign-in); per OS. Upgrade walk (AUTHENTICATED, adopted ~/.codex only): a new config, and a beta-saved config launched from its row, ran real Codex 0.157.1 after the per-launch confirmation; a restored tab asked for that confirmation, and a cancelled confirmation, or no account, left it Not started with its reason |
 | 10 | Lifecycle blockers and archive | PARTIAL | no | no | no | P3 | Blocker names each consumer with Go to; Archived list with Restore |
 | 11 | Staged re-authentication (WP1.52) | MISSING | no | no | no | P3 | Build it |
-| 12 | Upgrade: "Do you use Codex?", and the Set up Codex page's read-only check of this computer's sign-in | VERIFIED | yes, +e2e | no | no | P2 | Done: `tests/e2e/codex-reconfirm-upgrade.spec.ts` on the VM (WINDOWS_1) at `21fff8bc`, 3/3 pass (Claude-only, Codex-only and both upgraders). Owed: a real `codex login status` run of the check and of "Use this sign-in"; the CLI's own scratch writes under `tmp/` in that folder were seen on codex 0.153.4 only (0.155.1 unverified) |
-| 13 | Hello Codex, including after the upgrade Yes | VERIFIED | yes | no | no | P2 | Walk after Yes on the VM |
-| 14 | Codex-only mode, no Claude noise | PARTIAL | no | no | no | P3 | Title-bar Anthropic pills, onboarding steps, showcase, Accounts panel, session dialog |
+| 12 | Upgrade: "Do you use Codex?", and the Set up Codex page's read-only check of this computer's sign-in | VERIFIED | yes, +e2e | partial (Win) | partial (Win) | P2 | Done: `tests/e2e/codex-reconfirm-upgrade.spec.ts` on the VM (WINDOWS_1), 3/3 at `21fff8bc`, `c6dc4b60` and `95385267` (Claude-only, Codex-only and both upgraders). Upgrade walk from v2.1.1-beta.1: asked once after the release notes, again if quit unanswered, never after an answer; the check of a signed-in ~/.codex and "Use this sign-in" (AUTHENTICATED, 0.157.1); a signed-out `CODEX_HOME` named on the page (SIGNED-OUT); the check alone added no account. Owed: real runs at 0.153.4 and 0.155.1; the CLI's own scratch writes under `tmp/` in that folder were seen on 0.153.4 and 0.157.1 (0.155.1 unverified) |
+| 13 | Hello Codex, including after the upgrade Yes | VERIFIED | yes, +VM | no | no | P2 | A real managed Codex account (needs the owner's ChatGPT sign-in or API key), then Hello Codex after Yes. Upgrade walk (MOCKED: seeded managed account, fake CLI): shown once, right after Set up Codex; replayed from Settings and the Feature Guide. Never due for an adopted ~/.codex, by design |
+| 14 | Codex-only mode, no Claude noise | PARTIAL | no | partial (Win) | partial (Win) | P3 | Title-bar Anthropic pills, onboarding steps, showcase, Accounts panel, session dialog. Upgrade walk (Claude Code off, SIGNED-OUT): no Claude install or sign-in demands; still seen: the title-bar Claude.ai pill, the Accounts Claude card's sign-in prompts while Claude Code is off, and Ask Conductor saying it runs on Claude Code (row 53) |
 | 15 | Owner-run gates (native keyring, credential logins, packaged smoke) | MISSING | no | no | no | P4 | Hosts and timing from the owner |
 | 16 | WP1 traceability | PARTIAL | n/a | n/a | n/a | P4 | Items move from planned to evidenced |
 
@@ -68,7 +83,7 @@ Tokenomics).
 | 20 | Account chip (strip and sidebar) | MISSING | no | no | no | P3 | Chip from the account's identity |
 | 21 | Multi-account footer | MISSING | no | no | no | P3 | Owner review first; percentages never merged across providers |
 | 22 | Switch the account of a running session | MISSING | no | no | no | P3 | Keep the conversation, as Claude does |
-| 23 | Choose the account at launch | VERIFIED | yes | no | no | P4 | Real launch |
+| 23 | Choose the account at launch | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Real launch with a managed account (owner sign-in); per OS. Upgrade walk (AUTHENTICATED): the new-config picker offered this computer's Codex, Create waited for its launch confirmation, and real Codex 0.157.1 launched |
 | 24 | Running sessions per account | PARTIAL | no | no | no | P3 | Shown on the account row |
 | 25 | Tokenomics reads managed realms and `~/.codex` | VERIFIED | yes | no | no | P4 | Real rollouts |
 | 26 | Tokenomics per-account attribution and filters | MISSING | no | no | no | P3 | Owner review first |
@@ -109,7 +124,7 @@ Tokenomics).
 | 51 | Agent Canvas from Codex | MISSING | no | no | no | P4 | Tools, roots, instruction delivery, the live loop |
 | 52 | Browser and vision tools | OWNER | no | no | no | P4 | The July "Claude only for now" call is superseded by the parity rule |
 | 53 | Ask Conductor on Codex | MISSING | no | no | no | P4 | Which provider hosts Ask when both are on (owner) |
-| 54 | App knowledge, tour, tips | PARTIAL | yes | n/a | no | P2, P4 | P4: the final sweep. Done in P2 (mocked): the false tour, Memory, Status Line and device-code lines fixed |
+| 54 | App knowledge, tour, tips | PARTIAL | yes | n/a | no | P2, P4 | P4: the final sweep. Done in P2 (mocked): the false tour, Memory, Status Line and device-code lines fixed. After the upgrade walk: the Codex update wording (app knowledge, User Guide), the Partner Terminal, Command Targeting and Codex accounts tips, and the Feature Guide's Combined Mode card |
 | 55 | Memory | MISSING | no | no | no | P4 | Codex memories per realm |
 | 56 | Codex logs | MISSING | no | no | no | P4 | Surface `$CODEX_HOME/log` |
 | 57 | Cloud Agents | MISSING | no | no | no | P4 | Via `codex exec` |
@@ -124,15 +139,15 @@ Tokenomics).
 | 61 | Compact | MISSING | no | no | no | P3 | Codex's own command |
 | 62 | Extra CLI arguments | MISSING | no | no | no | P3 | With a block-list for authority settings |
 | 63 | Hooks gateway and notification rules | MISSING | no | no | no | P3 | Route Codex notify events |
-| 64 | Partner terminal wording | PARTIAL | no | no | no | P3 | Use the agent's name |
+| 64 | Partner terminal wording | VERIFIED | yes | partial (Win) | partial (Win) | P2 | The per-OS runs only. Done in P2: the strip names the tab's assistant (`tests/unit/renderer/session-launch.test.ts`), and the Partner Terminal and Command Targeting tips and the Feature Guide's Combined Mode card say Claude or Codex; seen on a live Codex tab (AUTHENTICATED). At the narrow window the GitHub button overlaps the strip's label on Claude and Codex tabs alike: older than P2, outside it |
 | 65 | GitHub session context | PARTIAL | no | no | no | P3 | Read Codex rollouts |
-| 66 | Packaged smoke | PARTIAL | n/a | n/a | no | P4 | Per OS |
-| 67 | E2E mode matrix | PARTIAL | yes, +e2e | no | no | P2, P4 | P2: VM (WINDOWS_1) run at `21fff8bc`: 77/80; two failures in specs this branch changed (`codex-settings-section` Accounts locator, `session-dialog-permutations` Codex x SSH seed after U1), fixed test-side; re-run after the fix: 80/81, both specs and a new not-set-up guard pass, the upgrade case (`codex-reconfirm-upgrade.spec.ts`) 3/3. One pre-existing e2e failure, reproduced on beta, is routed privately (not suppressed, not waived). P4: restart, enable/disable, a real launch |
+| 66 | Packaged smoke | PARTIAL | n/a | n/a | partial (Win) | P4 | Per OS, on a clean machine, signed. Windows so far: the P2 upgrade walk (an unsigned candidate over the signed beta on a used test VM) |
+| 67 | E2E mode matrix | PARTIAL | yes, +e2e | no | no | P2, P4 | P2: VM (WINDOWS_1) run at `21fff8bc`: 77/80; two failures in specs this branch changed (`codex-settings-section` Accounts locator, `session-dialog-permutations` Codex x SSH seed after U1), fixed test-side; re-run after the fix: 80/81, both specs and a new not-set-up guard pass, the upgrade case (`codex-reconfirm-upgrade.spec.ts`) 3/3. After the upgrade-walk fixes: 80/81 at `c6dc4b60` and again at `95385267`. One pre-existing e2e failure, reproduced on beta, is routed privately (not suppressed, not waived). P4: restart, enable/disable, a real launch |
 | 68 | Insights | OWNER | no | no | no | P4 | A Conductor-native Codex report, or section 19 |
 | 69 | Plan mode | OWNER | no | no | no | P3 | Evidence from the supported CLI versions |
 | 70 | Image paste | UNVERIFIED | no | no | no | P3 | Codex sees the image |
 | 71 | Copy, paste, scrollback, mouse | UNVERIFIED | no | no | no | P3 | Re-captured at 0.155.1 |
-| 72 | Multi Spawn and Quick Start with Codex | UNVERIFIED | no | no | no | P3 | N copies, one lease each |
+| 72 | Multi Spawn and Quick Start with Codex | PARTIAL | no | partial (Win) | partial (Win) | P2, P3 | P3: N copies, one lease each; Quick Start; a Codex-path test (the rule's tests use Claude configs). Done in P2, seen on the upgrade walk (AUTHENTICATED): a Codex config that is not Multi Spawn runs one at a time (a Not started tab's Restart is refused while a live copy runs; one Codex process), and a restored Not started copy plus a fresh launch no longer turns it into Multi Spawn |
 | 73 | Channel rules delivery | UNVERIFIED | no | no | no | P3 | Delivered in the Codex terminal |
 | 74 | Command buttons, preset pill, restart menu, theme | VERIFIED | yes | no | no | P4 | None beyond the real-CLI pass |
 | 75 | Claude-only environment switches | N/A | n/a | n/a | n/a | n/a | The label says Claude only |

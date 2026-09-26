@@ -189,7 +189,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Target commands at your partner terminal',
         title: 'Command Targeting',
-        body: 'You use partner terminals -- did you know **each command button can target a specific terminal**?\n\nWhen editing a command, set **Target** to:\n• **Claude** -- always runs in the Claude pane\n• **Partner** -- always runs in your partner shell\n• **Any** (default) -- runs in whichever pane is active\n\nGreat for `git status`, `npm test`, `docker ps` -- commands you want in the shell, not typed into Claude\'s prompt.',
+        body: 'You use partner terminals -- did you know **each command button can target a specific terminal**?\n\nWhen editing a command, set **Target** to:\n• **The assistant** -- always runs in the Claude or Codex pane\n• **Partner** -- always runs in your partner shell\n• **Any** (default) -- runs in whichever pane is active\n\nGreat for `git status`, `npm test`, `docker ps` -- commands you want in the shell, not typed into the assistant\'s prompt.',
       },
     },
   },
