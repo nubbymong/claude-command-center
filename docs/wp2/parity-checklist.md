@@ -57,14 +57,30 @@ agent surfaces and qualification.
 Every open item is in exactly one group: **A** affects P2 acceptance (owner
 action owed); **B** affects 2.1.1 release parity, not P2; **C** is an unrelated
 baseline defect (pre-existing on beta, reproduced, not fixed in P2, not
-waived). Evidence revision `95385267`; later commits change only help copy no
-screenshot shows, so none was refreshed. Galleries, both local, in
+waived). Evidence revision `95385267`; later commits up to `96c0af50` change
+only help copy no screenshot shows, so none was refreshed. Galleries, both local, in
 `.ccc-canvas/screens/p2-upgrade-95385267/`: `acceptance.html` (13 screens, 52
 images, mocked ones stamped) and `gallery.html` (37 screens, 145 images).
 Checks run during the VM wipe window of fixture preparation (from 05:44 VM
 time) were superseded and re-run on fixtures re-prepared with the proven
 junction-safe cleanup (13:40 to 13:57), which gave identical config data,
 apart from the per-install random value, and identical results.
+
+After `96c0af50` (2026-09-27). `808a23ee`: sign-in and sign-in-again re-check
+the Codex answer before discovery, after it, and right before the status check
+and `codex login` start (a new optional `mayStart` hook); an answer lost in
+that window starts nothing and releases the lease. It came from an ADR-009
+delta review of `21fff8bc`; the ADR-009 attacker lens passed it, confirmed
+twice, and the spec and code-quality reviews passed it. On the host its
+touched tests pass 38/38, `npm run typecheck` is clean and the WP1 gate passes
+16/16. `89a743d6`: the Memory page Codex banner test pins the copy reworded in
+`21fff8bc`, the only test that failed in CI on `96c0af50`; spec and
+code-quality reviewed. CI at `89a743d6` (run 36278616165): Test
+(windows-2025), Test (macos-latest), Changelog in sync, SSH multi-session
+smoke (#24) and lint-pr-title pass; the Desktop test gate stays red until the
+owner attests (#309). Neither the VM e2e nor the upgrade walk has re-run at
+`808a23ee` or `89a743d6`: `808a23ee` changes main-process sign-in code,
+`89a743d6` only a unit test.
 
 | Group | Open item | Tracked in |
 |---|---|---|
