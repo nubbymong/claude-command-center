@@ -688,12 +688,16 @@ describe("this computer's Codex sign-in", () => {
     })
   }
 
-  it('a folder that overlaps the app\'s own: the note, nothing offered, and no way to check again', async () => {
-    pa.probeExternal.mockResolvedValueOnce({ ok: false, code: 'external-overlap', message: 'x' })
+  it('a folder that overlaps the app\'s own, or cannot be checked: main\'s own reason and what to do, nothing offered, and no way to check again', async () => {
+    // Walk fix N1: main answers the same code for a relative or doubly set
+    // CODEX_HOME ("cannot be checked"), so the page says main's words, never
+    // a narrower "overlaps" of its own.
+    const main = "Your own Codex folder setting (CODEX_HOME, else ~/.codex) overlaps the app's Codex account folders, or cannot be checked. Set CODEX_HOME to a full path outside the app's data folder, or unset it, then try again."
+    pa.probeExternal.mockResolvedValueOnce({ ok: false, code: 'external-overlap', message: main })
     await render(snap({}, afterChoice))
     expect(byTest('codex-setup-sign-in')).not.toBeNull()
     expect(byTest('codex-setup-use-existing')).toBeNull()
-    expect(byTest('codex-setup-adoption-note')!.textContent).toBe("This computer's Codex folder overlaps this app's own account folders, so it cannot be used here.")
+    expect(byTest('codex-setup-adoption-note')!.textContent).toBe(main)
     expect(byTest('codex-setup-check-this-computer')).toBeNull()
   })
 

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-26T15:02:39.330Z",
-  "head": "c3569b3d05c4be38bc6b091dc659718c80137991",
-  "tree": "26fbe9ca0508ae8a63a2be51fe70ea79612ab066",
+  "generatedAt": "2026-09-26T16:44:00.591Z",
+  "head": "c6dc4b608dd69b9173fa68f7b833e9b6f3bfe477",
+  "tree": "05b708573e4d1060d1c93631af471083e3112c2c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -140,7 +140,7 @@
   "unscopedMentions": [],
   "unreadable": [],
   "matchedPathCount": 374,
-  "pathDigest": "c875b5ac53a9161b05dd59a09789cdd8642a809ca2d09cdaba1046db01c04abf",
+  "pathDigest": "29b3fa116f338daadbeb5881a172c4e4b638f58ea704e6be2d88f6af29730738",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -182,7 +182,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 93
+      "lineCount": 92
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -1319,7 +1319,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 106
+      "lineCount": 109
     },
     {
       "path": "src/renderer/onboarding/CommandBarStep.tsx",
@@ -1491,7 +1491,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 21
+      "lineCount": 22
     },
     {
       "path": "src/renderer/stores/appMetaStore.ts",
@@ -1586,7 +1586,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 20
+      "lineCount": 19
     },
     {
       "path": "src/renderer/utils/sessionLaunch.ts",
@@ -1594,7 +1594,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 9
+      "lineCount": 13
     },
     {
       "path": "src/shared/app-knowledge.ts",
@@ -2531,7 +2531,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 79
+      "lineCount": 71
     },
     {
       "path": "tests/unit/renderer/launch-always-new.test.tsx",
@@ -2617,7 +2617,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 253
+      "lineCount": 257
     },
     {
       "path": "tests/unit/renderer/onboarding-flow-stubs.tsx",
@@ -2828,7 +2828,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 8
+      "lineCount": 10
     },
     {
       "path": "tests/unit/renderer/session-lifecycle-rc15.test.ts",
@@ -2848,10 +2848,11 @@
     {
       "path": "tests/unit/renderer/session-persistence-restore.test.ts",
       "predicates": [
+        "P05",
         "P07",
         "P13"
       ],
-      "lineCount": 5
+      "lineCount": 17
     },
     {
       "path": "tests/unit/renderer/session-persistence-resume.test.ts",
@@ -2954,7 +2955,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 92
+      "lineCount": 88
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",

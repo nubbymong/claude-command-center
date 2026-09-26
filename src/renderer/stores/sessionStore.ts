@@ -165,8 +165,10 @@ export interface Session {
    *  not set up, no account to run on) or it ended before a process started.
    *  Such a tab is not a running session: it never counts as its config
    *  running (runningConfigCounts), so it blocks neither a launch nor a
-   *  delete. Cleared as soon as a PTY starts, and by a Restart. Ephemeral,
-   *  like ptyExited: not persisted. */
+   *  delete. Also set by the restore for a session whose provider cannot
+   *  launch then (session-persistence), before its tab is first viewed.
+   *  Cleared as soon as a PTY starts, and by a Restart. Ephemeral, like
+   *  ptyExited: not persisted. */
   neverStarted?: boolean
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */

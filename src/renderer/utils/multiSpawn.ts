@@ -105,28 +105,43 @@ export function placeMultiSpawnPopover(
 
 /** The session fields the migration counter reads — a narrow view so this
  *  module never depends on the full store record. */
-export type CountableSession = { id: string; configId?: string; kind?: string; neverStarted?: boolean }
+export type CountableSession = { id: string; configId?: string; kind?: string }
 
 /** The config fields the migration counter reads. */
 export type CountableConfig = Pick<TerminalConfig, 'id' | 'sessionType' | 'sshConfig' | 'allowMultiSpawn'>
 
 /**
- * How many copies of this config exist right now: live sessions launched from
- * it PLUS detached remotes in the registry that would reattach to it. The
- * registry is filtered against the live ids first (`filterLiveEntries`) so a
- * restored session that is BOTH live and still registered counts once, not
- * twice. The Ask Conductor session is config-less and skipped, exactly as in
- * `runningConfigCounts`.
+ * How many copies of this config a start brought back: the sessions it
+ * restores launched from it PLUS detached remotes in the registry that would
+ * reattach to it (RestoreCopyTally). The registry is filtered against the
+ * restored ids first (`filterLiveEntries`) so a restored session that is BOTH
+ * restored and still registered counts once, not twice. The Ask Conductor
+ * session is config-less and skipped, exactly as in `runningConfigCounts`.
  */
 export function multiSpawnCopyCount(
   config: CountableConfig,
   sessions: ReadonlyArray<CountableSession>,
   detached: ReadonlyArray<DetachedRemote>,
 ): number {
-  const live = sessions.filter((s) => s.kind !== 'ask' && !s.neverStarted && !!s.configId && s.configId === config.id)
+  const live = sessions.filter((s) => s.kind !== 'ask' && !!s.configId && s.configId === config.id)
   const liveIds = new Set(sessions.map((s) => s.id))
   const remotes = filterLiveEntries(matchDetachedRemotes([...detached], config), liveIds)
   return live.length + remotes.length
+}
+
+/**
+ * What this start brought back, tallied ONCE when the restore is decided
+ * (Resume, Don't open, or nothing saved to ask about): every session the saved
+ * set reopens, including one that comes back Not started because its provider
+ * cannot launch yet, and the left-running remotes in the registry. The
+ * grandfathering migration and its startup page count copies from this alone,
+ * never from the live session set afterwards: a launch made later in the run
+ * is already under the one-at-a-time rule, and counting it beside a restored
+ * Not started copy would grandfather a config that never ran two copies.
+ */
+export interface RestoreCopyTally {
+  sessions: ReadonlyArray<CountableSession>
+  detached: ReadonlyArray<DetachedRemote>
 }
 
 /**

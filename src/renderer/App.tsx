@@ -53,7 +53,7 @@ import { DialogOverlay, WINDOW_CLOSE_Z } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
-import { configsToEnableMultiSpawn } from './utils/multiSpawn'
+import { configsToEnableMultiSpawn, type RestoreCopyTally } from './utils/multiSpawn'
 import { MultiSpawnStartupPage } from './components/MultiSpawnStartupPage'
 import { decideMultiSpawnIntro, markMultiSpawnIntroSeen } from './onboarding/multi-spawn-intro-gate'
 import { useCommandBarStore } from './stores/commandBarStore'
@@ -79,6 +79,7 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
 import { useTypographyController } from './hooks/useTypography'
 import { useLaunchConfig } from './hooks/useLaunchConfig'
+import { sessionAgentName } from './utils/sessionLaunch'
 import StageEmptyState from './components/StageEmptyState'
 import { flushPendingConfigSaves } from './utils/config-saver'
 import { gatherLocalStorageData, clearMigratedLocalStorage, hydrateStores, applyConfigColourMigration, retireAskConfig, readFailureLockReason } from './utils/configHydration'
@@ -274,6 +275,10 @@ export default function App() {
   // this run. It is the whole saved set: a session whose provider cannot
   // launch is restored too and reopens as Not started (the prompt tags it).
   const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
+  // What this start brought back, tallied once when the restore is decided
+  // (Resume, Don't open, or nothing saved to ask about): the Allow Multi Spawn
+  // grandfathering and its startup page count copies from it alone.
+  const [restoreTally, setRestoreTally] = useState<RestoreCopyTally | null>(null)
   const configs = useConfigStore((s) => s.configs)
   const launchConfig = useLaunchConfig()
   // Keep session-state.json in sync with the live session set so a non-graceful
@@ -534,24 +539,27 @@ export default function App() {
   // Configs created before Allow Multi Spawn existed had no such limit, and
   // some of them are legitimately running several copies right now. Turning the
   // one-at-a-time rule on for them would suddenly refuse a launch they have
-  // always been allowed — so any config that DEMONSTRABLY runs more than one
-  // copy (live sessions + detached remotes that would reattach to it) gets the
-  // setting turned on, once, and persisted with the config.
+  // always been allowed — so any config that DEMONSTRABLY ran more than one
+  // copy when the app last closed (the sessions this start restores + detached
+  // remotes that would reattach to it: restoreTally) gets the setting turned
+  // on, once, and persisted with the config.
   //
-  // ENABLE-ONLY and idempotent, so it needs no one-shot flag: it runs on every
-  // start (and again whenever the session set or the registry moves, which is
-  // when the answer could change), and finds nothing to do the moment every
-  // multi-copy config is marked. `updateConfig` writes through to disk, so the
-  // re-render this triggers sees the flag already set and stops.
+  // Counted from the restore-time tally, never from the live session set: a
+  // launch later in the run is under the one-at-a-time rule already, and a
+  // restored copy that is Not started (its provider cannot launch yet) beside
+  // a fresh launch is not two copies the config ever ran. ENABLE-ONLY and
+  // idempotent, so it needs no one-shot flag: it runs when the tally is taken
+  // (and again when the configs move), and finds nothing to do the moment
+  // every multi-copy config is marked. `updateConfig` writes through to disk,
+  // so the re-render this triggers sees the flag already set and stops.
   //
   // It only ever touches a config whose setting is UNDEFINED (phase 4.1). A
   // config the user explicitly turned OFF stores `false`, and running this on
   // every start would otherwise revert that decision each launch for as long as
   // two copies happened to be live.
-  const detachedRemoteEntries = useDetachedRemotesStore((s) => s.entries)
   useEffect(() => {
-    if (!configLoaded) return
-    const ids = configsToEnableMultiSpawn(configs, sessions, detachedRemoteEntries)
+    if (!configLoaded || !restoreTally) return
+    const ids = configsToEnableMultiSpawn(configs, restoreTally.sessions, restoreTally.detached)
     if (ids.length === 0) return
     const { updateConfig } = useConfigStore.getState()
     for (const id of ids) updateConfig(id, { allowMultiSpawn: true })
@@ -562,7 +570,7 @@ export default function App() {
     setMultiSpawnAutoEnabled((prev) =>
       ids.every((id) => prev.includes(id)) ? prev : [...new Set([...prev, ...ids])],
     )
-  }, [configLoaded, configs, sessions, detachedRemoteEntries])
+  }, [configLoaded, configs, restoreTally])
 
   // Post-config-load initialization
   useEffect(() => {
@@ -673,6 +681,9 @@ export default function App() {
           reconcile: () => useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id)),
         })
         if (savedState) setPendingRestore(savedState)
+        // Nothing to ask about: nothing is restored, and what this start
+        // brought back is the left-running registry just hydrated.
+        else setRestoreTally({ sessions: [], detached: useDetachedRemotesStore.getState().entries })
         // R7 (Codex finding 4): startup load + registry hydration completed. From
         // here a zero-session close is a real decision (the prompt, if any, is up
         // and covered by pendingRestore); the transient-empty window is over.
@@ -1034,6 +1045,8 @@ export default function App() {
               // front (adversarial review, #188); once opened it stays mounted.
               const hasPartner = partnerEverActivated.has(session.id)
               const partnerPtyId = session.id + '-partner'
+              // The assistant the partner strip names: the tab's own.
+              const agentName = sessionAgentName(session.provider)
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
               const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
               const isShowingLogs = !!logsBySession[session.id]?.isOpen
@@ -1119,17 +1132,17 @@ export default function App() {
                           <polyline points="4 17 10 11 4 5" />
                           <line x1="12" y1="19" x2="20" y2="19" />
                         </svg>
-                        <span>Partner terminal &mdash; a plain shell, not Claude</span>
+                        <span>Partner terminal &mdash; a plain shell, not {agentName}</span>
                         <button
                           onClick={() => togglePartner(session.id)}
                           className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
                           style={{ color: 'var(--color-text)' }}
-                          title="Back to the Claude terminal"
+                          title={`Back to the ${agentName} terminal`}
                         >
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                             <path d="M19 12H5M11 18l-6-6 6-6" />
                           </svg>
-                          Back to Claude
+                          Back to {agentName}
                         </button>
                       </div>
                       <TerminalView
@@ -1411,6 +1424,10 @@ export default function App() {
               // launch reopens as Not started and keeps its conversation, so a
               // Restart once the provider is on carries on.
               const saved = pendingRestore
+              // What this start brings back, from the saved set itself (every
+              // session in it reopens, Not started or not), before the restore
+              // lands and before anything else can launch.
+              setRestoreTally({ sessions: saved.sessions, detached: saved.detachedRemotes ?? [] })
               // ADR-009 (Lens C, R7): mark the restore in flight BEFORE clearing
               // the prompt, so a close before it lands keeps the saved file.
               restoreUnsettledRef.current = true
@@ -1430,6 +1447,9 @@ export default function App() {
               // still running on their hosts -- hydrate the registry from the
               // declined state and persist it on its own.
               if (hydrateDetachedFromSavedState(saved) > 0) void pingAllDetachedHosts()
+              // Nothing reopens: what this start brought back is the
+              // left-running remotes just kept.
+              setRestoreTally({ sessions: [], detached: useDetachedRemotesStore.getState().entries })
               void persistDetachedOnlyOrClear()
             }}
             onRefresh={async () => {
@@ -1454,6 +1474,7 @@ export default function App() {
         {bootGate === 'multiSpawnIntro' && (
           <MultiSpawnStartupPage
             autoEnabledIds={multiSpawnAutoEnabled}
+            tally={restoreTally}
             onDone={() => setMultiSpawnIntroDue(false)}
           />
         )}

@@ -180,57 +180,57 @@ describe("a refused launch in plain words (main's sentences)", () => {
 
   it("acknowledgement-required names what was not confirmed, and only says 'on this computer' for this computer's own sign-in", () => {
     expect(describeLaunchFailure(refused(ACK), { external: true }))
-      .toBe('Codex did not start. This launch was not confirmed for the Codex sign-in already on this computer. Restart the session to confirm it.')
+      .toBe('Not started: This launch was not confirmed for the Codex sign-in already on this computer. Restart the session to confirm it.')
     expect(describeLaunchFailure(refused(ACK), { external: false }))
-      .toBe("Codex did not start. This launch was not confirmed for this account's unverified sign-in. Restart the session to confirm it.")
+      .toBe("Not started: This launch was not confirmed for this account's unverified sign-in. Restart the session to confirm it.")
     expect(describeLaunchFailure(refused(ACK)))
-      .toBe('Codex did not start. This launch needs your confirmation. Restart the session to confirm it.')
+      .toBe('Not started: This launch needs your confirmation. Restart the session to confirm it.')
   })
 
   it('lifecycle: inactive, archived and blocked all say the account needs attention (real shared wording)', () => {
     for (const state of ['inactive', 'archived', 'blocked'] as const) {
-      expect(describeLaunchFailure(refused(bindingRefusal(state)))).toBe(`Codex did not start. ${NEEDS_ATTENTION_TEXT}`)
+      expect(describeLaunchFailure(refused(bindingRefusal(state)))).toBe(`Not started: ${NEEDS_ATTENTION_TEXT}`)
     }
   })
 
   it('an account that no longer exists (real shared wording)', () => {
     expect(describeLaunchFailure(refused(bindingRefusal('gone'))))
-      .toBe('Codex did not start. The account this session uses no longer exists. Edit the config to choose another account.')
+      .toBe('Not started: The account this session uses no longer exists. Edit the config to choose another account.')
   })
 
   it('an unbound session with no account at all says to sign in to Codex first (real shared wording)', () => {
     const none = chooseSessionAccount(emptyRegistry(), 'codex')
     if (none.ok) throw new Error('expected no account')
-    expect(describeLaunchFailure(refused(none.message))).toBe('Codex did not start. Sign in to Codex first. Open Accounts.')
+    expect(describeLaunchFailure(refused(none.message))).toBe('Not started: Sign in to Codex first. Open Accounts.')
   })
 
   it('busy: signing in again, and anything else holding the account', () => {
     expect(describeLaunchFailure(refused('This account is signing in again; try again when that finishes.')))
-      .toBe('Codex did not start. This account is signing in again. Try again when that finishes.')
+      .toBe('Not started: This account is signing in again. Try again when that finishes.')
     expect(describeLaunchFailure(refused('Something else is using this account right now; try again when it finishes.')))
-      .toBe('Codex did not start. This account is busy right now. Try again when it finishes.')
+      .toBe('Not started: This account is busy right now. Try again when it finishes.')
   })
 
   it('sign-in-changed', () => {
     expect(describeLaunchFailure(refused('This account now holds a different sign-in than before. Review it in Accounts and confirm it before continuing.')))
-      .toBe(`Codex did not start. ${SIGNED_IN_ELSEWHERE_TEXT}`)
+      .toBe(`Not started: ${SIGNED_IN_ELSEWHERE_TEXT}`)
     expect(describeLaunchFailure(refused('This account signed in again, but the app could not record it. Check it in Accounts before using it.')))
-      .toBe(`Codex did not start. ${SIGNED_IN_ELSEWHERE_TEXT}`)
+      .toBe(`Not started: ${SIGNED_IN_ELSEWHERE_TEXT}`)
   })
 
   it('a CLI main may not run: "too old" only when discovery said so; unknown says it could not check', () => {
     const why = 'This Codex CLI version cannot be used for sign-in. Update it, then check it again in setup.'
     expect(describeLaunchFailure(refused(why), { version: '0.150.2', compatibility: 'too-old' }))
-      .toBe('Codex did not start. Codex 0.150.2 is too old for this app. Update Codex, then Check again in Settings, Accounts.')
+      .toBe('Not started: Codex 0.150.2 is too old for this app. Update Codex, then Check again in Settings, Accounts.')
     expect(describeLaunchFailure(refused(why), { compatibility: 'unknown' }))
-      .toBe('Codex did not start. This app could not check Codex. Open Accounts.')
+      .toBe('Not started: This app could not check Codex. Open Accounts.')
     expect(describeLaunchFailure(refused(why)))
-      .toBe('Codex did not start. This app could not check Codex. Open Accounts.')
+      .toBe('Not started: This app could not check Codex. Open Accounts.')
   })
 
   it("keeps main's own text for anything else, and a non-Codex failure as before", () => {
     expect(describeLaunchFailure(refused('Codex runs on this computer only in this release; it is not available in SSH sessions.')))
-      .toBe('Codex did not start. Codex runs on this computer only in this release; it is not available in SSH sessions.')
+      .toBe('Not started: Codex runs on this computer only in this release; it is not available in SSH sessions.')
     expect(describeLaunchFailure(new Error("Error invoking remote method 'pty:spawn': Error: spawn claude ENOENT")))
       .toBe('Failed to launch session: spawn claude ENOENT')
   })

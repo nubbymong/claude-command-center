@@ -14,6 +14,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 import { transformSync } from 'esbuild'
+import { configsToEnableMultiSpawn } from '../../../src/renderer/utils/multiSpawn'
 
 // ADR-009 round 2 (Lens C2): normalise CRLF -> LF. This file matches multi-line
 // source markers written with `\n`; on a Windows checkout with core.autocrlf the
@@ -124,17 +125,20 @@ describe('App.tsx wires the R6/R7 helpers', () => {
       const load = vi.fn(async () => { if (throws) throw new Error('synthetic load failure'); return returned })
       const loadSavedStateAtStartup = vi.fn(async (deps: { load: () => Promise<unknown> }) => { const r = await deps.load(); return r })
       const setPendingRestore = vi.fn()
+      const setRestoreTally = vi.fn()
       const pingAllDetachedHosts = vi.fn()
       const reconcile = vi.fn()
       const restoreUnsettledRef = { current: true } // as the component initialises it
       const fn = run<() => Promise<void>>(`async () => { ${stmt} }`, {
-        loadSavedStateAtStartup, setPendingRestore, pingAllDetachedHosts, restoreUnsettledRef, console,
+        loadSavedStateAtStartup, setPendingRestore, setRestoreTally, pingAllDetachedHosts, restoreUnsettledRef, console,
         useCommandBarStore: { getState: () => ({ reconcile }) }, useSessionStore: { getState: () => ({ sessions: [] }) },
+        useDetachedRemotesStore: { getState: () => ({ entries: REGISTRY }) },
         window: { electronAPI: { session: { load } } },
       })
       await fn()
-      return { load, loadSavedStateAtStartup, setPendingRestore, pingAllDetachedHosts, reconcile, restoreUnsettledRef }
+      return { load, loadSavedStateAtStartup, setPendingRestore, setRestoreTally, pingAllDetachedHosts, reconcile, restoreUnsettledRef }
     }
+    const REGISTRY = [{ sessionId: 'left-1' }]
     const saved = { sessions: [{ id: 'a' }], activeSessionId: 'a', savedAt: 1 }
     const withCards = await go(saved)
     expect(withCards.loadSavedStateAtStartup).toHaveBeenCalledTimes(1)
@@ -144,8 +148,13 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     const deps = withCards.loadSavedStateAtStartup.mock.calls[0][0] as { pingHosts: () => void; reconcile: () => void }
     deps.pingHosts(); expect(withCards.pingAllDetachedHosts).toHaveBeenCalledTimes(1)
     deps.reconcile(); expect(withCards.reconcile).toHaveBeenCalledWith([])
+    // Walk fix N5: the restore-time tally is taken where the restore is
+    // decided. With cards, that is the prompt's answer (below); with none,
+    // here: nothing restored, and the registry just hydrated.
+    expect(withCards.setRestoreTally).not.toHaveBeenCalled()
     const without = await go(null)
     expect(without.setPendingRestore).not.toHaveBeenCalled()
+    expect(without.setRestoreTally).toHaveBeenCalledWith({ sessions: [], detached: REGISTRY })
     expect(without.restoreUnsettledRef.current, 'cleared once the load resolved with no cards').toBe(false)
     // The load FAILED: the ref stays true so a zero-session close leaves the file.
     const failed = await go(null, true)
@@ -198,6 +207,9 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     const saved = { sessions: [{ id: 'a' }], activeSessionId: 'a', savedAt: 1, detachedRemotes: [{ sessionId: 'r' }] }
     const handler = run<() => void>(jsxHandler(APP, 'onDontOpen'), {
       pendingRestore: saved, setPendingRestore: (v: unknown) => { order.push(`setPendingRestore:${v}`) },
+      // Walk fix N5: nothing reopens; the tally is the remotes just kept.
+      setRestoreTally: (t: { sessions: unknown[]; detached: unknown[] }) => { order.push(`tally:${t.sessions.length}:${t.detached.length}`) },
+      useDetachedRemotesStore: { getState: () => ({ entries: [{ sessionId: 'r' }] }) },
       useCommandBarStore: { getState: () => ({ reconcile: () => { order.push('reconcile') } }) },
       useSessionStore: { getState: () => ({ sessions: [] }) },
       cancelSessionAutosave: () => { order.push('cancelAutosave') },
@@ -206,7 +218,7 @@ describe('App.tsx wires the R6/R7 helpers', () => {
       persistDetachedOnlyOrClear: async () => { order.push('persist'); return 'saved' },
     })
     handler()
-    expect(order).toEqual(['setPendingRestore:null', 'reconcile', 'cancelAutosave', 'hydrate:true', 'ping', 'persist'])
+    expect(order).toEqual(['setPendingRestore:null', 'reconcile', 'cancelAutosave', 'hydrate:true', 'ping', 'tally:0:1', 'persist'])
   })
 
   it('Resume hands the WHOLE saved set to restoreSavedSessions (none dropped), and clears the prompt first', () => {
@@ -221,8 +233,10 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     // call, unrenamed); that they are the stores' exports is App's import list.
     const probeGoneSessions = async () => []
     const pingAllDetachedHosts = () => {}
+    let tally: unknown
     const handler = run<() => void>(jsxHandler(APP, 'onResume'), {
       pendingRestore: saved, setPendingRestore: (v: unknown) => { order.push(`setPendingRestore:${v}`) },
+      setRestoreTally: (t: unknown) => { tally = t; order.push('tally') },
       restoreSavedSessions: async (s: unknown, _ref: unknown, deps: { probeGoneSessions: unknown; pingAllDetachedHosts: unknown }) => {
         order.push(`restore:${s === saved}`)
         order.push(`deps:${deps.probeGoneSessions === probeGoneSessions && deps.pingAllDetachedHosts === pingAllDetachedHosts}`)
@@ -232,7 +246,10 @@ describe('App.tsx wires the R6/R7 helpers', () => {
       pingAllDetachedHosts,
     })
     handler()
-    expect(order).toEqual(['setPendingRestore:null', 'restore:true', 'deps:true'])
+    expect(order).toEqual(['tally', 'setPendingRestore:null', 'restore:true', 'deps:true'])
+    // Walk fix N5: tallied from the saved set itself, every session in it
+    // (one that will reopen Not started included), before the restore lands.
+    expect(tally).toEqual({ sessions: saved.sessions, detached: [] })
     // ADR-009 R7: the restore is marked in flight BEFORE the prompt clears, so a
     // close before it lands keeps the saved file.
     expect(restoreUnsettledRef.current).toBe(true)
@@ -271,6 +288,47 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     expect(update(null), 'answered: stays answered').toBeNull()
     expect(update(codexOnly), 'still up: the fresh list').toBe(fresh)
     expect((await refreshWith({ sessions: [] }))(codexOnly), 'an empty read keeps the list').toBe(codexOnly)
+  })
+})
+
+describe('the Allow Multi Spawn grandfathering counts the restore-time tally, never live launches (walk fix N5)', () => {
+  // The migration effect as App wires it, cut out and run. Its globals cover
+  // both the fixed wiring and the earlier live-count one, so a revert runs
+  // (and fails on what it decides) rather than failing to run.
+  const marker = 'const ids = configsToEnableMultiSpawn('
+  const at = APP.lastIndexOf('useEffect(', APP.indexOf(marker))
+  const effect = block(APP, at + 'useEffect('.length).text
+  const cfg = { id: 'cfg-a', sessionType: 'local' }
+  const decide = (restoreTally: unknown, live: Array<{ id: string; configId: string; neverStarted?: boolean }>, restoredIds: string[]) => {
+    const updateConfig = vi.fn()
+    run<() => void>(effect, {
+      configLoaded: true, restoreTally, configs: [cfg], sessions: live, restoredIds, detachedRemoteEntries: [],
+      configsToEnableMultiSpawn,
+      copiesAsRestored: (s: Array<{ id: string; neverStarted?: boolean }>, ids: string[]) => s.map((x) => (x.neverStarted && ids.includes(x.id) ? { ...x, neverStarted: undefined } : x)),
+      useConfigStore: { getState: () => ({ updateConfig }) },
+      setMultiSpawnAutoEnabled: () => {},
+    })()
+    return updateConfig.mock.calls.map((c) => c[0])
+  }
+  const X = { id: 'x', configId: 'cfg-a' }
+  const Y = { id: 'y', configId: 'cfg-a' }
+
+  it("one restored copy that is Not started, then a fresh launch once its provider is on: NOT grandfathered (the reviewer's X+Y)", () => {
+    expect(decide({ sessions: [X], detached: [] }, [{ ...X, neverStarted: true }, Y], ['x'])).toEqual([])
+  })
+
+  it('a legacy config restored with two copies while its provider is off: grandfathered', () => {
+    const X2 = { id: 'x2', configId: 'cfg-a' }
+    expect(decide({ sessions: [X, X2], detached: [] }, [{ ...X, neverStarted: true }, { ...X2, neverStarted: true }], ['x', 'x2'])).toEqual(['cfg-a'])
+  })
+
+  it('restored with two launchable copies: grandfathered, as before', () => {
+    const X2 = { id: 'x2', configId: 'cfg-a' }
+    expect(decide({ sessions: [X, X2], detached: [] }, [X, X2], ['x', 'x2'])).toEqual(['cfg-a'])
+  })
+
+  it('before the restore is decided (no tally yet), nothing is decided', () => {
+    expect(decide(null, [X, Y], [])).toEqual([])
   })
 })
 

@@ -378,7 +378,7 @@ describe("main's refusals, in plain words at the terminal", () => {
     mount(codexSession({ providerAccountId: 'acc-work' }))
     await settle()
     await act(async () => { settles[0].reject(refused('the account is inactive; activate it or choose another')) })
-    expect(termLines()).toContain('Codex did not start. This account needs attention. Open Accounts.')
+    expect(termLines()).toContain('Not started: This account needs attention. Open Accounts.')
     expect(termLines()).not.toContain('Process exited')
   })
 
@@ -471,7 +471,7 @@ describe('the Restart pty:exit race', () => {
     fireExit!(1)
     await act(async () => { settles[0].reject(refused('This account is signing in again; try again when that finishes.')) })
     expect(exitedMarks()).toHaveLength(1)
-    expect(termLines()).toContain('Codex did not start. This account is signing in again.')
+    expect(termLines()).toContain('Not started: This account is signing in again.')
   })
 })
 
@@ -570,7 +570,7 @@ describe('a view remounted without a Restart (a partner-terminal restart re-keys
     await remountTo('b')
     expect(spawn).toHaveBeenCalledTimes(1)
     await act(async () => { settles[0].reject(refused('the account is inactive; activate it or choose another')) })
-    expect(termLines()).toContain('Codex did not start. This account needs attention. Open Accounts.')
+    expect(termLines()).toContain('Not started: This account needs attention. Open Accounts.')
     expect(exitedMarks()).toHaveLength(1)
     expect(H.spawned.has('s-1')).toBe(false)
   })
@@ -621,7 +621,7 @@ describe('a live session is never left flagged exited', () => {
     await act(async () => { settles[0].reject(refused('the account is inactive; activate it or choose another')) })
     // Shown: it starts, hears the kept refusal, says it and ends the session.
     await settle()
-    expect(termLines()).toContain('Codex did not start. This account needs attention. Open Accounts.')
+    expect(termLines()).toContain('Not started: This account needs attention. Open Accounts.')
     expect(exitedMarks().length).toBeGreaterThan(0)
     expect(spawn).toHaveBeenCalledTimes(1)
   })

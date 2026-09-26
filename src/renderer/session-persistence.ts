@@ -7,6 +7,7 @@ import type { SessionState, SavedSession } from './types/electron'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
+import { isConfigLaunchBlocked } from './hooks/useLaunchConfig'
 // Type-only: livenessStore imports persistSessionState from THIS module, so a
 // value import of either store here closes a renderer import cycle (benign
 // while nothing reads across it at module scope; a boot-time TDZ crash the day
@@ -418,6 +419,13 @@ export async function restoreSavedSessions(
         resumeCwd: saved.resumeCwd,
         codexOptions: saved.codexOptions,
         providerAccountId: saved.provider === 'codex' && typeof saved.providerAccountId === 'string' ? saved.providerAccountId : undefined,
+        // Its provider cannot launch now (off, or Codex not set up: the launch
+        // rule): main will start nothing for it, so it is Not started from
+        // the restore on, and never counts as its config running before its
+        // tab is first viewed (a tab starts on first view). Its view checks
+        // the Multi Spawn rule before it tries (TerminalView), so a session
+        // that CAN launch keeps counting from the restore as before.
+        ...(isConfigLaunchBlocked({ provider: saved.provider ?? 'claude', shellOnly: saved.shellOnly }) ? { neverStarted: true } : {}),
       }
     })
 

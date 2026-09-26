@@ -13,6 +13,8 @@
  *      places a bad stored value or a full sidebar could misbehave silently.
  */
 import { describe, it, expect } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import {
   isMultiSpawnLaunchBlocked,
   alreadyRunningLaunchCopy,
@@ -261,6 +263,13 @@ describe('the migration decision — enable-only, idempotent', () => {
     const configs = [cfg('a'), cfg('b'), cfg('c')]
     const sessions = [sess('1', 'a'), sess('2', 'a'), sess('3', 'b'), sess('4', 'b'), sess('5', 'c')]
     expect(configsToEnableMultiSpawn(configs, sessions, [])).toEqual(['a', 'b'])
+  })
+
+  it('walk fix N5: the startup page counts from the restore-time tally App hands it, never the live session set', () => {
+    const page = fs.readFileSync(path.resolve(process.cwd(), 'src/renderer/components/MultiSpawnStartupPage.tsx'), 'utf8').replace(/\r\n/g, '\n')
+    expect(page).toContain('const sessions = tally?.sessions ?? NONE')
+    expect(page).toContain('const detached = tally?.detached ?? NONE_DETACHED')
+    expect(page).not.toMatch(/useSessionStore/)
   })
 })
 

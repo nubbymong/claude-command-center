@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "c875b5ac53a9161b05dd59a09789cdd8642a809ca2d09cdaba1046db01c04abf",
-  "manifestHead": "c3569b3d05c4be38bc6b091dc659718c80137991",
+  "manifestPathDigest": "29b3fa116f338daadbeb5881a172c4e4b638f58ea704e6be2d88f6af29730738",
+  "manifestHead": "c6dc4b608dd69b9173fa68f7b833e9b6f3bfe477",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4088,12 +4088,13 @@
     {
       "path": "tests/unit/renderer/session-persistence-restore.test.ts",
       "predicates": [
+        "P05",
         "P07",
         "P13"
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: adapted to the account binding, the saved session carries its Codex account through restore (WP1.42); tests/unit/renderer/session-persistence-restore.test.ts",
+      "evidence": "WP1.58: adapted to the account binding, the saved session carries its Codex account through restore (WP1.42); WP2 upgrade walk: cases added for a restored session whose provider cannot launch (Codex off or not set up, or Claude Code off), which comes back Not started so it never counts as its config running before its tab is first viewed, while every provider on restores none so (the added P05 hit is the codexEnabled setting those cases set) (WP1.2, WP1.3); tests/unit/renderer/session-persistence-restore.test.ts",
       "note": "existing test extended in WP2 6c; Codex appears as the provider of a fixture session"
     },
     {

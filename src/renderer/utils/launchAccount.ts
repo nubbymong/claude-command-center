@@ -299,7 +299,8 @@ export function describeLaunchFailure(err: unknown, ctx: LaunchFailureContext = 
   const m = /^Codex session refused:\s*([\s\S]*)$/.exec(text)
   if (!m) return `Failed to launch session: ${text}`
   const why = m[1].trim()
-  const said = (plain: string) => `Codex did not start. ${plain}`
+  // The tab's own pattern for a launch that started nothing ("Not started:").
+  const said = (plain: string) => `Not started: ${plain}`
   if (/confirm that this launch may use it|confirm to continue/i.test(why)) {
     if (ctx.external === true) return said('This launch was not confirmed for the Codex sign-in already on this computer. Restart the session to confirm it.')
     if (ctx.external === false) return said("This launch was not confirmed for this account's unverified sign-in. Restart the session to confirm it.")

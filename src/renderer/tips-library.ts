@@ -221,14 +221,14 @@ export const TIPS_LIBRARY: Tip[] = [
     
     variants: {
       primary: {
-        shortText: 'Add a partner shell next to Claude',
+        shortText: 'Add a partner shell next to Claude or Codex',
         title: 'Partner Terminal',
-        body: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click on the Partner button in the command bar toggles between them — every session has one, no setup needed.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nIt opens in the session\'s working directory (home for SSH sessions).',
+        body: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude or Codex. One click on the Partner button in the command bar toggles between them — every session has one, no setup needed.\n\nUse it to:\n• Run `npm run dev` while the assistant edits code\n• Keep a test watcher running\n• Run git commands without the assistant\'s interference\n• Tail a log file\n\nIt opens in the session\'s working directory (home for SSH sessions).',
       },
       postUse: {
         shortText: 'Route command buttons to your partner shell',
         title: 'Target Commands at Partner',
-        body: 'Now that you use partner terminals: **each command button can target a specific terminal**. When editing a command, set **Target: Partner** and it\'ll always run in the partner shell.\n\nGreat for `git status`, `npm test`, `docker ps` -- anything you want in the shell instead of sent as a Claude prompt.',
+        body: 'Now that you use partner terminals: **each command button can target a specific terminal**. When editing a command, set **Target: Partner** and it\'ll always run in the partner shell.\n\nGreat for `git status`, `npm test`, `docker ps` -- anything you want in the shell instead of sent to Claude or Codex as a prompt.',
       },
     },
   },

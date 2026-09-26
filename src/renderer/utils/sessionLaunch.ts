@@ -4,6 +4,14 @@
 // the launch decisions are unit-testable (TerminalView itself is xterm-bound).
 import type { ProviderId } from '../../shared/types'
 
+/** How the partner terminal's strip names the assistant of the session it
+ *  sits beside: beside a Codex session it reads "not Codex", with the way
+ *  "Back to Codex". A session with no provider is Claude, and a Claude
+ *  session reads as it always has. */
+export function sessionAgentName(provider?: ProviderId): string {
+  return provider === 'codex' ? 'Codex' : 'Claude'
+}
+
 /**
  * Whether a session launch should pop the multi-account picker
  * (AccountLaunchGate) before spawning.

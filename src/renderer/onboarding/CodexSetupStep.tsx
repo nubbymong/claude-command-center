@@ -81,7 +81,8 @@ export function thisComputerSignIn(snapshot: AccountsSnapshot | null): ThisCompu
 /** What the page's read-only check found (probeExternal), as the page acts
  *  on it: signed-in and signed-out are Codex's answer; no-home, there is no
  *  Codex sign-in folder there at all; overlap, the folder overlaps this app's
- *  own account folders, so it cannot be used here; unusable, Codex cannot
+ *  own account folders or cannot be checked (a CODEX_HOME that is relative
+ *  or set twice), so it cannot be used here, as main's message says; unusable, Codex cannot
  *  check or use it here (the check is not enabled, Codex is not on or not
  *  set up, the app could not read whether it is on, or it has no such
  *  sign-in: "Use this sign-in" would be refused too); unknown, no answer (it timed out, did not start, or
@@ -101,10 +102,6 @@ export function thisComputerCheck(r: AccountsResult<{ state: KnownAuthState }>):
     default: return 'unknown'
   }
 }
-
-/** Said when the check finds the folder overlaps this app's own: the words
- *  Settings, Accounts uses for it. */
-const OVERLAP_NOTE = "This computer's Codex folder overlaps this app's own account folders, so it cannot be used here."
 
 /** The newer of two answers for the same provider: main pushes a snapshot
  *  after each check, but the check's own answer can arrive first. */
@@ -288,6 +285,10 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
   // it, and again from "Check this computer's sign-in again" once it was
   // found signed out (a new round).
   const [probe, setProbe] = useState<'idle' | 'running' | ThisComputerCheck>('idle')
+  // Main's own words for an 'overlap' answer: the folder overlaps this app's
+  // own account folders, OR cannot be checked (a CODEX_HOME that is relative
+  // or set twice), with what to do. The page says them as main does.
+  const [overlapMessage, setOverlapMessage] = useState<string | null>(null)
   const probeAsked = useRef(false)
   const [probeRound, setProbeRound] = useState(0)
   // Set in setup as well as cleared in cleanup: StrictMode (development)
@@ -360,6 +361,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
       // as in use for a moment.
       await useProviderAccountsStore.getState().hydrate()
       if (!mounted.current) return
+      setOverlapMessage(!r.ok && r.code === 'external-overlap' ? r.message : null)
       setProbe(thisComputerCheck(r))
     })()
   }, [canProbe, probeRound])
@@ -543,7 +545,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
       const signedOutNow = adoptAnswer === 'signed-out' || probe === 'signed-out'
       const note = signedOutNow
         ? `This computer's Codex sign-in${inHome()} is signed out.`
-        : probe === 'overlap' ? OVERLAP_NOTE : null
+        : probe === 'overlap' ? overlapMessage : null
       const lookAgain = providerAnsweredOn(provider) && signedOutNow
       view = 'sign-in'
       body = (
