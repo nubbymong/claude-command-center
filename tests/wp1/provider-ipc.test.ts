@@ -16,7 +16,7 @@ import { IPC } from '../../src/shared/ipc-channels'
 import type { AccountsService } from '../../src/main/providers/core'
 import { createGroup } from '../../src/shared/providers'
 import type { AccountsSnapshot } from '../../src/shared/providers'
-import { harness, claudeSnapshot, KEY, RES, EXE, EXT_HOME } from './accounts-harness'
+import { harness, claudeSnapshot, memoryFs, KEY, RES, EXE, EXT_HOME } from './accounts-harness'
 
 type Handler = (e: unknown, payload?: unknown) => unknown
 const ACC = 'acct-' + 'a'.repeat(32)
@@ -226,6 +226,36 @@ describe('what crosses back (WP1.29)', () => {
       expect(everything.includes(needle.replace(/\\/g, '\\\\')) || everything.includes(needle), needle).toBe(false)
     }
     for (let i = 0; i + 16 <= KEY.length; i++) expect(everything.includes(KEY.slice(i, i + 16)), `key fragment at ${i}`).toBe(false)
+  })
+
+  it('walk fix W7: with CODEX_HOME set, only its display string crosses: no other part of that path, and no environment value, in any reply or push', async () => {
+    const ALT = 'C:\\Users\\u\\codex-alt'
+    const folders = memoryFs()
+    folders.dirs.add(ALT.toLowerCase())
+    const h = await harness({ hostEnv: { CODEX_HOME: ALT }, folders })
+    h.signedIn.set(ALT.toLowerCase(), 'chatgpt')
+    const w = wire(h.service)
+    const replies: unknown[] = []
+    const call = async (c: string, p?: unknown) => { const r = await w.call(c, p); replies.push(r); return r as { ok: boolean; [k: string]: unknown } }
+    await call(IPC.PROVIDER_ACCOUNTS_SNAPSHOT)
+    await call(IPC.PROVIDER_ACCOUNTS_PROBE_EXTERNAL, { providerId: 'codex' })
+    const adopted = await call(IPC.PROVIDER_ACCOUNTS_ADOPT_EXTERNAL, { providerId: 'codex' })
+    expect(adopted).toMatchObject({ ok: true })
+    await call(IPC.PROVIDER_ACCOUNTS_REFRESH_STATUS, { accountId: adopted.accountId })
+    await call(IPC.PROVIDER_ACCOUNTS_DISCOVER, { providerId: 'codex' })
+    await call(IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, { providerId: 'codex' })
+    const snap = await call(IPC.PROVIDER_ACCOUNTS_SNAPSHOT) as unknown as AccountsSnapshot
+    await new Promise((r) => setImmediate(r))
+    // The check really used that folder: the CLI was pointed at it ...
+    expect(h.runs.some((r) => r.home === ALT)).toBe(true)
+    // ... and all the renderer got of it is the display string.
+    expect(snap.externalDefaults.find((e) => e.providerId === 'codex')?.home).toBe('~/codex-alt')
+    const everything = JSON.stringify({ replies, sent: w.wc.sent })
+    expect(everything).toContain('~/codex-alt')
+    expect(everything.split('codex-alt').length, 'codex-alt only as ~/codex-alt').toBe(everything.split('~/codex-alt').length)
+    for (const needle of [ALT, 'Users', 'CODEX_HOME', RES, 'codex-realms', EXE, EXT_HOME, 'sk-ambient', 'OPENAI_API_KEY', 'managed:', 'external-default"', '"command"']) {
+      expect(everything.includes(needle.replace(/\\/g, '\\\\')) || everything.includes(needle), needle).toBe(false)
+    }
   })
 
   it('changes are pushed to the window as one coalesced snapshot', async () => {

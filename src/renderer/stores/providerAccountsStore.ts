@@ -235,7 +235,7 @@ export function accountForLegacyId(snapshot: AccountsSnapshot | null, providerId
 export function accountDisplayName(snapshot: AccountsSnapshot | null, account: AccountView): string {
   if (account.external) {
     const p = providerView(snapshot, account.providerId)
-    return externalHomeLabel(p ?? { providerId: account.providerId, displayName: account.providerId })
+    return externalHomeLabel(p ?? { providerId: account.providerId, displayName: account.providerId }, externalHomeFolder(snapshot, account.providerId))
   }
   const friendly = snapshot?.identities.find((i) => i.id === account.identityId)?.friendlyName?.trim()
   if (friendly) return friendly
@@ -358,13 +358,16 @@ export function externalAdoption(snapshot: AccountsSnapshot | null, providerId: 
   if (snapshot.pendingSetups.some((s) => s.providerId === providerId && s.external)) return none
   if (snapshot.accounts.some((a) => a.providerId === providerId && a.external && a.lifecycle !== 'archived')) return none
   const name = p.displayName
-  const folder = providerId === 'codex' ? ` sign-in folder (~/.codex)` : ' sign-in folder'
+  const home = externalHomeFolder(snapshot, providerId)
+  const folder = home ? ` sign-in folder (${home})` : ' sign-in folder'
   if (providerNotSetUp(p)) {
     return { kind: 'confirm', text: `${name} is not set up yet. Once you say you use ${name}, you can use this computer's ${name} sign-in here.` }
   }
   const m = ext.marker
+  // True whether or not the Set up Codex page has checked it (read-only, and
+  // keeping nothing): what waits for the user is using it.
   if (!m) {
-    return { kind: 'offer', text: `The app has not looked at this computer's ${name} sign-in. It checks it only when you choose to use it.`, action: 'use' }
+    return { kind: 'offer', text: `This app uses this computer's ${name} sign-in only when you choose to use it. Choosing it asks ${name} first whether it is signed in.`, action: 'use' }
   }
   if (m.outcome === 'registered') return { kind: 'offer', text: null, action: 'use' }
   if (m.outcome === 'none') return { kind: 'offer', text: `When the app first checked, this computer's ${name} was signed out.`, action: 'use' }
@@ -427,9 +430,26 @@ export function accountFailureText(r: AccountsFailure, running?: Pick<AccountVie
 
 export type StatusTone = 'ok' | 'warn' | 'muted'
 
-/** Where a provider's own shared sign-in lives, as the surface names it. */
-export function externalHomeLabel(p: Pick<ProviderInstallationView, 'providerId' | 'displayName'>): string {
-  return p.providerId === 'codex' ? "This computer's Codex (~/.codex)" : `This computer's ${p.displayName}`
+/** The folder a provider's own shared sign-in lives in, as main names it
+ *  for display (Codex: ~/.codex when no CODEX_HOME is set, else the folder
+ *  CODEX_HOME named when the app started), or null when main names none: a
+ *  CODEX_HOME that is set but unusable, no home folder, or no snapshot yet.
+ *  Never guessed: a surface with null names no folder (externalHomeLabel,
+ *  externalHomeWhere). */
+export function externalHomeFolder(snapshot: AccountsSnapshot | null, providerId: ProviderId): string | null {
+  return snapshot?.externalDefaults.find((e) => e.providerId === providerId)?.home ?? null
+}
+
+/** Where a provider's own shared sign-in lives, as the surface names it:
+ *  with the folder main named (externalHomeFolder), else without one. */
+export function externalHomeLabel(p: Pick<ProviderInstallationView, 'providerId' | 'displayName'>, folder: string | null): string {
+  return folder ? `This computer's ${p.displayName} (${folder})` : `This computer's ${p.displayName}`
+}
+
+/** That folder as a sentence names it: the folder main named, else "this
+ *  computer's <provider> folder", which claims none. */
+export function externalHomeWhere(snapshot: AccountsSnapshot | null, p: Pick<ProviderInstallationView, 'providerId' | 'displayName'>): string {
+  return externalHomeFolder(snapshot, p.providerId) ?? `this computer's ${p.displayName} folder`
 }
 
 /** How an account signed in, as a row says it; null when unknown or when

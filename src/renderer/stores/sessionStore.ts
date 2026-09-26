@@ -161,6 +161,13 @@ export interface Session {
    *  allowlist, so a restored session starts unset (it has no PTY yet either
    *  way, and the restore path spawns one). */
   ptyExited?: boolean
+  /** Its last launch started nothing: main refused it (the provider off or
+   *  not set up, no account to run on) or it ended before a process started.
+   *  Such a tab is not a running session: it never counts as its config
+   *  running (runningConfigCounts), so it blocks neither a launch nor a
+   *  delete. Cleared as soon as a PTY starts, and by a Restart. Ephemeral,
+   *  like ptyExited: not persisted. */
+  neverStarted?: boolean
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */
   needsLogin?: boolean

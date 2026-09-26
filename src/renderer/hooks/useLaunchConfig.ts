@@ -5,7 +5,7 @@ import { TerminalConfig } from '../stores/configStore'
 import { generateId } from '../utils/id'
 import { markSessionForResumePicker } from '../utils/resumePicker'
 import { isClaudeOff, CLAUDE_OFF_LAUNCH_REASON } from '../lib/claudeOff'
-import { providerOffMessage, providerNotSetUpMessage } from '../../shared/providers'
+import { providerOffMessage, providerNotSetUpMessage, refusedTabText } from '../../shared/providers'
 import { codexPreference } from '../onboarding/provider-choice'
 
 /** What the launch rule reads of a config. */
@@ -77,6 +77,19 @@ export function useLaunchGateSettings(): LaunchGateSettings {
   return useMemo(() => ({ claudeEnabled, codexEnabled }), [claudeEnabled, codexEnabled])
 }
 
+/** What a tab of this config reads when it opens while its provider cannot
+ *  launch: main's own refusal (accounts-service launchRefusal), as the tab
+ *  words it (refusedTabText). Undefined when it can launch. The resume prompt
+ *  shows it on a saved session that will reopen so. */
+export function launchBlockedTabText(
+  config: LaunchGateConfig,
+  settings: LaunchGateSettings = useSettingsStore.getState().settings,
+): string | undefined {
+  if (!isConfigLaunchBlocked(config, settings)) return undefined
+  if ((config.provider ?? 'claude') !== 'codex') return refusedTabText({ message: providerOffMessage('Claude Code') })
+  return refusedTabText({ message: codexPreference(settings) === 'off' ? providerOffMessage('Codex') : providerNotSetUpMessage('Codex') })
+}
+
 /** The reason shown for a Codex config blocked because Codex is off. */
 export const CODEX_OFF_LAUNCH_REASON = providerOffMessage('Codex', 'to launch this config')
 
@@ -134,7 +147,25 @@ export function flattenPopoverCopy(copy: { headline: string; body: string }): st
 function liveCountForConfig(configId: string): number {
   return useSessionStore
     .getState()
-    .sessions.filter((s) => s.kind !== 'ask' && s.configId === configId).length
+    .sessions.filter((s) => s.kind !== 'ask' && !s.neverStarted && s.configId === configId).length
+}
+
+/**
+ * A Restart of a tab whose launch started nothing (Session.neverStarted) is a
+ * launch of its config: that tab does not count as running, so the config may
+ * have launched elsewhere since. It passes the same rule
+ * (isMultiSpawnLaunchBlocked) and is refused in the same words; undefined when
+ * it may restart. Any other tab is its config's running copy, which a Restart
+ * only replaces.
+ */
+export function restartLaunchRefusal(
+  session: Pick<Session, 'neverStarted' | 'configId' | 'kind'>,
+  configs: ReadonlyArray<Pick<TerminalConfig, 'id' | 'label' | 'allowMultiSpawn'>>,
+): string | undefined {
+  if (!session.neverStarted || session.kind === 'ask' || !session.configId) return undefined
+  const config = configs.find((c) => c.id === session.configId)
+  if (!config || !isMultiSpawnLaunchBlocked(config, liveCountForConfig(config.id))) return undefined
+  return flattenPopoverCopy(alreadyRunningLaunchCopy(config.label))
 }
 
 /** Overrides for a launch. SSH Persistent: a RESUME reuses the detached remote's

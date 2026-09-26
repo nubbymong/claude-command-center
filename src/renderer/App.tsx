@@ -267,7 +267,12 @@ export default function App() {
   // lazy mount of the partner TerminalView (see togglePartner).
   const [partnerEverActivated, setPartnerEverActivated] = useState<Set<string>>(new Set())
   // Saved sessions awaiting the user's Resume / Don't-open choice (startup gate —
-  // previously every boot force-resumed the whole saved set).
+  // previously every boot force-resumed the whole saved set). Boot-only: the
+  // startup load (postConfigInit, once) is the only thing that sets it, the
+  // prompt's Refresh only replaces it while it is still unanswered, and
+  // Resume / Don't open clear it, so once answered the gate never comes back
+  // this run. It is the whole saved set: a session whose provider cannot
+  // launch is restored too and reopens as Not started (the prompt tags it).
   const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
   const configs = useConfigStore((s) => s.configs)
   const launchConfig = useLaunchConfig()
@@ -1402,6 +1407,9 @@ export default function App() {
           <ResumeSessionsPrompt
             sessions={pendingRestore.sessions}
             onResume={() => {
+              // Every saved session, as before: one whose provider cannot
+              // launch reopens as Not started and keeps its conversation, so a
+              // Restart once the provider is on carries on.
               const saved = pendingRestore
               // ADR-009 (Lens C, R7): mark the restore in flight BEFORE clearing
               // the prompt, so a close before it lands keeps the saved file.
@@ -1428,9 +1436,11 @@ export default function App() {
               // The list is a boot-time snapshot; re-read the saved set so a
               // session restarted since launch shows up (#130). Keep the current
               // list on a transient empty read rather than dismissing the prompt.
+              // Boot-only: a read that lands after the prompt was answered
+              // (prev is null by then) never brings it back.
               try {
                 const saved = await window.electronAPI.session.load() as SessionState | null
-                setPendingRestore((prev) => (saved && saved.sessions.length > 0 ? saved : prev))
+                setPendingRestore((prev) => (prev && saved && saved.sessions.length > 0 ? saved : prev))
               } catch (err) {
                 console.error('[App] Resume refresh failed:', err)
               }

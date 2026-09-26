@@ -105,7 +105,7 @@ export function placeMultiSpawnPopover(
 
 /** The session fields the migration counter reads — a narrow view so this
  *  module never depends on the full store record. */
-export type CountableSession = { id: string; configId?: string; kind?: string }
+export type CountableSession = { id: string; configId?: string; kind?: string; neverStarted?: boolean }
 
 /** The config fields the migration counter reads. */
 export type CountableConfig = Pick<TerminalConfig, 'id' | 'sessionType' | 'sshConfig' | 'allowMultiSpawn'>
@@ -123,7 +123,7 @@ export function multiSpawnCopyCount(
   sessions: ReadonlyArray<CountableSession>,
   detached: ReadonlyArray<DetachedRemote>,
 ): number {
-  const live = sessions.filter((s) => s.kind !== 'ask' && !!s.configId && s.configId === config.id)
+  const live = sessions.filter((s) => s.kind !== 'ask' && !s.neverStarted && !!s.configId && s.configId === config.id)
   const liveIds = new Set(sessions.map((s) => s.id))
   const remotes = filterLiveEntries(matchDetachedRemotes([...detached], config), liveIds)
   return live.length + remotes.length

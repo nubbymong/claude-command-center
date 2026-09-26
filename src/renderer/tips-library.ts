@@ -978,7 +978,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'More than one Codex account, and one for reviews',
         title: 'Codex Accounts and the Reviewer',
-        body: 'You can add more than one Codex account in **Settings, Accounts** -- each one signs in inside its own folder, so sessions never mix identities.\n\n• **Default** -- what a new Codex session uses unless its config picks another\n• **Reviewer** -- what a Codex review uses. With none set, reviews use the default\n\nSet either from the menu on the account row (**Make default**, **Make reviewer**).\n\nThe Codex sign-in already on this computer (`~/.codex`) can be used too, but it must be confirmed at each launch, and it cannot run reviews. For code review, add a Codex account and make it the reviewer.',
+        body: 'You can add more than one Codex account in **Settings, Accounts** -- each one signs in inside its own folder, so sessions never mix identities.\n\n• **Default** -- what a new Codex session uses unless its config picks another\n• **Reviewer** -- what a Codex review uses. With none set, reviews use the default\n\nSet either from the menu on the account row (**Make default**, **Make reviewer**).\n\nThe Codex sign-in already on this computer (in `~/.codex`, or the folder `CODEX_HOME` names when it is set) can be used too, but it must be confirmed at each launch, and it cannot run reviews. For code review, add a Codex account and make it the reviewer.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
         focusHint: 'Settings, Accounts -- the Codex section, the menu on each account row',

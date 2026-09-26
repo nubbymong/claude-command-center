@@ -209,9 +209,11 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     expect(order).toEqual(['setPendingRestore:null', 'reconcile', 'cancelAutosave', 'hydrate:true', 'ping', 'persist'])
   })
 
-  it('Resume hands the saved state to restoreSavedSessions and clears the prompt first', () => {
+  it('Resume hands the WHOLE saved set to restoreSavedSessions (none dropped), and clears the prompt first', () => {
     const order: string[] = []
-    const saved = { sessions: [{ id: 'a' }], activeSessionId: 'a', savedAt: 1 }
+    // Walk fix W1: a session whose provider cannot launch is restored too (it
+    // reopens as Not started and keeps its conversation); nothing is dropped.
+    const saved = { sessions: [{ id: 'a' }, { id: 'x', provider: 'codex' }], activeSessionId: 'a', savedAt: 1 }
     const restoreUnsettledRef = { current: false }
     // 2.1.1 (ADR-021): App injects the two liveness helpers -- session-persistence
     // must not import the stores that import it back -- so the call site hands
@@ -234,6 +236,41 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     // ADR-009 R7: the restore is marked in flight BEFORE the prompt clears, so a
     // close before it lands keeps the saved file.
     expect(restoreUnsettledRef.current).toBe(true)
+  })
+
+  it('the resume gate is boot-only: raised by the saved set whatever its providers, set only by the startup load, never brought back once answered', async () => {
+    // Walk fix W1/W2. (a) The gate reads the saved set alone, never the launch
+    // settings: a set whose every session's provider is off raises it at boot,
+    // so nothing is left pending to surface mid-session when that provider is
+    // turned on; once answered (null) nothing raises it.
+    const m = /\n {4}resumePending: ([^\n]+),\n/.exec(APP)
+    expect(m, 'the resumePending entry').not.toBeNull()
+    const codexOnly = { sessions: [{ id: 'x', provider: 'codex' }], activeSessionId: 'x', savedAt: 1 }
+    expect(run<boolean>(m![1], { pendingRestore: codexOnly })).toBe(true)
+    expect(run<boolean>(m![1], { pendingRestore: null })).toBe(false)
+    // (b) The one thing that sets a saved set is the startup load, which runs
+    // once (hasRestoredRef); everything else clears it or is the Refresh below.
+    const setters = APP.match(/setPendingRestore\((?!null\))[^\n]*/g) ?? []
+    expect(setters).toEqual(['setPendingRestore(savedState)', 'setPendingRestore((prev) => (prev && saved && saved.sessions.length > 0 ? saved : prev))'])
+    expect(block(APP, APP.indexOf('async function postConfigInit()')).text).toContain('if (savedState) setPendingRestore(savedState)')
+    expect(APP).toContain('if (!configLoaded || hasRestoredRef.current) return\n    hasRestoredRef.current = true\n\n    async function postConfigInit()')
+    // (c) A Refresh read that lands after the prompt was answered leaves it
+    // answered; while it is still up the fresh list replaces it, and a
+    // transient empty read keeps the current one.
+    const fresh = { sessions: [{ id: 'b' }], activeSessionId: 'b', savedAt: 2 }
+    const refreshWith = async (loaded: unknown) => {
+      let updater: ((prev: unknown) => unknown) | undefined
+      const refresh = run<() => Promise<void>>(jsxHandler(APP, 'onRefresh'), {
+        setPendingRestore: (u: (prev: unknown) => unknown) => { updater = u },
+        window: { electronAPI: { session: { load: async () => loaded } } },
+      })
+      await refresh()
+      return updater!
+    }
+    const update = await refreshWith(fresh)
+    expect(update(null), 'answered: stays answered').toBeNull()
+    expect(update(codexOnly), 'still up: the fresh list').toBe(fresh)
+    expect((await refreshWith({ sessions: [] }))(codexOnly), 'an empty read keeps the list').toBe(codexOnly)
   })
 })
 

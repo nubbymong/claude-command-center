@@ -102,9 +102,19 @@ export interface AuthOperationResult {
   planLabel?: string
 }
 
+/** The CLI discovery last resolved, for a package whose update commands
+ *  depend on how it was installed. Main-process only: never sent to the
+ *  renderer. */
+export interface InstalledCli {
+  /** The canonical path of the executable discovery resolved. */
+  executable?: string
+}
+
 export interface ProviderSetupOperations {
   discover(): Promise<DiscoveryResult>
-  installRecipes(platform: CapabilityPlatform): readonly InstallRecipe[]
+  /** `installed`: what discovery last resolved, so an update command updates
+   *  that same install (the one sessions run). */
+  installRecipes(platform: CapabilityPlatform, installed?: InstalledCli): readonly InstallRecipe[]
 }
 
 export interface AuthLoginInput {
@@ -351,6 +361,10 @@ export interface ExternalDefaultRealmSpec {
   readonly kind: RealmKind
   /** The private identity's name: says the account is unverified. */
   readonly identityLabel: string
+  /** The home's folder as the user may be shown it (the user's home
+   *  shortened to ~), or null when there is none. Display only: never a way
+   *  to reach the folder. */
+  readonly displayHome?: () => string | null
 }
 
 /** Packages are created by the composition root, never at module load, so

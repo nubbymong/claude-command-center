@@ -119,6 +119,20 @@ describe('the external home (WP1.24, WP1.50)', () => {
     expect((await h.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
   })
 
+  it('the snapshot names its folder for display, as the package gives it (display only)', async () => {
+    const h = await harness()
+    const spec = h.codex.externalDefaultRealm!
+    const real = spec.displayHome
+    try {
+      ;(spec as { displayHome?: () => string | null }).displayHome = () => '~\\codex-alt'
+      expect(h.service.snapshot().externalDefaults).toEqual([{ providerId: 'codex', home: '~\\codex-alt' }])
+      ;(spec as { displayHome?: () => string | null }).displayHome = () => { throw new Error('boom') }
+      expect(h.service.snapshot().externalDefaults).toEqual([{ providerId: 'codex' }])
+    } finally {
+      ;(spec as { displayHome?: () => string | null }).displayHome = real
+    }
+  })
+
   it('can never be linked to another identity', async () => {
     const h = await harness()
     const ext = await withExternal(h)

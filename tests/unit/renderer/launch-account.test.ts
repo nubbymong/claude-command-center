@@ -43,6 +43,9 @@ function bindingRefusal(state: 'inactive' | 'archived' | 'blocked' | 'gone'): st
   return r.message
 }
 
+/** As main sends it with no CODEX_HOME set: the folder of this computer's own sign-in. */
+const MAIN_NAMES_HOME = { externalDefaults: [{ providerId: 'codex' as const, home: '~/.codex' }] }
+
 describe('the Codex account picker list', () => {
   it('puts the default first and marks it, then the others by name, then the blocked ones', () => {
     const opts = sessionAccountOptions(snapshot(), 'codex')
@@ -52,10 +55,11 @@ describe('the Codex account picker list', () => {
     expect(defaultAccountId(snapshot(), 'codex')).toBe('acc-work')
   })
 
-  it("labels this computer's own sign-in as confirmed at launch", () => {
-    const ext = sessionAccountOptions(snapshot(), 'codex').find((o) => o.id === 'acc-local')!
+  it("labels this computer's own sign-in as confirmed at launch, by the folder main names (none when it names none)", () => {
+    const ext = sessionAccountOptions(snapshot(MAIN_NAMES_HOME), 'codex').find((o) => o.id === 'acc-local')!
     expect(ext.label).toBe("This computer's Codex (~/.codex) - confirm at launch")
     expect(ext.disabled).toBe(false)
+    expect(sessionAccountOptions(snapshot(), 'codex').find((o) => o.id === 'acc-local')!.label).toBe("This computer's Codex - confirm at launch")
   })
 
   it('shows a blocked account disabled with "Needs attention"', () => {
@@ -152,7 +156,7 @@ describe('the account a launch names, and its next step', () => {
   })
 
   it('asks about the external account by name and email otherwise', () => {
-    const s = snapshot()
+    const s = snapshot(MAIN_NAMES_HOME)
     const step = launchStep(s, resolveLaunchAccount(s, 'codex', 'acc-local'), false)
     expect(step).toMatchObject({
       kind: 'ask',

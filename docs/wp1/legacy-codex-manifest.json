@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-26T09:58:06.695Z",
-  "head": "21fff8bcb7b4155fbb550e986bab743080549191",
-  "tree": "351b3eb08b16f1d1def32235e71bb738910c04af",
+  "generatedAt": "2026-09-26T15:02:39.330Z",
+  "head": "c3569b3d05c4be38bc6b091dc659718c80137991",
+  "tree": "26fbe9ca0508ae8a63a2be51fe70ea79612ab066",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 372,
-  "pathDigest": "e6858aed0ada115dacf0d5478087a049921f3b0286986ac20b7e9e5cb22ea2a2",
+  "matchedPathCount": 374,
+  "pathDigest": "c875b5ac53a9161b05dd59a09789cdd8642a809ca2d09cdaba1046db01c04abf",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -182,7 +182,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 91
+      "lineCount": 93
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -614,7 +614,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 161
+      "lineCount": 169
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -622,7 +622,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 18
+      "lineCount": 37
     },
     {
       "path": "src/main/providers/codex/mcp-config.ts",
@@ -675,7 +675,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 48
+      "lineCount": 59
     },
     {
       "path": "src/main/providers/codex/resume-picker.ts",
@@ -996,6 +996,14 @@
       "lineCount": 2
     },
     {
+      "path": "src/renderer/components/ResumeSessionsPrompt.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "lineCount": 6
+    },
+    {
       "path": "src/renderer/components/SessionDialog.tsx",
       "predicates": [
         "P04",
@@ -1124,7 +1132,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 41
+      "lineCount": 43
     },
     {
       "path": "src/renderer/components/settings/accounts/AccountsSurface.tsx",
@@ -1241,7 +1249,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 31
+      "lineCount": 34
     },
     {
       "path": "src/renderer/hooks/useSwitchAccount.ts",
@@ -1507,7 +1515,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 30
+      "lineCount": 31
     },
     {
       "path": "src/renderer/stores/sessionStore.ts",
@@ -1639,7 +1647,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 3
+      "lineCount": 11
     },
     {
       "path": "src/shared/providers/capabilities.ts",
@@ -2335,7 +2343,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 139
+      "lineCount": 152
     },
     {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
@@ -2358,7 +2366,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 2
+      "lineCount": 7
     },
     {
       "path": "tests/unit/renderer/boot-gates.test.ts",
@@ -2373,7 +2381,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 71
+      "lineCount": 82
     },
     {
       "path": "tests/unit/renderer/code-review-tools.test.tsx",
@@ -2383,7 +2391,7 @@
         "P08",
         "P13"
       ],
-      "lineCount": 91
+      "lineCount": 103
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -2427,7 +2435,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 55
+      "lineCount": 59
     },
     {
       "path": "tests/unit/renderer/command-bar-layout.test.ts",
@@ -2523,7 +2531,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 74
+      "lineCount": 79
     },
     {
       "path": "tests/unit/renderer/launch-always-new.test.tsx",
@@ -2609,7 +2617,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 231
+      "lineCount": 253
     },
     {
       "path": "tests/unit/renderer/onboarding-flow-stubs.tsx",
@@ -2698,7 +2706,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 65
+      "lineCount": 81
     },
     {
       "path": "tests/unit/renderer/providers-card-check-again.test.tsx",
@@ -2712,7 +2720,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 45
+      "lineCount": 50
     },
     {
       "path": "tests/unit/renderer/quick-start-panel.test.tsx",
@@ -2739,6 +2747,14 @@
       "lineCount": 2
     },
     {
+      "path": "tests/unit/renderer/resume-sessions-prompt.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "lineCount": 21
+    },
+    {
       "path": "tests/unit/renderer/session-auth-pending.test.tsx",
       "predicates": [
         "P13"
@@ -2761,7 +2777,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 86
+      "lineCount": 90
     },
     {
       "path": "tests/unit/renderer/session-dialog-credentials.test.tsx",
@@ -2842,7 +2858,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 2
+      "lineCount": 3
     },
     {
       "path": "tests/unit/renderer/session-status-strip-labelless-model.test.tsx",
@@ -2938,7 +2954,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 88
+      "lineCount": 92
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",

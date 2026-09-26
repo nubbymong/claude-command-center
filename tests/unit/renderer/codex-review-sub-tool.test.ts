@@ -58,7 +58,8 @@ function snapshot(providers: { claude?: Partial<ProviderInstallationView>; codex
     groups: [],
     accounts,
     pendingSetups: [],
-    externalDefaults: [],
+    // As main sends it with no CODEX_HOME set.
+    externalDefaults: [{ providerId: 'codex', home: '~/.codex' }],
     conflicts: [],
     reviewerNotices: [],
   }

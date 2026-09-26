@@ -10,7 +10,11 @@
 // - Everything the renderer receives is a view: opaque ids, states, labels,
 //   counts. No path, pathRef, executable, environment value, token, key or
 //   provider subject leaves this module (the snapshot builder is the only
-//   producer of renderer data, and it copies named fields only).
+//   producer of renderer data, and it copies named fields only). One display
+//   string is the exception: ExternalDefaultView.home, the provider package's
+//   displayHome() (the external default's folder as the user may be shown
+//   it, home shortened to ~, spoofable text stripped), never a way to reach
+//   it; nothing else of that path or the environment goes with it.
 // - Every change that could pull an account out from under a consumer reads
 //   the consumer count under the registry lock that applies it; sign-out and
 //   archive take the account exclusively for their whole run, so nothing can
@@ -398,6 +402,10 @@ export class AccountsService {
       const m = doc?.migrations.find((x) => x.providerId === p.id && x.step === 'external-default')
       const view: ExternalDefaultView = { providerId: p.id }
       if (m) view.marker = { outcome: m.outcome, at: m.at, ...(m.reason ? { reason: m.reason } : {}) }
+      // The folder the check and the adoption use, for display only.
+      let home: string | null = null
+      try { home = p.externalDefaultRealm?.displayHome?.() ?? null } catch { home = null }
+      if (typeof home === 'string' && home) view.home = home
       return view
     })
     return {
@@ -663,8 +671,11 @@ export class AccountsService {
   installRecipes(providerId: ProviderId): InstallRecipeView[] {
     const p = this.pkg(providerId)
     if (!p?.setup) return []
+    // The update commands update the install discovery last resolved (the
+    // one sessions run), not merely any install: its path stays in main.
+    const executable = this.installations.get(p.id)?.executable
     let recipes: readonly InstallRecipe[] = []
-    try { recipes = p.setup.installRecipes(this.deps.platform) } catch { return [] }
+    try { recipes = p.setup.installRecipes(this.deps.platform, executable ? { executable } : {}) } catch { return [] }
     return recipes.map((r) => {
       const runLine = recipeRunLine(r, this.deps.platform)
       return {

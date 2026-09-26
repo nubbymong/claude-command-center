@@ -39,7 +39,7 @@ vi.mock('../../../src/renderer/utils/config-saver', () => ({ saveConfigNow: vi.f
 
 const {
   isConfigLaunchBlocked, launchBlockedReason, launchBlockedTag, buildLaunchSession, useLaunchConfig,
-  CLAUDE_OFF_LAUNCH_REASON, CODEX_OFF_LAUNCH_REASON, CODEX_NOT_SET_UP_LAUNCH_REASON,
+  CLAUDE_OFF_LAUNCH_REASON, CODEX_OFF_LAUNCH_REASON, CODEX_NOT_SET_UP_LAUNCH_REASON, launchBlockedTabText,
 } = await import('../../../src/renderer/hooks/useLaunchConfig')
 const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
@@ -162,6 +162,20 @@ describe('a Codex the user has not said they use (owner decision 2026-09-26): no
     expect(start.title).toBe(NOT_SET_UP)
     act(() => { start.click() })
     expect(onLaunch).not.toHaveBeenCalled()
+  })
+})
+
+describe('what a tab of a blocked config reads when it opens (the resume prompt titles its tag with it)', () => {
+  it('the tab\'s own Not started line, in main\'s words, per provider and state; nothing when it can launch', () => {
+    expect(launchBlockedTabText({ provider: 'codex' }, { codexEnabled: false })).toBe('Not started. Codex is off. Turn it on in Settings, Accounts, then Restart this tab.')
+    expect(launchBlockedTabText({ provider: 'codex' }, {})).toBe('Not started. Codex is not set up yet. Set it up in Settings, Accounts, then Restart this tab.')
+    expect(launchBlockedTabText({ provider: 'claude' }, { claudeEnabled: false, codexEnabled: true })).toBe('Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.')
+    // A saved session with no provider is Claude.
+    expect(launchBlockedTabText({}, { claudeEnabled: false, codexEnabled: true })).toBe('Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.')
+    // A terminal-only session runs no Claude; a provider that is on launches.
+    expect(launchBlockedTabText({ provider: 'claude', shellOnly: true }, { claudeEnabled: false, codexEnabled: true })).toBeUndefined()
+    expect(launchBlockedTabText({ provider: 'codex' }, { codexEnabled: true })).toBeUndefined()
+    expect(launchBlockedTabText({ provider: 'claude' }, {})).toBeUndefined()
   })
 })
 

@@ -12,6 +12,10 @@
 // spawn is still the session's current one (ptyTracker.isCurrentSpawn), and
 // the view listening for the session says it and marks the session ended.
 //
+// A Restart refused before it starts anything (useRestartSession: a tab whose
+// launch started nothing, whose config now runs elsewhere and is not a Multi
+// Spawn config) is such a start too, and is said the same way.
+//
 // The new view may not be listening yet: a view whose pane is hidden (the
 // partner pane showing) starts only when it is first shown. So a report
 // nobody hears is KEPT, one per session (a newer one replaces it), and handed

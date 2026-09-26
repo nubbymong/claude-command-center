@@ -54,7 +54,8 @@ import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { noteActivityGrace } from '../stores/activeStore'
 import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
 import { launchRefusalOf, refusedTabText } from '../../shared/providers'
-import { isConfigLaunchBlocked, useLaunchGateSettings } from '../hooks/useLaunchConfig'
+import { isConfigLaunchBlocked, useLaunchGateSettings, restartLaunchRefusal } from '../hooks/useLaunchConfig'
+import { useConfigStore } from '../stores/configStore'
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
@@ -573,6 +574,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       useSessionStore.getState().updateSession(sessionId, { ptyExited: true })
       clearSpawned(sessionId)
     }
+    /** This start ended with nothing started (main refused it, or it ended
+     *  before a process started): the tab is not a running session. */
+    const markNeverStarted = () => {
+      useSessionStore.getState().updateSession(sessionId, { neverStarted: true })
+    }
     /** This view's own start ended: stop holding exits, and end the session
      *  when the hold says so. `line` defaults to the held exit's code. */
     const CANCELLED_TEXT = '[The launch was cancelled before the session started]'
@@ -583,6 +589,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
      *  listening yet, record the end so the next view starts afresh. */
     const endSpawnElsewhere = (token: number, line: string) => {
       if (!isCurrentSpawn(sessionId, token)) return
+      markNeverStarted()
       if (reportSpawnEnd(sessionId, line)) return
       // Kept for the view that listens next (a hidden pane starts when it is
       // shown). Meanwhile the session reads as ended; the tracker is left as
@@ -595,11 +602,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     /** A spawn that started a PTY: the session is live, whatever a stale
      *  flag from an earlier run or a kept report said. */
     const markLive = () => {
-      if (useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.ptyExited) {
-        useSessionStore.getState().updateSession(sessionId, { ptyExited: undefined })
+      const s = useSessionStore.getState().sessions.find((x) => x.id === sessionId)
+      if (s?.ptyExited || s?.neverStarted) {
+        useSessionStore.getState().updateSession(sessionId, { ptyExited: undefined, neverStarted: undefined })
       }
     }
     const settleOwnStart = (outcome: SpawnOutcome, line?: string | null) => {
+      // Every start of this view's that ended with nothing started (main
+      // refused it or started nothing, or its launch confirmation was
+      // declined): the tab is not a running session.
+      if (outcome === 'nothing-started') markNeverStarted()
       const r = exitHold.settle(outcome)
       if (r.end) markExited(line !== undefined ? line : `[Process exited with code ${r.code}]`)
     }
@@ -901,6 +913,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             settleOwnStart('no-spawn-here')
             return
           }
+          // A tab whose last launch started nothing, remounted by anything
+          // other than a Restart (a partner-terminal restart re-keys this
+          // view): starting it launches its config, so it passes the Multi
+          // Spawn rule like any launch (restartLaunchRefusal). Refused: nothing
+          // spawns, and it stays Not started, saying why. Allowed: it counts
+          // as running again from here, as a Restart's remount does.
+          const record = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+          if (record?.neverStarted) {
+            const refusal = restartLaunchRefusal(record, useConfigStore.getState().configs)
+            if (refusal !== undefined) {
+              settleOwnStart('nothing-started', `Not started: ${refusal}`)
+              return
+            }
+            useSessionStore.getState().updateSession(sessionId, { neverStarted: undefined })
+          }
           const cols = term.cols
           const rows = term.rows
           // Prefer the custom work name so a restored/pre-named session's log
@@ -1061,6 +1088,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 if (disposed) { endSpawnElsewhere(spawnToken, line); return }
                 console.error('[TerminalView] pty.spawn failed', err)
                 term?.writeln(line)
+                markNeverStarted()
                 // No PTY came of this spawn: an exit held meanwhile ends the
                 // session as it did before the hold (a refused launch that
                 // replaced a live run ends that run). The failure is written.

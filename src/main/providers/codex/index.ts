@@ -20,6 +20,7 @@ import { createCodexAuthOperations } from './auth-operations'
 import { createCodexReviewOperations } from './review'
 import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
 import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
+import { codexExternalDefaultHome, codexHomeDisplay } from './realm-paths'
 import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort } from './realm-folders'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -42,12 +43,13 @@ export {
   parseCodexVersion, classifyCodexVersion, parseCodexLoginStatus,
 } from './cli-contract'
 export type { CodexLoginStatus, CodexLoginVia } from './cli-contract'
-export { codexInstallRecipes, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from './install-recipes'
+export { codexInstallRecipes, codexInstallKind, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from './install-recipes'
+export type { CodexInstallKind } from './install-recipes'
 export { createCodexAuthOperations, createCodexOutputRedactor } from './auth-operations'
 export type { CodexAuthDeps, CodexRealmLookup, CodexRealmIdentity, CodexOutputRedactor } from './auth-operations'
 export { codexCliEnv, codexCliEnvAllowlist } from './cli-env'
 export {
-  codexRealmHome, codexExternalDefaultHome, codexExternalHomeCandidate, codexManagedRealmsRoot, codexHomesOverlap, isFullyQualifiedPath, CODEX_REALMS_DIRNAME,
+  codexRealmHome, codexExternalDefaultHome, codexExternalHomeCandidate, codexManagedRealmsRoot, codexHomesOverlap, isFullyQualifiedPath, codexHomeDisplay, CODEX_REALMS_DIRNAME,
 } from './realm-paths'
 export type { CodexRealmRoots, CodexRealmHome, CodexExternalCandidate } from './realm-paths'
 export {
@@ -254,6 +256,7 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
   // No home at all (POSIX without HOME or a passwd entry): no ~/.codex.
   try { homeDir = deps.hostHome ? deps.hostHome.homeDir : os.homedir() } catch { homeDir = '' }
   const realmFs = source ? (deps.realmFs ?? realRealmFsPort(process.platform, (dir) => source.mkdirSecure(dir))) : null
+  const displayPaths = (realmFs?.platform ?? process.platform) === 'win32' ? path.win32 : path.posix
   /** The registry's record with canonical roots, resolved afresh each time. */
   const lookupRealm = async (ref: RealmRef): Promise<CodexFolderLookup> => {
     if (!source || !realmFs) return { ok: false }
@@ -286,7 +289,11 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
       // the user chooses to use it and it is signed in (owner decision
       // 2026-09-26): realm-only, never vouched for (design 6.3).
-      externalDefaultRealm: CODEX_EXTERNAL_DEFAULT_REALM,
+      // Named for display as the CLI finds it: the CODEX_HOME inherited, else
+      // ~/.codex (the page and Accounts say which folder was checked), by the
+      // same path rules as the folder code that checks it (its platform);
+      // none for a CODEX_HOME that cannot be used.
+      externalDefaultRealm: { ...CODEX_EXTERNAL_DEFAULT_REALM, displayHome: () => codexHomeDisplay(codexExternalDefaultHome(inherited, homeDir, displayPaths), homeDir, displayPaths) },
     } : {}),
   }
 }

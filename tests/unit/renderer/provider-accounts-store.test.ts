@@ -13,7 +13,7 @@ import {
   accountState, providerStatus, accountFailureText, accountForLegacyId, ACCOUNT_NAME_FALLBACK,
   signInAgainMethods, canOfferMakeInactive, canOfferMakeActive, canOfferArchive,
   PROVIDER_ENABLED_SETTING, PROVIDER_ANSWERED_SETTING, savedOff, canOfferCheckSignIn, signInCheckText, externalSignInHint,
-  providerNotSetUp, providerUnanswered, providerAnsweredOn,
+  providerNotSetUp, providerUnanswered, providerAnsweredOn, externalHomeFolder, externalHomeWhere,
 } from '../../../src/renderer/stores/providerAccountsStore'
 // Main's own record of where Codex's on/off is saved (type-only imports: no
 // main-process code runs here).
@@ -254,8 +254,23 @@ describe('row text', () => {
       .toBe('This account is in use (3). Running now: 2 sessions.')
     expect(accountFailureText({ ok: false, code: 'busy', message: 'Busy now.' })).toBe('Busy now.')
   })
-  it("names the provider's external home by its label, whatever its identity is called", () => {
-    expect(accountDisplayName(snapshot(), local)).toBe("This computer's Codex (~/.codex)")
+  it("names the provider's external home by its label and the folder main names, whatever its identity is called", () => {
+    // As main sends it with no CODEX_HOME set.
+    expect(accountDisplayName(snapshot({ externalDefaults: [{ providerId: 'codex', home: '~/.codex' }] }), local)).toBe("This computer's Codex (~/.codex)")
+  })
+  it("names it by the folder main reports: CODEX_HOME's, when set; with none reported, no folder at all (walk fix W6: never a guessed ~/.codex)", () => {
+    const codex = snapshot().providers[1]
+    const s = { ...snapshot(), externalDefaults: [{ providerId: 'codex' as const, home: '~/codex-alt' }] }
+    expect(externalHomeFolder(s, 'codex')).toBe('~/codex-alt')
+    expect(accountDisplayName(s, local)).toBe("This computer's Codex (~/codex-alt)")
+    expect(externalHomeWhere(s, codex)).toBe('~/codex-alt')
+    // Main named none (a CODEX_HOME it cannot use), or has not said yet.
+    for (const none of [snapshot({ externalDefaults: [{ providerId: 'codex' }] }), snapshot()]) {
+      expect(externalHomeFolder(none, 'codex')).toBeNull()
+      expect(accountDisplayName(none, local)).toBe("This computer's Codex")
+      expect(externalHomeWhere(none, codex)).toBe("this computer's Codex folder")
+    }
+    expect(externalHomeFolder(null, 'codex')).toBeNull()
   })
 })
 

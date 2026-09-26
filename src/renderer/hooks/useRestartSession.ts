@@ -5,6 +5,9 @@ import { markSessionForResumePicker } from '../utils/resumePicker'
 import { restartPicksConversation } from '../utils/launchAccount'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { spentCommand } from '../utils/commandTerminal'
+import { restartLaunchRefusal } from './useLaunchConfig'
+import { useConfigStore } from '../stores/configStore'
+import { reportSpawnEnd } from '../utils/spawnEndNotice'
 
 // Shared restart/recover logic for SessionHeader and the v2 bottom bar.
 // Behaviour is identical to the inline functions that previously lived in
@@ -17,6 +20,19 @@ export interface RestartOptions {
    *  applies (restartPicksConversation): some providers always offer it,
    *  others offer a plain "Restart" that starts a new conversation. */
   pickConversation?: boolean
+}
+
+/** A tab whose launch started nothing is not its config's running copy, so
+ *  restarting it launches the config, and it passes the Multi Spawn rule like
+ *  any launch (restartLaunchRefusal). Refused: nothing is killed or remounted,
+ *  the tab stays Not started, and the view showing it says why
+ *  (utils/spawnEndNotice). True when refused. */
+function refuseRestart(sessionId: string): boolean {
+  const live = useSessionStore.getState().getSession(sessionId)
+  const refusal = live ? restartLaunchRefusal(live, useConfigStore.getState().configs) : undefined
+  if (refusal === undefined) return false
+  reportSpawnEnd(sessionId, `\r\n\x1b[90mNot started: ${refusal}\x1b[0m`)
+  return true
 }
 
 export function useRestartSession(
@@ -58,6 +74,8 @@ export function useRestartSession(
         // check (findAskSession's, the dock's dot) read the fresh session as
         // dead.
         ptyExited: undefined,
+        // Nor does the last launch's "started nothing": this one may start.
+        neverStarted: undefined,
         // #85: the wheel->tmux-scrollback translation is armed off this flag,
         // and a restart re-runs SSH connect, auth and remote setup before
         // anything decides whether tmux is in play this time. Left set, the
@@ -98,6 +116,10 @@ export function useRestartSession(
   const restart = useCallback((overrides?: Partial<Session>, options?: RestartOptions) => {
     if (!session) return
     if (isShowingPartner) {
+      // The remount below re-keys the main view too. A main tab whose launch
+      // started nothing keeps that flag through it, and the remounted view
+      // checks the Multi Spawn rule before it starts it (TerminalView), so the
+      // partner always restarts and the main tab never becomes a second copy.
       // Partner terminal: just kill partner PTY, leave main Claude untouched
       const partnerPtyId = session.id + '-partner'
       // Only kill the partner -- don't use killSessionPty which also kills main+partner
@@ -112,6 +134,7 @@ export function useRestartSession(
       store.addSession({ ...session, ...live, ...overrides, id: session.id, status: session.status, createdAt: Date.now() })
       return
     }
+    if (refuseRestart(session.id)) return
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
     killSessionPty(session.id)
     // Show resume picker on restart so user can pick a conversation, unless
@@ -129,6 +152,7 @@ export function useRestartSession(
 
   const recover = useCallback(() => {
     if (!session) return
+    if (refuseRestart(session.id)) return
     const partnerPtyId = session.id + '-partner'
     // Kill both main and partner PTYs (ignore errors -- process may already be dead)
     window.electronAPI.pty.kill(session.id)

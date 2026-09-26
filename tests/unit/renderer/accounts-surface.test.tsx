@@ -157,7 +157,8 @@ function snapshot(over: Partial<AccountsSnapshot> = {}): AccountsSnapshot {
     groups: [],
     accounts: [work, personal, local, old, parked, unv, refused, gone, claudeMain, claudeHome],
     pendingSetups: [],
-    externalDefaults: [{ providerId: 'codex' }],
+    // As main sends it with no CODEX_HOME set.
+    externalDefaults: [{ providerId: 'codex', home: '~/.codex' }],
     conflicts: [],
     reviewerNotices: [],
     ...over,
@@ -369,6 +370,10 @@ describe('Codex rows', () => {
   it("titles the external home with its label, leaves its method empty, and never shows an identity's 'unverified' name", () => {
     render(snapshot())
     expect(q('account-name-acc-local')?.textContent).toBe("This computer's Codex (~/.codex)")
+    // Walk fix W6: a folder main did not name is not guessed.
+    act(() => { useProviderAccountsStore.setState({ snapshot: snapshot({ externalDefaults: [{ providerId: 'codex' }] }) }) })
+    expect(q('account-name-acc-local')?.textContent).toBe("This computer's Codex")
+    act(() => { useProviderAccountsStore.setState({ snapshot: snapshot() }) })
     expect(q('account-method-acc-local')).toBeNull()
     expect(q('account-plan-cell-acc-local')?.textContent).toBe('')
     expect(q('provider-account-row-acc-local')?.textContent).toContain('alex@example.com')
@@ -1191,7 +1196,8 @@ describe('registry, conflicts, adoption and pending setups', () => {
 
   it("with Codex on and nothing recorded, offers this computer's sign-in with honest text; only the click takes it in, and one that could not finish becomes Check again", async () => {
     render(snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex' }] }))
-    expect(q('external-adoption-text-codex')?.textContent).toBe("The app has not looked at this computer's Codex sign-in. It checks it only when you choose to use it.")
+    // True whether or not the Set up Codex page checked it: only using it waits for the user.
+    expect(q('external-adoption-text-codex')?.textContent).toBe("This app uses this computer's Codex sign-in only when you choose to use it. Choosing it asks Codex first whether it is signed in.")
     expect(q('adopt-external-codex')?.textContent).toBe("Use this computer's Codex sign-in")
     expect(pa.adoptExternal).not.toHaveBeenCalled()
     pa.adoptExternal.mockResolvedValueOnce({ ok: false, code: 'timed-out', message: 'Codex did not answer in time.' } as never)
@@ -1203,6 +1209,16 @@ describe('registry, conflicts, adoption and pending setups', () => {
     pa.adoptExternal.mockResolvedValueOnce({ ok: false, code: 'not-signed-in', message: 'Your existing sign-in is signed out; sign in to add an account.' } as never)
     await click('adopt-external-codex')
     expect(q('adopt-external-codex')?.textContent).toBe("Use this computer's Codex sign-in")
+  })
+
+  it('names this computer\'s sign-in by the folder main reports (CODEX_HOME, when set): the offer, and the account row', () => {
+    const elsewhere = [{ providerId: 'codex' as const, home: '~\\codex-alt' }]
+    render(snapshot({ accounts: [work], externalDefaults: elsewhere }))
+    expect(q('external-adoption-codex')!.textContent).toContain("This computer's Codex (~\\codex-alt)")
+    unmountNow()
+    render(snapshot({ accounts: [work, local], externalDefaults: elsewhere }))
+    expect(document.body.textContent).toContain("This computer's Codex (~\\codex-alt)")
+    expect(document.body.textContent).not.toContain('~/.codex')
   })
 
   it('offers nothing while that home is being set up, or once an account stands for it', () => {

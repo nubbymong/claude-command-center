@@ -51,7 +51,8 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true })
+  // Main names the folder of this computer's own sign-in (no CODEX_HOME set).
+  useProviderAccountsStore.setState({ snapshot: snapshot({ externalDefaults: [{ providerId: 'codex', home: '~/.codex' }] }), loaded: true })
   // The user said they use Codex: its configs can launch.
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, codexEnabled: true, codexAnswered: true } })
 })

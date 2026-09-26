@@ -4,6 +4,7 @@ import type { AccountsResult, AccountsSnapshot, AccountView, InstallRecipeView, 
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import {
   useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, providerAnsweredOn,
+  externalHomeFolder,
 } from '../stores/providerAccountsStore'
 import { AddProviderAccountDialog, methodCopy } from '../components/settings/accounts/AddProviderAccountDialog'
 import { openCommandTerminal } from '../utils/commandTerminal'
@@ -302,6 +303,14 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
   const install = codexInstallation(provider)
   const signedIn = signedInCodexAccounts(snapshot)
   const thisComputer = thisComputerSignIn(snapshot)
+  // The folder the check and "Use this sign-in" use, as main names it: the
+  // folder CODEX_HOME named when the app started, else ~/.codex; none when
+  // main names none (then the page names no folder).
+  const home = externalHomeFolder(snapshot, 'codex')
+  const inHome = (extra?: string) => {
+    const parts = [home, extra].filter((x): x is string => !!x)
+    return parts.length > 0 ? ` (${parts.join(', ')})` : ''
+  }
 
   const checkAgain = async () => {
     setChecking(true)
@@ -319,11 +328,14 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [returns])
 
+  // Read again after every check: the update commands are the ones for the
+  // install that check found, which an install or update since may change.
+  const checkedAt = provider?.lastCheckedAt
   useEffect(() => {
     let live = true
     void providerAccountActions.installRecipes('codex').then((r) => { if (live) setRecipes(r) })
     return () => { live = false }
-  }, [])
+  }, [checkedAt])
 
   // This computer's own Codex sign-in, when nothing stands for it: asked
   // once per round, READ-ONLY (probeExternal: Codex's status there, and
@@ -459,8 +471,8 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
         <span className="cx-callout-i" aria-hidden>i</span>
         <span>
           {verified
-            ? `Codex is already signed in on this computer (~/.codex${label ? `, ${label}` : ''})`
-            : 'The app could not check whether Codex is signed in on this computer (~/.codex). Use this sign-in checks it again.'}
+            ? `Codex is already signed in on this computer${inHome(label)}`
+            : `The app could not check whether Codex is signed in on this computer${inHome()}. Use this sign-in checks it again.`}
         </span>
       </div>
     )
@@ -530,7 +542,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
       // nothing to say, and nothing offered.
       const signedOutNow = adoptAnswer === 'signed-out' || probe === 'signed-out'
       const note = signedOutNow
-        ? 'This computer\'s Codex sign-in (~/.codex) is signed out.'
+        ? `This computer's Codex sign-in${inHome()} is signed out.`
         : probe === 'overlap' ? OVERLAP_NOTE : null
       const lookAgain = providerAnsweredOn(provider) && signedOutNow
       view = 'sign-in'

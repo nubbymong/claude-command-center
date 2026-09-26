@@ -71,7 +71,8 @@ function snapshot(over: Partial<AccountsSnapshot> = {}, providers?: { claude?: P
     groups: [],
     accounts: [personal, work, local, claudeMain, claudeHome],
     pendingSetups: [],
-    externalDefaults: [],
+    // As main sends it with no CODEX_HOME set.
+    externalDefaults: [{ providerId: 'codex', home: '~/.codex' }],
     conflicts: [],
     reviewerNotices: [],
     ...over,
@@ -365,6 +366,20 @@ describe('Code review switches: not set up (the user has not said they use the p
     renderTools()
     expect(sw('claudeReview').disabled).toBe(false)
     expect(message('claudeReview')).toBeUndefined()
+  })
+})
+
+describe('Code review switches: this computer\'s sign-in by its folder', () => {
+  it('names the folder main reports (CODEX_HOME, when set), not ~/.codex', () => {
+    setup({ snap: snapshot({ accounts: [local, claudeMain, claudeHome], externalDefaults: [{ providerId: 'codex', home: '~/codex-alt' }] }, { codex: { review: { ready: false, accountId: local.id, source: 'provider-default' } } }) })
+    renderTools()
+    expect(message('codexReview')).toBe('No Codex account can run reviews. Add a Codex account (a sign-in from ~/codex-alt cannot review).')
+  })
+
+  it('walk fix W6: with no folder named by main (a CODEX_HOME it cannot use), names none', () => {
+    setup({ snap: snapshot({ accounts: [local, claudeMain, claudeHome], externalDefaults: [{ providerId: 'codex' }] }, { codex: { review: { ready: false, accountId: local.id, source: 'provider-default' } } }) })
+    renderTools()
+    expect(message('codexReview')).toBe("No Codex account can run reviews. Add a Codex account (a sign-in from this computer's Codex folder cannot review).")
   })
 })
 

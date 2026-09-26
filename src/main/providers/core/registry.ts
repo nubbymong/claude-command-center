@@ -79,6 +79,7 @@ export function packageRegistrationProblem(pkg: ProviderPackage): string | null 
     if (typeof ext !== 'object' || ext === null) return 'externalDefaultRealm must be an object when present'
     if (!isRealmKindOf(ext.kind, pkg.id)) return `externalDefaultRealm.kind is not a realm kind of ${pkg.id}`
     if (typeof ext.identityLabel !== 'string' || !ext.identityLabel.trim()) return 'externalDefaultRealm.identityLabel must be declared'
+    if (ext.displayHome !== undefined && typeof ext.displayHome !== 'function') return 'externalDefaultRealm.displayHome must be a function when present'
     // Adopting a shared home needs the operations that check it first.
     if (!pkg.setup || !pkg.auth) return 'externalDefaultRealm needs the setup and auth operations'
   }

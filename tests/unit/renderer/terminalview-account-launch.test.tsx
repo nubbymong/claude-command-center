@@ -185,6 +185,7 @@ const { useLaunchAckStore, grantLaunchAcknowledgement, consumeLaunchAcknowledgem
 const { useAccountGateStore } = await import('../../../src/renderer/stores/accountGateStore')
 const { snapshot, provider, account } = await import('./accounts-snapshot-harness')
 const { forgetSpawnEnd } = await import('../../../src/renderer/utils/spawnEndNotice')
+const { useConfigStore } = await import('../../../src/renderer/stores/configStore')
 
 let container: HTMLDivElement
 let root: Root
@@ -281,6 +282,9 @@ describe("a later launch on this computer's own sign-in asks first", () => {
     expect(spawn).not.toHaveBeenCalled()
     expect(termLines()).toContain('Not started: the launch was not confirmed.')
     expect(exitedMarks()).toHaveLength(1)
+    // Walk fix W3: a declined launch started nothing, so the tab is never
+    // started and does not count as running.
+    expect(H.updates.some((u) => u.patch.neverStarted === true)).toBe(true)
   })
 
   it("accepted: the spawn carries THIS launch's acknowledgement for that account", async () => {
@@ -747,6 +751,56 @@ describe('main refuses a launch because its provider is off', () => {
     expect(termLines()).toContain(CODEX_OFF_TAB)
     expect(exitedMarks()).toHaveLength(1)
     expect(removeSession).not.toHaveBeenCalled()
+  })
+
+  it('a refused launch marks its tab as never started, so it does not count as running; a later start clears it', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].resolve(codexOff) })
+    await settle()
+    expect(H.updates.some((u) => u.patch.neverStarted === true)).toBe(true)
+    // A Restart once Codex is on starts a PTY: the flag goes.
+    await restartTo(codexSession({ providerAccountId: 'acc-work', neverStarted: true }), 'k2')
+    await act(async () => { settles[1].resolve(undefined) })
+    expect(H.updates.some((u) => 'neverStarted' in u.patch && u.patch.neverStarted === undefined)).toBe(true)
+  })
+
+  it('walk fix X3: a partner restart re-keys a Not started main tab; the remounted main view passes the Multi Spawn rule before it spawns (no second live copy)', async () => {
+    const cfg = (over: Record<string, unknown> = {}) => ({ id: 'cfg-1', label: 'Web App', workingDirectory: 'C:/proj', color: '', sessionType: 'local', provider: 'claude', ...over })
+    // The main tab as the partner restart hands it back: the live record,
+    // Not started flag and all, with a new createdAt (so a new key); its own
+    // spawn tracking was cleared when its launch started nothing.
+    const stale = claudeSession({ configId: 'cfg-1', neverStarted: true, ptyExited: true, createdAt: 2 })
+    const other = { ...claudeSession({ configId: 'cfg-1' }), id: 's-2' }
+    try {
+      // Its config runs elsewhere and is not a Multi Spawn config: nothing
+      // spawns, and the tab stays Not started, saying why.
+      useConfigStore.setState({ configs: [cfg()] as never })
+      mount(stale, 's-1-main-2')
+      H.sessionState.sessions = [stale, other]
+      await settle()
+      expect(spawn).not.toHaveBeenCalled()
+      expect(termLines()).toContain("Not started: Web App is already running. It isn't a Multi Spawn config, so it runs one at a time.")
+      expect(H.updates.some((u) => 'neverStarted' in u.patch && u.patch.neverStarted === undefined)).toBe(false)
+      // A Multi Spawn config: it starts, and counts as running again.
+      useConfigStore.setState({ configs: [cfg({ allowMultiSpawn: true })] as never })
+      H.spawned.delete('s-1')
+      mount(stale, 'b')
+      H.sessionState.sessions = [stale, other]
+      await settle()
+      expect(spawn).toHaveBeenCalledTimes(1)
+      expect(H.updates.some((u) => 'neverStarted' in u.patch && u.patch.neverStarted === undefined)).toBe(true)
+    } finally {
+      useConfigStore.setState({ configs: [] })
+    }
+  })
+
+  it('a launch main threw on (nothing started) is never started too', async () => {
+    mount(claudeSession())
+    await settle()
+    await act(async () => { settles[0].reject(refused('no account')) })
+    await settle()
+    expect(H.updates.some((u) => u.patch.neverStarted === true)).toBe(true)
   })
 
   it('a restored Codex session while Codex is off asks no sign-in question: it goes to main, and the tab says Codex is off', async () => {

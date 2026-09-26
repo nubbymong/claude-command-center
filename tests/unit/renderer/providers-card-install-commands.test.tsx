@@ -99,7 +99,11 @@ describe('Providers card: install and update commands (the retired Codex tab ins
   it('a CLI found too old, or unsupported, gets the update command instead', async () => {
     for (const compatibility of ['too-old', 'unsupported'] as const) {
       await render(codex({ version: '0.150.2', compatibility }))
-      expect(commands('update'), compatibility).toEqual(['npm install -g @openai/codex@latest'])
+      // Main's answer before it knows which install it found: every update.
+      expect(commands('update'), compatibility).toEqual([
+        'npm install -g @openai/codex@latest',
+        'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"',
+      ])
       expect(commands('install')).toEqual([])
       expect(byTest('provider-recipes-source-codex')!.textContent).toBe("Update Codex (from OpenAI's README), then Check again.")
       act(() => { root.unmount() })
@@ -149,6 +153,22 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     await render(codex({ discoveryState: 'missing', version: undefined }))
     expect(byTest('provider-recipe-note-codex-script-install-ps1')!.textContent).toBe(SCRIPT_NOTE)
     expect(byTest('provider-recipe-note-codex-npm-install')).toBeNull()
+  })
+
+  it('reads the commands again after each check: the update shown is the one for the install that check found', async () => {
+    await render(codex({ version: '0.142.4', compatibility: 'too-old', lastCheckedAt: 1 }))
+    expect(pa.installRecipes).toHaveBeenCalledTimes(1)
+    // A later check found OpenAI's standalone install: main offers its installer again, not npm.
+    pa.installRecipes.mockImplementationOnce(async () => codexInstallRecipes('win32', { executable: 'C:\\Users\\u\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe' }).map((r) => ({
+      id: r.id, providerId: r.providerId, purpose: r.purpose, publisher: r.publisher, sourceUrl: r.sourceUrl, displayCommand: r.displayCommand,
+      method: r.method, needsNetwork: r.needsNetwork, mayElevate: r.mayElevate, autoRunAllowed: r.autoRunAllowed, ...(r.note !== undefined ? { note: r.note } : {}),
+    })))
+    await act(async () => {
+      useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [claude(), codex({ version: '0.142.4', compatibility: 'too-old', lastCheckedAt: 2 })] }), loaded: true })
+    })
+    await act(async () => { await Promise.resolve() })
+    expect(pa.installRecipes).toHaveBeenCalledTimes(2)
+    expect(commands('update')).toEqual(['powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"'])
   })
 
   it('WP2 commit 6g: an unchecked CLI shows Check again but no commands; once main says missing, the install commands appear', async () => {

@@ -8,7 +8,7 @@
 // renderer (`runLine`) only for a recipe main allows to run. PURE: the
 // service below has no registry, runs nothing and reads no file.
 import { describe, it, expect } from 'vitest'
-import { codexInstallRecipes, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from '../../src/main/providers/codex'
+import { codexInstallRecipes, codexInstallKind, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from '../../src/main/providers/codex'
 import { AccountsService, ConsumerLeaseRegistry, SecretHandleStore, recipeRunLine } from '../../src/main/providers/core'
 import type { InstallRecipe, ProviderPackage } from '../../src/main/providers/core'
 import type { CapabilityPlatform } from '../../src/shared/providers'
@@ -73,6 +73,95 @@ describe('the Codex recipe registry', () => {
     }
     expect(codexInstallRecipes('win32').some((r) => r.displayCommand.startsWith('brew'))).toBe(false)
     expect(codexInstallRecipes('linux').some((r) => r.displayCommand.startsWith('powershell'))).toBe(false)
+  })
+})
+
+// --- Upgrade walk D1: the update updates the install discovery resolved -----
+
+describe('the update offered is the one for the install sessions run', () => {
+  const STANDALONE_WIN = 'C:\\Users\\u\\.codex\\packages\\standalone\\releases\\0.142.4\\bin\\codex.exe'
+  const updates = (p: CapabilityPlatform, executable?: string) =>
+    codexInstallRecipes(p, executable ? { executable } : {}).filter((r) => r.purpose === 'update').map((r) => r.id)
+
+  it('tells the kind of install from the canonical path alone', () => {
+    expect(codexInstallKind(STANDALONE_WIN)).toBe('standalone')
+    expect(codexInstallKind('C:\\Users\\u\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe')).toBe('standalone')
+    expect(codexInstallKind('/Users/u/.codex/packages/standalone/current/bin/codex')).toBe('standalone')
+    expect(codexInstallKind('C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd')).toBe('npm')
+    expect(codexInstallKind('/usr/local/lib/node_modules/@openai/codex/bin/codex.js')).toBe('npm')
+    expect(codexInstallKind('/opt/homebrew/Caskroom/codex/0.155.1/codex-aarch64-apple-darwin')).toBe('brew')
+    for (const other of ['C:\\Tools\\codex.exe', '/usr/bin/codex', '', undefined]) expect(codexInstallKind(other), String(other)).toBe('unknown')
+  })
+
+  it("walk fix W5: npm only in npm's own global layout; a Homebrew formula and another package manager's global are unknown", () => {
+    // npm: a POSIX prefix (system, a Node version manager's, Homebrew node's), and Windows' default prefix.
+    for (const npm of [
+      '/usr/local/lib/node_modules/@openai/codex/bin/codex.js',
+      '/home/u/.nvm/versions/node/v22.1.0/lib/node_modules/@openai/codex/bin/codex.js',
+      '/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js',
+      'C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js',
+      'C:\\Users\\u\\AppData\\Roaming\\npm\\codex.ps1',
+    ]) expect(codexInstallKind(npm), npm).toBe('npm')
+    // Not npm's: bun, pnpm (its global folder, its store, its Windows shim), Yarn.
+    for (const other of [
+      '/Users/u/.bun/install/global/node_modules/@openai/codex/bin/codex.js',
+      'C:\\Users\\u\\.bun\\install\\global\\node_modules\\@openai\\codex\\bin\\codex.js',
+      '/home/u/.local/share/pnpm/global/5/node_modules/@openai/codex/bin/codex.js',
+      '/home/u/.local/share/pnpm/global/5/.pnpm/@openai+codex@0.155.1/node_modules/@openai/codex/bin/codex.js',
+      'C:\\Users\\u\\AppData\\Local\\pnpm\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js',
+      'C:\\Users\\u\\AppData\\Local\\pnpm\\codex.cmd',
+      '/home/u/.config/yarn/global/node_modules/@openai/codex/bin/codex.js',
+    ]) expect(codexInstallKind(other), other).toBe('unknown')
+    // A Homebrew formula, on a Mac or Linuxbrew: unknown, so every update is
+    // shown rather than the cask upgrade, which fails on a formula.
+    expect(codexInstallKind('/opt/homebrew/Cellar/codex/0.155.1/bin/codex')).toBe('unknown')
+    expect(codexInstallKind('/home/linuxbrew/.linuxbrew/Cellar/codex/0.155.1/bin/codex')).toBe('unknown')
+    expect(updates('darwin', '/opt/homebrew/Cellar/codex/0.155.1/bin/codex')).toEqual(['codex-npm-update', 'codex-brew-update', 'codex-script-update-sh'])
+    expect(updates('linux', '/home/linuxbrew/.linuxbrew/Cellar/codex/0.155.1/bin/codex')).toEqual(['codex-npm-update', 'codex-script-update-sh'])
+    expect(updates('linux', '/home/u/.config/yarn/global/node_modules/@openai/codex/bin/codex.js')).toEqual(['codex-npm-update', 'codex-script-update-sh'])
+    // The cask still gets the cask upgrade alone.
+    expect(updates('darwin', '/opt/homebrew/Caskroom/codex/0.155.1/codex-aarch64-apple-darwin')).toEqual(['codex-brew-update'])
+  })
+
+  it('a standalone install gets its own installer run again, never npm; npm and Homebrew get theirs', () => {
+    expect(updates('win32', STANDALONE_WIN)).toEqual(['codex-script-update-ps1'])
+    expect(updates('darwin', '/Users/u/.codex/packages/standalone/current/bin/codex')).toEqual(['codex-script-update-sh'])
+    expect(updates('win32', 'C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd')).toEqual(['codex-npm-update'])
+    expect(updates('darwin', '/opt/homebrew/Caskroom/codex/0.155.1/codex')).toEqual(['codex-brew-update'])
+    // Not known, or not resolved yet: every update, each saying which install it updates.
+    expect(updates('win32', 'C:\\Tools\\codex.exe')).toEqual(['codex-npm-update', 'codex-script-update-ps1'])
+    expect(updates('darwin')).toEqual(['codex-npm-update', 'codex-brew-update', 'codex-script-update-sh'])
+    // The installs never change with it.
+    for (const exe of [STANDALONE_WIN, undefined]) {
+      expect(codexInstallRecipes('win32', exe ? { executable: exe } : {}).filter((r) => r.purpose === 'install').map((r) => r.id)).toEqual(['codex-npm-install', 'codex-script-install-ps1'])
+    }
+  })
+
+  it('walk fix X2: listed for an install it cannot tell, every update says which install it updates', () => {
+    for (const p of ['win32', 'darwin', 'linux'] as const) {
+      const shown = codexInstallRecipes(p).filter((r) => r.purpose === 'update')
+      expect(shown.length, p).toBeGreaterThan(1)
+      for (const r of shown) expect(r.note, `${p} ${r.id}`).toMatch(/^Updates (an npm installation|a Homebrew cask \(not a formula\)|a Codex this script installed)[.:]/)
+    }
+    expect(codexInstallRecipes('darwin').find((r) => r.id === 'codex-brew-update')!.note).toBe('Updates a Homebrew cask (not a formula).')
+  })
+
+  it('the standalone update is the installer, shown and copied, never run by the app', () => {
+    const r = codexInstallRecipes('win32', { executable: STANDALONE_WIN }).find((x) => x.purpose === 'update')!
+    expect(r).toMatchObject({ method: 'script', command: null, autoRunAllowed: false })
+    expect(r.displayCommand).toBe(codexInstallRecipes('win32').find((x) => x.id === 'codex-script-install-ps1')!.displayCommand)
+    expect(r.note).toMatch(/Updates a Codex this script installed/)
+    expect(recipeRunLine(r, 'win32')).toBeUndefined()
+    // Walk fix W8: the same for the sh installer, on both platforms it runs on.
+    for (const p of ['darwin', 'linux'] as const) {
+      const sh = codexInstallRecipes(p, { executable: '/Users/u/.codex/packages/standalone/current/bin/codex' }).find((x) => x.purpose === 'update')!
+      expect(sh.id).toBe('codex-script-update-sh')
+      expect(sh).toMatchObject({ method: 'script', command: null, autoRunAllowed: false })
+      expect(sh.displayCommand).toBe(codexInstallRecipes(p).find((x) => x.id === 'codex-script-install-sh')!.displayCommand)
+      expect(sh.displayCommand).toBe('curl -fsSL https://chatgpt.com/codex/install.sh | sh')
+      expect(sh.note).toMatch(/Updates a Codex this script installed/)
+      expect(recipeRunLine(sh, p)).toBeUndefined()
+    }
   })
 })
 
@@ -165,6 +254,27 @@ describe('the accounts service hands the renderer a line only for a recipe main 
     const win = serviceOn('win32').installRecipes('codex')
     expect(win.find((v) => v.id === 'codex-npm-install')!.runLine).toBe("npm.cmd 'install' '-g' '@openai/codex'")
     expect(win.find((v) => v.id === 'codex-script-install-ps1')!.runLine).toBeUndefined()
+  })
+
+  it('the update the service hands over is the one for the install its last check resolved (the path stays in main)', async () => {
+    const standalone = 'C:\\Users\\u\\.codex\\packages\\standalone\\current\\bin\\codex.exe'
+    const pkg = {
+      id: 'codex',
+      setup: {
+        discover: async () => ({ state: 'found', executable: standalone, version: '0.142.4', compatibility: 'too-old', checkedAt: 1 }),
+        installRecipes: codexInstallRecipes,
+      },
+    } as unknown as ProviderPackage
+    const svc = new AccountsService({
+      store: () => null, leases: new ConsumerLeaseRegistry(), secrets: new SecretHandleStore({ now: () => 0 }),
+      packages: () => [pkg], preference: () => 'on', platform: 'win32', randomHex: () => '0'.repeat(32),
+    })
+    // Before any check: every update.
+    expect(svc.installRecipes('codex').filter((v) => v.purpose === 'update').map((v) => v.id)).toEqual(['codex-npm-update', 'codex-script-update-ps1'])
+    expect((await svc.discover('codex')).ok).toBe(true)
+    const after = svc.installRecipes('codex')
+    expect(after.filter((v) => v.purpose === 'update').map((v) => v.id)).toEqual(['codex-script-update-ps1'])
+    expect(JSON.stringify(after)).not.toContain('packages')
   })
 
   it('a recipe that says it may run but carries no argv gets no line', () => {

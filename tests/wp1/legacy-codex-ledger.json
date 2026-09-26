@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "e6858aed0ada115dacf0d5478087a049921f3b0286986ac20b7e9e5cb22ea2a2",
-  "manifestHead": "21fff8bcb7b4155fbb550e986bab743080549191",
+  "manifestPathDigest": "c875b5ac53a9161b05dd59a09789cdd8642a809ca2d09cdaba1046db01c04abf",
+  "manifestHead": "c3569b3d05c4be38bc6b091dc659718c80137991",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1365,6 +1365,17 @@
       "disposition": "retain",
       "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads config.provider for a label kind through the compatibility shadow",
       "note": "session surface (runtime work package)"
+    },
+    {
+      "path": "src/renderer/components/ResumeSessionsPrompt.tsx",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "replace",
+      "evidence": "WP2 upgrade walk: the resume prompt restores every saved session as before, names whose conversations stay resumable by provider (Claude, Codex, or both) instead of Claude alone, and wears the launch surfaces' own tag on a session whose provider cannot launch now, which reopens as Not started (WP1.2, WP1.3); tests/unit/renderer/resume-sessions-prompt.test.tsx, tests/unit/renderer/app-lifecycle-wiring.test.ts",
+      "note": "session surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
       "path": "src/renderer/components/SessionDialog.tsx",
@@ -3934,6 +3945,17 @@
       "category": "TEST",
       "disposition": "replace",
       "evidence": "WP1.58: the retargeted dialog's kill-session hint is now the exact, quoted tmux target '=ccc-<safeSid>' (WP2 final fixes), and one case was added: a session id with characters outside [A-Za-z0-9_-] is named as main names the session; the WP2 T24 fix added two cases (an End that reports Claude may remain in a container raises the End notice; Remove calls End before it drops the entry and saves the session state) and changed no existing assertion, 40 baseline cases to 43; its Codex mention (codexEnabled in the settings fixture) is unchanged; adapted in place: tests/unit/renderer/remote-resumable-section.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/resume-sessions-prompt.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP1.58: adapted in place for the WP2 upgrade walk: cases added for the note naming each provider whose conversations stay resumable, and for the tag on a saved session whose provider is off or not set up (it reopens as Not started), live as the switch flips (WP1.2, WP1.3); no existing assertion changed; tests/unit/renderer/resume-sessions-prompt.test.tsx",
       "note": ""
     },
     {

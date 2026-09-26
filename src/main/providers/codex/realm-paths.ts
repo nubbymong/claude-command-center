@@ -15,6 +15,7 @@
 import path from 'node:path'
 import { isOpaqueId, realmShapeProblem, MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF } from '../../../shared/providers'
 import type { AuthRealm } from '../../../shared/providers'
+import { stripSpoofableText } from '../../../shared/safe-text'
 
 export const CODEX_REALMS_DIRNAME = 'codex-realms'
 
@@ -76,6 +77,40 @@ export function codexExternalDefaultHome(env: Readonly<Record<string, string | u
     if (typeof v === 'string' && v !== '') return isFullyQualifiedPath(v, pathApi) ? pathApi.normalize(v) : null
   }
   return isFullyQualifiedPath(homeDir, pathApi) ? pathApi.join(homeDir, '.codex') : null
+}
+
+/** The external default home as the user may be shown it, never used to
+ *  reach it: `~/.codex` when it is the default (no CODEX_HOME at all), else
+ *  the path with the user's home shortened to `~` and written with `/`
+ *  throughout, as `~/.codex` is (the form the app shows every other path
+ *  in: an absolute path under the home carries the OS username), and
+ *  anything that could spoof text stripped. Null when there is no such home:
+ *  no usable home folder, or a CODEX_HOME that is set but unusable
+ *  (codexExternalDefaultHome); the surfaces then name no folder.
+ *
+ *  The home is matched only where the match is certain, and a path spelled
+ *  another way is shown in full rather than shortened wrongly: on Windows
+ *  ASCII letters fold and either separator counts, and every other character
+ *  must be the same (full Unicode folding would change a string's length, so
+ *  a dotted capital I cut the wrong prefix, and would match the Kelvin sign
+ *  to `K`, which NTFS keeps apart). Both keep the length, so the prefix is cut
+ *  from the ORIGINAL string at the same place. A `\\?\` form or an 8.3 short
+ *  name of the home is not matched: the user's own path, shown as it is. */
+export function codexHomeDisplay(home: string | null, homeDir: string, pathApi: typeof path = path): string | null {
+  if (!home) return null
+  const win = isWin(pathApi)
+  // On POSIX a backslash is part of a name: only `/` separates there.
+  const trailing = win ? /[\\/]+$/ : /\/+$/
+  const same = (s: string): string => (win ? s.replace(/\//g, '\\').replace(/[A-Z]/g, (c) => c.toLowerCase()) : s)
+  const bare = home.replace(trailing, '') || home
+  if (homeDir !== '' && same(bare) === same(pathApi.join(homeDir, '.codex'))) return '~/.codex'
+  // The home without a trailing separator; a root (`/`, `C:\`) shortens nothing.
+  const base = homeDir.replace(trailing, '')
+  const under = base !== '' && !(win && /^[A-Za-z]:$/.test(base))
+    && (same(bare) === same(base) || same(bare).startsWith(same(base) + pathApi.sep))
+  // Under the home, one separator: `~\codex-alt` would mix them.
+  const rest = bare.slice(base.length)
+  return stripSpoofableText(under ? '~' + (win ? rest.replace(/[\\/]+/g, '/') : rest) : bare, 300)
 }
 
 /** The external home setting, for main's overlap check (slice 3d): none (no

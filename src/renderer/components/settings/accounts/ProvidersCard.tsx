@@ -87,17 +87,18 @@ function RecipeLine({ recipe }: { recipe: InstallRecipeView }) {
 }
 
 /** The install or update commands main knows for the provider on this
- *  computer, with where they come from. Asked for once, when the row first
- *  needs them. A provider with none for the purpose (Claude Code has none
- *  here), or whose commands could not be read, shows nothing: its status
- *  line and Check again still say what is wrong. */
+ *  computer, with where they come from. Asked for when the row first needs
+ *  them, and again after each check: the update commands are the ones for
+ *  the install that check found. A provider with none for the purpose
+ *  (Claude Code has none here), or whose commands could not be read, shows
+ *  nothing: its status line and Check again still say what is wrong. */
 function InstallCommands({ p, purpose }: { p: ProviderInstallationView; purpose: 'install' | 'update' }) {
   const [recipes, setRecipes] = useState<InstallRecipeView[] | null | undefined>(undefined)
   useEffect(() => {
     let live = true
     void providerAccountActions.installRecipes(p.providerId).then((r) => { if (live) setRecipes(r) })
     return () => { live = false }
-  }, [p.providerId])
+  }, [p.providerId, p.lastCheckedAt])
   const mine = (recipes ?? []).filter((r) => r.purpose === purpose)
   if (mine.length === 0) return null
   return (

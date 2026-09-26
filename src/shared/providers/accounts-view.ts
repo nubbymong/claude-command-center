@@ -3,10 +3,15 @@
 // renderer-safe BY CONSTRUCTION: opaque ids, states, labels and counts. No
 // token, key, file path, pathRef, executable, environment value or provider
 // subject ever appears in these shapes; the main process resolves all of
-// those from the opaque ids and keeps them. The one exception is sign-in
-// output (SignInOutputEvent): the provider CLI's own display text, redacted
-// of secrets, shown to the user who started it -- it carries the login URL
-// or device code they need and may name the account's folder.
+// those from the opaque ids and keeps them. Two exceptions, both display
+// text only, never a way to reach anything: sign-in output
+// (SignInOutputEvent), the provider CLI's own display text, redacted of
+// secrets, shown to the user who started it -- it carries the login URL or
+// device code they need and may name the account's folder; and
+// ExternalDefaultView.home, the folder of the provider's own shared sign-in
+// as the user may be shown it (`~/.codex`, or the CODEX_HOME folder with the
+// user's home shortened to ~ and spoofable text stripped). No other part of
+// that path, and no environment value, crosses with it.
 import type { ProviderId } from '../types'
 import type {
   AccountLifecycle, AuthMethod, KnownAuthState, OperationalState, IdentityAssurance, RealmLifecycle, DiscoveryState, Compatibility,
@@ -151,6 +156,13 @@ export interface PendingSetupView {
 export interface ExternalDefaultView {
   providerId: ProviderId
   marker?: { outcome: ProviderMigrationMarker['outcome']; reason?: ProviderMigrationSkipReason; at: number }
+  /** The folder that sign-in lives in, as the user may be shown it: the
+   *  user's home shortened to ~ (`~/.codex` when no CODEX_HOME is set, else
+   *  the folder CODEX_HOME named when the app started). A display string
+   *  only, never a way to reach it. Absent when main names none (a
+   *  CODEX_HOME set but unusable, or no home folder): the surface then names
+   *  no folder rather than guess one. */
+  home?: string
 }
 
 export type RegistryModeView =

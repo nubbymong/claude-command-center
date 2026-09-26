@@ -105,6 +105,9 @@ export interface HarnessOpts {
   /** Awaited at the start of every Codex CLI discovery (WP2 6g): a test
    *  holds a discovery in flight with it. */
   beforeDiscovery?: () => Promise<void> | void
+  /** The environment the app inherited, as the Codex package reads it
+   *  (CODEX_HOME). Absent: none set. */
+  hostEnv?: Record<string, string>
 }
 
 export const claudeSnapshot = (legacyId: string, over: Partial<LegacyAccountSnapshot> = {}): LegacyAccountSnapshot => ({
@@ -172,7 +175,7 @@ export async function harness(o: HarnessOpts = {}) {
     },
     auth: { takeSecret: (h) => secrets.take(h) },
     realmFs: folders.fs,
-    hostHome: { env: {}, homeDir: USER },
+    hostHome: { env: o.hostEnv ?? {}, homeDir: USER },
     discoveryDeps: async (): Promise<CodexDiscoveryDeps> => {
       discoveries++
       await o.beforeDiscovery?.()

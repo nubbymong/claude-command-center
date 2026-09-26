@@ -9,7 +9,7 @@ import type { IdentityColorKey } from '../../../../shared/identity-colors'
 import { resolveIdentityColor } from '../../../../shared/identity-colors'
 import {
   useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, canOfferMakeReviewer,
-  showsReviewerBadge, accountFailureText, accountState, signInMethodLabel, externalHomeLabel, canOfferSignInAgain,
+  showsReviewerBadge, accountFailureText, accountState, signInMethodLabel, externalHomeLabel, externalHomeFolder, canOfferSignInAgain,
   canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption, canOfferCheckSignIn, signInCheckText, externalSignInHint,
 } from '../../../stores/providerAccountsStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
@@ -31,7 +31,8 @@ function ExternalAckDialog({ kind, provider, onConfirm, onCancel }: {
   onCancel: () => void
 }) {
   useDialogEscape(onCancel)
-  const home = externalHomeLabel(provider)
+  const folder = useProviderAccountsStore((s) => externalHomeFolder(s.snapshot, provider.providerId))
+  const home = externalHomeLabel(provider, folder)
   const title = kind === 'logout' ? `Sign out of ${home}?` : `Archive ${home}?`
   return (
     <AccountsModal labelledBy="external-ack-title" role="alertdialog" testId="external-ack-dialog" overlayTestId="external-ack-overlay">
@@ -289,7 +290,7 @@ function ExternalAdoptionBlock({ providerId, provider }: { providerId: ProviderI
   return (
     <div className="rounded-[10px] border px-3.5 py-2.5 flex items-center gap-3" style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-panel)' }} data-testid={`external-adoption-${providerId}`}>
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{externalHomeLabel(provider)}</div>
+        <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{externalHomeLabel(provider, externalHomeFolder(snapshot, providerId))}</div>
         {view.kind === 'note' || view.kind === 'confirm' ? (
           <MutedLine testId={`external-adoption-text-${providerId}`}>{view.text}</MutedLine>
         ) : (

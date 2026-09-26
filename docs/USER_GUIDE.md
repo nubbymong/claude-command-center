@@ -211,8 +211,8 @@ Codex section of Settings → Accounts, or on the Set up Codex page):
   that section shows **Yes, I use Codex**, which only records your answer).
   (It does read the conversation files Codex writes there for Tokenomics; see
   [PRIVACY.md](../PRIVACY.md).) Choosing it asks Codex whether that folder is
-  signed in, and only if it is, lists it as *This computer's Codex
-  (~/.codex)*. If Codex could not answer, the button becomes **Check again**;
+  signed in, and only if it is, lists it as *This computer's Codex*, with
+  the folder it checked, such as *(~/.codex)*. If Codex could not answer, the button becomes **Check again**;
   if the folder is signed out, sign in there first (see below) and choose it
   again.
 - Because CCC did not create it, the row reads **Confirm each launch** and
@@ -265,8 +265,12 @@ to copy:
 
 OpenAI's script installers (`curl -fsSL https://chatgpt.com/codex/install.sh | sh`
 on macOS and Linux, and a PowerShell one on Windows) are shown for you to read
-and run yourself; CCC never runs them. After installing or updating, press
-**Check again**.
+and run yourself; CCC never runs them. When CCC can tell how the Codex it found
+(the one your sessions run) was installed, it shows the update for that way: an
+npm install gets the npm update, a Homebrew cask the Homebrew upgrade, and one
+that OpenAI's script installer put there gets that installer again. When it
+cannot tell (another package manager, or a Homebrew formula rather than the
+cask), it shows every update, each saying which install it updates. After installing or updating, press **Check again**.
 
 During setup, the **Set up Codex** page can also run the npm or Homebrew
 command for you: **Run in a terminal** asks *Run this command?* and then types

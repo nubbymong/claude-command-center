@@ -8,7 +8,7 @@ import React from 'react'
 import type { AccountsSnapshot, ProviderId, ReviewReadinessView } from '../../../shared/providers'
 import { providerOffMessage, providerNotSetUpMessage } from '../../../shared/providers'
 import { useSettingsStore, DEFAULT_CONDUCTOR_TOOLS } from '../../stores/settingsStore'
-import { useProviderAccountsStore, providerView, reviewerLine, reviewerNotice, accountDisplayName, savedOff, providerUnanswered, providerNotSetUp } from '../../stores/providerAccountsStore'
+import { useProviderAccountsStore, providerView, reviewerLine, reviewerNotice, accountDisplayName, savedOff, providerUnanswered, providerNotSetUp, externalHomeWhere } from '../../stores/providerAccountsStore'
 import ToggleSwitch from '../github/config/ToggleSwitch'
 import { ProviderMark } from '../sidebar/Badges'
 import { DialogCallout } from '../ui/Dialog'
@@ -47,10 +47,13 @@ export interface ReviewToolContext {
  *  review would use and that account's own state. */
 function noReviewMessage(snapshot: AccountsSnapshot, id: ProviderId, review: ReviewReadinessView): string {
   const isCodex = id === 'codex'
+  // This computer's own sign-in, by the folder main names (~/.codex, or the
+  // folder CODEX_HOME named), else by no folder.
+  const home = externalHomeWhere(snapshot, { providerId: 'codex', displayName: 'Codex' })
   if (snapshot.registry.mode !== 'ready') return 'The account list is not available right now.'
   const account = review.accountId ? snapshot.accounts.find((a) => a.id === review.accountId) : undefined
   if (!account) {
-    return isCodex ? 'No Codex account can run reviews. Add a Codex account (a sign-in from ~/.codex cannot review).' : 'No Claude account can run reviews right now.'
+    return isCodex ? `No Codex account can run reviews. Add a Codex account (a sign-in from ${home} cannot review).` : 'No Claude account can run reviews right now.'
   }
   if (account.external || account.unverified) {
     // Only point at making another account the reviewer when one exists:
@@ -59,10 +62,10 @@ function noReviewMessage(snapshot: AccountsSnapshot, id: ProviderId, review: Rev
     const another = snapshot.accounts.some((a) => a.id !== account.id && a.providerId === id && a.lifecycle === 'active'
       && a.operationalState !== 'blocked' && !a.unverified && !a.external)
     if (!another) {
-      return isCodex ? 'No Codex account can run reviews. Add a Codex account (a sign-in from ~/.codex cannot review).' : 'No Claude account can run reviews right now.'
+      return isCodex ? `No Codex account can run reviews. Add a Codex account (a sign-in from ${home} cannot review).` : 'No Claude account can run reviews right now.'
     }
     return isCodex
-      ? 'Make a Codex account the reviewer in Accounts (a sign-in from ~/.codex cannot review).'
+      ? `Make a Codex account the reviewer in Accounts (a sign-in from ${home} cannot review).`
       : 'Make another Claude account the reviewer in Accounts (an unverified sign-in cannot review).'
   }
   // Inactive, archived, blocked, signed out, signing in, or refused here.
