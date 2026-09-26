@@ -46,8 +46,8 @@ its own sign-in, in its own folder), SIGNED-OUT (real CLI, a signed-out
 `CODEX_HOME`), NOT-INSTALLED, or MOCKED (seeded state or the fake CLI). Its
 screenshots are local and gitignored: `.ccc-canvas/screens/p2-upgrade-95385267/`,
 approved by the owner 2026-09-26, and the managed sign-in set
-`.ccc-canvas/screens/p2-managed-95385267/` (16 images), awaiting owner
-approval; none are in the repo.
+`.ccc-canvas/screens/p2-managed-95385267/` (16 images), also approved
+2026-09-26; none are in the repo.
 
 Packages: **P2** finishes PR #625; **P3** is sessions and usage; **P4** is
 agent surfaces and qualification.
@@ -69,7 +69,7 @@ apart from the per-install random value, and identical results.
 | Group | Open item | Tracked in |
 |---|---|---|
 | A | A managed Codex account added through the supported sign-in flow on WINDOWS_1, and Hello Codex seen on it: DONE 2026-09-26 (the owner's ChatGPT sign-in at `95385267`, AUTHENTICATED managed). By design Hello Codex is not shown after adopting this computer's sign-in (`src/renderer/onboarding/hello-codex.ts`, `docs/wp2/hello-codex-spec.md`) | Rows 4, 9, 13, 23 |
-| A | The owner's approval of the managed sign-in screenshots (`.ccc-canvas/screens/p2-managed-95385267/`, 16 images, local) | This section |
+| A | The owner's approval of the managed sign-in screenshots (`.ccc-canvas/screens/p2-managed-95385267/`, 16 images, local): DONE, approved 2026-09-26 | This section |
 | A | The owner's acceptance of the evidence gallery: DONE, approved 2026-09-26 | This section |
 | B | macOS and Linux packaged runs | Row 66 |
 | B | A signed Windows packaged run (the walk used an unsigned candidate) | Row 66 |
