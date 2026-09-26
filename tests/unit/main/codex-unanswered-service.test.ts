@@ -247,6 +247,108 @@ describe('the launch rule, asked again under the lock (A2)', () => {
   })
 })
 
+describe('a sign-in reads the answer again before each CLI it starts (ADR-009 delta L1)', () => {
+  // Past the lock's check, a sign-in waits on discovery and on the status
+  // step before it spawns the login. An answer lost in that window (the
+  // saved setting edited outside the app, a resources-folder swap) must stop
+  // it there: the same refusal as at the lock, no login run, nothing left.
+  const signInLosing = async (moment: 'lock' | 'discovery' | 'status', then: ProviderPreference | 'unreadable') => {
+    let pref: ProviderPreference | 'unreadable' = 'on'
+    let armed = false
+    const lose = () => { if (armed) pref = then }
+    const h = await harness({
+      preference: { codex: () => { if (pref === 'unreadable') throw new Error('unreadable'); return pref } },
+      beforeDiscovery: () => { if (moment === 'discovery') lose() },
+      script: { 'login status': () => { if (moment === 'status') lose(); return { exitCode: 1, stderr: 'Not logged in\n' } } },
+    })
+    const begun = await h.service.beginSetup({ providerId: 'codex', method: 'browser' })
+    if (!begun.ok) throw new Error(begun.code)
+    // The sign-in looks for the CLI again (the lost-answer window) when the
+    // last check did not find it: a Check again while it is missing, then
+    // back in place for the sign-in.
+    if (moment === 'discovery' || moment === 'lock') {
+      h.state.cli = false
+      await h.service.discover('codex')
+      h.state.cli = true
+    }
+    // Lost the moment the lock hands over: right after its check, as the
+    // sign-in's lease is taken, before anything is awaited.
+    if (moment === 'lock') {
+      const add = h.leases.add.bind(h.leases)
+      h.leases.add = ((...args: Parameters<typeof add>) => { const r = add(...args); lose(); return r }) as typeof h.leases.add
+    }
+    const discoveries = h.discoveries()
+    const baseEnvReads = h.baseEnvReads()
+    const before = JSON.stringify(h.doc().journals)
+    armed = true
+    const r = await h.service.signIn({ accountId: begun.accountId, method: 'browser' }, 1)
+    return { h, r, accountId: begun.accountId, before, discoveries, baseEnvReads }
+  }
+
+  for (const [then, code] of [['undecided', 'provider-not-set-up'], ['unreadable', 'provider-state-unknown'], ['off', 'provider-disabled']] as const) {
+    it(`lost during the status step (${then}): refused as ${code}, the login never runs, and no lease, run or record is left`, async () => {
+      const { h, r, accountId, before } = await signInLosing('status', then)
+      expect(r).toMatchObject({ ok: false, code })
+      expect(h.args().filter((a) => a === 'login')).toEqual([])
+      expect(h.leases.count(accountId)).toBe(0)
+      expect(h.service.snapshot().pendingSetups.find((s) => s.accountId === accountId)?.signingIn).toBe(false)
+      expect(JSON.stringify(h.doc().journals)).toBe(before)
+    })
+  }
+
+  it('lost as the lock hands over: refused before the CLI is even looked for, no login, no lease', async () => {
+    const { h, r, accountId, discoveries } = await signInLosing('lock', 'undecided')
+    expect(r).toMatchObject({ ok: false, code: 'provider-not-set-up' })
+    expect(h.discoveries()).toBe(discoveries)
+    expect(h.args().filter((a) => a === 'login' || a === 'login status')).toEqual([])
+    expect(h.leases.count(accountId)).toBe(0)
+  })
+
+  it('lost while it waits on discovery: refused before the provider prepares anything (no login-shell PATH read) and before any CLI of the sign-in runs', async () => {
+    const { h, r, accountId, baseEnvReads } = await signInLosing('discovery', 'undecided')
+    expect(r).toMatchObject({ ok: false, code: 'provider-not-set-up' })
+    // prepare() never ran: on macOS and Linux it starts the login shell to read PATH.
+    expect(h.baseEnvReads()).toBe(baseEnvReads)
+    expect(h.args().filter((a) => a === 'login' || a === 'login status')).toEqual([])
+    expect(h.leases.count(accountId)).toBe(0)
+  })
+
+  it('signing an existing account in again: lost during the status step, refused; no login, nothing recorded, the lease released', async () => {
+    let pref: ProviderPreference = 'on'
+    let armed = false
+    let signedIn: Map<string, string> | null = null
+    const h = await harness({
+      preference: { codex: () => pref },
+      script: {
+        // The harness's own status answer, with the answer lost as it runs.
+        'login status': (r) => {
+          if (armed) pref = 'undecided'
+          return signedIn?.get(r.home.toLowerCase()) ? { exitCode: 0, stderr: 'Logged in using ChatGPT\n' } : { exitCode: 1, stderr: 'Not logged in\n' }
+        },
+      },
+    })
+    signedIn = h.signedIn
+    const a = await addCodexAccount(h)
+    signedIn.clear()
+    expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    const logins = h.args().filter((x) => x === 'login').length
+    const record = JSON.stringify(h.doc().accounts.find((x) => x.id === a))
+    armed = true
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'provider-not-set-up' })
+    expect(h.args().filter((x) => x === 'login').length).toBe(logins)
+    expect(JSON.stringify(h.doc().accounts.find((x) => x.id === a))).toBe(record)
+    expect(h.leases.count(a)).toBe(0)
+  })
+
+  it('kept throughout: the sign-in runs as before', async () => {
+    const h = await harness()
+    const begun = await h.service.beginSetup({ providerId: 'codex', method: 'browser' })
+    if (!begun.ok) throw new Error(begun.code)
+    expect(await h.service.signIn({ accountId: begun.accountId, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.args().filter((a) => a === 'login')).toEqual(['login'])
+  })
+})
+
 describe('Device-code sign-in stays off in the shipped wiring (U3; WP1.41)', () => {
   it('the wired Codex package declares it experimental, so without the owner\'s flag it is not offered and nothing can start it', async () => {
     // The harness wires the registry's realms exactly as the composition root

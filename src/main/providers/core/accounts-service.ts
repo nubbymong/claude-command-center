@@ -44,7 +44,7 @@ import type {
   SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
 } from '../../../shared/providers'
-import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, InstallRecipe, ExternalDefaultRealmSpec } from './package'
+import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
 import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './consumer-leases'
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
@@ -753,6 +753,35 @@ export class AccountsService {
     this.deps.secrets.deposit(handle, senderId, secret)
   }
 
+  /** A sign-in's login, with the provider's CLI rule (cliRefusal) read
+   *  again after every wait and immediately before each CLI the sign-in
+   *  starts up to the login itself: discovery, the provider's status check,
+   *  and the login (AuthLoginInput.mayStart). The lock's check only held when
+   *  it was made; an answer lost since (the saved setting edited outside the
+   *  app, a resources-folder swap) starts nothing more, and the sign-in is
+   *  refused with that answer's own refusal. The caller releases its lease
+   *  and record as on any refusal. */
+  private async loginUnderCliRule(
+    p: ProviderPackage,
+    realm: RealmRef,
+    method: SignInMethod,
+    input: AuthLoginInput,
+  ): Promise<{ refused: AccountsFailure } | { result: AuthOperationResult }> {
+    let lost = this.cliRefusal(p.id)
+    if (lost) return { refused: lost }
+    await this.ensureDiscovered(p)
+    lost = this.cliRefusal(p.id)
+    if (lost) return { refused: lost }
+    const result = await p.auth!.login(realm, method, {
+      ...input,
+      mayStart: () => {
+        lost = this.cliRefusal(p.id)
+        return lost === null
+      },
+    })
+    return lost ? { refused: lost } : { result }
+  }
+
   /** Run the provider's own sign-in in a pending setup's realm. */
   async signIn(
     input: { accountId: string; method: SignInMethod; secretHandle?: string },
@@ -808,12 +837,13 @@ export class AccountsService {
         lease = leased.lease
         if (run.controller.signal.aborted) result = { ok: false, code: 'cancelled' }
         else {
-          await this.ensureDiscovered(p)
-          result = await p.auth!.login({ authRealmId: j.realmId }, input.method, {
+          const ran = await this.loginUnderCliRule(p, { authRealmId: j.realmId }, input.method, {
             ...(handle !== undefined ? { secretHandle: handle } : {}),
             onOutput: (text) => { try { onOutput?.(text) } catch { /* display only */ } },
             signal: run.controller.signal,
           })
+          if ('refused' in ran) refusal = ran.refused
+          else result = ran.result
         }
       }
     } catch {
@@ -900,12 +930,13 @@ export class AccountsService {
         lease = leased.added.lease
         if (run.controller.signal.aborted) result = { ok: false, code: 'cancelled' }
         else {
-          await this.ensureDiscovered(p)
-          result = await p.auth!.login({ authRealmId: a.authRealmId }, input.method, {
+          const ran = await this.loginUnderCliRule(p, { authRealmId: a.authRealmId }, input.method, {
             ...(handle !== undefined ? { secretHandle: handle } : {}),
             onOutput: (text) => { try { onOutput?.(text) } catch { /* display only */ } },
             signal: run.controller.signal,
           })
+          if ('refused' in ran) refusal = ran.refused
+          else result = ran.result
           // Signed in, also after a "failure" (a cancelled login may have
           // finished anyway): recorded from what the login itself observed,
           // while this lease still holds the account, so nothing launches on

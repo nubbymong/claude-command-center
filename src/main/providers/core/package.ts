@@ -124,6 +124,13 @@ export interface AuthLoginInput {
   onOutput?: (text: string) => void
   /** Cancels this sign-in, and nothing else. */
   signal?: AbortSignal
+  /** Asked immediately before each CLI the sign-in starts up to and
+   *  including the login itself (the status check first, then the login):
+   *  false starts nothing more, and the sign-in ends 'not-started'. The
+   *  caller's rule for whether the provider may run a CLI at all, read again
+   *  after every wait. Once the login has run, its result is confirmed as
+   *  before: stopping then would lose what it left in the realm. */
+  mayStart?: () => boolean
 }
 
 /** A status check's options. */

@@ -398,10 +398,15 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         const show = (t: string) => { try { input?.onOutput?.(t) } catch { /* the display never breaks the sign-in */ } }
         const secrets = key !== null ? [key] : []
         const display = { stdout: createCodexOutputRedactor(show, secrets), stderr: createCodexOutputRedactor(show, secrets) }
+        // The caller's rule, asked again right before each CLI this sign-in
+        // starts (AuthLoginInput.mayStart): a no after any wait starts nothing.
+        const mayStart = () => { try { return input?.mayStart ? input.mayStart() === true : true } catch { return false } }
         try {
+          if (!mayStart()) return refuse('not-started')
           const before = await readStatus(r)
           if (before.state === 'signed-in') return { ...refuse('already-signed-in'), state: 'signed-in', credential: credentialOf(before.via) }
           if (before.state !== 'signed-out') return refuse(before.code, before.message)
+          if (!mayStart()) return refuse('not-started')
           const out = await run(r, spec.op, {
             timeoutMs: spec.timeoutMs,
             signal: input?.signal,

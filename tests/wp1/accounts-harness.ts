@@ -132,6 +132,9 @@ export async function harness(o: HarnessOpts = {}) {
   const runs: CliRun[] = []
   const logs: string[] = []
   let discoveries = 0
+  // prepare()'s base environment: in the shipped wiring, the login shell's
+  // PATH on macOS and Linux (a process started for the operation).
+  let baseEnvReads = 0
   // `envFile`: homes holding a `.env`; `exeStat`: the executable as re-read
   // now (a different one = replaced after setup proved it).
   const state = { cli: o.cli !== false, envFile: new Set<string>(), exeStat: STAT }
@@ -188,7 +191,7 @@ export async function harness(o: HarnessOpts = {}) {
     },
     authPorts: {
       executablePorts: { resolve: () => EXE, realpath: (p) => p, stat: () => state.exeStat, platform: 'win32' },
-      baseEnv: async () => ({ PATH: 'C:\\Tools', SystemRoot: 'C:\\Windows', OPENAI_API_KEY: 'sk-ambient-0000000000000000' }),
+      baseEnv: async () => { baseEnvReads++; return { PATH: 'C:\\Tools', SystemRoot: 'C:\\Windows', OPENAI_API_KEY: 'sk-ambient-0000000000000000' } },
       envFilePresent: (home) => state.envFile.has(home.toLowerCase()),
       run: async (cmd: CodexCommand, opts: CodexRunOptions): Promise<CodexRunResult> => {
         const r: CliRun = { args: cmd.args.join(' '), home: opts.env.CODEX_HOME ?? '', env: { ...opts.env }, opts }
@@ -243,6 +246,7 @@ export async function harness(o: HarnessOpts = {}) {
   return {
     store, port, leases, secrets, service, codex, claude, folders, signedIn, runs, logs, state, legacyWrites,
     discoveries: () => discoveries,
+    baseEnvReads: () => baseEnvReads,
     doc: (): ProviderRegistryDoc => store.current()!,
     setClaude: (records: LegacyAccountSnapshot[]) => { claudeRecords = records },
     useStore: (next: AccountRegistryStore | null) => { active = next },
