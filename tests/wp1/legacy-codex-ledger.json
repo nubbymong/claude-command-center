@@ -3692,8 +3692,8 @@
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "WP1.33: the banner assertion adapted in place to the WP2 P2 help text (owner decision 2026-09-26, P1): the Memory page note says Codex memories are not shown here yet and that Codex reads AGENTS.md, and no longer claims ~/.codex/rules/ (asserted absent); same single case and name, same conditions (empty page), and it now also checks the note sits above the page body; tests/unit/renderer/memory-codex-coverage-banner.test.ts",
       "note": ""
     },
     {
