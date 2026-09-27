@@ -199,10 +199,15 @@ export function detectedNewAccountEmail(profileId: string): string | null {
  *  home out from under the probe). */
 export function sessionsOnProfile(profileId: string): string[] {
   if (!profileId) return []
-  const out = new Set<string>()
-  for (const [sessionId, pid] of watched) if (pid === profileId) out.add(sessionId)
-  for (const [sessionId, pid] of profileBySession) if (pid === profileId) out.add(sessionId)
-  return [...out]
+  // A session is on the profile it runs on now: the active watcher's, when
+  // there is one (a restart on another profile re-registers it there), else
+  // the one captured at spawn.
+  const out: string[] = []
+  for (const sessionId of new Set([...watched.keys(), ...profileBySession.keys()])) {
+    const pid = watched.has(sessionId) ? watched.get(sessionId) : profileBySession.get(sessionId)
+    if (pid === profileId) out.push(sessionId)
+  }
+  return out
 }
 
 /** True when `profileId` is in use by a live session OR a transient credential

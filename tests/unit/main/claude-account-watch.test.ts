@@ -164,3 +164,21 @@ describe('sessionsOnProfile (P3.2 review round 3: the sessions a lifecycle refus
     expect(sessionsOnProfile('')).toEqual([])
   })
 })
+
+describe('sessionsOnProfile follows a session to the profile it runs on now (P3.2 ADR-009 pass, F2)', () => {
+  beforeEach(() => { _resetClaudeAccounts() })
+  afterEach(() => { _resetClaudeAccounts() })
+
+  it('a session restarted on another profile under the same id is on the new one only', () => {
+    captureClaudeAccount('s1', 'p-old')
+    startWatchingAccountIdentity('s1', 'p-old')
+    expect(sessionsOnProfile('p-old')).toEqual(['s1'])
+    // Switch account: the same session id respawns on another profile; the
+    // spawn-captured map keeps the first profile, the watcher moves.
+    stopWatchingAccountIdentity('s1')
+    captureClaudeAccount('s1', 'p-new')
+    startWatchingAccountIdentity('s1', 'p-new')
+    expect(sessionsOnProfile('p-old')).toEqual([])
+    expect(sessionsOnProfile('p-new')).toEqual(['s1'])
+  })
+})

@@ -374,14 +374,12 @@ describe('restoring an archived account (design 5.3; P3.2, "Archived (N)" with R
     return ok(setAccountLifecycle(doc, acct(1), 'archived', { consumers: 0 }, 51))
   }
 
-  it('comes back inactive, its realm live again, and nothing about its sign-in trusted', () => {
+  it('comes back inactive, its realm live again, keeping its recorded sign-in; its state is unknown until checked', () => {
     const doc = ok(restoreArchivedAccount(archivedOne(), acct(1), 60))
     expect(doc.accounts.find((a) => a.id === acct(1))).toMatchObject({
-      lifecycle: 'inactive', isProviderDefault: false, lastKnownAuthState: 'unknown', operationalState: 'attention', identityAssurance: 'user-asserted', updatedAt: 60,
+      lifecycle: 'inactive', isProviderDefault: false, lastKnownAuthState: 'unknown', operationalState: 'attention', identityAssurance: 'verified-subject', updatedAt: 60,
+      providerSubject: 'sub-1', providerAuthorityId: 'auth-1',
     })
-    const a = doc.accounts.find((x) => x.id === acct(1))!
-    expect(a.providerSubject).toBeUndefined()
-    expect(a.providerAuthorityId).toBeUndefined()
     expect(doc.realms.find((r) => r.id === realm(1))).toMatchObject({ lifecycle: 'active' })
     expect(selectableAccounts(doc, 'codex').map((x) => x.id)).toEqual([acct(2)])
     expect(checkRegistryInvariants(doc)).toEqual([])
@@ -427,6 +425,45 @@ describe('when an account was archived (P3.2 review S3: "Archived (N)" says when
     expect(parseRegistryDoc(bad)).toMatchObject({ ok: false })
     const back = ok(restoreArchivedAccount(doc, acct(1), 60))
     expect('archivedAt' in back.accounts.find((a) => a.id === acct(1))!).toBe(false)
+    expect(checkRegistryInvariants(back)).toEqual([])
+  })
+})
+
+describe('restore keeps the account\'s recorded sign-in (P3.2 ADR-009 pass, F1)', () => {
+  const AUTH = 'https://auth.example'
+  // Account 1 signed in as sub-1, made inactive, archived; account 2 the default.
+  const archivedSignedIn = () => {
+    let doc = two()
+    doc = ok(recordAuthCheck(doc, acct(1), { state: 'signed-in', providerSubject: 'sub-1', providerAuthorityId: AUTH }, 30))
+    doc = ok(setProviderDefault(doc, acct(2), 40))
+    doc = ok(setAccountLifecycle(doc, acct(1), 'inactive', { consumers: 0 }, 50))
+    return doc
+  }
+
+  it('after archive and restore, a different sign-in blocks activation exactly as for a plain inactive account', () => {
+    const inactive = archivedSignedIn()
+    const plain = ok(recordAuthCheck(inactive, acct(1), { state: 'signed-in', providerSubject: 'sub-other', providerAuthorityId: AUTH }, 60))
+    expect(plain.accounts.find((a) => a.id === acct(1))!.operationalState).toBe('blocked')
+    expect(setAccountLifecycle(plain, acct(1), 'active', { consumers: 0 }, 61)).toMatchObject({ ok: false, code: 'lifecycle' })
+
+    let doc = ok(setAccountLifecycle(inactive, acct(1), 'archived', { consumers: 0 }, 70))
+    doc = ok(restoreArchivedAccount(doc, acct(1), 71))
+    doc = ok(recordAuthCheck(doc, acct(1), { state: 'signed-in', providerSubject: 'sub-other', providerAuthorityId: AUTH }, 72))
+    expect(doc.accounts.find((a) => a.id === acct(1))).toMatchObject({ operationalState: 'blocked', providerSubject: 'sub-1' })
+    expect(setAccountLifecycle(doc, acct(1), 'active', { consumers: 0 }, 73)).toMatchObject({ ok: false, code: 'lifecycle' })
+    // The same sign-in comes back ready.
+    let same = ok(restoreArchivedAccount(ok(setAccountLifecycle(inactive, acct(1), 'archived', { consumers: 0 }, 80)), acct(1), 81))
+    same = ok(recordAuthCheck(same, acct(1), { state: 'signed-in', providerSubject: 'sub-1', providerAuthorityId: AUTH }, 82))
+    expect(ok(setAccountLifecycle(same, acct(1), 'active', { consumers: 0 }, 83)).accounts.find((a) => a.id === acct(1))).toMatchObject({ lifecycle: 'active', operationalState: 'ready' })
+  })
+
+  it('is refused while another live account holds its recorded sign-in', () => {
+    let doc = ok(setAccountLifecycle(archivedSignedIn(), acct(1), 'archived', { consumers: 0 }, 70))
+    doc = ok(recordAuthCheck(doc, acct(2), { state: 'signed-in', providerSubject: 'sub-1', providerAuthorityId: AUTH }, 71))
+    expect(restoreArchivedAccount(doc, acct(1), 72)).toMatchObject({ ok: false, code: 'subject-conflict' })
+    // Another authority's same subject is someone else.
+    const other = ok(recordAuthCheck(ok(setAccountLifecycle(archivedSignedIn(), acct(1), 'archived', { consumers: 0 }, 70)), acct(2), { state: 'signed-in', providerSubject: 'sub-1', providerAuthorityId: 'https://elsewhere' }, 71))
+    const back = ok(restoreArchivedAccount(other, acct(1), 72))
     expect(checkRegistryInvariants(back)).toEqual([])
   })
 })

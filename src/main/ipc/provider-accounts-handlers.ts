@@ -26,6 +26,7 @@ import { isOpaqueId, isProviderId, isLegacyId, SECRET_HANDLE_RE, FRIENDLY_NAME_M
 import type { AccountsFailure, OpaqueIdKind, ProviderId } from '../../shared/providers'
 import type { AccountsService } from '../providers/core'
 import { logError } from '../debug-logger'
+import { appWindowSender } from './trusted-sender'
 
 const opaque = (kind: OpaqueIdKind) => z.string().max(80).refine((v) => isOpaqueId(v, kind))
 const accountId = opaque('account')
@@ -83,20 +84,8 @@ const UNAVAILABLE = refusal('registry-unavailable', 'The account list is not ava
 const INTERNAL = refusal('internal', 'That did not work; the app log has the detail.')
 
 export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow | null, getService: () => AccountsService | null): void {
-  /** The app's own window, top frame only. */
-  const trusted = (e: IpcMainInvokeEvent | IpcMainEvent): boolean => {
-    try {
-      const win = getWindow()
-      if (!win || win.isDestroyed()) return false
-      if (e.sender !== win.webContents) return false
-      // The window's own main frame, by identity (not "a frame without a
-      // parent", which a fenced frame's root also is).
-      const frame = e.senderFrame
-      return !!frame && frame === win.webContents.mainFrame
-    } catch {
-      return false
-    }
-  }
+  /** The app's own window, top frame only (trusted-sender.ts). */
+  const trusted = appWindowSender(getWindow)
 
   // A renderer that goes away (closed, crashed) stops what it started.
   const watched = new Set<number>()

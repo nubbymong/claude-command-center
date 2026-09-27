@@ -1,5 +1,5 @@
 // src/main/ipc/account-profiles-handlers.ts
-import { ipcMain } from 'electron'
+import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
 import { ipcStreamEnd } from '../../shared/ipc-stream'
 import {
@@ -11,6 +11,9 @@ import {
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, sessionsOnProfile, detectedNewAccountEmail } from '../claude-account-identity'
 import { profileConsumerCount } from '../profile-consumers'
+import { appWindowSender } from './trusted-sender'
+
+const UNTRUSTED = { ok: false, code: 'untrusted-sender', error: 'That request was not accepted.' } as const
 
 /** What holds a profile, for a refusal the Accounts row turns into "Go to"
  *  buttons: the sessions on it (ids), and how many holders are not sessions
@@ -29,8 +32,15 @@ import { closeArtifacts } from '../account-web/artifacts'
 import { closeAccountPanesForProfile } from '../account-web/account-pane'
 import { listManagedLaunchReports } from '../managed-launch-diagnostics'
 
-export function registerAccountProfilesHandlers(): void {
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
+export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow | null): void {
+  // Every handler here answers the app's own window only, as the Accounts
+  // handlers do (trusted-sender.ts); anything else is refused unanswered.
+  const trusted = appWindowSender(getWindow)
+  const handle = (channel: string, fn: (e: IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
+    ipcMain.handle(channel, (e, ...args) => (trusted(e) ? fn(e, ...args) : UNTRUSTED))
+  }
+
+  handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
 
   // Managed-launch preflight reports. This channel is what makes layer 4 of the
   // account-isolation hardening VISIBLE. Without it the preflight is
@@ -42,7 +52,7 @@ export function registerAccountProfilesHandlers(): void {
   // that has launched, so handing all of it to a renderer leaked one account's
   // stripped settings keys and ambient variable names -- and its absolute
   // profile path, and therefore the OS username -- to another (MAJOR 5).
-  ipcMain.handle(IPC.ACCOUNT_MANAGED_LAUNCH_REPORTS, (_e, profileId: unknown) => {
+  handle(IPC.ACCOUNT_MANAGED_LAUNCH_REPORTS, (_e, profileId: unknown) => {
     try {
       if (typeof profileId !== 'string' || profileId.length === 0) return []
       return listManagedLaunchReports(profileId)
@@ -57,7 +67,7 @@ export function registerAccountProfilesHandlers(): void {
   // Usage track MP3 (D5): while Claude Code is switched off no credential
   // file is read; the answer is no accounts (Insights then shows no sign-in
   // warning). The rule is main's own, set at start (setClaudeAccountDataAllowed).
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_AUTH_INFO, () => {
+  handle(IPC.ACCOUNT_PROFILES_AUTH_INFO, () => {
     try {
       if (!claudeAccountDataAllowed()) return []
       return readAllProfileAuthInfo()
@@ -68,7 +78,7 @@ export function registerAccountProfilesHandlers(): void {
   })
 
   // All-accounts usage overview: fetch each profile's usage directly (no session).
-  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL, () => fetchAllAccountsUsage())
+  handle(IPC.ACCOUNT_USAGE_FETCH_ALL, () => fetchAllAccountsUsage())
 
   // Streaming variant (plan P3): the renderer opens a private reply channel and
   // passes its name; each account's usage is sent back on it AS IT RESOLVES, so
@@ -89,7 +99,7 @@ export function registerAccountProfilesHandlers(): void {
   // still pacing, read as current again.
   const streamGenBySender = new Map<number, number>()
   let streamSeq = 0
-  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, async (event, p: { channel?: unknown }) => {
+  handle(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, async (event, p: { channel?: unknown }) => {
     const channel = p?.channel
     if (typeof channel !== 'string' || !channel.startsWith('accountUsage:result:') || channel.length > 128) return
     const senderId = event.sender.id
@@ -112,7 +122,7 @@ export function registerAccountProfilesHandlers(): void {
   })
   // Usage track MP3: the labels Settings lists, from cached figures only (no
   // network, no credential read). Takes no input; a failure is no labels.
-  ipcMain.handle(IPC.ACCOUNT_USAGE_KNOWN_LABELS, () => {
+  handle(IPC.ACCOUNT_USAGE_KNOWN_LABELS, () => {
     try {
       return knownUsageLabels()
     } catch (err) {
@@ -120,7 +130,7 @@ export function registerAccountProfilesHandlers(): void {
       return []
     }
   })
-  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>
+  handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>
     // `!!p.noRefresh`, not `=== true` (adversarial review): a hostile/garbled
     // noRefresh must fail toward NOT rotating the token (a stale number), never
     // toward a rotation that could strand a respawning session. Junk is truthy
@@ -130,9 +140,9 @@ export function registerAccountProfilesHandlers(): void {
   )
 
   // Renderer pull: the reliable per-session account identity captured at spawn.
-  ipcMain.handle(IPC.ACCOUNT_IDENTITY_GET, (_e, p: { sessionId: string }) => (p?.sessionId ? getAccountIdentity(p.sessionId) : null))
+  handle(IPC.ACCOUNT_IDENTITY_GET, (_e, p: { sessionId: string }) => (p?.sessionId ? getAccountIdentity(p.sessionId) : null))
 
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_RENAME, (_e, p: { id: string; name: string }) => {
+  handle(IPC.ACCOUNT_PROFILES_RENAME, (_e, p: { id: string; name: string }) => {
     if (!p || !isValidProfileId(p.id)) return { ok: false }
     const prof = listProfiles().find((x) => x.id === p.id)
     if (!prof) return { ok: false }
@@ -143,11 +153,13 @@ export function registerAccountProfilesHandlers(): void {
   // Mark an account active/inactive. Inactive accounts stay listed but cannot be
   // chosen when switching a session's account (enforced in the switch surfaces
   // and, as a backstop, in useSwitchAccount).
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_SET_ACTIVE, (_e, p: { id: string; active: boolean }) => {
+  handle(IPC.ACCOUNT_PROFILES_SET_ACTIVE, (_e, p: { id: string; active: boolean }) => {
     if (!p || !isValidProfileId(p.id)) return { ok: false }
     const profs = listProfiles()
     const prof = profs.find((x) => x.id === p.id)
     if (!prof) return { ok: false }
+    // Already inactive: nothing to change (as the account registry treats it).
+    if (p.active === false && !isAccountActive(prof)) return { ok: true }
     // The primary account is always active -- it can't be deleted either, and
     // keeping it selectable guarantees the switcher can never be left empty.
     if (prof.isPrimary && p.active === false) {
@@ -164,6 +176,8 @@ export function registerAccountProfilesHandlers(): void {
     // removal makes. The Accounts row names those sessions with Go to.
     // Sessions only: a transient consumer (the sign-in status probe each
     // Claude row starts when Accounts opens) is not a reason to refuse.
+    // Checked at the moment of the request: a UX rule, not an isolation
+    // boundary (a session may start right after).
     const running = p.active === false ? sessionsOnProfile(p.id) : []
     if (running.length) {
       return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.', sessions: running }
@@ -175,7 +189,7 @@ export function registerAccountProfilesHandlers(): void {
   // ASYNC because the delete now AWAITS the web-session clear before it destroys
   // anything (#216). Losing the `async` here in a merge would make that await a
   // no-op returned to the caller and quietly restore the bug it fixed.
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_DELETE, async (_e, p: { id: string }) => {
+  handle(IPC.ACCOUNT_PROFILES_DELETE, async (_e, p: { id: string }) => {
     // safeTeardownProfile validates the id + asserts path containment + refuses a
     // reparse-point root; it throws on an invalid/escaping id.
     if (!p || !isValidProfileId(p.id)) return { ok: false, error: 'invalid profile id' }
@@ -240,7 +254,7 @@ export function registerAccountProfilesHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, (_e, p: { id: string }) => {
+  handle(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, (_e, p: { id: string }) => {
     if (!p || !isValidProfileId(p.id)) return { ok: false, email: null }
     const email = readProfileAccountEmail(p.id)
     if (email) {
@@ -257,12 +271,12 @@ export function registerAccountProfilesHandlers(): void {
   // email on disk, so refreshIdentity alone "completed" a login that never
   // happened. This returns a generation stamp (stat) and a signed-in flag;
   // token contents never cross the bridge.
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, (_e, p: { id: string }) => {
+  handle(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, (_e, p: { id: string }) => {
     if (!p || !isValidProfileId(p.id)) return { ok: false, stamp: null, signedIn: false }
     return { ok: true, ...readProfileCredentialStamp(p.id) }
   })
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sessionId: string; name?: string }) => {
+  handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
+  handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sessionId: string; name?: string }) => {
     if (!p || !p.sessionId) return null
     // Bug 2: the /login wrote the new account into the session's SHARED profile home.
     // Resolve that profile, capture the new account out of it into a fresh profile,
@@ -288,5 +302,5 @@ export function registerAccountProfilesHandlers(): void {
     if (np) { try { restoreProfileIdentityFromCanonical(profileId) } catch { /* best-effort */ } }
     return np
   })
-  ipcMain.handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())
+  handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())
 }

@@ -492,6 +492,16 @@ describe('a Claude profile a live session runs on (P3.2 review: the in-use refus
     expect((await h.service.setLifecycle({ accountId: b.id, lifecycle: 'active' })).ok).toBe(true)
   })
 
+  it('an account already inactive is a no-op, not refused, while a session holds its record (P3.2 ADR-009 pass, F3)', async () => {
+    const h = await harness({
+      claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2', { lifecycle: 'inactive' })],
+      legacyRecordInUse: () => true,
+    })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    expect(b.lifecycle).toBe('inactive')
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toEqual({ ok: true })
+  })
+
   it('a check that throws counts as in use (fail closed); a managed account is not asked', async () => {
     const asked: string[] = []
     const h = await harness({

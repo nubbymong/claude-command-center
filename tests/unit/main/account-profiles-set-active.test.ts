@@ -38,7 +38,20 @@ vi.mock('../../../src/main/debug-logger', () => ({ logError: vi.fn(), logInfo: v
 
 import { registerAccountProfilesHandlers } from '../../../src/main/ipc/account-profiles-handlers'
 
-const invoke = (ch: string, ...args: any[]) => handlers.get(ch)!({} as any, ...args)
+
+// The app's own window, and an event from its top frame: the account-profile
+// handlers answer nothing else (P3.2, trusted-sender.ts). An event object is
+// stamped as coming from it (its sender becomes the window's webContents).
+const appFrame = { frame: 'app' }
+const appWindow: any = { isDestroyed: () => false, webContents: { mainFrame: appFrame } }
+const getAppWindow = () => appWindow
+function fromApp<T extends Record<string, any>>(ev: T = {} as T): T {
+  const wc = ev.sender ?? { mainFrame: appFrame }
+  if (!wc.mainFrame) wc.mainFrame = { frame: 'main' }
+  appWindow.webContents = wc
+  return Object.assign(ev, { sender: wc, senderFrame: wc.mainFrame })
+}
+const invoke = (ch: string, ...args: any[]) => handlers.get(ch)!(fromApp({} as any), ...args)
 const prof = (over: Partial<AccountProfile>): AccountProfile =>
   ({ id: 'p1', name: '', createdAt: 0, ...over })
 const activeOf = (id: string) => store.find((p) => p.id === id)?.active
@@ -47,7 +60,7 @@ describe('accountProfiles:setActive handler', () => {
   beforeEach(() => {
     handlers.clear()
     store = []
-    registerAccountProfilesHandlers()
+    registerAccountProfilesHandlers(getAppWindow)
   })
 
   it('deactivates a non-primary account and round-trips the flag', () => {
@@ -101,7 +114,7 @@ describe('accountProfiles: in use by a live session', () => {
   beforeEach(() => {
     handlers.clear()
     store = []
-    registerAccountProfilesHandlers()
+    registerAccountProfilesHandlers(getAppWindow)
   })
 
   it('refuses Make inactive with code in-use and the sessions on it, and writes nothing; Make active is never refused for it', async () => {
@@ -137,5 +150,48 @@ describe('accountProfiles: in use by a live session', () => {
     expect(r).toMatchObject({ ok: false, code: 'in-use' })
     expect('sessions' in r).toBe(false)
     vi.mocked(isProfileInUseByLiveSession).mockImplementation(() => false)
+  })
+})
+
+describe('accountProfiles handlers: an already-inactive account, and who may ask (P3.2 ADR-009 pass, F3, F4)', () => {
+  beforeEach(() => {
+    handlers.clear()
+    store = []
+    registerAccountProfilesHandlers(getAppWindow)
+  })
+
+  it('Make inactive on an account already inactive is a no-op ok, even with sessions on it', async () => {
+    const { sessionsOnProfile } = await import('../../../src/main/claude-account-identity')
+    vi.mocked(sessionsOnProfile).mockImplementation(() => ['s-1'])
+    store = [prof({ id: 'primary', isPrimary: true }), prof({ id: 'idle', active: false })]
+    expect(invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id: 'idle', active: false })).toEqual({ ok: true })
+    expect(activeOf('idle')).toBe(false)
+    vi.mocked(sessionsOnProfile).mockImplementation(() => [])
+  })
+
+  it('a foreign sender and a subframe of the app window are refused, and nothing is read or written', async () => {
+    store = [prof({ id: 'primary', isPrimary: true }), prof({ id: 'work' })]
+    const foreign = { sender: { id: 77 }, senderFrame: { frame: 'other' } }
+    const sub = () => { const ev = fromApp({} as any); return { sender: ev.sender, senderFrame: { frame: 'iframe' } } }
+    const REFUSED = { ok: false, code: 'untrusted-sender', error: 'That request was not accepted.' }
+    for (const ev of [foreign, sub()]) {
+      expect(handlers.get(IPC.ACCOUNT_PROFILES_SET_ACTIVE)!(ev, { id: 'work', active: false })).toEqual(REFUSED)
+      expect(await handlers.get(IPC.ACCOUNT_PROFILES_DELETE)!(ev, { id: 'work' })).toEqual(REFUSED)
+      expect(handlers.get(IPC.ACCOUNT_PROFILES_RENAME)!(ev, { id: 'work', name: 'x' })).toEqual(REFUSED)
+      expect(handlers.get(IPC.ACCOUNT_PROFILES_LIST)!(ev)).toEqual(REFUSED)
+    }
+    expect(activeOf('work')).toBeUndefined()
+    expect(store.find((p) => p.id === 'work')!.name).toBe('')
+    // The app's own window is answered.
+    expect(invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id: 'work', active: false })).toEqual({ ok: true })
+  })
+
+  it('every handler this module registers answers the app window only', () => {
+    const foreign = { sender: { id: 77 }, senderFrame: { frame: 'other' } }
+    expect(handlers.size).toBeGreaterThanOrEqual(16)
+    for (const [channel, fn] of handlers) {
+      const r = fn(foreign, {})
+      expect(r, channel).toEqual({ ok: false, code: 'untrusted-sender', error: 'That request was not accepted.' })
+    }
   })
 })
