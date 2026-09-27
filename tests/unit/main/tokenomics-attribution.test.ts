@@ -360,7 +360,8 @@ const code = indexSource
 describe('main composes the attribution beside the transcript binder (MP10)', () => {
   it('both transcript-path sources reach the attribution, whether logging is on or off', () => {
     expect(code).toMatch(/import \{ createTranscriptAttribution \} from '\.\/tokenomics\/tk-attribution'/)
-    expect(code).toMatch(/import \{ getClaudeProfileId \} from '\.\/claude-account-identity'/)
+    // P3.2: index also imports the sessions-only in-use check from there.
+    expect(code).toMatch(/import \{[^}]*\bgetClaudeProfileId\b[^}]*\} from '\.\/claude-account-identity'/)
     expect(code).toMatch(/getProfilesRoot, getProfileConfigDir, isValidProfileId \} from '\.\/account-profiles'/)
     // The route calls the attribution first, then the binder (which is null
     // with logging off, so it cannot gate the attribution).

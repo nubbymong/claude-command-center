@@ -389,6 +389,20 @@ describe('lifecycle blockers name the sessions (row 10, design 5.3)', () => {
     window.removeEventListener('app:goToSession', onGo)
   })
 
+  it('"and N more" is main\'s unnamed count: a session and its own review add nothing; sign-ins add theirs (review round 3)', async () => {
+    useSessionStore.setState({ sessions: [{ ...base, id: 's-docs', label: 'Docs site' }] as never })
+    pa.setLifecycle.mockResolvedValueOnce({ ok: false, code: 'consumers', message: 'x', consumers: 2, sessions: ['s-docs'] } as never)
+    render(snapshot())
+    await click('account-menu-btn-acc-spare')
+    await click('account-menu-archive-acc-spare')
+    expect(q('account-blocker-acc-spare')).not.toBeNull()
+    expect(q('account-blocker-acc-spare-more')).toBeNull()
+    pa.setLifecycle.mockResolvedValueOnce({ ok: false, code: 'consumers', message: 'x', consumers: 4, sessions: ['s-docs'], unnamed: 2 } as never)
+    await click('account-menu-btn-acc-spare')
+    await click('account-menu-archive-acc-spare')
+    expect(q('account-blocker-acc-spare-more')?.textContent).toBe('and 2 more')
+  })
+
   it('an archive refused for sessions says "archived"; with none of them open here, the count', async () => {
     useSessionStore.setState({ sessions: [{ ...base, id: 's-docs', label: 'Docs site' }] as never })
     pa.setLifecycle.mockResolvedValueOnce({ ok: false, code: 'consumers', message: 'x', consumers: 1, sessions: ['s-docs'] } as never)

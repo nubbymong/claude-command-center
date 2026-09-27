@@ -9,7 +9,17 @@ import {
   readProfileCredentialStamp,
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
-import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, detectedNewAccountEmail } from '../claude-account-identity'
+import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, sessionsOnProfile, detectedNewAccountEmail } from '../claude-account-identity'
+import { profileConsumerCount } from '../profile-consumers'
+
+/** What holds a profile, for a refusal the Accounts row turns into "Go to"
+ *  buttons: the sessions on it (ids), and how many holders are not sessions
+ *  (transient consumers such as the sign-in status probe). */
+function holdersOf(profileId: string): { sessions?: string[]; unnamed?: number } {
+  const sessions = sessionsOnProfile(profileId)
+  const unnamed = profileConsumerCount(profileId)
+  return { ...(sessions.length ? { sessions } : {}), ...(unnamed ? { unnamed } : {}) }
+}
 import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage, knownUsageLabels, claudeAccountDataAllowed } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError, logWarn } from '../debug-logger'
@@ -152,8 +162,11 @@ export function registerAccountProfilesHandlers(): void {
     // Design 5.3 (WP1.16), as every provider's accounts: an account is not
     // made inactive while a live session runs on it -- the same check a
     // removal makes. The Accounts row names those sessions with Go to.
-    if (p.active === false && isProfileInUseByLiveSession(p.id)) {
-      return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' }
+    // Sessions only: a transient consumer (the sign-in status probe each
+    // Claude row starts when Accounts opens) is not a reason to refuse.
+    const running = p.active === false ? sessionsOnProfile(p.id) : []
+    if (running.length) {
+      return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.', sessions: running }
     }
     upsertProfile({ ...prof, active: p.active !== false })
     return { ok: true }
@@ -171,7 +184,7 @@ export function registerAccountProfilesHandlers(): void {
     // mid-recursion would half-destroy its creds (auth breaks, token refresh fails) and
     // leave the metadata pointing at a gutted dir. Ask the user to close it first.
     if (isProfileInUseByLiveSession(p.id)) {
-      return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' }
+      return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.', ...holdersOf(p.id) }
     }
     // #216: the profile dir is not the whole account. This account's claude.ai
     // WEB session lives in an Electron partition, so without this a delete
@@ -208,7 +221,8 @@ export function registerAccountProfilesHandlers(): void {
     // session whose partition was just wiped.
     if (isProfileInUseByLiveSession(p.id)) {
       removeWebSession(p.id)
-      return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Its claude.ai sign-in was cleared; close its sessions and try again.' }
+      // Its own code: the row keeps these words (what did happen) beside the sessions it names.
+      return { ok: false, code: 'in-use-cleared', error: 'This account is in use by an open session. Its claude.ai sign-in was cleared; close its sessions and try again.', ...holdersOf(p.id) }
     }
     // Drop the record next to the clear that made it meaningless, rather than
     // after the teardown below: if that throws, the account survives with a

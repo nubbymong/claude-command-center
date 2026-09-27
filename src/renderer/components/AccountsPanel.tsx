@@ -24,6 +24,7 @@ import { AccountIsolationNotice } from './settings/AccountIsolationNotice'
 import {
   useProviderAccountsStore, providerAccountActions, accountForLegacyId, canOfferMakeReviewer, showsReviewerBadge, accountFailureText,
   accountDisplayName, identityOf, linkedAccounts, linkedAccountLabel, providerView, claudeSessionsOnProfile, sessionTitle,
+  blockerSessions, unnamedHolders,
 } from '../stores/providerAccountsStore'
 import { claudeCodeOn } from '../onboarding/hello-codex'
 import { ProviderMark } from './sidebar/Badges'
@@ -48,7 +49,7 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
   const sessions = useSessionStore((s) => s.sessions)
   const [error, setError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [blocker, setBlocker] = useState<{ verb: string; sessions: { id: string; title: string }[] } | null>(null)
+  const [blocker, setBlocker] = useState<{ verb: string; sessions: { id: string; title: string }[]; more: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
@@ -83,11 +84,14 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
     }
   }
 
-  /** A refusal for "in use" names this window's sessions on the profile,
-   *  each with Go to; with none of them open here (an SSH or another
-   *  window's session), main's own words. */
-  const blockedBy = (): { id: string; title: string }[] =>
-    claudeSessionsOnProfile(useSessionStore.getState().sessions, profile.id, primaryId).map((s) => ({ id: s.id, title: sessionTitle(s) }))
+  /** A refusal for "in use" names the sessions main found on the profile
+   *  that this window has open, each with Go to, and "and N more" for the
+   *  rest; with none of them open here, the row keeps main's own words. */
+  const blockerFrom = (verb: string, res: { sessions?: string[]; unnamed?: number }) => {
+    const named = blockerSessions(useSessionStore.getState().sessions, res.sessions)
+    if (!named.length) return null
+    return { verb, sessions: named.map((s) => ({ id: s.id, title: sessionTitle(s) })), more: unnamedHolders(res.sessions, named, res.unnamed) }
+  }
 
   const makeReviewer = () => act(async () => {
     if (!registryAccount) return null
@@ -101,8 +105,8 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
     const res = await window.electronAPI.accountProfiles.setActive(profile.id, next)
     // Nothing changed on a refusal: the row stays as it is, with the reason.
     if (res && res.ok === false) {
-      const holding = res.code === 'in-use' ? blockedBy() : []
-      if (holding.length) { setBlocker({ verb: 'made inactive', sessions: holding }); return null }
+      const b = res.code === 'in-use' ? blockerFrom('made inactive', res) : null
+      if (b) { setBlocker(b); return null }
       return res.error || 'That did not work.'
     }
     await useAccountProfilesStore.getState().hydrate()
@@ -123,9 +127,11 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
     try {
       const res = await window.electronAPI.accountProfiles.delete(profile.id)
       if (!res?.ok) {
-        const holding = res?.code === 'in-use' ? blockedBy() : []
-        if (holding.length) setBlocker({ verb: 'removed', sessions: holding })
-        else setDeleteError(res?.error || 'Could not remove this account. Please try again.')
+        const b = res?.code === 'in-use' || res?.code === 'in-use-cleared' ? blockerFrom('removed', res) : null
+        if (b) setBlocker(b)
+        // Main's words stay unless the blocker says the same thing: after its
+        // claude.ai sign-in was cleared, they say what did happen.
+        if (!b || res?.code === 'in-use-cleared') setDeleteError(res?.error || 'Could not remove this account. Please try again.')
         return
       }
     } catch {
@@ -245,7 +251,7 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
           (adversarial review, MAJOR 5). Renders nothing when there is nothing
           to say, so a healthy install pays no space for it. */}
       {claudeOn && <AccountIsolationNotice profileId={profile.id} />}
-      {blocker && <BlockerLine name={name} verb={blocker.verb} sessions={blocker.sessions} testId={`profile-blocker-${profile.id}`} />}
+      {blocker && <BlockerLine name={name} verb={blocker.verb} sessions={blocker.sessions} more={blocker.more} testId={`profile-blocker-${profile.id}`} />}
       {deleteError && (
         <p
           className="text-[11px] text-red mt-1.5"

@@ -418,7 +418,10 @@ describe('when an account was archived (P3.2 review S3: "Archived (N)" says when
     expect(doc.accounts.find((a) => a.id === acct(1))!.archivedAt).toBeUndefined()
     doc = ok(setAccountLifecycle(doc, acct(1), 'archived', { consumers: 0 }, 51))
     expect(doc.accounts.find((a) => a.id === acct(1))!.archivedAt).toBe(51)
-    expect(parseRegistryDoc(JSON.parse(JSON.stringify(doc)))).toMatchObject({ ok: true })
+    const parsed = parseRegistryDoc(JSON.parse(JSON.stringify(doc)))
+    expect(parsed).toMatchObject({ ok: true })
+    // The time survives the stored form.
+    expect(parsed.ok && parsed.doc.accounts.find((a) => a.id === acct(1))!.archivedAt).toBe(51)
     const bad = JSON.parse(JSON.stringify(doc))
     bad.accounts.find((a: { id: string }) => a.id === acct(1)).archivedAt = 'yesterday'
     expect(parseRegistryDoc(bad)).toMatchObject({ ok: false })

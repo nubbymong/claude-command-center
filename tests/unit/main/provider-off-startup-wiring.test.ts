@@ -23,7 +23,10 @@ const code = indexSource
 describe('provider-off start-up wiring', () => {
   it('the switch-off rule counts what runs without a lease (provider-in-use.ts)', () => {
     expect(code).toMatch(/import \{ providerUseWithoutLease \} from '\.\/provider-in-use'/)
-    expect(code).toMatch(/initProviderAccounts\(\{ unleasedSessions: \(id\) => providerUseWithoutLease\(id\) \}\)/)
+    // P3.2: the same call also wires the sessions-only in-use check for a
+    // Claude profile (legacyRecordInUse).
+    expect(code).toMatch(/initProviderAccounts\(\{\s*unleasedSessions: \(id\) => providerUseWithoutLease\(id\),/)
+    expect(code).toMatch(/legacyRecordInUse: \(id, legacyId\) => id === 'claude' && sessionsOnProfile\(legacyId\)\.length > 0,/)
   })
 
   // Usage track MP3 (D5): the Account usage page reads nothing of Claude Code

@@ -64,7 +64,7 @@ vi.mock('../../../src/main/account-profiles', () => ({
 }))
 vi.mock('../../../src/main/claude-account-identity', () => ({
   getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(),
-  getWatchedProfileId: vi.fn(), isProfileInUseByLiveSession: (id: string) => h.inUse(id),
+  getWatchedProfileId: vi.fn(), isProfileInUseByLiveSession: (id: string) => h.inUse(id), sessionsOnProfile: () => [],
 }))
 vi.mock('../../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => h.readAllProfileAuthInfo() }))
 vi.mock('../../../src/main/debug-logger', () => ({ logError: vi.fn(), logInfo: vi.fn() }))
@@ -305,6 +305,7 @@ describe('accountProfiles:delete — the in-use guard', () => {
     expect(r.ok).toBe(false)
     expect(r.error).toMatch(/in use by an open session/)
     expect(r.error).toMatch(/sign-in was cleared/) // the user is told what did happen
+    expect(r.code).toBe('in-use-cleared') // its own code: the row keeps these words
     expect(h.clearWebSession).toHaveBeenCalledTimes(1)
     expect(h.removeWebSession).toHaveBeenCalledWith('profile-racing') // no record claiming a wiped partition survives
     expect(h.safeTeardownProfile).not.toHaveBeenCalled()

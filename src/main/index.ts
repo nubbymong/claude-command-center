@@ -60,7 +60,7 @@ import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { initTokenomics, shutdownTokenomics, getTokenomicsSupervisor } from './tokenomics/tokenomics-service'
 import { createTranscriptAttribution } from './tokenomics/tk-attribution'
-import { getClaudeProfileId, isProfileInUseByLiveSession } from './claude-account-identity'
+import { getClaudeProfileId, sessionsOnProfile } from './claude-account-identity'
 import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
@@ -528,9 +528,9 @@ if (!gotTheLock) {
       initProviderAccounts({
         unleasedSessions: (id) => providerUseWithoutLease(id),
         // P3.2: a Claude profile a live session runs on is not made inactive
-        // or archived through the accounts service either (the check the
-        // profile handlers make).
-        legacyRecordInUse: (id, legacyId) => id === 'claude' && isProfileInUseByLiveSession(legacyId),
+        // or archived through the accounts service either (the sessions-only
+        // check the profile handlers' Make inactive makes).
+        legacyRecordInUse: (id, legacyId) => id === 'claude' && sessionsOnProfile(legacyId).length > 0,
       })
       // A resources directory chosen after start (first-run setup) moves the
       // registry with it before anything reads or reconciles it.

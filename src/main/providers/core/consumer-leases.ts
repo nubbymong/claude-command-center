@@ -127,6 +127,19 @@ export class ConsumerLeaseRegistry {
     return [...out]
   }
 
+  /** How many leases on the account belong to no named session: sign-ins,
+   *  operations, and a session or review that names none. A session and its
+   *  own review are both named, so they add nothing here. */
+  unattributed(accountId: string): number {
+    let n = 0
+    for (const e of this.byKey.values()) {
+      if (e.lease.accountId !== accountId) continue
+      if (e.sessionId !== undefined && (e.lease.kind === 'session' || e.lease.kind === 'review')) continue
+      n++
+    }
+    return n
+  }
+
   isHeld(accountId: string): boolean {
     return this.exclusive.has(accountId)
   }

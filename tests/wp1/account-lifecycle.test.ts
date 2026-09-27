@@ -1129,7 +1129,15 @@ describe('Archived (N) with Restore, and a refusal that names its sessions (P3.2
     const r = await h.store.reconcileLegacy({ providerId: 'claude', read: () => [claudeSnapshot('profile-a1', { isDefault: true })], apply: () => {} })
     expect(r.ok).toBe(true)
     expect(h.doc().accounts.find((a) => a.id === b.id)).toMatchObject({ lifecycle: 'archived' })
+    // The legacy sync records when it archived the record (review round 3)...
+    expect(typeof h.doc().accounts.find((a) => a.id === b.id)!.archivedAt).toBe('number')
     expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'legacy-owned' })
+    // ...and drops it when the record comes back.
+    const back = await h.store.reconcileLegacy({ providerId: 'claude', read: () => [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')], apply: () => {} })
+    expect(back.ok).toBe(true)
+    const restored = h.doc().accounts.find((a) => a.id === b.id)!
+    expect(restored.lifecycle).not.toBe('archived')
+    expect('archivedAt' in restored).toBe(false)
   })
 
   it('a refusal for consumers names the app sessions whose sessions or reviews hold the account', async () => {
@@ -1146,6 +1154,8 @@ describe('Archived (N) with Restore, and a refusal that names its sessions (P3.2
     const r = await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
     expect(r).toMatchObject({ ok: false, code: 'consumers', consumers: 4 })
     expect(r.ok === false && r.sessions ? [...r.sessions].sort() : null).toEqual(['tab-1', 'tab-2', 'tab-3'])
+    // Every holder is a named session (tab-1's review included): nothing more.
+    expect(r.ok === false && 'unnamed' in r).toBe(false)
     // Nothing holding it by session: the count alone, and no list.
     h.service.releaseLaunch('session', 'tab-1:1')
     h.service.releaseLaunch('session', 'tab-2:1')
@@ -1153,7 +1163,7 @@ describe('Archived (N) with Restore, and a refusal that names its sessions (P3.2
     h.service.releaseLaunch('session', 'tab-3:1')
     expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 'bare' })).ok).toBe(true)
     const bare = await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
-    expect(bare).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+    expect(bare).toMatchObject({ ok: false, code: 'consumers', consumers: 1, unnamed: 1 })
     expect(bare.ok === false && 'sessions' in bare).toBe(false)
   })
 })
