@@ -471,6 +471,44 @@ describe('Claude accounts keep their own rules', () => {
   })
 })
 
+describe('a Claude profile a live session runs on (P3.2 review: the in-use refusal holds whichever channel asks)', () => {
+  it('is not made inactive through the accounts service while in use, and nothing is written to Claude\'s list; free, it is', async () => {
+    let busy = new Set(['profile-b2'])
+    const h = await harness({
+      claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')],
+      legacyRecordInUse: (providerId, legacyId) => providerId === 'claude' && busy.has(legacyId),
+    })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    const writes = h.legacyWrites.length
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toMatchObject({
+      ok: false, code: 'in-use', message: 'This account is in use by an open session. Close its sessions and try again.',
+    })
+    expect(h.doc().accounts.find((a) => a.id === b.id)).toMatchObject({ lifecycle: 'active' })
+    expect(h.legacyWrites.length).toBe(writes)
+    busy = new Set()
+    expect((await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).ok).toBe(true)
+    // Making it active again is never refused for this.
+    busy = new Set(['profile-b2'])
+    expect((await h.service.setLifecycle({ accountId: b.id, lifecycle: 'active' })).ok).toBe(true)
+  })
+
+  it('a check that throws counts as in use (fail closed); a managed account is not asked', async () => {
+    const asked: string[] = []
+    const h = await harness({
+      claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')],
+      legacyRecordInUse: (_p, legacyId) => { asked.push(legacyId); throw new Error('boom') },
+    })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'in-use' })
+    const a = await addCodexAccount(h, 'A')
+    const c = await addCodexAccount(h, 'C')
+    await h.service.setDefault({ accountId: c })
+    asked.length = 0
+    expect((await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).ok).toBe(true)
+    expect(asked).toEqual([])
+  })
+})
+
 describe('a sign-in that changed, and reconciling it (WP1.24, WP1.25; design 5.3, 5.5)', () => {
   const account = (h: Awaited<ReturnType<typeof harness>>, id: string) => h.doc().accounts.find((x) => x.id === id)!
   const STATUS = {

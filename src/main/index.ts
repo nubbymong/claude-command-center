@@ -60,7 +60,7 @@ import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { initTokenomics, shutdownTokenomics, getTokenomicsSupervisor } from './tokenomics/tokenomics-service'
 import { createTranscriptAttribution } from './tokenomics/tk-attribution'
-import { getClaudeProfileId } from './claude-account-identity'
+import { getClaudeProfileId, isProfileInUseByLiveSession } from './claude-account-identity'
 import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
@@ -525,7 +525,13 @@ if (!gotTheLock) {
       // A switch-off is refused while any of the provider runs: its sessions,
       // and (WP2) for Claude Code its cloud agents, Insights runs, Sentinel
       // runs and accepted SSH "Launch Claude"s too (provider-in-use.ts).
-      initProviderAccounts({ unleasedSessions: (id) => providerUseWithoutLease(id) })
+      initProviderAccounts({
+        unleasedSessions: (id) => providerUseWithoutLease(id),
+        // P3.2: a Claude profile a live session runs on is not made inactive
+        // or archived through the accounts service either (the check the
+        // profile handlers make).
+        legacyRecordInUse: (id, legacyId) => id === 'claude' && isProfileInUseByLiveSession(legacyId),
+      })
       // A resources directory chosen after start (first-run setup) moves the
       // registry with it before anything reads or reconciles it.
       onResourcesDirectoryChanged((dir) => { void followResourcesDirectory(dir) })
