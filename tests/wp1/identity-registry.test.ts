@@ -6,7 +6,7 @@ import {
   emptyRegistry, parseRegistryDoc, checkRegistryInvariants, REGISTRY_SCHEMA_VERSION,
   createIdentity, updateIdentity, createGroup, renameGroup, deleteGroup,
   linkAccountIdentity, unlinkAccountIdentity, beginAccountSetup, commitAccountSetup, normaliseLabel, FRIENDLY_NAME_MAX,
-  recordAccountPlan,
+  recordAccountPlan, reconcileLegacyAccounts, findIdentity, ID_PREFIX, setAccountLifecycle,
 } from '../../src/shared/providers'
 import type { ProviderRegistryDoc } from '../../src/shared/providers'
 
@@ -110,6 +110,43 @@ describe('linking accounts to identities (WP1.12, WP1.13, WP1.14)', () => {
     expect(out.identities.find((i) => i.id === idn(7))).toMatchObject({ friendlyName: 'Work', colourKey: 'indigo', createdAt: 40 })
     expect(out.accounts[0].lastKnownAuthState).toBe('signed-in')
     expect(out.realms).toEqual(doc.realms)
+  })
+
+  it('link then unlink keeps the name the account showed: an unnamed identity named by a linked label', () => {
+    // A Claude profile often has no name of its own; its row, and every
+    // account linked to it, is named by its email. A named Codex account
+    // linked there shows that email; unlinked, its private copy must carry
+    // it, never fall back to "no name".
+    const rec = reconcileLegacyAccounts(withCodexAccount(), 'claude', [{
+      legacyId: 'profile-work', friendlyName: '', colourKey: 'rose', lifecycle: 'active', isDefault: true, providerLabel: 'nick@example.com',
+      realm: { kind: 'claude-config-home', ownership: 'conductor-managed', pathRef: 'claude-profile:profile-work' }, authMethod: 'browser', identityAssurance: 'user-asserted',
+    }], { now: 20, deterministicId: (kind, seed) => `${ID_PREFIX[kind]}-${seed === 'profile-work' ? hex(2) : hex(3)}` })
+    if (!rec.ok) throw new Error(rec.problems.join('; '))
+    const claude = rec.doc.accounts.find((a) => a.providerId === 'claude')!
+    expect(findIdentity(rec.doc, claude.identityId)!.friendlyName).toBeUndefined()
+    const doc = ok(linkAccountIdentity(rec.doc, acct(1), claude.identityId, 30))
+    const out = ok(unlinkAccountIdentity(doc, acct(1), idn(7), 40))
+    expect(out.accounts.find((a) => a.id === acct(1))!.identityId).toBe(idn(7))
+    expect(out.identities.find((i) => i.id === idn(7))).toMatchObject({ friendlyName: 'nick@example.com', colourKey: 'rose' })
+    expect(checkRegistryInvariants(out)).toEqual([])
+    // The labelled account unlinked instead is still named by its own label:
+    // its copy stays unnamed, as the identity it came from.
+    const back = ok(unlinkAccountIdentity(doc, claude.id, idn(8), 41))
+    expect(back.identities.find((i) => i.id === idn(8))!.friendlyName).toBeUndefined()
+  })
+
+  it('an archived holder\'s label named nothing, so an unlinked copy does not take it', () => {
+    let doc = ok(createIdentity(emptyRegistry(), { id: idn(1), colourKey: 'indigo' }, 10))
+    doc = ok(beginAccountSetup(doc, { accountId: acct(1), realmId: realm(1), providerId: 'codex', method: 'browser', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${realm(1)}` }, 11))
+    doc = ok(commitAccountSetup(doc, acct(1), { identityId: idn(1), authMethod: 'browser', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted' }, 12))
+    doc = ok(beginAccountSetup(doc, { accountId: acct(2), realmId: realm(2), providerId: 'codex', method: 'apiKey', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${realm(2)}` }, 13))
+    doc = ok(commitAccountSetup(doc, acct(2), { identityId: idn(1), authMethod: 'apiKey', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted', providerLabel: 'old@example.com' }, 14))
+    const live = ok(unlinkAccountIdentity(doc, acct(1), idn(7), 20))
+    expect(live.identities.find((i) => i.id === idn(7))!.friendlyName).toBe('old@example.com')
+    doc = ok(setAccountLifecycle(doc, acct(2), 'inactive', { consumers: 0 }, 15))
+    doc = ok(setAccountLifecycle(doc, acct(2), 'archived', { consumers: 0 }, 16))
+    const out = ok(unlinkAccountIdentity(doc, acct(1), idn(7), 20))
+    expect(out.identities.find((i) => i.id === idn(7))!.friendlyName).toBeUndefined()
   })
 
   it('an account whose identity cannot be verified (an external realm) is never linked', () => {

@@ -428,14 +428,24 @@ export function linkAccountIdentity(doc: ProviderRegistryDoc, accountId: string,
 }
 
 /** Give an account a new private identity, copied from its current one. The
- *  old identity is retained: history may still name it. */
+ *  old identity is retained: history may still name it.
+ *
+ *  The copy carries the name the account was shown under. An identity with
+ *  no name of its own (a Claude profile often has none) is named, on an
+ *  account with no label of its own, by the label of a live account sharing
+ *  it (the rows' rule, accountDisplayName in the renderer's accounts store);
+ *  once unlinked that label no longer reaches it, so the copy takes it as its
+ *  name rather than leaving the account unnamed. */
 export function unlinkAccountIdentity(doc: ProviderRegistryDoc, accountId: string, newIdentityId: string, now: number): RegistryResult {
   const account = findAccount(doc, accountId)
   if (!account) return fail('not-found', `account ${accountId} does not exist`)
   if (isRealmOnly(account, findRealm(doc, account.authRealmId))) return fail('not-linkable', 'an unverified external sign-in keeps its own identity')
   const from = findIdentity(doc, account.identityId)
   if (!from) return fail('not-found', `identity ${account.identityId} does not exist`)
-  const created = createIdentity(doc, { id: newIdentityId, friendlyName: from.friendlyName, colourKey: from.colourKey, groupId: from.groupId }, now)
+  const shownBy = from.friendlyName !== undefined || account.providerLabel?.trim()
+    ? undefined
+    : doc.accounts.find((a) => a.identityId === from.id && a.lifecycle !== 'archived' && a.providerLabel?.trim())?.providerLabel
+  const created = createIdentity(doc, { id: newIdentityId, friendlyName: from.friendlyName ?? shownBy, colourKey: from.colourKey, groupId: from.groupId }, now)
   if (!created.ok) return created
   return done({ ...created.doc, accounts: created.doc.accounts.map((a) => (a.id === accountId ? { ...a, identityId: newIdentityId, updatedAt: now } : a)) })
 }
