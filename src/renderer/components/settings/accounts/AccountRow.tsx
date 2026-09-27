@@ -66,10 +66,13 @@ export function LinkedLine({ providerId, providerName, label, testId }: { provid
 /** A refused inactivate, archive or removal that names what holds the
  *  account (design 5.3): "<name> can't be made inactive while these use it:"
  *  and one "Go to <session>" per session. */
-export function BlockerLine({ name, verb, sessions, testId }: {
+export function BlockerLine({ name, verb, sessions, more = 0, testId }: {
   name: string
   verb: string
   sessions: readonly { id: string; title: string }[]
+  /** What else holds it that this window cannot name (a sign-in, an
+   *  operation, a session in another window). */
+  more?: number
   testId?: string
 }) {
   return (
@@ -97,6 +100,7 @@ export function BlockerLine({ name, verb, sessions, testId }: {
           <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
       ))}
+      {more > 0 && <span data-testid={testId ? `${testId}-more` : undefined}>and {more} more</span>}
     </div>
   )
 }

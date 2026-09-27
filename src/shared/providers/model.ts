@@ -50,6 +50,9 @@ export interface ProviderAccount {
   updatedAt: number
   lastAuthenticatedAt?: number
   lastValidatedAt?: number
+  /** When it was archived (design 5.3, "Archived (N)"). Present only while
+   *  archived: set on archive, dropped on restore. */
+  archivedAt?: number
   lastKnownAuthState: KnownAuthState
   operationalState: OperationalState
   identityAssurance: IdentityAssurance

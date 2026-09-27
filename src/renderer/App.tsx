@@ -247,7 +247,7 @@ export default function App() {
     return () => window.removeEventListener('app:openAccountPane', onOpenAccountPane)
   }, [])
 
-  // Settings → Accounts "Go to <session>" (P3.2, design 5.3): a refused
+  // Settings, Accounts "Go to <session>" (P3.2, design 5.3): a refused
   // inactivate, archive or removal names the sessions holding the account;
   // each one's button brings its tab forward. A stale id is a no-op.
   useEffect(() => listenGoToSession(() => setView('sessions')), [])

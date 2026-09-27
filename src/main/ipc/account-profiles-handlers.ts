@@ -149,6 +149,12 @@ export function registerAccountProfilesHandlers(): void {
     if (p.active === false && !profs.some((x) => x.id !== p.id && isAccountActive(x))) {
       return { ok: false, error: 'At least one account must stay active.' }
     }
+    // Design 5.3 (WP1.16), as every provider's accounts: an account is not
+    // made inactive while a live session runs on it -- the same check a
+    // removal makes. The Accounts row names those sessions with Go to.
+    if (p.active === false && isProfileInUseByLiveSession(p.id)) {
+      return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' }
+    }
     upsertProfile({ ...prof, active: p.active !== false })
     return { ok: true }
   })
@@ -165,7 +171,7 @@ export function registerAccountProfilesHandlers(): void {
     // mid-recursion would half-destroy its creds (auth breaks, token refresh fails) and
     // leave the metadata pointing at a gutted dir. Ask the user to close it first.
     if (isProfileInUseByLiveSession(p.id)) {
-      return { ok: false, error: 'This account is in use by an open session. Close its sessions and try again.' }
+      return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' }
     }
     // #216: the profile dir is not the whole account. This account's claude.ai
     // WEB session lives in an Electron partition, so without this a delete
@@ -202,7 +208,7 @@ export function registerAccountProfilesHandlers(): void {
     // session whose partition was just wiped.
     if (isProfileInUseByLiveSession(p.id)) {
       removeWebSession(p.id)
-      return { ok: false, error: 'This account is in use by an open session. Its claude.ai sign-in was cleared; close its sessions and try again.' }
+      return { ok: false, code: 'in-use', error: 'This account is in use by an open session. Its claude.ai sign-in was cleared; close its sessions and try again.' }
     }
     // Drop the record next to the clear that made it meaningless, rather than
     // after the teardown below: if that throws, the account survives with a

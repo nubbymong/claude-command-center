@@ -127,8 +127,9 @@ export interface ElectronAPI {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
     create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
-    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
-    delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+    /** `code: 'in-use'`: a live session runs on the account (P3.2). */
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string; code?: 'in-use' }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string; code?: 'in-use' }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Credential generation (stat stamp + signed-in), never token contents. */
     credentialStamp: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>

@@ -409,3 +409,21 @@ describe('restoring an archived account (design 5.3; P3.2, "Archived (N)" with R
     expect(restoreArchivedAccount(gone, acct(1), 60)).toMatchObject({ ok: false, code: 'realm-conflict' })
   })
 })
+
+describe('when an account was archived (P3.2 review S3: "Archived (N)" says when)', () => {
+  it('archive records the time; restore drops it; the stored form round-trips and a bad value is refused', () => {
+    let doc = two()
+    doc = ok(setProviderDefault(doc, acct(2), 40))
+    doc = ok(setAccountLifecycle(doc, acct(1), 'inactive', { consumers: 0 }, 50))
+    expect(doc.accounts.find((a) => a.id === acct(1))!.archivedAt).toBeUndefined()
+    doc = ok(setAccountLifecycle(doc, acct(1), 'archived', { consumers: 0 }, 51))
+    expect(doc.accounts.find((a) => a.id === acct(1))!.archivedAt).toBe(51)
+    expect(parseRegistryDoc(JSON.parse(JSON.stringify(doc)))).toMatchObject({ ok: true })
+    const bad = JSON.parse(JSON.stringify(doc))
+    bad.accounts.find((a: { id: string }) => a.id === acct(1)).archivedAt = 'yesterday'
+    expect(parseRegistryDoc(bad)).toMatchObject({ ok: false })
+    const back = ok(restoreArchivedAccount(doc, acct(1), 60))
+    expect('archivedAt' in back.accounts.find((a) => a.id === acct(1))!).toBe(false)
+    expect(checkRegistryInvariants(back)).toEqual([])
+  })
+})

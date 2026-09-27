@@ -69,9 +69,8 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
   const [signingInAgain, setSigningInAgain] = useState(false)
   const [checked, setChecked] = useState<KnownAuthState | null>(null)
   const [editing, setEditing] = useState(false)
-  const [blocker, setBlocker] = useState<{ verb: string; sessions: { id: string; title: string }[] } | null>(null)
+  const [blocker, setBlocker] = useState<{ verb: string; sessions: { id: string; title: string }[]; more: number } | null>(null)
   const chipRef = useRef<HTMLButtonElement>(null)
-  const sessions = useSessionStore((st) => st.sessions)
   const id = account.id
   const manageable = provider.enabled
   const name = accountDisplayName(snapshot, account)
@@ -93,12 +92,21 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
     setError(null)
     setBlocker(null)
     setChecked(null)
-    const r = await op()
+    let r: AccountsResult
+    try {
+      r = await op()
+    } catch {
+      setBusy(false)
+      setError('That did not work; try again.')
+      return
+    }
     setBusy(false)
     if (r.ok) return
-    const holding = verb && r.code === 'consumers' ? blockerSessions(sessions, r.sessions) : []
-    if (holding.length) setBlocker({ verb: verb!, sessions: holding.map((x) => ({ id: x.id, title: sessionTitle(x) })) })
-    else setError(accountFailureText(r, account))
+    const holding = verb && r.code === 'consumers' ? blockerSessions(useSessionStore.getState().sessions, r.sessions) : []
+    if (holding.length) {
+      const more = Math.max(0, (r.consumers ?? holding.length) - holding.length)
+      setBlocker({ verb: verb!, sessions: holding.map((x) => ({ id: x.id, title: sessionTitle(x) })), more })
+    } else setError(accountFailureText(r, account))
   }
 
   // A check's answer stands only while the record agrees with it: once the
@@ -248,16 +256,24 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
       )}
     >
       {error && <ErrorLine testId={`account-error-${id}`}>{error}</ErrorLine>}
-      {blocker && <BlockerLine name={name} verb={blocker.verb} sessions={blocker.sessions} testId={`account-blocker-${id}`} />}
+      {blocker && <BlockerLine name={name} verb={blocker.verb} sessions={blocker.sessions} more={blocker.more} testId={`account-blocker-${id}`} />}
       {ack && <ExternalAckDialog kind={ack} provider={provider} onConfirm={confirmAck} onCancel={() => setAck(null)} />}
       {signingInAgain && <SignInAgainDialog provider={provider} account={account} name={name} onClose={() => setSigningInAgain(false)} />}
-      {editing && <IdentityEditor anchor={chipRef} account={account} snapshot={snapshot} onClose={() => setEditing(false)} testId={`identity-editor-${id}`} />}
+      {editing && manageable && <IdentityEditor anchor={chipRef} account={account} snapshot={snapshot} onClose={() => setEditing(false)} testId={`identity-editor-${id}`} />}
     </AccountRow>
   )
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "12 Sep": the day it was archived, in local time. */
+export function archivedOn(at: number): string {
+  const d = new Date(at)
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`
+}
+
 /** One archived account under "Archived (N)": its name, how it signed in,
- *  and Restore (it comes back inactive; Make active then checks it). */
+ *  when it was archived, and Restore (it comes back inactive; Make active
+ *  then checks it). */
 function ArchivedAccountRow({ account, provider, snapshot }: { account: AccountView; provider: ProviderInstallationView; snapshot: AccountsSnapshot }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -266,15 +282,21 @@ function ArchivedAccountRow({ account, provider, snapshot }: { account: AccountV
   const restore = async () => {
     setBusy(true)
     setError(null)
-    const r = await providerAccountActions.restore(account.id)
-    setBusy(false)
-    if (!r.ok) setError(accountFailureText(r))
+    try {
+      const r = await providerAccountActions.restore(account.id)
+      if (!r.ok) setError(accountFailureText(r))
+    } catch {
+      setError('That did not work; try again.')
+    } finally {
+      setBusy(false)
+    }
   }
   return (
     <div className="pl-[38px] pt-2" data-testid={`archived-account-${account.id}`}>
       <div className="flex items-center gap-3 text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
         <span className="truncate" title={name}>{name}</span>
         {method && <span className="truncate">{method}</span>}
+        {account.archivedAt !== undefined && <span className="truncate" data-testid={`archived-when-${account.id}`}>archived {archivedOn(account.archivedAt)}</span>}
         {provider.enabled && canOfferRestore(account) && (
           <span className="ml-auto"><RowButton onClick={() => { void restore() }} disabled={busy} testId={`archived-restore-${account.id}`}>Restore</RowButton></span>
         )}

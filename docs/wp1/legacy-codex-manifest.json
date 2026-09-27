@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T19:35:17.154Z",
-  "head": "fd8e01c9e88cdbda9c84f02e9b1e17b35e38e114",
-  "tree": "8ac6bfc922527e62bae4612d187cc8e744ace282",
+  "generatedAt": "2026-09-27T19:59:59.896Z",
+  "head": "92072198de7362cf757d2af4b45247605017a173",
+  "tree": "4e4d239a9296104bf18812f6cd2aa5c6e9c644b5",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -2576,7 +2576,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 23
+      "lineCount": 24
     },
     {
       "path": "tests/unit/renderer/accounts-p32-selectors.test.ts",
