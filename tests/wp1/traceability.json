@@ -1024,7 +1024,8 @@
         "tests/wp1/traceability.json",
         "docs/wp2/plan.md",
         "docs/wp2/hello-codex-spec.md",
-        "docs/wp2/parity-checklist.md"
+        "docs/wp2/parity-checklist.md",
+        "docs/wp2/completion-plan.md"
       ],
       "status": "planned",
       "currentTests": [],
