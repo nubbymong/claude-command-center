@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-26T16:44:00.591Z",
-  "head": "c6dc4b608dd69b9173fa68f7b833e9b6f3bfe477",
-  "tree": "05b708573e4d1060d1c93631af471083e3112c2c",
+  "generatedAt": "2026-09-27T01:44:29.079Z",
+  "head": "1dbd39f31cb4926eedbbb121f9b07bad8bc522b5",
+  "tree": "d2fdb264af64db0bbc031fce7914ae607d46a3f2",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2315,
-  "excludedFileCount": 377,
-  "scannedFileCount": 1938,
+  "trackedFileCount": 2322,
+  "excludedFileCount": 381,
+  "scannedFileCount": 1941,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 374,
-  "pathDigest": "29b3fa116f338daadbeb5881a172c4e4b638f58ea704e6be2d88f6af29730738",
+  "matchedPathCount": 377,
+  "pathDigest": "ca572c50930d3fa731206319b83639f5aef65eec79e19f1db6ffecf15f5631a5",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -196,14 +196,14 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 46
+      "lineCount": 68
     },
     {
       "path": "docs/wp2/plan.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 127
+      "lineCount": 131
     },
     {
       "path": "package.json",
@@ -385,7 +385,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 46
+      "lineCount": 47
     },
     {
       "path": "src/main/codex-review-usage.ts",
@@ -529,7 +529,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 1
+      "lineCount": 2
     },
     {
       "path": "src/main/providers/claude/spawn.ts",
@@ -560,7 +560,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 75
+      "lineCount": 78
     },
     {
       "path": "src/main/providers/codex/cli-contract.ts",
@@ -585,7 +585,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 84
+      "lineCount": 104
     },
     {
       "path": "src/main/providers/codex/discovery.ts",
@@ -594,7 +594,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 45
+      "lineCount": 46
     },
     {
       "path": "src/main/providers/codex/enablement.ts",
@@ -729,7 +729,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 11
+      "lineCount": 12
     },
     {
       "path": "src/main/providers/core/accounts-service.ts",
@@ -1555,14 +1555,14 @@
         "P11",
         "P12"
       ],
-      "lineCount": 87
+      "lineCount": 95
     },
     {
       "path": "src/renderer/training-steps.ts",
       "predicates": [
         "P11"
       ],
-      "lineCount": 43
+      "lineCount": 45
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -1792,6 +1792,33 @@
       "lineCount": 2
     },
     {
+      "path": "tests/fixtures/codex/app-server/0.153.4/usage-schema.json",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
+      "path": "tests/fixtures/codex/app-server/0.155.1/usage-schema.json",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
+      "path": "tests/fixtures/codex/app-server/0.157.1/usage-schema.json",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
       "path": "tests/fixtures/codex/rollout-sample.jsonl",
       "predicates": [
         "P01",
@@ -1931,7 +1958,7 @@
         "P09",
         "P13"
       ],
-      "lineCount": 79
+      "lineCount": 84
     },
     {
       "path": "tests/unit/main/codex-review-session-abort.test.ts",
@@ -1958,7 +1985,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 106
+      "lineCount": 112
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -2562,7 +2589,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 8
+      "lineCount": 10
     },
     {
       "path": "tests/unit/renderer/model-colors.test.ts",

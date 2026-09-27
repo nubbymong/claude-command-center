@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "29b3fa116f338daadbeb5881a172c4e4b638f58ea704e6be2d88f6af29730738",
-  "manifestHead": "c6dc4b608dd69b9173fa68f7b833e9b6f3bfe477",
+  "manifestPathDigest": "ca572c50930d3fa731206319b83639f5aef65eec79e19f1db6ffecf15f5631a5",
+  "manifestHead": "1dbd39f31cb4926eedbbb121f9b07bad8bc522b5",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -2553,6 +2553,42 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; resume-picker fixture for tests/unit/scripts/codex-resume-picker.test.ts (WP1.68)",
       "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex/app-server/0.153.4/usage-schema.json",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 P3 usage track MP1 (owner decision 2026-09-27, M2, the scoped WP1.41 exception): the offline app-server schema excerpt of the three usage-read messages (initialize, initialized, account/rateLimits/read) on Codex 0.153.4, the minimum, generated with an empty CODEX_HOME and no network, for the version check of the supported CLIs (WP1.71); docs/wp1/owner-decisions-2026-09-27.md",
+      "note": "fixture data; P04 is the schema field describing the server CODEX_HOME, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/app-server/0.155.1/usage-schema.json",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 P3 usage track MP1 (owner decision 2026-09-27, M2, the scoped WP1.41 exception): the offline app-server schema excerpt of the three usage-read messages (initialize, initialized, account/rateLimits/read) on Codex 0.155.1, the pinned reference, generated with an empty CODEX_HOME and no network, for the version check of the supported CLIs (WP1.71); docs/wp1/owner-decisions-2026-09-27.md",
+      "note": "fixture data; P04 is the schema field describing the server CODEX_HOME, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/app-server/0.157.1/usage-schema.json",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 P3 usage track MP1 (owner decision 2026-09-27, M2, the scoped WP1.41 exception): the offline app-server schema excerpt of the three usage-read messages (initialize, initialized, account/rateLimits/read) on Codex 0.157.1, newer than tested, generated with an empty CODEX_HOME and no network, for the version check of the supported CLIs (WP1.71); docs/wp1/owner-decisions-2026-09-27.md",
+      "note": "fixture data; P04 is the schema field describing the server CODEX_HOME, no Codex code path"
     },
     {
       "path": "tests/fixtures/codex/auth-api-key.json",

@@ -4,8 +4,9 @@ The release-wide list for 2.1.1, the Codex feature-parity release. Its gate is
 zero unsupported shared Conductor features for Codex (WP1 design section 19).
 **SSH Codex sessions are the only agreed exclusion.** A PR being ready never
 means parity is complete. The decisions behind this list are in
-`docs/wp1/owner-decisions-2026-09-20.md` and
-`docs/wp1/owner-decisions-2026-09-26.md`.
+`docs/wp1/owner-decisions-2026-09-20.md`,
+`docs/wp1/owner-decisions-2026-09-26.md` and
+`docs/wp1/owner-decisions-2026-09-27.md`.
 
 Update this file in the same commit as the work that moves a row.
 
@@ -147,26 +148,28 @@ file is CI and VM only. CI and the confirmation review are pending.
 
 ## B. Account summary, usage footer, switching, Tokenomics
 
-Rows 17, 21 and 26 depend on UX the owner reviews before anything that
-depends on it is built (the account summary, the usage footer and
-Tokenomics).
+The owner approved the usage UX on 2026-09-27 (the account summary, the
+usage footer and Tokenomics; `docs/wp1/owner-decisions-2026-09-27.md`).
+Rows 17 to 21, 26 and 28 to 30 are built by the multi-provider usage track
+of P3, phases MP1 to MP13; a closed Codex account's reading comes from the
+scoped app-server read of ADR-022.
 
 | # | Feature | Status | Mocked | Real CLI | Packaged | Pkg | Still owed |
 |---|---|---|---|---|---|---|---|
-| 17 | All-accounts usage page | MISSING | no | no | no | P3 | Owner review of the layout first |
-| 18 | Session-strip meters | PARTIAL | no | no | no | P3 | Labels from `window_minutes`; a 0.155.1 fixture |
-| 19 | Strip cost wording | PARTIAL | no | no | no | P3 | Wording per provider and sign-in method |
-| 20 | Account chip (strip and sidebar) | MISSING | no | no | no | P3 | Chip from the account's identity |
-| 21 | Multi-account footer | MISSING | no | no | no | P3 | Owner review first; percentages never merged across providers |
+| 17 | All-accounts usage page | MISSING | no | no | no | P3 | Usage track MP3, MP4 (layout approved 2026-09-27); a closed Codex account's read MP7, MP8 (ADR-022) |
+| 18 | Session-strip meters | PARTIAL | no | no | no | P3 | Usage track MP2, MP6: labels from `window_minutes`; a 0.155.1 rollout fixture, owed for MP8 (the test VM has no 0.155.1 session) |
+| 19 | Strip cost wording | PARTIAL | no | no | no | P3 | Usage track MP6: wording per provider and sign-in method |
+| 20 | Account chip (strip and sidebar) | MISSING | no | no | no | P3 | Chip from the account's identity; the usage track (MP4, MP5) uses the same identity chip on the usage page and footer |
+| 21 | Multi-account footer | MISSING | no | no | no | P3 | Usage track MP5, MP6 (approved 2026-09-27): one pill per identity; percentages never merged across providers |
 | 22 | Switch the account of a running session | MISSING | no | no | no | P3 | Keep the conversation, as Claude does |
 | 23 | Choose the account at launch | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Per OS. Windows (AUTHENTICATED managed): the new-config picker defaulted to the managed account with no confirmation box, and real Codex 0.157.1 launched. Upgrade walk (AUTHENTICATED, this computer's Codex): Create waited for its launch confirmation, then real Codex 0.157.1 launched |
 | 24 | Running sessions per account | PARTIAL | no | no | no | P3 | Shown on the account row |
 | 25 | Tokenomics reads managed realms and `~/.codex` | VERIFIED | yes | no | no | P4 | Real rollouts |
-| 26 | Tokenomics per-account attribution and filters | MISSING | no | no | no | P3 | Owner review first |
+| 26 | Tokenomics per-account attribution and filters | MISSING | no | no | no | P3 | Usage track MP9, MP10, MP12 (approved 2026-09-27): attribution, Provider and Account filters |
 | 27 | Subagent collision fix | VERIFIED | yes | no | no | P4 | A real 0.155.1 subagent rollout |
-| 28 | Codex pricing | PARTIAL | no | no | no | P3 | Every pickable model priced or shown as unknown; one price source |
-| 29 | Plan type | MISSING | no | no | no | P3 | Fill the plan label |
-| 30 | Tokenomics totals split by provider | PARTIAL | no | no | no | P3 | With row 26 |
+| 28 | Codex pricing | PARTIAL | no | no | no | P3 | Usage track MP11: every pickable model priced or shown as "no price"; one price source |
+| 29 | Plan type | MISSING | no | no | no | P3 | Usage track MP2, MP8: fill the plan label from each reading's plan |
+| 30 | Tokenomics totals split by provider | PARTIAL | no | no | no | P3 | Usage track MP11, MP12, with row 26 |
 
 ## C. Sessions, statusline, model, Sentinel, Watchdog, status
 
@@ -242,6 +245,9 @@ relies on it; current online documentation can describe a newer CLI.
   (models and reasoning efforts). Missing fields in `codex login status` do
   not prove these are unavailable; account types differ in what they return
   (rows 17 to 21, 29, 39, 40; the email on the Set up Codex page).
+  `account/rateLimits/read` was checked offline on 0.153.4, 0.155.1 and
+  0.157.1 (MP1: what the read uses is identical on all three) and is the
+  only method the scoped exception of ADR-022 allows.
 - Codex supports STDIO and Streamable HTTP MCP servers. The Canvas and
   browser tools are to be validated through the existing Conductor MCP
   integration (rows 51, 52).
