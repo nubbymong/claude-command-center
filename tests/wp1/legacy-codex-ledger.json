@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "11311dc42f86b2371bdf39abde7f351c5b060f4a81cf53730733b46a7a46009f",
-  "manifestHead": "886253cccab823ad70f3e46c022680796bcd6b61",
+  "manifestHead": "81ed64a82a41cf822a8da0fddcd82be96f7e33ff",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -3458,7 +3458,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: cases retained; realm-env cases added (tests/wp1/launch-handoff.test.ts); WP2 final fixes: the resolveBinary case now asserts that CodexProvider refuses both PATH lookups, and resolveCodexBinary, the discovery lookup, keeps its cases (WP1.17)",
+      "evidence": "WP1.58: cases retained; realm-env cases added (tests/wp1/launch-handoff.test.ts); WP2 final fixes: the resolveBinary case now asserts that CodexProvider refuses both PATH lookups, and resolveCodexBinary, the discovery lookup, keeps its cases (WP1.17); WP2 P3 usage track MP3 follow-up (a stale case CI caught): the telemetry case now pins the sixth argument, the allowance callback that records the session's figure as its own realm's live figure and forgets it when the session stops (WP1.68); tests/unit/providers/codex/spawn.test.ts",
       "note": ""
     },
     {

@@ -42,7 +42,7 @@ vi.mock('../../../../src/main/providers/codex/telemetry', async (importOriginal)
 import * as osMod from 'os'
 import { execSync } from 'child_process'
 import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
-import { CodexProvider } from '../../../../src/main/providers/codex'
+import { CodexProvider, createCodexLiveUsage } from '../../../../src/main/providers/codex'
 import { resolveCodexBinary, resolveNodeExe, __resetNodeExeCache, codexCmdExeTarget } from '../../../../src/main/providers/codex/spawn'
 
 // WP2 (plan A10): a Codex spawn runs only from its prepared realm launch -- the
@@ -512,7 +512,30 @@ describe('CodexProvider telemetry (WP2 plan A13)', () => {
     expect(() => none.stop()).not.toThrow()
     expect(vi.mocked(watchAndClaimRollout)).not.toHaveBeenCalled()
     const cb = () => {}
+    // No live figure wired: nothing is recorded (no allowance callback).
     new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/res/codex-realms/r1/sessions' }, cb)
-    expect(vi.mocked(watchAndClaimRollout)).toHaveBeenCalledWith('sid', '/w', 7, cb, '/res/codex-realms/r1/sessions')
+    expect(vi.mocked(watchAndClaimRollout)).toHaveBeenCalledWith('sid', '/w', 7, cb, '/res/codex-realms/r1/sessions', undefined)
+  })
+
+  // Usage track MP3: the session's allowance is recorded as its realm's live
+  // figure, under the realm's own sessions folder, for as long as one of the
+  // realm's sessions still reports.
+  it('records each allowance the session reports as its own realm\'s live figure, and forgets it when the session stops', () => {
+    vi.mocked(watchAndClaimRollout).mockClear()
+    const live = createCodexLiveUsage('linux')
+    const cb = () => {}
+    const DIR = '/res/codex-realms/r1/sessions'
+    const src = new CodexProvider(live).ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: DIR }, cb)
+    const call = vi.mocked(watchAndClaimRollout).mock.calls[0]
+    expect(call.slice(0, 5)).toEqual(['sid', '/w', 7, cb, DIR])
+    const onAllowance = call[5]
+    expect(typeof onAllowance).toBe('function')
+    const reading = { limits: [{ limitId: 'codex', limitName: null, readingAt: 1234, primary: { windowMinutes: 300, usedPercent: 52, resetsAt: null }, secondary: null }], planType: 'plus', readingAt: 1234 }
+    onAllowance!(reading)
+    expect(live.get(DIR)).toEqual(reading)
+    // Another realm's folder holds nothing of it.
+    expect(live.get('/res/codex-realms/r2/sessions')).toBeNull()
+    src.stop()
+    expect(live.get(DIR)).toBeNull()
   })
 })

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T05:49:07.013Z",
-  "head": "886253cccab823ad70f3e46c022680796bcd6b61",
-  "tree": "d763043af5fd50af193bd65f313394ba5a2eb52e",
+  "generatedAt": "2026-09-27T05:55:51.646Z",
+  "head": "81ed64a82a41cf822a8da0fddcd82be96f7e33ff",
+  "tree": "7490448d30cfb985ea07ad2ee96ff25aa1a2c788",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -2381,7 +2381,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 205
+      "lineCount": 213
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
