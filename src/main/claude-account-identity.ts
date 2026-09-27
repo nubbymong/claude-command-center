@@ -225,8 +225,9 @@ export function sessionsOnProfile(profileId: string): string[] {
  *  gains profile binding this check must learn about it. */
 export function isProfileInUseByLiveSession(profileId: string): boolean {
   if (!profileId) return false
-  for (const pid of watched.values()) if (pid === profileId) return true
-  for (const pid of profileBySession.values()) if (pid === profileId) return true
+  // The sessions on it now (sessionsOnProfile), so a refusal and the sessions
+  // it names agree; then the transient consumers.
+  if (sessionsOnProfile(profileId).length > 0) return true
   if (hasTransientProfileConsumer(profileId)) return true
   return false
 }

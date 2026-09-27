@@ -680,9 +680,8 @@ export function restoreArchivedAccount(doc: ProviderRegistryDoc, accountId: stri
   if (doc.realms.some((r) => r.id !== realm.id && r.providerId === realm.providerId && r.pathRef === realm.pathRef && holdsPath(r))) {
     return fail('realm-conflict', 'another account now uses this sign-in location')
   }
-  if (account.providerSubject !== undefined && account.providerAuthorityId !== undefined && doc.accounts.some((a) => a.id !== accountId
-    && a.lifecycle !== 'archived' && a.providerId === account.providerId
-    && a.providerAuthorityId === account.providerAuthorityId && a.providerSubject === account.providerSubject)) {
+  if (account.providerSubject !== undefined && account.providerAuthorityId !== undefined
+    && subjectTaken(doc, account.providerId, account.providerAuthorityId, account.providerSubject, accountId)) {
     return fail('subject-conflict', 'another account is now signed in as this one')
   }
   const realms = doc.realms.map((r) => (r.id === realm.id ? { ...r, lifecycle: 'active' as const } : r))
@@ -1463,7 +1462,7 @@ export function reconcileLegacyAccounts(
       }
       // Nothing about who is signed in there is known any more: the subject is
       // dropped (another account may hold it by now) and the account needs a
-      // fresh check, exactly as a restore through the accounts flow would.
+      // fresh check.
       realms = realms.map((r) => (r.id === realm.id ? { ...r, lifecycle: 'active' as const } : r))
       accounts = accounts.map((a) => (a.id === existing!.id
         ? compact({

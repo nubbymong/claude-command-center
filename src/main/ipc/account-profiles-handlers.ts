@@ -12,6 +12,14 @@ import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, sessionsOnProfile, detectedNewAccountEmail } from '../claude-account-identity'
 import { profileConsumerCount } from '../profile-consumers'
 import { appWindowSender } from './trusted-sender'
+import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage, knownUsageLabels, claudeAccountDataAllowed } from '../usage/account-usage'
+import { readAllProfileAuthInfo } from '../account-auth-info'
+import { logError, logWarn } from '../debug-logger'
+import { clearWebSession } from '../account-web/sign-in'
+import { removeWebSession } from '../account-web/session-store'
+import { closeArtifacts } from '../account-web/artifacts'
+import { closeAccountPanesForProfile } from '../account-web/account-pane'
+import { listManagedLaunchReports } from '../managed-launch-diagnostics'
 
 const UNTRUSTED = { ok: false, code: 'untrusted-sender', error: 'That request was not accepted.' } as const
 
@@ -23,14 +31,6 @@ function holdersOf(profileId: string): { sessions?: string[]; unnamed?: number }
   const unnamed = profileConsumerCount(profileId)
   return { ...(sessions.length ? { sessions } : {}), ...(unnamed ? { unnamed } : {}) }
 }
-import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage, knownUsageLabels, claudeAccountDataAllowed } from '../usage/account-usage'
-import { readAllProfileAuthInfo } from '../account-auth-info'
-import { logError, logWarn } from '../debug-logger'
-import { clearWebSession } from '../account-web/sign-in'
-import { removeWebSession } from '../account-web/session-store'
-import { closeArtifacts } from '../account-web/artifacts'
-import { closeAccountPanesForProfile } from '../account-web/account-pane'
-import { listManagedLaunchReports } from '../managed-launch-diagnostics'
 
 export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow | null): void {
   // Every handler here answers the app's own window only, as the Accounts
