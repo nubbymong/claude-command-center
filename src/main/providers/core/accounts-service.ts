@@ -79,6 +79,12 @@ export interface AccountsServiceDeps {
    *  switch-off refuses while any runs. A throw counts as running (fail
    *  closed). */
   unleasedSessions?: (providerId: ProviderId) => number
+  /** Whether a live session the provider runs without a lease holds the
+   *  provider's own record of an account (Claude: a profile a session runs
+   *  on). A mirrored account is then not made inactive or archived here,
+   *  as the provider's own surface refuses it (design 5.3, WP1.16). A
+   *  throw counts as in use (fail closed). */
+  legacyRecordInUse?: (providerId: ProviderId, legacyId: string) => boolean
   log?: (message: string) => void
   /** Usage track MP8: the fresh reads' clock and pacing. Absent: the
    *  shipped values (tests shorten them). */
@@ -200,6 +206,7 @@ const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
   'provider-state-unknown': 'This app could not read whether this provider is on, so nothing was started.',
   'last-provider': 'At least one provider must stay on.',
   'consumers': 'Sessions or operations are using this account.',
+  'in-use': 'This account is in use by an open session. Close its sessions and try again.',
   'busy': 'Something else is using this account right now; try again when it finishes.',
   'acknowledgement-required': 'This sign-in is shared with other apps on this computer; confirm to continue.',
   'not-signed-in': 'This account is not signed in.',
@@ -1439,16 +1446,22 @@ export class AccountsService {
       let consumers = 0
       let sessions: string[] = []
       let held = false
+      let inUse = false
       const r = await ctx.store.mutate((d, t) => {
         // Under the lock that applies it: a sign-out, archive or abandon
         // holding the account is never overtaken by a lifecycle change.
         if (this.deps.leases.isHeld(a.id)) { held = true; return { ok: false, code: 'blocked-by-consumers', message: 'held' } }
+        // A mirrored account's own record held by a session that takes no
+        // lease (a Claude profile): refused here as on the provider's own
+        // surface, whichever channel asks.
+        if (next !== 'active' && this.legacyRecordInUse(d, a.id)) { inUse = true; return { ok: false, code: 'blocked-by-consumers', message: 'in use' } }
         consumers = this.deps.leases.count(a.id)
         // Which sessions hold it, read with the count: the refusal names them.
         sessions = this.deps.leases.sessionsHolding(a.id)
         return setAccountLifecycle(d, a.id, next, { consumers }, t)
       })
       if (held) return failure('busy')
+      if (inUse) return failure('in-use')
       const bad = this.fromStore(r, consumers, sessions)
       if (bad) return bad
       // A mirrored account's lifecycle is the provider's own list's too:
@@ -2586,6 +2599,14 @@ export class AccountsService {
     // actually ended: its own finally releases that lease.
     this.deps.leases.releaseForRenderer(senderId, (lease) => lease.kind === 'sign-in' && this.signIns.get(lease.ownerId)?.senderId === senderId)
     this.deps.secrets.discardForRenderer(senderId)
+  }
+
+  /** The provider's own record of this account in use by a session that
+   *  takes no lease (legacyRecordInUse); a throw counts as in use. */
+  private legacyRecordInUse(doc: ProviderRegistryDoc, accountId: string): boolean {
+    const link = doc.legacyLinks.find((l) => l.accountId === accountId)
+    if (!link || !this.deps.legacyRecordInUse) return false
+    try { return this.deps.legacyRecordInUse(link.providerId, link.legacyId) } catch { return true }
   }
 
   /** For a message that names the blocker (design 10, 11). */

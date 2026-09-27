@@ -207,6 +207,7 @@ export type AccountsFailureCode =
   | 'provider-state-unknown'   // the saved on/off could not be read: nothing that starts a process runs
   | 'last-provider'            // at least one provider stays enabled
   | 'consumers'                // sessions or operations hold it: `consumers` says how many
+  | 'in-use'                   // a live session the provider runs without a lease holds its own record (a Claude profile)
   | 'busy'                     // a sign-in or another change holds it
   | 'acknowledgement-required' // an external home's wider effect needs the user's yes
   | 'not-signed-in'

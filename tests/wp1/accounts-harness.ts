@@ -89,6 +89,8 @@ export interface CliRun { args: string; home: string; env: Record<string, string
 export type CliScript = Partial<Record<string, (r: CliRun) => Partial<CodexRunResult> | Promise<Partial<CodexRunResult>>>>
 
 export interface HarnessOpts {
+  /** The composition root's check that a session holds a mirrored record (Claude profile). */
+  legacyRecordInUse?: (providerId: ProviderId, legacyId: string) => boolean
   preference?: Partial<Record<ProviderId, ProviderPreference | (() => ProviderPreference)>>
   experimental?: ScopedCapabilityKey[]
   script?: CliScript
@@ -260,6 +262,7 @@ export async function harness(o: HarnessOpts = {}) {
     platform: 'win32',
     randomHex: nextHex,
     reconcileLegacy: async () => { await store.reconcileLegacy(claudeLegacy) },
+    ...(o.legacyRecordInUse ? { legacyRecordInUse: o.legacyRecordInUse } : {}),
     ...(o.unleasedSessions ? { unleasedSessions: o.unleasedSessions } : {}),
     ...(o.usageReads ? { usageReads: o.usageReads } : {}),
     ...(o.registrySettled ? { registrySettled: o.registrySettled } : {}),

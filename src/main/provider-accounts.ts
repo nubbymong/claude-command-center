@@ -73,11 +73,16 @@ export function experimentalFromSettings(settings: Record<string, unknown> | nul
 }
 
 /** Build the service once the registry has been loaded (or failed to).
- *  `unleasedSessions` comes from the composition root (pty-manager), so this
- *  module imports no PTY code. */
-export function initProviderAccounts(opts: { unleasedSessions?: (providerId: ProviderId) => number } = {}): AccountsService {
+ *  `unleasedSessions` and `legacyRecordInUse` come from the composition
+ *  root (pty-manager, the Claude session identities), so this module imports
+ *  no PTY or provider session code. */
+export function initProviderAccounts(opts: {
+  unleasedSessions?: (providerId: ProviderId) => number
+  legacyRecordInUse?: (providerId: ProviderId, legacyId: string) => boolean
+} = {}): AccountsService {
   service = new AccountsService({
     ...(opts.unleasedSessions ? { unleasedSessions: opts.unleasedSessions } : {}),
+    ...(opts.legacyRecordInUse ? { legacyRecordInUse: opts.legacyRecordInUse } : {}),
     // Asked afresh each time: a resources-directory change re-creates it.
     store: () => getAccountRegistry(),
     // Once the load has run, a registry missing or unloaded (its load threw)
