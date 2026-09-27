@@ -40,19 +40,23 @@ function writeClaude(dir: string, id: string): string {
 describe('the one-off Codex account attribution (usage track MP9)', () => {
   let tmp: string
   let workers: Array<{ stop: () => void }> = []
-  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tkacct-')); workers = [] })
+  /** Links to the temp folder made outside it, removed before it. */
+  let aliases: string[] = []
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tkacct-')); workers = []; aliases = [] })
   afterEach(() => {
     for (const w of workers) { try { w.stop() } catch { /* stopped */ } }
+    // The link itself, never what it points at.
+    for (const at of aliases) { try { fs.unlinkSync(at) } catch { try { fs.rmdirSync(at) } catch { /* gone */ } } }
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 
-  function start(dbPath: string, dirs: Array<{ dir: string; accountKey: string }>, extra: { codexRealmDirsKnown?: boolean } = {}, workerFs?: typeof fs) {
+  function start(dbPath: string, dirs: Array<{ dir: string; accountKey: string }>, extra: { codexRealmDirsKnown?: boolean } = {}, workerFs?: typeof fs, base: string = tmp) {
     const fake = new FakeTkWorkerTransport()
     const msgs: FromTkWorker[] = []
     fake.onMessage((m) => msgs.push(m))
     const w = createTokenomicsWorker(fake.asWorkerSide(), workerFs ? { fs: workerFs } : {})
     workers.push(w)
-    fake.post({ type: 'open', dbPath, pricing: PRICING, configs: [], claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: path.join(tmp, 'home-codex'), codexRealmSessionsDirs: dirs, ...extra })
+    fake.post({ type: 'open', dbPath, pricing: PRICING, configs: [], claudeProjectsDir: path.join(base, 'claude'), codexSessionsDir: path.join(base, 'home-codex'), codexRealmSessionsDirs: dirs, ...extra })
     let qid = 1000
     const ask = async (kind: string, args: Record<string, unknown> = {}): Promise<any> => {
       const id = ++qid
@@ -188,35 +192,131 @@ describe('the one-off Codex account attribution (usage track MP9)', () => {
     fs.symlinkSync(target, at, process.platform === 'win32' ? 'junction' : 'dir')
   }
 
-  it('an account folder linked into another account\'s never takes that account\'s sessions', async () => {
-    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
-    const realmB = path.join(tmp, 'realms', 'b', 'sessions')
-    writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
-    link(realmB, realmA)
-    // A is listed first, and is reached only through the link.
-    // The folder is walked once, by its own path (the link is never listed).
-    const listed: string[] = []
-    const tracing = new Proxy(fs, {
-      get(target, k) {
-        if (k === 'readdirSync') return (p: string, o: unknown) => { listed.push(String(p)); return (fs.readdirSync as (p: string, o: unknown) => unknown)(p, o) }
-        return (target as unknown as Record<PropertyKey, unknown>)[k]
-      },
-    })
-    const t = start(path.join(tmp, 'tk.db'), [{ dir: realmA, accountKey: 'codex:acct-a' }, { dir: realmB, accountKey: 'codex:acct-b' }], {}, tracing as unknown as typeof fs)
-    await t.settle()
-    expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-b' }])
-    expect((await t.ask('index-status')).eventsTotal).toBe(2)
-    expect(listed.filter((p) => p.startsWith(realmA))).toEqual([])
-    expect(listed.filter((p) => p.startsWith(realmB)).length).toBeGreaterThan(0)
-  })
+  // CI at d54e1666 and 7e561aa3: the runners reach their temp folder through
+  // an alias (a Windows 8.3 short name, C:\Users\RUNNER~1; macOS's /var
+  // link to /private/var), so no folder's real path was the path it was
+  // given and every one read as reached through a link. Each case runs with
+  // the temp folder reached by its own path, through a linked parent and by
+  // its 8.3 short name, with the folders named in either order.
+  /** The temp folder reached through a link to it, as macOS reaches /var. */
+  const viaLink = (): string => {
+    const at = path.join(os.tmpdir(), `tkalias-${process.pid}-${Math.random().toString(36).slice(2, 8)}`)
+    link(tmp, at)
+    aliases.push(at)
+    return at
+  }
+  /** A folder in the temp folder by its 8.3 short name, as the Windows
+   *  runners reach theirs; null where the volume makes no short names. */
+  const viaShortName = (): string | null => {
+    if (process.platform !== 'win32') return null
+    const long = path.join(tmp, 'shortnamed-folder')
+    fs.mkdirSync(long)
+    const short = path.join(tmp, 'SHORTN~1')
+    try {
+      const a = fs.statSync(long, { bigint: true })
+      const b = fs.statSync(short, { bigint: true })
+      return a.ino === b.ino && a.dev === b.dev && a.ino !== 0n ? short : null
+    } catch { return null }
+  }
+  const bases: Array<[string, () => string | null]> = [
+    ['by its own path', () => tmp],
+    ['through a linked parent', viaLink],
+    ['by its 8.3 short name', viaShortName],
+  ]
+  const baseOr = (how: string, get: () => string | null, skip: () => void): string => {
+    const base = get()
+    if (base === null) { skip(); throw new Error(`no ${how} here`) }
+    return base
+  }
 
-  it('this computer\'s own folder linked into an account\'s never takes that account\'s sessions', async () => {
+  for (const [how, get] of bases) {
+    for (const aFirst of [true, false]) {
+      const named = `(the temp folder ${how}; the linked folder named ${aFirst ? 'first' : 'last'})`
+
+      it(`an account folder linked into another account's never takes that account's sessions ${named}`, async (ctx) => {
+        const base = baseOr(how, get, () => ctx.skip())
+        const realmA = path.join(base, 'realms', 'a', 'sessions')
+        const realmB = path.join(base, 'realms', 'b', 'sessions')
+        writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
+        link(realmB, realmA)
+        // A is reached only through the link. The folder is walked once, by
+        // its own path (the link is never listed).
+        const listed: string[] = []
+        const tracing = new Proxy(fs, {
+          get(target, k) {
+            if (k === 'readdirSync') return (p: string, o: unknown) => { listed.push(String(p)); return (fs.readdirSync as (p: string, o: unknown) => unknown)(p, o) }
+            return (target as unknown as Record<PropertyKey, unknown>)[k]
+          },
+        })
+        const dirs = [{ dir: realmA, accountKey: 'codex:acct-a' }, { dir: realmB, accountKey: 'codex:acct-b' }]
+        const t = start(path.join(tmp, 'tk.db'), aFirst ? dirs : [...dirs].reverse(), {}, tracing as unknown as typeof fs, base)
+        await t.settle()
+        expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-b' }])
+        expect((await t.ask('index-status')).eventsTotal).toBe(2)
+        expect(listed.filter((p) => p.startsWith(realmA))).toEqual([])
+        expect(listed.filter((p) => p.startsWith(realmB)).length).toBeGreaterThan(0)
+      })
+
+      it(`an account's own folder, linked above its sessions folder into another's, never takes that account's sessions ${named}`, async (ctx) => {
+        const base = baseOr(how, get, () => ctx.skip())
+        const realmB = path.join(base, 'realms', 'b', 'sessions')
+        writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
+        link(path.join(base, 'realms', 'b'), path.join(base, 'realms', 'a'))
+        const realmA = path.join(base, 'realms', 'a', 'sessions')
+        const dirs = [{ dir: realmA, accountKey: 'codex:acct-a' }, { dir: realmB, accountKey: 'codex:acct-b' }]
+        const t = start(path.join(tmp, 'tk.db'), aFirst ? dirs : [...dirs].reverse(), {}, undefined, base)
+        await t.settle()
+        expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-b' }])
+        expect((await t.ask('index-status')).eventsTotal).toBe(2)
+      })
+
+      it(`this computer's own folder linked into an account's never takes that account's sessions ${named}`, async (ctx) => {
+        const base = baseOr(how, get, () => ctx.skip())
+        const realmB = path.join(base, 'realms', 'b', 'sessions')
+        writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
+        link(realmB, path.join(base, 'home-codex'))
+        const t = start(path.join(tmp, 'tk.db'), [{ dir: realmB, accountKey: 'codex:acct-b' }], {}, undefined, base)
+        await t.settle()
+        expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-b' }])
+        expect((await t.ask('index-status')).eventsTotal).toBe(2)
+      })
+
+      it(`an account folder linked into this computer's own never takes its sessions ${named}`, async (ctx) => {
+        const base = baseOr(how, get, () => ctx.skip())
+        const home = path.join(base, 'home-codex')
+        writeRollout(path.join(home, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-h.jsonl', 'cx-h', 2)
+        const realmB = path.join(base, 'realms', 'b', 'sessions')
+        link(home, realmB)
+        const t = start(path.join(tmp, 'tk.db'), [{ dir: realmB, accountKey: 'codex:acct-b' }], {}, undefined, base)
+        await t.settle()
+        expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:external' }])
+        expect((await t.ask('index-status')).eventsTotal).toBe(2)
+      })
+    }
+  }
+
+  it('this computer\'s own folder linked into a folder inside an account\'s never takes that account\'s sessions', async () => {
     const realmB = path.join(tmp, 'realms', 'b', 'sessions')
     writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
-    link(realmB, path.join(tmp, 'home-codex'))
+    link(path.join(realmB, '2026'), path.join(tmp, 'home-codex'))
     const t = start(path.join(tmp, 'tk.db'), [{ dir: realmB, accountKey: 'codex:acct-b' }])
     await t.settle()
     expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-b' }])
+    expect((await t.ask('index-status')).eventsTotal).toBe(2)
+  })
+
+  // Only folders that overlap are compared: an alias above one folder does
+  // not move it behind another it has nothing in common with, and those keep
+  // their order (one rollout hard-linked into both goes to the first).
+  it('folders that do not overlap keep their order, however each is reached', async () => {
+    const realmA = path.join(viaLink(), 'realms', 'a', 'sessions')
+    const realmB = path.join(tmp, 'realms', 'b', 'sessions')
+    const file = writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
+    fs.mkdirSync(path.join(realmA, '2026', '08', '01'), { recursive: true })
+    fs.linkSync(file, path.join(realmA, '2026', '08', '01', 'rollout-2026-08-01T00-00-00-b.jsonl'))
+    const t = start(path.join(tmp, 'tk.db'), [{ dir: realmA, accountKey: 'codex:acct-a' }, { dir: realmB, accountKey: 'codex:acct-b' }])
+    await t.settle()
+    expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-a' }])
     expect((await t.ask('index-status')).eventsTotal).toBe(2)
   })
 

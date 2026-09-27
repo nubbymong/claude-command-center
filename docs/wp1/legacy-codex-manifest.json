@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T10:58:55.652Z",
-  "head": "8e70329df8ba8fffc46f6dce7a338bbb3db48dff",
-  "tree": "af2526e40e725f8638106d567c7fce7c67b4576c",
+  "generatedAt": "2026-09-27T11:15:19.087Z",
+  "head": "f3b5fec7efc4b2f9afb864a524fdb1ebe9021af5",
+  "tree": "22313c11759b828b1391af08ad205fcc88db6bff",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -2353,7 +2353,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 31
+      "lineCount": 41
     },
     {
       "path": "tests/unit/native/tokenomics-worker-hardening.native.test.ts",

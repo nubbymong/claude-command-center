@@ -5,7 +5,7 @@ import type { AccountsSnapshot } from '../../../shared/providers'
 import { getModelColor, getModelShort } from './modelColors'
 import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
 import { ProviderMark } from '../sidebar/Badges'
-import { tkAccountLabel, tkAccountColourKey, tkCostTooltip, TK_PROVIDER_LABEL, TK_NOT_RECORDED } from './tk-labels'
+import { tkAccountLabel, tkAccountColourKey, tkCostTooltip, TK_PROVIDER_LABEL, TK_NOT_RECORDED, TK_THIS_COMPUTER } from './tk-labels'
 import { IdentityChip } from '../ui/IdentityChip'
 import { resolveIdentityColor } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
@@ -54,7 +54,8 @@ const SessionRow = memo(function SessionRow({
   const account = tkAccountLabel(snapshot, row.accountKey ?? '')
   // The account's identity chip, as the approved canvas draws it.
   const colourKey = tkAccountColourKey(snapshot, row.accountKey ?? '')
-  const notRecorded = account === TK_NOT_RECORDED
+  // Muted as the canvas draws them: usage with no account in the app.
+  const muted = account === TK_NOT_RECORDED || account === TK_THIS_COMPUTER
   const color = getModelColor(row.model)
   return (
     <tr
@@ -85,10 +86,11 @@ const SessionRow = memo(function SessionRow({
           </span>
         </span>
       </td>
-      {/* Account (MP12): its identity chip and name; "Not recorded" muted */}
+      {/* Account (MP12): its identity chip and name; "Not recorded" and
+          "This computer's sign-in" muted */}
       <td
         className="px-3 py-2 text-xs max-w-[160px]"
-        style={{ color: notRecorded ? 'var(--text-muted)' : 'var(--text-secondary)' }}
+        style={{ color: muted ? 'var(--text-muted)' : 'var(--text-secondary)' }}
         title={account}
       >
         <span className="inline-flex items-center gap-1.5 min-w-0">

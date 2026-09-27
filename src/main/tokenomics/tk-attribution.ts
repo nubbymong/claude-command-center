@@ -97,7 +97,11 @@ export function transcriptProfile(
   for (const base of roots) {
     const rel = inside(p, base, file)
     if (!rel) continue
-    const id = rel.split(p.sep)[0]
+    // Windows compares paths without case, and a profile id is lower case:
+    // the folder name is lowered before it is checked, or a path reported
+    // in other case would never reach the case-free account lookup.
+    const segment = rel.split(p.sep)[0]
+    const id = platform === 'win32' ? segment.toLowerCase() : segment
     if (!isProfileId(id)) continue
     // Where this profile's transcripts go, relative to the root.
     const layout = inside(p, root, p.resolve(projectsDirOf(id)))

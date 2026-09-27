@@ -286,12 +286,13 @@ describe('the components (MP12)', () => {
     expect(container.querySelectorAll('[data-testid="provider-mark-claude"]')).toHaveLength(1)
     expect(container.querySelectorAll('[data-testid="provider-mark-codex"]')).toHaveLength(3)
     // As drawn (MP12 round 1): an account's identity chip beside its name,
-    // in its own colour; none where there is no account; "Not recorded" muted.
+    // in its own colour; none where there is no account; "Not recorded" and
+    // "This computer's sign-in" muted (the canvas draws both dim).
     const cells = accounts.map((c) => c.closest('td') as HTMLElement)
     const chips = cells.map((td) => (td.querySelector('span[aria-hidden="true"]') as HTMLElement | null)?.style.backgroundColor ?? null)
     expect(chips.map((c) => c !== null && c !== '')).toEqual([true, true, false, false])
     expect(chips[0]).not.toBe(chips[1])
-    expect(cells.map((td) => td.style.color)).toEqual(['var(--text-secondary)', 'var(--text-secondary)', 'var(--text-secondary)', 'var(--text-muted)'])
+    expect(cells.map((td) => td.style.color)).toEqual(['var(--text-secondary)', 'var(--text-secondary)', 'var(--text-muted)', 'var(--text-muted)'])
     const titles = [...container.querySelectorAll('tbody tr')].map((tr) => (tr.querySelectorAll('td')[3] as HTMLElement).title)
     expect(titles).toEqual(['API-equivalent estimate', 'Estimate at API list prices', TK_NO_PRICE_NOTE, 'API-equivalent estimate'])
   })

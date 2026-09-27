@@ -15,6 +15,7 @@ import { FakeTkWorkerTransport } from '../../../src/main/tokenomics/tk-worker-tr
 import type { ToTkWorker } from '../../../src/main/tokenomics/tk-worker-transport'
 import { harness, claudeSnapshot } from '../../wp1/accounts-harness'
 import indexSource from '../../../src/main/index.ts?raw'
+import { isValidProfileId } from '../../../src/shared/profile-id'
 
 const U1 = '0b6f3c2e-9d41-4f8a-a1c2-3e4d5f607182'
 const U2 = '7d2a9e10-4b3c-4d5e-8f60-718293a4b5c6'
@@ -60,6 +61,14 @@ describe('the profile a transcript path names (MP10: the path decides, in the re
     expect(transcriptProfile(`c:/RES/Account-Profiles/profile-a1/.Claude/Projects/F--app/${U1}.jsonl`, ROOT_W, ok, winProjects, 'win32')).toBe('profile-a1')
     // A subagent's transcript deeper in the project folder still counts.
     expect(transcriptProfile(`/home/u/res/account-profiles/profile-b2/.claude/projects/-app/sub/${U1}.jsonl`, '/home/u/res/account-profiles', ok, posixProjects('/home/u/res/account-profiles'), 'linux')).toBe('profile-b2')
+  })
+  // Windows compares paths without case, and the app's id check takes lower
+  // case only: the folder name is lowered first, or the case-free account
+  // lookup would never be reached. POSIX compares with case.
+  it('on Windows a profile folder reported in other case is still the profile\'s', () => {
+    expect(isValidProfileId('PROFILE-A1')).toBe(false)
+    expect(transcriptProfile(`${ROOT_W}\\PROFILE-A1\\.claude\\projects\\F--app\\${U1}.jsonl`, ROOT_W, isValidProfileId, winProjects, 'win32')).toBe('profile-a1')
+    expect(transcriptProfile(`/res/account-profiles/PROFILE-A1/.claude/projects/-app/${U1}.jsonl`, '/res/account-profiles', isValidProfileId, posixProjects('/res/account-profiles'), 'linux')).toBeUndefined()
   })
   it('the old layout, with no .claude folder, is not a profile\'s', () => {
     expect(transcriptProfile(`${ROOT_W}\\profile-a1\\projects\\F--app\\${U1}.jsonl`, ROOT_W, ok, winProjects, 'win32')).toBeUndefined()

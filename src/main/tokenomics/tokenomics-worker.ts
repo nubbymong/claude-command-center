@@ -227,12 +227,28 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
    *  the file system gives no id (MP9 round 1, B-F1). */
   const fileIdOf = (st: { dev: bigint | number; ino: bigint | number }, p: string): string =>
     BigInt(st.ino) !== 0n ? `${st.dev}:${st.ino}` : `path:${p}`
-  /** Whether a folder is reached by its own path, not through a link. */
-  const reachedDirectly = (dir: string): boolean => {
-    let real: string
-    try { real = fs.realpathSync.native(dir) } catch { return true }
-    const norm = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p))
-    return norm(real) === norm(dir)
+  /** A folder's real path (its own when it cannot be resolved). */
+  const realOf = (dir: string): string => {
+    try { return fs.realpathSync.native(dir) } catch { return path.resolve(dir) }
+  }
+  /** How deep the deepest link (a symlink or junction) on a folder's path
+   *  leads: the segments of the real path it resolves to, 0 with no link on
+   *  the path. An alias that is not a link, a Windows 8.3 short name, is no
+   *  link. */
+  const linkDepth = (dir: string): number => {
+    for (let p = path.resolve(dir); ; ) {
+      let isLink = false
+      try { isLink = fs.lstatSync(p).isSymbolicLink() } catch { isLink = false }
+      if (isLink) return realOf(p).split(/[\\/]+/).filter(Boolean).length
+      const up = path.dirname(p)
+      if (up === p) return 0
+      p = up
+    }
+  }
+  /** One real path at or below another. */
+  const atOrBelow = (child: string, parent: string): boolean => {
+    const rel = path.relative(parent, child)
+    return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel))
   }
 
   /** Every rollout with whose sessions it holds. One folder is walked once,
@@ -240,7 +256,15 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
    *  B-F1): a folder reached by its own path is walked before one reached
    *  through a link (a junction from one account's folder, or the user's own,
    *  into another's never takes that account's files), then in order (the
-   *  user's own home first). */
+   *  user's own home first).
+   *
+   *  "Through a link" is decided between the folders that overlap (one's
+   *  real path at or below the other's): the one whose deepest link leads
+   *  deeper is the linked one, and with no difference the order decides.
+   *  Comparing a folder's real path with the path it was given read every
+   *  folder as linked wherever an alias sits above them all (a Windows 8.3
+   *  short name, as on the CI runners, or macOS's /var link), and the order
+   *  then let a linked folder take another account's sessions. */
   function enumerateCodex(): Array<{ file: string; accountKey: string }> {
     const out: Array<{ file: string; accountKey: string }> = []
     const seen = new Set<string>()
@@ -266,13 +290,19 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         if (BigInt(st.size) > 0n && !seen.has(id)) { seen.add(id); out.push({ file: full, accountKey }) }
       }
     }
-    const roots: Array<{ root: TkSessionsRoot; order: number; id: string; direct: boolean }> = []
+    const roots: Array<{ root: TkSessionsRoot; order: number; id: string; real: string; link: number; direct: boolean }> = []
     codexDirs.forEach((root, order) => {
       try {
         if (!fs.existsSync(root.dir)) return
-        roots.push({ root, order, id: fileIdOf(fs.statSync(root.dir, { bigint: true }), root.dir), direct: reachedDirectly(root.dir) })
+        roots.push({
+          root, order, id: fileIdOf(fs.statSync(root.dir, { bigint: true }), root.dir),
+          real: realOf(root.dir), link: linkDepth(root.dir), direct: true,
+        })
       } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
     })
+    for (const r of roots) {
+      r.direct = !roots.some((s) => s !== r && s.link < r.link && (atOrBelow(r.real, s.real) || atOrBelow(s.real, r.real)))
+    }
     roots.sort((a, b) => Number(b.direct) - Number(a.direct) || a.order - b.order)
     const walked = new Set<string>()
     for (const r of roots) {
