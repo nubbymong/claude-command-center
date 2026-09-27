@@ -91,17 +91,22 @@ root left running, and a kill made before the early read whose own read fails
 reads once more with that budget; the run still settles at its 15 s bound, and
 the chain is still never killed with `/T`. On the host its unit file passed
 92/92 (4 red before the fix, 5 mutants red). Its spec, code-quality and
-ADR-009 reviews asked for fixes, made in the commit after `8a6b83d5`: a table
-answering more than 8 s after its read began, and any retry read, kills only
-the wrapper line; a failed early read gets one retry; every reader answer is
-checked; the run's result says when a kill still under way at the settle
-bound has finished (`killSettled`, at most 43 s after the stop), and the realm
-lock, browser slot, review lease, Claude profile hold and discovery's
+ADR-009 reviews asked for fixes, made in `040ad456`: a table answering more
+than 8 s after its read began kills only the wrapper line; a failed early read
+gets one retry; every reader answer is checked; the run's result says when a
+kill still under way at the settle bound has finished (`killSettled`), and the
+realm lock, browser slot, review lease, Claude profile hold and discovery's
 throwaway home are held until then; kills still reading are flushed at app
-quit. On the host the four touched unit files pass 239/239 (17 red before the
-fixes, 23 mutants red), `npm run typecheck` is clean and the WP1 gate passes
-16/16. The fake-CLI file is CI and VM only. CI and the confirmation review are
-pending.
+quit. On the host its four touched unit files passed 239/239 (17 red before,
+23 mutants red). Its ADR-009 confirmation passed; the spec and code-quality
+reviews asked for minor fixes, made in the commit after `040ad456`: the same
+8 s age rule for every read, retries included; a 1 s margin on the kill's
+worst case (now 44 s after the stop); the quit flush is one synchronous
+taskkill bounded at 5 s, and a kill whose read lands after it kills nothing
+more; a throwing lease or hold release never replaces a review's result. On
+the host the four touched unit files pass 244/244 (10 red before, 11 mutants
+red), `npm run typecheck` is clean and the WP1 gate passes 16/16. The fake-CLI
+file is CI and VM only. CI and the confirmation review are pending.
 
 | Group | Open item | Tracked in |
 |---|---|---|

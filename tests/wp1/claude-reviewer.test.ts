@@ -192,6 +192,20 @@ describe('the Claude reviewer invocation (WP2 5b)', () => {
     expect(h.release).toHaveBeenCalledTimes(1)
   })
 
+  // Round 3 (B6): a hold release that throws never replaces the review.
+  it('a profile-hold release that throws, at once or after the kill, never replaces the result', async () => {
+    const h = reviewDeps()
+    h.release.mockImplementation(() => { throw new Error('hold gone') })
+    expect(await createClaudeReviewOperations(h.deps).run(input())).toMatchObject({ ok: true })
+    let finishKill!: () => void
+    const killSettled = new Promise<void>((res) => { finishKill = res })
+    h.deps.run = runner(() => ({ exitCode: null, spawnError: 'cancelled', stopped: 'cancel' as const, killSettled })).run
+    expect(await createClaudeReviewOperations(h.deps).run(input())).toMatchObject({ ok: false, code: 'cancelled' })
+    finishKill()
+    await new Promise((res) => setTimeout(res, 0))
+    expect(h.release).toHaveBeenCalledTimes(2)
+  })
+
   it('releases the account on every outcome, a runner that throws included', async () => {
     for (const script of [() => ({ exitCode: 1 }), () => ({ timedOut: true, stopped: 'deadline' as const }), () => { throw new Error('boom') }]) {
       const h = reviewDeps({})

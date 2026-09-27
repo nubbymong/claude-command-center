@@ -416,7 +416,7 @@ async function runReview(
       // way -- then the lease goes once that kill has finished (bounded by
       // CODEX_KILL_WORST_MS), not before: the reviewer may live until then. A
       // command the reviewer left behind does not hold the account.
-      const letGo = () => prepared.lease.release()
+      const letGo = () => { try { prepared.lease.release() } catch { /* a release never replaces the result */ } }
       if (kill) void kill.then(letGo, letGo)
       else letGo()
     }

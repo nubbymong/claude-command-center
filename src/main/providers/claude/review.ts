@@ -85,7 +85,7 @@ export interface ClaudeReviewDeps extends ClaudeCliPorts {
 
 /** The consumer hold outlives the run's own deadline by this much at most:
  *  the run settles right after its kill, and a kill still under way when it
- *  settles ends within the runner's worst case (43 s, CODEX_KILL_WORST_MS in
+ *  settles ends within the runner's worst case (44 s, CODEX_KILL_WORST_MS in
  *  the composition root's runner), so a hold older than this could only be
  *  one whose release never ran. */
 export const CLAUDE_REVIEW_HOLD_GRACE_MS = 60_000
@@ -213,7 +213,7 @@ export function createClaudeReviewOperations(deps: ClaudeReviewDeps): ProviderRe
         if (!out.text.trim()) return { ok: false, code: 'no-output', message: 'Claude Code returned no review.', ...usage }
         return { ok: true, text: finishReview(out.text), ...usage }
       } finally {
-        const letGo = () => held()
+        const letGo = () => { try { held() } catch { /* a release never replaces the result */ } }
         if (kill) void kill.then(letGo, letGo)
         else letGo()
       }

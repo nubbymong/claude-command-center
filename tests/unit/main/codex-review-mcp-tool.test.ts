@@ -259,6 +259,18 @@ describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its se
     expect(h.release).toHaveBeenCalledTimes(3)
   })
 
+  // Round 3 (B6): a lease release that throws never replaces the agent's answer.
+  it('a lease release that throws, at once or after the kill, never replaces the result', async () => {
+    h.release.mockImplementation(() => { throw new Error('lease gone') })
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toMatchObject({ isError: false })
+    let finishKill!: () => void
+    const killSettled = new Promise<void>((res) => { finishKill = res })
+    h.run.mockImplementationOnce(async () => ({ ok: false, code: 'cancelled', message: 'x', killSettled }))
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toEqual({ isError: true, text: 'Codex review was cancelled.' })
+    finishKill()
+    await vi.waitFor(() => expect(h.release).toHaveBeenCalledTimes(2))
+  })
+
   it('the MCP request\'s cancel stops the reviewer; the lease goes and the agent is told', async () => {
     h.run.mockImplementationOnce(untilStopped)
     const ac = new AbortController()

@@ -935,6 +935,21 @@ describe('the realm is held until a stopped run\'s kill has finished (round 2, A
     again!()
   })
 
+  // Round 3 (B1): the real-process cancel test reads status right after the
+  // sign-in's processes are gone, possibly before its hold lets go. A status
+  // check is a reader, which runs beside a sign-in's hold, so it is never
+  // refused as busy there.
+  it('a status check runs beside a cancelled sign-in whose kill still holds the realm: a reader, never refused as busy', async () => {
+    const locks = createCodexRealmLocks()
+    const k = deferred()
+    const w = world({ locks }, { 'login': () => ({ spawnError: 'cancelled', stopped: 'cancel', killSettled: k.p }) })
+    expect(await w.ops.login(MANAGED, 'browser')).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'busy' })
+    expect(await w.ops.status(MANAGED)).toEqual({ ok: true, state: 'signed-out' })
+    k.settle()
+    await later()
+  })
+
   it('a status check stopped with its kill under way keeps its reader hold, so the folder cannot be removed until the kill has finished', async () => {
     const locks = createCodexRealmLocks()
     const k = deferred()

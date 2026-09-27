@@ -397,16 +397,21 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
     expect(named(calls[0])).toEqual(new Set([10, 11, 12, 15]))
   })
 
-  it('an EARLIER read stands in for a failed kill-time read with its wrapper line only -- never a helper the codex binary may have reaped', async () => {
-    const { calls, spawn } = taskkills()
-    let reads = 0
-    const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { reads++; throw new Error('timed out') }, async () => { reads++; return table })
-    const c = child()
-    kill.prime!(c as never)
-    await new Promise((r) => setTimeout(r, 0))
-    await kill(c as never)
-    expect(reads).toBe(2)
-    expect(named(calls[0])).toEqual(new Set([10, 11, 12]))
+  it('an EARLIER read stands in for a failed kill-time read -- once older than CODEX_PROCESS_TABLE_TIMEOUT_MS, with its wrapper line only, never a helper the codex binary may have reaped', async () => {
+    vi.useFakeTimers()
+    try {
+      for (const [age, expected] of [[CODEX_PROCESS_TABLE_TIMEOUT_MS + 1000, [10, 11, 12]], [CODEX_PROCESS_TABLE_TIMEOUT_MS - 1000, [10, 11, 12, 15]]] as const) {
+        const { calls, spawn } = taskkills()
+        let reads = 0
+        const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { reads++; throw new Error('timed out') }, async () => { reads++; return table })
+        const c = child()
+        kill.prime!(c as never)
+        await vi.advanceTimersByTimeAsync(age)
+        await kill(c as never)
+        expect(reads, String(age)).toBe(2)
+        expect(named(calls[0]), String(age)).toEqual(new Set(expected))
+      }
+    } finally { vi.useRealTimers() }
   })
 
   // How long 60ea77be let a kill wait for an early read (then the root alone).
@@ -513,7 +518,9 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
 
   // Round 2 (ADR-009 P1): an awaited early read that failed after the old
   // wait left the root alone with no second read.
-  it('an early read that FAILS while the kill waits for it, early or late, gets one retry with the kill\'s own reader, which names the wrapper line only', async () => {
+  // Round 3 (B4): every read is judged by its own age. The retry is a fresh
+  // kill-time read, bounded by CODEX_PROCESS_TABLE_TIMEOUT_MS, so it is used whole.
+  it('an early read that FAILS while the kill waits for it, early or late, gets one retry with the kill\'s own reader, a fresh read that names the whole chain', async () => {
     vi.useFakeTimers()
     try {
       for (const failAt of [1500, KILL_READ_BUDGET + 5000]) {
@@ -530,7 +537,7 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
         await vi.advanceTimersByTimeAsync(10)
         await done
         expect(own, String(failAt)).toBe(1)
-        expect(named(calls[0]), String(failAt)).toEqual(new Set([10, 11, 12]))
+        expect(named(calls[0]), String(failAt)).toEqual(new Set([10, 11, 12, 15]))
       }
     } finally { vi.useRealTimers() }
   })
@@ -549,7 +556,7 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
       await vi.advanceTimersByTimeAsync(20)
       await done
       expect(own).toBe(1)
-      expect(named(calls[0])).toEqual(new Set([10, 11, 12]))
+      expect(named(calls[0])).toEqual(new Set([10, 11, 12, 15]))
     } finally { vi.useRealTimers() }
   })
 
@@ -590,30 +597,33 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
     const thrown = taskkills()
     await expect(Promise.resolve(makeCodexKillTree('win32', thrown.spawn, 'C:\\Windows', (() => { throw new Error('no powershell') }) as never)(child() as never))).resolves.toBeUndefined()
     expect(thrown.calls).toEqual([['/F', '/PID', '10']])
-    // A read that throws as it starts is a failed read like any other: the retry still runs.
+    // A read that throws as it starts is a failed read like any other: the
+    // retry still runs, and answering at once it is fresh, so it is used whole.
     const retried = taskkills()
     await makeCodexKillTree('win32', retried.spawn, 'C:\\Windows', (() => { throw new Error('no powershell') }) as never, async () => table)(child() as never)
-    expect(named(retried.calls[0])).toEqual(new Set([10, 11, 12]))
+    expect(named(retried.calls[0])).toEqual(new Set([10, 11, 12, 15]))
   })
 
-  it('a kill with no early read (stopped inside CODEX_TREE_PRIME_MS) whose own read fails reads once more with the early read\'s reader, the root left running, and names the wrapper line only', async () => {
+  it('a kill with no early read (stopped inside CODEX_TREE_PRIME_MS) whose own read fails reads once more with the early read\'s reader, the root left running: the whole chain if it answers within CODEX_PROCESS_TABLE_TIMEOUT_MS of its start, else the wrapper line', async () => {
     vi.useFakeTimers()
     try {
-      const { calls, spawn } = taskkills()
-      let own = 0
-      let longReads = 0
-      const r = pending()
-      const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { own++; throw new Error('timed out') }, () => { longReads++; return r.read() })
-      const c = child()
-      const done = Promise.resolve(kill(c as never))
-      await vi.advanceTimersByTimeAsync(KILL_READ_BUDGET + 1000)
-      expect([own, longReads]).toEqual([1, 1])
-      expect(calls).toEqual([])
-      expect(c.kill).not.toHaveBeenCalled()
-      r.answer(table)
-      await vi.advanceTimersByTimeAsync(10)
-      await done
-      expect(named(calls[0])).toEqual(new Set([10, 11, 12]))
+      for (const [answerAt, expected] of [[KILL_READ_BUDGET + 1000, [10, 11, 12]], [CODEX_PROCESS_TABLE_TIMEOUT_MS - 1000, [10, 11, 12, 15]]] as const) {
+        const { calls, spawn } = taskkills()
+        let own = 0
+        let longReads = 0
+        const r = pending()
+        const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { own++; throw new Error('timed out') }, () => { longReads++; return r.read() })
+        const c = child()
+        const done = Promise.resolve(kill(c as never))
+        await vi.advanceTimersByTimeAsync(answerAt)
+        expect([own, longReads], String(answerAt)).toEqual([1, 1])
+        expect(calls, String(answerAt)).toEqual([])
+        expect(c.kill).not.toHaveBeenCalled()
+        r.answer(table)
+        await vi.advanceTimersByTimeAsync(10)
+        await done
+        expect(named(calls[0]), String(answerAt)).toEqual(new Set(expected))
+      }
     } finally { vi.useRealTimers() }
   })
 
@@ -656,8 +666,32 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
     } finally { vi.useRealTimers() }
   })
 
-  it('the kill\'s worst case is its own read, the longer read and taskkill', () => {
-    expect(CODEX_KILL_WORST_MS).toBe(CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS)
+  it('the kill\'s worst case is its own read, the longer read and taskkill, with a margin', () => {
+    const phases = CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS
+    expect(CODEX_KILL_WORST_MS).toBeGreaterThanOrEqual(phases + 1000)
+    expect(CODEX_KILL_WORST_MS).toBeLessThanOrEqual(phases + 2000)
+  })
+
+  // Round 3 (B5): a taskkill ended by its own timeout reports a moment after
+  // it; the bound on killSettled leaves room for that.
+  it('killSettled waits for a kill that ends just past its phases\' sum (a taskkill ended by its own timeout), within the margin', async () => {
+    vi.useFakeTimers()
+    try {
+      const cmd = { file: 'C:\\x\\codex.exe', args: ['login'], verbatim: false, cwd: 'C:\\x' }
+      const { deps } = fakeDeps()
+      const phases = CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS
+      const late: CodexRunDeps = { ...deps, killTree: () => new Promise<void>((res) => { setTimeout(res, phases + 500) }) }
+      const ac = new AbortController()
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 60_000, signal: ac.signal }, late)
+      ac.abort()
+      await vi.advanceTimersByTimeAsync(CODEX_KILL_SETTLE_MS + 10)
+      let done = false
+      void (await p).killSettled!.then(() => { done = true })
+      await vi.advanceTimersByTimeAsync(phases + 500 - CODEX_KILL_SETTLE_MS - 20)
+      expect(done).toBe(false)
+      await vi.advanceTimersByTimeAsync(20)
+      expect(done).toBe(true)
+    } finally { vi.useRealTimers() }
   })
 
   it('the runner settles at its bound while its kill still waits for a slow early read, and the kill then ends the wrapper line', async () => {
@@ -754,42 +788,75 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
   // Round 2 (A7): a quit during the wait would otherwise leave node and codex
   // running once the app is gone (the job that ends cmd.exe at exit does not
   // reach below it).
-  it('at app quit, a kill still reading kills at once what it knows -- an earlier table\'s wrapper line, else the root alone -- and nothing once the root has exited or the kill has finished', async () => {
-    flushPendingCodexKills()
+  // Round 3 (B2, B3): the quit-time kill runs synchronously, like
+  // killSpawnedBrowser, so the app's exit cannot cut it off; a kill whose read
+  // lands after it does not kill again. Every call here passes a fake
+  // synchronous runner: the default would run the real taskkill.
+  it('at app quit, ONE synchronous taskkill names what each kill still reading knows -- an earlier table\'s wrapper line, else the root alone -- nothing for a root that has exited or a kill that has finished, and nothing again when a read lands later', async () => {
+    flushPendingCodexKills(() => {})
+    const syncCalls: Array<{ file: string; args: string[]; opts: Record<string, unknown> }> = []
+    const runSync = (file: string, args: string[], opts: Record<string, unknown>) => { syncCalls.push({ file, args, opts }) }
     // Waiting on an early read: nothing known yet, the root alone.
     const a = taskkills()
-    const ka = makeCodexKillTree('win32', a.spawn, 'C:\\Windows', fails(), () => new Promise<CodexProcessEntry[]>(() => {}))
-    const ca = child()
+    const ra = pending()
+    const ka = makeCodexKillTree('win32', a.spawn, 'C:\\Windows', async () => table, ra.read)
+    const ca = child(30)
     ka.prime!(ca as never)
-    void ka(ca as never)
+    const doneA = Promise.resolve(ka(ca as never))
     // An earlier table, the kill's own read still under way: its wrapper line.
     const b = taskkills()
-    const kb = makeCodexKillTree('win32', b.spawn, 'C:\\Windows', () => new Promise<CodexProcessEntry[]>(() => {}), async () => table)
-    const cb = child()
+    const rb = pending()
+    const kb = makeCodexKillTree('win32', b.spawn, 'C:\\Windows', rb.read, async () => table)
+    const cb = child(10)
     kb.prime!(cb as never)
     await new Promise((r) => setTimeout(r, 0))
-    void kb(cb as never)
+    const doneB = Promise.resolve(kb(cb as never))
     // A root that has exited since its kill began: nothing by pid.
     const e = taskkills()
     const ke = makeCodexKillTree('win32', e.spawn, 'C:\\Windows', () => new Promise<CodexProcessEntry[]>(() => {}))
-    const ce = child()
+    const ce = child(40)
     void ke(ce as never)
     ce.exitCode = 0
     // A kill that has finished is no longer pending.
     const f = taskkills()
-    await makeCodexKillTree('win32', f.spawn, 'C:\\Windows', async () => table)(child() as never)
+    await makeCodexKillTree('win32', f.spawn, 'C:\\Windows', async () => table)(child(50) as never)
     expect(f.calls).toHaveLength(1)
     await new Promise((r) => setTimeout(r, 0))
-    expect([a.calls, b.calls, e.calls]).toEqual([[], [], []])
-    flushPendingCodexKills()
-    expect(a.calls).toEqual([['/F', '/PID', '10']])
-    expect(b.calls).toHaveLength(1)
-    expect(named(b.calls[0])).toEqual(new Set([10, 11, 12]))
-    expect(e.calls).toEqual([])
-    expect(f.calls).toHaveLength(1)
+    flushPendingCodexKills(runSync)
+    expect(syncCalls).toHaveLength(1)
+    expect(syncCalls[0].file).toBe('C:\\Windows\\System32\\taskkill.exe')
+    expect(syncCalls[0].args[0]).toBe('/F')
+    expect(syncCalls[0].args).not.toContain('/T')
+    expect(named(syncCalls[0].args)).toEqual(new Set([30, 10, 11, 12]))
+    expect(syncCalls[0].opts).toMatchObject({ cwd: 'C:\\Windows', windowsHide: true })
+    expect(syncCalls[0].opts.timeout as number).toBeGreaterThan(0)
+    expect(syncCalls[0].opts.timeout as number).toBeLessThanOrEqual(5000)
+    expect([a.calls, b.calls, e.calls, f.calls.length]).toEqual([[], [], [], 1])
+    // The reads land after the flush, the roots not yet reported gone: no second kill by pid.
+    ra.answer(table)
+    rb.answer(table)
+    await doneA
+    await doneB
+    expect([a.calls, b.calls]).toEqual([[], []])
     // Flushed once: a second flush adds nothing.
-    flushPendingCodexKills()
-    expect([a.calls.length, b.calls.length]).toEqual([1, 1])
+    flushPendingCodexKills(runSync)
+    expect(syncCalls).toHaveLength(1)
+  })
+
+  it('a quit-time taskkill that fails or times out makes sure of each root and never throws; a kill with no usable Windows root kills its root directly', () => {
+    flushPendingCodexKills(() => {})
+    const a = taskkills()
+    const ca = child(30)
+    void makeCodexKillTree('win32', a.spawn, 'C:\\Windows', () => new Promise<CodexProcessEntry[]>(() => {}))(ca as never)
+    const n = taskkills()
+    const cn = child(31)
+    void makeCodexKillTree('win32', n.spawn, 'Windows', () => new Promise<CodexProcessEntry[]>(() => {}))(cn as never)
+    let syncRuns = 0
+    expect(() => flushPendingCodexKills(() => { syncRuns++; throw new Error('ETIMEDOUT') })).not.toThrow()
+    expect(syncRuns).toBe(1)
+    expect(ca.kill).toHaveBeenCalled()
+    expect(cn.kill).toHaveBeenCalled()
+    expect([a.calls, n.calls]).toEqual([[], []])
   })
 
   it('an early table that is not a list (even an iterable of rows) counts as a failed read', async () => {

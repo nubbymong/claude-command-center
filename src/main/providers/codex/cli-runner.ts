@@ -30,7 +30,7 @@
 // runCodexCli and makeCodexKillTree.
 import path from 'node:path'
 import fs from 'node:fs'
-import { spawn as nodeSpawn, execFile } from 'node:child_process'
+import { spawn as nodeSpawn, execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 
 export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review'
@@ -349,26 +349,70 @@ export function makeCodexProcessLister(
   return ps ? read(ps, ['-ww', '-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'comm='], { cwd: '/', env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' } }, parsePosixProcessTable) : null
 }
 
+/** Room past the kill's phases for a taskkill ended by its own timeout,
+ *  which reports a moment after that timeout. */
+const CODEX_KILL_MARGIN_MS = 1000
 /** The longest a kill can take: the kill's own table read, one more read with
- *  the early read's longer budget, then taskkill (makeCodexKillTree). A caller
- *  holding a realm or a lease for a stopped run holds it this long at most
- *  after the stop (CodexRunResult.killSettled). */
-export const CODEX_KILL_WORST_MS = CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS
+ *  the early read's longer budget, then taskkill, plus CODEX_KILL_MARGIN_MS
+ *  (makeCodexKillTree). A caller holding a realm or a lease for a stopped run
+ *  holds it this long at most after the stop (CodexRunResult.killSettled). */
+export const CODEX_KILL_WORST_MS = CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS + CODEX_KILL_MARGIN_MS
 
-/** What each kill still reading its table would kill right now, for the
- *  app's quit (flushPendingCodexKills). Module-wide: every run builds its own
- *  kill (defaultCodexRunDeps). */
-const pendingKills = new Set<() => void>()
+/** A kill still reading its table, as the quit flush sees it. */
+interface PendingKill {
+  platform: NodeJS.Platform
+  systemRoot: string | undefined
+  /** What it would kill right now; null once its root has exited. */
+  pids(): number[] | null
+  killRoot(): void
+  /** Set by the flush: the kill does not kill again when its read lands. */
+  flushed: boolean
+}
+
+/** Every kill still reading its table, for the app's quit. Module-wide:
+ *  every run builds its own kill (defaultCodexRunDeps). */
+const pendingKills = new Set<PendingKill>()
+
+type RunSync = (file: string, args: string[], opts: Record<string, unknown>) => void
+const runSyncDefault: RunSync = (file, args, opts) => { execFileSync(file, args, opts) }
 
 /** At app quit: every kill still reading its table kills at once what it
- *  knows -- an earlier table's wrapper line, else the root alone -- rather
- *  than leave node and codex running once the app is gone (the job that ends
- *  the app's own children at exit does not reach below cmd.exe). Nothing is
- *  killed for a root that has exited. Best effort, like the rest of the quit. */
-export function flushPendingCodexKills(): void {
+ *  knows -- an earlier table's wrapper line, else the root alone, and nothing
+ *  for a root that has exited -- rather than leave node and codex running
+ *  once the app is gone (the job that ends the app's own children at exit
+ *  does not reach below cmd.exe). On Windows it is ONE synchronous taskkill
+ *  per Windows root (in practice one), bounded by CODEX_TASKKILL_TIMEOUT_MS,
+ *  as killSpawnedBrowser does, so the exit cannot cut it off. A taskkill
+ *  that fails or times out makes sure of each root. Never throws; best
+ *  effort, like the rest of the quit. `runSync` is for the test. */
+export function flushPendingCodexKills(runSync: RunSync = runSyncDefault): void {
   const now = [...pendingKills]
   pendingKills.clear()
-  for (const flush of now) { try { flush() } catch { /* best effort at quit */ } }
+  const byRoot = new Map<string, { pids: number[]; kills: PendingKill[] }>()
+  for (const k of now) {
+    k.flushed = true
+    try {
+      const pids = k.pids()
+      if (!pids) continue
+      if (k.platform !== 'win32') {
+        for (const p of pids) { try { process.kill(p, 'SIGKILL') } catch { /* already gone */ } }
+        continue
+      }
+      if (!k.systemRoot || !isWindowsAbsolute(k.systemRoot)) { k.killRoot(); continue }
+      const group = byRoot.get(k.systemRoot) ?? { pids: [], kills: [] }
+      group.pids.push(...pids)
+      group.kills.push(k)
+      byRoot.set(k.systemRoot, group)
+    } catch { /* best effort at quit */ }
+  }
+  for (const [root, group] of byRoot) {
+    try {
+      runSync(path.win32.join(root, 'System32', 'taskkill.exe'), ['/F', ...group.pids.flatMap((p) => ['/PID', String(p)])], { stdio: 'ignore', windowsHide: true, cwd: root, timeout: CODEX_TASKKILL_TIMEOUT_MS })
+    } catch {
+      // Non-zero (some pid already gone), a timeout or no taskkill.
+      for (const k of group.kills) { try { k.killRoot() } catch { /* best effort at quit */ } }
+    }
+  }
 }
 
 /** Exported for the test: the kill with its guards. It kills the run's own
@@ -381,24 +425,26 @@ export function flushPendingCodexKills(): void {
  *    meanwhile (the run settles at its bound regardless). Killing the root
  *    alone sooner would leave the chain below it running, and once the root
  *    is gone nothing vouches for those pids. Windows CI saw an early read
- *    outlast a 10 s wait.
- *  - Otherwise the kill reads the table itself (`listProcesses`).
- *  - A table is used whole (codexChainPids) only while it can be no older
- *    than a kill-time read may be: CODEX_PROCESS_TABLE_TIMEOUT_MS from the
- *    start of its read (the query captures the table somewhere inside it). An
- *    older one, or one from a retry, gives only its wrapper line
- *    (codexWrapperLinePids): the root still running vouches for that line,
- *    not for a helper the codex binary may since have reaped, whose pid a
- *    stranger may hold.
- *  - If that read fails, an earlier finished early read stands in with its
- *    wrapper line; failing that, ONE retry with the reader the failed read
- *    did not use (after the kill's own read, `primeListProcesses` with its
- *    budget; after the early read, `listProcesses` with the kill-time one),
- *    so no kill waits longer than CODEX_KILL_WORST_MS. `primeListProcesses`
+ *    outlast a 10 s wait. If it fails or never answers, ONE retry with the
+ *    kill's own reader (`listProcesses`, its budget).
+ *  - Otherwise the kill reads the table itself (`listProcesses`). If that
+ *    fails: an early read that finished earlier stands in; one that FAILED
+ *    already had the longer budget, so the root alone; with no early read at
+ *    all (a stop inside CODEX_TREE_PRIME_MS), ONE retry with
+ *    `primeListProcesses` and its longer budget. `primeListProcesses`
  *    defaults to `listProcesses`: the same reader then gets the longer wait.
- *  - The root alone only when those reads all failed, or with no reader.
- *  Every read is bounded, and a throw or an answer that is not a list counts
- *  as a failed read: the kill never rejects with nothing killed. */
+ *  - Every table, whichever read gave it, is used whole (codexChainPids) only
+ *    while it can be no older than a kill-time read may be:
+ *    CODEX_PROCESS_TABLE_TIMEOUT_MS from the start of its read (the query
+ *    captures the table somewhere inside it). An older one gives only its
+ *    wrapper line (codexWrapperLinePids): the root still running vouches for
+ *    that line, not for a helper the codex binary may since have reaped,
+ *    whose pid a stranger may hold.
+ *  - The root alone when those reads all failed, or with no reader. No kill
+ *    waits longer than CODEX_KILL_WORST_MS. Every read is bounded, and a
+ *    throw or an answer that is not a list counts as a failed read: the kill
+ *    never rejects with nothing killed.
+ *  - A kill the quit flush has already dealt with kills nothing more. */
 export function makeCodexKillTree(
   platform: NodeJS.Platform,
   spawn: CodexRunDeps['spawn'],
@@ -413,6 +459,8 @@ export function makeCodexKillTree(
   // when the read began.
   type Primed = { done: Promise<void>; started: number; table?: CodexProcessEntry[] | null }
   const primed = new WeakMap<ChildProcess, Primed>()
+  /** A table and when the read that gave it began. */
+  type Answer = { table: CodexProcessEntry[]; started: number }
   const bounded = <T>(p: Promise<T>, ms: number): Promise<T | null> => new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), ms)
     ;(timer as unknown as { unref?: () => void }).unref?.()
@@ -420,23 +468,29 @@ export function makeCodexKillTree(
   })
   /** One read, bounded: a throw, a rejection, no answer in time or an answer
    *  that is not a list is null. */
-  const read = (reader: (() => Promise<CodexProcessEntry[]>) | null, ms: number): Promise<CodexProcessEntry[] | null> =>
-    reader ? bounded(Promise.resolve().then(reader), ms).then((t) => (Array.isArray(t) ? t : null)) : Promise.resolve(null)
-  const fresh = (started: number) => Date.now() - started <= CODEX_PROCESS_TABLE_TIMEOUT_MS
+  const read = (reader: (() => Promise<CodexProcessEntry[]>) | null, ms: number): Promise<Answer | null> => {
+    if (!reader) return Promise.resolve(null)
+    const started = Date.now()
+    return bounded(Promise.resolve().then(reader), ms).then((t) => (Array.isArray(t) ? { table: t, started } : null))
+  }
+  /** The whole chain from a table no older than a kill-time read may be;
+   *  only the wrapper line from an older one. */
+  const pidsFrom = (pid: number, a: Answer): number[] =>
+    Date.now() - a.started <= CODEX_PROCESS_TABLE_TIMEOUT_MS ? codexChainPids(pid, a.table) : codexWrapperLinePids(pid, a.table)
   const choosePids = async (pid: number, early: Primed | undefined): Promise<number[]> => {
     if (early && early.table === undefined) {
       await bounded(early.done, CODEX_PRIME_TABLE_TIMEOUT_MS)
-      if (early.table) return fresh(early.started) ? codexChainPids(pid, early.table) : codexWrapperLinePids(pid, early.table)
+      if (early.table) return pidsFrom(pid, { table: early.table, started: early.started })
       const again = await read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS)
-      return again ? codexWrapperLinePids(pid, again) : [pid]
+      return again ? pidsFrom(pid, again) : [pid]
     }
     const own = await read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS)
-    if (own) return codexChainPids(pid, own)
-    if (early?.table) return codexWrapperLinePids(pid, early.table)
+    if (own) return pidsFrom(pid, own)
+    if (early?.table) return pidsFrom(pid, { table: early.table, started: early.started })
     // An early read that FAILED already had the longer budget.
     if (early) return [pid]
     const again = await read(primeListProcesses, CODEX_PRIME_TABLE_TIMEOUT_MS)
-    return again ? codexWrapperLinePids(pid, again) : [pid]
+    return again ? pidsFrom(pid, again) : [pid]
   }
   /** taskkill (Windows) or a signal per pid (POSIX), for a root still running. */
   const killPids = async (child: ChildProcess, pids: number[]): Promise<void> => {
@@ -469,21 +523,32 @@ export function makeCodexKillTree(
     // can be reused, and a kill by pid would hit a stranger.
     if (!pid || !running(child)) return
     const early = primed.get(child)
-    const flush = () => { if (running(child)) void killPids(child, early?.table ? codexWrapperLinePids(pid, early.table) : [pid]) }
-    pendingKills.add(flush)
+    const pending: PendingKill = {
+      platform,
+      systemRoot,
+      flushed: false,
+      pids: () => {
+        if (!running(child)) return null
+        try { return early?.table ? codexWrapperLinePids(pid, early.table) : [pid] } catch { return [pid] }
+      },
+      killRoot: () => killRoot(child),
+    }
+    pendingKills.add(pending)
     let pids: number[]
     try {
       pids = await choosePids(pid, early)
     } catch {
       pids = [pid]
     } finally {
-      pendingKills.delete(flush)
+      pendingKills.delete(pending)
     }
-    // The table took time to read. A root that exited meanwhile means its
-    // chain has almost certainly exited before it (cmd.exe waits for node,
-    // node for codex), so those pids may already belong to strangers: kill
-    // nothing by pid.
-    if (!running(child)) return
+    // Killed at quit meanwhile: its root is gone or going, and nothing
+    // vouches for the pids below it any more (its exit may not be reported
+    // yet). And the table took time to read: a root that exited meanwhile
+    // means its chain has almost certainly exited before it (cmd.exe waits
+    // for node, node for codex), so those pids may already belong to
+    // strangers. Either way, kill nothing by pid.
+    if (pending.flushed || !running(child)) return
     await killPids(child, pids)
   }
   kill.prime = (child) => {

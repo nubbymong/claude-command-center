@@ -354,7 +354,10 @@ describe('the auth operations against the fake Codex CLI (real processes)', () =
       while (alive(loginPid) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 50))
       expect(alive(loginPid), `the waiting fake login (pid ${loginPid}) outlived the cancel`).toBe(false)
       expect(alive(browserPid), `the "browser" (pid ${browserPid}) the sign-in opened was killed with it`).toBe(true)
-      // The fake is gone, so nothing can sign the realm in later.
+      // The fake is gone, so nothing can sign the realm in later. On the slow
+      // path the sign-in may still hold the realm here (until its kill
+      // reports); a status check is a reader, which runs beside that hold,
+      // so it is never refused as busy (pinned in codex-auth-adapter.test.ts).
       expect(await ops.status({ authRealmId: id })).toEqual({ ok: true, state: 'signed-out' })
     } finally {
       try { process.kill(browserPid) } catch { /* already gone */ }
