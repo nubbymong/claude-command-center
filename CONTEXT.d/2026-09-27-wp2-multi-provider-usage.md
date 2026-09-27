@@ -23,7 +23,8 @@ track built it in thirteen phases on PR #625's branch:
   a `--disable remote_plugin` experiment made the helper contact GitHub and
   leave clone folders in the realm, so it was reverted (MP8 round 3).
 - MP9 to MP12: Tokenomics records whose usage each row is (Codex by realm
-  folder, Claude by profile folder from now on), keeps the v1 rollups for
+  folder, Claude by the profile home's .claude/projects folder a local
+  session's transcript is in, from now on), keeps the v1 rollups for
   older builds, splits every figure by provider, reads "no price" instead of
   $0, and adds Provider and Account filters.
 - MP13: the user-facing sweep (changelog, app knowledge, tips, tour, README,

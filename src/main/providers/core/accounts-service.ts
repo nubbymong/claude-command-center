@@ -83,6 +83,10 @@ export interface AccountsServiceDeps {
   /** Usage track MP8: the fresh reads' clock and pacing. Absent: the
    *  shipped values (tests shorten them). */
   usageReads?: { now?: () => number; gapMs?: number; reuseMs?: number; retryFloorMs?: number; settleMaxMs?: number }
+  /** Whether the registry's load has run, whatever came of it. Until it
+   *  has, no registry (or one not loaded) means "not read yet"; after, it
+   *  means none can be read. Absent: never settled. */
+  registrySettled?: () => boolean
 }
 
 /** Usage track MP8 (ADR-022, bound 7): the least time between two fresh
@@ -2401,10 +2405,16 @@ export class AccountsService {
     if (!p?.launch || !launchKindsOf(p).includes('session')) return []
     // Null while the registry has not been read (no store yet, or one not
     // loaded): the index is not told "no folders" before it could know
-    // (MP9 round 1, lens B). A registry that cannot be read lists none.
+    // (MP9 round 1, lens B). A registry that cannot be read lists none, and
+    // so does one still missing or unloaded once its load has run (its load
+    // threw): otherwise the index would wait for it for ever.
     const store = this.currentStore()
     const status = store?.status()
-    if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) return null
+    if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) {
+      let settled = false
+      try { settled = this.deps.registrySettled?.() === true } catch { settled = false }
+      return settled ? [] : null
+    }
     const ready = this.ready()
     if ('ok' in ready) return []
     const out: Array<{ dir: string; accountId: string | null; external: boolean }> = []

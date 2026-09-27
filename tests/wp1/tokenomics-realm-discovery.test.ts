@@ -88,6 +88,35 @@ describe('the Codex transcript folders with their accounts (AccountsService.sess
     store.status = status
     expect(await h.service.sessionsRoots('claude')).toEqual([])
   })
+
+  // 394b09c7 code-quality minor: a registry load that threw leaves no
+  // registry for ever, so once the load has run the index is told none
+  // instead of waiting for ever (and its sorting notice never clearing).
+  it('lists none once the registry load has run and left no registry, or one unloaded', async () => {
+    let settled = false
+    const h = await harness({ registrySettled: () => settled })
+    await addCodexAccount(h, 'A')
+    const store = h.store
+    h.useStore(null)
+    expect(await h.service.sessionsRoots('codex')).toBeNull()
+    settled = true
+    expect(await h.service.sessionsRoots('codex')).toEqual([])
+    h.useStore(store)
+    const status = store.status.bind(store)
+    store.status = () => ({ mode: 'recovery', reason: 'unloaded', problems: [] })
+    expect(await h.service.sessionsRoots('codex')).toEqual([])
+    settled = false
+    expect(await h.service.sessionsRoots('codex')).toBeNull()
+    store.status = status
+    // A registry that was read lists its folders, whatever the answer says.
+    expect((await h.service.sessionsRoots('codex'))?.length).toBe(1)
+    settled = true
+    expect((await h.service.sessionsRoots('codex'))?.length).toBe(1)
+    // An answer that cannot be had is no answer: it waits.
+    const h2 = await harness({ registrySettled: () => { throw new Error('no answer') } })
+    h2.useStore(null)
+    expect(await h2.service.sessionsRoots('codex')).toBeNull()
+  })
 })
 
 // The service side: tokenomics-service follows the accounts service and hands

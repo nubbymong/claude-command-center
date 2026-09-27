@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T10:42:54.062Z",
-  "head": "3a127fb9e2299e7967015805136b8509f4b099e2",
-  "tree": "ba7c249d3bb1188d97ddf3c1c5ec62e41b5bbc69",
+  "generatedAt": "2026-09-27T10:58:55.652Z",
+  "head": "8e70329df8ba8fffc46f6dce7a338bbb3db48dff",
+  "tree": "af2526e40e725f8638106d567c7fce7c67b4576c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2355,
+  "trackedFileCount": 2356,
   "excludedFileCount": 382,
-  "scannedFileCount": 1973,
+  "scannedFileCount": 1974,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 413,
-  "pathDigest": "4ee38ece03536f19ca2c176d2f8be6d669afb06193f402ab599e03fee8705f93",
+  "matchedPathCount": 414,
+  "pathDigest": "f893ad8e45a9ea7af60ef5718241c9192d85b65cbcc56d029b967018503ba3ec",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -182,7 +182,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 98
+      "lineCount": 100
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -1983,6 +1983,13 @@
         "P13"
       ],
       "lineCount": 6
+    },
+    {
+      "path": "tests/unit/main/account-registry-load-settled.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
     },
     {
       "path": "tests/unit/main/canvas-mcp-tool.test.ts",

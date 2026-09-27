@@ -506,8 +506,8 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Track every dollar Claude and Codex cost you across every session. A background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the dashboard opens instantly with a KPI row, charts, and a sessions table you can filter.',
     highlights: [
-      '**KPI row** -- total spend, tokens, sessions, and daily burn at the top, each split between Claude Code and Codex',
-      '**Charts** for daily spend, one line per provider, and a per-model breakdown',
+      '**KPI row** -- Life-to-date, Last 7 days and Cache efficiency, each split between Claude Code and Codex when both have usage and no filter narrows the view',
+      '**Charts** for daily spend, with a line per provider when both have spend in the range, and a per-model breakdown',
       '**Sessions table** with cost, model, account and config attribution per session',
       '**Filters** -- provider, account, config, date range (7d / 30d / all), and a free-text search over model and project',
       'A model with no price yet reads **no price**, never $0, and a notice names it',

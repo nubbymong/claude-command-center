@@ -10,8 +10,8 @@ import type { ProviderEnablementSpec } from './providers/core'
 import { isCapabilityKey, isProviderId } from '../shared/providers'
 import type { ProviderId, ProviderPreference, ScopedCapabilityKey, CapabilityPlatform } from '../shared/providers'
 import {
-  getAccountRegistry, getAccountRegistryResourcesDir, getConsumerLeases, initAccountRegistry, reconcileLegacyAccountStore, reconcileLegacyAccountStores,
-  sameDirectory,
+  accountRegistryLoadSettled, getAccountRegistry, getAccountRegistryResourcesDir, getConsumerLeases, initAccountRegistry, reconcileLegacyAccountStore,
+  reconcileLegacyAccountStores, sameDirectory,
 } from './provider-account-registry'
 import { readConfigChecked } from './config-manager'
 import { logInfo, logError } from './debug-logger'
@@ -80,6 +80,9 @@ export function initProviderAccounts(opts: { unleasedSessions?: (providerId: Pro
     ...(opts.unleasedSessions ? { unleasedSessions: opts.unleasedSessions } : {}),
     // Asked afresh each time: a resources-directory change re-creates it.
     store: () => getAccountRegistry(),
+    // Once the load has run, a registry missing or unloaded (its load threw)
+    // can never be read: the usage index is then told no folders.
+    registrySettled: () => accountRegistryLoadSettled(),
     leases: getConsumerLeases(),
     secrets,
     packages: () => listProviderPackages(),

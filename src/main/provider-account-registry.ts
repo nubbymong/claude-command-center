@@ -83,6 +83,8 @@ export function createRegistryFsPort(resourcesDir: string): RegistryFsPort {
 
 let store: AccountRegistryStore | null = null
 let storeResourcesDir: string | null = null
+/** The registry's load has run at least once, whatever came of it. */
+let loadSettled = false
 
 /** The one consumer lease registry (A11). The store reads its counts under
  *  the lock that applies a lifecycle change; the accounts service adds and
@@ -103,20 +105,32 @@ export function getAccountRegistryResourcesDir(): string | null {
  *  the app running in recovery mode, and Claude keeps working from
  *  profiles.json. */
 export function initAccountRegistry(resourcesDir: string): RegistryStatus {
-  // A replaced store refuses every later change: an operation that captured
-  // it cannot write the old directory's file, nor the same file behind the
-  // new store's own lock.
-  store?.retire()
-  store = new AccountRegistryStore({
-    fs: createRegistryFsPort(resourcesDir),
-    now: () => Date.now(),
-    consumers: (accountId) => leases.count(accountId),
-    log: (m) => logInfo(m),
-  })
-  storeResourcesDir = resourcesDir
-  const status = store.load()
-  logInfo(`[registry] loaded: ${status.mode}${status.mode === 'recovery' ? ` (${status.reason})` : ''}`)
-  return status
+  try {
+    // A replaced store refuses every later change: an operation that captured
+    // it cannot write the old directory's file, nor the same file behind the
+    // new store's own lock.
+    store?.retire()
+    store = new AccountRegistryStore({
+      fs: createRegistryFsPort(resourcesDir),
+      now: () => Date.now(),
+      consumers: (accountId) => leases.count(accountId),
+      log: (m) => logInfo(m),
+    })
+    storeResourcesDir = resourcesDir
+    const status = store.load()
+    logInfo(`[registry] loaded: ${status.mode}${status.mode === 'recovery' ? ` (${status.reason})` : ''}`)
+    return status
+  } finally {
+    // Settled even when this threw: what reads the registry then knows none
+    // can be read, rather than waiting for it (usage track MP9).
+    loadSettled = true
+  }
+}
+
+/** Whether the registry's load has run at least once, whatever came of it
+ *  (a throw included). */
+export function accountRegistryLoadSettled(): boolean {
+  return loadSettled
 }
 
 export function getAccountRegistry(): AccountRegistryStore | null {

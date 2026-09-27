@@ -339,10 +339,30 @@ account shows its 5-hour and weekly allowance and its plan:
 An account with no session yet says its allowance shows after the first one;
 an API-key account is billed per token, so it has no plan allowance. The
 usage strip at the foot of the window shows one pill per person, grouped by
-provider. Token use and cost are in Tokenomics, where the **Provider** and
-**Account** filters and the Account column show Codex usage by account
-(*This computer's sign-in* for `~/.codex`, *Not recorded* for usage from
-before accounts were recorded).
+provider. Token use and cost are in Tokenomics (below).
+
+### Tokenomics by provider and account
+
+Tokenomics shows Claude Code and Codex apart once both have usage:
+
+- The **Provider** filter appears when both assistants have usage. The
+  **Account** filter lists each account under its provider, with *This
+  computer's sign-in* for `~/.codex` and *Not recorded* for usage with no
+  account, and the sessions table has an Account column.
+- The KPI row (Life-to-date, Last 7 days and Cache efficiency) splits each
+  figure between the two when both have usage and no filter narrows the
+  view. The cost chart draws a line for each when both have spend in the
+  range.
+- Codex usage belongs to the account whose folder it was written in, and
+  Claude usage to the account profile a local session runs under, from this
+  version on. Older usage, SSH sessions, sessions run outside the app and
+  sessions with no account profile read *Not recorded*; usage cannot be
+  assigned by hand.
+- A model with no price yet reads **no price** instead of costing $0, and a
+  notice names it and its tokens; its cost is not in the totals.
+- The first start after updating sorts your earlier Codex history by account
+  once. A notice shows its progress while it runs; the totals are complete
+  throughout, and only the split by account fills in.
 
 ## Tokenomics, Memory, and the rest
 

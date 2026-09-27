@@ -115,6 +115,8 @@ export interface HarnessOpts {
   liveUsage?: CodexLiveUsage
   /** The fresh usage reads' clock and pacing (MP8). Absent: the shipped values. */
   usageReads?: AccountsServiceDeps['usageReads']
+  /** Whether the registry's load has run (MP9). Absent: never settled. */
+  registrySettled?: () => boolean
 }
 
 /** A usage filesystem with nothing in it. */
@@ -260,6 +262,7 @@ export async function harness(o: HarnessOpts = {}) {
     reconcileLegacy: async () => { await store.reconcileLegacy(claudeLegacy) },
     ...(o.unleasedSessions ? { unleasedSessions: o.unleasedSessions } : {}),
     ...(o.usageReads ? { usageReads: o.usageReads } : {}),
+    ...(o.registrySettled ? { registrySettled: o.registrySettled } : {}),
     log: (m) => logs.push(m),
   })
   return {
