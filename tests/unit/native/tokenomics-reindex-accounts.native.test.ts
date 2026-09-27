@@ -382,4 +382,77 @@ describe('the one-off Codex account attribution (usage track MP9)', () => {
     await b.settle()
     expect(await b.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-a' }])
   })
+
+  // VM final pass at 8e41444f (defect 4). In the app the account folders are
+  // named just after the worker's first sweep has listed its files: the
+  // supervisor holds them until the worker says it is ready, and the worker
+  // starts that sweep as it says so. That sweep listed only this computer's
+  // own folder, yet it finished the re-read: the account folders' rows were
+  // marked done unread, the notice cleared, and the folders were swept later
+  // with no notice while their usage read Not recorded.
+  it('account folders named while the first sweep runs are re-read before the re-read is done, counted in it, with the notice until then', async () => {
+    const dbPath = path.join(tmp, 'tk.db')
+    const home = path.join(tmp, 'home-codex')
+    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
+    writeRollout(path.join(home, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-h.jsonl', 'cx-h', 2)
+    writeRollout(path.join(realmA, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-a.jsonl', 'cx-a', 3)
+    writeRollout(path.join(realmA, '2026', '08', '02'), 'rollout-2026-08-02T00-00-00-a.jsonl', 'cx-a2', 1)
+    // The previous build indexed both folders, accounts not recorded.
+    const a = start(dbPath, [{ dir: realmA, accountKey: '' }])
+    await a.settle()
+    a.w.stop()
+    await new Promise((r) => setTimeout(r, 30))
+    const raw = new Database(dbPath)
+    raw.exec(`DROP INDEX IF EXISTS idx_sessions_account;
+      ALTER TABLE tk_events DROP COLUMN accountKey; ALTER TABLE tk_sessions DROP COLUMN accountKey;
+      ALTER TABLE tk_files DROP COLUMN accountKey; ALTER TABLE tk_files DROP COLUMN accountReread;
+      DROP TABLE tk_daily2; DROP TABLE tk_heatmap2; DROP TABLE tk_session_accounts;
+      UPDATE tk_meta SET value = '1' WHERE key = 'schemaVersion';
+      DELETE FROM tk_meta WHERE key IN ('rollupRowid', 'rollupsDirty', 'accountReread');`)
+    raw.close()
+
+    // This build: the folders are named once the first sweep has listed
+    // this computer's own folder, as the app's timing has it.
+    let named = false
+    const post: { to?: (m: unknown) => void } = {}
+    const late = new Proxy(fs, {
+      get(target, k) {
+        if (k === 'readdirSync') return (p: string, o: unknown) => {
+          const listed = (fs.readdirSync as (p: string, o: unknown) => unknown)(p, o)
+          if (!named && path.resolve(String(p)) === path.resolve(home)) {
+            named = true
+            post.to?.({ type: 'set-codex-realm-dirs', dirs: [{ dir: realmA, accountKey: 'codex:acct-a' }] })
+          }
+          return listed
+        }
+        return (target as unknown as Record<PropertyKey, unknown>)[k]
+      },
+    })
+    const b = start(dbPath, [], { codexRealmDirsKnown: false }, late as unknown as typeof fs)
+    post.to = (m) => b.fake.post(m as never)
+    // Whenever the notice is gone, every Codex row already has its account.
+    const unread = (): number => {
+      const db = new Database(dbPath, { readonly: true })
+      try { return (db.prepare("SELECT COUNT(*) AS n FROM tk_events WHERE provider = 'codex' AND accountKey = ''").get() as { n: number }).n } finally { db.close() }
+    }
+    let seen = false
+    const unreadWhenCleared: number[] = []
+    const totals: number[] = []
+    b.fake.onMessage((m) => {
+      b.msgs.push(m)
+      if (m.type !== 'index-progress') return
+      const r = (m as { accountReread?: { stage: string; total: number } | null }).accountReread
+      if (r) { seen = true; if (r.stage === 'reread' && r.total > 0) totals.push(r.total) } else if (seen) unreadWhenCleared.push(unread())
+    })
+    await b.settle()
+    expect(named).toBe(true)
+    expect(seen).toBe(true)
+    expect(unreadWhenCleared.length).toBeGreaterThan(0)
+    expect(unreadWhenCleared.every((n) => n === 0)).toBe(true)
+    // Stage 1 counts every rollout it will read: this computer's and the account's.
+    expect(totals.length).toBeGreaterThan(0)
+    expect(totals.every((t) => t === 3)).toBe(true)
+    expect(await b.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-a' }, { provider: 'codex', accountKey: 'codex:external' }])
+    expect((await b.ask('index-status')).accountReread).toBeNull()
+  })
 })

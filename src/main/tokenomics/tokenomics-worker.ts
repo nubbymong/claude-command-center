@@ -155,6 +155,12 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
    *  named after the first drained sweep would otherwise be re-read after
    *  the re-read was declared done, and the rollups rebuilt twice. */
   let realmDirsKnown = false
+  /** How often the app has named its account folders (VM final pass, defect
+   *  4): a sweep that listed its files before the latest naming read with an
+   *  older list, so it neither settles the re-read nor counts as drained. */
+  let realmDirsSeq = 0
+  /** The folders were named during a sweep: another follows it. */
+  let sweepAfter = false
   let sweeping = false
   /** MP9: the one-off account attribution, while it runs (index status). */
   let rereadProgress: TkAccountReread | null = null
@@ -628,6 +634,10 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     sweepPending = false
     sweepFailed = 0
     try {
+      // What this sweep's list was made with (defect 4): the account folders
+      // as named when it began, and whether they had been named at all.
+      const dirsKnown = realmDirsKnown
+      const dirsSeq = realmDirsSeq
       const claude = enumerateClaude()
       const codex = enumerateCodex()
       const total = claude.length + codex.length
@@ -640,9 +650,11 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         if (done % 50 === 0) { lastProgress = { filesDone: done, filesTotal: total, eventsIngested: events }; post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase, accountReread: accountReread() }) }
       }
       // MP9: while the Codex history is re-read for its accounts, how many of
-      // the rollouts still here have been (their cursors say, 1 then 2).
+      // the rollouts still here have been (their cursors say, 1 then 2). Only
+      // counted once the account folders are named, so the count covers every
+      // folder the re-read will read (defect 4); until then it has none.
       const rereadFlag = (file: string): number => db!.getFileCursor(file)?.accountReread ?? 0
-      const reread = db.accountRereadPending() ? { done: 0, total: 0 } : null
+      const reread = db.accountRereadPending() && dirsKnown ? { done: 0, total: 0 } : null
       if (reread) {
         for (const f of codex) { const flag = rereadFlag(f.file); if (flag >= 1) { reread.total++; if (flag === 2) reread.done++ } }
         rereadProgress = { stage: 'reread', ...reread }
@@ -676,11 +688,17 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       // "Everything we can read has been read" is the honest bar; `filesFailed`
       // rides alongside so the count that is missing can be shown rather than
       // hidden.
-      const drained = !sweepPending
+      // A sweep whose list predates the latest naming of the account folders
+      // has not read them: not drained, and another sweep follows (defect 4).
+      const drained = !sweepPending && realmDirsSeq === dirsSeq
       // MP9: a drained sweep has re-read every rollout it could reach, so the
       // re-read is done; then the rollups are rebuilt if they need it. Inside
       // the sweep, so nothing is ingested while they are rebuilt; queries are
-      // answered between its steps.
+      // answered between its steps. Only a sweep whose list had the account
+      // folders in it: none settles before they are named, and one listed
+      // before the latest naming is not drained. One made before they were
+      // named marked their rows done unread, and the notice cleared before
+      // they were read (defect 4).
       if (drained && realmDirsKnown) await settleAccounts(phase)
       if (!db) return
       if (drained && !firstSweepDone) {
@@ -691,7 +709,10 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         post({ type: 'index-complete', firstIndex: false, drained, filesFailed: sweepFailed, eventsTotal: db.eventCount() })
       }
     } catch (err) { logw('error', `ingestAll failed: ${String(err)}`) }
-    finally { sweeping = false }
+    finally {
+      sweeping = false
+      if (sweepAfter && db) { sweepAfter = false; scheduleIncremental() }
+    }
   }
 
   /** Usage track MP9: finish the Codex re-read, then rebuild the rollups
@@ -852,7 +873,14 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     switch (msg.type) {
       case 'set-pricing': setPricing(msg.pricing); return
       case 'set-configs': configs = msg.configs; db.upsertConfigs(configs); return
-      case 'set-codex-realm-dirs': setCodexRealmDirs(Array.isArray(msg.dirs) ? msg.dirs : []); realmDirsKnown = true; scheduleIncremental(); return
+      case 'set-codex-realm-dirs':
+        setCodexRealmDirs(Array.isArray(msg.dirs) ? msg.dirs : [])
+        realmDirsKnown = true
+        realmDirsSeq++
+        // A sweep running now listed its files without these: one follows it.
+        if (sweeping) sweepAfter = true
+        scheduleIncremental()
+        return
       case 'set-session-account': setSessionAccount(msg); return
       case 'reindex': void ingestAll('incremental'); return
       case 'query': handleQuery(msg.id, msg.kind, msg.args); return

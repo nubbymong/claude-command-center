@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "f893ad8e45a9ea7af60ef5718241c9192d85b65cbcc56d029b967018503ba3ec",
-  "manifestHead": "f3b5fec7efc4b2f9afb864a524fdb1ebe9021af5",
+  "manifestPathDigest": "48777585e81c415f63d074639129dee0d77aec825c4b728e38096cfc70938152",
+  "manifestHead": "8e41444f6efc24574df8f1b958297f6bd6268eb4",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1240,7 +1240,7 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): the worker walks and watches ~/.codex/sessions plus every folder it is handed, reading each rollout once -- tests/unit/native/tokenomics-worker-ingest.native.test.ts (CI native suite); the folder list itself by tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2, WP1.5); WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): stamps each rollout's turns and cursor with its folder's account, runs the one-off re-read and the stepped rollup rebuild with progress, and answers the accounts query (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts, tests/unit/native/tokenomics-worker-ingest.native.test.ts; WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): the set-session-account message, checked (WP1.2); tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): one Codex folder walked once and one rollout listed once by file id, a folder reached by its own path first; the one-off attribution settled only once the account folders are named (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts; WP2 P3 usage track MP10 round 1 (review fix: the transcript path decides the account): the attribution message applies from then on (WP1.2); tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP9 (CI fix): which Codex folder is reached through a link is decided between the folders that overlap, by how deep the deepest link on each path leads, so an alias above them all (a Windows 8.3 short name, macOS /var) no longer reads every folder as linked and a linked folder never takes another account's sessions; folders that do not overlap keep their order (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts",
+      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): the worker walks and watches ~/.codex/sessions plus every folder it is handed, reading each rollout once -- tests/unit/native/tokenomics-worker-ingest.native.test.ts (CI native suite); the folder list itself by tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2, WP1.5); WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): stamps each rollout's turns and cursor with its folder's account, runs the one-off re-read and the stepped rollup rebuild with progress, and answers the accounts query (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts, tests/unit/native/tokenomics-worker-ingest.native.test.ts; WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): the set-session-account message, checked (WP1.2); tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): one Codex folder walked once and one rollout listed once by file id, a folder reached by its own path first; the one-off attribution settled only once the account folders are named (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts; WP2 P3 usage track MP10 round 1 (review fix: the transcript path decides the account): the attribution message applies from then on (WP1.2); tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP9 (CI fix): which Codex folder is reached through a link is decided between the folders that overlap, by how deep the deepest link on each path leads, so an alias above them all (a Windows 8.3 short name, macOS /var) no longer reads every folder as linked and a linked folder never takes another account's sessions; folders that do not overlap keep their order (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts; WP2 P3 usage track MP9 (VM final pass, defect 4): the one-off re-read settles only after a sweep whose list had the named account folders in it (a sweep listed before the latest naming is not drained, and another follows it), and stage 1 counts only once they are named, so it counts every rollout it will read and the notice stays until all are read and rolled up (WP1.2); tests/unit/tokenomics/tokenomics-worker-reread-order.test.ts; tests/unit/native/tokenomics-reindex-accounts.native.test.ts",
       "note": "walks the list of sessions directories it is handed; parsing unchanged"
     },
     {
@@ -3398,7 +3398,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the upgrade end to end in the worker: the Codex history re-read into its accounts, the rollups rebuilt with progress, totals unchanged, a pruned rollout's history kept not recorded, Claude history not re-read, a rollout reachable twice read once (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): a real v1 database for the upgrade case, and cases for linked and hard-linked folders, a file system with no file ids, and the attribution waiting for the account folders (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts; WP2 P3 usage track MP9 (CI fix): the link cases run with the temp folder reached by its own path, through a linked parent and by its 8.3 short name, with the folders in either order; a link above an account's sessions folder and into a folder inside it; folders that do not overlap keep their order (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts",
+      "evidence": "new WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the upgrade end to end in the worker: the Codex history re-read into its accounts, the rollups rebuilt with progress, totals unchanged, a pruned rollout's history kept not recorded, Claude history not re-read, a rollout reachable twice read once (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): a real v1 database for the upgrade case, and cases for linked and hard-linked folders, a file system with no file ids, and the attribution waiting for the account folders (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts; WP2 P3 usage track MP9 (CI fix): the link cases run with the temp folder reached by its own path, through a linked parent and by its 8.3 short name, with the folders in either order; a link above an account's sessions folder and into a folder inside it; folders that do not overlap keep their order (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts; WP2 P3 usage track MP9 (VM final pass, defect 4): the account folders named while the first sweep runs are re-read before the re-read is done, counted in it, with the notice until then (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts",
       "note": ""
     },
     {
@@ -4840,6 +4840,16 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/tokenomics/tokenomics-worker-reread-order.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP9 (VM final pass, defect 4) test (tests/unit/tokenomics/tokenomics-worker-reread-order.test.ts): with the account folders named while the first sweep runs (not named at open, or named as none), every rollout is read before the sorting notice clears, stage 1 counts every rollout it will read, and a sweep asked for during a sweep follows it (WP1.2)",
+      "note": "created by WP2 usage track MP9 (defect 4)"
     },
     {
       "path": "tests/unit/tokenomics/tokenomics2-handlers.test.ts",

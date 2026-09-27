@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T11:15:19.087Z",
-  "head": "f3b5fec7efc4b2f9afb864a524fdb1ebe9021af5",
-  "tree": "22313c11759b828b1391af08ad205fcc88db6bff",
+  "generatedAt": "2026-09-27T12:53:03.631Z",
+  "head": "8e41444f6efc24574df8f1b958297f6bd6268eb4",
+  "tree": "b85b7f9e6398b59b7aa7958de55ac50f6f6bffc0",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2356,
+  "trackedFileCount": 2357,
   "excludedFileCount": 382,
-  "scannedFileCount": 1974,
+  "scannedFileCount": 1975,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 414,
-  "pathDigest": "f893ad8e45a9ea7af60ef5718241c9192d85b65cbcc56d029b967018503ba3ec",
+  "matchedPathCount": 415,
+  "pathDigest": "48777585e81c415f63d074639129dee0d77aec825c4b728e38096cfc70938152",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -894,7 +894,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 68
+      "lineCount": 69
     },
     {
       "path": "src/main/watchdog/watchdog-manager.ts",
@@ -2353,7 +2353,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 47
     },
     {
       "path": "tests/unit/native/tokenomics-worker-hardening.native.test.ts",
@@ -3355,6 +3355,13 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/tokenomics/tokenomics-worker-reread-order.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 6
     },
     {
       "path": "tests/unit/tokenomics/tokenomics2-handlers.test.ts",
