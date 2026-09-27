@@ -70,10 +70,13 @@ describe('getClaudeProfileId', () => {
     captureClaudeAccount('s1', undefined)
     expect(getClaudeProfileId('s1')).toBeUndefined()
   })
-  it('is first-capture-wins (a later capture does not change it)', () => {
+  it('is first-capture-wins under one profile; a capture under another profile is the session running there now (P3.2)', () => {
     captureClaudeAccount('s3', 'p1')
-    captureClaudeAccount('s3', 'p2')
+    captureClaudeAccount('s3', 'p1')
     expect(getClaudeProfileId('s3')).toBe('p1')
+    // Switch account restarts the same session id on another profile.
+    captureClaudeAccount('s3', 'p2')
+    expect(getClaudeProfileId('s3')).toBe('p2')
   })
   it('clears on cleanup', () => {
     captureClaudeAccount('s2', 'p1'); clearClaudeAccount('s2')
