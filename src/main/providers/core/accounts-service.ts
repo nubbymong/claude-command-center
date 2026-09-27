@@ -1454,8 +1454,10 @@ export class AccountsService {
         if (this.deps.leases.isHeld(a.id)) { held = true; return { ok: false, code: 'blocked-by-consumers', message: 'held' } }
         // A mirrored account's own record held by a session that takes no
         // lease (a Claude profile): refused here as on the provider's own
-        // surface, whichever channel asks.
-        if (next !== 'active' && this.legacyRecordInUse(d, a.id)) { inUse = true; return { ok: false, code: 'blocked-by-consumers', message: 'in use' } }
+        // surface, whichever channel asks. Checked at the moment of the
+        // request: a UX rule, not an isolation boundary. Already at the
+        // requested state: a no-op, never refused (as the registry treats it).
+        if (next !== 'active' && findAccount(d, a.id)?.lifecycle !== next && this.legacyRecordInUse(d, a.id)) { inUse = true; return { ok: false, code: 'blocked-by-consumers', message: 'in use' } }
         consumers = this.deps.leases.count(a.id)
         // Which sessions hold it, read with the count: the refusal names them.
         sessions = this.deps.leases.sessionsHolding(a.id)

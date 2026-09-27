@@ -85,6 +85,19 @@ function fakeEvent(id = 1) {
     sender: { id, isDestroyed: () => destroyed, send: (channel: string, u: AccountUsage) => sent.push({ channel, usage: u }) },
   }
 }
+
+// The app's own window, and an event from its top frame: the account-profile
+// handlers answer nothing else (P3.2, trusted-sender.ts). An event object is
+// stamped as coming from it (its sender becomes the window's webContents).
+const appFrame = { frame: 'app' }
+const appWindow: any = { isDestroyed: () => false, webContents: { mainFrame: appFrame } }
+const getAppWindow = () => appWindow
+function fromApp<T extends Record<string, any>>(ev: T = {} as T): T {
+  const wc = ev.sender ?? { mainFrame: appFrame }
+  if (!wc.mainFrame) wc.mainFrame = { frame: 'main' }
+  appWindow.webContents = wc
+  return Object.assign(ev, { sender: wc, senderFrame: wc.mainFrame })
+}
 const CH = 'accountUsage:result:abc123'
 /** What the caller's callback gets: every message but the end marker. */
 const ids = (ev: ReturnType<typeof fakeEvent>) => ev.sent.filter((s) => !isIpcStreamEnd(s.usage)).map((s) => s.usage.profileId)
@@ -104,11 +117,11 @@ beforeEach(() => {
   h.readAllProfileAuthInfo.mockClear()
   h.holds.length = 0
   calls = 0
-  registerAccountProfilesHandlers()
+  registerAccountProfilesHandlers(getAppWindow)
 })
 
 // Look up per call: handlers are registered in beforeEach, after module load.
-const runStream = (ev: any, arg: any) => handlers.get(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM)!(ev, arg)
+const runStream = (ev: any, arg: any) => handlers.get(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM)!(fromApp(ev), arg)
 
 describe('accountUsage:fetchAllStream handler', () => {
   it('sends each streamed account on the caller-named channel, in order, then the end marker last', async () => {
@@ -240,7 +253,7 @@ describe('accountUsage:fetchAllStream — one stream per caller (adversarial pas
 // accounts, which Insights reads as no sign-in warning. A rule that cannot be
 // answered is a no.
 describe('accountProfiles:authInfo handler, Claude Code off (D5)', () => {
-  const authInfo = () => handlers.get(IPC.ACCOUNT_PROFILES_AUTH_INFO)!({})
+  const authInfo = () => handlers.get(IPC.ACCOUNT_PROFILES_AUTH_INFO)!(fromApp())
 
   it('reads nothing and answers no accounts while Claude Code is off', async () => {
     h.claudeOn.mockImplementation(() => false)
@@ -264,7 +277,7 @@ describe('accountProfiles:authInfo handler, Claude Code off (D5)', () => {
 // id BEFORE the reader touches the filesystem, and passes the reader's stat-shaped
 // answer through unchanged -- no token, email or path is added on the way.
 describe('accountProfiles:credentialStamp handler', () => {
-  const stamp = (arg: unknown) => handlers.get(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP)!({}, arg)
+  const stamp = (arg: unknown) => handlers.get(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP)!(fromApp(), arg)
 
   it('REGRESSION: an invalid id is refused before the credential file is touched', () => {
     const hostile: unknown[] = [
@@ -287,7 +300,7 @@ describe('accountProfiles:credentialStamp handler', () => {
 // guard covers the WHOLE delete, not only its first instant (the web-session
 // clear is awaited, and a session can spawn on the profile meanwhile).
 describe('accountProfiles:delete — the in-use guard', () => {
-  const del = (id: unknown) => handlers.get(IPC.ACCOUNT_PROFILES_DELETE)!({}, { id })
+  const del = (id: unknown) => handlers.get(IPC.ACCOUNT_PROFILES_DELETE)!(fromApp(), { id })
   // P3.2: the refusal carries code 'in-use', the one the Accounts row names sessions for.
   const REFUSED = { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' }
 
@@ -332,7 +345,7 @@ describe('accountProfiles:delete — the in-use guard', () => {
 // handler takes no input and hands back that list.
 describe('accountUsage:knownLabels handler', () => {
   it('returns the cached labels and ignores anything sent with the request', async () => {
-    const known = handlers.get(IPC.ACCOUNT_USAGE_KNOWN_LABELS)!
+    const known = (ev: any, ...a: any[]) => handlers.get(IPC.ACCOUNT_USAGE_KNOWN_LABELS)!(fromApp(ev), ...a)
     expect(await known(fakeEvent())).toEqual(['5h', 'Weekly', 'Fable'])
     expect(await known(fakeEvent(), { profileId: '..\\..\\x', refresh: true })).toEqual(['5h', 'Weekly', 'Fable'])
     expect(fetchAllAccountsUsageStreaming).not.toHaveBeenCalled()
@@ -340,6 +353,6 @@ describe('accountUsage:knownLabels handler', () => {
 
   it('a failure reads as no labels, never a throw', async () => {
     knownUsageLabels.mockImplementationOnce(() => { throw new Error('disk') })
-    expect(await handlers.get(IPC.ACCOUNT_USAGE_KNOWN_LABELS)!(fakeEvent())).toEqual([])
+    expect(await handlers.get(IPC.ACCOUNT_USAGE_KNOWN_LABELS)!(fromApp(fakeEvent()))).toEqual([])
   })
 })

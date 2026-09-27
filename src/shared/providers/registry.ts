@@ -658,17 +658,18 @@ export function setAccountLifecycle(
 }
 
 /** Bring an archived account back (design 5.3, "Archived (N)" with Restore).
- *  It returns INACTIVE with its realm live again, and nothing about who is
- *  signed in there is trusted any more -- exactly as a legacy record that
- *  comes back is restored: the subject is dropped (another account may hold
- *  it by now), the sign-in state is unknown, and a vouched-for identity drops
- *  to user-asserted. Making it active is the provider-verified step: it checks
- *  the sign-in first (the accounts service's re-activation).
+ *  It returns INACTIVE with its realm live again. It keeps its recorded
+ *  sign-in (subject, authority and assurance), so the check that makes it
+ *  active compares what is signed in there now against it, as for any
+ *  inactive account; its sign-in state is unknown and it needs attention
+ *  until that check runs. Making it active is the provider-verified step (the
+ *  accounts service's re-activation).
  *
  *  Refused: an account that is not archived; a legacy record (it comes back
  *  where it was removed, through the legacy store); a realm that is gone, is
  *  another provider's, or whose location another live realm now holds (the
- *  same home adopted again as a new account). */
+ *  same home adopted again as a new account); a recorded sign-in another
+ *  live account now holds. */
 export function restoreArchivedAccount(doc: ProviderRegistryDoc, accountId: string, now: number): RegistryResult {
   const account = findAccount(doc, accountId)
   if (!account) return fail('not-found', `account ${accountId} does not exist`)
@@ -679,13 +680,17 @@ export function restoreArchivedAccount(doc: ProviderRegistryDoc, accountId: stri
   if (doc.realms.some((r) => r.id !== realm.id && r.providerId === realm.providerId && r.pathRef === realm.pathRef && holdsPath(r))) {
     return fail('realm-conflict', 'another account now uses this sign-in location')
   }
+  if (account.providerSubject !== undefined && account.providerAuthorityId !== undefined && doc.accounts.some((a) => a.id !== accountId
+    && a.lifecycle !== 'archived' && a.providerId === account.providerId
+    && a.providerAuthorityId === account.providerAuthorityId && a.providerSubject === account.providerSubject)) {
+    return fail('subject-conflict', 'another account is now signed in as this one')
+  }
   const realms = doc.realms.map((r) => (r.id === realm.id ? { ...r, lifecycle: 'active' as const } : r))
   const accounts = doc.accounts.map((a) => (a.id === accountId
     ? compact({
       ...a, lifecycle: 'inactive' as const, isProviderDefault: false, updatedAt: now, archivedAt: undefined,
-      providerSubject: undefined, providerAuthorityId: undefined, lastKnownAuthState: 'unknown' as const,
+      lastKnownAuthState: 'unknown' as const,
       operationalState: a.operationalState === 'blocked' ? 'blocked' as const : 'attention' as const,
-      identityAssurance: a.identityAssurance === 'verified-subject' ? 'user-asserted' as const : a.identityAssurance,
     })
     : a))
   return done({ ...doc, accounts, realms })

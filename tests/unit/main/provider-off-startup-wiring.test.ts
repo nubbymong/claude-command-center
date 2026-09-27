@@ -35,7 +35,7 @@ describe('provider-off start-up wiring', () => {
   it('the Claude usage gate is handed the launch rule, before the usage handlers register', () => {
     expect(code).toMatch(/import \{ recordLiveUsageForSession, setClaudeAccountDataAllowed \} from '\.\/usage\/account-usage'/)
     const wired = code.indexOf("setClaudeAccountDataAllowed(() => providerProbeRefusal('claude') === null)")
-    const registered = code.indexOf('registerAccountProfilesHandlers()')
+    const registered = code.indexOf('registerAccountProfilesHandlers(getWindow)')
     expect(wired).toBeGreaterThan(-1)
     expect(registered).toBeGreaterThan(-1)
     expect(wired).toBeLessThan(registered)

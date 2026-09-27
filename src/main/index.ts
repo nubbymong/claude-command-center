@@ -704,7 +704,7 @@ if (!gotTheLock) {
       const ch = readConfig<{ updateChannel?: string }>('settings')?.updateChannel
       if (ch === 'beta') { setVerboseBaseline(true); logInfo('[boot] verbose logging enabled (beta channel)') }
     } catch { /* settings unreadable this early -- skip */ }
-    registerAccountProfilesHandlers()
+    registerAccountProfilesHandlers(getWindow)
     // SAFETY: snapshot the real Claude config before the multi-account feature
     // does anything, so the user's original login is always recoverable.
     try { backupRealClaudeOnce() } catch (e) { logInfo(`[backup] snapshot skipped: ${e}`) }
