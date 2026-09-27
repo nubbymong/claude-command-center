@@ -1061,8 +1061,8 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   - While the one-off attribution runs (`accountReread` in the index
     status), the totals are complete and only the split is filling in, so
     the notice says so, one line per stage (shortened in MP12 round 1; the
-    canvas does not draw it, so it goes to the owner in the screenshot
-    review with the other undrawn lines):
+    canvas does not draw it; the owner approved it with the usage
+    screenshots on 2026-09-27):
     re-read: "Sorting Codex history by account: N of M files. Totals are
     complete; the split by account fills in." (": counting files" in place
     of the count until its files are counted)
@@ -1073,9 +1073,24 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
     recorded its provider): the page shows it under the same notice and
     does not present a per-provider heatmap as final until the attribution
     has finished.
-- **Owed (MP12, VM):** the Tokenomics page's e2e screenshots in the three
-  modes (both providers, Claude only, Codex only), unpriced and while usage
-  is sorted by account, as the usage plan's MP12 section lists them.
+- **Done (MP12, VM):** the Tokenomics page's screenshots in the three modes
+  (both providers, Claude only, Codex only), unpriced and while usage is
+  sorted by account, with the rest of the usage screens: approved by the
+  owner on 2026-09-27 (the canvas "Usage screens for approval", v2; 125
+  images in `.ccc-canvas/screens/usage-final-8e41444f/`, local and gitignored,
+  124 mocked and 1 real, redacted).
+- **Approved copy (2026-09-27):** the owner approved, with those
+  screenshots, the copy the approved mockup does not draw:
+  - the account-sorting notice, both stages, and ": counting files" in
+    place of the count until stage 1 has counted its files (above);
+  - the heatmap's line while usage is sorted by account: "Filling in as
+    usage is sorted by account.";
+  - the no-price tooltip: "No price yet, so not in the totals.";
+  - an account no longer in the registry: "Removed account";
+  - a cost chart point with both providers: "<day>: Claude Code $x, Codex
+    $y";
+  - the unpriced notice's singular form: "<model> has no price yet
+    (<tokens> tokens), so its cost is not in these figures."
 - **Residual, accepted (MP10, the path decides):** Claude usage is attributed
   from the transcript path a local session reports (a hook or the
   statusline): the profile whose config folder holds it names the account

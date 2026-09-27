@@ -107,7 +107,17 @@ taskkill bounded at 5 s, and a kill whose read lands after it kills nothing
 more; a throwing lease or hold release never replaces a review's result. On
 the host the four touched unit files pass 244/244 (10 red before, 11 mutants
 red), `npm run typecheck` is clean and the WP1 gate passes 16/16. The fake-CLI
-file is CI and VM only. CI and the confirmation review are pending.
+file is CI and VM only. CI at `040ad456` and `1dbd39f3` passed on Windows and
+macOS (the Desktop test gate aside); the confirmation review is not recorded
+here.
+
+Usage track (P3, 2026-09-27). CI at `67b7aa90` passes on Windows and macOS;
+the Desktop test gate stays red until the owner attests (#309). The VM e2e
+passed 81/81 at `8e41444f` and at `7c2739bf`. The owner approved the usage
+screenshots on 2026-09-27 (the canvas "Usage screens for approval", v2): 125
+images in `.ccc-canvas/screens/usage-final-8e41444f/`, local and gitignored, 124 mocked and
+1 real (redacted), including the copy the approved mockup does not draw, as
+recorded in `docs/wp2/plan.md`.
 
 | Group | Open item | Tracked in |
 |---|---|---|
@@ -118,7 +128,7 @@ file is CI and VM only. CI and the confirmation review are pending.
 | B | A signed Windows packaged run (the walk used an unsigned candidate) | Row 66 |
 | B | Real CLI on codex 0.153.4 and 0.155.1 | Rows 1, 2, 12 |
 | B | Claude-only UI for Codex-only users: the title-bar Claude.ai pill, Ask Conductor saying it runs on Claude Code, the Accounts Claude card's sign-in prompts while Claude Code is off, Hello Codex page 1 saying Codex runs beside Claude | Row 14 (P3) |
-| B | Account summary, usage footer and Tokenomics UX, held for the owner's UX review (the next step after P2 acceptance) | Rows 17, 21, 26 |
+| B | Account summary, usage footer and Tokenomics UX, held for the owner's UX review (the next step after P2 acceptance): DONE, the UX approved 2026-09-27 (`docs/wp1/owner-decisions-2026-09-27.md`), built by the usage track, and its screenshots approved 2026-09-27 | Rows 17, 21, 26 |
 | C | At the narrow window the GitHub button overlaps the partner strip label, on Claude and Codex tabs | Row 64 |
 | C | The one-at-a-time Multi Spawn rule is enforced only in the renderer (a UX rule, not a security boundary) | Row 72 |
 | C | Resume replaces the whole tab list while its prompt is non-modal: tabs launched meanwhile drop out of the list while still running, and Refresh can bring them back as duplicates | This section |
@@ -152,24 +162,26 @@ The owner approved the usage UX on 2026-09-27 (the account summary, the
 usage footer and Tokenomics; `docs/wp1/owner-decisions-2026-09-27.md`).
 Rows 17 to 21, 26 and 28 to 30 are built by the multi-provider usage track
 of P3, phases MP1 to MP13; a closed Codex account's reading comes from the
-scoped app-server read of ADR-022.
+scoped app-server read of ADR-022. The owner approved the usage screenshots
+on 2026-09-27: 125 images in `.ccc-canvas/screens/usage-final-8e41444f/` (local,
+gitignored), 124 mocked and 1 real (redacted).
 
 | # | Feature | Status | Mocked | Real CLI | Packaged | Pkg | Still owed |
 |---|---|---|---|---|---|---|---|
-| 17 | All-accounts usage page | VERIFIED | yes | partial (Win) | no | P3 | Usage track MP3, MP4, MP8: a Codex section with the live, fresh-read and last-seen figures, per-token and no-session notes (`tests/unit/renderer/account-usage-panel-streaming.test.tsx`, `tests/unit/main/codex-usage-read.test.ts`). Real CLI: the MP8 VM walk (Windows, unsigned candidates at 81ed64a8 and fa2907e7, AUTHENTICATED managed) read a ChatGPT account on 0.153.4 and 0.155.1 and never read 0.157.1. Owed: macOS and Linux, packaged, the VM screenshots in three modes |
-| 18 | Session-strip meters | VERIFIED | yes | no | no | P3 | Usage track MP2, MP6: Codex meters labelled from `window_minutes` (5h, Weekly, one per separate limit), the no-reading meter after a reset, and the pending state (`tests/unit/renderer/session-status-strip.test.ts`, `tests/unit/renderer/strip-usage-consistency.test.ts`). Owed: a 0.155.1 rollout fixture from a real session, and a real-CLI run |
-| 19 | Strip cost wording | VERIFIED | yes | no | no | P3 | Usage track MP6: API-equivalent estimate, or Estimate at API list prices for an API-key account (`tests/unit/renderer/strip-usage-consistency.test.ts`); Tokenomics words each session's cost the same way (MP12, `tests/unit/renderer/tokenomics-mp12.test.tsx`) |
-| 20 | Account chip (strip and sidebar) | PARTIAL | yes | no | no | P3 | The usage page and the footer carry the account's identity chip (usage track MP4, MP5; `tests/unit/renderer/multi-account-statusline-render.test.tsx`). Owed: the chip on the session strip and in the sidebar |
-| 21 | Multi-account footer | VERIFIED | yes | no | no | P3 | Usage track MP5, MP6: one pill per identity, grouped by provider, percentages never merged across providers; bars hidden per provider (`tests/unit/renderer/multi-account-statusline-render.test.tsx`). Owed: a real-CLI and packaged run |
+| 17 | All-accounts usage page | VERIFIED | yes | partial (Win) | no | P3 | Usage track MP3, MP4, MP8: a Codex section with the live, fresh-read and last-seen figures, per-token and no-session notes (`tests/unit/renderer/account-usage-panel-streaming.test.tsx`, `tests/unit/main/codex-usage-read.test.ts`). Real CLI: the MP8 VM walk (Windows, unsigned candidates at 81ed64a8 and fa2907e7, AUTHENTICATED managed) read a ChatGPT account on 0.153.4 and 0.155.1 and never read 0.157.1. Screens approved by the owner 2026-09-27. Owed: macOS and Linux, packaged |
+| 18 | Session-strip meters | VERIFIED | yes | no | no | P3 | Usage track MP2, MP6: Codex meters labelled from `window_minutes` (5h, Weekly, one per separate limit), the no-reading meter after a reset, and the pending state (`tests/unit/renderer/session-status-strip.test.ts`, `tests/unit/renderer/strip-usage-consistency.test.ts`). Screens approved by the owner 2026-09-27. Owed: a 0.155.1 rollout fixture from a real session, and a real-CLI run |
+| 19 | Strip cost wording | VERIFIED | yes | no | no | P3 | Usage track MP6: API-equivalent estimate, or Estimate at API list prices for an API-key account (`tests/unit/renderer/strip-usage-consistency.test.ts`); Tokenomics words each session's cost the same way (MP12, `tests/unit/renderer/tokenomics-mp12.test.tsx`). Screens approved by the owner 2026-09-27. |
+| 20 | Account chip (strip and sidebar) | PARTIAL | yes | no | no | P3 | The usage page and the footer carry the account's identity chip (usage track MP4, MP5; `tests/unit/renderer/multi-account-statusline-render.test.tsx`). Screens approved by the owner 2026-09-27. Owed: the chip on the session strip and in the sidebar |
+| 21 | Multi-account footer | VERIFIED | yes | no | no | P3 | Usage track MP5, MP6: one pill per identity, grouped by provider, percentages never merged across providers; bars hidden per provider (`tests/unit/renderer/multi-account-statusline-render.test.tsx`). Screens approved by the owner 2026-09-27. Owed: a real-CLI and packaged run |
 | 22 | Switch the account of a running session | MISSING | no | no | no | P3 | Keep the conversation, as Claude does |
 | 23 | Choose the account at launch | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Per OS. Windows (AUTHENTICATED managed): the new-config picker defaulted to the managed account with no confirmation box, and real Codex 0.157.1 launched. Upgrade walk (AUTHENTICATED, this computer's Codex): Create waited for its launch confirmation, then real Codex 0.157.1 launched |
 | 24 | Running sessions per account | PARTIAL | no | no | no | P3 | Shown on the account row |
-| 25 | Tokenomics reads managed realms and `~/.codex` | VERIFIED | yes | no | no | P4 | Real rollouts. MP9 round 1: a realm's folder is read only through the canonical-home check, and a folder or rollout reached twice (a junction, a hard link) is read once (`tests/unit/native/tokenomics-reindex-accounts.native.test.ts`) |
-| 26 | Tokenomics per-account attribution and filters | VERIFIED | yes | no | no | P3 | Usage track MP9, MP10, MP12: Codex by the realm folder (`tests/unit/native/tokenomics-reindex-accounts.native.test.ts`); Claude by the account profile a local session runs under, its transcript in that profile home's `.claude/projects` (from now on; the old layout without `.claude` is refused, MP10 round 1: `tests/unit/main/tokenomics-attribution.test.ts`), recorded in the index as `tests/unit/native/tokenomics-attribution.native.test.ts` shows; Provider and Account filters with Not recorded under both providers and This computer's sign-in (`tests/unit/renderer/tokenomics-mp12.test.tsx`). Owed: the VM screenshots in three modes |
-| 27 | Subagent collision fix | VERIFIED | yes | no | no | P4 | A real 0.155.1 subagent rollout |
-| 28 | Codex pricing | VERIFIED | yes | no | no | P3 | Usage track MP11: a model with no price reads "no price" and is in no total; one cached-input rule for the strip and Tokenomics (`tests/unit/tokenomics/tk-pricing.test.ts`, `tests/unit/native/tk-db-summary.native.test.ts`) |
-| 29 | Plan type | VERIFIED | yes | partial (Win) | no | P3 | Usage track MP2, MP8: the plan from each reading, recorded on the account (`tests/unit/main/codex-usage-read.test.ts`); the MP8 VM walk showed Pro on 0.153.4 and 0.155.1. Owed: macOS and Linux, packaged |
-| 30 | Tokenomics totals split by provider | VERIFIED | yes | no | no | P3 | Usage track MP11, MP12: every KPI and the daily series per provider, shown as a two-segment split and two chart lines (`tests/unit/native/tk-db-summary.native.test.ts`, `tests/unit/renderer/tokenomics-mp12.test.tsx`). Owed: the VM screenshots |
+| 25 | Tokenomics reads managed realms and `~/.codex` | VERIFIED | yes | no | no | P4 | Real rollouts. MP9 round 1: a realm's folder is read only through the canonical-home check, and a folder or rollout reached twice (a junction, a hard link) is read once (`tests/unit/native/tokenomics-reindex-accounts.native.test.ts`). Screens approved by the owner 2026-09-27. |
+| 26 | Tokenomics per-account attribution and filters | VERIFIED | yes | no | no | P3 | Usage track MP9, MP10, MP12: Codex by the realm folder (`tests/unit/native/tokenomics-reindex-accounts.native.test.ts`); Claude by the account profile a local session runs under, its transcript in that profile home's `.claude/projects` (from now on; the old layout without `.claude` is refused, MP10 round 1: `tests/unit/main/tokenomics-attribution.test.ts`), recorded in the index as `tests/unit/native/tokenomics-attribution.native.test.ts` shows; Provider and Account filters with Not recorded under both providers and This computer's sign-in (`tests/unit/renderer/tokenomics-mp12.test.tsx`). Screens approved by the owner 2026-09-27. |
+| 27 | Subagent collision fix | VERIFIED | yes | no | no | P4 | Screens approved by the owner 2026-09-27. Owed: a real 0.155.1 subagent rollout |
+| 28 | Codex pricing | VERIFIED | yes | no | no | P3 | Usage track MP11: a model with no price reads "no price" and is in no total; one cached-input rule for the strip and Tokenomics (`tests/unit/tokenomics/tk-pricing.test.ts`, `tests/unit/native/tk-db-summary.native.test.ts`). Screens approved by the owner 2026-09-27. |
+| 29 | Plan type | VERIFIED | yes | partial (Win) | no | P3 | Usage track MP2, MP8: the plan from each reading, recorded on the account (`tests/unit/main/codex-usage-read.test.ts`); the MP8 VM walk showed Pro on 0.153.4 and 0.155.1. Screens approved by the owner 2026-09-27. Owed: macOS and Linux, packaged |
+| 30 | Tokenomics totals split by provider | VERIFIED | yes | no | no | P3 | Usage track MP11, MP12: every KPI and the daily series per provider, shown as a two-segment split and two chart lines (`tests/unit/native/tk-db-summary.native.test.ts`, `tests/unit/renderer/tokenomics-mp12.test.tsx`). Screens approved by the owner 2026-09-27. |
 
 ## C. Sessions, statusline, model, Sentinel, Watchdog, status
 

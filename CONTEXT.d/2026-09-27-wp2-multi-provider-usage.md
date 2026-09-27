@@ -38,6 +38,11 @@ no manual attribution (June decision).
 **Residuals and what is owed** are in `docs/wp2/plan.md`: a read also
 refreshes Codex's model list and checks its plugin cache (listed in
 PRIVACY.md); Codex usage stored during a downgrade stays Not recorded; the
-account chip on the strip and sidebar; a real 0.155.1 rollout fixture; the
-VM screenshots of the Usage page and Tokenomics in three modes; macOS,
-Linux and packaged runs.
+account chip on the strip and sidebar; a real 0.155.1 rollout fixture;
+macOS, Linux and packaged runs.
+
+**Approved.** The owner approved the usage screenshots on 2026-09-27 (125
+images, local: 124 mocked and 1 real, redacted), including the copy the
+mockup does not draw (recorded in `docs/wp2/plan.md`). CI passes on Windows
+and macOS at `67b7aa90`, the Desktop test gate aside; the VM e2e passed
+81/81 at `8e41444f` and `7c2739bf`.
