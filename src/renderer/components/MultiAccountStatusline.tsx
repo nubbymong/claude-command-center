@@ -536,8 +536,10 @@ function tooltip(
       const sub = g.email ?? g.method
       lines.push(`${providerNameOf(g.providerId, snapshot)}${sub ? ` ${MIDDOT} ${sub}` : ''}`)
       if (g.word) { lines.push(USAGE_WORD_TIP[g.word]); continue }
-      if (g.buckets.length === 0 && opts?.showPending) { lines.push('Waiting for the status line'); continue }
     }
+    // Usage track MP6 (as drawn): a pill still waiting for its first reading
+    // says so, a plain one too.
+    if (g.buckets.length === 0 && opts?.showPending) { lines.push('Waiting for the status line'); continue }
     for (const b of g.buckets) {
       if (bucketPastReset(b, now)) { lines.push(pastLine(b)); continue }
       // In minimal mode the dots carry a BAND, not a figure, so the exact number

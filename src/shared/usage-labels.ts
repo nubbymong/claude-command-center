@@ -3,6 +3,12 @@
 // session strip). Pure: no Node or DOM imports.
 
 import type { UsageBucket } from './usage-types'
+import type { ProviderId } from './types'
+
+/** The provider the multi-account footer's older, bare hidden labels belong
+ *  to (usage track MP6): they were written when the footer showed only Claude
+ *  Code's meters. Newer entries name their provider (`<provider>:<label>`). */
+export const FOOTER_BARE_LABEL_PROVIDER: ProviderId = 'claude'
 
 const MINUTES_PER_DAY = 1440
 const MINUTES_PER_WEEK = 10080

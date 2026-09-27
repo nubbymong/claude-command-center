@@ -26,6 +26,10 @@ import { AccountsSurface } from './settings/accounts/AccountsSurface'
 import { CodeReviewTools } from './settings/CodeReviewTools'
 import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
+import { usesClaude, usesCodex } from '../onboarding/provider-choice'
+import { ProviderMark } from './sidebar/Badges'
+import { FOOTER_BARE_LABEL_PROVIDER } from '../../shared/usage-labels'
+import type { ProviderId } from '../../shared/providers'
 declare const __BUILD_TIME__: string
 declare const __BUILD_SHA__: string
 declare const __APP_VERSION__: string
@@ -70,15 +74,19 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'about', label: 'About' }
 ]
 
-/** With a Codex session in front: these settings apply to it too (one status
- *  strip for every session), and say which items it cannot fill yet. */
+/** With Codex in use, or a Codex session in front: these settings apply to it
+ *  too (one status strip for every session), and say which items it cannot
+ *  fill yet. Usage track MP6: a Codex session's account now shows (the
+ *  footer names it through the registry), so the note no longer says it
+ *  does not. */
 function StatuslineCodexBanner() {
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === s.activeSessionId))
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
   const isCodex = (activeSession?.provider ?? 'claude') === 'codex'
-  if (!isCodex) return null
+  if (!isCodex && !codexOn) return null
   return (
     <div className="rounded-md bg-blue/10 border border-blue/30 p-3 mb-3 text-sm text-blue" data-testid="statusline-codex-note">
-      These settings apply to Codex sessions too. A Codex session does not report its account, lines changed or session time yet, so those items do not show for it.
+      These settings apply to Codex sessions too. A Codex session does not report lines changed or session time yet, so those items do not show for it.
     </div>
   )
 }
@@ -839,17 +847,24 @@ const EMPTY_BUCKET_HIDDEN: string[] = []
 // the set of buckets changes. Two independent scopes share the one discovery
 // fetch: the per-session status line (hiddenUsageBuckets) and the multi-account
 // footer (footerHiddenUsageBuckets).
-function BucketToggleCard({ title, subtitle, labels, hidden, onToggle }: {
+function BucketToggleCard({ title, subtitle, labels, hidden, onToggle, mark, testId }: {
   title: string
   subtitle: string
   labels: string[]
   hidden: string[]
   onToggle: (label: string) => void
+  /** The provider whose bars these are, drawn beside the title (usage track
+   *  MP6: the footer's cards, per provider, with more than one in use). */
+  mark?: ProviderId
+  testId?: string
 }): React.ReactElement {
   return (
-    <div className="settings-card overflow-hidden">
+    <div className="settings-card overflow-hidden" data-testid={testId}>
       <div className="px-4 py-2.5 border-b settings-divider">
-        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">{title}</h3>
+        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider flex items-center gap-2">
+          {mark && <ProviderMark providerId={mark} size={16} />}
+          {title}
+        </h3>
         <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{subtitle}</p>
       </div>
       <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -864,29 +879,82 @@ function BucketToggleCard({ title, subtitle, labels, hidden, onToggle }: {
   )
 }
 
+/** The labels every Codex session reports, whatever it has reported yet. */
+const CODEX_BASE_LABELS = ['5h', 'Weekly']
+const CODEX: ProviderId = 'codex'
+const MIDDOT = String.fromCharCode(0xb7)
+const RSQUO = String.fromCharCode(0x2019)
+
+/** The labels live sessions of a provider have reported, first seen first. */
+function useLiveLabels(want: (provider: ProviderId) => boolean): string[] {
+  const sessions = useSessionStore((s) => s.sessions)
+  return React.useMemo(() => {
+    const out: string[] = []
+    for (const s of sessions) {
+      if (!want(s.provider ?? FOOTER_BARE_LABEL_PROVIDER)) continue
+      for (const b of s.usageBuckets ?? []) if (b.label && !out.includes(b.label)) out.push(b.label)
+    }
+    return out
+  }, [sessions, want])
+}
+
+const merge = (...lists: string[][]): string[] => {
+  const out: string[] = []
+  for (const l of lists) for (const x of l) if (!out.includes(x)) out.push(x)
+  return out
+}
+
 function UsageBucketToggles(): React.ReactElement | null {
   const hidden = useSettingsStore((s) => s.settings.hiddenUsageBuckets) ?? EMPTY_BUCKET_HIDDEN
   const footerHidden = useSettingsStore((s) => s.settings.footerHiddenUsageBuckets) ?? EMPTY_BUCKET_HIDDEN
-  const [labels, setLabels] = React.useState<string[] | null>(null)
-
+  const claudeOn = useSettingsStore((s) => usesClaude(s.settings))
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
+  // Claude Code's labels: the ones its accounts have reported, from cached
+  // figures only (usage track MP6: no network fetch of every account each time
+  // this tab opens), plus any a live session reports.
+  const [known, setKnown] = React.useState<string[] | null>(null)
   React.useEffect(() => {
+    if (!claudeOn) { setKnown([]); return }
     let cancelled = false
     void (async () => {
       try {
-        const rows = await window.electronAPI.accountUsage.fetchAll()
-        const seen: string[] = []
-        for (const r of rows) for (const b of r.buckets) if (!seen.includes(b.label)) seen.push(b.label)
-        if (!cancelled) setLabels(seen)
-      } catch { if (!cancelled) setLabels([]) }
+        const labels = await window.electronAPI.accountUsage.knownLabels()
+        if (!cancelled) setKnown(Array.isArray(labels) ? labels.filter((l) => typeof l === 'string') : [])
+      } catch { if (!cancelled) setKnown([]) }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [claudeOn])
+  const isBareProvider = React.useCallback((p: ProviderId) => p === FOOTER_BARE_LABEL_PROVIDER, [])
+  const isOther = React.useCallback((p: ProviderId) => p !== FOOTER_BARE_LABEL_PROVIDER, [])
+  const liveClaude = useLiveLabels(isBareProvider)
+  const liveCodex = useLiveLabels(isOther)
+  const claudeLabels = merge(known ?? [], liveClaude)
+  // Codex's: its two windows, plus any other limit a live session reports.
+  const codexLabels = merge(CODEX_BASE_LABELS, liveCodex)
+  const labels = known === null ? null : merge(claudeOn ? claudeLabels : [], codexOn ? codexLabels : [])
 
-  const toggle = (cur: string[], scope: 'session' | 'footer', label: string) => {
+  const toggle = (cur: string[], label: string) => {
     const next = cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label]
-    void useSettingsStore.getState().updateSettings(
-      scope === 'footer' ? { footerHiddenUsageBuckets: next } : { hiddenUsageBuckets: next },
-    )
+    void useSettingsStore.getState().updateSettings({ hiddenUsageBuckets: next })
+  }
+  // The footer's list is per provider (`<provider>:<label>`); an older bare
+  // label is Claude Code's.
+  const footerHiddenFor = (p: ProviderId): string[] => {
+    const out: string[] = []
+    for (const e of footerHidden) {
+      const i = e.indexOf(':')
+      if (i > 0 && e.slice(0, i) === p) out.push(e.slice(i + 1))
+      else if (i < 0 && p === FOOTER_BARE_LABEL_PROVIDER) out.push(e)
+    }
+    return out
+  }
+  const toggleFooter = (p: ProviderId, label: string) => {
+    const scoped = `${p}:${label}`
+    const hiddenNow = footerHiddenFor(p).includes(label)
+    const next = hiddenNow
+      ? footerHidden.filter((e) => e !== scoped && !(p === FOOTER_BARE_LABEL_PROVIDER && e === label))
+      : [...footerHidden, scoped]
+    void useSettingsStore.getState().updateSettings({ footerHiddenUsageBuckets: next })
   }
 
   if (labels === null) {
@@ -903,22 +971,43 @@ function UsageBucketToggles(): React.ReactElement | null {
       </div>
     )
   }
+  // Usage track MP6 (as drawn): with Claude Code alone, its footer card reads
+  // as it always has; with Codex in use there is a card per provider, each led
+  // by its mark, and the footer counts identities.
   return (
     <div className="space-y-3">
       <BucketToggleCard
         title="Which usage bars"
-        subtitle="Shown on each session's status line. Discovered from your account, so this list follows whatever Anthropic tracks."
+        subtitle={codexOn
+          ? "Shown on each session's status line. Discovered from your accounts and sessions, so this list follows whatever each provider reports."
+          : "Shown on each session's status line. Discovered from your account, so this list follows whatever Anthropic tracks."}
         labels={labels}
         hidden={hidden}
-        onToggle={(l) => toggle(hidden, 'session', l)}
+        onToggle={(l) => toggle(hidden, l)}
+        testId="usage-bars-session"
       />
-      <BucketToggleCard
-        title="Multi-account footer bars"
-        subtitle="Shown in the bottom footer when 2 or more accounts are live, independent of the per-session bars above (e.g. keep only Fable here to narrow the strip)."
-        labels={labels}
-        hidden={footerHidden}
-        onToggle={(l) => toggle(footerHidden, 'footer', l)}
-      />
+      {claudeOn && claudeLabels.length > 0 && (
+        <BucketToggleCard
+          title={codexOn ? `Claude Code ${MIDDOT} Multi-account footer bars` : 'Multi-account footer bars'}
+          subtitle={`Shown in the bottom footer when 2 or more ${codexOn ? 'identities' : 'accounts'} are live, independent of the per-session bars above (e.g. keep only Fable here to narrow the strip).`}
+          labels={claudeLabels}
+          hidden={footerHiddenFor(FOOTER_BARE_LABEL_PROVIDER)}
+          onToggle={(l) => toggleFooter(FOOTER_BARE_LABEL_PROVIDER, l)}
+          mark={codexOn ? FOOTER_BARE_LABEL_PROVIDER : undefined}
+          testId="usage-bars-footer-claude"
+        />
+      )}
+      {codexOn && (
+        <BucketToggleCard
+          title={`Codex ${MIDDOT} Multi-account footer bars`}
+          subtitle={`Shown in the bottom footer after each identity${RSQUO}s Codex mark. Discovered from your Codex sessions, so this list follows whatever Codex reports.`}
+          labels={codexLabels}
+          hidden={footerHiddenFor(CODEX)}
+          onToggle={(l) => toggleFooter(CODEX, l)}
+          mark={CODEX}
+          testId="usage-bars-footer-codex"
+        />
+      )}
       <FooterDisplayCard />
     </div>
   )

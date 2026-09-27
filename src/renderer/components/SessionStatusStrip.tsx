@@ -2,7 +2,10 @@ import React, { useState, useMemo } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import { usesCodex } from '../onboarding/provider-choice'
-import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
+import RateLimitBar, { RateLimitBarPending, RateLimitBarNoReading } from './terminal/RateLimitBar'
+import { bucketPastReset } from '../../shared/usage-labels'
+import { useRenderAtNextReset } from '../hooks/useRenderAtNextReset'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
@@ -107,6 +110,26 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const [openPicker, setOpenPicker] = useState<'model' | 'account' | null>(null)
   const [lastEffort, setLastEffort] = useState<string | null>(null)
   const isClaude = (session?.provider ?? 'claude') === 'claude'
+  // Usage track MP6: a session of an account-attributed provider (Codex) is
+  // billed by its registry account: the one it runs under, else the provider
+  // default. An API-key account is billed per token and reports no allowance.
+  const perToken = useProviderAccountsStore((s) => {
+    if (isClaude || !session) return false
+    const accounts = s.snapshot?.accounts ?? []
+    const account = session.providerAccountId
+      ? accounts.find((a) => a.id === session.providerAccountId)
+      : accounts.find((a) => a.providerId === session.provider && a.isProviderDefault && a.lifecycle !== 'archived')
+    return account?.authMethod === 'apiKey'
+  })
+  // D2: a window whose reset passes while the session is idle turns to "no
+  // reading since" on time.
+  const resets = useMemo(() => {
+    const out = (session?.usageBuckets ?? []).map((b) => b.resetsAt).filter(Boolean)
+    if (session?.rateLimitCurrentResets) out.push(session.rateLimitCurrentResets)
+    if (session?.rateLimitWeeklyResets) out.push(session.rateLimitWeeklyResets)
+    return out
+  }, [session?.usageBuckets, session?.rateLimitCurrentResets, session?.rateLimitWeeklyResets])
+  useRenderAtNextReset(resets)
 
   // Model rows are grouped now (alias rows, then the pinned versions under each
   // family, #385), so the popover has N model sections instead of one. The
@@ -184,17 +207,20 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
 
   // "The meters should appear, but nothing has arrived yet." Shimmering forever
   // on a session that has nothing to say is worse than the blank it replaces, so
-  // this excludes the two cases that will never report: a shell-only session
-  // runs no Claude, and a disconnected one is finished.
+  // this excludes the cases that will never report: a shell-only session runs
+  // no provider, a disconnected one is finished, and (usage track MP6, any
+  // provider that reports usage) one whose provider said nothing will report
+  // it, or whose account is billed per token.
   //
   // Deliberately NOT re-checking statusLineEnabled here. The whole telemetry
   // band below is already inside `{statusLineEnabled ? ... }`, so a clause for
   // it would be unreachable -- verified by mutation: deleting it changes no test
   // result. The footer needs its own check because it has no such wrapper.
   const awaitingStatusline =
-    isClaude &&
     !session.shellOnly &&
     session.status !== 'disconnected' &&
+    session.usageUnavailable !== 'no-reading' &&
+    !perToken &&
     (session.usageBuckets == null || session.usageBuckets.length === 0) &&
     session.rateLimitCurrent == null
 
@@ -359,7 +385,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           </span>
         )}
         {sl.showCost && session.costUsd != null && (
-          <span className="tabular-nums shrink-0" title="API equivalent cost (not billed on Max plan)">API eq ${session.costUsd.toFixed(4)}</span>
+          // Q1.5: Claude Code's wording is unchanged; a Codex ChatGPT sign-in's is
+          // an API-equivalent estimate, an API-key account's an estimate at API
+          // list prices.
+          <span className="tabular-nums shrink-0" title={isClaude ? 'API equivalent cost (not billed on Max plan)' : perToken ? 'Estimate at API list prices' : 'API-equivalent estimate'}>API eq ${session.costUsd.toFixed(4)}</span>
         )}
         {sl.showLinesChanged && session.linesAdded != null && (
           <span className="tabular-nums shrink-0" style={{ color: 'color-mix(in srgb, var(--status-success) 70%, var(--text-secondary))' }}>+{session.linesAdded}</span>
@@ -381,7 +410,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
             return (
               <span className="flex items-center gap-3 shrink-0">
                 {shown.map((b) => (
-                  <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} showReset={sl.showResetTime} />
+                  bucketPastReset(b, Date.now())
+                    ? <RateLimitBarNoReading key={b.key} label={b.label} resetsAt={b.resetsAt} />
+                    : <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} showReset={sl.showResetTime} />
                 ))}
                 {validExtraUsage(session.rateLimitExtra) && (
                   <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
@@ -403,16 +434,22 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
             return (
               <span className="flex items-center gap-3 shrink-0" data-testid="statusline-pending">
                 {pendingLabels.map((l) => (
-                  <RateLimitBarPending key={l} label={l === 'Weekly' ? '7d' : l} />
+                  <RateLimitBarPending key={l} label={l} />
                 ))}
               </span>
             )
           }
           return (
             <span className="flex items-center gap-3 shrink-0">
-              {!hiddenBuckets.includes('5h') && <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} showReset={sl.showResetTime} />}
+              {!hiddenBuckets.includes('5h') && (
+                session.rateLimitCurrentResets && bucketPastReset({ resetsAt: session.rateLimitCurrentResets }, Date.now())
+                  ? <RateLimitBarNoReading label="5h" resetsAt={session.rateLimitCurrentResets} />
+                  : <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} showReset={sl.showResetTime} />
+              )}
               {session.rateLimitWeekly != null && !hiddenBuckets.includes('Weekly') && (
-                <RateLimitBar label="7d" pct={session.rateLimitWeekly} resets={session.rateLimitWeeklyResets} showReset={sl.showResetTime} />
+                session.rateLimitWeeklyResets && bucketPastReset({ resetsAt: session.rateLimitWeeklyResets }, Date.now())
+                  ? <RateLimitBarNoReading label="Weekly" resetsAt={session.rateLimitWeeklyResets} />
+                  : <RateLimitBar label="Weekly" pct={session.rateLimitWeekly} resets={session.rateLimitWeeklyResets} showReset={sl.showResetTime} />
               )}
               {session.rateLimitExtra?.enabled && (
                 <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>

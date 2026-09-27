@@ -159,6 +159,9 @@ export interface ElectronAPI {
     fetchAll: () => Promise<import('../../shared/usage-types').AccountUsage[]>
     fetchAllStream: (onResult: (usage: import('../../shared/usage-types').AccountUsage) => void) => Promise<void>
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => Promise<import('../../shared/usage-types').AccountUsage | null>
+    /** Usage track MP3: the labels Claude Code's accounts have reported, from
+     *  cached figures only (no network, no credential read). */
+    knownLabels: () => Promise<string[]>
   }
   window: {
     minimize: () => void

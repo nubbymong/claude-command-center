@@ -331,6 +331,19 @@ describe('MultiAccountStatusline, one pill per identity (usage track MP5)', () =
     expect(bars('codex')).toEqual(['Weekly rate limit utilisation'])
   })
 
+  // Usage track MP6 (as drawn): a pill still waiting for its first reading
+  // says so in its tooltip, a plain Claude Code one too, while the status line
+  // is on.
+  it('a pill waiting for its first reading says so in its tooltip, only while the status line is on', () => {
+    settings({}, false)
+    show([claude('a@x.com'), claude('b@x.com', { rateLimitCurrent: 1 })])
+    expect(pillOf('a@x.com').title).toContain('Waiting for the status line')
+    expect(pillOf('b@x.com').title).not.toContain('Waiting for the status line')
+    settings({ statusLineEnabled: false }, false)
+    show([claude('a@x.com'), claude('b@x.com', { rateLimitCurrent: 1 })])
+    expect(pillOf('a@x.com').title).not.toContain('Waiting for the status line')
+  })
+
   it('shows nothing with fewer than two identities live, however many sessions', () => {
     show([claude('a@x.com', { rateLimitCurrent: 1 }), codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(1, 1) })])
     expect(container.querySelector('[data-testid="multi-account-statusline"]')).toBeNull()
