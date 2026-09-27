@@ -62,8 +62,15 @@ vi.mock('https', () => {
 
 const {
   fetchAccountUsage, fetchAllAccountsUsageStreaming, setClaudeAccountDataAllowed, claudeAccountDataAllowed, knownUsageLabels,
-  recordLiveUsageForSession, _resetLiveUsageForTest, _resetSnapshotsForTest,
+  recordLiveUsageForSession, setLiveUsageTranscriptProfile, _resetLiveUsageForTest, _resetSnapshotsForTest,
 } = await import('../../src/main/usage/account-usage')
+
+// P3.2: the recorder files a figure under a profile only when the session's
+// transcript lies in that profile's folder (the Tokenomics folder rule, tested
+// in tk-attribution). Here a stand-in for that rule: /profiles/<id>/projects/...
+const transcriptOf = (sessionId: string, profileId = profileBySession.get(sessionId)) =>
+  `/profiles/${profileId}/projects/p/00000000-0000-4000-8000-000000000000.jsonl`
+const fakeFolderRule = (transcriptPath: string) => /^\/profiles\/([^/]+)\/projects\/[^/]+\/[^/]+\.jsonl$/.exec(transcriptPath)?.[1]
 
 const profile = (id: string, over: Partial<AccountProfile> = {}): AccountProfile => ({ id, name: `Acct ${id}`, accountEmail: `${id}@example.com`, createdAt: 0, ...over })
 const bucket = (label: string): UsageBucket => ({ key: `k:${label}`, label, group: 'weekly', percent: 5, resetsAt: '', severity: 'normal' })
@@ -75,6 +82,7 @@ function writeCreds(expiresAt: number): void {
 }
 
 beforeEach(() => {
+  setLiveUsageTranscriptProfile(fakeFolderRule)
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-usage-off-'))
   profiles = [profile('profile-a-1'), profile('profile-b-1'), profile('profile-c-1'), profile('profile-d-1'), profile('profile-e-1')]
   configDirAsked.length = 0
@@ -150,7 +158,7 @@ describe('knownUsageLabels (Settings, no network)', () => {
   it('lists the labels of the saved and live figures, once each, with no call and no credential read', async () => {
     seededSnapshots = { 'profile-a-1': { buckets: [bucket('5h'), bucket('Weekly')], fetchedAt: 1 }, 'profile-b-1': { buckets: [bucket('Weekly'), bucket('Fable')], fetchedAt: 1 } }
     profileBySession.set('sess-1', 'profile-c-1')
-    recordLiveUsageForSession('sess-1', [bucket('Opus')], false)
+    recordLiveUsageForSession('sess-1', [bucket('Opus')], false, transcriptOf('sess-1'))
     setClaudeAccountDataAllowed(() => false)
     expect(knownUsageLabels()).toEqual(['5h', 'Weekly', 'Fable', 'Opus'])
     expect(configDirAsked).toEqual([])

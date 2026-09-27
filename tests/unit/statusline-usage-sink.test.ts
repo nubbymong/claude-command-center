@@ -22,7 +22,7 @@ vi.mock('../../src/main/debug-logger', () => ({ logWarn: () => {}, logInfo: () =
 
 const { dispatchSSHStatuslineUpdate, setStatuslineUsageSink, startStatuslineWatcher } = await import('../../src/main/statusline-watcher')
 
-type SinkCall = { sessionId: string; buckets: unknown; hasCredits: boolean }
+type SinkCall = { sessionId: string; buckets: unknown; hasCredits: boolean; transcriptPath?: string }
 let calls: SinkCall[] = []
 // The string-dispatch path no-ops until a window is registered (sshDispatchWindow),
 // which only startStatuslineWatcher sets. A fake window is enough; the fan-out just
@@ -33,7 +33,7 @@ let stopWatcher: (() => void) | null = null
 beforeEach(() => {
   calls = []
   stopWatcher = startStatuslineWatcher(() => fakeWin as never)
-  setStatuslineUsageSink((sessionId, buckets, hasCredits) => calls.push({ sessionId, buckets, hasCredits }))
+  setStatuslineUsageSink((sessionId, buckets, hasCredits, transcriptPath) => calls.push({ sessionId, buckets, hasCredits, transcriptPath }))
 })
 afterEach(() => { stopWatcher?.(); stopWatcher = null })
 
@@ -47,6 +47,14 @@ describe('the statusline fan-out harvests delivered usage to the sink', () => {
     expect(calls[0].sessionId).toBe('sess-1')
     expect(calls[0].buckets).toEqual(buckets)
     expect(calls[0].hasCredits).toBe(false)
+  })
+
+  it('passes the transcript path with the figure, so the sink can tell whose folder wrote it (P3.2)', () => {
+    const buckets = [{ key: 'session:', label: '5h', group: 'session', percent: 33, resetsAt: '', severity: 'normal' }]
+    dispatch({ usageBuckets: buckets, transcriptPath: '/profiles/p1/projects/x/00000000-0000-4000-8000-000000000000.jsonl' })
+    expect(calls[0].transcriptPath).toBe('/profiles/p1/projects/x/00000000-0000-4000-8000-000000000000.jsonl')
+    dispatch({ usageBuckets: buckets })
+    expect(calls[1].transcriptPath).toBeUndefined()
   })
 
   it('reports hasCredits when the payload also carries rateLimitExtra (paid credit enabled)', () => {

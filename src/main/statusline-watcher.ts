@@ -75,8 +75,8 @@ export function setTranscriptPathSink(sink: (sessionId: string, path: string) =>
 // making its own redundant call. The figure is the buckets a live session's
 // statusline just delivered, so it is harvested HERE at the fan-out, through a
 // sink (like transcriptPathSink) so this module stays free of the account graph.
-let statuslineUsageSink: ((sessionId: string, buckets: unknown, hasCredits: boolean) => void) | null = null
-export function setStatuslineUsageSink(sink: (sessionId: string, buckets: unknown, hasCredits: boolean) => void): void {
+let statuslineUsageSink: ((sessionId: string, buckets: unknown, hasCredits: boolean, transcriptPath?: string) => void) | null = null
+export function setStatuslineUsageSink(sink: (sessionId: string, buckets: unknown, hasCredits: boolean, transcriptPath?: string) => void): void {
   statuslineUsageSink = sink
 }
 
@@ -128,7 +128,9 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
   // and stores nothing for an SSH or default-home session, and must never break
   // the fan-out.
   if (data.sessionId && Array.isArray(data.usageBuckets) && data.usageBuckets.length > 0 && statuslineUsageSink) {
-    try { statuslineUsageSink(data.sessionId, data.usageBuckets, data.rateLimitExtra != null) } catch { /* sink must not break fan-out */ }
+    // The transcript path goes with it: the sink files the figure under a
+    // profile only when the transcript lies in that profile's folder.
+    try { statuslineUsageSink(data.sessionId, data.usageBuckets, data.rateLimitExtra != null, data.transcriptPath) } catch { /* sink must not break fan-out */ }
   }
   // Sentinel Trigger A: observe the raw model id (modelId preferred; fall back to
   // model which may be a display name — the resolver handles both). Safe before
