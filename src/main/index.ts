@@ -58,7 +58,9 @@ import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
-import { initTokenomics, shutdownTokenomics } from './tokenomics/tokenomics-service'
+import { initTokenomics, shutdownTokenomics, getTokenomicsSupervisor } from './tokenomics/tokenomics-service'
+import { createTranscriptAttribution } from './tokenomics/tk-attribution'
+import { getClaudeProfileId } from './claude-account-identity'
 import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
@@ -786,11 +788,27 @@ if (!gotTheLock) {
     // (HOOKS_STATUS, HOOKS_EVENT, ...) the supervisor/gateway emit passes through.
     const emitWithMerge = (channel: string, payload: unknown) =>
       channel === IPC.SERVICE_HEALTH_UPDATE ? pushDiagnostics() : emitToWindow(channel, payload)
+    // Usage track MP10: the same live transcript paths attribute each local
+    // Claude session's usage to the account it launched under (its launch
+    // profile's registry link), for Tokenomics. Independent of the binder, so
+    // it works with logging off; the usage index is resolved lazily too.
+    const attributeTranscript = createTranscriptAttribution({
+      profileOf: (sessionId) => getClaudeProfileId(sessionId),
+      accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId) ?? null,
+      record: (sessionId, accountKey) => {
+        const tokenomics = getTokenomicsSupervisor()
+        if (!tokenomics) return false
+        tokenomics.setSessionAccount(sessionId, accountKey)
+        return true
+      },
+    })
     // Logs v2 (Task 8): route transcript paths the child gateway lifts from hook
     // POSTs into the binder. Resolved lazily — the binder is created later by
     // initLogging(), and is null when logging is disabled (then this is a no-op).
-    const routeTranscriptPath = (sessionId: string, path: string) =>
+    const routeTranscriptPath = (sessionId: string, path: string) => {
+      attributeTranscript(sessionId, path)
       getTranscriptBinder()?.notifyTranscriptPath(sessionId, path)
+    }
     if (hooksEnabled) {
       // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
       // crash-isolated from the main thread, with restart/backoff + fail-open-to-in-process.

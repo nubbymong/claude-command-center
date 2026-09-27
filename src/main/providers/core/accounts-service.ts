@@ -2374,6 +2374,17 @@ export class AccountsService {
     return out
   }
 
+  /** The account a provider's legacy record is linked to (usage track MP10:
+   *  a Claude session's launch profile names its account for the usage
+   *  index), or null when the registry is not ready or no link names one.
+   *  Opaque ids only. */
+  accountIdForLegacy(providerId: ProviderId, legacyId: string): string | null {
+    const ready = this.ready()
+    if ('ok' in ready) return null
+    const link = ready.doc.legacyLinks.find((l) => l.providerId === providerId && l.legacyId === legacyId)
+    return link && findAccount(ready.doc, link.accountId) ? link.accountId : null
+  }
+
   async sessionsDirs(providerId: ProviderId): Promise<string[]> {
     const p = this.pkg(providerId)
     const ready = this.ready()

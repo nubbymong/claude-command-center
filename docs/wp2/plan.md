@@ -1003,6 +1003,16 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   MP9), and the Tokenomics channels, the new accounts query included, do
   not check their sender (as before MP9); it takes no arguments and answers
   provider names and account keys only.
+- **Residual, accepted (MP10, whole sessions):** Claude usage is attributed
+  per session id, from the transcript path the session reports (a hook or
+  the statusline) and the launch profile recorded at its spawn. A transcript
+  resumed in the app keeps its session id, so it is attributed whole,
+  turns from before the resume included, and the first attribution of a
+  session id wins: resuming it later under another profile does not move
+  it. Sessions from before this build, sessions run outside the app, SSH
+  sessions (their transcripts are on the remote host) and sessions on the
+  default home (no launch profile) stay not recorded. There is no manual
+  attribution.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

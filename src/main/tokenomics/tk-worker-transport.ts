@@ -1,4 +1,4 @@
-import type { TkConfigDim, TkPricing, TkSessionsRoot, TkAccountReread } from './tk-types'
+import type { TkConfigDim, TkPricing, TkSessionsRoot, TkAccountReread, TkAccountKey } from './tk-types'
 
 export type ToTkWorker =
   /** `codexSessionsDir` is the user's own Codex home's (this computer's
@@ -10,6 +10,9 @@ export type ToTkWorker =
   /** The Codex accounts' transcript folders changed (an account added, removed or signed out). */
   | { type: 'set-codex-realm-dirs'; dirs: TkSessionsRoot[] }
   | { type: 'set-configs'; configs: TkConfigDim[] }
+  /** Usage track MP10: a Claude session id and the account its session
+   *  launched under; the first attribution of a session id wins. */
+  | { type: 'set-session-account'; sessionId: string; accountKey: TkAccountKey }
   | { type: 'reindex' }
   | { type: 'query'; id: number; kind: string; args: Record<string, unknown> }
   | { type: 'shutdown' }

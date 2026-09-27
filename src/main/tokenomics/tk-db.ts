@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import type { TkEvent, TkPricing, TkProvider, TkSummary, TkSummaryFilter, TkSessionsQuery, TkSessionsPage, TkSessionDetail, TkAccountPresent } from './tk-types'
-import { tkAccountKeyOk, TK_ACCOUNT_NOT_RECORDED } from './tk-types'
+import { tkAccountKeyOk, tkClaudeAccountKeyOk, TK_ACCOUNT_NOT_RECORDED } from './tk-types'
 
 function dayOf(ts: number): string {
   const d = new Date(ts)
@@ -129,6 +129,16 @@ CREATE TABLE IF NOT EXISTS tk_sessions (
   accountKey     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_lastts ON tk_sessions(lastTs DESC, sessionId DESC);
+
+-- Usage track MP10: the account each Claude session launched under, recorded
+-- from now on (the first attribution of a session id wins). A table of its
+-- own, not a column: a session is attributed before or after its rows are
+-- ingested, and an earlier build opening the file ignores it.
+CREATE TABLE IF NOT EXISTS tk_session_accounts (
+  sessionId  TEXT PRIMARY KEY,
+  accountKey TEXT NOT NULL,
+  setAt      INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_sessions_config ON tk_sessions(configId);
 
 CREATE TABLE IF NOT EXISTS tk_session_models (
@@ -215,6 +225,14 @@ export interface TkDb {
   querySessionDetail(pricing: Record<string, TkPricing>, sessionId: string): TkSessionDetail | null
   /** Usage track MP9: every provider and account the stored usage has. */
   queryAccounts(): TkAccountPresent[]
+  /** Usage track MP10: record the account a Claude session launched under
+   *  (the first attribution of a session id wins) and, in the same
+   *  transaction, re-attribute the rows already stored for it: its events
+   *  and session row, and the daily and hourly rollups moved from "not
+   *  recorded" to the account. While the rollups are dirty or being rebuilt
+   *  they are left dirty for another rebuild instead. `stamped` counts the
+   *  events re-attributed. */
+  setSessionAccount(sessionId: string, accountKey: string, now: number): { recorded: boolean; stamped: number }
   /** Usage track MP9: the one-off Codex re-read that stamps stored history
    *  with its accounts is still due (set when a schema v1 database is
    *  opened). */
@@ -396,20 +414,37 @@ export function openTkDb(dbPath: string): TkDb {
     ON CONFLICT(configId) DO UPDATE SET label=excluded.label, workingDirectory=excluded.workingDirectory`)
   const getCwd = sqlite.prepare('SELECT projectDir FROM tk_sessions WHERE sessionId = ?')
 
+  // MP10: the account a Claude session was attributed to, if it was.
+  const sessionAccountStmt = sqlite.prepare('SELECT accountKey FROM tk_session_accounts WHERE sessionId = ?')
   const insertEventsTxn = sqlite.transaction((events: Array<TkEvent & { configId?: string | null }>) => {
     let inserted = 0
+    const attributed = new Map<string, string>()
+    const sessionAccount = (sessionId: string): string => {
+      let key = attributed.get(sessionId)
+      if (key === undefined) {
+        const row = sessionAccountStmt.get(sessionId) as { accountKey?: unknown } | undefined
+        key = tkClaudeAccountKeyOk(row?.accountKey) ? row!.accountKey as string : TK_ACCOUNT_NOT_RECORDED
+        attributed.set(sessionId, key)
+      }
+      return key
+    }
     for (const e of events) {
       // '' = no-config sentinel (see KEY DESIGN). MUST be non-NULL for rollup PK aggregation.
       const configId = e.configId ?? ''
-      const accountKey = tkAccountKeyOk(e.accountKey) ? e.accountKey : TK_ACCOUNT_NOT_RECORDED
+      const stamped = tkAccountKeyOk(e.accountKey) ? e.accountKey : TK_ACCOUNT_NOT_RECORDED
+      // MP10: a Claude row with no account of its own takes its session's.
+      const accountKey = stamped === TK_ACCOUNT_NOT_RECORDED && e.provider === 'claude' ? sessionAccount(e.sessionId) : stamped
       const day = dayOf(e.ts)
       const bucket = bucketOf(e.ts)
       const info = insEvent.run({ ...e, day, configId, projectDir: e.cwd, accountKey })
       if (info.changes === 0) {
         // Dedup hit -> do NOT touch rollups. MP9: a row stored before its
         // account was known is stamped now; the rollups catch up by rebuild.
-        if (accountKey !== TK_ACCOUNT_NOT_RECORDED && restampEvent.run({ dedupKey: e.dedupKey, accountKey }).changes > 0) {
-          restampSession.run({ sessionId: e.sessionId, accountKey })
+        // Only by the row's own stamp (its folder's): a session's account
+        // never re-stamps a row stored under another session (MP10: a
+        // resumed transcript repeats earlier turns under the same keys).
+        if (stamped !== TK_ACCOUNT_NOT_RECORDED && restampEvent.run({ dedupKey: e.dedupKey, accountKey: stamped }).changes > 0) {
+          restampSession.run({ sessionId: e.sessionId, accountKey: stamped })
           dirtyEpoch++
           setMetaStmt.run('rollupsDirty', '1')
         }
@@ -569,6 +604,83 @@ export function openTkDb(dbPath: string): TkDb {
     if (dirtyEpoch === r.epoch) setMetaStmt.run('rollupsDirty', '0')
     rebuild = null
     return { done: r.done, total: r.done, finished: true }
+  })
+
+  // Usage track MP10: a Claude session's account, recorded once, and the rows
+  // already stored for it re-attributed in the same transaction. The rollups
+  // are moved by exact deltas, grouped as the live ingest keyed them (the
+  // stored day; the hour of week from the timestamp, as the rebuild does):
+  // taken from the "not recorded" row, which must hold at least that much,
+  // and added to the account's; a row left with no messages (daily) or no
+  // tokens (hourly) is dropped. A group that cannot be taken leaves both rows
+  // alone and the rollups dirty, so totals never move and a rebuild settles
+  // the split. While the rollups are dirty or a rebuild runs, only the events
+  // and session row are stamped and the rollups are left for a rebuild.
+  const insSessionAccount = sqlite.prepare('INSERT OR IGNORE INTO tk_session_accounts(sessionId, accountKey, setAt) VALUES (?, ?, ?)')
+  const sessionRowsStmt = sqlite.prepare(`SELECT day, ts, model, priceModel, provider, COALESCE(configId, '') AS configId, inTok, outTok, cacheReadTok, cacheCreateTok
+    FROM tk_events WHERE sessionId = ? AND provider = 'claude' AND accountKey = ''`)
+  const stampSessionEvents = sqlite.prepare("UPDATE tk_events SET accountKey = @accountKey WHERE sessionId = @sessionId AND provider = 'claude' AND accountKey = ''")
+  const stampSessionRow = sqlite.prepare("UPDATE tk_sessions SET accountKey = @accountKey WHERE sessionId = @sessionId AND provider = 'claude' AND accountKey = ''")
+  const TOKENS_AT_LEAST = 'inTok >= @inTok AND outTok >= @outTok AND cacheReadTok >= @cacheReadTok AND cacheCreateTok >= @cacheCreateTok'
+  const TAKE_TOKENS = 'inTok = inTok - @inTok, outTok = outTok - @outTok, cacheReadTok = cacheReadTok - @cacheReadTok, cacheCreateTok = cacheCreateTok - @cacheCreateTok'
+  const ADD_TOKENS = 'inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok, cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok'
+  const dailyWhere = "day = @day AND model = @model AND provider = @provider AND configId = @configId AND accountKey = ''"
+  const dailyTake = sqlite.prepare(`UPDATE tk_daily SET ${TAKE_TOKENS}, msgCount = msgCount - @msgCount WHERE ${dailyWhere} AND msgCount >= @msgCount AND ${TOKENS_AT_LEAST}`)
+  const dailyPrune = sqlite.prepare(`DELETE FROM tk_daily WHERE ${dailyWhere} AND msgCount <= 0`)
+  const dailyGive = sqlite.prepare(`INSERT INTO tk_daily(day,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
+    VALUES(@day,@model,@priceModel,@provider,@configId,@accountKey,@inTok,@outTok,@cacheReadTok,@cacheCreateTok,@msgCount)
+    ON CONFLICT(day,model,provider,configId,accountKey) DO UPDATE SET ${ADD_TOKENS}, msgCount=msgCount+excluded.msgCount`)
+  const heatWhere = "bucket = @bucket AND model = @model AND provider = @provider AND configId = @configId AND accountKey = ''"
+  const heatTake = sqlite.prepare(`UPDATE tk_heatmap SET ${TAKE_TOKENS} WHERE ${heatWhere} AND ${TOKENS_AT_LEAST}`)
+  const heatPrune = sqlite.prepare(`DELETE FROM tk_heatmap WHERE ${heatWhere} AND inTok <= 0 AND outTok <= 0 AND cacheReadTok <= 0 AND cacheCreateTok <= 0`)
+  const heatGive = sqlite.prepare(`INSERT INTO tk_heatmap(bucket,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok)
+    VALUES(@bucket,@model,@priceModel,@provider,@configId,@accountKey,@inTok,@outTok,@cacheReadTok,@cacheCreateTok)
+    ON CONFLICT(bucket,model,provider,configId,accountKey) DO UPDATE SET ${ADD_TOKENS}`)
+  type RollupDelta = { model: string; priceModel: string; provider: string; configId: string; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }
+  const setSessionAccountTxn = sqlite.transaction((sessionId: string, accountKey: string, now: number): { recorded: boolean; stamped: number } => {
+    if (insSessionAccount.run(sessionId, accountKey, now).changes === 0) return { recorded: false, stamped: 0 }
+    const rows = sessionRowsStmt.all(sessionId) as Array<Record<string, unknown>>
+    if (rows.length === 0) return { recorded: true, stamped: 0 }
+    stampSessionEvents.run({ sessionId, accountKey })
+    stampSessionRow.run({ sessionId, accountKey })
+    const leaveDirty = (): void => { dirtyEpoch++; setMetaStmt.run('rollupsDirty', '1') }
+    if (rebuild !== null || (getMetaStmt.get('rollupsDirty') as { value?: string } | undefined)?.value === '1') {
+      leaveDirty()
+      return { recorded: true, stamped: rows.length }
+    }
+    const daily = new Map<string, RollupDelta & { day: string }>()
+    const heat = new Map<string, RollupDelta & { bucket: number }>()
+    const add = <T extends RollupDelta>(into: Map<string, T>, key: string, fresh: () => T, r: Record<string, unknown>): void => {
+      let d = into.get(key)
+      if (!d) { d = fresh(); into.set(key, d) }
+      d.inTok += Number(r.inTok) || 0
+      d.outTok += Number(r.outTok) || 0
+      d.cacheReadTok += Number(r.cacheReadTok) || 0
+      d.cacheCreateTok += Number(r.cacheCreateTok) || 0
+      d.msgCount += 1
+    }
+    for (const r of rows) {
+      const base = { model: String(r.model), priceModel: String(r.priceModel), provider: String(r.provider), configId: String(r.configId ?? ''), inTok: 0, outTok: 0, cacheReadTok: 0, cacheCreateTok: 0, msgCount: 0 }
+      const day = (r.day as string | null) || dayOf(r.ts as number)
+      const bucket = bucketOf(r.ts as number)
+      const sep = String.fromCharCode(0)
+      add(daily, [day, base.model, base.provider, base.configId].join(sep), () => ({ ...base, day }), r)
+      add(heat, [String(bucket), base.model, base.provider, base.configId].join(sep), () => ({ ...base, bucket }), r)
+    }
+    let whole = true
+    for (const d of daily.values()) {
+      if (dailyTake.run(d).changes === 0) { whole = false; continue }
+      dailyPrune.run(d)
+      dailyGive.run({ ...d, accountKey })
+    }
+    for (const h of heat.values()) {
+      const { msgCount: _m, ...tokens } = h
+      if (heatTake.run(tokens).changes === 0) { whole = false; continue }
+      heatPrune.run(tokens)
+      heatGive.run({ ...tokens, accountKey })
+    }
+    if (!whole) leaveDirty()
+    return { recorded: true, stamped: rows.length }
   })
 
   return {
@@ -768,6 +880,10 @@ export function openTkDb(dbPath: string): TkDb {
       }
     },
 
+    setSessionAccount: (sessionId, accountKey, now) => {
+      if (typeof sessionId !== 'string' || sessionId.length === 0 || !tkClaudeAccountKeyOk(accountKey)) return { recorded: false, stamped: 0 }
+      return setSessionAccountTxn(sessionId, accountKey, now)
+    },
     queryAccounts() {
       const rows = sqlite.prepare('SELECT provider, accountKey FROM tk_daily GROUP BY provider, accountKey ORDER BY provider, accountKey').all() as Array<{ provider: TkProvider; accountKey: string }>
       return rows.map((r) => ({ provider: r.provider, accountKey: r.accountKey ?? '' }))

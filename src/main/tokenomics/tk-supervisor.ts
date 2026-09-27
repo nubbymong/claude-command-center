@@ -1,7 +1,8 @@
 import { logError, logWarn, logInfo } from '../debug-logger'
 import type { ForkedTkWorker } from './fork-tokenomics-worker'
 import type { ToTkWorker, FromTkWorker } from './tk-worker-transport'
-import type { TkConfigDim, TkPricing, TkIndexStatus, TkSessionsRoot, TkAccountReread } from './tk-types'
+import type { TkConfigDim, TkPricing, TkIndexStatus, TkSessionsRoot, TkAccountReread, TkAccountKey } from './tk-types'
+import { tkSessionUuidOk, tkClaudeAccountKeyOk } from './tk-types'
 
 export interface TokenomicsSupervisorOptions {
   forkChild: () => ForkedTkWorker
@@ -23,6 +24,8 @@ export interface TkIndexProgress { filesDone: number; filesTotal: number; events
 export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }
 
 const BACKOFFS = [250, 1000, 4000, 4000, 4000]
+/** Session attributions kept for a restarted worker (MP10), oldest dropped. */
+const SESSION_ACCOUNTS_KEPT = 4096
 const DEFAULT_QUERY_TIMEOUT_MS = 15_000
 
 export class TokenomicsSupervisor {
@@ -47,6 +50,9 @@ export class TokenomicsSupervisor {
   private lastIndexAt: number | null = null
   /** MP9: the one-off account attribution, as the worker last reported it. */
   private lastAccountReread: TkAccountReread | null = null
+  /** MP10: the Claude session attributions sent so far, first wins, sent
+   *  again to a restarted worker (one that died before storing them). */
+  private sessionAccounts = new Map<string, TkAccountKey>()
   // Set when the worker reports an UNCORRELATED error (e.g. a failed DB open,
   // which leaves the worker alive but never `ready` — no exit, no restart). The
   // renderer consumes this so the tokenomics page can stop showing 'indexing'
@@ -70,6 +76,13 @@ export class TokenomicsSupervisor {
     this.listening = false
     w.transport.onMessage((m) => this.onMessage(m))
     w.onExit(() => this.onExit())
+    // MP10: every attribution kept, once, when the worker is ready (the
+    // index ignores one it already has). Queued before the open: its ready
+    // may come back at once.
+    this.buffer = [
+      ...this.buffer.filter((m) => m.type !== 'set-session-account'),
+      ...[...this.sessionAccounts].map(([sessionId, accountKey]) => ({ type: 'set-session-account' as const, sessionId, accountKey })),
+    ]
     w.transport.post({
       type: 'open', dbPath: this.opts.dbPath, pricing: this.opts.pricing, configs: this.opts.configs,
       claudeProjectsDir: this.opts.claudeProjectsDir, codexSessionsDir: this.opts.codexSessionsDir,
@@ -170,6 +183,19 @@ export class TokenomicsSupervisor {
     this.sendOrBuffer({ type: 'set-codex-realm-dirs', dirs: copy.map((d) => ({ ...d })) })
   }
   reindex(): void { this.sendOrBuffer({ type: 'reindex' }) }
+  /** Usage track MP10: a Claude session id and the account its session
+   *  launched under. The first attribution of a session id wins; anything
+   *  not well formed is dropped. */
+  setSessionAccount(sessionId: string, accountKey: TkAccountKey): void {
+    if (this.shuttingDown || !tkSessionUuidOk(sessionId) || !tkClaudeAccountKeyOk(accountKey)) return
+    if (this.sessionAccounts.has(sessionId)) return
+    this.sessionAccounts.set(sessionId, accountKey)
+    if (this.sessionAccounts.size > SESSION_ACCOUNTS_KEPT) {
+      const oldest = this.sessionAccounts.keys().next()
+      if (!oldest.done) this.sessionAccounts.delete(oldest.value)
+    }
+    this.sendOrBuffer({ type: 'set-session-account', sessionId, accountKey })
+  }
 
   onIndexProgress(cb: (p: TkIndexProgress) => void): () => void { this.progressSubs.add(cb); return () => { this.progressSubs.delete(cb) } }
   onIndexComplete(cb: (c: TkIndexCompleteEvent) => void): () => void { this.completeSubs.add(cb); return () => { this.completeSubs.delete(cb) } }

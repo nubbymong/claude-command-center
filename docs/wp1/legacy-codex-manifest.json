@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T08:16:28.918Z",
-  "head": "d71c9a686aea9f8435cc2d4a2c1d29fb5de15ea0",
-  "tree": "a0cc06333a344d45f8fb9fa2078a54eafe2d8bc8",
+  "generatedAt": "2026-09-27T08:37:48.965Z",
+  "head": "7569ca5c999494c4b7922d368e40f8f446943dd8",
+  "tree": "ba43182910cbf24c2d036ade8ac8a2ed410b8aea",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2344,
+  "trackedFileCount": 2347,
   "excludedFileCount": 381,
-  "scannedFileCount": 1963,
+  "scannedFileCount": 1966,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 401,
-  "pathDigest": "e7380eb7e359c2d5247a6423512d6f1fb620bfb79b40930fb40f591d14a28c04",
+  "matchedPathCount": 403,
+  "pathDigest": "1275e4156d65aaf175db925390ce7fd518a4775645d111a76071e69793c822c8",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -832,9 +832,10 @@
     {
       "path": "src/main/tokenomics/tk-db.ts",
       "predicates": [
+        "P05",
         "P14"
       ],
-      "lineCount": 46
+      "lineCount": 47
     },
     {
       "path": "src/main/tokenomics/tk-parse.ts",
@@ -2220,6 +2221,13 @@
       "lineCount": 5
     },
     {
+      "path": "tests/unit/main/tokenomics-attribution.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
       "path": "tests/unit/main/watchdog/watchdog-manager.test.ts",
       "predicates": [
         "P13"
@@ -2267,6 +2275,13 @@
         "P13"
       ],
       "lineCount": 36
+    },
+    {
+      "path": "tests/unit/native/tokenomics-attribution.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 11
     },
     {
       "path": "tests/unit/native/tokenomics-reindex-307.native.test.ts",

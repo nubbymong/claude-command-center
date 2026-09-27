@@ -24,6 +24,18 @@ export function tkAccountKey(provider: TkProvider, accountId: string | null | un
 /** A transcript folder and whose sessions it holds. */
 export interface TkSessionsRoot { dir: string; accountKey: TkAccountKey }
 
+/** A Claude session id as its transcript file names it, exactly: a lower-case
+ *  UUID (usage track MP10). */
+const TK_SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+export function tkSessionUuidOk(id: unknown): id is string {
+  return typeof id === 'string' && TK_SESSION_UUID_RE.test(id)
+}
+/** An account a Claude session can be attributed to (MP10): a Claude
+ *  account's key, never "not recorded" and never another provider's. */
+export function tkClaudeAccountKeyOk(key: unknown): key is TkAccountKey {
+  return typeof key === 'string' && key.startsWith('claude:') && tkAccountKeyOk(key)
+}
+
 /** One billable unit, normalized across providers. */
 export interface TkEvent {
   dedupKey: string        // claude: `c:${messageId}:${requestId}`  codex: `x:${sessionId}:${ordinal}`

@@ -4,7 +4,7 @@ import { openTkDb, TK_REBUILD_PAGE, type TkDb, type TkFileCursor } from './tk-db
 import { parseClaudeUsageLine, extractCwdFromLine, codexEventsFromRollout, type CodexRolloutSeed } from './tk-parse'
 import { findConfigForCwd, isJunkCwd } from './tk-config-match'
 import type { TkConfigDim, TkEvent, TkPricing, TkSessionsRoot, TkAccountReread } from './tk-types'
-import { tkAccountKeyOk, TK_CODEX_EXTERNAL } from './tk-types'
+import { tkAccountKeyOk, tkSessionUuidOk, tkClaudeAccountKeyOk, TK_CODEX_EXTERNAL } from './tk-types'
 import type { ToTkWorker, FromTkWorker, TkWorkerHostTransport } from './tk-worker-transport'
 
 export interface TkWorkerDeps { fs?: typeof nodeFs; watchDebounceMs?: number; configs?: TkConfigDim[]; maxTickBytes?: number }
@@ -738,6 +738,15 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     }
   }
 
+  /** Usage track MP10: record a Claude session's account (the first wins)
+   *  and re-attribute what the index already holds of it. Anything not well
+   *  formed is ignored; a failure is logged, never thrown. */
+  function setSessionAccount(msg: { sessionId?: unknown; accountKey?: unknown }): void {
+    const { sessionId, accountKey } = msg
+    if (!tkSessionUuidOk(sessionId) || !tkClaudeAccountKeyOk(accountKey)) { logw('warn', 'a session attribution that was not well formed was ignored'); return }
+    try { db!.setSessionAccount(sessionId, accountKey, Date.now()) } catch (err) { logw('error', `session attribution failed: ${String(err)}`) }
+  }
+
   function startWatching(): void {
     for (const dir of [claudeDir, codexDirs[0]?.dir]) {
       const wch = dir ? watchDir(dir) : null
@@ -778,6 +787,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       case 'set-pricing': setPricing(msg.pricing); return
       case 'set-configs': configs = msg.configs; db.upsertConfigs(configs); return
       case 'set-codex-realm-dirs': setCodexRealmDirs(Array.isArray(msg.dirs) ? msg.dirs : []); scheduleIncremental(); return
+      case 'set-session-account': setSessionAccount(msg); return
       case 'reindex': void ingestAll('incremental'); return
       case 'query': handleQuery(msg.id, msg.kind, msg.args); return
       default: { const _x: never = msg; void _x }
