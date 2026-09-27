@@ -136,9 +136,11 @@ export interface ElectronAPI {
   accountProfiles: {
     list: () => Promise<import('../../shared/account-types').AccountProfile[]>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
-    /** `code: 'in-use'`: a live session runs on the account (P3.2). */
-    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string; code?: 'in-use' }>
-    delete: (id: string) => Promise<{ ok: boolean; error?: string; code?: 'in-use' }>
+    /** `code: 'in-use'`: a live session runs on the account; `sessions`
+     *  names them, `unnamed` counts other holders (P3.2). A removal refused
+     *  after its claude.ai sign-in was cleared says `in-use-cleared`. */
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string; code?: 'in-use'; sessions?: string[] }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string; code?: 'in-use' | 'in-use-cleared'; sessions?: string[]; unnamed?: number }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Credential generation (stat stamp + signed-in), never token contents (rc.14 review F7). */
     credentialStamp?: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>

@@ -190,6 +190,21 @@ export function detectedNewAccountEmail(profileId: string): string | null {
   return detectedByProfile.get(profileId) ?? null
 }
 
+/** The live sessions running on `profileId` now (the active watchers and the
+ *  spawn-captured map), each once -- the sessions a lifecycle refusal names.
+ *  Unlike isProfileInUseByLiveSession it does not count transient consumers:
+ *  the `claude auth status` probe every Claude row starts when Accounts
+ *  opens would otherwise refuse Make inactive right after the page opens
+ *  (P3.2 review). A removal still counts them (its teardown would pull the
+ *  home out from under the probe). */
+export function sessionsOnProfile(profileId: string): string[] {
+  if (!profileId) return []
+  const out = new Set<string>()
+  for (const [sessionId, pid] of watched) if (pid === profileId) out.add(sessionId)
+  for (const [sessionId, pid] of profileBySession) if (pid === profileId) out.add(sessionId)
+  return [...out]
+}
+
 /** True when `profileId` is in use by a live session OR a transient credential
  *  consumer -- i.e. that profile's home is the active USERPROFILE/credential
  *  store of something running now. Used to refuse a profile delete that would

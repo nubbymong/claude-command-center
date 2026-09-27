@@ -30,7 +30,7 @@ vi.mock('../../../src/main/account-profiles', () => ({
 }))
 vi.mock('../../../src/main/claude-account-identity', () => ({
   getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(),
-  getWatchedProfileId: vi.fn(), isProfileInUseByLiveSession: vi.fn(() => false),
+  getWatchedProfileId: vi.fn(), isProfileInUseByLiveSession: vi.fn(() => false), sessionsOnProfile: vi.fn(() => [] as string[]),
 }))
 vi.mock('../../../src/main/usage/account-usage', () => ({ fetchAllAccountsUsage: vi.fn(), fetchAllAccountsUsageStreaming: vi.fn(), fetchAccountUsage: vi.fn() }))
 vi.mock('../../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: vi.fn(() => []) }))
@@ -104,24 +104,38 @@ describe('accountProfiles: in use by a live session', () => {
     registerAccountProfilesHandlers()
   })
 
-  it('refuses Make inactive with code in-use and writes nothing; Make active is never refused for it', async () => {
-    const { isProfileInUseByLiveSession } = await import('../../../src/main/claude-account-identity')
-    vi.mocked(isProfileInUseByLiveSession).mockImplementation((id: string) => id === 'work')
+  it('refuses Make inactive with code in-use and the sessions on it, and writes nothing; Make active is never refused for it', async () => {
+    const { sessionsOnProfile } = await import('../../../src/main/claude-account-identity')
+    vi.mocked(sessionsOnProfile).mockImplementation((id: string) => (id === 'work' || id === 'idle' ? ['s-1'] : []))
     store = [prof({ id: 'primary', isPrimary: true }), prof({ id: 'work' }), prof({ id: 'idle', active: false })]
     expect(invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id: 'work', active: false })).toEqual({
-      ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.',
+      ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.', sessions: ['s-1'],
     })
     expect(activeOf('work')).toBeUndefined()
-    vi.mocked(isProfileInUseByLiveSession).mockImplementation((id: string) => id === 'idle')
     expect(invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id: 'idle', active: true })).toEqual({ ok: true })
+    vi.mocked(sessionsOnProfile).mockImplementation(() => [])
+  })
+
+  it('a transient holder (the sign-in status probe Accounts starts on open) does not refuse Make inactive (review round 3)', async () => {
+    const { isProfileInUseByLiveSession, sessionsOnProfile } = await import('../../../src/main/claude-account-identity')
+    vi.mocked(isProfileInUseByLiveSession).mockImplementation(() => true)
+    vi.mocked(sessionsOnProfile).mockImplementation(() => [])
+    store = [prof({ id: 'primary', isPrimary: true }), prof({ id: 'work' })]
+    expect(invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id: 'work', active: false })).toEqual({ ok: true })
+    expect(activeOf('work')).toBe(false)
     vi.mocked(isProfileInUseByLiveSession).mockImplementation(() => false)
   })
 
-  it('a removal refused for a live session carries code in-use', async () => {
-    const { isProfileInUseByLiveSession } = await import('../../../src/main/claude-account-identity')
+  it('a removal refused for a live session carries code in-use and the sessions on it (a probe still refuses a removal)', async () => {
+    const { isProfileInUseByLiveSession, sessionsOnProfile } = await import('../../../src/main/claude-account-identity')
     vi.mocked(isProfileInUseByLiveSession).mockImplementation((id: string) => id === 'work')
+    vi.mocked(sessionsOnProfile).mockImplementation((id: string) => (id === 'work' ? ['s-1'] : []))
     store = [prof({ id: 'primary', isPrimary: true }), prof({ id: 'work' })]
-    expect(await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })).toMatchObject({ ok: false, code: 'in-use' })
+    expect(await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })).toMatchObject({ ok: false, code: 'in-use', sessions: ['s-1'] })
+    vi.mocked(sessionsOnProfile).mockImplementation(() => [])
+    const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
+    expect(r).toMatchObject({ ok: false, code: 'in-use' })
+    expect('sessions' in r).toBe(false)
     vi.mocked(isProfileInUseByLiveSession).mockImplementation(() => false)
   })
 })

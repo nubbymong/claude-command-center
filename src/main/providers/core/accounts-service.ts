@@ -221,7 +221,7 @@ const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
 /** A package's platform review rule for one realm (see reviewRefusalOf). */
 type PlatformReviewRule = { kind: 'allowed' } | { kind: 'refused'; message: string } | { kind: 'unknown' }
 
-function failure(code: AccountsFailureCode, message?: string, extra: { consumers?: number; sessions?: string[]; state?: KnownAuthState } = {}): AccountsFailure {
+function failure(code: AccountsFailureCode, message?: string, extra: { consumers?: number; sessions?: string[]; unnamed?: number; state?: KnownAuthState } = {}): AccountsFailure {
   return { ok: false, code, message: message ?? FAIL_MESSAGES[code] ?? 'That did not work.', ...extra }
 }
 
@@ -647,11 +647,11 @@ export class AccountsService {
     return { store, doc }
   }
 
-  private fromStore(r: StoreResult, consumers?: number, sessions?: string[]): AccountsFailure | null {
+  private fromStore(r: StoreResult, consumers?: number, sessions?: string[], unnamed?: number): AccountsFailure | null {
     if (r.ok) return null
     if (r.code === 'recovery') return failure('registry-unavailable')
     if (r.code === 'persist-failed') return failure('persist-failed', 'The change could not be saved.')
-    if (r.code === 'blocked-by-consumers') return failure('consumers', undefined, { consumers: consumers ?? 1, ...(sessions?.length ? { sessions } : {}) })
+    if (r.code === 'blocked-by-consumers') return failure('consumers', undefined, { consumers: consumers ?? 1, ...(sessions?.length ? { sessions } : {}), ...(unnamed ? { unnamed } : {}) })
     return failure(r.code, r.message)
   }
 
@@ -1445,6 +1445,7 @@ export class AccountsService {
     const apply = async (): Promise<AccountsResult> => {
       let consumers = 0
       let sessions: string[] = []
+      let unnamed = 0
       let held = false
       let inUse = false
       const r = await ctx.store.mutate((d, t) => {
@@ -1458,11 +1459,12 @@ export class AccountsService {
         consumers = this.deps.leases.count(a.id)
         // Which sessions hold it, read with the count: the refusal names them.
         sessions = this.deps.leases.sessionsHolding(a.id)
+        unnamed = this.deps.leases.unattributed(a.id)
         return setAccountLifecycle(d, a.id, next, { consumers }, t)
       })
       if (held) return failure('busy')
       if (inUse) return failure('in-use')
-      const bad = this.fromStore(r, consumers, sessions)
+      const bad = this.fromStore(r, consumers, sessions, unnamed)
       if (bad) return bad
       // A mirrored account's lifecycle is the provider's own list's too:
       // write it there now, not at the next start.

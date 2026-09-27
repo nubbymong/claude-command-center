@@ -16,6 +16,7 @@ import {
   startWatchingAccountIdentity,
   stopWatchingAccountIdentity,
   isProfileInUseByLiveSession,
+  sessionsOnProfile,
   _resetClaudeAccounts,
 } from '../../../src/main/claude-account-identity'
 import { acquireProfileConsumer, _resetProfileConsumersForTest } from '../../../src/main/profile-consumers'
@@ -143,5 +144,23 @@ describe('isProfileInUseByLiveSession (R-006: refuse delete of an in-use profile
     expect(isProfileInUseByLiveSession('p9')).toBe(true) // the consumer still holds it
     release()
     expect(isProfileInUseByLiveSession('p9')).toBe(false)
+  })
+})
+
+describe('sessionsOnProfile (P3.2 review round 3: the sessions a lifecycle refusal names)', () => {
+  beforeEach(() => { _resetClaudeAccounts(); _resetProfileConsumersForTest() })
+  afterEach(() => { _resetClaudeAccounts(); _resetProfileConsumersForTest() })
+
+  it('lists the watched and spawn-captured sessions on a profile once each, and never a transient consumer', () => {
+    startWatchingAccountIdentity('s1', 'p1')
+    captureClaudeAccount('s1', 'p1')
+    captureClaudeAccount('s2', 'p1')
+    startWatchingAccountIdentity('s3', 'p2')
+    expect(sessionsOnProfile('p1').sort()).toEqual(['s1', 's2'])
+    const release = acquireProfileConsumer('p9', { maxAgeMs: Infinity })
+    expect(isProfileInUseByLiveSession('p9')).toBe(true)
+    expect(sessionsOnProfile('p9')).toEqual([])
+    release()
+    expect(sessionsOnProfile('')).toEqual([])
   })
 })

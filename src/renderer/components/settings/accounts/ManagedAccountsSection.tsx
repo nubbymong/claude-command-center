@@ -14,7 +14,7 @@ import {
   useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, canOfferMakeReviewer,
   showsReviewerBadge, accountFailureText, accountState, signInMethodLabel, externalHomeLabel, externalHomeFolder, canOfferSignInAgain,
   canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption, canOfferCheckSignIn, signInCheckText, externalSignInHint,
-  selectArchivedAccounts, canOfferRestore, linkedAccounts, linkedAccountLabel, blockerSessions, sessionTitle,
+  selectArchivedAccounts, canOfferRestore, linkedAccounts, linkedAccountLabel, blockerSessions, sessionTitle, unnamedHolders,
 } from '../../../stores/providerAccountsStore'
 import { useSessionStore } from '../../../stores/sessionStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
@@ -104,7 +104,9 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
     if (r.ok) return
     const holding = verb && r.code === 'consumers' ? blockerSessions(useSessionStore.getState().sessions, r.sessions) : []
     if (holding.length) {
-      const more = Math.max(0, (r.consumers ?? holding.length) - holding.length)
+      // Main counts what no named session accounts for (a session and its
+      // own review are one name); the named sessions not open here add to it.
+      const more = unnamedHolders(r.sessions, holding, r.unnamed)
       setBlocker({ verb: verb!, sessions: holding.map((x) => ({ id: x.id, title: sessionTitle(x) })), more })
     } else setError(accountFailureText(r, account))
   }

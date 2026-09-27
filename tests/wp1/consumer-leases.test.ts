@@ -554,3 +554,18 @@ describe('the sessions a refusal names (P3.2, design 5.3)', () => {
     expect(r.sessionsHolding('acct-none')).toEqual([])
   })
 })
+
+describe('what no named session accounts for (P3.2 review round 3: "and N more")', () => {
+  it('a session and its own review are one name; sign-ins, operations and unnamed leases are counted', () => {
+    const r = new ConsumerLeaseRegistry()
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'tab-1:1', sessionId: 'tab-1' })
+    r.add('acct-a', 'codex', { kind: 'review', ownerId: 'review:tab-1:1', sessionId: 'tab-1' })
+    expect(r.unattributed('acct-a')).toBe(0)
+    r.add('acct-a', 'codex', { kind: 'sign-in', ownerId: 'acct-a', sessionId: 'tab-9' })
+    r.add('acct-a', 'codex', { kind: 'operation', ownerId: 'op-1' })
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'bare' })
+    r.add('acct-b', 'codex', { kind: 'operation', ownerId: 'op-2' })
+    expect(r.unattributed('acct-a')).toBe(3)
+    expect(r.unattributed('acct-none')).toBe(0)
+  })
+})

@@ -303,6 +303,13 @@ export function claudeSessionsOnProfile(sessions: readonly AccountSessionFacts[]
     && (s.profileId ?? primaryId) === profileId)
 }
 
+/** How many holders a refusal counts that this window cannot name: main's
+ *  own unnamed count, plus the named sessions not open here. */
+export function unnamedHolders(ids: readonly string[] | undefined, named: readonly { id: string }[], unnamed: number | undefined): number {
+  const here = new Set(named.map((s) => s.id))
+  return (unnamed ?? 0) + (ids ?? []).filter((id) => !here.has(id)).length
+}
+
 /** The sessions a refusal named that this window has open, for "Go to". */
 export function blockerSessions(sessions: readonly AccountSessionFacts[], ids: readonly string[] | undefined): AccountSessionFacts[] {
   if (!ids?.length) return []

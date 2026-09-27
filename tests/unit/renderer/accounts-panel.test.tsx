@@ -326,7 +326,7 @@ describe('AccountsPanel', () => {
         { ...base, id: 's-shell', label: 'Shell', profileId: profileWithEmail.id, shellOnly: true },
       ] as never,
     })
-    deleteMock.mockResolvedValue({ ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' } as never)
+    deleteMock.mockResolvedValue({ ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.', sessions: ['s-docs', 's-blog'] } as never)
     const heard: string[] = []
     const onGo = (e: Event) => { heard.push(((e as CustomEvent).detail as { sessionId: string }).sessionId) }
     window.addEventListener('app:goToSession', onGo)
@@ -370,12 +370,13 @@ describe('AccountsPanel', () => {
   it('Make inactive refused while sessions run on the profile names them with Go to (design 5.3, review S1); none open here: main\'s words', async () => {
     useAccountProfilesStore.setState({ profiles: [primaryProfile, profileWithEmail] })
     useSessionStore.setState({ sessions: [{ id: 's-docs', label: 'Docs site', sessionType: 'local', provider: 'claude', profileId: profileWithEmail.id }] as never })
-    setActiveMock.mockResolvedValue({ ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' } as never)
+    setActiveMock.mockResolvedValue({ ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.', sessions: ['s-docs'] } as never)
     const { container, unmount: u } = renderComponent(React.createElement(AccountsPanel, { onAdd: vi.fn() }))
     unmount = u
     await openMenu(profileWithEmail.id)
     await act(async () => { menuItem('make-inactive', profileWithEmail.id)!.click() })
     const blocker = container.querySelector(`[data-testid="profile-blocker-${profileWithEmail.id}"]`)!
+    expect(container.querySelector(`[data-testid="profile-blocker-${profileWithEmail.id}-more"]`)).toBeNull()
     expect(blocker.textContent).toContain("Work can't be made inactive while these use it:")
     expect([...blocker.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Go to Docs site'])
     expect(container.querySelector(`[data-testid="profile-error-${profileWithEmail.id}"]`)).toBeNull()
@@ -385,6 +386,24 @@ describe('AccountsPanel', () => {
     await act(async () => { menuItem('make-inactive', profileWithEmail.id)!.click() })
     expect(container.querySelector(`[data-testid="profile-blocker-${profileWithEmail.id}"]`)).toBeNull()
     expect(container.querySelector(`[data-testid="profile-error-${profileWithEmail.id}"]`)!.textContent).toBe('This account is in use by an open session. Close its sessions and try again.')
+  })
+
+  it('a removal refused after its claude.ai sign-in was cleared keeps main\'s words beside the blocker, with "and N more" for holders not named here', async () => {
+    useAccountProfilesStore.setState({ profiles: [primaryProfile, profileWithEmail] })
+    useSessionStore.setState({ sessions: [{ id: 's-docs', label: 'Docs site', sessionType: 'local', provider: 'claude', profileId: profileWithEmail.id }] as never })
+    deleteMock.mockResolvedValue({
+      ok: false, code: 'in-use-cleared', error: 'This account is in use by an open session. Its claude.ai sign-in was cleared; close its sessions and try again.',
+      sessions: ['s-docs', 's-other-window'], unnamed: 1,
+    } as never)
+    const { container, unmount: u } = renderComponent(React.createElement(AccountsPanel, { onAdd: vi.fn() }))
+    unmount = u
+    await openMenu(profileWithEmail.id)
+    await act(async () => { menuItem('remove', profileWithEmail.id)!.click() })
+    const blocker = container.querySelector(`[data-testid="profile-blocker-${profileWithEmail.id}"]`)!
+    expect([...blocker.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Go to Docs site'])
+    expect(container.querySelector(`[data-testid="profile-blocker-${profileWithEmail.id}-more"]`)!.textContent).toBe('and 2 more')
+    expect(container.querySelector(`[data-testid="delete-error-${profileWithEmail.id}"]`)!.textContent).toContain('sign-in was cleared')
+    useSessionStore.setState({ sessions: [] })
   })
 
   it('a change that throws says so and frees the row (review Q1)', async () => {

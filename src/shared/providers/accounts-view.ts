@@ -238,6 +238,9 @@ export type AccountsFailure = {
   /** With `consumers` from a lifecycle change: the app sessions whose
    *  sessions or reviews hold it (ids only), so the refusal can name them. */
   sessions?: string[]
+  /** With `consumers` from a lifecycle change: how many holders belong to no
+   *  named session (sign-ins, operations), for "and N more". */
+  unnamed?: number
   /** The sign-in state the operation observed, when it read one. */
   state?: KnownAuthState
 }
