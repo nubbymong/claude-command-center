@@ -267,21 +267,21 @@ export function canLinkIdentity(account: Pick<AccountView, 'unverified' | 'exter
   return !account.unverified && !account.external
 }
 
-/** Accounts the identity editor offers under "Link another account": live,
- *  vouched-for accounts of another provider that is on, whose provider has no
- *  account on this identity yet, and that are not already linked with an
- *  account of this one's provider (one account of each provider per
- *  identity, which is also what main accepts for a provider's own list). A
- *  provider that is off offers nothing, as it manages nothing. */
+/** Accounts the identity editor offers under "Link another account": what
+ *  main accepts (linkAccountIdentity) -- live, vouched-for accounts on
+ *  another identity, and never a record of a provider's own list (a Claude
+ *  profile) when a record of that same list is already on this identity,
+ *  live or archived -- of a provider that is on (one that is off offers
+ *  nothing, as it manages nothing). */
 export function linkCandidates(snapshot: AccountsSnapshot | null, account: AccountView): AccountView[] {
   if (!canLinkIdentity(account)) return []
   const accounts = snapshot?.accounts ?? []
-  const here = new Set(accounts.filter((a) => a.identityId === account.identityId && a.lifecycle !== 'archived').map((a) => a.providerId))
-  // An account already linked with one of this provider's accounts stays
-  // where it is: it is unlinked there first, never moved from here.
-  const pairedWithMine = (a: AccountView) => accounts.some((b) => b.id !== a.id && b.identityId === a.identityId && b.lifecycle !== 'archived' && b.providerId === account.providerId)
+  // Records of a provider's own list on this identity (an archived one is no
+  // longer linked, and only a provider's own list archives it this way).
+  const listRecordHere = (a: AccountView) => accounts.some((b) => b.id !== a.id && b.identityId === account.identityId
+    && b.providerId === a.providerId && (b.legacyLinked || b.lifecycle === 'archived'))
   return accounts.filter((a) => a.identityId !== account.identityId && a.lifecycle !== 'archived' && canLinkIdentity(a)
-    && !here.has(a.providerId) && !pairedWithMine(a) && providerView(snapshot, a.providerId)?.enabled !== false)
+    && !(a.legacyLinked && listRecordHere(a)) && providerView(snapshot, a.providerId)?.enabled !== false)
 }
 
 /** The session facts the Accounts rows read (a structural subset of the
