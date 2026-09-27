@@ -4,11 +4,37 @@
 
 import type { UsageBucket } from './usage-types'
 import type { ProviderId } from './types'
+import { isProviderId } from './providers/ids'
 
 /** The provider the multi-account footer's older, bare hidden labels belong
  *  to (usage track MP6): they were written when the footer showed only Claude
  *  Code's meters. Newer entries name their provider (`<provider>:<label>`). */
 export const FOOTER_BARE_LABEL_PROVIDER: ProviderId = 'claude'
+
+/**
+ * One entry of the footer's hidden list, read: `<provider>:<label>` names its
+ * provider; anything else is a bare label of FOOTER_BARE_LABEL_PROVIDER's (a
+ * colon that names no provider is part of the label). Null for a value that
+ * is not an entry. The one reader: the footer, Settings and the migration all
+ * use it, so they cannot disagree about an entry.
+ */
+export function parseFooterHiddenEntry(entry: unknown): { providerId: ProviderId; label: string; scoped: boolean } | null {
+  if (typeof entry !== 'string' || !entry) return null
+  const i = entry.indexOf(':')
+  const prefix = i > 0 ? entry.slice(0, i) : ''
+  if (isProviderId(prefix)) return { providerId: prefix, label: entry.slice(i + 1), scoped: true }
+  return { providerId: FOOTER_BARE_LABEL_PROVIDER, label: entry, scoped: false }
+}
+
+/** The labels the footer's hidden list hides for one provider. */
+export function footerHiddenLabelsFor(hidden: readonly unknown[], providerId: ProviderId): string[] {
+  const out: string[] = []
+  for (const entry of hidden) {
+    const e = parseFooterHiddenEntry(entry)
+    if (e && e.providerId === providerId && !out.includes(e.label)) out.push(e.label)
+  }
+  return out
+}
 
 const MINUTES_PER_DAY = 1440
 const MINUTES_PER_WEEK = 10080

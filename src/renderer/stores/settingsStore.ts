@@ -2,8 +2,7 @@ import { create } from 'zustand'
 import { saveConfigNow } from '../utils/config-saver'
 import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { migrateTypography } from './migrateTypography'
-import { isProviderId } from '../../shared/providers/ids'
-import { FOOTER_BARE_LABEL_PROVIDER } from '../../shared/usage-labels'
+import { parseFooterHiddenEntry } from '../../shared/usage-labels'
 
 export type StatusLineFont = 'sans' | 'mono'
 
@@ -528,9 +527,9 @@ export function migrateFooterHiddenBuckets(settings: AppSettings): { settings: A
   if (!Array.isArray(list) || list.length === 0) return { settings, changed: false }
   const out: string[] = []
   for (const entry of list) {
-    if (typeof entry !== 'string' || !entry) continue
-    const i = entry.indexOf(':')
-    const scoped = i > 0 && isProviderId(entry.slice(0, i)) ? entry : `${FOOTER_BARE_LABEL_PROVIDER}:${entry}`
+    const e = parseFooterHiddenEntry(entry)
+    if (!e) continue
+    const scoped = `${e.providerId}:${e.label}`
     if (!out.includes(scoped)) out.push(scoped)
   }
   const changed = out.length !== list.length || out.some((e, i) => e !== list[i])

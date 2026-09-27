@@ -13,11 +13,30 @@ const saveConfigNow = vi.fn(async (_name: string, _value: unknown) => true)
 vi.mock('../../../src/renderer/utils/config-saver', () => ({ saveConfigNow: (n: string, v: unknown) => saveConfigNow(n, v) }))
 
 const { migrateFooterHiddenBuckets, useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
+const { parseFooterHiddenEntry, footerHiddenLabelsFor } = await import('../../../src/shared/usage-labels')
 type AppSettings = Parameters<typeof migrateFooterHiddenBuckets>[0]
 
 const withHidden = (list: unknown): AppSettings => ({ ...DEFAULT_SETTINGS, footerHiddenUsageBuckets: list as string[] })
 
 beforeEach(() => { saveConfigNow.mockClear() })
+
+// MP6 review N3: one reader of the list, shared by the footer, Settings and
+// the migration.
+describe('the footer hidden-list reader', () => {
+  it('reads a provider\'s entry, a bare label, and a colon that names no provider', () => {
+    expect(parseFooterHiddenEntry('codex:Weekly')).toEqual({ providerId: 'codex', label: 'Weekly', scoped: true })
+    expect(parseFooterHiddenEntry('Fable')).toEqual({ providerId: 'claude', label: 'Fable', scoped: false })
+    expect(parseFooterHiddenEntry('Opus: extended')).toEqual({ providerId: 'claude', label: 'Opus: extended', scoped: false })
+    expect(parseFooterHiddenEntry('constructor:x')).toEqual({ providerId: 'claude', label: 'constructor:x', scoped: false })
+    for (const junk of ['', 42, null, undefined]) expect(parseFooterHiddenEntry(junk)).toBeNull()
+  })
+
+  it('gives each provider its own labels, once each', () => {
+    const list = ['Fable', 'claude:Fable', 'codex:Weekly', 'Opus: extended', 'codex:5h']
+    expect(footerHiddenLabelsFor(list, 'claude')).toEqual(['Fable', 'Opus: extended'])
+    expect(footerHiddenLabelsFor(list, 'codex')).toEqual(['Weekly', '5h'])
+  })
+})
 
 describe('migrateFooterHiddenBuckets (usage track MP6)', () => {
   it('moves a bare label to Claude Code\'s', () => {

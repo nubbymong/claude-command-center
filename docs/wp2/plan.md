@@ -949,6 +949,13 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   it (two while locating the realm for its live figure hangs too); once it
   settles, the next request reads afresh. Releasing the entry at the
   timeout instead would let every Refresh add another hung read.
+- **Residual, accepted (MP6, downgrade):** the footer's hidden bars are
+  stored per provider (`claude:Fable`, `codex:Weekly`) once this build loads
+  the settings. An older build reads such an entry as a literal label that
+  matches no bar, so after a rollback the bars hidden in the footer show
+  again until they are hidden again there. Upgrading again re-migrates any
+  bare entry the older build wrote (the migration is idempotent), and the
+  per-session strip's own list is never touched.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

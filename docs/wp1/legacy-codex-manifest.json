@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T04:31:12.470Z",
-  "head": "b54d3d5ede54995c8a449d007d1a5743758600e0",
-  "tree": "559f831eaadf6861f5dd3d91f6ac2e65271f7529",
+  "generatedAt": "2026-09-27T04:37:43.709Z",
+  "head": "02c1280bb7ee708697287b7c363d84ffe0233209",
+  "tree": "9d1a67b838fb4c80288b5978cd348335569072ba",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -203,7 +203,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 133
+      "lineCount": 134
     },
     {
       "path": "package.json",
@@ -911,7 +911,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 64
+      "lineCount": 70
     },
     {
       "path": "src/renderer/components/AccountsPanel.tsx",
@@ -2407,7 +2407,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 52
+      "lineCount": 55
     },
     {
       "path": "tests/unit/renderer/account-usage-panel.test.tsx",
@@ -2599,7 +2599,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 4
+      "lineCount": 7
     },
     {
       "path": "tests/unit/renderer/footer-identity-pills.test.tsx",
@@ -3022,7 +3022,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 25
+      "lineCount": 27
     },
     {
       "path": "tests/unit/renderer/setup-codex-only.test.tsx",

@@ -456,7 +456,9 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     expect(container.textContent).not.toContain('Sign in again')
   })
 
-  it('coming back to the window reloads quietly, at most once a minute', async () => {
+  // MP6 review N1: a focus reloads Codex alone; Claude Code's closed accounts
+  // call a rate-limited endpoint and keep their own cadence.
+  it('coming back to the window reloads Codex quietly, at most once a minute, and never re-asks Claude Code', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     modes({ claude: true, withCodex: true }, [cxAccount('w')])
     list.mockResolvedValue([profile('a')])
@@ -465,18 +467,36 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     latestCx().emit(cxView('w', 18)); latestCx().done()
     await flush()
     await act(async () => { window.dispatchEvent(new Event('focus')) })
-    expect(fetchAllStream).toHaveBeenCalledTimes(1)
+    expect(usageStream).toHaveBeenCalledTimes(1)
     vi.setSystemTime(Date.now() + FOCUS_REFRESH_MS + 1)
     await act(async () => { window.dispatchEvent(new Event('focus')) })
     await flush()
-    expect(fetchAllStream).toHaveBeenCalledTimes(2)
     expect(usageStream).toHaveBeenCalledTimes(2)
-    // Quiet: the figures stay while the new streams run.
+    expect(fetchAllStream).toHaveBeenCalledTimes(1)
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(authInfo).toHaveBeenCalledTimes(1)
+    // Quiet: the figures stay while the new stream runs.
     expect(container.textContent).toContain('20%')
     expect(container.textContent).toContain('18%')
     await act(async () => { window.dispatchEvent(new Event('focus')) })
-    expect(fetchAllStream).toHaveBeenCalledTimes(2)
-    latest().done(); latestCx().done()
+    expect(usageStream).toHaveBeenCalledTimes(2)
+    latestCx().done()
+  })
+
+  // MP6 review N2: the registry copy arriving after the stream started is
+  // not a change to read every account again for.
+  it('a registry copy arriving while the stream runs reads nothing again', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...choiceSettings('codex'), codexAnswered: true }, isLoaded: true })
+    useProviderAccountsStore.setState({ snapshot: null, loaded: false })
+    await mount()
+    expect(usageStream).toHaveBeenCalledTimes(1)
+    latestCx().emit(cxView('w', 18)); latestCx().emit(cxView('r', 6))
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshotOf([cxAccount('w'), cxAccount('r')]), loaded: true }) })
+    latestCx().done()
+    await flush()
+    expect(usageOne).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('18%')
+    expect(container.textContent).toContain('6%')
   })
 
   // MP4 review F3.

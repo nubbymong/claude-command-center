@@ -117,6 +117,15 @@ describe('Status Line tab, usage bar toggles (usage track MP6)', () => {
     expect(writes.pop()).toEqual({ footerHiddenUsageBuckets: ['codex:Weekly'] })
   })
 
+  // MP6 review S1: nothing cached yet (a fresh install) beside Codex: Claude
+  // Code's card still offers its two windows.
+  it('both providers with nothing cached for Claude Code yet: its footer card still offers 5h and Weekly', async () => {
+    knownLabels.mockResolvedValueOnce([])
+    await open('both')
+    expect(labelsOf('usage-bars-footer-claude')).toEqual(['5h', 'Weekly'])
+    expect(labelsOf('usage-bars-footer-codex')).toEqual(['5h', 'Weekly'])
+  })
+
   it('Codex alone (Claude Code off): only the Codex card, and nothing of Claude Code is asked for', async () => {
     await open('codex')
     expect(knownLabels).not.toHaveBeenCalled()

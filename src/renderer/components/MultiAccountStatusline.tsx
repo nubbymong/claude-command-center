@@ -13,7 +13,7 @@ import RateLimitBar, { RateLimitBarPending, RateLimitBarNoReading } from './term
 import type { AccountProfile } from '../../shared/account-types'
 import type { UsageBucket } from '../../shared/usage-types'
 import type { AccountsSnapshot, AccountView, IdentityView, ProviderId } from '../../shared/providers'
-import { bucketPastReset } from '../../shared/usage-labels'
+import { bucketPastReset, footerHiddenLabelsFor } from '../../shared/usage-labels'
 import { formatResetTime } from '../utils/terminalFormatting'
 import {
   useProviderAccountsStore, accountForLegacyId, accountDisplayName, providerView, signInMethodLabel, ACCOUNT_NAME_FALLBACK,
@@ -72,16 +72,14 @@ const MIDDOT = String.fromCharCode(0xb7)
  *   - `plainAlone`: a pill of this provider alone reads as it always has: the
  *     email with meters, the name with dots, its name and colour from the
  *     email (aliases and colour overrides), and no provider mark.
- *   - `bareHidden`: the footer's hidden entries written as a bare label are
- *     its own (they predate other providers' groups).
  *   - `words`: when nothing will ever report, its group says so in one word
  *     (D3) instead of a placeholder.
  */
-interface FooterProviderRules { byEmail: boolean; plainAlone: boolean; bareHidden: boolean; words: boolean }
+interface FooterProviderRules { byEmail: boolean; plainAlone: boolean; words: boolean }
 /** Claude Code: attributed by the email its status line reports. */
-const EMAIL_ATTRIBUTED: FooterProviderRules = { byEmail: true, plainAlone: true, bareHidden: true, words: false }
+const EMAIL_ATTRIBUTED: FooterProviderRules = { byEmail: true, plainAlone: true, words: false }
 /** Codex: attributed by the registry account its session runs under. */
-const ACCOUNT_ATTRIBUTED: FooterProviderRules = { byEmail: false, plainAlone: false, bareHidden: false, words: true }
+const ACCOUNT_ATTRIBUTED: FooterProviderRules = { byEmail: false, plainAlone: false, words: true }
 const FOOTER_PROVIDER: Readonly<Record<ProviderId, FooterProviderRules>> = { claude: EMAIL_ATTRIBUTED, codex: ACCOUNT_ATTRIBUTED }
 const PROVIDER_ORDER = Object.keys(FOOTER_PROVIDER) as ProviderId[]
 const DEFAULT_PROVIDER: ProviderId = PROVIDER_ORDER[0]
@@ -602,17 +600,10 @@ function tooltip(
   return lines.join('\n')
 }
 
-/** The labels hidden from a provider's group: its own `<provider>:<label>`
- *  entries, and the bare-label entries of the provider they belong to. */
+/** The labels hidden from a provider's group (the shared reader of the
+ *  footer's hidden list: `<provider>:<label>`, a bare label Claude Code's). */
 function hiddenFor(providerId: ProviderId, hidden: string[]): string[] {
-  const out: string[] = []
-  for (const h of hidden) {
-    const i = h.indexOf(':')
-    const scope = i > 0 ? h.slice(0, i) : ''
-    if (scope && Object.hasOwn(FOOTER_PROVIDER, scope)) { if (scope === providerId) out.push(h.slice(i + 1)) }
-    else if (FOOTER_PROVIDER[providerId].bareHidden) out.push(h)
-  }
-  return out
+  return footerHiddenLabelsFor(hidden, providerId)
 }
 
 function shownBuckets(a: { buckets: UsageBucket[] }, hidden: string[]): UsageBucket[] {

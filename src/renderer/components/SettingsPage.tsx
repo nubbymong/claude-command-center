@@ -28,7 +28,7 @@ import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
 import { usesClaude, usesCodex } from '../onboarding/provider-choice'
 import { ProviderMark } from './sidebar/Badges'
-import { FOOTER_BARE_LABEL_PROVIDER } from '../../shared/usage-labels'
+import { FOOTER_BARE_LABEL_PROVIDER, footerHiddenLabelsFor } from '../../shared/usage-labels'
 import type { ProviderId } from '../../shared/providers'
 declare const __BUILD_TIME__: string
 declare const __BUILD_SHA__: string
@@ -879,23 +879,26 @@ function BucketToggleCard({ title, subtitle, labels, hidden, onToggle, mark, tes
   )
 }
 
-/** The labels every Codex session reports, whatever it has reported yet. */
-const CODEX_BASE_LABELS = ['5h', 'Weekly']
+/** The windows every provider's sessions report, whatever they have reported
+ *  yet: a provider's footer card always offers them. */
+const WINDOW_LABELS = ['5h', 'Weekly']
 const CODEX: ProviderId = 'codex'
 const MIDDOT = String.fromCharCode(0xb7)
 const RSQUO = String.fromCharCode(0x2019)
 
-/** The labels live sessions of a provider have reported, first seen first. */
+/** The labels live sessions of a provider have reported, first seen first.
+ *  Selects the labels themselves (joined), so a session tick that changes no
+ *  label re-renders nothing here. */
 function useLiveLabels(want: (provider: ProviderId) => boolean): string[] {
-  const sessions = useSessionStore((s) => s.sessions)
-  return React.useMemo(() => {
+  const joined = useSessionStore((s) => {
     const out: string[] = []
-    for (const s of sessions) {
-      if (!want(s.provider ?? FOOTER_BARE_LABEL_PROVIDER)) continue
-      for (const b of s.usageBuckets ?? []) if (b.label && !out.includes(b.label)) out.push(b.label)
+    for (const sess of s.sessions) {
+      if (!want(sess.provider ?? FOOTER_BARE_LABEL_PROVIDER)) continue
+      for (const b of sess.usageBuckets ?? []) if (b.label && !out.includes(b.label)) out.push(b.label)
     }
-    return out
-  }, [sessions, want])
+    return out.join('\n')
+  })
+  return React.useMemo(() => (joined ? joined.split('\n') : []), [joined])
 }
 
 const merge = (...lists: string[][]): string[] => {
@@ -929,8 +932,11 @@ function UsageBucketToggles(): React.ReactElement | null {
   const liveClaude = useLiveLabels(isBareProvider)
   const liveCodex = useLiveLabels(isOther)
   const claudeLabels = merge(known ?? [], liveClaude)
+  // Beside Codex, Claude Code's footer card always offers its two windows, so
+  // a fresh install (nothing cached yet) still has it.
+  const claudeFooterLabels = codexOn ? merge(WINDOW_LABELS, claudeLabels) : claudeLabels
   // Codex's: its two windows, plus any other limit a live session reports.
-  const codexLabels = merge(CODEX_BASE_LABELS, liveCodex)
+  const codexLabels = merge(WINDOW_LABELS, liveCodex)
   const labels = known === null ? null : merge(claudeOn ? claudeLabels : [], codexOn ? codexLabels : [])
 
   const toggle = (cur: string[], label: string) => {
@@ -938,16 +944,8 @@ function UsageBucketToggles(): React.ReactElement | null {
     void useSettingsStore.getState().updateSettings({ hiddenUsageBuckets: next })
   }
   // The footer's list is per provider (`<provider>:<label>`); an older bare
-  // label is Claude Code's.
-  const footerHiddenFor = (p: ProviderId): string[] => {
-    const out: string[] = []
-    for (const e of footerHidden) {
-      const i = e.indexOf(':')
-      if (i > 0 && e.slice(0, i) === p) out.push(e.slice(i + 1))
-      else if (i < 0 && p === FOOTER_BARE_LABEL_PROVIDER) out.push(e)
-    }
-    return out
-  }
+  // label is Claude Code's. Read with the footer's own reader.
+  const footerHiddenFor = (p: ProviderId): string[] => footerHiddenLabelsFor(footerHidden, p)
   const toggleFooter = (p: ProviderId, label: string) => {
     const scoped = `${p}:${label}`
     const hiddenNow = footerHiddenFor(p).includes(label)
@@ -986,11 +984,11 @@ function UsageBucketToggles(): React.ReactElement | null {
         onToggle={(l) => toggle(hidden, l)}
         testId="usage-bars-session"
       />
-      {claudeOn && claudeLabels.length > 0 && (
+      {claudeOn && claudeFooterLabels.length > 0 && (
         <BucketToggleCard
           title={codexOn ? `Claude Code ${MIDDOT} Multi-account footer bars` : 'Multi-account footer bars'}
           subtitle={`Shown in the bottom footer when 2 or more ${codexOn ? 'identities' : 'accounts'} are live, independent of the per-session bars above (e.g. keep only Fable here to narrow the strip).`}
-          labels={claudeLabels}
+          labels={claudeFooterLabels}
           hidden={footerHiddenFor(FOOTER_BARE_LABEL_PROVIDER)}
           onToggle={(l) => toggleFooter(FOOTER_BARE_LABEL_PROVIDER, l)}
           mark={codexOn ? FOOTER_BARE_LABEL_PROVIDER : undefined}

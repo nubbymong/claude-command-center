@@ -37,8 +37,11 @@ const CLAUDE: ProviderId = 'claude'
 const CODEX: ProviderId = 'codex'
 const PROVIDER_NAME: Readonly<Record<ProviderId, string>> = { claude: 'Claude Code', codex: 'Codex' }
 
-/** A window focus reloads the page at most this often. */
+/** A window focus reloads the page's Codex views at most this often. */
 export const FOCUS_REFRESH_MS = 60_000
+/** In the registry-change bookkeeping: the stream read this account, before
+ *  its sign-in state was known here. */
+const READ_BY_STREAM = 'read-by-stream'
 
 const TONE_TEXT: Record<AuthWindowTone, string> = {
   expired: 'text-red',
@@ -181,6 +184,9 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
       if (!api?.usageStream) return // no stream: the rows turn to Retry
       const r = await api.usageStream(CODEX, (view) => {
         if (codexGen.current !== gen || !view || typeof view.accountId !== 'string') return
+        // The stream read this account: a registry copy arriving after it
+        // started is not a change to read it again for.
+        if (!codexSeen.current.has(view.accountId)) codexSeen.current.set(view.accountId, READ_BY_STREAM)
         setCodexViews((prev) => ({ ...prev, [view.accountId]: view }))
       })
       if (codexGen.current === gen && r && r.ok === true && r.provider === 'off') setCodexStreamOff(true)
@@ -198,19 +204,22 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
     await Promise.all([loadClaude(opts), loadCodex(opts)])
   }, [loadClaude, loadCodex])
 
-  // Coming back to the window reloads, quietly (the figures stay until each
-  // new one lands), at most once per FOCUS_REFRESH_MS.
+  // Coming back to the window reloads Codex, quietly (the figures stay until
+  // each new one lands), at most once per FOCUS_REFRESH_MS. Codex only: its
+  // views are read locally, while Claude Code's closed accounts call a
+  // rate-limited endpoint, so Claude Code keeps its own cadence (the page
+  // opening, Refresh, a card's Retry).
   const lastFocusLoad = useRef(Date.now())
   useEffect(() => {
     const onFocus = () => {
       const t = Date.now()
       if (t - lastFocusLoad.current < FOCUS_REFRESH_MS) return
       lastFocusLoad.current = t
-      void load({ quiet: true })
+      void loadCodex({ quiet: true })
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [load])
+  }, [loadCodex])
 
   const refreshOne = useCallback(async (profileId: string) => {
     try {
@@ -235,6 +244,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
     for (const a of codexAccounts) {
       if (a.lifecycle === 'inactive') continue
       const before = seen.get(a.id)
+      if (before === READ_BY_STREAM) continue
       if (before === undefined || before !== a.lastKnownAuthState) void refreshCodexOne(a.id)
     }
     codexSeen.current = new Map(codexAccounts.map((a) => [a.id, a.lastKnownAuthState]))
