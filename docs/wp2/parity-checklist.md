@@ -157,7 +157,7 @@ scoped app-server read of ADR-022.
 | # | Feature | Status | Mocked | Real CLI | Packaged | Pkg | Still owed |
 |---|---|---|---|---|---|---|---|
 | 17 | All-accounts usage page | MISSING | no | no | no | P3 | Usage track MP3, MP4 (layout approved 2026-09-27); a closed Codex account's read MP7, MP8 (ADR-022) |
-| 18 | Session-strip meters | PARTIAL | no | no | no | P3 | Usage track MP2, MP6: labels from `window_minutes`; a 0.155.1 rollout fixture, owed for MP8 (the test VM has no 0.155.1 session) |
+| 18 | Session-strip meters | PARTIAL | yes | no | no | P3 | Done in usage track MP2: Codex meters labelled from `window_minutes` (5h, Weekly, one per separate limit; `tests/unit/renderer/session-status-strip.test.ts`). Remaining in MP6: the D2 no-reading meter and the pending state for Codex. Owed for MP8: a 0.155.1 rollout fixture (the test VM has no 0.155.1 session) |
 | 19 | Strip cost wording | PARTIAL | no | no | no | P3 | Usage track MP6: wording per provider and sign-in method |
 | 20 | Account chip (strip and sidebar) | MISSING | no | no | no | P3 | Chip from the account's identity; the usage track (MP4, MP5) uses the same identity chip on the usage page and footer |
 | 21 | Multi-account footer | MISSING | no | no | no | P3 | Usage track MP5, MP6 (approved 2026-09-27): one pill per identity; percentages never merged across providers |

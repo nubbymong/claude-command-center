@@ -19,7 +19,7 @@ approved as drawn, which is each one's recommended option.
 
 | Decision | As approved |
 | --- | --- |
-| D1 = C | An open Codex account shows its live session figure. A closed account gets one short-lived `codex app-server` read where the version probe passes; otherwise it shows the last-seen reading from the newest session in that account's own folder, stamped with its age. |
+| D1 = C | An open Codex account shows its live session figure. A closed account gets one short-lived `codex app-server` read on a supported CLI version where the probe passes; otherwise it shows the last-seen reading from the newest session in that account's own folder, stamped with its age. |
 | D2 (drawn) | A window whose reset time has passed shows no figure: the page reads "Reset 3:10 pm, no reading since"; the footer and the strip show a static no-reading meter (the pending style without the shimmer, `--%`). Claude too. |
 | D3 (drawn) | A Codex group that will never report keeps its pill with its mark and one word: "per token" (an API key) or "no reading" (no session ever claimed). No shimmer. |
 | D4 (drawn) | The Account usage rail entry shows with two or more accounts in total across the providers that are on. |
@@ -53,13 +53,20 @@ What it allows, and nothing more (ADR-022 holds the full bounds):
   a session, a review or a sign-in in progress is never read. An API-key
   account and this computer's own Codex sign-in (shared with the user's own
   Codex tools) are never read either.
+- **A read may refresh that account's sign-in**, as Codex itself does when it
+  runs. That is why an account in use is never read, and why a launch,
+  sign-in, sign-out, archive or inactivate waits for a read in flight to end.
 - **Isolated to that account.** The helper runs in the account's own folder
   (`CODEX_HOME` is the account's realm), and its `initialize` answer must
   name that same folder, or the read is refused.
 - **Shut down afterwards.** Each read ends the helper and its whole process
   chain before the account is released.
-- **Supported versions proven.** A read is tried only on a CLI whose version
-  the probe proves; anything that answers differently fails closed.
+- **Supported versions only.** A read is tried only on a CLI whose version is
+  in the supported range (`classifyCodexVersion` says `supported`: today
+  0.153.4 to 0.156.1). A newer CLI (0.157.1 included), an older one or an
+  unknown version is not read and shows the last-known usage. On a supported
+  version the run is still a probe: anything that answers differently fails
+  closed.
 - **Fail closed.** Anything unexpected, unsupported or failed shows the
   last-known usage with its timestamp.
 
@@ -81,7 +88,9 @@ Device-code sign-in stays off (`owner-decisions-2026-09-26.md`, U3).
   `supportsLunaReserve`; the read sends none), and adds `ordinaryUsageAllowed`
   to the answer and `normalModelSlug` to each snapshot; 0.157.1 adds the
   `explicitGatewayOauth` initialize capability (the read sends no
-  capabilities). No field was removed and no required list changed.
+  capabilities). No field was removed and no required list changed. 0.157.1
+  was checked for drift only: it is newer than the supported range and is not
+  read.
 - **Owed.** A real read on 0.153.4 and 0.155.1 with a signed-in account
   (MP8). A 0.155.1 rollout fixture: the test VM has no 0.155.1 session (its
   sessions are from 0.137.0 and 0.142.4), and making one needs a real signed-in

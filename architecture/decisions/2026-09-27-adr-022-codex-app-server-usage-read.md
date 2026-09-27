@@ -55,9 +55,12 @@ owner decision and a new ADR.
    in with ChatGPT, and nothing uses it: no session, review or sign-in. An
    API-key account ("per token") and this computer's own Codex sign-in folder,
    which the user's own Codex tools share, are never read (parity with Claude,
-   whose primary profile is never refreshed). A launch, sign-in, sign-out,
-   archive or inactivate on an account with a read in flight aborts the read
-   and waits for its process chain to end first.
+   whose primary profile is never refreshed). A read may refresh that
+   account's sign-in, as Codex itself does when it runs (and as Claude's
+   guarded refresh does); that is why an account in use is never read, and
+   why a launch, sign-in, sign-out, archive or inactivate on an account with a
+   read in flight aborts the read and waits for its process chain to end
+   first.
 
 3. **Isolated to that account's realm.** The helper runs in the account's own
    folder: `CODEX_HOME` is the realm, the environment is the allowlisted one
@@ -74,19 +77,22 @@ owner decision and a new ADR.
    only once the chain has ended. One helper at a time app-wide; a deadline of
    20 s per read.
 
-5. **Supported versions proven by probe.** A read is tried only when discovery
-   proved the CLI, its compatibility allows use, and its version is at least
-   the app-server usage floor (0.153.4). The run itself is the probe: a
-   schema-valid `initialize` answer within 12 s naming the realm, then a
-   schema-valid `rateLimits`. Method-not-found, an invalid request, a schema
-   mismatch or a wrong `codexHome` marks that executable unsupported until it
-   changes; a timeout, early exit, spawn error, sign-in or backend error, or
-   cancel is transient.
+5. **Supported versions only, proven by probe.** The owner said "Test the
+   supported versions": a read is tried only when discovery proved the CLI and
+   its version classifies as `supported` (`classifyCodexVersion`, today
+   0.153.4 to 0.156.1, `cli-contract.ts`). A `too-new` CLI (0.157.1
+   included), a `too-old` one or an `unknown` version is never read; it shows
+   the last-seen reading. The run itself is then the probe: a schema-valid
+   `initialize` answer within 12 s naming the realm, then a schema-valid
+   `rateLimits`. Method-not-found, an invalid request, a schema mismatch or a
+   wrong `codexHome` marks that executable unsupported until it changes; a
+   timeout, early exit, spawn error, sign-in or backend error, or cancel is
+   transient. Widening the supported range is the version work's own
+   evidence step (real-CLI qualification), not this ADR's.
 
-6. **Fail closed to the last-known usage.** Every failure, refusal or
-   unsupported CLI shows the last-seen reading with its timestamp (or no
-   reading, if there is none). A CLI newer than tested may try; anything it
-   answers differently fails closed.
+6. **Fail closed to the last-known usage.** Every failure, refusal or version
+   outside the supported range shows the last-seen reading with its
+   timestamp (or no reading, if there is none).
 
 7. **Only when asked, never in the background.** Reads start only from the
    Account usage page (open, Refresh, a card's Retry): never from the footer,
@@ -115,6 +121,7 @@ optional fields only (0.155.1: optional `account/rateLimits/read` parameters,
 `ordinaryUsageAllowed` in the answer, `normalModelSlug` in each snapshot;
 0.157.1: the `explicitGatewayOauth` initialize capability). The validator must
 therefore accept unknown extra fields and must not require the new ones.
+0.157.1 was checked for drift only: it is `too-new` and is not read (bound 5).
 
 A real read on 0.153.4 and 0.155.1 with a signed-in account, with the hosts
 contacted during it recorded, is owed before the live read ships (MP8).
@@ -126,9 +133,8 @@ contacted during it recorded, is owed before the live read ships (MP8).
   security-sensitive (ADR-009): the runner's open-stdin mode, the protocol
   client and the orchestration each get an adversarial pass.
 - The only new network traffic is the request Codex itself makes to OpenAI
-  with that account's own sign-in, the same kind of call a Codex session
-  makes. A read may refresh that account's sign-in, which is why an account in
-  use is never read and why a launch waits for a read in flight.
+  with that account's own sign-in (and, when due, its sign-in refresh; bound
+  2), the same kind of call a Codex session makes.
 - The exception is narrow by construction: every bound above is a test in the
   phases that build it, and a change to any of them is a new owner decision.
 - If a future CLI removes or changes the method, the page keeps working on the

@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { computeCodexCostUsd } from './pricing'
-import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
+import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, isoFromEpochMs, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 import type { StatuslineData } from '../../../shared/types'
 import type { AllowanceReading } from '../../../shared/usage-types'
 import type { TelemetrySource } from '../types'
@@ -212,9 +212,8 @@ export function parseCodexRollout(text: string): {
  *   against real rollouts where total_tokens == input_tokens + output_tokens)
  * - outputTokens = output_tokens (reasoning_output_tokens is likewise a subset)
  * - costUsd: computed via computeCodexCostUsd; undefined if model has no pricing entry
- * - rateLimitCurrent + rateLimitCurrentResets: present when rate_limits.primary exists
- * - rateLimitWeekly + rateLimitWeeklyResets: present when rate_limits.secondary exists
  * - contextUsedPercent: contextTokensInWindow / contextWindow * 100 when contextWindow is known
+ * - no rate-limit field: withAllowance sets those from the validated allowance
  */
 
 /** Tokens currently occupying the context window. Codex's `total_token_usage`
@@ -255,47 +254,22 @@ export function mapTokenCountToStatusline(
     contextWindowSize: contextWindow ?? undefined,
     contextUsedPercent: contextWindow ? Math.min(100, (contextTokensInWindow(tc) / contextWindow) * 100) : undefined,
   }
-
-  if (tc.rate_limits?.primary) {
-    sl.rateLimitCurrent = Math.round(tc.rate_limits.primary.used_percent)
-    const iso = isoFromEpochSeconds(tc.rate_limits.primary.resets_at)
-    if (iso) sl.rateLimitCurrentResets = iso
-  }
-
-  if (tc.rate_limits?.secondary) {
-    sl.rateLimitWeekly = Math.round(tc.rate_limits.secondary.used_percent)
-    const iso = isoFromEpochSeconds(tc.rate_limits.secondary.resets_at)
-    if (iso) sl.rateLimitWeeklyResets = iso
-  }
-
+  // The rate-limit fields come only from the validated allowance
+  // (withAllowance), never from this event's raw rate_limits.
   return sl
-}
-
-/** ISO time for epoch seconds, or undefined for anything that is not a finite
- *  number inside the Date range: `toISOString` throws on an invalid Date, and a
- *  throw here used to drop the whole status update. */
-function isoFromEpochSeconds(s: unknown): string | undefined {
-  if (typeof s !== 'number' || !Number.isFinite(s)) return undefined
-  const d = new Date(s * 1000)
-  return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
 }
 
 /**
  * Put a session's allowance on a status line update (usage track MP2), from
  * the validated reading only: `usageBuckets` (one per window, labelled from
- * its length), `rateLimitsAt` (the time of the event that carried it), and the
- * legacy `rateLimitCurrent` / `rateLimitWeekly` pair from the default limit,
- * replacing whatever the raw event said. With no reading none of them is set.
- * Exported for tests.
+ * its length), `rateLimitsAt` (how old the reading is: its oldest limit's
+ * event time, so a figure left behind never looks fresh), and the
+ * legacy `rateLimitCurrent` / `rateLimitWeekly` pair from the default limit.
+ * These are the only source of those fields (mapTokenCountToStatusline sets
+ * none of them). With no reading none of them is set. Exported for tests.
  */
 export function withAllowance(sl: StatuslineData, reading: AllowanceReading | null): StatuslineData {
   const out: StatuslineData = { ...sl }
-  delete out.rateLimitCurrent
-  delete out.rateLimitCurrentResets
-  delete out.rateLimitWeekly
-  delete out.rateLimitWeeklyResets
-  delete out.usageBuckets
-  delete out.rateLimitsAt
   if (!reading) return out
   const buckets = readingToBuckets(reading)
   if (buckets.length > 0) out.usageBuckets = buckets
@@ -303,11 +277,13 @@ export function withAllowance(sl: StatuslineData, reading: AllowanceReading | nu
   const main = reading.limits.find((l) => l.limitId === CODEX_DEFAULT_LIMIT_ID)
   if (main?.primary) {
     out.rateLimitCurrent = Math.round(main.primary.usedPercent)
-    if (main.primary.resetsAt !== null) out.rateLimitCurrentResets = new Date(main.primary.resetsAt).toISOString()
+    const iso = isoFromEpochMs(main.primary.resetsAt)
+    if (iso) out.rateLimitCurrentResets = iso
   }
   if (main?.secondary) {
     out.rateLimitWeekly = Math.round(main.secondary.usedPercent)
-    if (main.secondary.resetsAt !== null) out.rateLimitWeeklyResets = new Date(main.secondary.resetsAt).toISOString()
+    const iso = isoFromEpochMs(main.secondary.resetsAt)
+    if (iso) out.rateLimitWeeklyResets = iso
   }
   return out
 }

@@ -11,8 +11,9 @@
  * Everything is treated as untrusted: only own properties of plain objects are
  * read, percentages are clamped to 0-100, a window length must be a positive
  * whole number of minutes, a reset time must fall within 60 days of the
- * reading, the plan must be one this build knows, a limit id must be a short
- * plain identifier and a limit name short and printable. Anything else is
+ * reading and inside the Date range, the plan must be one this build knows, a
+ * limit id must be a short plain identifier (never "__proto__" and the like)
+ * and a limit name short and printable. Anything else is
  * dropped, never repaired, and fields this code does not use (account id,
  * credits, upsell, the fields later CLIs added) are never copied.
  */
@@ -30,6 +31,10 @@ const MAX_LIMITS = 8
 const MAX_WINDOW_MINUTES = 366 * 1440
 const RESET_BOUND_MS = 60 * 24 * 60 * 60 * 1000
 const LIMIT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/
+/** Names an object's own machinery answers to: never a limit id. */
+const RESERVED_IDS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
+/** The largest epoch ms a Date can hold: past it toISOString throws. */
+const MAX_DATE_MS = 8.64e15
 const LIMIT_NAME_MAX = 40
 // Control, format (bidi overrides and the like) and line/paragraph separators.
 const UNPRINTABLE_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u
@@ -48,6 +53,17 @@ function own(o: Plain, key: string): unknown {
   return Object.prototype.hasOwnProperty.call(o, key) ? o[key] : undefined
 }
 
+const isLimitId = (v: unknown): v is string => typeof v === 'string' && LIMIT_ID_RE.test(v) && !RESERVED_IDS.has(v)
+
+/** An epoch-ms time a Date can hold, or null. */
+const dateMs = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= MAX_DATE_MS ? v : null)
+
+/** ISO text for an epoch-ms time, or '' for one a Date cannot hold (never throws). */
+export function isoFromEpochMs(ms: number | null): string {
+  const v = dateMs(ms)
+  return v === null ? '' : new Date(v).toISOString()
+}
+
 /** The protocol's names for the fields this code reads, per source. */
 const NAMES = {
   'rollout': { limitId: 'limit_id', limitName: 'limit_name', planType: 'plan_type', used: 'used_percent', minutes: 'window_minutes', resets: 'resets_at' },
@@ -64,8 +80,8 @@ function readWindow(raw: unknown, n: Names, reference: number): AllowanceWindow 
   const resets = own(raw, n.resets)
   let resetsAt: number | null = null
   if (typeof resets === 'number' && Number.isFinite(resets)) {
-    const ms = resets * 1000
-    if (Math.abs(ms - reference) <= RESET_BOUND_MS) resetsAt = ms
+    const ms = dateMs(resets * 1000)
+    if (ms !== null && Math.abs(ms - reference) <= RESET_BOUND_MS) resetsAt = ms
   }
   return {
     windowMinutes: typeof minutes === 'number' && Number.isInteger(minutes) && minutes > 0 && minutes <= MAX_WINDOW_MINUTES ? minutes : null,
@@ -84,22 +100,31 @@ function readLimitName(v: unknown): string | null {
 interface Snapshot { limit: AllowanceLimit | null; planType: string | null }
 
 /** One snapshot; null when it cannot be trusted at all (not a plain object, or
- *  a limit id that is present but not a plain identifier). */
-function readSnapshot(raw: unknown, n: Names, reference: number): Snapshot | null {
+ *  a limit id that is present but not a plain identifier). A snapshot with no
+ *  id of its own is `fallbackId`'s: the default limit for a rollout's or the
+ *  answer's own snapshot, its key for an entry of the per-limit map. */
+function readSnapshot(raw: unknown, n: Names, reference: number, readingAt: number | null, fallbackId: string): Snapshot | null {
   if (!isPlain(raw)) return null
   const id = own(raw, n.limitId)
   let limitId: string
-  if (id === undefined || id === null) limitId = CODEX_DEFAULT_LIMIT_ID
-  else if (typeof id === 'string' && LIMIT_ID_RE.test(id)) limitId = id
+  if (id === undefined || id === null) limitId = fallbackId
+  else if (isLimitId(id)) limitId = id
   else return null
   const plan = own(raw, n.planType)
   const planType = planLabelFor(plan) !== null ? (plan as string) : null
   const primary = readWindow(own(raw, 'primary'), n, reference)
   const secondary = readWindow(own(raw, 'secondary'), n, reference)
   const limit = primary || secondary
-    ? { limitId, limitName: readLimitName(own(raw, n.limitName)), primary, secondary }
+    ? { limitId, limitName: readLimitName(own(raw, n.limitName)), readingAt, primary, secondary }
     : null
   return { limit, planType }
+}
+
+/** The oldest time among limits, or null when none has one. */
+function oldestOf(limits: readonly AllowanceLimit[]): number | null {
+  let out: number | null = null
+  for (const l of limits) if (l.readingAt !== null && (out === null || l.readingAt < out)) out = l.readingAt
+  return out
 }
 
 /** Default limit first, then the others by id; one entry per id, at most eight. */
@@ -120,9 +145,13 @@ function orderLimits(limits: AllowanceLimit[]): AllowanceLimit[] {
  *   (`{ rateLimits, rateLimitsByLimitId }`).
  *
  * `at` is when the reading was taken (the event time, or the read time),
- * epoch ms, and becomes `readingAt`; reset times must fall within 60 days of
- * it (of `now` when it is unknown), so an old transcript keeps its own resets.
- * Null when nothing usable is left: no limit with a window and no plan.
+ * epoch ms, and becomes each limit's `readingAt` (null outside the Date
+ * range); reset times must fall within 60 days of it (of `now` when it is
+ * unknown), so an old transcript keeps its own resets. An entry of the
+ * per-limit map with no id of its own takes its key; one whose own id is not
+ * its key, or whose key is not a plain identifier, is dropped: no entry can
+ * stand in for the default limit. Null when nothing usable is left: no limit
+ * with a window and no plan.
  */
 export function normaliseCodexRateLimits(
   raw: unknown,
@@ -131,21 +160,25 @@ export function normaliseCodexRateLimits(
   now: number = Date.now(),
 ): AllowanceReading | null {
   const n = NAMES[source]
-  const readingAt = typeof at === 'number' && Number.isFinite(at) ? at : null
+  const readingAt = dateMs(at)
   const reference = readingAt ?? now
   const snapshots: Snapshot[] = []
   if (source === 'rollout') {
-    const s = readSnapshot(raw, n, reference)
+    const s = readSnapshot(raw, n, reference, readingAt, CODEX_DEFAULT_LIMIT_ID)
     if (s) snapshots.push(s)
   } else {
     if (!isPlain(raw)) return null
-    const main = readSnapshot(own(raw, 'rateLimits'), n, reference)
+    const main = readSnapshot(own(raw, 'rateLimits'), n, reference, readingAt, CODEX_DEFAULT_LIMIT_ID)
     if (!main) return null
     snapshots.push(main)
     const map = own(raw, 'rateLimitsByLimitId')
     if (isPlain(map)) {
       for (const key of Object.keys(map).sort()) {
-        const s = readSnapshot(own(map, key), n, reference)
+        if (!isLimitId(key)) continue
+        const entry = own(map, key)
+        const ownId = isPlain(entry) ? own(entry, n.limitId) : undefined
+        if (ownId !== undefined && ownId !== null && ownId !== key) continue
+        const s = readSnapshot(entry, n, reference, readingAt, key)
         if (s) snapshots.push(s)
       }
     }
@@ -153,13 +186,16 @@ export function normaliseCodexRateLimits(
   const limits = orderLimits(snapshots.flatMap((s) => (s.limit ? [s.limit] : [])))
   const planType = snapshots.find((s) => s.planType !== null)?.planType ?? null
   if (limits.length === 0 && planType === null) return null
+  // Every limit here was read at the same moment: the reading is as old as it.
   return { limits, planType, readingAt }
 }
 
 /**
  * Merge readings taken over time (a session's `token_count` events, oldest
- * first): each limit keeps its newest reading, the plan is the newest one
- * reported, and the reading time is the newest. Null when there is nothing.
+ * first): each limit keeps its newest reading WITH its own time, the plan is
+ * the newest one reported, and the reading as a whole is as old as its oldest
+ * limit (so a default figure left behind by a switch to another model's limit
+ * never looks fresh). Null when there is nothing.
  */
 export function mergeAllowanceReadings(readings: readonly (AllowanceReading | null)[]): AllowanceReading | null {
   const present = readings.filter((r): r is AllowanceReading => r !== null)
@@ -173,7 +209,8 @@ export function mergeAllowanceReadings(readings: readonly (AllowanceReading | nu
     if (r.readingAt !== null) readingAt = readingAt === null ? r.readingAt : Math.max(readingAt, r.readingAt)
   }
   // orderLimits keeps the LAST entry per id: the newest reading of each limit.
-  return { limits: orderLimits(limits), planType, readingAt }
+  const merged = orderLimits(limits)
+  return { limits: merged, planType, readingAt: merged.length > 0 ? oldestOf(merged) : readingAt }
 }
 
 /**
@@ -205,7 +242,7 @@ export function readingToBuckets(reading: AllowanceReading | null): UsageBucket[
         label: isDefault ? window : `${name} ${window}`,
         group: weekly ? 'weekly' : 'session',
         percent: Math.round(w.usedPercent),
-        resetsAt: w.resetsAt !== null ? new Date(w.resetsAt).toISOString() : '',
+        resetsAt: isoFromEpochMs(w.resetsAt),
         severity: 'normal',
       })
     }

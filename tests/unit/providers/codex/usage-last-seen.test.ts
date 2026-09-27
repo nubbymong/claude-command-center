@@ -209,7 +209,7 @@ describe('readLastSeenAllowance: what it may open', () => {
 })
 
 describe('the live figure (memory only)', () => {
-  const reading = (p: number, at: number): AllowanceReading => ({ limits: [{ limitId: 'codex', limitName: null, primary: { windowMinutes: 300, usedPercent: p, resetsAt: null }, secondary: null }], planType: 'pro', readingAt: at })
+  const reading = (p: number, at: number): AllowanceReading => ({ limits: [{ limitId: 'codex', limitName: null, readingAt: at, primary: { windowMinutes: 300, usedPercent: p, resetsAt: null }, secondary: null }], planType: 'pro', readingAt: at })
 
   it('keeps the newest reading per sessions folder, named the same however it is spelled on Windows', () => {
     const live = createCodexLiveUsage('win32')
@@ -242,7 +242,7 @@ describe('createCodexUsageOperations', () => {
     const ops = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: f.port, live })
     expect(await ops.live(realm)).toBeNull()
     expect(f.calls).toEqual([])
-    live.record(SESSIONS, { limits: [{ limitId: 'codex', limitName: null, primary: { windowMinutes: 300, usedPercent: 44, resetsAt: null }, secondary: null }], planType: 'plus', readingAt: 5 })
+    live.record(SESSIONS, { limits: [{ limitId: 'codex', limitName: null, readingAt: 5, primary: { windowMinutes: 300, usedPercent: 44, resetsAt: null }, secondary: null }], planType: 'plus', readingAt: 5 })
     expect(await ops.live(realm)).toEqual({ buckets: [{ key: 'codex/300:', label: '5h', group: 'session', percent: 44, resetsAt: '', severity: 'normal' }], readingAt: 5, planLabel: 'Plus' })
     expect(f.calls).toEqual([])
     const seen = await ops.lastSeen(realm)

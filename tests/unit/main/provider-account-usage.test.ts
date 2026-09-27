@@ -166,7 +166,7 @@ describe('what each account shows (plan section 3)', () => {
     const fallback = await t.h.service.readAccountUsage({ accountId: a })
     expect(fallback).toMatchObject({ ok: true, usage: { status: 'ok', source: 'last-seen' } })
     t.fs.calls.length = 0
-    t.live.record(sessionsOf(t.h, a), { limits: [{ limitId: 'codex', limitName: null, primary: { windowMinutes: 300, usedPercent: 52, resetsAt: null }, secondary: null }], planType: 'plus', readingAt: 1234 })
+    t.live.record(sessionsOf(t.h, a), { limits: [{ limitId: 'codex', limitName: null, readingAt: 1234, primary: { windowMinutes: 300, usedPercent: 52, resetsAt: null }, secondary: null }], planType: 'plus', readingAt: 1234 })
     const r = await t.h.service.readAccountUsage({ accountId: a })
     expect(r).toMatchObject({ ok: true, usage: { status: 'ok', source: 'live', readingAt: 1234, planLabel: 'Plus' } })
     if (!r.ok) throw new Error(r.code)
@@ -178,7 +178,7 @@ describe('what each account shows (plan section 3)', () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
     const b = await addCodexAccount(t.h, 'B')
-    t.live.record(sessionsOf(t.h, b), { limits: [{ limitId: 'codex', limitName: null, primary: { windowMinutes: 300, usedPercent: 90, resetsAt: null }, secondary: null }], planType: null, readingAt: 1 })
+    t.live.record(sessionsOf(t.h, b), { limits: [{ limitId: 'codex', limitName: null, readingAt: 1, primary: { windowMinutes: 300, usedPercent: 90, resetsAt: null }, secondary: null }], planType: null, readingAt: 1 })
     expect(await t.h.service.readAccountUsage({ accountId: a })).toMatchObject({ ok: true, usage: { status: 'no-session-yet' } })
   })
 

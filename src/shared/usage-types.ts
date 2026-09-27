@@ -58,6 +58,10 @@ export interface AllowanceLimit {
   limitId: string
   /** The display name the provider gives a separate limit, or null. */
   limitName: string | null
+  /** When THIS limit was last reported, epoch ms; null when unknown. A
+   *  session that moved to another model's limit leaves this one's figure
+   *  behind, with its own, older time. */
+  readingAt: number | null
   primary: AllowanceWindow | null
   secondary: AllowanceWindow | null
 }
@@ -67,8 +71,10 @@ export interface AllowanceReading {
   limits: AllowanceLimit[]
   /** The plan as the provider reports it ('plus', 'pro', ...), from the known list only. */
   planType: string | null
-  /** When the reading was taken, epoch ms: the event time for a session's
-   *  transcript, the read time for a live read; null when unknown. */
+  /** How old the reading is as a whole, epoch ms: the OLDEST of its limits'
+   *  times (the event time for a session's transcript, the read time for a
+   *  live read), so an "as of" built on it never looks fresher than any
+   *  figure it shows; null when unknown. */
   readingAt: number | null
 }
 

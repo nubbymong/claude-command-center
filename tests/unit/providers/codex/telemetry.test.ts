@@ -4,9 +4,9 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { mkdirSync } from 'fs'
 
-import { parseCodexRollout, mapTokenCountToStatusline, contextTokensInWindow, watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
+import { parseCodexRollout, mapTokenCountToStatusline, contextTokensInWindow, watchAndClaimRollout, withAllowance } from '../../../../src/main/providers/codex/telemetry'
 import type { TokenCountEvent } from '../../../../src/main/providers/codex/telemetry'
-import { CODEX_DEFAULT_LIMIT_ID as DEFAULT_ID } from '../../../../src/main/providers/codex/rate-limits'
+import { CODEX_DEFAULT_LIMIT_ID as DEFAULT_ID, normaliseCodexRateLimits } from '../../../../src/main/providers/codex/rate-limits'
 import { createCodexLiveUsage } from '../../../../src/main/providers/codex/usage'
 import { CodexProvider } from '../../../../src/main/providers/codex'
 
@@ -26,17 +26,20 @@ describe('codex rollout parsing', () => {
     expect(tokenCounts[0].total_token_usage.input_tokens).toBeGreaterThanOrEqual(0)
   })
 
-  it('maps token_count to StatuslineData', () => {
-    const { tokenCounts, meta } = parseCodexRollout(FIXTURE)
+  // The rate-limit fields of an update come only from the validated
+  // allowance (withAllowance); the token mapper no longer sets them (review Q4).
+  it('maps token_count to StatuslineData, with the rate limits from the allowance', () => {
+    const { tokenCounts, meta, allowance } = parseCodexRollout(FIXTURE)
     const tc = tokenCounts[tokenCounts.length - 1]
-    const sl = mapTokenCountToStatusline(tc, meta, 'sid-test')
+    const mapped = mapTokenCountToStatusline(tc, meta, 'sid-test')
+    expect(mapped.rateLimitCurrent).toBeUndefined()
+    expect(mapped.rateLimitCurrentResets).toBeUndefined()
+    const sl = withAllowance(mapped, allowance)
     expect(sl.sessionId).toBe('sid-test')
     expect(sl.model).toBe(meta.model)
     expect(sl.inputTokens).toBeGreaterThanOrEqual(0)
-    if (tc.rate_limits?.primary) {
-      expect(sl.rateLimitCurrent).toBeDefined()
-      expect(sl.rateLimitCurrentResets).toBeDefined()
-    }
+    expect(sl.rateLimitCurrent).toBe(1)
+    expect(sl.rateLimitCurrentResets).toBe(new Date(1777544035 * 1000).toISOString())
   })
 
   it('extracts contextWindow from task_started', () => {
@@ -60,13 +63,11 @@ describe('codex rollout parsing', () => {
   })
 
   it('maps rate_limits secondary to rateLimitWeekly', () => {
-    const { tokenCounts, meta } = parseCodexRollout(FIXTURE)
+    const { tokenCounts, meta, allowance } = parseCodexRollout(FIXTURE)
     const tc = tokenCounts[tokenCounts.length - 1]
-    const sl = mapTokenCountToStatusline(tc, meta, 'sid-weekly')
-    if (tc.rate_limits?.secondary) {
-      expect(sl.rateLimitWeekly).toBeDefined()
-      expect(sl.rateLimitWeeklyResets).toBeDefined()
-    }
+    const sl = withAllowance(mapTokenCountToStatusline(tc, meta, 'sid-weekly'), allowance)
+    expect(sl.rateLimitWeekly).toBe(13)
+    expect(sl.rateLimitWeeklyResets).toBe(new Date(1777959356 * 1000).toISOString())
   })
 
   it('omits costUsd when model pricing is unknown', () => {
@@ -687,37 +688,44 @@ describe('parseAndEmit truncation guard', () => {
   })
 })
 
-describe('mapTokenCountToStatusline NaN guards', () => {
+// The rate-limit fields come from the validated allowance only (review Q4:
+// the token mapper's own copy of them was dead, withAllowance replaced it).
+describe('rate-limit fields NaN guards (through the allowance)', () => {
   const baseMeta = { id: 's', cwd: '/x', model: 'm', cli_version: '1', timestamp: '2026-05-04T00:00:00Z' }
-
-  it('omits rateLimitCurrentResets when primary.resets_at is NaN', () => {
+  const AT = Date.parse('2026-04-30T05:13:52.611Z')
+  const update = (rateLimits: TokenCountEvent['rate_limits']) => {
     const tc: TokenCountEvent = {
       total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 },
-      rate_limits: { primary: { used_percent: 50, window_minutes: 300, resets_at: NaN } },
+      rate_limits: rateLimits,
     }
-    const sl = mapTokenCountToStatusline(tc, baseMeta, 'sid')
+    return withAllowance(mapTokenCountToStatusline(tc, baseMeta, 'sid'), normaliseCodexRateLimits(rateLimits, 'rollout', AT))
+  }
+
+  it('omits rateLimitCurrentResets when primary.resets_at is NaN', () => {
+    const sl = update({ primary: { used_percent: 50, window_minutes: 300, resets_at: NaN } })
     expect(sl.rateLimitCurrent).toBe(50)
     expect(sl.rateLimitCurrentResets).toBeUndefined()
   })
 
   it('omits rateLimitWeeklyResets when secondary.resets_at is NaN', () => {
-    const tc: TokenCountEvent = {
-      total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 },
-      rate_limits: { secondary: { used_percent: 30, window_minutes: 10080, resets_at: NaN } },
-    }
-    const sl = mapTokenCountToStatusline(tc, baseMeta, 'sid')
+    const sl = update({ secondary: { used_percent: 30, window_minutes: 10080, resets_at: NaN } })
     expect(sl.rateLimitWeekly).toBe(30)
     expect(sl.rateLimitWeeklyResets).toBeUndefined()
   })
 
   it('sets rateLimitCurrentResets when primary.resets_at is a valid finite number', () => {
-    const tc: TokenCountEvent = {
-      total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 },
-      rate_limits: { primary: { used_percent: 75, window_minutes: 300, resets_at: 1777544035 } },
-    }
-    const sl = mapTokenCountToStatusline(tc, baseMeta, 'sid')
+    const sl = update({ primary: { used_percent: 75, window_minutes: 300, resets_at: 1777544035 } })
     expect(sl.rateLimitCurrent).toBe(75)
     expect(sl.rateLimitCurrentResets).toBe(new Date(1777544035 * 1000).toISOString())
+  })
+
+  it('the token mapper sets no rate-limit field of its own', () => {
+    const tc: TokenCountEvent = {
+      total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 },
+      rate_limits: { primary: { used_percent: 75, window_minutes: 300, resets_at: 1777544035 }, secondary: { used_percent: 5, window_minutes: 10080, resets_at: 1777959356 } },
+    }
+    const sl = mapTokenCountToStatusline(tc, baseMeta, 'sid')
+    for (const k of ['rateLimitCurrent', 'rateLimitCurrentResets', 'rateLimitWeekly', 'rateLimitWeeklyResets'] as const) expect(sl[k], k).toBeUndefined()
   })
 })
 
@@ -837,15 +845,37 @@ describe('allowance from the rollout (usage track MP2)', () => {
     expect(u.usageBuckets!.map((b) => [b.label, b.percent, b.resetsAt])).toEqual([['5h', 100, '']])
   })
 
-  it('mapTokenCountToStatusline survives a reset time outside the Date range (it used to throw and drop the update)', () => {
+  it('an update survives a reset time outside the Date range (it used to throw and drop the update)', () => {
+    const rateLimits = { primary: { used_percent: 20, window_minutes: 300, resets_at: 1e30 }, secondary: { used_percent: 30, window_minutes: 10080, resets_at: -1e30 } }
     const tc: TokenCountEvent = {
       total_token_usage: { input_tokens: 3, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 3 },
-      rate_limits: { primary: { used_percent: 20, window_minutes: 300, resets_at: 1e30 }, secondary: { used_percent: 30, window_minutes: 10080, resets_at: -1e30 } },
+      rate_limits: rateLimits,
     }
-    const sl = mapTokenCountToStatusline(tc, { id: 's', cwd: '/x', model: 'm', cli_version: '1', timestamp: '' }, 'sid')
+    const sl = withAllowance(mapTokenCountToStatusline(tc, { id: 's', cwd: '/x', model: 'm', cli_version: '1', timestamp: '' }, 'sid'), normaliseCodexRateLimits(rateLimits, 'rollout', Date.now()))
     expect(sl.inputTokens).toBe(3)
+    expect(sl.rateLimitCurrent).toBe(20)
     expect(sl.rateLimitCurrentResets).toBeUndefined()
     expect(sl.rateLimitWeeklyResets).toBeUndefined()
+  })
+
+  // Review Q2: an event stamped at the edge of the Date range, carrying a
+  // later reset on a separate limit, used to throw in every update from then
+  // on (the merged reading kept it), leaving the session with no status line.
+  it('an event at the edge of the Date range never stops the status line', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const edge = '+275760-09-13T00:00:00.000Z'
+    expect(Date.parse(edge)).toBe(8.64e15)
+    const updates = await watchRollout(spawn, [
+      meta(ts, '/mp2/cwd'),
+      tokenCount(edge, null, { limit_id: 'codex_x', primary: { used_percent: 5, window_minutes: 300, resets_at: 8.64e12 + 3600 } }),
+      tokenCount(ts, usage(7), { limit_id: DEFAULT_ID, primary: { used_percent: 9, window_minutes: 300 } }),
+    ])
+    expect(updates.length).toBeGreaterThan(0)
+    const u = updates[updates.length - 1]
+    expect(u.inputTokens).toBe(7)
+    expect(u.rateLimitCurrent).toBe(9)
+    expect(u.usageBuckets!.map((b) => [b.label, b.resetsAt])).toEqual([['5h', ''], ['codex_x 5h', '']])
   })
 
   it('sends no usage fields when the rollout carries no rate limits', async () => {

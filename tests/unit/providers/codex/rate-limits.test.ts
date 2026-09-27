@@ -13,6 +13,7 @@ import {
   CODEX_DEFAULT_LIMIT_ID,
 } from '../../../../src/main/providers/codex/rate-limits'
 import { planLabelFor } from '../../../../src/shared/usage-types'
+import { withAllowance } from '../../../../src/main/providers/codex/telemetry'
 
 const FIXTURE_LINES = readFileSync(join(__dirname, '../../../fixtures/codex/rollout-sample.jsonl'), 'utf-8').split('\n')
 const line = (n: number) => JSON.parse(FIXTURE_LINES[n - 1]) as { timestamp: string; payload: { info: unknown; rate_limits: unknown } }
@@ -36,6 +37,7 @@ describe('normaliseCodexRateLimits from a rollout', () => {
       {
         limitId: 'codex',
         limitName: null,
+        readingAt: Date.parse('2026-04-30T05:13:52.611Z'),
         primary: { windowMinutes: 300, usedPercent: 1, resetsAt: 1777544035 * 1000 },
         secondary: { windowMinutes: 10080, usedPercent: 13, resetsAt: 1777959356 * 1000 },
       },
@@ -46,7 +48,9 @@ describe('normaliseCodexRateLimits from a rollout', () => {
     const l11 = line(11)
     const r = normaliseCodexRateLimits(l11.payload.rate_limits, 'rollout', Date.parse(l11.timestamp))!
     const r8 = normaliseCodexRateLimits(line(8).payload.rate_limits, 'rollout', AT)!
-    expect(r.limits).toEqual(r8.limits)
+    const windows = (x: typeof r) => x.limits.map((l) => ({ ...l, readingAt: 0 }))
+    expect(windows(r)).toEqual(windows(r8))
+    expect(r.limits[0].readingAt).toBe(Date.parse(l11.timestamp))
     expect(r.planType).toBe('plus')
   })
 
@@ -101,7 +105,7 @@ describe('normaliseCodexRateLimits from the app-server read (camelCase)', () => 
     expect(r.limits.map((l) => l.limitId)).toEqual(['codex', 'codex_spark'])
     expect(r.limits[0].primary).toEqual({ windowMinutes: 300, usedPercent: 22, resetsAt: Date.parse('2026-09-27T14:10:00Z') })
     expect(r.limits[1]).toEqual({
-      limitId: 'codex_spark', limitName: 'GPT-5.3-Codex-Spark',
+      limitId: 'codex_spark', limitName: 'GPT-5.3-Codex-Spark', readingAt: NOW,
       primary: { windowMinutes: 300, usedPercent: 4, resetsAt: Date.parse('2026-09-27T15:00:00Z') },
       secondary: null,
     })
@@ -118,6 +122,31 @@ describe('normaliseCodexRateLimits from the app-server read (camelCase)', () => 
   it('reads the single snapshot when the per-limit map is null (0.153.4 allows it)', () => {
     const r = normaliseCodexRateLimits({ ...result, rateLimitsByLimitId: null }, 'app-server', NOW, NOW)!
     expect(r.limits.map((l) => l.limitId)).toEqual(['codex'])
+  })
+
+  // Review Q1: a per-limit entry never stands in for the default limit.
+  const main = { limitId: 'codex', primary: window(22, 300, '2026-09-27T14:10:00Z'), planType: 'pro' }
+  const shown = (r: ReturnType<typeof normaliseCodexRateLimits>) => r!.limits.map((l) => [l.limitId, l.primary?.usedPercent])
+
+  it('a per-limit entry with no id of its own takes its key, never the default limit\'s', () => {
+    const r = normaliseCodexRateLimits({ rateLimits: main, rateLimitsByLimitId: { codex_spark: { limitId: null, primary: window(90, 300, '2026-09-27T15:00:00Z') } } }, 'app-server', NOW, NOW)
+    expect(shown(r)).toEqual([['codex', 22], ['codex_spark', 90]])
+    expect(readingToBuckets(r).find((b) => b.label === '5h')!.percent).toBe(22)
+    expect(withAllowance({ sessionId: 's' }, r).rateLimitCurrent).toBe(22)
+  })
+
+  it('a per-limit entry whose own id is not its key is dropped', () => {
+    const r = normaliseCodexRateLimits({ rateLimits: main, rateLimitsByLimitId: { codex_spark: { limitId: 'codex', primary: window(90, 300, '2026-09-27T15:00:00Z'), planType: 'free' } } }, 'app-server', NOW, NOW)
+    expect(shown(r)).toEqual([['codex', 22]])
+    expect(r!.planType).toBe('pro')
+  })
+
+  it('a "__proto__" key in the per-limit map is dropped', () => {
+    const raw = JSON.parse(`{"rateLimits":${JSON.stringify(main)},"rateLimitsByLimitId":{"__proto__":{"primary":{"usedPercent":90,"windowDurationMins":300}}}}`)
+    expect(Object.keys(raw.rateLimitsByLimitId)).toEqual(['__proto__'])
+    expect(shown(normaliseCodexRateLimits(raw, 'app-server', NOW, NOW))).toEqual([['codex', 22]])
+    const named = JSON.parse(`{"rateLimits":${JSON.stringify(main)},"rateLimitsByLimitId":{"__proto__":{"limitId":"__proto__","primary":{"usedPercent":90,"windowDurationMins":300}}}}`)
+    expect(shown(normaliseCodexRateLimits(named, 'app-server', NOW, NOW))).toEqual([['codex', 22]])
   })
 
   it('is null for an answer without rateLimits', () => {
@@ -210,8 +239,6 @@ describe('normaliseCodexRateLimits rejects hostile or broken input', () => {
     const proto = { limit_id: DEFAULT_ID, plan_type: 'pro', primary: { used_percent: 10, window_minutes: 300 } }
     const inherited = Object.create(proto) as Record<string, unknown>
     expect(normaliseCodexRateLimits(inherited, 'rollout', AT)).toBeNull()
-    const parsed = JSON.parse('{"__proto__":{"plan_type":"pro"},"primary":{"used_percent":10,"window_minutes":300}}')
-    expect(normaliseCodexRateLimits(parsed, 'rollout', AT)!.planType).toBeNull()
     // A polluted Object.prototype must not supply a field either.
     Object.defineProperty(Object.prototype, 'plan_type', { value: 'pro', configurable: true, enumerable: false })
     try {
@@ -219,6 +246,36 @@ describe('normaliseCodexRateLimits rejects hostile or broken input', () => {
     } finally {
       delete (Object.prototype as Record<string, unknown>).plan_type
     }
+  })
+
+  // Review Q5: the classic JSON "__proto__" attack. A payload's "__proto__"
+  // key, copied by a naive merge elsewhere in the process, lands on
+  // Object.prototype itself; only own-property reads keep it out of a reading.
+  it('a JSON "__proto__" payload merged naively elsewhere never supplies a field', () => {
+    const payload = JSON.parse('{"__proto__":{"plan_type":"pro","limit_id":"codex_polluted"}}') as Record<string, Record<string, unknown>>
+    const naive: Record<string, Record<string, unknown>> = {}
+    try {
+      for (const k of Object.keys(payload)) for (const [kk, v] of Object.entries(payload[k])) naive[k][kk] = v
+      expect(({} as Record<string, unknown>).plan_type).toBe('pro')
+      const r = normaliseCodexRateLimits({ primary: { used_percent: 10, window_minutes: 300 } }, 'rollout', AT)!
+      expect(r.planType).toBeNull()
+      expect(r.limits[0].limitId).toBe(CODEX_DEFAULT_LIMIT_ID)
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).plan_type
+      delete (Object.prototype as Record<string, unknown>).limit_id
+    }
+  })
+
+  // Review Q2: a reading time at the very edge of the Date range must not let
+  // a reset time past it through (toISOString would throw on it).
+  it('keeps a reset time only inside the Date range, whatever the reading time', () => {
+    const edge = 8.64e15
+    const r = normaliseCodexRateLimits({ limit_id: 'codex_x', primary: { used_percent: 5, window_minutes: 300, resets_at: edge / 1000 + 3600 } }, 'rollout', edge)!
+    expect(r.limits[0].primary!.resetsAt).toBeNull()
+    expect(() => readingToBuckets(r)).not.toThrow()
+    expect(() => withAllowance({ sessionId: 's' }, r)).not.toThrow()
+    const beyond = normaliseCodexRateLimits({ limit_id: DEFAULT_ID, primary: { used_percent: 5, window_minutes: 300 } }, 'rollout', edge + 1)!
+    expect(beyond.readingAt).toBeNull()
   })
 
   it('reads plain objects only: an array carrying snapshot fields is refused', () => {
@@ -240,14 +297,25 @@ describe('normaliseCodexRateLimits rejects hostile or broken input', () => {
 describe('mergeAllowanceReadings (the latest snapshot per limit)', () => {
   const snap = (id: string, pct: number, plan: string | null = 'plus') => ({ limit_id: id, plan_type: plan, primary: { used_percent: pct, window_minutes: 300 } })
 
-  it('keeps the newest reading of each limit and the newest reading time', () => {
+  it('keeps the newest reading of each limit, each with its own time; the reading as a whole is as old as its oldest limit', () => {
     const a = normaliseCodexRateLimits(snap('codex', 10), 'rollout', AT)
     const b = normaliseCodexRateLimits(snap('codex_spark', 3), 'rollout', AT + 1000)
     const c = normaliseCodexRateLimits(snap('codex', 12, null), 'rollout', AT + 2000)
     const m = mergeAllowanceReadings([a, b, c])!
-    expect(m.limits.map((l) => [l.limitId, l.primary!.usedPercent])).toEqual([['codex', 12], ['codex_spark', 3]])
-    expect(m.readingAt).toBe(AT + 2000)
+    expect(m.limits.map((l) => [l.limitId, l.primary!.usedPercent, l.readingAt])).toEqual([['codex', 12, AT + 2000], ['codex_spark', 3, AT + 1000]])
+    expect(m.readingAt).toBe(AT + 1000)
     expect(m.planType).toBe('plus')
+  })
+
+  // Review Q3: after a switch to another model's limit, the default figure
+  // does not borrow the newer limit's time.
+  it('a default figure left behind by a switch to another limit keeps its own, older time', () => {
+    const before = normaliseCodexRateLimits(snap('codex', 40), 'rollout', AT)
+    const after = normaliseCodexRateLimits(snap('codex_spark', 2), 'rollout', AT + 3 * 3_600_000)
+    const m = mergeAllowanceReadings([before, after])!
+    expect(m.limits.find((l) => l.limitId === 'codex')!.readingAt).toBe(AT)
+    expect(m.readingAt).toBe(AT)
+    expect(withAllowance({ sessionId: 's' }, m).rateLimitsAt).toBe(AT)
   })
 
   it('is null when there is nothing to merge', () => {

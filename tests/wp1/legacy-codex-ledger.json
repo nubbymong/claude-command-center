@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "b2deb11033ea4a5fee5970dd978d927ff3d6e44eeaeade7b14df80910f8eb215",
-  "manifestHead": "93d81811e0f6db6a94203436f1632e020ac92a96",
+  "manifestHead": "3c515a22ee3794c71c4fc26a8ce5e3e3fff284d3",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -191,7 +191,7 @@
       ],
       "category": "DOCS",
       "disposition": "added",
-      "evidence": "WP2 P2 (owner decision 2026-09-26, P1): the tracked 2.1.1 Codex parity checklist the owner decisions name as the release-wide list; one row per shared Conductor feature with its Mocked, Real CLI and Packaged evidence kept apart, mapping each row to its test or record; no Codex code path (WP1.70); docs/wp1/owner-decisions-2026-09-26.md",
+      "evidence": "WP2 P2 (owner decision 2026-09-26, P1): the tracked 2.1.1 Codex parity checklist the owner decisions name as the release-wide list; one row per shared Conductor feature with its Mocked, Real CLI and Packaged evidence kept apart, mapping each row to its test or record; no Codex code path (WP1.70); docs/wp1/owner-decisions-2026-09-26.md; WP2 P3 usage track, MP1/MP2 review fixes: row 18 says what MP2 finished and what MP6 and MP8 still owe (WP1.70); docs/wp1/owner-decisions-2026-09-27.md",
       "note": "release checklist text, not a user-facing claim"
     },
     {
@@ -899,7 +899,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "added",
-      "evidence": "WP2 P3 usage track MP2 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): one validated allowance reading from a rollout rate_limits or the app-server account/rateLimits/read result (ADR-022), and the usage buckets drawn from it; own properties of plain objects only, percentages clamped, window lengths, reset times, plan, limit id and name bounded, 16 guard mutants red (WP1.68 rollout telemetry); tests/unit/providers/codex/rate-limits.test.ts",
+      "evidence": "WP2 P3 usage track MP2 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): one validated allowance reading from a rollout rate_limits or the app-server account/rateLimits/read result (ADR-022), and the usage buckets drawn from it; own properties of plain objects only, percentages clamped, window lengths, reset times, plan, limit id and name bounded, 16 guard mutants red (WP1.68 rollout telemetry); tests/unit/providers/codex/rate-limits.test.ts; WP2 P3 usage track, MP1/MP2 review fixes: a per-limit map entry takes its key as its id and is dropped when its own id differs, a reserved name is never an id, reset and reading times stay inside the Date range, and each limit keeps its own reading time (WP1.68); tests/unit/providers/codex/rate-limits.test.ts",
       "note": "new module; parsing only, no process, no file read"
     },
     {
@@ -978,7 +978,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "replace",
-      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): watchAndClaimRollout hands the validated allowance to an optional recorder, whose throw never stops the watch (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
+      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): watchAndClaimRollout hands the validated allowance to an optional recorder, whose throw never stops the watch (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track, MP1/MP2 review fixes: the token mapper no longer copies raw rate limits (the fields come only from the validated allowance), and an event at the edge of the Date range no longer stops the status line (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
       "note": "watchAndClaimRollout takes the sessions directory of the launch binding realm instead of getCodexHome(); parsing and claim logic unchanged; MP2 rebuilt the rate-limit contract (replace): parsing of token usage, the claim and the realm rule unchanged",
       "adaptsTests": [
         "tests/unit/providers/codex/telemetry.test.ts"
@@ -3344,7 +3344,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 P3 usage track MP2 test (tests/unit/providers/codex/rate-limits.test.ts): fixture lines 8 (info null) and 11, the camelCase app-server shape checked against the committed 0.153.4, 0.155.1 and 0.157.1 schema excerpts, missing and hostile fields, several limits, and the bucket keys and labels (WP1.68, WP1.71)",
+      "evidence": "new WP2 P3 usage track MP2 test (tests/unit/providers/codex/rate-limits.test.ts): fixture lines 8 (info null) and 11, the camelCase app-server shape checked against the committed 0.153.4, 0.155.1 and 0.157.1 schema excerpts, missing and hostile fields, several limits, and the bucket keys and labels (WP1.68, WP1.71); WP2 P3 usage track, MP1/MP2 review fixes: cases for the map key fallback, a mismatched id, the __proto__ key, the Date edge, per-limit times and a JSON __proto__ pollution (WP1.68); tests/unit/providers/codex/rate-limits.test.ts",
       "note": "host-safe: pure functions, no process"
     },
     {
@@ -3382,7 +3382,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.68: every watch is handed its realm sessions folder (the auth-module mock is gone with the module, WP2 commit 6g); a watch with no folder reads nothing even with CODEX_HOME pointing at a matching transcript; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: new cases for the allowance from the fixture and from an info-null-only rollout, the pre-response update, the allowance kept when the newest event has none, several limits, validated legacy fields, an out-of-range reset time, no usage fields without rate limits, and no-reading once at the 30 s give-up only (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the session records its allowance by its sessions folder only, and a throwing recorder never stops the updates (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
+      "evidence": "WP1.58/WP1.68: every watch is handed its realm sessions folder (the auth-module mock is gone with the module, WP2 commit 6g); a watch with no folder reads nothing even with CODEX_HOME pointing at a matching transcript; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: new cases for the allowance from the fixture and from an info-null-only rollout, the pre-response update, the allowance kept when the newest event has none, several limits, validated legacy fields, an out-of-range reset time, no usage fields without rate limits, and no-reading once at the 30 s give-up only (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the session records its allowance by its sessions folder only, and a throwing recorder never stops the updates (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track, MP1/MP2 review fixes: the rate-limit field and NaN-guard cases now go through the allowance, plus the Date-edge case (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
       "note": ""
     },
     {
@@ -4233,7 +4233,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.33 mapping: adapted in place for the WP2 reconfirm (owner decision 2026-09-26, U3: every surface reads not set up): the codex-review count case now saves Codex on (the added P05 hits are its codexEnabled seed helper) and asserts the session id it asks for; a new case pins that an unanswered Codex never asks for the count; the other cases are unchanged (WP1.58); tests/unit/renderer/session-status-strip.test.ts; listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "WP1.33 mapping: adapted in place for the WP2 reconfirm (owner decision 2026-09-26, U3: every surface reads not set up): the codex-review count case now saves Codex on (the added P05 hits are its codexEnabled seed helper) and asserts the session id it asks for; a new case pins that an unanswered Codex never asks for the count; the other cases are unchanged (WP1.58); tests/unit/renderer/session-status-strip.test.ts; listed in docs/wp1/baseline-test-inventory.json; WP2 P3 usage track, MP1/MP2 review fixes: a Codex session's meters read 5h, Weekly and one per separate limit, never 7d (WP1.68); tests/unit/renderer/session-status-strip.test.ts",
       "note": ""
     },
     {
