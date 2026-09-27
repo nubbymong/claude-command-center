@@ -24,6 +24,7 @@ import {
   providerAccountActions, providerView, identityOf, linkedAccounts, linkedAccountLabel, linkCandidates, canLinkIdentity, accountDisplayName,
 } from '../../../stores/providerAccountsStore'
 import { ProviderMark } from '../../sidebar/Badges'
+import { DIALOG_INPUT_STYLE } from '../../ui/Dialog'
 import { ErrorLine, RowButton } from './accounts-ui'
 
 const GAP = 6
@@ -100,8 +101,9 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
   const colourKey = (registry ? identity!.colourKey : legacy?.colourKey) as IdentityColorKey | undefined
   const title = registry ? accountDisplayName(snapshot, account!) : (legacy?.name || 'Account')
 
-  // Placed from the chip once rendered (its height decides above or below).
-  useLayoutEffect(() => {
+  // Placed from the chip once rendered (its height decides above or below),
+  // and again whenever the page moves under it.
+  const place = useCallback(() => {
     const a = anchor.current?.getBoundingClientRect()
     const panel = panelRef.current
     if (!a || !panel) return
@@ -111,6 +113,7 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
     const top = below + h <= window.innerHeight || a.top - GAP - h < 0 ? below : a.top - GAP - h
     setPos({ top, left: Math.max(0, Math.min(a.left, window.innerWidth - w)) })
   }, [anchor])
+  useLayoutEffect(() => { place() }, [place])
 
   useLayoutEffect(() => {
     if (!pos) return
@@ -133,24 +136,33 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
     }
-    // Placed from the chip: once the page moves, it would float off it (as RowMenu closes).
-    // (A scroll of the window itself has no node target: it closes it too.)
+    // A user scrolling elsewhere (the wheel, a touch drag) closes it, as the
+    // row menu closes. A scroll with no user behind it -- the page shifting
+    // because this editor's own Link or Unlink added or removed a line --
+    // keeps it on its chip: it is placed again from the chip.
+    const outside = (e: Event) => !(e.target instanceof Node && panelRef.current?.contains(e.target))
+    const onUserScroll = (e: Event) => { if (outside(e)) leave() }
     const onScroll = (e: Event) => {
-      const t = e.target
-      if (t instanceof Node && panelRef.current?.contains(t)) return
-      leave()
+      if (!outside(e)) return
+      const chip = anchor.current
+      if (!chip || !chip.isConnected) { leave(); return }
+      place()
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey, true)
     window.addEventListener('resize', leave)
     window.addEventListener('scroll', onScroll, true)
+    document.addEventListener('wheel', onUserScroll, { capture: true, passive: true })
+    document.addEventListener('touchmove', onUserScroll, { capture: true, passive: true })
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey, true)
       window.removeEventListener('resize', leave)
       window.removeEventListener('scroll', onScroll, true)
+      document.removeEventListener('wheel', onUserScroll, { capture: true })
+      document.removeEventListener('touchmove', onUserScroll, { capture: true })
     }
-  }, [onClose, close, anchor])
+  }, [onClose, close, anchor, place])
 
   const run = async (op: () => Promise<string | null>) => {
     setBusy(true)
@@ -172,7 +184,7 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
     void run(async () => {
       if (!registry) return legacy ? legacy.rename(next) : null
       const r = await providerAccountActions.updateIdentity({ identityId: identity!.id, friendlyName: next || null })
-      if (!r.ok) { setName(identity!.friendlyName ?? ''); committed.current = identity!.friendlyName ?? ''; return r.message }
+      if (!r.ok) { setName(identity!.friendlyName ?? ''); committed.current = identity!.friendlyName ?? ''; return plain(r) }
       await refreshClaudeProfiles(snapshot, identity!.id)
       return null
     })
@@ -216,7 +228,7 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
   const unlink = (other: AccountView) => {
     void run(async () => {
       const r = await providerAccountActions.unlinkIdentity(other.id)
-      if (!r.ok) return r.message
+      if (!r.ok) return plain(r, other)
       await refreshClaudeProfiles(snapshot, identity!.id)
       return null
     })
@@ -227,7 +239,7 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
     if (!other) return
     void run(async () => {
       const r = await providerAccountActions.linkIdentity(other.id, identity!.id)
-      if (!r.ok) return r.message
+      if (!r.ok) return plain(r, other)
       setLinkId('')
       // The account linked here now shows this identity's colour: a Claude
       // one's email-keyed setting follows (the snapshot in hand predates the link).
@@ -240,6 +252,13 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
   }
 
   const providerName = (a: AccountView) => providerView(snapshot, a.providerId)?.displayName ?? a.providerId
+  /** Main's refusal, in the editor's words where main's are a rule's. */
+  const plain = (r: { code: string; message: string }, other?: AccountView): string => {
+    if (r.code === 'legacy-owned' && other) return `This identity already has a ${providerName(other)} account.`
+    if (r.code === 'legacy-owned') return 'This account needs a name. Type one instead of clearing it.'
+    if (r.code === 'not-linkable') return "This computer's own sign-in keeps its own identity."
+    return r.message
+  }
   const linked = registry ? linkedAccounts(snapshot, account!) : []
   const candidates = registry ? linkCandidates(snapshot, account!) : []
   const groups = registry ? [...(snapshot?.groups ?? [])].sort((a, b) => a.order - b.order) : []
@@ -273,7 +292,8 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
             maxLength={120}
             placeholder="A name you will recognise"
             disabled={busy}
-            className="w-full bg-crust/60 border border-surface0/80 rounded-lg px-2.5 py-1 text-[12.5px] text-text focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
+            className="w-full h-8 px-2.5 rounded-lg border text-[12.5px] focus-ring-strong transition-colors"
+            style={DIALOG_INPUT_STYLE}
             data-testid={`${testId}-name`}
           />
         </label>
@@ -316,7 +336,8 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
               onChange={(e) => pickGroup(e.target.value)}
               disabled={busy}
               aria-label="Group"
-              className="w-full bg-crust/60 border border-surface0/80 rounded-lg px-2.5 py-1 text-[12.5px] text-text focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
+              className="w-full h-8 px-2.5 rounded-lg border text-[12.5px] focus-ring-strong transition-colors"
+            style={DIALOG_INPUT_STYLE}
               data-testid={`${testId}-group`}
             >
               <option value="">None</option>
@@ -332,7 +353,8 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
                   maxLength={60}
                   placeholder="Group name"
                   aria-label="New group name"
-                  className="w-full bg-crust/60 border border-surface0/80 rounded-lg px-2.5 py-1 text-[12.5px] text-text focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
+                  className="w-full h-8 px-2.5 rounded-lg border text-[12.5px] focus-ring-strong transition-colors"
+            style={DIALOG_INPUT_STYLE}
                   data-testid={`${testId}-new-group`}
                 />
                 <RowButton onClick={addGroup} disabled={busy || !newGroup.trim()} testId={`${testId}-add-group`}>Add</RowButton>
@@ -362,7 +384,8 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
                 onChange={(e) => setLinkId(e.target.value)}
                 disabled={busy}
                 aria-label="Link another account"
-                className="w-full bg-crust/60 border border-surface0/80 rounded-lg px-2.5 py-1 text-[12.5px] text-text focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
+                className="w-full h-8 px-2.5 rounded-lg border text-[12.5px] focus-ring-strong transition-colors"
+            style={DIALOG_INPUT_STYLE}
                 data-testid={`${testId}-link-select`}
               >
                 <option value="">Link another account</option>

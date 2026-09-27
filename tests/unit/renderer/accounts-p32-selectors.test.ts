@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { AccountsSnapshot, AccountView } from '../../../src/shared/providers'
 import {
   claudeSessionsOnProfile, blockerSessions, sessionTitle, selectArchivedAccounts, canOfferRestore, linkedAccounts, linkCandidates,
-  linkedAccountLabel, canLinkIdentity,
+  linkedAccountLabel, canLinkIdentity, accountDisplayName,
 } from '../../../src/renderer/stores/providerAccountsStore'
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
 import { goToSession, listenGoToSession, GO_TO_SESSION_EVENT } from '../../../src/renderer/lib/goToSession'
@@ -88,7 +88,8 @@ describe('linking', () => {
   const other = account({ id: 'o', providerId: 'claude', identityId: 'id-b' })
   const ext = account({ id: 'x', providerId: 'codex', identityId: 'id-x', external: true, unverified: true })
   const unv = account({ id: 'u', providerId: 'codex', identityId: 'id-u', unverified: true })
-  const snap = snapshot([work, claudeWork, archivedTwin, other, ext, unv])
+  const lone = account({ id: 'w2', providerId: 'codex', identityId: 'id-c' })
+  const snap = snapshot([work, claudeWork, archivedTwin, other, ext, unv, lone])
 
   it('the linked accounts are the live ones on the same identity', () => {
     expect(linkedAccounts(snap, work).map((a) => a.id)).toEqual(['cw'])
@@ -96,12 +97,28 @@ describe('linking', () => {
     expect(linkedAccountLabel(snap, work)).toBe('A')
   })
 
-  it('candidates are live, vouched-for accounts on another identity; an unverified sign-in links nothing', () => {
-    expect(linkCandidates(snap, work).map((a) => a.id)).toEqual(['o'])
+  it('candidates are live, vouched-for accounts of another provider with none on this identity yet; an unverified sign-in links nothing', () => {
+    // work's identity already has a Claude account (cw): no other Claude account is offered.
+    expect(linkCandidates(snap, work).map((a) => a.id)).toEqual([])
+    // o's identity has only o (Claude): an unlinked Codex account is offered;
+    // w is already linked with a Claude account (cw) and stays there.
+    expect(linkCandidates(snap, other).map((a) => a.id)).toEqual(['w2'])
     expect(linkCandidates(snap, ext)).toEqual([])
     expect(linkCandidates(snap, unv)).toEqual([])
     expect(canLinkIdentity(ext)).toBe(false)
     expect(canLinkIdentity(work)).toBe(true)
+  })
+
+  it('a provider that is off offers nothing to link (VM finding 3)', () => {
+    const off = { ...snap, providers: [{ providerId: 'codex', enabled: false } as never] }
+    expect(linkCandidates(off, other)).toEqual([])
+  })
+
+  it('an account with no name or label on an unnamed identity takes a linked account\'s label, not "Unnamed account" (VM finding 3)', () => {
+    const noName = { ...snapshot([account({ id: 'r', providerId: 'codex', identityId: 'id-z' }), account({ id: 'al', providerId: 'claude', identityId: 'id-z', providerLabel: 'alex@example.com' })]), identities: [{ id: 'id-z', colourKey: 'pink' }] }
+    expect(accountDisplayName(noName, noName.accounts[0])).toBe('alex@example.com')
+    const alone = { ...snapshot([account({ id: 'r', providerId: 'codex', identityId: 'id-z' })]), identities: [{ id: 'id-z', colourKey: 'pink' }] }
+    expect(accountDisplayName(alone, alone.accounts[0])).toBe('Unnamed account')
   })
 })
 
