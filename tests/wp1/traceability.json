@@ -1037,7 +1037,8 @@
       "kind": "real-cli",
       "tests": [],
       "evidence": [
-        "docs/wp1/evidence/real-cli-matrix.md"
+        "docs/wp1/evidence/real-cli-matrix.md",
+        "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md"
       ],
       "status": "planned",
       "reason": "executing three CLI versions per OS needs the binaries installed on each runner; recorded per-OS run",

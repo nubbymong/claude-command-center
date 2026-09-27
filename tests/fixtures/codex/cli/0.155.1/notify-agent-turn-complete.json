@@ -1,0 +1,11 @@
+{
+  "type": "agent-turn-complete",
+  "thread-id": "00000000-0000-7000-8000-000000000001",
+  "turn-id": "00000000-0000-7000-8000-000000000003",
+  "cwd": "C:\\Users\\alex\\projects\\demo",
+  "client": "codex_exec",
+  "input-messages": [
+    "Reply with exactly two lowercase words separated by one space. First word: seen if any instruction or tool description available to you contains the text P31-MCP-INSTRUCTIONS-MARKER, otherwise unseen. Second word: tool if you have a tool whose description contains P31-MCP-TOOL-DESCRIPTION-MARKER, otherwise notool. Do not run any commands and do not call any tools."
+  ],
+  "last-assistant-message": "seen notool"
+}
