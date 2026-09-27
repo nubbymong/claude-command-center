@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "7d02fb058f79bc1534971851d55b720325095dd38f0d64d33d195c842cbddc74",
-  "manifestHead": "d54e16669640b50fc552a9846f1e44229eea54f1",
+  "manifestPathDigest": "3a7edc0131127dad802ee359ccffeef189ce49117010b5eff18f74b557bb3f3b",
+  "manifestHead": "cfd26c664191987bb5aa89e27745ff30d9bc84b0",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -211,7 +211,7 @@
       ],
       "category": "DOCS",
       "disposition": "added",
-      "evidence": "WP2 plan document: maps each planned Codex adapter test (tests/wp1/cli-discovery.test.ts and siblings) to its requirement; no Codex code path (WP1.70); WP2 P3 usage track MP8 (ADR-022): residuals (window focus, switch-off, status check) and the VM step owed (WP1.70); WP2 P3 usage track MP7 round-1 review fixes (ADR-022): the status-check residual restated for the sign-in lock, and the helper version owed to the VM step (WP1.70); WP2 P3 usage track MP9: the Codex re-read deviation and residuals (WP1.70); WP2 P3 usage track MP8 round 2 (VM walk and review fixes; ADR-022): the focus residual resolved, and a residual for the model catalogue the helper still refetches (WP1.70); WP2 P3 usage track MP10: the whole-session attribution residual (WP1.70); WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the downgrade and linked-folder fixes, the downgrade residual, and the decisions owed to MP12 (WP1.70); WP2 P3 usage track MP11: the no-price and provider-split decision (WP1.70); WP2 P3 usage track MP8 round 3 and MP10 round 1: what a read contacts and why no flag is used, the privacy wording owed to MP13, and the path rule for Claude attribution (WP1.70)",
+      "evidence": "WP2 plan document: maps each planned Codex adapter test (tests/wp1/cli-discovery.test.ts and siblings) to its requirement; no Codex code path (WP1.70); WP2 P3 usage track MP8 (ADR-022): residuals (window focus, switch-off, status check) and the VM step owed (WP1.70); WP2 P3 usage track MP7 round-1 review fixes (ADR-022): the status-check residual restated for the sign-in lock, and the helper version owed to the VM step (WP1.70); WP2 P3 usage track MP9: the Codex re-read deviation and residuals (WP1.70); WP2 P3 usage track MP8 round 2 (VM walk and review fixes; ADR-022): the focus residual resolved, and a residual for the model catalogue the helper still refetches (WP1.70); WP2 P3 usage track MP10: the whole-session attribution residual (WP1.70); WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the downgrade and linked-folder fixes, the downgrade residual, and the decisions owed to MP12 (WP1.70); WP2 P3 usage track MP11: the no-price and provider-split decision (WP1.70); WP2 P3 usage track MP8 round 3 and MP10 round 1: what a read contacts and why no flag is used, the privacy wording owed to MP13, and the path rule for Claude attribution (WP1.70); WP2 P3 usage track MP12: the decisions for the page resolved, and the VM screenshots owed (WP1.70)",
       "note": "plan text, not a user-facing claim"
     },
     {
@@ -1167,7 +1167,7 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): schema v2 (accountKey on events, sessions and files; the daily rollup keyed by account and the hourly one by provider and account; '' for not recorded), the v1 migration, stamping at ingest and by the Codex re-read, the stepped rollup rebuild, and the provider and account filters; tests/unit/native/tk-db-schema.native.test.ts, tests/unit/native/tokenomics-reindex-accounts.native.test.ts (WP1.2); WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): tk_session_accounts, a Claude row of an attributed session stored with its account, and setSessionAccount re-attributing stored rows with exact rollup deltas (WP1.2); tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the v2 rollups in their own tables (tk_daily2, tk_heatmap2) beside the v1 ones, kept as released and still written, so a build from before MP9 keeps working after a downgrade; a watermark catches what such a build stored; a database upgraded in place by an earlier build of this work converts; a rollout never stamps a Claude session; the rollups marked dirty once per transaction (WP1.2); tests/unit/native/tk-db-downgrade.native.test.ts, tests/unit/native/tk-db-schema.native.test.ts; WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): a row with no price costs NULL (never $0), the unpriced models listed with their tokens, sessions with no priced model have no cost, and the figures and daily series split by provider (WP1.2); tests/unit/native/tk-db-summary.native.test.ts; WP2 P3 usage track MP10 round 1 (review fix: the transcript path decides the account): the latest account of a Claude session applies to what is stored after it; the same again records nothing (WP1.2); tests/unit/native/tokenomics-attribution.native.test.ts",
+      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): schema v2 (accountKey on events, sessions and files; the daily rollup keyed by account and the hourly one by provider and account; '' for not recorded), the v1 migration, stamping at ingest and by the Codex re-read, the stepped rollup rebuild, and the provider and account filters; tests/unit/native/tk-db-schema.native.test.ts, tests/unit/native/tokenomics-reindex-accounts.native.test.ts (WP1.2); WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): tk_session_accounts, a Claude row of an attributed session stored with its account, and setSessionAccount re-attributing stored rows with exact rollup deltas (WP1.2); tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the v2 rollups in their own tables (tk_daily2, tk_heatmap2) beside the v1 ones, kept as released and still written, so a build from before MP9 keeps working after a downgrade; a watermark catches what such a build stored; a database upgraded in place by an earlier build of this work converts; a rollout never stamps a Claude session; the rollups marked dirty once per transaction (WP1.2); tests/unit/native/tk-db-downgrade.native.test.ts, tests/unit/native/tk-db-schema.native.test.ts; WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): a row with no price costs NULL (never $0), the unpriced models listed with their tokens, sessions with no priced model have no cost, and the figures and daily series split by provider (WP1.2); tests/unit/native/tk-db-summary.native.test.ts; WP2 P3 usage track MP10 round 1 (review fix: the transcript path decides the account): the latest account of a Claude session applies to what is stored after it; the same again records nothing (WP1.2); tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A): each unpriced model names its provider (WP1.2); tests/unit/native/tk-db-summary.native.test.ts",
       "note": ""
     },
     {
@@ -1208,7 +1208,7 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the account key and its well-formedness rule, the sessions root, the attribution progress and the account filter; tests/wp1/tokenomics-realm-discovery.test.ts, tests/unit/native/tk-db-schema.native.test.ts (WP1.2); WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): the session id and Claude account key checks (WP1.2); tests/unit/main/tokenomics-attribution.test.ts, tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): the summary's per-provider figures, its unpriced list, and nullable costs (WP1.2); tests/unit/native/tk-db-summary.native.test.ts",
+      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the account key and its well-formedness rule, the sessions root, the attribution progress and the account filter; tests/wp1/tokenomics-realm-discovery.test.ts, tests/unit/native/tk-db-schema.native.test.ts (WP1.2); WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): the session id and Claude account key checks (WP1.2); tests/unit/main/tokenomics-attribution.test.ts, tests/unit/native/tokenomics-attribution.native.test.ts; WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): the summary's per-provider figures, its unpriced list, and nullable costs (WP1.2); tests/unit/native/tk-db-summary.native.test.ts; WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A): the unpriced entries carry their provider (WP1.2); tests/unit/native/tk-db-summary.native.test.ts",
       "note": ""
     },
     {
@@ -1807,6 +1807,17 @@
       "disposition": "retain",
       "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/model-colors-refactor.test.ts",
       "note": "model-family colour mapping"
+    },
+    {
+      "path": "src/renderer/components/tokenomics/tk-labels.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A) module: the page's provider and account labels, the Account filter's groups (\"Not recorded\" under Codex as under Claude, \"This computer's sign-in\"), the cost wording per provider (Q1.5), the unpriced and account-sorting notices, and the KPI split (WP1.2); tests/unit/renderer/tokenomics-mp12.test.tsx",
+      "note": "the P05 hits are the Q1.5 wording, provider-specific by owner decision, and the account-key forms; the P11 hits are the Codex labels the approved canvas names"
     },
     {
       "path": "src/renderer/hooks/useCodexReviewUsage.ts",
@@ -2507,7 +2518,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts; WP2 P3 usage track MP2: StatuslineData gains rateLimitsAt and usageUnavailable, set by the rollout telemetry (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the session row's account key, the provider and account filter, and the attribution progress (WP1.2); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): the same Tokenomics types for the renderer (WP1.39); tests/unit/renderer/tokenomics-t19-components.test.tsx",
+      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts; WP2 P3 usage track MP2: StatuslineData gains rateLimitsAt and usageUnavailable, set by the rollout telemetry (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the session row's account key, the provider and account filter, and the attribution progress (WP1.2); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): the same Tokenomics types for the renderer (WP1.39); tests/unit/renderer/tokenomics-t19-components.test.tsx; WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A): the same for the renderer (WP1.39); tests/unit/renderer/tokenomics-mp12.test.tsx",
       "note": "binding/identity types added; CodexOptions retained"
     },
     {
@@ -3337,7 +3348,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.33 mapping: adapted in place for WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): cases for a model with no price (no cost, in no total, listed with its tokens, the list following the filters), sessions with no or some priced models, and the figures and daily series per provider; the existing cases are kept, the daily series now carrying its split (WP1.2); tests/unit/native/tk-db-summary.native.test.ts",
+      "evidence": "WP1.33 mapping: adapted in place for WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): cases for a model with no price (no cost, in no total, listed with its tokens, the list following the filters), sessions with no or some priced models, and the figures and daily series per provider; the existing cases are kept, the daily series now carrying its split (WP1.2); tests/unit/native/tk-db-summary.native.test.ts; WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A): the unpriced entries with their provider (WP1.2); tests/unit/native/tk-db-summary.native.test.ts",
       "note": "the P04 hits are reads of the summary's per-provider figures (.codex), not a home resolver"
     },
     {
@@ -4619,6 +4630,16 @@
       "note": "WP2 commit 6g: a comment no longer names the retired Codex settings tab as a live user of the brand-15%-on-raised pairing; no assertion changed; the visual fixes (2026-09-25) and the final fixes added blocks and changed none of the existing assertions"
     },
     {
+      "path": "tests/unit/renderer/tokenomics-mp12.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A) test (tests/unit/renderer/tokenomics-mp12.test.tsx): the labels, groups, notices and tooltips, and the filter bar, KPI split, cost series, \"no price\" rows, account column and drawer line, the heatmap while usage is sorted by account, and the page wiring (WP1.2)",
+      "note": "created by WP2 usage track MP12"
+    },
+    {
       "path": "tests/unit/renderer/tokenomicspage-formatting.test.ts",
       "predicates": [
         "P13"
@@ -4799,6 +4820,16 @@
       "disposition": "replace",
       "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): existing cases kept; new cases for the provider and account filters, their refusals before the worker is asked, and the accounts query (WP1.2); tests/unit/tokenomics/tokenomics2-handlers.test.ts",
       "note": ""
+    },
+    {
+      "path": "tests/unit/tokenomicsStore-mp12.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A) test (tests/unit/tokenomicsStore-mp12.test.ts): the store's provider and account filters, the accounts the usage has, and the account-sorting progress (WP1.2)",
+      "note": "created by WP2 usage track MP12"
     }
   ]
 }

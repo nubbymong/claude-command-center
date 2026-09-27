@@ -1,11 +1,34 @@
 import { create } from 'zustand'
-import type { TkSummary, TkSessionRow, TkSessionDetail, TkIndexStatus } from '../../shared/types'
+import type { TkSummary, TkSessionRow, TkSessionDetail, TkIndexStatus, TkAccountPresent, TkProvider, TkSummaryFilter } from '../../shared/types'
 
 export type TkRange = '7d' | '30d' | 'all'
-export interface TkUiFilter { configId?: string | null; range: TkRange; model?: string; search?: string }
+/** Usage track MP12: `provider` (only when both have data) and `account`
+ *  (an account under its provider: "Not recorded" is '' under either). */
+export interface TkUiFilter {
+  configId?: string | null
+  range: TkRange
+  model?: string
+  search?: string
+  provider?: TkProvider
+  account?: { provider: TkProvider; key: string }
+}
+
+/** The query a filter makes (MP12): an account's provider comes with it. */
+export function tkQueryFilter(filter: TkUiFilter, now: number): TkSummaryFilter {
+  const provider = filter.provider ?? filter.account?.provider
+  return {
+    ...(filter.configId !== undefined ? { configId: filter.configId } : {}),
+    ...(filter.model ? { model: filter.model } : {}),
+    ...(provider ? { provider } : {}),
+    ...(filter.account ? { accountKey: filter.account.key } : {}),
+    ...rangeToWindow(filter.range, now),
+  }
+}
 
 interface TokenomicsState {
   summary: TkSummary | null
+  /** MP12: the providers and accounts the stored usage has. */
+  accounts: TkAccountPresent[]
   sessions: TkSessionRow[]
   nextCursor: { lastTs: number; sessionId: string } | null
   indexStatus: TkIndexStatus | null
@@ -24,6 +47,10 @@ interface TokenomicsState {
   refresh: () => Promise<void>
   refreshIndexStatus: () => Promise<void>
   setConfig: (configId: string | null | undefined) => void
+  /** MP12: one provider, or all (an account under the other is let go). */
+  setProvider: (provider: TkProvider | undefined) => void
+  /** MP12: one account under its provider, or all. */
+  setAccount: (account: { provider: TkProvider; key: string } | undefined) => void
   setRange: (range: TkRange) => void
   setSearch: (search: string) => void
   loadMore: () => Promise<void>
@@ -41,6 +68,7 @@ function rangeToWindow(range: TkRange, now: number): { from?: number } {
 
 export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
   summary: null,
+  accounts: [],
   sessions: [],
   nextCursor: null,
   indexStatus: null,
@@ -76,8 +104,9 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
     // Subscribe to progress events — update filesDone/filesTotal
     const unsubProgress = tk.onIndexProgress((p) => {
       set((s) => ({
+        // MP12: the one-off attribution's progress rides the progress events.
         indexStatus: s.indexStatus
-          ? { ...s.indexStatus, filesDone: p.filesDone, filesTotal: p.filesTotal }
+          ? { ...s.indexStatus, filesDone: p.filesDone, filesTotal: p.filesTotal, accountReread: p.accountReread ?? null }
           : s.indexStatus,
       }))
     })
@@ -123,22 +152,21 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
     const { filter } = get()
     const tk = window.electronAPI.tokenomics
 
-    const base = {
-      ...(filter.configId !== undefined ? { configId: filter.configId } : {}),
-      ...(filter.model ? { model: filter.model } : {}),
-      ...rangeToWindow(filter.range, Date.now()),
-    }
+    const base = tkQueryFilter(filter, Date.now())
 
     set({ loadingSummary: true, loadingSessions: true, error: null })
 
     try {
-      const [summary, page] = await Promise.all([
+      const [summary, page, accounts] = await Promise.all([
         tk.summary(base),
         tk.sessions({ ...base, search: filter.search, limit: 50 }),
+        // The filters' choices; an answer lost keeps the last ones.
+        (tk.accounts ? tk.accounts() : Promise.resolve([] as TkAccountPresent[])).catch(() => get().accounts),
       ])
 
       set({
         summary,
+        accounts: Array.isArray(accounts) ? accounts : [],
         sessions: page.rows,
         nextCursor: page.nextCursor,
         loadingSummary: false,
@@ -162,6 +190,22 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
     get().refresh()
   },
 
+  setProvider: (provider) => {
+    set((s) => ({
+      filter: {
+        ...s.filter,
+        provider,
+        account: provider && s.filter.account && s.filter.account.provider !== provider ? undefined : s.filter.account,
+      },
+    }))
+    get().refresh()
+  },
+
+  setAccount: (account) => {
+    set((s) => ({ filter: { ...s.filter, account } }))
+    get().refresh()
+  },
+
   setRange: (range) => {
     set((s) => ({ filter: { ...s.filter, range } }))
     get().refresh()
@@ -178,11 +222,7 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
 
     const tk = window.electronAPI.tokenomics
 
-    const base = {
-      ...(filter.configId !== undefined ? { configId: filter.configId } : {}),
-      ...(filter.model ? { model: filter.model } : {}),
-      ...rangeToWindow(filter.range, Date.now()),
-    }
+    const base = tkQueryFilter(filter, Date.now())
 
     try {
       const page = await tk.sessions({

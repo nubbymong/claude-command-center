@@ -3,6 +3,8 @@ import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkSessionDetail } from '../../../shared/types'
 import { getModelColor, getModelShort } from './modelColors'
 import { isContextMenuGesture } from '../../lib/pointer'
+import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
+import { tkAccountLabel, tkCostTooltip, TK_PROVIDER_LABEL } from './tk-labels'
 import { scrim } from '../ui/Dialog'
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
@@ -45,6 +47,7 @@ function DrawerContent({
   detail: TkSessionDetail
   onClose: () => void
 }) {
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const projectShort = detail.projectDir
     ? detail.projectDir.split(/[/\\]/).slice(-2).join('/')
     : null
@@ -112,7 +115,9 @@ function DrawerContent({
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <span style={{ color: 'var(--text-muted)' }}>Provider</span>
-            <span className="capitalize" style={{ color: 'var(--text-secondary)' }}>{detail.provider}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{TK_PROVIDER_LABEL[detail.provider] ?? detail.provider}</span>
+            <span style={{ color: 'var(--text-muted)' }}>Account</span>
+            <span style={{ color: 'var(--text-secondary)' }} data-testid="tk-detail-account">{tkAccountLabel(snapshot, detail.accountKey ?? '')}</span>
             <span style={{ color: 'var(--text-muted)' }}>First</span>
             <span style={{ color: 'var(--text-secondary)' }}>{formatTs(detail.firstTs)}</span>
             <span style={{ color: 'var(--text-muted)' }}>Last</span>
@@ -130,7 +135,7 @@ function DrawerContent({
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
             <span style={{ color: 'var(--text-muted)' }}>Cost</span>
-            <span className="font-mono" style={{ color: 'var(--status-warning)' }}>{formatCost(detail.costUsd)}</span>
+            <span className="font-mono" style={{ color: detail.costUsd === null ? 'var(--text-muted)' : 'var(--status-warning)' }} title={tkCostTooltip(detail.provider, detail.accountKey ?? '', snapshot, detail.costUsd)}>{formatCost(detail.costUsd)}</span>
             <span style={{ color: 'var(--text-muted)' }}>Input</span>
             <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{formatTokensCompact(detail.inTok)}</span>
             <span style={{ color: 'var(--text-muted)' }}>Output</span>

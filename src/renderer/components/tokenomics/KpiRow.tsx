@@ -1,5 +1,6 @@
 import React from 'react'
-import type { TkSummary } from '../../../shared/types'
+import type { TkSummary, TkKpis, TkProvider } from '../../../shared/types'
+import { TK_PROVIDER_LABEL, TK_PROVIDER_COLOR } from './tk-labels'
 
 function formatCostKpi(usd: number): string {
   if (usd >= 1000) return `$${(usd / 1000).toFixed(1)}k`
@@ -8,11 +9,47 @@ function formatCostKpi(usd: number): string {
   return `$${usd.toFixed(2)}`
 }
 
-interface Props {
-  kpis: TkSummary['kpis']
+/** Usage track MP12 (Q1.4): each KPI split between the providers, shown
+ *  when both have usage in these figures. `noPrice`: providers whose usage
+ *  here has no price at all (their segment reads "no price", never $0). */
+export interface TkKpiSplit {
+  byProvider: TkSummary['kpisByProvider']
+  providers: TkProvider[]
+  noPrice: TkProvider[]
 }
 
-export function KpiRow({ kpis }: Props) {
+/** A cost KPI's two-segment bar and legend. */
+function CostSplit({ split, pick }: { split: TkKpiSplit; pick: (k: TkKpis) => number }) {
+  const parts = split.providers.map((p) => ({ p, value: pick(split.byProvider[p]) || 0, noPrice: split.noPrice.includes(p) }))
+  const total = parts.reduce((s, x) => s + x.value, 0)
+  return (
+    <div className="mt-2" data-testid="tk-kpi-split">
+      <div className="flex h-1.5 rounded overflow-hidden" style={{ background: 'var(--surface-stage)' }}>
+        {total > 0 && parts.map((x) => x.value > 0 && (
+          <div key={x.p} style={{ width: `${(x.value / total) * 100}%`, background: TK_PROVIDER_COLOR[x.p] }} />
+        ))}
+      </div>
+      <div className="mt-1 space-y-0.5">
+        {parts.map((x) => (
+          <div key={x.p} className="flex items-center gap-1.5 text-[10px]">
+            <span className="rounded-sm shrink-0" style={{ width: 6, height: 6, background: TK_PROVIDER_COLOR[x.p] }} />
+            <span style={{ color: 'var(--text-muted)' }}>{TK_PROVIDER_LABEL[x.p]}</span>
+            <span className="ml-auto font-mono" style={{ color: 'var(--text-secondary)' }}>{x.noPrice ? 'no price' : formatCostKpi(x.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+interface Props {
+  kpis: TkSummary['kpis']
+  /** MP12: the split between providers, when both have usage here. */
+  split?: TkKpiSplit
+}
+
+export function KpiRow({ kpis, split }: Props) {
+  const showSplit = !!split && split.providers.length > 1
   const { lifeToDateCostUsd, last7dCostUsd, prev7dCostUsd, cacheEfficiencyPct, cacheSavingsUsd } = kpis
 
   // Week-over-week delta
@@ -40,6 +77,7 @@ export function KpiRow({ kpis }: Props) {
         <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
           API-equivalent estimate
         </div>
+        {showSplit && <CostSplit split={split!} pick={(k) => k.lifeToDateCostUsd} />}
       </div>
 
       {/* Last 7 days */}
@@ -73,6 +111,7 @@ export function KpiRow({ kpis }: Props) {
         <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
           vs prior 7 days
         </div>
+        {showSplit && <CostSplit split={split!} pick={(k) => k.last7dCostUsd} />}
       </div>
 
       {/* Cache efficiency */}
@@ -89,6 +128,17 @@ export function KpiRow({ kpis }: Props) {
         <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
           {formatCostKpi(cacheSavingsUsd)} saved
         </div>
+        {showSplit && (
+          <div className="mt-2 space-y-0.5" data-testid="tk-kpi-split">
+            {split!.providers.map((p) => (
+              <div key={p} className="flex items-center gap-1.5 text-[10px]">
+                <span className="rounded-sm shrink-0" style={{ width: 6, height: 6, background: TK_PROVIDER_COLOR[p] }} />
+                <span style={{ color: 'var(--text-muted)' }}>{TK_PROVIDER_LABEL[p]}</span>
+                <span className="ml-auto font-mono" style={{ color: 'var(--text-secondary)' }}>{split!.byProvider[p].cacheEfficiencyPct.toFixed(0)}%</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

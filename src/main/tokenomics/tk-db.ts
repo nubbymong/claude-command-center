@@ -883,7 +883,7 @@ export function openTkDb(dbPath: string): TkDb {
       }
       // MP11: the models in these figures with no price, and their tokens
       // (the life-to-date scope, which every figure falls within).
-      const unpriced = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE p.pm IS NULL ${frag('d','model',false)} GROUP BY d.model ORDER BY tokens DESC, d.model`).all(binds) as any[]
+      const unpriced = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, d.provider AS provider, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE p.pm IS NULL ${frag('d','model',false)} GROUP BY d.model, d.provider ORDER BY tokens DESC, d.model`).all(binds) as any[]
       const models = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, SUM(${COST('d')}) AS costUsd, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.model ORDER BY costUsd DESC`).all(binds) as any[]
       const cache = sqlite.prepare(`WITH ${cte} SELECT
           COALESCE(SUM(d.inTok*COALESCE(p.pin,0)/1000000.0),0) AS inputUsd,
@@ -916,7 +916,7 @@ export function openTkDb(dbPath: string): TkDb {
         dailySeries: daily,
         // A model with no price has no cost (null), never $0.
         modelSplit: models.map((m: any) => ({ model: m.model, costUsd: m.costUsd ?? null, tokens: m.tokens ?? 0 })),
-        unpriced: unpriced.map((u: any) => ({ model: String(u.model), tokens: Number(u.tokens) || 0 })),
+        unpriced: unpriced.map((u: any) => ({ model: String(u.model), provider: u.provider as TkProvider, tokens: Number(u.tokens) || 0 })),
         cacheSplit: { inputUsd: cache.inputUsd ?? 0, outputUsd: cache.outputUsd ?? 0, cacheReadUsd: cache.cacheReadUsd ?? 0, cacheCreateUsd: cache.cacheCreateUsd ?? 0 },
         costByConfig,
         heatmap: heat.map((h: any) => ({ bucket: h.bucket, tokens: h.tokens ?? 0 })),

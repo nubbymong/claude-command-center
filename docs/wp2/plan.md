@@ -1035,10 +1035,12 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   The figures split by provider (`kpisByProvider`, and `byProvider` on each
   day of the series). A Codex model with no cached tier charges cached
   input at its input rate in Tokenomics, as the session strip always did.
-  Until MP12 the page shows "no price" in the sessions table and drawer and
-  leaves such a model out of the cost donut; the notice and the split are
-  MP12's.
-- **Owed to MP12 (decided 2026-09-27, MP9 round 1):**
+  The page (MP12) says "no price" in the model breakdown, the sessions
+  table and the drawer, and names such models and their tokens in the
+  notice in the `filesFailed` slot; the unpriced list carries each model's
+  provider, so a provider whose usage has no price at all reads "no price"
+  in its KPI segment.
+- **Resolved (MP12, as decided 2026-09-27 in MP9 round 1):**
   - The Account filter lists a "Not recorded" entry under Codex as well as
     under Claude (parity; Codex usage from before the account folders were
     known, or from pruned rollouts, is not recorded), with a test.
@@ -1054,6 +1056,9 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
     recorded its provider): the page shows it under the same notice and
     does not present a per-provider heatmap as final until the attribution
     has finished.
+- **Owed (MP12, VM):** the Tokenomics page's e2e screenshots in the three
+  modes (both providers, Claude only, Codex only), unpriced and while usage
+  is sorted by account, as the usage plan's MP12 section lists them.
 - **Residual, accepted (MP10, the path decides):** Claude usage is attributed
   from the transcript path a local session reports (a hook or the
   statusline): the profile whose config folder holds it names the account

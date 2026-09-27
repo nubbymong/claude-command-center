@@ -1,7 +1,11 @@
 import React from 'react'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkSessionRow } from '../../../shared/types'
+import type { AccountsSnapshot } from '../../../shared/providers'
 import { getModelColor, getModelShort } from './modelColors'
+import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
+import { ProviderMark } from '../sidebar/Badges'
+import { tkAccountLabel, tkCostTooltip, TK_PROVIDER_LABEL } from './tk-labels'
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
@@ -35,10 +39,13 @@ function formatTs(ts: number): string {
 function SessionRow({
   row,
   onSelect,
+  snapshot,
 }: {
   row: TkSessionRow
   onSelect: (id: string) => void
+  snapshot: AccountsSnapshot | null
 }) {
+  const account = tkAccountLabel(snapshot, row.accountKey ?? '')
   const color = getModelColor(row.model)
   return (
     <tr
@@ -54,22 +61,35 @@ function SessionRow({
       >
         {row.configLabel || <span style={{ color: 'var(--text-muted)' }}>External</span>}
       </td>
-      {/* Model */}
+      {/* Model, with its provider's mark (MP12) */}
       <td className="px-3 py-2">
-        <span
-          className="text-xs px-1.5 py-0.5 rounded"
-          style={{
-            backgroundColor: `color-mix(in srgb, ${color} 13%, transparent)`,
-            color,
-          }}
-        >
-          {getModelShort(row.model)}
+        <span className="inline-flex items-center gap-1.5">
+          <ProviderMark providerId={row.provider} size={14} title={TK_PROVIDER_LABEL[row.provider]} />
+          <span
+            className="text-xs px-1.5 py-0.5 rounded"
+            style={{
+              backgroundColor: `color-mix(in srgb, ${color} 13%, transparent)`,
+              color,
+            }}
+          >
+            {getModelShort(row.model)}
+          </span>
         </span>
       </td>
-      {/* Cost */}
+      {/* Account (MP12) */}
+      <td
+        className="px-3 py-2 text-xs truncate max-w-[140px]"
+        style={{ color: 'var(--text-secondary)' }}
+        title={account}
+        data-testid="tk-session-account"
+      >
+        {account}
+      </td>
+      {/* Cost, with its wording per provider (Q1.5) */}
       <td
         className="px-3 py-2 font-mono text-xs"
-        style={{ color: 'var(--color-peach)' }}
+        style={{ color: row.costUsd === null ? 'var(--text-muted)' : 'var(--color-peach)' }}
+        title={tkCostTooltip(row.provider, row.accountKey ?? '', snapshot, row.costUsd)}
       >
         {formatCost(row.costUsd)}
       </td>
@@ -117,6 +137,7 @@ function SessionRow({
 const HEADER_CELLS: { label: string; className?: string }[] = [
   { label: 'Config' },
   { label: 'Model' },
+  { label: 'Account' },
   { label: 'Cost' },
   { label: 'In' },
   { label: 'Out' },
@@ -127,6 +148,7 @@ const HEADER_CELLS: { label: string; className?: string }[] = [
 
 export function SessionsTable() {
   const sessions = useTokenomicsStore((s) => s.sessions)
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const nextCursor = useTokenomicsStore((s) => s.nextCursor)
   const loadingSessions = useTokenomicsStore((s) => s.loadingSessions)
   const loadMore = useTokenomicsStore((s) => s.loadMore)
@@ -174,7 +196,7 @@ export function SessionsTable() {
               </tr>
             ) : (
               sessions.map((row) => (
-                <SessionRow key={row.sessionId} row={row} onSelect={selectSession} />
+                <SessionRow key={row.sessionId} row={row} onSelect={selectSession} snapshot={snapshot} />
               ))
             )}
           </tbody>

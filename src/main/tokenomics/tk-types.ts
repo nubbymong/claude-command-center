@@ -78,8 +78,8 @@ export interface TkSummary {
   /** `costUsd` is null for a model with no price (MP11), never 0. */
   modelSplit: Array<{ model: string; costUsd: number | null; tokens: number }>
   /** MP11: the models in these figures that have no price, with their
-   *  tokens; their cost is in no figure. */
-  unpriced: Array<{ model: string; tokens: number }>
+   *  provider and tokens; their cost is in no figure. */
+  unpriced: Array<{ model: string; provider: TkProvider; tokens: number }>
   cacheSplit: { inputUsd: number; outputUsd: number; cacheReadUsd: number; cacheCreateUsd: number }
   costByConfig: Array<{ configId: string | null; label: string; costUsd: number; sessions: number }>
   heatmap: Array<{ bucket: number; tokens: number }>

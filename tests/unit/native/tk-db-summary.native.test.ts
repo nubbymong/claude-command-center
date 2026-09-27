@@ -102,7 +102,7 @@ describe('tk-db querySummary: unpriced models and the provider split (MP11)', ()
     expect(s.modelSplit.find((m) => m.model === 'claude-new-9')).toEqual({ model: 'claude-new-9', costUsd: null, tokens: 427 })
     expect(s.modelSplit.find((m) => m.model === 'gpt-9-unpriced')?.costUsd).toBeNull()
     expect(s.modelSplit.find((m) => m.model === 'claude-opus-4-8')?.costUsd).toBeCloseTo(10, 6)
-    expect(s.unpriced).toEqual([{ model: 'claude-new-9', tokens: 427 }, { model: 'gpt-9-unpriced', tokens: 50 }])
+    expect(s.unpriced).toEqual([{ model: 'claude-new-9', provider: 'claude', tokens: 427 }, { model: 'gpt-9-unpriced', provider: 'codex', tokens: 50 }])
     expect(s.costByConfig[0].costUsd).toBeCloseTo(12, 6)
     expect(s.cacheSplit.inputUsd).toBeCloseTo(12, 6)
     // Every model priced: none listed.
@@ -111,8 +111,8 @@ describe('tk-db querySummary: unpriced models and the provider split (MP11)', ()
 
   it('the unpriced list follows the filters', () => {
     const db = seed()
-    expect(db.querySummary(PRICED, { provider: 'codex' }, NOW).unpriced).toEqual([{ model: 'gpt-9-unpriced', tokens: 50 }])
-    expect(db.querySummary(PRICED, { provider: 'claude' }, NOW).unpriced).toEqual([{ model: 'claude-new-9', tokens: 427 }])
+    expect(db.querySummary(PRICED, { provider: 'codex' }, NOW).unpriced).toEqual([{ model: 'gpt-9-unpriced', provider: 'codex', tokens: 50 }])
+    expect(db.querySummary(PRICED, { provider: 'claude' }, NOW).unpriced).toEqual([{ model: 'claude-new-9', provider: 'claude', tokens: 427 }])
     expect(db.querySummary(PRICED, { model: 'claude-opus-4-8' }, NOW).unpriced).toEqual([])
   })
 

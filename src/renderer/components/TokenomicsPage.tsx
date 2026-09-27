@@ -14,6 +14,7 @@ import { SessionsTable as NewSessionsTable } from './tokenomics/SessionsTable'
 import { SessionDetailDrawer } from './tokenomics/SessionDetailDrawer'
 import { ActivityHeatmap } from './tokenomics/ActivityHeatmap'
 import { GitHubCopilotCard } from './tokenomics/GitHubCopilotCard'
+import { tkKpiSplit, tkRereadNotice, tkUnpricedNotice } from './tokenomics/tk-labels'
 
 // ── Shimmer / loading state ──
 
@@ -57,6 +58,14 @@ export default function TokenomicsPage() {
   const summary = useTokenomicsStore((s) => s.summary)
   const loadingSummary = useTokenomicsStore((s) => s.loadingSummary)
   const error = useTokenomicsStore((s) => s.error)
+  const accounts = useTokenomicsStore((s) => s.accounts)
+  const filter = useTokenomicsStore((s) => s.filter)
+  // Usage track MP12 (Q1.4): the split between providers, the notices in the
+  // filesFailed slot, and what fills in while usage is sorted by account.
+  const split = summary ? tkKpiSplit(summary, accounts, filter.provider ?? filter.account?.provider) : undefined
+  const unpricedNotice = tkUnpricedNotice(summary?.unpriced)
+  const rereadNotice = tkRereadNotice(indexStatus?.accountReread)
+  const splitFilling = !!indexStatus?.accountReread && !!(filter.provider || filter.account)
 
   // GitHub Copilot billing card (ACTUAL billing credits, distinct from the
   // estimates above). Shown only when the meter is on and there is something to
@@ -143,6 +152,18 @@ export default function TokenomicsPage() {
                   : `${indexStatus.filesFailed} transcripts could not be read, so their usage is missing from these figures.`}
               </div>
             )}
+            {/* Models with no price, and the one-off sorting by account (MP12). */}
+            {[unpricedNotice, rereadNotice].filter((n): n is string => !!n).map((notice) => (
+              <div
+                key={notice}
+                className="rounded-xl px-3 py-2 mb-4 text-[11px]"
+                style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                role="status"
+                data-testid="tk-notice"
+              >
+                {notice}
+              </div>
+            ))}
 
             {/* Filter bar */}
             <NewFilterBar />
@@ -169,11 +190,11 @@ export default function TokenomicsPage() {
             ) : summary ? (
               <>
                 {/* KPI row */}
-                <KpiRow kpis={summary.kpis} />
+                <KpiRow kpis={summary.kpis} split={split} />
 
                 {/* Charts row */}
                 <div className="grid grid-cols-2 gap-3 mb-5">
-                  <CostOverTimeChart data={summary.dailySeries} />
+                  <CostOverTimeChart data={summary.dailySeries} series={split?.providers} />
                   <ModelCacheDonut
                     modelSplit={summary.modelSplit}
                     cacheSplit={summary.cacheSplit}
@@ -187,7 +208,7 @@ export default function TokenomicsPage() {
               <>
                 <CostByConfig data={summary.costByConfig} />
                 <NewSessionsTable />
-                <ActivityHeatmap data={summary.heatmap} />
+                <ActivityHeatmap data={summary.heatmap} filling={splitFilling} />
               </>
             )}
 

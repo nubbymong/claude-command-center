@@ -3,6 +3,9 @@ import type { TkSummary } from '../../../shared/types'
 
 interface Props {
   data: TkSummary['heatmap']
+  /** Usage track MP12: the hours by provider or account are still filling in
+   *  (the one-off attribution runs, and the view is split by one). */
+  filling?: boolean
 }
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -14,7 +17,7 @@ function formatTokensCompact(n: number): string {
   return String(n)
 }
 
-export function ActivityHeatmap({ data }: Props) {
+export function ActivityHeatmap({ data, filling }: Props) {
   // Build a full 168-cell array from the sparse data
   const cells = useMemo(() => {
     const grid = new Array<number>(168).fill(0)
@@ -62,6 +65,11 @@ export function ActivityHeatmap({ data }: Props) {
       <div className="text-[11px] text-overlay0 uppercase tracking-wider mb-3">
         Activity heatmap (tokens by day &amp; hour)
       </div>
+      {filling && (
+        <div className="text-[10px] -mt-2 mb-2" style={{ color: 'var(--text-muted)' }} data-testid="tk-heatmap-filling">
+          These hours fill in as usage is sorted by account and provider.
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         {/* Hour axis labels */}
