@@ -18,7 +18,7 @@ import {
 } from '../../src/main/providers/claude'
 import type { ClaudeReviewPorts, ClaudeCliRunResult, ClaudeCliRunOptions, ClaudeCliCommand, ClaudeFileStat, ClaudeReviewDeps } from '../../src/main/providers/claude'
 import { packageRegistrationProblem } from '../../src/main/providers/core'
-import { cliCommandLine, codexShellEnv } from '../../src/main/providers/codex'
+import { cliCommandLine, codexShellEnv, CODEX_KILL_WORST_MS } from '../../src/main/providers/codex'
 import type { AuthRealm } from '../../src/shared/providers'
 
 // The composition root's realm lookup reads the running registry: a stub
@@ -162,6 +162,34 @@ describe('the Claude reviewer invocation (WP2 5b)', () => {
     const h = reviewDeps()
     await createClaudeReviewOperations(h.deps).run(input())
     expect(h.deps.recordPreflight).toHaveBeenCalledWith(PID, h.calls[0].opts.env)
+  })
+
+  // Round 2 (A3): the run settles at its bound, but a kill still reading a
+  // slow process table carries on; the account stays held until it ends, and
+  // the result passes it on so the review lease is held as long.
+  it('a stopped review whose kill is still under way holds the account until that kill has finished, and passes killSettled on', async () => {
+    for (const stop of [{ spawnError: 'cancelled', stopped: 'cancel' as const }, { timedOut: true, stopped: 'deadline' as const }]) {
+      let finishKill!: () => void
+      const killSettled = new Promise<void>((res) => { finishKill = res })
+      const h = reviewDeps()
+      h.deps.run = runner(() => ({ exitCode: null, ...stop, killSettled })).run
+      const r = await createClaudeReviewOperations(h.deps).run(input())
+      expect(r, stop.stopped).toMatchObject({ ok: false, code: stop.stopped === 'cancel' ? 'cancelled' : 'timed-out' })
+      expect((r as { killSettled?: Promise<void> }).killSettled, stop.stopped).toBe(killSettled)
+      await new Promise((res) => setTimeout(res, 0))
+      expect(h.release, stop.stopped).not.toHaveBeenCalled()
+      finishKill()
+      await new Promise((res) => setTimeout(res, 0))
+      expect(h.release, stop.stopped).toHaveBeenCalledTimes(1)
+    }
+    // The hold's age limit covers a kill that ends only at the runner's worst case after the deadline.
+    expect(CLAUDE_REVIEW_HOLD_GRACE_MS).toBeGreaterThan(CODEX_KILL_WORST_MS)
+    // One that rejects still lets go.
+    const h = reviewDeps()
+    h.deps.run = runner(() => ({ exitCode: null, timedOut: true, stopped: 'deadline' as const, killSettled: Promise.reject(new Error('no taskkill')) })).run
+    await createClaudeReviewOperations(h.deps).run(input())
+    await new Promise((res) => setTimeout(res, 0))
+    expect(h.release).toHaveBeenCalledTimes(1)
   })
 
   it('releases the account on every outcome, a runner that throws included', async () => {

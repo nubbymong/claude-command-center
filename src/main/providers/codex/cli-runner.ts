@@ -18,12 +18,16 @@
 // killed -- the root and, below it, only the launcher and CLI images (cmd.exe
 // -> node -> codex would otherwise outlive a cancelled sign-in) -- and never
 // what the CLI started beyond them: a browser a sign-in opened is the user's.
-// A stopped run settles only once that kill has landed (bounded), so a caller
-// that holds a realm for the run does not let go while it still runs. A kill
-// still reading a slow process table at that bound carries on after the run
-// has settled, and never kills the root alone to meet it: that would leave the
-// chain below running. Nothing is killed once the root has exited: its pid may
-// have been reused. See runCodexCli and makeCodexKillTree.
+// A stopped run settles once that kill has landed and its root has exited, or
+// at CODEX_KILL_SETTLE_MS, whichever is first, so the caller hears back on
+// time. A kill still reading a slow process table at that bound carries on
+// (it never kills the root alone to meet the bound: that would leave the chain
+// below running), for at most CODEX_KILL_WORST_MS from the stop, and the
+// result says so (`killSettled`): a caller that holds a realm or a lease for
+// the run lets go only once that kill has finished. Nothing is killed once the
+// root has exited: its pid may have been reused. At app quit, kills still
+// reading kill what they know at once (flushPendingCodexKills). See
+// runCodexCli and makeCodexKillTree.
 import path from 'node:path'
 import fs from 'node:fs'
 import { spawn as nodeSpawn, execFile } from 'node:child_process'
@@ -147,6 +151,12 @@ export interface CodexRunResult {
   stopped?: 'cancel' | 'deadline'
   /** The process could not be started (the message is the spawn error's). */
   spawnError?: string
+  /** Present only when a stopped run settled at CODEX_KILL_SETTLE_MS with
+   *  its kill still under way (a slow process table): resolves once that
+   *  kill has finished, or CODEX_KILL_WORST_MS after the stop, and never
+   *  rejects. The run's processes may live until then, so a caller holding a
+   *  realm lock or an account lease for the run lets go only after it. */
+  killSettled?: Promise<void>
 }
 
 export interface CodexRunOptions {
@@ -164,8 +174,9 @@ export interface CodexRunOptions {
 }
 
 /** Kills a run's own processes (see makeCodexKillTree). `prime`, when
- *  present, reads the run's chain once the run is established, so a kill
- *  whose own table read fails still names the whole chain. */
+ *  present, reads the run's chain once the run is established, so a kill on a
+ *  slow machine awaits a read already under way instead of starting a cold
+ *  one, and one whose own read fails still has an earlier table. */
 export type CodexKillTree = ((child: ChildProcess) => Promise<void> | void) & { prime?: (child: ChildProcess) => void }
 
 export interface CodexRunDeps {
@@ -338,16 +349,56 @@ export function makeCodexProcessLister(
   return ps ? read(ps, ['-ww', '-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'comm='], { cwd: '/', env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' } }, parsePosixProcessTable) : null
 }
 
-/** Exported for the test: the kill with its guards. It reads the process
- *  table, kills the run's own chain (codexChainPids) and resolves when that is
- *  done -- never the whole tree, which may hold the user's browser. When the
- *  table cannot be read at kill time it falls back to the EARLY read (prime,
- *  with its own longer budget, `primeListProcesses`): still running, it is
- *  awaited -- up to that budget, the root left running -- and used whole,
- *  since it is as fresh as a kill-time read; finished earlier, only its
- *  wrapper line is used (codexWrapperLinePids). With no early read, a failed
- *  kill-time read is tried once more with the longer budget. The root alone
- *  only once a read with that budget has failed, or with no reader. */
+/** The longest a kill can take: the kill's own table read, one more read with
+ *  the early read's longer budget, then taskkill (makeCodexKillTree). A caller
+ *  holding a realm or a lease for a stopped run holds it this long at most
+ *  after the stop (CodexRunResult.killSettled). */
+export const CODEX_KILL_WORST_MS = CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS
+
+/** What each kill still reading its table would kill right now, for the
+ *  app's quit (flushPendingCodexKills). Module-wide: every run builds its own
+ *  kill (defaultCodexRunDeps). */
+const pendingKills = new Set<() => void>()
+
+/** At app quit: every kill still reading its table kills at once what it
+ *  knows -- an earlier table's wrapper line, else the root alone -- rather
+ *  than leave node and codex running once the app is gone (the job that ends
+ *  the app's own children at exit does not reach below cmd.exe). Nothing is
+ *  killed for a root that has exited. Best effort, like the rest of the quit. */
+export function flushPendingCodexKills(): void {
+  const now = [...pendingKills]
+  pendingKills.clear()
+  for (const flush of now) { try { flush() } catch { /* best effort at quit */ } }
+}
+
+/** Exported for the test: the kill with its guards. It kills the run's own
+ *  chain and resolves when that is done -- never the whole tree, which may
+ *  hold the user's browser -- and nothing once the root has exited.
+ *
+ *  Which pids, from which table:
+ *  - An early read (prime) still running is awaited, up to its own timeout,
+ *    rather than raced by a second cold read; the root is left running
+ *    meanwhile (the run settles at its bound regardless). Killing the root
+ *    alone sooner would leave the chain below it running, and once the root
+ *    is gone nothing vouches for those pids. Windows CI saw an early read
+ *    outlast a 10 s wait.
+ *  - Otherwise the kill reads the table itself (`listProcesses`).
+ *  - A table is used whole (codexChainPids) only while it can be no older
+ *    than a kill-time read may be: CODEX_PROCESS_TABLE_TIMEOUT_MS from the
+ *    start of its read (the query captures the table somewhere inside it). An
+ *    older one, or one from a retry, gives only its wrapper line
+ *    (codexWrapperLinePids): the root still running vouches for that line,
+ *    not for a helper the codex binary may since have reaped, whose pid a
+ *    stranger may hold.
+ *  - If that read fails, an earlier finished early read stands in with its
+ *    wrapper line; failing that, ONE retry with the reader the failed read
+ *    did not use (after the kill's own read, `primeListProcesses` with its
+ *    budget; after the early read, `listProcesses` with the kill-time one),
+ *    so no kill waits longer than CODEX_KILL_WORST_MS. `primeListProcesses`
+ *    defaults to `listProcesses`: the same reader then gets the longer wait.
+ *  - The root alone only when those reads all failed, or with no reader.
+ *  Every read is bounded, and a throw or an answer that is not a list counts
+ *  as a failed read: the kill never rejects with nothing killed. */
 export function makeCodexKillTree(
   platform: NodeJS.Platform,
   spawn: CodexRunDeps['spawn'],
@@ -358,66 +409,37 @@ export function makeCodexKillTree(
   const running = (child: ChildProcess) => !!child.pid && child.exitCode === null && child.signalCode === null
   const killRoot = (child: ChildProcess) => { try { if (running(child)) child.kill('SIGKILL') } catch { /* already gone */ } }
   // What each run's early read (prime) found, by run: `table` stays
-  // undefined while the read is running, null when it failed.
-  const primed = new WeakMap<ChildProcess, { done: Promise<void>; table?: CodexProcessEntry[] | null }>()
+  // undefined while the read is running, null when it failed; `started` is
+  // when the read began.
+  type Primed = { done: Promise<void>; started: number; table?: CodexProcessEntry[] | null }
+  const primed = new WeakMap<ChildProcess, Primed>()
   const bounded = <T>(p: Promise<T>, ms: number): Promise<T | null> => new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), ms)
     ;(timer as unknown as { unref?: () => void }).unref?.()
     p.then((v) => { clearTimeout(timer); resolve(v) }, () => { clearTimeout(timer); resolve(null) })
   })
-  const kill: CodexKillTree = async (child) => {
-    const pid = child.pid
-    // Only a process that is still running: once the root has exited its pid
-    // can be reused, and a kill by pid would hit a stranger.
-    if (!pid || !running(child)) return
-    let pids = [pid]
-    const early = primed.get(child)
+  /** One read, bounded: a throw, a rejection, no answer in time or an answer
+   *  that is not a list is null. */
+  const read = (reader: (() => Promise<CodexProcessEntry[]>) | null, ms: number): Promise<CodexProcessEntry[] | null> =>
+    reader ? bounded(Promise.resolve().then(reader), ms).then((t) => (Array.isArray(t) ? t : null)) : Promise.resolve(null)
+  const fresh = (started: number) => Date.now() - started <= CODEX_PROCESS_TABLE_TIMEOUT_MS
+  const choosePids = async (pid: number, early: Primed | undefined): Promise<number[]> => {
     if (early && early.table === undefined) {
-      // The early read is still running -- a slow table, the very case this
-      // is for. Wait for it rather than start a second cold read beside it
-      // (two would compete on a loaded machine). The CIM query captures the
-      // table when it runs, at the end of the slow PowerShell start, so an
-      // answer that arrives now is as fresh as a kill-time read: its whole
-      // chain is used. If it fails inside CODEX_KILL_READ_BUDGET_MS, the
-      // kill's own read gets the time left. It is waited for up to its own
-      // timeout, past the settle bound if need be (the run settles at that
-      // bound regardless): killing the root alone sooner would leave the
-      // chain below it running, and once the root is gone nothing vouches
-      // for those pids. Windows CI saw an early read outlast a 10 s wait.
-      const started = Date.now()
       await bounded(early.done, CODEX_PRIME_TABLE_TIMEOUT_MS)
-      if (early.table) {
-        pids = codexChainPids(pid, early.table)
-      } else if (early.table === null && listProcesses) {
-        const left = CODEX_KILL_READ_BUDGET_MS - (Date.now() - started)
-        const own = left > 0 ? await bounded(listProcesses(), left) : null
-        if (own) pids = codexChainPids(pid, own)
-      }
-    } else if (listProcesses) {
-      try {
-        pids = codexChainPids(pid, await listProcesses())
-      } catch {
-        // The table could not be read now (PowerShell blocked, or too slow on
-        // a loaded machine: Windows CI went past its 8 s budget). An earlier
-        // read stands in for it, but only its wrapper line -- the root still
-        // running (checked again below) vouches for that line, not for a
-        // helper the codex binary may since have reaped. With no earlier read
-        // at all (a stop inside CODEX_TREE_PRIME_MS), one more read with the
-        // early read's longer budget, the root left running meanwhile as
-        // above; the root alone only if that fails too.
-        if (early?.table) pids = codexWrapperLinePids(pid, early.table)
-        else if (!early && primeListProcesses) {
-          const read = primeListProcesses
-          const late = await bounded(Promise.resolve().then(read), CODEX_PRIME_TABLE_TIMEOUT_MS)
-          if (Array.isArray(late)) pids = codexChainPids(pid, late)
-        }
-      }
+      if (early.table) return fresh(early.started) ? codexChainPids(pid, early.table) : codexWrapperLinePids(pid, early.table)
+      const again = await read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS)
+      return again ? codexWrapperLinePids(pid, again) : [pid]
     }
-    // The table took time to read. A root that exited meanwhile means its
-    // chain has almost certainly exited before it (cmd.exe waits for node,
-    // node for codex), so those pids may already belong to strangers: kill
-    // nothing by pid.
-    if (!running(child)) return
+    const own = await read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS)
+    if (own) return codexChainPids(pid, own)
+    if (early?.table) return codexWrapperLinePids(pid, early.table)
+    // An early read that FAILED already had the longer budget.
+    if (early) return [pid]
+    const again = await read(primeListProcesses, CODEX_PRIME_TABLE_TIMEOUT_MS)
+    return again ? codexWrapperLinePids(pid, again) : [pid]
+  }
+  /** taskkill (Windows) or a signal per pid (POSIX), for a root still running. */
+  const killPids = async (child: ChildProcess, pids: number[]): Promise<void> => {
     if (platform === 'win32') {
       // taskkill only from an absolute Windows root, run there, bounded; no
       // search of the current directory or PATH for a bare name. No /T: the
@@ -441,13 +463,36 @@ export function makeCodexKillTree(
       for (const p of pids) { try { process.kill(p, 'SIGKILL') } catch { /* already gone */ } }
     }
   }
+  const kill: CodexKillTree = async (child) => {
+    const pid = child.pid
+    // Only a process that is still running: once the root has exited its pid
+    // can be reused, and a kill by pid would hit a stranger.
+    if (!pid || !running(child)) return
+    const early = primed.get(child)
+    const flush = () => { if (running(child)) void killPids(child, early?.table ? codexWrapperLinePids(pid, early.table) : [pid]) }
+    pendingKills.add(flush)
+    let pids: number[]
+    try {
+      pids = await choosePids(pid, early)
+    } catch {
+      pids = [pid]
+    } finally {
+      pendingKills.delete(flush)
+    }
+    // The table took time to read. A root that exited meanwhile means its
+    // chain has almost certainly exited before it (cmd.exe waits for node,
+    // node for codex), so those pids may already belong to strangers: kill
+    // nothing by pid.
+    if (!running(child)) return
+    await killPids(child, pids)
+  }
   kill.prime = (child) => {
     const pid = child.pid
     if (!primeListProcesses || !pid || primed.has(child) || !running(child)) return
-    const entry: { done: Promise<void>; table?: CodexProcessEntry[] | null } = { done: Promise.resolve() }
-    let read: Promise<CodexProcessEntry[]>
-    try { read = primeListProcesses() } catch { read = Promise.reject(new Error('no table')) }
-    entry.done = read.then(
+    const entry: Primed = { done: Promise.resolve(), started: Date.now() }
+    let answer: Promise<CodexProcessEntry[]>
+    try { answer = primeListProcesses() } catch { answer = Promise.reject(new Error('no table')) }
+    entry.done = Promise.resolve(answer).then(
       (table) => { entry.table = Array.isArray(table) ? table : null },
       () => { entry.table = null },
     )
@@ -469,24 +514,30 @@ const MAX_TIMEOUT_MS = 2_147_483_647
  *  CodexKillTree.prime): short runs -- a status check -- never pay for it. */
 export const CODEX_TREE_PRIME_MS = 2_000
 /** How long a stopped run waits for its kill to land before it settles
- *  anyway: longer than reading the process table plus taskkill, so a slow
- *  table does not settle a run whose kill has not been issued yet. A table
- *  slower still settles the run with its kill under way: the kill keeps
- *  reading, the root left running, and then ends the chain (makeCodexKillTree). */
+ *  anyway: longer than reading the process table plus taskkill, so a table
+ *  read in the usual time does not settle a run whose kill has not been
+ *  issued yet. A slower table settles the run with its kill under way
+ *  (CodexRunResult.killSettled). */
 export const CODEX_KILL_SETTLE_MS = 15_000
-/** How long a kill may spend reading the process table -- an early read that
- *  failed while it waited, then its own -- so that taskkill still lands
- *  inside the settle bound. An early read still RUNNING is waited for longer. */
-const CODEX_KILL_READ_BUDGET_MS = CODEX_KILL_SETTLE_MS - CODEX_TASKKILL_TIMEOUT_MS
+
+/** Resolves once `ended` has, or after `ms`, whichever is first. Never rejects. */
+function settleWithin(ended: Promise<void>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, Math.max(0, ms))
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    void ended.then(() => { clearTimeout(timer); resolve() })
+  })
+}
 
 /** Run one prepared command. Never rejects.
  *
  *  Settles on `close`. At the deadline or on cancel it kills the run's own
  *  chain and settles once the kill has landed and the root has exited, or
- *  after CODEX_KILL_SETTLE_MS, whichever is first. Nothing is killed once the
- *  root has exited -- if a descendant holds its output open (a browser a
- *  sign-in opened), the run settles with the root's exit code and the streams
- *  are destroyed instead. Nothing is reported once a stop has begun. */
+ *  after CODEX_KILL_SETTLE_MS, whichever is first; a kill still under way
+ *  then is reported as `killSettled`. Nothing is killed once the root has
+ *  exited -- if a descendant holds its output open (a browser a sign-in
+ *  opened), the run settles with the root's exit code and the streams are
+ *  destroyed instead. Nothing is reported once a stop has begun. */
 export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: CodexRunDeps = defaultCodexRunDeps()): Promise<CodexRunResult> {
   const cap = opts.maxOutput ?? 64 * 1024
   return new Promise((resolve) => {
@@ -526,15 +577,23 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       const outcome = why === 'deadline'
         ? { exitCode: null, timedOut: true, stopped: 'deadline' as const }
         : { exitCode: null, timedOut: false, spawnError: 'cancelled', stopped: 'cancel' as const }
+      const stoppedAt = Date.now()
       let killed: Promise<unknown>
       try { killed = Promise.resolve(deps.killTree(c)) } catch { killed = Promise.resolve() }
+      // Registered before the race below, so it has run by the time a kill
+      // that finished in time lets the run settle.
+      let killDone = false
+      const killEnded = killed.then(() => { killDone = true }, () => { killDone = true })
       const rootGone = new Promise<void>((res) => { if (exited !== undefined) res(); else c.once('exit', () => res()) })
       let bound: ReturnType<typeof setTimeout> | null = null
       const bounded = new Promise<void>((res) => { bound = setTimeout(res, CODEX_KILL_SETTLE_MS) })
-      void Promise.race([Promise.all([killed.catch(() => undefined), rootGone]), bounded]).then(() => {
+      void Promise.race([Promise.all([killEnded, rootGone]), bounded]).then(() => {
         if (bound) clearTimeout(bound)
         release()
-        finish(outcome)
+        // A kill still reading a slow table carries on past the bound: the
+        // result says when it has finished, so a caller holding a realm or a
+        // lease for the run lets go only then.
+        finish(killDone ? outcome : { ...outcome, killSettled: settleWithin(killEnded, CODEX_KILL_WORST_MS - (Date.now() - stoppedAt)) })
       })
     }
     const onAbort = () => stop('cancel')

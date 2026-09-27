@@ -24,7 +24,7 @@ import {
 import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
 import { recordLiveUsageForSession } from './usage/account-usage'
 import { getProvider } from './providers'
-import { composeProviders } from './providers/compose'
+import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
 import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
 import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart } from './provider-accounts'
 import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
@@ -997,6 +997,9 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // Kill any GUI-subsystem tool still being captured (#379). Its stdio is
     // piped to us, so leaving it running orphans a process nobody can see.
     try { stopAllCapturedRuns() } catch { /* never started */ }
+    // A headless CLI run stopped but still reading its process table would
+    // otherwise leave its chain below cmd.exe running once the app is gone.
+    try { flushPendingProviderCliKills() } catch { /* nothing pending */ }
     stopServiceStatusPoller()
     stopLoopStallMonitor()
     stopUpdateWatcher()

@@ -269,9 +269,12 @@ export interface ReviewUsage {
   outputTokens: number
 }
 
+/** `killSettled`: a stopped review whose kill was still under way when its
+ *  run settled (a slow process table) says when that kill has finished; it
+ *  never rejects. The caller holding the account's lease lets go only then. */
 export type ReviewRunResult =
   | { ok: true; text: string; usage?: ReviewUsage }
-  | { ok: false; code: 'timed-out' | 'cancelled' | 'failed' | 'no-output' | 'not-started'; message: string; usage?: ReviewUsage }
+  | { ok: false; code: 'timed-out' | 'cancelled' | 'failed' | 'no-output' | 'not-started'; message: string; usage?: ReviewUsage; killSettled?: Promise<void> }
 
 export interface ProviderReviewOperations {
   run(input: ReviewRunInput): Promise<ReviewRunResult>

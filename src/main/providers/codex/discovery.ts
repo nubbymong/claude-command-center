@@ -93,13 +93,20 @@ export async function discoverCodex(deps: CodexDiscoveryDeps): Promise<CodexDisc
   if ('refused' in cmd) return { ...base, state: 'invalid', executable: canonical, identity, detail: cmd.refused }
   let run: CodexRunResult
   let scratch: { home: string; dispose(): void } | null = null
+  // A stopped run whose kill is still under way may still be using the home:
+  // it is removed once that kill has finished (CodexRunResult.killSettled).
+  let kill: Promise<void> | undefined
   try {
     scratch = deps.versionHome()
     run = await deps.run(cmd, codexCliEnv(deps.env, scratch.home, deps.platform))
+    if (run && run.killSettled instanceof Promise) kill = run.killSettled
   } catch {
     return { ...base, state: 'error', executable: canonical, identity, detail: 'the Codex CLI could not be started' }
   } finally {
-    try { scratch?.dispose() } catch { /* a leftover temp directory is harmless */ }
+    const home = scratch
+    const dispose = () => { try { home?.dispose() } catch { /* a leftover temp directory is harmless */ } }
+    if (kill) void kill.then(dispose, dispose)
+    else dispose()
   }
   if (run.spawnError || run.timedOut) {
     return { ...base, state: 'error', executable: canonical, identity, detail: run.timedOut ? 'the Codex CLI did not answer --version in time' : 'the Codex CLI could not be started' }

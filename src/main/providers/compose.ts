@@ -9,7 +9,7 @@ import type { ProviderPackageFactory } from './core'
 import { registerProviderPackage, listProviderPackages, tryGetProviderPackage } from './core'
 import { createClaudePackage } from './claude'
 import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts } from './claude'
-import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps } from './codex'
+import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, flushPendingCodexKills } from './codex'
 import type { CodexRealmSource } from './codex'
 import { findRealm } from '../../shared/providers'
 import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight } from '../account-profiles'
@@ -91,4 +91,11 @@ export function composeProviders(): void {
 
 export function composedProviderIds(): readonly string[] {
   return listProviderPackages().map((p) => p.id)
+}
+
+/** At app quit: the headless CLI runs of both providers go through one
+ *  runner, and its kills still reading a process table kill what they know
+ *  at once rather than leave a CLI running once the app is gone. */
+export function flushPendingProviderCliKills(): void {
+  flushPendingCodexKills()
 }

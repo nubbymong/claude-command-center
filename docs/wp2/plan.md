@@ -459,33 +459,57 @@ obligations fall on later slices:
   timeout (8 s, about twice a typical cold PowerShell start). A table read
   that times out falls back to killing the root alone. On Windows the root
   is cmd.exe, so the Codex CLI outlives a deadline or a cancel.
-  **Fixed (2026-09-24):**
+  **Fixed (2026-09-24), revised 2026-09-27** (Windows CI at `14ad7475`: an
+  early read outlasted the kill's former 10 s wait, the root alone was
+  killed, and the fake codex kept running):
   - A run still going after `CODEX_TREE_PRIME_MS` (2 s) reads its process
-    table once, in the background, with a 30 s budget.
+    table once, in the background, with a 30 s budget. Short runs, such as
+    a status check, never pay for the read.
   - If that early read is still running when the kill comes, the kill waits
-    for it rather than starting a second cold read beside it. It uses the
-    whole chain, because the CIM query captures the table when it runs, at
-    the end of the slow start. If the early read fails meanwhile, the kill's
-    own read gets the time left. The kill spends at most 10 s reading (the
-    15 s settle bound minus taskkill's 5 s).
-  - If it finished earlier and the kill's own read fails, only its wrapper
-    line is used: cmd.exe -> node -> the codex binary. Each member waits
-    for the next, and Windows reuses no pid while a handle to it is open.
-    Helpers the codex binary started are never killed from an earlier read.
-  - Everything is used only while the root still runs.
-  - If no read answers within the kill's 10 s, only the root is killed, as
-    before the fix. On Windows a codex under cmd.exe then keeps running.
+    for it, up to its own 30 s timeout, rather than starting a second cold
+    read beside it. The root is left running meanwhile: killing it alone
+    would leave the chain below it running, and once it is gone nothing
+    vouches for those pids.
+  - A table is used whole only while it can be no older than a kill-time
+    read may be: 8 s from the start of its read (the CIM query captures the
+    table somewhere inside it). A table that answers later, and any retry
+    read, gives only its wrapper line: cmd.exe -> node -> the codex binary.
+    Each member waits for the next, and Windows reuses no pid while a
+    handle to it is open. Helpers the codex binary started are killed only
+    from a fresh table: one it has reaped may have handed its pid on.
+  - A failed read gets one bounded retry: after a failed early read, the
+    kill's own 8 s read; after a failed kill-time read, an earlier finished
+    early read stands in with its wrapper line, else one read with the 30 s
+    budget. A throw or an answer that is not a list counts as a failed
+    read; the kill never rejects with nothing killed.
+  - Only the root is killed when every read failed, or with no reader. On
+    Windows a codex under cmd.exe then keeps running.
+  - Everything is killed only while the root still runs.
+  - The run still settles at its 15 s bound, so the caller hears back on
+    time. A kill still reading then carries on, for at most 43 s from the
+    stop (`CODEX_KILL_WORST_MS`: 8 s, 30 s and taskkill's 5 s), and the
+    result says so (`killSettled`). A sign-in's, sign-out's or status
+    check's realm lock and the browser slot, the review lease, the Claude
+    reviewer's profile hold and discovery's throwaway home are all held
+    until that kill has finished.
+  - At app quit, a kill still reading kills at once what it knows: an
+    earlier table's wrapper line, else the root alone
+    (`flushPendingCodexKills`, called from the quit teardown through the
+    composition root).
   - An early read taken before node had started codex yields cmd.exe ->
     node. Killing node still ends codex: node places its children in a job
     that dies with it.
-  - Short runs, such as a status check, never pay for the read.
   - The real-process test forces the kill-time read to fail and ends the
     whole tree. With the fallback removed, it fails on Windows (VM,
     2026-09-24).
 
   Residual: a wrapper that exits while the root still runs could have its
   pid reused before the kill. That needs a parent to have reaped it, which
-  the npm and native wrappers do not do while they run.
+  the npm and native wrappers do not do while they run. Residual: a quit
+  while a kill knows no table yet (its early read still running, or a stop
+  inside 2 s whose own read is still running) kills the root alone, so node
+  and codex can outlive the app; and a quit-time taskkill that has not
+  finished when the app exits is ended with it.
 - **Known, accepted:** deleting the very last Claude profile does not archive
   its account (indistinguishable from a failed read); emoji ZWJ sequences
   store with spaces (stripSpoofableText); reconcile is quadratic in profile

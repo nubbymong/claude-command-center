@@ -865,3 +865,100 @@ describe('a status check that is stopped', () => {
     expect(w.runs[0].opts.signal).toBeUndefined()
   })
 })
+
+// Round 2 (A3): a stopped CLI run settles at its bound, but a kill still
+// reading a slow process table carries on after it (CodexRunResult.
+// killSettled). The realm lock, and the machine-wide browser slot, are held
+// until that kill has finished, so no second sign-in, sign-out or folder
+// removal runs beside a CLI that may still be alive. The result still returns
+// at once.
+describe('the realm is held until a stopped run\'s kill has finished (round 2, A3)', () => {
+  const later = () => new Promise<void>((r) => setTimeout(r, 0))
+  const deferred = () => { let settle!: () => void; const p = new Promise<void>((r) => { settle = r }); return { p, settle } }
+
+  it('a cancelled browser sign-in returns at once, but keeps the realm and the browser slot until its kill has finished', async () => {
+    const locks = createCodexRealmLocks()
+    const k = deferred()
+    const w = world({ locks }, {
+      'login': (r) => {
+        if (r.env.CODEX_HOME === HOME_A) return { spawnError: 'cancelled', stopped: 'cancel', killSettled: k.p }
+        w.signedIn.set(r.env.CODEX_HOME, 'chatgpt')
+        return { exitCode: 0 }
+      },
+    })
+    expect(await w.ops.login(MANAGED, 'browser')).toMatchObject({ ok: false, code: 'cancelled', state: 'signed-out' })
+    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'busy' })
+    expect(locks.holdRemoval('id:9:11')).toBeNull()
+    expect(await w.ops.login(MANAGED_B, 'browser')).toMatchObject({ ok: false, code: 'browser-busy' })
+    k.settle()
+    await later()
+    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: true })
+    expect(await w.ops.login(MANAGED_B, 'browser')).toEqual(SIGNED_IN_ACCOUNT)
+  })
+
+  it('with two kills under way, one that fails early does not free the realm while the other still runs', async () => {
+    const locks = createCodexRealmLocks()
+    const k = deferred()
+    let statusRuns = 0
+    const w = world({ locks }, {
+      'login': () => ({ spawnError: 'cancelled', stopped: 'cancel', killSettled: k.p }),
+      // The check before the sign-in answers; the one after it times out, its kill failing at once.
+      'login status': () => (++statusRuns === 1 ? { exitCode: 1, stderr: 'Not logged in\n' } : { timedOut: true, stopped: 'deadline', killSettled: Promise.reject(new Error('no taskkill')) }),
+    })
+    expect(await w.ops.login(MANAGED, 'browser')).toMatchObject({ ok: false, code: 'cancelled' })
+    await later()
+    expect(locks.holdRemoval('id:9:11')).toBeNull()
+    k.settle()
+    await later()
+    const removal = locks.holdRemoval('id:9:11')
+    expect(removal).not.toBeNull()
+    removal!()
+  })
+
+  it('a timed-out sign-out keeps the realm until its kill has finished, and lets go even when that promise rejects', async () => {
+    const locks = createCodexRealmLocks()
+    const w = world({ locks }, { 'logout': () => ({ timedOut: true, stopped: 'deadline', killSettled: Promise.reject(new Error('no taskkill')) }) })
+    const k = deferred()
+    const v = world({ locks }, { 'logout': () => ({ timedOut: true, stopped: 'deadline', killSettled: k.p }) })
+    expect(await v.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'timed-out' })
+    expect(locks.holdRemoval('id:9:11')).toBeNull()
+    expect(await v.ops.login(MANAGED, 'device')).toMatchObject({ ok: false, code: 'busy' })
+    k.settle()
+    await later()
+    const removal = locks.holdRemoval('id:9:11')
+    expect(removal).not.toBeNull()
+    removal!()
+    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'timed-out' })
+    await later()
+    const again = locks.holdRemoval('id:9:11')
+    expect(again).not.toBeNull()
+    again!()
+  })
+
+  it('a status check stopped with its kill under way keeps its reader hold, so the folder cannot be removed until the kill has finished', async () => {
+    const locks = createCodexRealmLocks()
+    const k = deferred()
+    const w = world({ locks }, { 'login status': () => ({ spawnError: 'cancelled', stopped: 'cancel', killSettled: k.p }) })
+    expect(await w.ops.status(MANAGED)).toMatchObject({ ok: false, state: 'error' })
+    expect(locks.holdRemoval('id:9:11')).toBeNull()
+    k.settle()
+    await later()
+    const removal = locks.holdRemoval('id:9:11')
+    expect(removal).not.toBeNull()
+    removal!()
+  })
+
+  it('a run with no kill under way, or an answer whose killSettled is not a promise, lets go at once', async () => {
+    const locks = createCodexRealmLocks()
+    const w = world({ locks }, { 'logout': () => ({ timedOut: true, stopped: 'deadline', killSettled: 'soon' as never }) })
+    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'timed-out' })
+    const removal = locks.holdRemoval('id:9:11')
+    expect(removal).not.toBeNull()
+    removal!()
+    const v = world({ locks }, { 'logout': () => ({ timedOut: true, stopped: 'deadline' }) })
+    expect(await v.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'timed-out' })
+    const again = locks.holdRemoval('id:9:11')
+    expect(again).not.toBeNull()
+    again!()
+  })
+})

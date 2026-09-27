@@ -239,6 +239,26 @@ describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its se
     expect(h.release).toHaveBeenCalledTimes(1)
   })
 
+  // Round 2 (A3): the run settles at its bound, but a kill still reading a
+  // slow process table carries on; the account stays leased until it ends.
+  it('a stopped review whose kill is still under way keeps its lease until that kill has finished; the agent is told at once', async () => {
+    let finishKill!: () => void
+    const killSettled = new Promise<void>((res) => { finishKill = res })
+    h.run.mockImplementationOnce(async () => ({ ok: false, code: 'cancelled', message: 'x', killSettled }))
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toEqual({ isError: true, text: 'Codex review was cancelled.' })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(h.release).not.toHaveBeenCalled()
+    finishKill()
+    await vi.waitFor(() => expect(h.release).toHaveBeenCalledTimes(1))
+    // A killSettled that rejects, or one that is not a promise, still lets go.
+    h.run.mockImplementationOnce(async () => ({ ok: false, code: 'timed-out', message: 'x', killSettled: Promise.reject(new Error('no taskkill')) }))
+    await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    await vi.waitFor(() => expect(h.release).toHaveBeenCalledTimes(2))
+    h.run.mockImplementationOnce(async () => ({ ok: false, code: 'timed-out', message: 'x', killSettled: 'soon' }))
+    await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)
+    expect(h.release).toHaveBeenCalledTimes(3)
+  })
+
   it('the MCP request\'s cancel stops the reviewer; the lease goes and the agent is told', async () => {
     h.run.mockImplementationOnce(untilStopped)
     const ac = new AbortController()

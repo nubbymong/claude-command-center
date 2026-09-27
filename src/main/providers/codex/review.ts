@@ -127,8 +127,10 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
       )
       const out = reader.end()
       const usage = out.usage ? { usage: out.usage } : {}
-      if (r.stopped === 'cancel' || input.signal?.aborted) return { ok: false, code: 'cancelled', message: 'The review was cancelled.', ...usage }
-      if (r.timedOut || r.stopped === 'deadline') return { ok: false, code: 'timed-out', message: 'The review timed out.', ...usage }
+      // Only a stopped run can carry one: the lease is held until it ends.
+      const kill = r.killSettled ? { killSettled: r.killSettled } : {}
+      if (r.stopped === 'cancel' || input.signal?.aborted) return { ok: false, code: 'cancelled', message: 'The review was cancelled.', ...usage, ...kill }
+      if (r.timedOut || r.stopped === 'deadline') return { ok: false, code: 'timed-out', message: 'The review timed out.', ...usage, ...kill }
       if (r.spawnError) return { ok: false, code: 'not-started', message: `Codex could not be started: ${clip(redactHead(r.spawnError, redact))}.` }
       if (r.exitCode !== 0) {
         const stderr = (errCut ? redact(errTail).slice(MARGIN) : redact(errTail)).trim()

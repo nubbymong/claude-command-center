@@ -28,7 +28,9 @@
 // - a managed realm is app-created and must hold no `.env`: the CLI loads
 //   CODEX_HOME/.env, which could carry OPENAI_API_KEY past the allowlist;
 // - one sign-in or sign-out at a time per realm, and one browser sign-in at a
-//   time overall (the CLI's local callback port is machine-wide);
+//   time overall (the CLI's local callback port is machine-wide); a hold, the
+//   browser one included, lasts until any kill its stopped runs left under
+//   way has finished (CodexRunResult.killSettled);
 // - sign-in and logout succeed only when a status run in the same realm
 //   agrees afterwards; after a failed or cancelled sign-in the realm's state
 //   is read again and reported, because the user may have finished in the
@@ -146,7 +148,9 @@ const refuse = (code: AuthFailureCode, message: string = MSG[code]): Refusal => 
 const isRefusal = (x: unknown): x is Refusal => !!x && typeof x === 'object' && (x as { ok?: unknown }).ok === false
 
 type Env = Readonly<Record<string, string | undefined>>
-interface Ready { ok: true; home: string; ownership: RealmOwnership; lock: string; base: Env }
+/** `kills`: the kills this operation's stopped runs left under way
+ *  (CodexRunResult.killSettled); its realm hold outlasts them. */
+interface Ready { ok: true; home: string; ownership: RealmOwnership; lock: string; base: Env; kills: Promise<void>[] }
 type Observed = { state: 'signed-in'; via?: CodexLoginVia } | { state: 'signed-out' } | Refusal & { state: 'error' }
 
 const credentialOf = (via: CodexLoginVia | undefined): AuthCredentialKind => (via === 'chatgpt' ? 'account' : via === 'api-key' ? 'api-key' : 'unknown')
@@ -228,7 +232,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     let base: Env
     try { base = await deps.baseEnv() } catch { return refuse('not-started') }
     if (!base || typeof base !== 'object') return refuse('not-started')
-    return { ok: true, home: where.home, ownership, lock: codexRealmLockKey(fsid.canonical, fsid.dev, fsid.ino), base }
+    return { ok: true, home: where.home, ownership, lock: codexRealmLockKey(fsid.canonical, fsid.dev, fsid.ino), base, kills: [] }
   }
 
   /** One run, from the executable re-verified for THIS run. */
@@ -239,6 +243,8 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
       const cmd = codexCommandLine(exe.executable, op, platform, codexShellEnv(r.base, platform))
       if ('refused' in cmd) return refuse('not-started')
       const out = await deps.run(cmd, { ...opts, env: codexCliEnv(r.base, r.home, platform) })
+      const kill = out && typeof out === 'object' ? (out as { killSettled?: unknown }).killSettled : undefined
+      if (kill instanceof Promise) r.kills.push(kill.then(() => undefined, () => undefined))
       return out && typeof out === 'object' && !isRefusal(out) ? out : refuse('not-started')
     } catch {
       return refuse('not-started')
@@ -282,6 +288,19 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
       return refuse('realm-unavailable')
     }
     return release
+  }
+
+  /** Let go of a realm hold (and anything released with it) once every
+   *  kill this operation's stopped runs left under way has finished: a
+   *  stopped run returns at its settle bound, but a kill still reading a slow
+   *  process table carries on, and the CLI may live until it ends -- a second
+   *  sign-in, a sign-out or a folder removal must not run beside it. At once
+   *  when no kill is under way. The runner bounds each kill's wait
+   *  (CODEX_KILL_WORST_MS). */
+  function releaseAfterKills(r: Ready, release: () => void): void {
+    const letGo = () => { try { release() } catch { /* a release never breaks the operation */ } }
+    if (!r.kills.length) { letGo(); return }
+    void Promise.all(r.kills).then(letGo, letGo)
   }
 
   /** Nothing escapes as a rejection: an unexpected throw is a refusal. */
@@ -334,7 +353,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
           if (s.state === 'error') return s
           return s.state === 'signed-in' ? { ok: true, state: s.state, credential: credentialOf(s.via) } : { ok: true, state: s.state }
         } finally {
-          release()
+          releaseAfterKills(r, release)
         }
       }, { state: 'error' as KnownAuthState }) as Promise<{ state: KnownAuthState } & AuthOperationResult>
     },
@@ -357,7 +376,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
           if (s.state === 'signed-in') return { ...refuse('still-signed-in'), state: 'signed-in', credential: credentialOf(s.via) }
           return refuse(s.code, s.message)
         } finally {
-          release()
+          releaseAfterKills(r, release)
         }
       })
     },
@@ -441,8 +460,9 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
           display.stdout.discard()
           display.stderr.discard()
           key = null
-          if (browser) browserRunning = false
-          release()
+          // The browser slot too: a stopped sign-in's login server may still
+          // hold the machine-wide callback port until its kill has finished.
+          releaseAfterKills(r, () => { if (browser) browserRunning = false; release() })
         }
       })
     },

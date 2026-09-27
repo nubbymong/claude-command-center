@@ -1,7 +1,7 @@
 ## 2026-09-27 -- WP2: a timed-out Codex run's whole chain is killed when the process table is slow
 
-Draft PR #625 (branch `session/beta/c4d568ce-wp2-codex`). Local commit after
-`14ad7475`; not pushed.
+Draft PR #625 (branch `session/beta/c4d568ce-wp2-codex`). First fix `8a6b83d5`
+(pushed); review fixes in the commit after it (local, not pushed).
 
 ### Problem
 
@@ -32,29 +32,45 @@ of the rest.
 
 ### Fix
 
-The kill never kills the root alone while a table may still come. An early
-read still running is waited for up to its own 30 s timeout, the root left
-running, and its whole chain is killed. A kill with no early read whose own
-read fails reads once more with the 30 s budget. The root alone only once a
-read with that budget has failed. The run still settles at its 15 s bound; a
-kill still reading then carries on after the run has settled. Unchanged: no
-`/T`, nothing killed by pid once the root has exited (checked right before
-taskkill), and a stale early table only ever supplies its wrapper line.
+- The kill never kills the root alone while a table may still come. An early
+  read still running is waited for up to its own 30 s timeout, the root left
+  running.
+- A table is used whole only while it can be no older than a kill-time read
+  may be (8 s from the start of its read). A later one, and any retry read,
+  gives only the wrapper line (cmd.exe -> node -> codex), which the running
+  root vouches for; a helper codex has reaped may have handed its pid on.
+- A failed read gets one bounded retry (after a failed early read, the kill's
+  own 8 s read; after a failed kill-time read with no earlier table, one 30 s
+  read). A throw or an answer that is not a list is a failed read; the kill
+  never rejects with nothing killed. The root alone only when every read
+  failed.
+- The run still settles at its 15 s bound. A kill still reading carries on,
+  at most 43 s from the stop (`CODEX_KILL_WORST_MS`), and the result carries
+  `killSettled`. The realm lock and browser slot (sign-in, sign-out, status),
+  the review lease, the Claude reviewer's profile hold and discovery's
+  throwaway home are held until it resolves; the caller still hears back at
+  the bound.
+- At app quit, kills still reading kill at once what they know: an earlier
+  table's wrapper line, else the root alone (`flushPendingCodexKills`, from
+  the quit teardown through the composition root).
+- Unchanged: no `/T`; nothing killed by pid once the root has exited.
+
+Residual: a quit while a kill knows no table yet kills the root alone, so node
+and codex can outlive the app; a quit-time taskkill still running when the app
+exits ends with it.
 
 ### Evidence
 
-- `tests/wp1/cli-discovery.test.ts`: four tests written first were red on
-  `14ad7475` (4 failed, 88 passed) and green after (92/92): an early read
-  answering after the old budget names the whole chain and nothing is killed
-  before it; a root that exits while the kill waits is not killed by pid; the
-  no-early-read retry, with its failure, non-list and bounded cases; the runner
-  settles at its bound while the kill still waits. The old root-alone test now
-  pins the longer, still bounded, wait.
-- Five mutants (the old wait bound, no retry, an unguarded synchronous throw, a
-  non-list answer accepted, a retry after a failed early read) each go red;
-  restored byte-identically (sha checked).
-- `tests/wp1/fake-cli.test.ts` (CI and VM only, not run on the host): the poll
-  windows, the sign-in delay of the cancel test and the test timeouts now come
-  from the kill's worst case (own read + the longer read + taskkill).
-- `npm run typecheck` clean; WP1 gate pair 16/16. CI pending; spec,
-  code-quality and ADR-009 reviews pending.
+- First fix: four cli-discovery tests red on `14ad7475` (4 failed, 88 passed),
+  green after (92/92); five mutants red.
+- Review fixes: tests written first were red on `8a6b83d5` (17 failed, 221
+  passed over cli-discovery, codex-auth-adapter, claude-reviewer and
+  codex-review-mcp-tool), green after (239/239). 23 mutants over the runner,
+  the auth operations, discovery, both reviewers and the review tool each go
+  red; one survived at first and got a test. Sources restored byte-identically.
+- `tests/wp1/fake-cli.test.ts` (CI and VM only, not run on the host): after a
+  stopped run returns, the sleep tests wait for `killSettled`, then 8 s; the
+  cancel test keeps its 3 s window unless the run returned at the settle
+  bound. Timeouts and the sign-in delay come from `CODEX_KILL_WORST_MS`.
+- `npm run typecheck` clean; WP1 gate pair 16/16. CI pending; confirmation
+  review pending.

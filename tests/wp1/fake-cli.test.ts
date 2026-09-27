@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, createCodexReviewOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS } from '../../src/main/providers/codex'
+import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, createCodexReviewOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS, CODEX_KILL_WORST_MS } from '../../src/main/providers/codex'
 import { createClaudeReviewLaunch, createClaudeReviewOperations, CLAUDE_REVIEW_ARGS } from '../../src/main/providers/claude'
 import { produceReviewDiff, defaultReviewDiffDeps, findGit } from '../../src/main/review-diff'
 import type { CodexCliOperation, CodexDiscovery, CodexAuthDeps } from '../../src/main/providers/codex'
@@ -129,11 +129,17 @@ afterAll(() => {
 const withNode = `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? process.env.Path ?? ''}`
 const poisoned = { ...process.env, PATH: withNode, Path: undefined, OPENAI_API_KEY: 'sk-ambient', CODEX_API_KEY: 'x', NODE_OPTIONS: '--no-warnings' } as Record<string, string | undefined>
 const home = (name: string) => path.join(dir, 'realms', name)
-// The longest a stop's kill may take (makeCodexKillTree): its own table read,
-// one more with the early read's longer budget, then taskkill. A kill still
-// reading when the run settles carries on after it, so a wait for the chain
-// to die is measured from the stop, not from the run settling.
-const KILL_WORST_MS = CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS
+// How long a killed process may take to be reported gone.
+const GONE_MS = 8000
+/** When a stopped run's processes must be gone by: its kill landed before the
+ *  run settled, or -- a process table slower than the settle bound -- it is
+ *  still under way (killSettled, at most CODEX_KILL_WORST_MS after the stop).
+ *  Either way the wait after the kill is short, so a kill that ended nothing
+ *  is not hidden behind the slow path's long window. */
+async function goneBy(r: { killSettled?: Promise<void> }): Promise<number> {
+  if (r.killSettled) await r.killSettled
+  return Date.now() + GONE_MS
+}
 
 async function op(operation: CodexCliOperation, realm: string, stdin?: string) {
   const cmd = codexCommandLine(exe, operation, process.platform, { ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot })
@@ -202,11 +208,10 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
     const pid = Number(fs.readFileSync(pidFile, 'utf8'))
     expect(pid).toBeGreaterThan(0)
     const alive = () => { try { process.kill(pid, 0); return true } catch { return false } }
-    // A slower table than the settle bound allows: the kill lands after the run settled.
-    const deadline = started + timeoutMs + KILL_WORST_MS + 8000
+    const deadline = await goneBy(r)
     while (alive() && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100))
     expect(alive(), `the sleeping fake (pid ${pid}) outlived the tree kill`).toBe(false)
-  }, SLEEP_TIMEOUT_MS + KILL_WORST_MS + 8000 + 10_000)
+  }, SLEEP_TIMEOUT_MS + CODEX_KILL_WORST_MS + GONE_MS + 10_000)
 
   const NOREAD_TIMEOUT_MS = CODEX_TREE_PRIME_MS + 8000
   it('a kill whose own process-table read fails still ends the WHOLE tree, from the chain the run showed once established', async () => {
@@ -222,7 +227,6 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
     let reads = 0
     const lister = async () => { if (++reads > 1) throw new Error('process table unavailable'); return real!() }
     const deps = { spawn: nodeSpawn, platform: process.platform, killTree: makeCodexKillTree(process.platform, nodeSpawn, process.env.SystemRoot, lister) }
-    const started = Date.now()
     const r = await runCodexCli(cmd, { env: codexCliEnv(poisoned, home('sleep-noread')), timeoutMs: NOREAD_TIMEOUT_MS }, deps)
     expect(r).toMatchObject({ timedOut: true, exitCode: null })
     // Read once while running; the kill either waited for that read (still
@@ -231,10 +235,10 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
     const pid = Number(fs.readFileSync(pidFile, 'utf8'))
     expect(pid).toBeGreaterThan(0)
     const alive = () => { try { process.kill(pid, 0); return true } catch { return false } }
-    const deadline = started + NOREAD_TIMEOUT_MS + KILL_WORST_MS + 8000
+    const deadline = await goneBy(r)
     while (alive() && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100))
     expect(alive(), `the sleeping fake (pid ${pid}) outlived a kill whose table read failed`).toBe(false)
-  }, NOREAD_TIMEOUT_MS + KILL_WORST_MS + 8000 + 10_000)
+  }, NOREAD_TIMEOUT_MS + CODEX_KILL_WORST_MS + GONE_MS + 10_000)
 })
 
 // WP2 5a: the Codex reviewer over the real runner and, on Windows, the real
@@ -331,18 +335,22 @@ describe('the auth operations against the fake Codex CLI (real processes)', () =
     // The fake would sign the realm in only after the kill's whole window
     // (which may outlast the run's settle bound): the cancel must kill it
     // before then on any machine, however slow its process table is to read.
-    fs.writeFileSync(path.join(homeOf(id), 'HANG'), String(KILL_WORST_MS + 5000))
+    fs.writeFileSync(path.join(homeOf(id), 'HANG'), String(CODEX_KILL_WORST_MS + 5000))
     const ops = createCodexAuthOperations(deps())
     const ac = new AbortController()
-    const r = await ops.login({ authRealmId: id }, 'browser', { signal: ac.signal, onOutput: (t) => { if (/sign in/.test(t)) ac.abort() } })
+    let cancelledAt = 0
+    const r = await ops.login({ authRealmId: id }, 'browser', { signal: ac.signal, onOutput: (t) => { if (/sign in/.test(t) && !cancelledAt) { cancelledAt = Date.now(); ac.abort() } } })
+    const returnedAt = Date.now()
     const loginPid = Number(fs.readFileSync(path.join(dir, 'login.pid'), 'utf8'))
     const browserPid = Number(fs.readFileSync(path.join(dir, 'browser.pid'), 'utf8'))
     // Every assertion inside the try: a failure must not leave the "browser"
     // running in the test folder (afterAll could not remove it).
     try {
       expect(r).toMatchObject({ ok: false, code: 'cancelled', state: 'signed-out' })
-      // A kill still reading a slow table when the run settled lands later.
-      const deadline = Date.now() + KILL_WORST_MS
+      // Returned before the settle bound: the kill had landed, so only a
+      // moment for the fake to be gone. Otherwise a kill still reading a slow
+      // table may land up to CODEX_KILL_WORST_MS after the cancel.
+      const deadline = returnedAt - cancelledAt < CODEX_KILL_SETTLE_MS ? returnedAt + 3000 : cancelledAt + CODEX_KILL_WORST_MS + 3000
       while (alive(loginPid) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 50))
       expect(alive(loginPid), `the waiting fake login (pid ${loginPid}) outlived the cancel`).toBe(false)
       expect(alive(browserPid), `the "browser" (pid ${browserPid}) the sign-in opened was killed with it`).toBe(true)
@@ -353,7 +361,7 @@ describe('the auth operations against the fake Codex CLI (real processes)', () =
       const gone = Date.now() + 5000
       while (alive(browserPid) && Date.now() < gone) await new Promise((res) => setTimeout(res, 50))
     }
-  }, 45_000 + KILL_WORST_MS)
+  }, 45_000 + CODEX_KILL_WORST_MS)
 
   it('a managed realm holding a .env is refused before the CLI runs', async () => {
     const id = realm()

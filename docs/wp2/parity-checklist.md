@@ -86,13 +86,21 @@ After `14ad7475` (2026-09-27). Windows CI at `14ad7475` failed the fake-CLI
 deadline test once in 40 Windows runs since `60ea77be`: the sleeping fake
 outlived the kill. The early process-table read outlasted the kill's 10 s wait,
 so only the root (cmd.exe) was killed and the Codex process below it kept
-running. The fix commit after `14ad7475` waits for that read up to its own
-30 s timeout with the root left running, and a kill made before the early read
-whose own read fails reads once more with that budget; the run still settles at
-its 15 s bound, and the chain is still never killed with `/T`. On the host the
-touched unit file passes 92/92 (4 red before the fix, 5 mutants red),
-`npm run typecheck` is clean and the WP1 gate passes 16/16. The fake-CLI file
-is CI and VM only. CI is pending; spec, code-quality and ADR-009 reviews are
+running. `8a6b83d5` waits for that read up to its own 30 s timeout with the
+root left running, and a kill made before the early read whose own read fails
+reads once more with that budget; the run still settles at its 15 s bound, and
+the chain is still never killed with `/T`. On the host its unit file passed
+92/92 (4 red before the fix, 5 mutants red). Its spec, code-quality and
+ADR-009 reviews asked for fixes, made in the commit after `8a6b83d5`: a table
+answering more than 8 s after its read began, and any retry read, kills only
+the wrapper line; a failed early read gets one retry; every reader answer is
+checked; the run's result says when a kill still under way at the settle
+bound has finished (`killSettled`, at most 43 s after the stop), and the realm
+lock, browser slot, review lease, Claude profile hold and discovery's
+throwaway home are held until then; kills still reading are flushed at app
+quit. On the host the four touched unit files pass 239/239 (17 red before the
+fixes, 23 mutants red), `npm run typecheck` is clean and the WP1 gate passes
+16/16. The fake-CLI file is CI and VM only. CI and the confirmation review are
 pending.
 
 | Group | Open item | Tracked in |

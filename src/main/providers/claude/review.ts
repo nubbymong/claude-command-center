@@ -58,6 +58,9 @@ export interface ClaudeCliRunResult {
   truncated: boolean
   stopped?: 'cancel' | 'deadline'
   spawnError?: string
+  /** A stopped run whose kill was still under way when it settled: resolves
+   *  (never rejects) once that kill has finished. */
+  killSettled?: Promise<void>
 }
 export interface ClaudeCliPorts {
   /** A constant argv against one resolved executable, or why not (a Windows
@@ -81,8 +84,10 @@ export interface ClaudeReviewDeps extends ClaudeCliPorts {
 }
 
 /** The consumer hold outlives the run's own deadline by this much at most:
- *  the run settles right after its kill, so a hold older than this could only
- *  be one whose release never ran. */
+ *  the run settles right after its kill, and a kill still under way when it
+ *  settles ends within the runner's worst case (43 s, CODEX_KILL_WORST_MS in
+ *  the composition root's runner), so a hold older than this could only be
+ *  one whose release never ran. */
 export const CLAUDE_REVIEW_HOLD_GRACE_MS = 60_000
 /** stdout is read as it arrives, up to this much: the result line carries the
  *  whole review. More than this is refused, never parsed from a cut. */
@@ -165,6 +170,10 @@ export function createClaudeReviewOperations(deps: ClaudeReviewDeps): ProviderRe
         return { ok: false, code: 'not-started', message: "Claude Code could not be started: the reviewer account's sign-in is busy." }
       }
       if (!release) return cancelled
+      const held = release
+      // A stopped run whose kill is still under way (a slow process table):
+      // the account stays held, and the review lease with it, until it ends.
+      let kill: Promise<void> | undefined
       try {
         if (input.signal?.aborted) return cancelled
         deps.recordPreflight(profileId, env)
@@ -187,10 +196,12 @@ export function createClaudeReviewOperations(deps: ClaudeReviewDeps): ProviderRe
           { ...cmd, cwd: input.cwd },
           { env, timeoutMs: input.timeoutMs, stdin: input.prompt, maxOutput: RUNNER_CAPTURE, onChunk, ...(input.signal ? { signal: input.signal } : {}) },
         )
+        if (r && r.killSettled instanceof Promise) kill = r.killSettled
         const out = overflow ? null : parseClaudeResult(stdout)
         const usage = out?.usage ? { usage: out.usage } : {}
-        if (r.stopped === 'cancel' || input.signal?.aborted) return { ...cancelled, ...usage }
-        if (r.timedOut || r.stopped === 'deadline') return { ok: false, code: 'timed-out', message: 'The review timed out.', ...usage }
+        const pending = kill ? { killSettled: kill } : {}
+        if (r.stopped === 'cancel' || input.signal?.aborted) return { ...cancelled, ...usage, ...pending }
+        if (r.timedOut || r.stopped === 'deadline') return { ok: false, code: 'timed-out', message: 'The review timed out.', ...usage, ...pending }
         if (r.spawnError) return { ok: false, code: 'not-started', message: `Claude Code could not be started: ${clip(redactHead(r.spawnError, redactFailure))}.` }
         if (overflow) return { ok: false, code: 'no-output', message: `Claude Code printed more than this app reads (${CLAUDE_REVIEW_MAX_STDOUT / (1024 * 1024)} MB).` }
         if (!out) {
@@ -202,7 +213,9 @@ export function createClaudeReviewOperations(deps: ClaudeReviewDeps): ProviderRe
         if (!out.text.trim()) return { ok: false, code: 'no-output', message: 'Claude Code returned no review.', ...usage }
         return { ok: true, text: finishReview(out.text), ...usage }
       } finally {
-        release()
+        const letGo = () => held()
+        if (kill) void kill.then(letGo, letGo)
+        else letGo()
       }
     },
   }
