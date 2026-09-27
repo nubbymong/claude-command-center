@@ -125,7 +125,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 17 | All-accounts usage page | PARTIAL: built and its screens approved; no Codex credits row (known issue in `src/shared/app-knowledge.ts`) | OD27 M1, M2; ADR-022; credits: parity, shown once a real read shows their unit (recorded with the usage plan, 2026-09-27) | implementation (evidence first, P3.1); verification: macOS, Linux, packaged | 2; 3, v4 |
 | 18 | Session-strip meters | DONE | OD27 M1 (D2, D3); labels from `window_minutes` (decided by design, 2026-09-26) | verification: a 0.155.1 rollout fixture from a real session; a real-CLI run | 2, v4 |
 | 19 | Strip cost wording | DONE | "API-equivalent estimate" wording (decided by design, 2026-09-26) | none | 2 |
-| 20 | Account chip on the strip and in the sidebar | PARTIAL: on the usage page and the footer; the strip and the sidebar still key the chip by email (`SessionStatusStrip.tsx`, `sidebar/SessionRow.tsx:101-107`) | Canvas 2026-09-26, "Switching a running Codex session's account": the strip's Codex account pill and its Switch account menu; the footer's label rule (a Codex identity shows its name); parity for the sidebar | implementation | 2; 3 |
+| 20 | Account chip on the strip and in the sidebar | PARTIAL: on the usage page and the footer; the strip and the sidebar still key the chip by email (`SessionStatusStrip.tsx`, `sidebar/SessionRow.tsx:101-107`); also here, from row 7: the email-keyed Claude colour overrides migrate into the identity's colour (moved at the P3.2 review) | Canvas 2026-09-26, "Switching a running Codex session's account": the strip's Codex account pill and its Switch account menu; the footer's label rule (a Codex identity shows its name); parity for the sidebar | implementation | 2; 3 |
 | 21 | Multi-account footer | DONE | Canvas 2026-09-26 (footer, option B); OD27 M1 | verification: real CLI, packaged | 2, v4 |
 | 22 | Switch the account of a running session | OPEN: refused for Codex (`hooks/useSwitchAccount.ts:50`) | Canvas 2026-09-26 (as row 20): keep the conversation; copy its rollout into the new account's folder, then `codex resume` there | implementation (evidence first: a copied rollout resumes on the supported versions; if not, section 19) | 3 |
 | 23 | Choose the account at launch | DONE | Commit 6 canvas, 2026-09-24 | verification: per OS | 2, v4 |
@@ -370,8 +370,10 @@ fixtures under `tests/fixtures/codex/` and a short evidence record. ADR-009: no
 
 **P3.2 Accounts.** One row component for both providers; the identity editor
 from any row's chip (name, colour, group, linked accounts; Claude's inline
-name and colour fields move into it, and the email-keyed colour overrides
-migrate to the identity's colour); a "N running" pill; a refused inactivate or
+name and colour fields move into it; the email-keyed colour overrides stay
+Claude's colour store, kept in step with the identity's colour, and their
+migration into the identity's colour moved to P3.6 with the chips that read
+them, recorded at the P3.2 review, 2026-09-27); a "N running" pill; a refused inactivate or
 archive names each consumer with Go to; "Archived (N)" with Restore, which
 needs a new registry transition out of archived. Likely files:
 `src/renderer/components/settings/accounts/*`, `AccountsPanel.tsx`,
@@ -412,7 +414,9 @@ here.
 **P3.6 Account chip and Switch account** (after P3.5). The strip's Codex
 account pill with its Switch account menu (inactive accounts greyed, this
 computer's sign-in marked "confirm at launch"); the sidebar chip from the
-identity; a switch pins the new account, copies the conversation's rollout
+identity; the email-keyed Claude colour overrides migrate into the identity's
+colour, and every chip that read them (header, strip, sidebar, launch gate,
+remote list) reads the identity (moved here from P3.2, row 7); a switch pins the new account, copies the conversation's rollout
 into its folder while both accounts are held, then resumes there, with the
 fallback of section 5. Likely files: `SessionStatusStrip.tsx`,
 `sidebar/SessionRow.tsx`, `hooks/useSwitchAccount.ts`, `utils/sessionLaunch.ts`,
