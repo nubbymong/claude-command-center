@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T06:17:00.176Z",
-  "head": "0c9f04a8545c46695ca49f6d65c5586f2c1797b6",
-  "tree": "1876250191aaebf628072730deca13842e55f297",
+  "generatedAt": "2026-09-27T08:16:28.918Z",
+  "head": "d71c9a686aea9f8435cc2d4a2c1d29fb5de15ea0",
+  "tree": "a0cc06333a344d45f8fb9fa2078a54eafe2d8bc8",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2343,
+  "trackedFileCount": 2344,
   "excludedFileCount": 381,
-  "scannedFileCount": 1962,
+  "scannedFileCount": 1963,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 400,
-  "pathDigest": "bc9208a9a95bc552f9dd2c6b659960b8d16601597a8532739f29070aba9d2a53",
+  "matchedPathCount": 401,
+  "pathDigest": "e7380eb7e359c2d5247a6423512d6f1fb620bfb79b40930fb40f591d14a28c04",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -565,7 +565,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 13
+      "lineCount": 14
     },
     {
       "path": "src/main/providers/codex/auth-operations.ts",
@@ -600,7 +600,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 107
+      "lineCount": 108
     },
     {
       "path": "src/main/providers/codex/discovery.ts",
@@ -904,7 +904,7 @@
         "P08",
         "P14"
       ],
-      "lineCount": 15
+      "lineCount": 17
     },
     {
       "path": "src/renderer/App.tsx",
@@ -927,7 +927,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 72
+      "lineCount": 73
     },
     {
       "path": "src/renderer/components/AccountsPanel.tsx",
@@ -2040,7 +2040,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 101
+      "lineCount": 109
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -2319,6 +2319,13 @@
       "lineCount": 2
     },
     {
+      "path": "tests/unit/preload-usage-stream-channel.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
       "path": "tests/unit/providers/claude/statusline-deploy.test.ts",
       "predicates": [
         "P13"
@@ -2332,7 +2339,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 22
+      "lineCount": 23
     },
     {
       "path": "tests/unit/providers/codex/app-server-read.test.ts",

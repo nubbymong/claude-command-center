@@ -107,7 +107,12 @@ function setup(o: { version?: string; compatibility?: string; helper?: Helper; e
     envFilePresent: () => false,
     locks,
   }
-  return { ops: createCodexAuthOperations(deps), locks, ...fr }
+  // MP8 round 2 (D-nit): readUsage requires the caller's last word. These
+  // cases speak for a caller that says yes unless they pass their own;
+  // `raw` is the operations as they are.
+  const raw = createCodexAuthOperations(deps)
+  const ops: typeof raw = { ...raw, readUsage: (realm, o = {}) => raw.readUsage(realm, 'mayStart' in o ? o : { ...o, mayStart: () => true }) }
+  return { ops, raw, locks, ...fr }
 }
 /** What discovery proved: this executable, at this version. */
 function proven(version: string, compatibility = 'supported', stat: typeof STAT = STAT, exe = EXE): CodexDiscovery {
@@ -122,7 +127,7 @@ describe('readUsage: who may be read (ADR-022 bounds 2, 5)', () => {
     const r = await t.ops.readUsage({ authRealmId: MANAGED })
     expect(r.ok).toBe(true)
     expect(t.runs).toHaveLength(1)
-    expect(t.runs[0].cmd.args).toEqual(['app-server'])
+    expect(t.runs[0].cmd.args).toEqual(['app-server', '--disable', 'remote_plugin'])
     expect(t.runs[0].opts.env.CODEX_HOME).toBe(homeOf(MANAGED).home)
     expect(t.runs[0].opts.env.OPENAI_API_KEY).toBeUndefined()
     expect(t.runs[0].opts.timeoutMs).toBe(APP_SERVER_READ_DEADLINE_MS)
@@ -366,6 +371,13 @@ describe('readUsage: the realm is held against sign-in, sign-out and removal (C-
 // Usage track MP8: the caller's last word before the spawn, and the end of
 // the helper's chain it waits for (#49).
 describe('readUsage: the last word before the spawn, and the chain end (MP8)', () => {
+  it('no mayStart at all starts nothing', async () => {
+    const t = setup()
+    expect(await t.raw.readUsage({ authRealmId: MANAGED })).toEqual({ ok: false, kind: 'refused', reason: 'may-not-start' })
+    expect(await t.raw.readUsage({ authRealmId: MANAGED }, { signal: new AbortController().signal })).toEqual({ ok: false, kind: 'refused', reason: 'may-not-start' })
+    expect(t.runs).toHaveLength(0)
+  })
+
   it('mayStart saying no starts nothing, and frees the one helper slot', async () => {
     const t = setup()
     expect(await t.ops.readUsage({ authRealmId: MANAGED }, { mayStart: () => false })).toEqual({ ok: false, kind: 'refused', reason: 'may-not-start' })

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import { randomId } from '../shared/id'
+import { isIpcStreamEnd, IPC_STREAM_END_WAIT_MS } from '../shared/ipc-stream'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
 import type { WebviewNavState } from '../shared/browser-url'
@@ -41,6 +42,48 @@ function onChannel<T>(channel: string, cb: (data: T) => void): () => void {
   const handler = (_: unknown, data: T) => cb(data)
   ipcRenderer.on(channel, handler)
   return () => ipcRenderer.removeListener(channel, handler)
+}
+
+/**
+ * A stream on a private per-call channel (usage track MP8 round 2). Main
+ * sends the items with `webContents.send` and its result as the `invoke`
+ * reply, and Electron does not order the two routes against each other, so
+ * stopping at the reply dropped items still on their way (the VM lost 3 of 20
+ * Codex usage streams, 8 of 10 offline). Subscribed before the invoke; after
+ * a reply that says the stream ran (`streamed`), it keeps listening until
+ * main's end marker arrives on the same channel (after every item: one
+ * channel is delivered in order), or, failing that, IPC_STREAM_END_WAIT_MS.
+ * A reply that says it did not run, or a rejection, stops at once. The
+ * promise settles with the reply only once the listener is gone.
+ */
+function streamOnChannel<T, R>(channel: string, invoke: () => Promise<R>, onItem: (item: T) => void, streamed: (reply: R) => boolean): Promise<R> {
+  return new Promise<R>((resolve, reject) => {
+    let ended = false
+    let replied: { ok: true; value: R } | { ok: false; error: unknown } | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let done = false
+    const finish = (): void => {
+      if (done || !replied) return
+      done = true
+      ipcRenderer.removeListener(channel, handler)
+      if (timer) clearTimeout(timer)
+      if (replied.ok) resolve(replied.value)
+      else reject(replied.error)
+    }
+    const handler = (_e: unknown, message: unknown): void => {
+      if (done) return
+      if (isIpcStreamEnd(message)) { ended = true; finish(); return }
+      if (ended) return
+      try { onItem(message as T) } catch { /* a consumer never stops the stream */ }
+    }
+    ipcRenderer.on(channel, handler)
+    const onReply = (r: { ok: true; value: R } | { ok: false; error: unknown }): void => {
+      replied = r
+      if (ended || !r.ok || !streamed(r.value)) { finish(); return }
+      timer = setTimeout(finish, IPC_STREAM_END_WAIT_MS)
+    }
+    invoke().then((value) => onReply({ ok: true, value }), (error) => onReply({ ok: false, error }))
+  })
 }
 
 /** Mirrors src/main/watchdog/session-watchdog.ts's WatchdogPublicState — kept
@@ -622,9 +665,9 @@ export interface ElectronAPI {
     setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<AccountsResult>
     /** Usage track MP3: each listed account's allowance view as it is ready,
      *  on a private per-call channel; nothing for a provider that is off. */
-    usageStream: (providerId: ProviderId, onResult: (view: ProviderAccountUsageView) => void) => Promise<ProviderUsageStreamResult>
+    usageStream: (providerId: ProviderId, onResult: (view: ProviderAccountUsageView) => void, opts?: { read?: boolean }) => Promise<ProviderUsageStreamResult>
     usageStreamStop: (providerId: ProviderId) => Promise<AccountsResult>
-    usageOne: (accountId: string) => Promise<AccountsResult<{ usage: ProviderAccountUsageView }>>
+    usageOne: (accountId: string, opts?: { read?: boolean }) => Promise<AccountsResult<{ usage: ProviderAccountUsageView }>>
   }
   github: GitHubBridge
   hooks: HooksBridge
@@ -873,12 +916,15 @@ const electronAPI: ElectronAPI = {
     // Streaming variant (plan P3): each account's usage arrives via `onResult` as
     // it resolves. A private per-call channel is subscribed before the invoke and
     // torn down when the stream completes, so overlapping calls never cross-talk.
-    fetchAllStream: (onResult: (usage: import('../shared/usage-types').AccountUsage) => void): Promise<void> => {
+    // MP8 round 2: the same end-of-stream rule as the Codex stream.
+    fetchAllStream: async (onResult: (usage: import('../shared/usage-types').AccountUsage) => void): Promise<void> => {
       const channel = `accountUsage:result:${randomId()}`
-      const handler = (_e: unknown, usage: import('../shared/usage-types').AccountUsage) => onResult(usage)
-      ipcRenderer.on(channel, handler)
-      return ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, { channel })
-        .finally(() => ipcRenderer.removeListener(channel, handler))
+      await streamOnChannel<import('../shared/usage-types').AccountUsage, unknown>(
+        channel,
+        () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, { channel }),
+        onResult,
+        (reply) => !!reply && typeof reply === 'object' && (reply as { ok?: unknown }).ok === true,
+      )
     },
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id, noRefresh: opts?.noRefresh }),
     knownLabels: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_KNOWN_LABELS),
@@ -1332,15 +1378,19 @@ const electronAPI: ElectronAPI = {
     // A private per-call reply channel (main checks its exact shape,
     // PROVIDER_USAGE_RESULT_RE), subscribed before the invoke and removed when
     // the stream ends, so overlapping streams never cross.
-    usageStream: (providerId, onResult) => {
+    // MP8 round 2: every view main sent arrives before the stream is done
+    // (streamOnChannel). `read` only for the page's own asks (ADR-022 bound 7).
+    usageStream: (providerId, onResult, opts) => {
       const channel = `providerAccounts:usageResult:${randomId()}`
-      const handler = (_e: unknown, view: ProviderAccountUsageView) => onResult(view)
-      ipcRenderer.on(channel, handler)
-      return ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId, channel })
-        .finally(() => ipcRenderer.removeListener(channel, handler))
+      return streamOnChannel<ProviderAccountUsageView, ProviderUsageStreamResult>(
+        channel,
+        () => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId, channel, ...(opts?.read === true ? { read: true } : {}) }),
+        onResult,
+        (reply) => !!reply && typeof reply === 'object' && (reply as { ok?: unknown }).ok === true,
+      )
     },
     usageStreamStop: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId }),
-    usageOne: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId }),
+    usageOne: (accountId, opts) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId, ...(opts?.read === true ? { read: true } : {}) }),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

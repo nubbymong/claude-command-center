@@ -36,10 +36,10 @@ const fetchOne = vi.fn(async () => null)
 /** The provider-neutral usage stream (MP3), driven the same way. */
 interface ProviderStreamCtl { emit: (v: ProviderAccountUsageView) => void; done: (r?: ProviderUsageStreamResult) => void; reject: (e: unknown) => void }
 const providerStreams: ProviderStreamCtl[] = []
-const usageStream = vi.fn((_providerId: string, onResult: (v: ProviderAccountUsageView) => void) => new Promise<ProviderUsageStreamResult>((resolve, reject) => {
+const usageStream = vi.fn((_providerId: string, onResult: (v: ProviderAccountUsageView) => void, _opts?: { read?: boolean }) => new Promise<ProviderUsageStreamResult>((resolve, reject) => {
   providerStreams.push({ emit: (v) => act(() => onResult(v)), done: (r) => resolve(r ?? { ok: true, provider: 'on', accounts: 0 }), reject: (e) => reject(e) })
 }))
-const usageOne = vi.fn(async (_accountId: string): Promise<unknown> => ({ ok: false, code: 'not-found' }))
+const usageOne = vi.fn(async (_accountId: string, _opts?: { read?: boolean }): Promise<unknown> => ({ ok: false, code: 'not-found' }))
 const usageStreamStop = vi.fn(async (_providerId: string) => ({ ok: true }))
 
 Object.defineProperty(window, 'electronAPI', {
@@ -311,7 +311,8 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     expect(list).not.toHaveBeenCalled()
     expect(authInfo).not.toHaveBeenCalled()
     expect(fetchAllStream).not.toHaveBeenCalled()
-    expect(usageStream).toHaveBeenCalledWith('codex', expect.any(Function))
+    // Opening the page reads afresh (MP8 round 2, ADR-022 bound 7).
+    expect(usageStream).toHaveBeenCalledWith('codex', expect.any(Function), { read: true })
     expect(container.textContent).toContain('Claude Code is off. Turn it on in Settings, Accounts to see its accounts.')
     expect(heading('claude')).toBeNull()
     expect(heading('codex')?.textContent).toBe('Codex2 accounts')
@@ -359,7 +360,8 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     usageOne.mockResolvedValueOnce({ ok: true, usage: cxView('w', 44) })
     await act(async () => { (unavailable[0].querySelector('button') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     await flush()
-    expect(usageOne).toHaveBeenCalledWith('w')
+    // A card's Retry reads afresh (MP8 round 2).
+    expect(usageOne).toHaveBeenCalledWith('w', { read: true })
     expect(container.textContent).toContain('44%')
   })
 
@@ -465,7 +467,8 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     usageOne.mockResolvedValueOnce({ ok: true, usage: cxView('w', 44) })
     await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshotOf([cxAccount('w', { lastKnownAuthState: 'signed-in' })]), loaded: true }) })
     await flush()
-    expect(usageOne).toHaveBeenCalledWith('w')
+    // A registry change shows what is there; it does not read afresh.
+    expect(usageOne).toHaveBeenCalledWith('w', { read: false })
     expect(container.textContent).toContain('44%')
     expect(container.textContent).not.toContain('Sign in again')
   })
@@ -486,6 +489,8 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     await act(async () => { window.dispatchEvent(new Event('focus')) })
     await flush()
     expect(usageStream).toHaveBeenCalledTimes(2)
+    // The focus reload never reads afresh (MP8 round 2, ADR-022 bound 7).
+    expect(usageStream.mock.calls.map((c) => c[2])).toEqual([{ read: true }, { read: false }])
     expect(fetchAllStream).toHaveBeenCalledTimes(1)
     expect(list).toHaveBeenCalledTimes(1)
     expect(authInfo).toHaveBeenCalledTimes(1)

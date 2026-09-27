@@ -956,12 +956,15 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   again until they are hidden again there. Upgrading again re-migrates any
   bare entry the older build wrote (the migration is idempotent), and the
   per-session strip's own list is never touched.
-- **Residual, accepted (MP8, window focus):** the Account usage page's
-  quiet Codex reload when its window regains focus (at most once per
-  `FOCUS_REFRESH_MS`, MP4) is a page stream, so a closed account may be
-  read afresh on it. It happens only while the page is open, and the 60 s
-  reuse keeps it to one read per account per minute at most, the same as
-  pressing Refresh.
+- **Resolved (MP8 round 2, window focus):** the Account usage page's quiet
+  Codex reload when its window regains focus, and the read of an account the
+  registry changed, no longer start a fresh read (ADR-022 bound 7): they
+  show the live, kept or last-seen figure. Only opening the page, Refresh
+  and a card's Retry read afresh.
+- **Residual, accepted (MP8 round 2, the model catalogue):** a read still
+  refetches the CLI's model catalogue into the realm (no supported CLI lets
+  a caller turn that off); the remote plugin checks are off (ADR-022,
+  Evidence).
 - **Residual, accepted (MP8, switch-off):** switching Codex off while a
   fresh read runs is refused as in use (the read's operation lease counts,
   as a status check's does) for at most that read's own bound (20 s, then

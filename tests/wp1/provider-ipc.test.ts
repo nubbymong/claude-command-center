@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ipcMain } from 'electron'
 import { registerProviderAccountsHandlers } from '../../src/main/ipc/provider-accounts-handlers'
 import { IPC } from '../../src/shared/ipc-channels'
+import { isIpcStreamEnd } from '../../src/shared/ipc-stream'
 import type { AccountsService } from '../../src/main/providers/core'
 import { createGroup } from '../../src/shared/providers'
 import type { AccountsSnapshot } from '../../src/shared/providers'
@@ -38,6 +39,7 @@ function fakeContents(id: number) {
     on: (ev: string, fn: () => void) => { (events[ev] ??= []).push(fn) },
     destroy: () => { destroyed = true; for (const fn of events.destroyed ?? []) fn() },
     emit: (ev: string) => { for (const fn of events[ev] ?? []) fn() },
+    emitWith: (ev: string, ...args: unknown[]) => { for (const fn of events[ev] ?? []) (fn as (...a: unknown[]) => void)(...args) },
   }
 }
 
@@ -187,6 +189,9 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH + ':x' }],
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: 42 }],
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH, accountId: ACC }],
+      // MP8 round 2: `read` is a boolean, nothing else.
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH, read: 'yes' }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC, read: 1 }],
       // MP8: a stop names a known provider and nothing else.
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'gemini' }],
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'codex', channel: USAGE_CH }],
@@ -447,7 +452,8 @@ describe('the usage stream over IPC (usage track MP3)', () => {
     }) as unknown as AccountsService
     return { svc, produced }
   }
-  const usageSent = (w: ReturnType<typeof wire>) => w.wc.sent.filter(([c]) => c.startsWith('providerAccounts:usageResult:'))
+  /** The views on the reply channels (the end marker aside). */
+  const usageSent = (w: ReturnType<typeof wire>) => w.wc.sent.filter(([c, v]) => c.startsWith('providerAccounts:usageResult:') && !isIpcStreamEnd(v))
 
   it('sends each view on the caller\'s own reply channel, and the result says how many', async () => {
     const { svc } = streamingService(['a', 'b'])
@@ -544,17 +550,28 @@ describe('the usage stream over IPC (usage track MP3)', () => {
   // Usage track MP8: a stream may read a closed account afresh, so what
   // stops it must reach the read under way, not only the next account.
   function signalService() {
-    const signals: Array<{ providerId: string; signal: AbortSignal | undefined }> = []
+    const signals: Array<{ providerId: string; signal: AbortSignal | undefined; read?: boolean }> = []
+    const ones: Array<{ accountId: string; signal: AbortSignal | undefined; read?: boolean }> = []
     const releases: Array<() => void> = []
     const svc = new Proxy({}, {
       get: (_t, prop) => {
         if (prop === 'subscribe') return () => () => {}
         if (prop === 'then') return undefined
         if (prop === 'streamAccountUsage') {
-          return (input: { providerId: string }, _onResult: unknown, opts: { signal?: AbortSignal }) => {
-            signals.push({ providerId: input.providerId, signal: opts?.signal })
+          return (input: { providerId: string }, _onResult: unknown, opts: { signal?: AbortSignal; read?: boolean }) => {
+            signals.push({ providerId: input.providerId, signal: opts?.signal, read: opts?.read })
             return new Promise((resolve) => {
               const done = () => resolve({ ok: true, provider: 'on', accounts: 0 })
+              releases.push(done)
+              opts?.signal?.addEventListener('abort', done, { once: true })
+            })
+          }
+        }
+        if (prop === 'readAccountUsage') {
+          return (input: { accountId: string }, opts: { signal?: AbortSignal; read?: boolean }) => {
+            ones.push({ accountId: input.accountId, signal: opts?.signal, read: opts?.read })
+            return new Promise((resolve) => {
+              const done = () => resolve({ ok: false, code: 'not-found' })
               releases.push(done)
               opts?.signal?.addEventListener('abort', done, { once: true })
             })
@@ -563,8 +580,80 @@ describe('the usage stream over IPC (usage track MP3)', () => {
         return () => ({ ok: true })
       },
     }) as unknown as AccountsService
-    return { svc, signals, releaseAll: () => { for (const r of releases) r() } }
+    return { svc, signals, ones, releaseAll: () => { for (const r of releases) r() } }
   }
+
+  // MP8 round 2 (VM, V1): the end marker is the last message on the stream's
+  // own channel, after every view, so the preload stops listening only once
+  // every view sent has arrived.
+  it('sends the end marker last on the stream\'s own channel, after every view', async () => {
+    const { svc } = streamingService(['a', 'b'])
+    const w = wire(svc)
+    await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })
+    const mine = w.wc.sent.filter(([c]) => c === USAGE_CH)
+    expect(mine.map(([, v]) => isIpcStreamEnd(v))).toEqual([false, false, true])
+  })
+
+  // MP8 round 2 (S1): only the page's own asks read afresh.
+  it('hands the service the read intent: only when asked, and never by default', async () => {
+    const s = signalService()
+    const w = wire(s.svc)
+    const a = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH, read: true })
+    const b = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'claude', channel: 'providerAccounts:usageResult:' + 'c'.repeat(24) })
+    const c = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC, read: true })
+    const d = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(s.signals.map((x) => x.read)).toEqual([true, false])
+    expect(s.ones.map((x) => x.read)).toEqual([true, false])
+    s.releaseAll()
+    await Promise.all([a, b, c, d])
+  })
+
+  // MP8 round 2 (S2, Q2): a card's Retry read stops with the page, and every
+  // read stops when the renderer crashes or its main frame goes elsewhere.
+  it('the page closing stops its cards\' Retry reads too', async () => {
+    const s = signalService()
+    const w = wire(s.svc)
+    const one = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC, read: true })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(s.ones[0].signal?.aborted).toBe(false)
+    await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'codex' })
+    expect(s.ones[0].signal?.aborted).toBe(true)
+    await one
+  })
+
+  it('a renderer that crashes, or whose main frame navigates to another document, stops its streams and reads', async () => {
+    for (const leave of [
+      (w: ReturnType<typeof wire>) => w.wc.emit('render-process-gone'),
+      (w: ReturnType<typeof wire>) => w.wc.emitWith('did-start-navigation', { isMainFrame: true, isSameDocument: false }),
+      (w: ReturnType<typeof wire>) => w.wc.emitWith('did-start-navigation', {}, 'app://x', false, true),
+    ]) {
+      const s = signalService()
+      const w = wire(s.svc)
+      const st = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH, read: true })
+      const one = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC, read: true })
+      await new Promise((r) => setTimeout(r, 0))
+      leave(w)
+      expect(s.signals[0].signal?.aborted).toBe(true)
+      expect(s.ones[0].signal?.aborted).toBe(true)
+      await Promise.all([st, one])
+    }
+    // A same-document navigation, or a subframe's, stops nothing.
+    for (const stay of [
+      (w: ReturnType<typeof wire>) => w.wc.emitWith('did-start-navigation', { isMainFrame: true, isSameDocument: true }),
+      (w: ReturnType<typeof wire>) => w.wc.emitWith('did-start-navigation', { isMainFrame: false, isSameDocument: false }),
+      (w: ReturnType<typeof wire>) => w.wc.emitWith('did-start-navigation', {}, 'app://x', true, true),
+    ]) {
+      const s = signalService()
+      const w = wire(s.svc)
+      const st = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH, read: true })
+      await new Promise((r) => setTimeout(r, 0))
+      stay(w)
+      expect(s.signals[0].signal?.aborted).toBe(false)
+      s.releaseAll()
+      await st
+    }
+  })
 
   it('the page closing (usageStreamStop) stops the caller\'s stream for that provider, the read under way included; the other provider\'s is left alone', async () => {
     const s = signalService()
@@ -617,7 +706,7 @@ describe('the usage stream over IPC (usage track MP3)', () => {
     await w.call(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, { accountId: begun.accountId, identity: { mode: 'new', colourKey: 'pink' } })
     w.wc.sent.length = 0
     expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })).toEqual({ ok: true, provider: 'on', accounts: 1 })
-    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: begun.accountId })).toMatchObject({ ok: true, usage: { accountId: begun.accountId, status: 'no-session-yet' } })
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: begun.accountId, read: true })).toMatchObject({ ok: true, usage: { accountId: begun.accountId, status: 'no-session-yet' } })
     const text = JSON.stringify(w.wc.sent)
     for (const needle of [RES, EXE, EXT_HOME, 'codex-realms', 'sessions', 'rollout-']) {
       expect(text.includes(needle.replace(/\\/g, '\\\\')) || text.includes(needle), needle).toBe(false)

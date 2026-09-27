@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { IPC } from '../../../src/shared/ipc-channels'
 import type { AccountUsage } from '../../../src/shared/usage-types'
+import { isIpcStreamEnd } from '../../../src/shared/ipc-stream'
 
 const handlers = new Map<string, (...a: any[]) => any>()
 vi.mock('electron', () => ({
@@ -85,7 +86,8 @@ function fakeEvent(id = 1) {
   }
 }
 const CH = 'accountUsage:result:abc123'
-const ids = (ev: ReturnType<typeof fakeEvent>) => ev.sent.map((s) => s.usage.profileId)
+/** What the caller's callback gets: every message but the end marker. */
+const ids = (ev: ReturnType<typeof fakeEvent>) => ev.sent.filter((s) => !isIpcStreamEnd(s.usage)).map((s) => s.usage.profileId)
 const tick = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
@@ -109,19 +111,33 @@ beforeEach(() => {
 const runStream = (ev: any, arg: any) => handlers.get(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM)!(ev, arg)
 
 describe('accountUsage:fetchAllStream handler', () => {
-  it('sends each streamed account on the caller-named channel, in order', async () => {
+  it('sends each streamed account on the caller-named channel, in order, then the end marker last', async () => {
     emit.push(usage('a'), usage('b'), usage('c'))
     const ev = fakeEvent()
-    await runStream(ev, { channel: CH })
-    expect(ev.sent.map((s) => s.channel)).toEqual([CH, CH, CH])
+    // MP8 round 2 (VM): the reply says the stream ran, and the end marker is
+    // the last message on the same channel, after every account.
+    expect(await runStream(ev, { channel: CH })).toEqual({ ok: true })
+    expect(ev.sent.map((s) => s.channel)).toEqual([CH, CH, CH, CH])
     expect(ids(ev)).toEqual(['a', 'b', 'c'])
+    expect(ev.sent.map((s) => isIpcStreamEnd(s.usage))).toEqual([false, false, false, true])
+  })
+
+  it('a stream that stops early still ends with the marker', async () => {
+    emit.push(usage('a'), usage('b'))
+    const ev1 = fakeEvent(3)
+    const first = runStream(ev1, { channel: CH })
+    await tick()
+    await runStream(fakeEvent(3), { channel: CH })
+    await first
+    expect(ev1.sent.map((s) => isIpcStreamEnd(s.usage)).at(-1)).toBe(true)
   })
 
   it('refuses a channel that is not the accountUsage:result: prefix, and streams nothing', async () => {
     emit.push(usage('a'))
     for (const channel of ['pty:data:evil', 'accountProfiles:list', 'AccountUsage:result:x', '', 42 as unknown as string, undefined]) {
       const ev = fakeEvent()
-      await runStream(ev, { channel })
+      // Not a stream: no end marker either, and the reply says nothing ran.
+      expect(await runStream(ev, { channel }), JSON.stringify(channel)).toBeUndefined()
       expect(ev.sent, JSON.stringify(channel)).toEqual([])
     }
     expect(fetchAllAccountsUsageStreaming).not.toHaveBeenCalled()

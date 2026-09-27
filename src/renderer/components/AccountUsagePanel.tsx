@@ -172,7 +172,10 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
     }
   }, [claudeOff])
 
-  const loadCodex = useCallback(async (opts: { quiet?: boolean } = {}) => {
+  // `read` (MP8 round 2, ADR-022 bound 7): a closed Codex account is read
+  // afresh only when the page opens or on Refresh; the window-focus reload
+  // shows the live, kept or last-seen figure only.
+  const loadCodex = useCallback(async (opts: { quiet?: boolean; read?: boolean } = {}) => {
     const gen = ++codexGen.current
     if (!opts.quiet) setCodexViews({})
     setCodexStreamOff(false)
@@ -188,7 +191,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
         // started is not a change to read it again for.
         if (!codexSeen.current.has(view.accountId)) codexSeen.current.set(view.accountId, READ_BY_STREAM)
         setCodexViews((prev) => ({ ...prev, [view.accountId]: view }))
-      })
+      }, { read: opts.read !== false })
       if (codexGen.current === gen && r && r.ok === true && r.provider === 'off') setCodexStreamOff(true)
     } catch {
       // A failed stream leaves the unresolved rows to Retry, one account each.
@@ -220,7 +223,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
       const t = Date.now()
       if (t - lastFocusLoad.current < FOCUS_REFRESH_MS) return
       lastFocusLoad.current = t
-      void loadCodex({ quiet: true })
+      void loadCodex({ quiet: true, read: false })
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
@@ -233,9 +236,11 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
     } catch { /* leave the stale row */ }
   }, [])
 
-  const refreshCodexOne = useCallback(async (accountId: string) => {
+  // `read`: a card's Retry only; an account the registry changed shows the
+  // live, kept or last-seen figure (MP8 round 2, ADR-022 bound 7).
+  const refreshCodexOne = useCallback(async (accountId: string, read: boolean) => {
     try {
-      const r = await window.electronAPI.providerAccounts.usageOne(accountId)
+      const r = await window.electronAPI.providerAccounts.usageOne(accountId, { read })
       if (r && r.ok === true && r.usage) setCodexViews((prev) => ({ ...prev, [accountId]: r.usage }))
     } catch { /* it stays a Retry row */ }
   }, [])
@@ -250,7 +255,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
       if (a.lifecycle === 'inactive') continue
       const before = seen.get(a.id)
       if (before === READ_BY_STREAM) continue
-      if (before === undefined || before !== a.lastKnownAuthState) void refreshCodexOne(a.id)
+      if (before === undefined || before !== a.lastKnownAuthState) void refreshCodexOne(a.id, false)
     }
     codexSeen.current = new Map(codexAccounts.map((a) => [a.id, a.lastKnownAuthState]))
   }, [codexAccounts, codexOn, codexStreaming, refreshCodexOne])
@@ -329,10 +334,10 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
           if (!view && !parked) {
             return codexStreaming
               ? <UsageSkeletonCard key={a.id} />
-              : <UsageUnavailableRow key={a.id} name={accountDisplayName(snapshot, a)} onRetry={() => void refreshCodexOne(a.id)} />
+              : <UsageUnavailableRow key={a.id} name={accountDisplayName(snapshot, a)} onRetry={() => void refreshCodexOne(a.id, true)} />
           }
           if (view && (view.status === 'error' || view.status === 'off')) {
-            return <UsageUnavailableRow key={a.id} name={accountDisplayName(snapshot, a)} onRetry={() => void refreshCodexOne(a.id)} />
+            return <UsageUnavailableRow key={a.id} name={accountDisplayName(snapshot, a)} onRetry={() => void refreshCodexOne(a.id, true)} />
           }
           const identity = identityOf(snapshot, a)
           const provider = providerView(snapshot, a.providerId) ?? { providerId: a.providerId, displayName: PROVIDER_NAME[a.providerId] }

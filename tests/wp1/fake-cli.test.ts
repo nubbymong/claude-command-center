@@ -76,7 +76,7 @@ if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m 
   })
   return
 }
-if (a === 'app-server') {
+if (a === 'app-server --disable remote_plugin') {
   // Usage track MP7 (ADR-022): the protocol helper. Logs every message it is
   // sent, answers initialize naming its CODEX_HOME (or another folder) and the
   // usage read, and exits when its stdin closes -- unless the realm's
@@ -490,7 +490,7 @@ describe('a Codex usage read against the fake app-server (real processes)', () =
   it('reads the allowance with exactly the three messages, in the realm, with no Conductor variable, and the helper exits', async () => {
     expect(proven, 'discovery through the shim').not.toBeNull()
     const id = realm()
-    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { mayStart: () => true })
     expect(r.ok, JSON.stringify(r)).toBe(true)
     const methods = fs.readFileSync(path.join(homeOf(id), 'app-server.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).method)
     expect(methods).toEqual(['initialize', 'initialized', 'account/rateLimits/read'])
@@ -503,23 +503,24 @@ describe('a Codex usage read against the fake app-server (real processes)', () =
   it('a helper that stays up after its answer is killed with its chain, and the reading still returns', async () => {
     const id = realm()
     fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'stay')
-    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { mayStart: () => true })
     expect(r.ok, JSON.stringify(r)).toBe(true)
     expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
   }, CODEX_KILL_WORST_MS + 60_000)
 
-  it('a helper that names another folder is refused and shut down', async () => {
+  it('a helper that names another folder is refused (transient) and shut down', async () => {
     const id = realm()
     fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'wrong-home')
-    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
-    expect(r).toEqual({ ok: false, kind: 'unsupported', reason: 'codex-home' })
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { mayStart: () => true })
+    // MP7 round 1 (D-1): a wrong home is about the realm, not the CLI: transient.
+    expect(r).toEqual({ ok: false, kind: 'transient', reason: 'codex-home' })
     expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
   }, CODEX_KILL_WORST_MS + 60_000)
 
   it('a helper that answers nothing is killed at the initialize bound', async () => {
     const id = realm()
     fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'silent')
-    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { mayStart: () => true })
     expect(r).toEqual({ ok: false, kind: 'transient', reason: 'timeout' })
     expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
   }, CODEX_KILL_WORST_MS + 60_000)
@@ -527,7 +528,7 @@ describe('a Codex usage read against the fake app-server (real processes)', () =
   it('an error answer to the read is transient, and the helper exits', async () => {
     const id = realm()
     fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'error')
-    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { mayStart: () => true })
     expect(r).toEqual({ ok: false, kind: 'transient', reason: 'error-response' })
     expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
   }, CODEX_KILL_WORST_MS + 60_000)
@@ -535,7 +536,7 @@ describe('a Codex usage read against the fake app-server (real processes)', () =
   it('a request from the helper is never answered: the read fails and the helper is shut down', async () => {
     const id = realm()
     fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'server-request')
-    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { mayStart: () => true })
     expect(r).toEqual({ ok: false, kind: 'transient', reason: 'server-request' })
     const sent = fs.readFileSync(path.join(homeOf(id), 'app-server.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { id?: unknown; method?: string })
     expect(sent.some((m) => m.id === 'srv-1')).toBe(false)
@@ -551,7 +552,7 @@ describe('a Codex usage read against the fake app-server (real processes)', () =
     fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'silent')
     const stop = new AbortController()
     let ended: Promise<void> | null = null
-    const reading = createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { signal: stop.signal, onEnded: (e) => { ended = e } })
+    const reading = createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { signal: stop.signal, mayStart: () => true, onEnded: (e) => { ended = e } })
     const pidFile = path.join(homeOf(id), 'app-server.pid')
     const until = Date.now() + 20_000
     while (!fs.existsSync(pidFile) && Date.now() < until) await new Promise((r) => setTimeout(r, 50))

@@ -163,16 +163,32 @@ describe('the answer (ADR-022 bounds 3, 5, 8)', () => {
     expect(sent).toHaveLength(3)
   })
 
-  it('error answers: method not found and invalid requests are unsupported; anything else is transient', () => {
-    const cases: Array<[number, string, string]> = [[-32601, 'unsupported', 'method-not-found'], [-32600, 'unsupported', 'invalid-request'], [-32602, 'unsupported', 'invalid-request'], [-32000, 'transient', 'error-response']]
+  // MP8 round 2 (VM): after a successful initialize only method-not-found on
+  // the read says anything about the CLI; every other error answer to the
+  // read is about the realm.
+  it('error answers to the read: method not found is unsupported; any other is transient', () => {
+    const cases: Array<[number, string, string]> = [[-32601, 'unsupported', 'method-not-found'], [-32600, 'transient', 'error-response'], [-32602, 'transient', 'error-response'], [-32000, 'transient', 'error-response'], [-32603, 'transient', 'error-response']]
     for (const [code, kind, reason] of cases) {
       const { c } = client()
       c.begin(); c.receive(initAnswer()); c.receive(line({ id: 2, error: { code, message: 'x' } }))
       expect(c.verdict, String(code)).toEqual({ ok: false, kind, reason })
     }
-    const early = client()
-    early.c.begin(); early.c.receive(line({ id: 1, error: { code: -32601, message: 'no' } }))
-    expect(early.c.verdict).toEqual({ ok: false, kind: 'unsupported', reason: 'method-not-found' })
+  })
+
+  it('the real CLI\'s answer in a signed-out realm is transient, never the sticky verdict', () => {
+    const { c } = client()
+    c.begin(); c.receive(initAnswer())
+    c.receive(line({ id: 2, error: { code: -32600, message: 'codex account authentication required to read rate limits' } }))
+    expect(c.verdict).toEqual({ ok: false, kind: 'transient', reason: 'error-response' })
+  })
+
+  it('error answers to initialize: method not found and invalid requests are unsupported; any other is transient', () => {
+    const cases: Array<[number, string, string]> = [[-32601, 'unsupported', 'method-not-found'], [-32600, 'unsupported', 'invalid-request'], [-32602, 'unsupported', 'invalid-request'], [-32000, 'transient', 'error-response']]
+    for (const [code, kind, reason] of cases) {
+      const early = client()
+      early.c.begin(); early.c.receive(line({ id: 1, error: { code, message: 'no' } }))
+      expect(early.c.verdict, String(code)).toEqual({ ok: false, kind, reason })
+    }
   })
 
   it('answers that do not match the schema fail as unsupported', () => {

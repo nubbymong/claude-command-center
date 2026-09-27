@@ -21,6 +21,7 @@ import { ipcMain } from 'electron'
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
+import { ipcStreamEnd } from '../../shared/ipc-stream'
 import { isOpaqueId, isProviderId, isLegacyId, SECRET_HANDLE_RE, FRIENDLY_NAME_MAX, GROUP_NAME_MAX, PROVIDER_USAGE_RESULT_RE } from '../../shared/providers'
 import type { AccountsFailure, OpaqueIdKind, ProviderId } from '../../shared/providers'
 import type { AccountsService } from '../providers/core'
@@ -68,7 +69,11 @@ export const PROVIDER_ACCOUNTS_SCHEMAS = {
   setReviewerDefault: z.object({ providerId, accountId: accountId.nullable() }).strict(),
   // Usage track MP3: the reply channel is the preload's exact private shape,
   // so a stream can address no other listener in the caller's renderer.
-  usageStream: z.object({ providerId, channel: z.string().max(64).regex(PROVIDER_USAGE_RESULT_RE) }).strict(),
+  // MP8 round 2 (ADR-022 bound 7): `read` is true only for the page's own
+  // asks (opening it, Refresh, a card's Retry); absent, nothing is read
+  // afresh.
+  usageStream: z.object({ providerId, channel: z.string().max(64).regex(PROVIDER_USAGE_RESULT_RE), read: z.boolean().optional() }).strict(),
+  usageOne: z.object({ accountId, read: z.boolean().optional() }).strict(),
 } as const
 
 const refusal = (code: AccountsFailure['code'], message: string): AccountsFailure => ({ ok: false, code, message })
@@ -198,7 +203,43 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
   // way (its signal), not only the next account.
   const usageStreams = new Map<string, { gen: number; stop: AbortController }>()
   let usageStreamSeq = 0
-  handle(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, S.account, (i, svc) => svc.readAccountUsage(i))
+  // MP8 round 2 (S2): a card's Retry reads under a stop of its own, which the
+  // page closing (or the renderer going away) triggers, as a stream's.
+  const usageOnes = new Map<number, Set<AbortController>>()
+  /** Stop `stop` when the renderer goes away, crashes, or its main frame
+   *  navigates to another document (Q2). Returns the unsubscribe. */
+  const stopOnLeave = (sender: WebContents, stop: AbortController): (() => void) => {
+    const gone = () => stop.abort()
+    const navigated = (details: unknown, _url?: unknown, isInPlace?: unknown, isMainFrame?: unknown) => {
+      const d = details && typeof details === 'object' ? details as { isMainFrame?: unknown; isSameDocument?: unknown } : {}
+      const main = typeof isMainFrame === 'boolean' ? isMainFrame : d.isMainFrame === true
+      const sameDocument = typeof isInPlace === 'boolean' ? isInPlace : d.isSameDocument === true
+      if (main && !sameDocument) stop.abort()
+    }
+    try { sender.once('destroyed', gone) } catch { /* a renderer gone already */ }
+    try { sender.on('render-process-gone', gone) } catch { /* a renderer gone already */ }
+    try { sender.on('did-start-navigation', navigated as never) } catch { /* a renderer gone already */ }
+    return () => {
+      try { sender.removeListener('destroyed', gone) } catch { /* gone */ }
+      try { sender.removeListener('render-process-gone', gone) } catch { /* gone */ }
+      try { sender.removeListener('did-start-navigation', navigated as never) } catch { /* gone */ }
+    }
+  }
+  handle(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, S.usageOne, async (i, svc, e) => {
+    const sender = e.sender
+    const stop = new AbortController()
+    const mine = usageOnes.get(sender.id) ?? new Set<AbortController>()
+    mine.add(stop)
+    usageOnes.set(sender.id, mine)
+    const unsubscribe = stopOnLeave(sender, stop)
+    try {
+      return await svc.readAccountUsage({ accountId: i.accountId }, { read: i.read === true, signal: stop.signal })
+    } finally {
+      unsubscribe()
+      mine.delete(stop)
+      if (mine.size === 0 && usageOnes.get(sender.id) === mine) usageOnes.delete(sender.id)
+    }
+  })
   handle(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, S.usageStream, async (i, svc, e) => {
     const sender = e.sender
     const key = `${sender.id}|${i.providerId}`
@@ -206,21 +247,24 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
     usageStreams.get(key)?.stop.abort()
     const stop = new AbortController()
     usageStreams.set(key, { gen, stop })
-    const gone = () => stop.abort()
-    sender.once('destroyed', gone)
+    const unsubscribe = stopOnLeave(sender, stop)
     const live = () => !sender.isDestroyed() && usageStreams.get(key)?.gen === gen
     try {
       return await svc.streamAccountUsage({ providerId: i.providerId }, (view) => {
         if (!live()) return
         try { sender.send(i.channel, view) } catch { /* a renderer going away never breaks the stream */ }
-      }, { shouldContinue: live, signal: stop.signal })
+      }, { shouldContinue: live, signal: stop.signal, read: i.read === true })
     } finally {
-      try { sender.removeListener('destroyed', gone) } catch { /* a renderer gone already */ }
+      unsubscribe()
       if (usageStreams.get(key)?.gen === gen) usageStreams.delete(key)
+      // MP8 round 2 (VM): the end marker, last on the same channel, so the
+      // caller stops listening only once every view sent has arrived.
+      try { if (!sender.isDestroyed()) sender.send(i.channel, ipcStreamEnd()) } catch { /* a renderer gone already */ }
     }
   })
   // The page closed: its stream for that provider stops now, a read under
-  // way included. Only the caller's own stream; nothing else is touched.
+  // way included, and so do its cards' Retry reads (S2). Only the caller's
+  // own; nothing else is touched.
   handle(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, S.provider, (i, _svc, e) => {
     const key = `${e.sender.id}|${i.providerId}`
     const running = usageStreams.get(key)
@@ -228,6 +272,7 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
       usageStreams.delete(key)
       running.stop.abort()
     }
+    for (const stop of usageOnes.get(e.sender.id) ?? []) stop.abort()
     return { ok: true }
   })
 

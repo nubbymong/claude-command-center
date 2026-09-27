@@ -82,7 +82,7 @@ export interface AccountsServiceDeps {
   log?: (message: string) => void
   /** Usage track MP8: the fresh reads' clock and pacing. Absent: the
    *  shipped values (tests shorten them). */
-  usageReads?: { now?: () => number; gapMs?: number; reuseMs?: number; settleMaxMs?: number }
+  usageReads?: { now?: () => number; gapMs?: number; reuseMs?: number; retryFloorMs?: number; settleMaxMs?: number }
 }
 
 /** Usage track MP8 (ADR-022, bound 7): the least time between two fresh
@@ -91,6 +91,9 @@ export const USAGE_READ_GAP_MS = 300
 /** A fresh reading is shown again for this long without a read; a card's
  *  Retry reads again. */
 export const USAGE_READ_REUSE_MS = 60_000
+/** MP8 round 2 (C-M1): a card's Retry shows a fresh reading this young again
+ *  rather than reading once more. */
+export const USAGE_READ_RETRY_FLOOR_MS = 10_000
 /** Transient failures in one stream after which the rest of it shows the
  *  last-seen readings without trying (offline). */
 export const USAGE_READ_TRANSIENT_LIMIT = 3
@@ -116,6 +119,10 @@ interface UsageReadRun {
  *  failures. `signal`: the stream stopped (the page closed, a newer stream). */
 interface UsageReadMode {
   reuse: boolean
+  /** MP8 round 2 (S1, ADR-022 bound 7): a fresh read may start only for the
+   *  page's own asks (opening it, Refresh, a card's Retry). A window-focus
+   *  reload or a registry change shows the live, kept or last-seen reading. */
+  read: boolean
   pass?: { transient: number }
   signal?: AbortSignal
 }
@@ -299,6 +306,10 @@ export class AccountsService {
   private usageReadQueue: Promise<void> = Promise.resolve()
   private usageReadEndedAt = Number.NEGATIVE_INFINITY
   private usageReadSeq = 0
+  /** The fresh reads' own operation leases held now, by account: a read's
+   *  lease does not make its account "in use" to the next ask, which queues
+   *  behind it instead (MP8 round 2, Q1). */
+  private readonly usageReadLeases = new Map<string, number>()
   /** The app is quitting: no fresh read starts again (stopUsageReads). */
   private usageStopped = false
   private subscribedStore: AccountRegistryStore | null = null
@@ -1383,7 +1394,11 @@ export class AccountsService {
     // above all) stops a fresh read of the account and waits for its
     // process chain first, and none starts while it runs: a read never makes
     // either refuse as "in use".
-    const unbar = await this.settleUsageRead(String(input?.accountId))
+    // An id that names no account is refused before anything is settled
+    // (Q3: no settle count for a stranger).
+    const known = this.accountContext(input?.accountId)
+    if ('ok' in known) return known
+    const unbar = await this.settleUsageRead(input.accountId)
     try {
       return await this.changeLifecycle(input)
     } finally {
@@ -1953,7 +1968,7 @@ export class AccountsService {
    *  (usage track MP8), never from a kept reading. A provider that is off,
    *  not set up, or whose setting cannot be read reads nothing at all (D5).
    *  An archived account is not served. */
-  async readAccountUsage(input: { accountId: string }): Promise<AccountsResult<{ usage: ProviderAccountUsageView }>> {
+  async readAccountUsage(input: { accountId: string }, opts: { read?: boolean; signal?: AbortSignal } = {}): Promise<AccountsResult<{ usage: ProviderAccountUsageView }>> {
     const id = input && typeof input === 'object' ? (input as { accountId?: unknown }).accountId : undefined
     if (typeof id !== 'string' || !id) return failure('not-found')
     const ready = this.ready()
@@ -1963,7 +1978,7 @@ export class AccountsService {
     const p = this.usagePackage(a.providerId)
     if (!p) return failure('unsupported')
     if (this.launchRefusal(p.id)) return { ok: true, usage: { accountId: a.id, providerId: a.providerId, status: 'off', buckets: [] } }
-    return { ok: true, usage: await this.usageView(p, ready.doc, a, { reuse: false }) }
+    return { ok: true, usage: await this.usageView(p, ready.doc, a, { reuse: false, read: opts?.read === true, ...(opts?.signal ? { signal: opts.signal } : {}) }) }
   }
 
   /** Every listed account of a provider, one view each, sent as it is ready.
@@ -1979,7 +1994,7 @@ export class AccountsService {
   async streamAccountUsage(
     input: { providerId: ProviderId },
     onResult: (view: ProviderAccountUsageView) => void,
-    opts: { shouldContinue?: () => boolean; signal?: AbortSignal } = {},
+    opts: { shouldContinue?: () => boolean; signal?: AbortSignal; read?: boolean } = {},
   ): Promise<ProviderUsageStreamResult> {
     const p = this.usagePackage(input?.providerId)
     if (!p) return failure('unsupported')
@@ -1991,7 +2006,7 @@ export class AccountsService {
       try { return !opts.shouldContinue || opts.shouldContinue() === true } catch { return false }
     }
     const listed = ready.doc.accounts.filter((a) => a.providerId === p.id && a.lifecycle !== 'archived').map((a) => a.id)
-    const mode: UsageReadMode = { reuse: true, pass: { transient: 0 }, ...(opts.signal ? { signal: opts.signal } : {}) }
+    const mode: UsageReadMode = { reuse: true, read: opts.read === true, pass: { transient: 0 }, ...(opts.signal ? { signal: opts.signal } : {}) }
     let sent = 0
     for (const id of listed) {
       await yieldTurn()
@@ -2025,7 +2040,9 @@ export class AccountsService {
     const realm = findRealm(doc, a.authRealmId)
     if (!realm || realm.lifecycle !== 'active') return base
     const ref: RealmRef = { authRealmId: realm.id }
-    const inUse = this.signIns.has(a.id) || this.deps.leases.count(a.id) > 0
+    // In use: a session, review, sign-in or other operation; a fresh read's
+    // own lease aside (the next ask queues behind it).
+    const inUse = this.signIns.has(a.id) || this.deps.leases.count(a.id) - (this.usageReadLeases.get(a.id) ?? 0) > 0
     const shown = (r: UsageReading | null, source: ProviderAccountUsageView['source'] | undefined, status: ProviderAccountUsageView['status'] = 'ok'): ProviderAccountUsageView => {
       const view: ProviderAccountUsageView = { ...base, status }
       if (r) {
@@ -2102,7 +2119,7 @@ export class AccountsService {
     }
   }
 
-  private usageSetting(key: 'gapMs' | 'reuseMs' | 'settleMaxMs', shipped: number): number {
+  private usageSetting(key: 'gapMs' | 'reuseMs' | 'retryFloorMs' | 'settleMaxMs', shipped: number): number {
     const v = this.deps.usageReads?.[key]
     return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : shipped
   }
@@ -2122,6 +2139,8 @@ export class AccountsService {
     realm: ProviderRegistryDoc['realms'][number],
   ): boolean {
     return typeof p.usage.read === 'function'
+      && a.lifecycle === 'active'
+      && realm.lifecycle === 'active'
       && a.operationalState !== 'blocked'
       && (a.authMethod === 'browser' || a.authMethod === 'device')
       && a.lastKnownAuthState === 'signed-in'
@@ -2140,15 +2159,21 @@ export class AccountsService {
     realmId: string,
     mode: UsageReadMode,
   ): Promise<UsageReading | null> {
-    if (mode.reuse) {
-      const kept = this.usageFresh.get(a.id)
-      const age = kept ? this.usageNow() - kept.at : Number.NaN
-      // A clock that went back reads as old.
-      if (kept && age >= 0 && age < this.usageSetting('reuseMs', USAGE_READ_REUSE_MS)) return kept.reading
-    }
+    const kept = this.usageFresh.get(a.id)
+    const age = kept ? this.usageNow() - kept.at : Number.NaN
+    // A clock that went back reads as old.
+    const within = (ms: number): boolean => !!kept && age >= 0 && age < ms
+    const reuseMs = this.usageSetting('reuseMs', USAGE_READ_REUSE_MS)
+    // Not one of the page's own asks: a kept reading, else none (S1).
+    if (!mode.read) return kept && within(reuseMs) ? kept.reading : null
+    // A stream reuses a reading under a minute old; a Retry one under the
+    // floor (C-M1).
+    if (kept && within(mode.reuse ? reuseMs : this.usageSetting('retryFloorMs', USAGE_READ_RETRY_FLOOR_MS))) return kept.reading
     if (mode.pass && mode.pass.transient >= USAGE_READ_TRANSIENT_LIMIT) return null
     if (this.usageStopped) return null
-    const run = this.usageReads.get(a.id) ?? this.startUsageRead(p, a.id, a.providerId, realmId, mode.signal)
+    // A read already stopped is not joined (Q1): a new one queues after it.
+    const running = this.usageReads.get(a.id)
+    const run = running && !running.stop.signal.aborted ? running : this.startUsageRead(p, a.id, a.providerId, realmId, mode.signal)
     let outcome: UsageReadOutcome
     try { outcome = await run.outcome } catch { outcome = { ok: false, failure: 'refused' } }
     if (outcome.ok === true) {
@@ -2205,11 +2230,15 @@ export class AccountsService {
         if (stop.signal.aborted) return refused
         lease = await this.usageReadLease(accountId, providerId)
         if (!lease) return refused
+        this.usageReadLeases.set(accountId, (this.usageReadLeases.get(accountId) ?? 0) + 1)
         await this.ensureDiscovered(p)
         const r = await p.usage.read!({ authRealmId: realmId }, { signal: stop.signal, mayStart: () => this.usageMayStart(accountId, providerId) })
         if (r && r.ended instanceof Promise) ended = r.ended
         const o = r?.outcome
-        if (!o) return refused
+        // A stopped read (the page closed, a settle) is no transient failure:
+        // it never counts toward a stream's cutoff (Q1). A reading that
+        // arrived before the stop is still a reading.
+        if (!o || (stop.signal.aborted && o.ok !== true)) return refused
         return o.ok === true ? { ok: true, reading: o.reading ?? null } : { ok: false, failure: o.failure }
       } catch {
         return refused
@@ -2217,9 +2246,15 @@ export class AccountsService {
         const leased = lease
         void boundedWait(ended, this.usageSetting('settleMaxMs', USAGE_READ_SETTLE_MAX_MS)).then(() => {
           try { leased?.release() } catch { /* a release never breaks the read */ }
+          if (leased) {
+            const n = (this.usageReadLeases.get(accountId) ?? 1) - 1
+            if (n > 0) this.usageReadLeases.set(accountId, n)
+            else this.usageReadLeases.delete(accountId)
+          }
           this.usageReadEndedAt = this.usageNow()
           if (signal) signal.removeEventListener('abort', onAbort)
-          this.usageReads.delete(accountId)
+          // A newer run may have replaced this stopped one (Q1).
+          if (this.usageReads.get(accountId) === run) this.usageReads.delete(accountId)
           free()
           finish()
         })

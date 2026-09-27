@@ -43,7 +43,7 @@ function fakeScript(version: string): string {
     "  process.stderr.write('Not logged in' + NL); process.exit(1)",
     '}',
     // Usage track MP7 (ADR-022): the app-server helper for a usage read.
-    "if (a === 'app-server') {",
+    "if (a === 'app-server --disable remote_plugin') {",
     "  let buf = ''",
     "  process.stdin.setEncoding('utf8')",
     "  process.stdin.on('data', (c) => {",

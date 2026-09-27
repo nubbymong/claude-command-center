@@ -930,11 +930,14 @@ export interface ElectronAPI {
     setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<ProviderAccountsResult>
     /** Usage track MP3: each listed account's allowance view as it is ready,
      *  on a private per-call channel; nothing for a provider that is off. */
-    usageStream: (providerId: ProviderAccountsProviderId, onResult: (view: ProviderAccountUsageView) => void) => Promise<ProviderUsageStreamResult>
+    /** `read` (MP8 round 2, ADR-022 bound 7): only for the page's own asks
+     *  (opening it, Refresh); otherwise nothing is read afresh. */
+    usageStream: (providerId: ProviderAccountsProviderId, onResult: (view: ProviderAccountUsageView) => void, opts?: { read?: boolean }) => Promise<ProviderUsageStreamResult>
     /** Usage track MP8: the page closed; its stream for the provider stops,
      *  a fresh read under way included. */
     usageStreamStop?: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult>
-    usageOne: (accountId: string) => Promise<ProviderAccountsResult<{ usage: ProviderAccountUsageView }>>
+    /** `read`: only for a card's Retry. */
+    usageOne: (accountId: string, opts?: { read?: boolean }) => Promise<ProviderAccountsResult<{ usage: ProviderAccountUsageView }>>
   }
 }
 

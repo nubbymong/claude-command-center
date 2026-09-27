@@ -1,6 +1,7 @@
 // src/main/ipc/account-profiles-handlers.ts
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
+import { ipcStreamEnd } from '../../shared/ipc-stream'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
@@ -91,7 +92,13 @@ export function registerAccountProfilesHandlers(): void {
       }, { shouldContinue: live })
     } finally {
       if (streamGenBySender.get(senderId) === gen) streamGenBySender.delete(senderId)
+      // Usage track MP8 round 2 (VM): the end marker, last on the same
+      // channel: the preload stops listening only once every result sent has
+      // arrived (the reply travels another route, unordered against sends).
+      try { if (!event.sender.isDestroyed()) event.sender.send(channel, ipcStreamEnd()) } catch { /* a renderer gone already */ }
     }
+    // The stream ran: the preload waits for the end marker.
+    return { ok: true }
   })
   // Usage track MP3: the labels Settings lists, from cached figures only (no
   // network, no credential read). Takes no input; a failure is no labels.

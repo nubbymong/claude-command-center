@@ -208,13 +208,13 @@ describe('what each account shows (plan section 3)', () => {
     const a = await addCodexAccount(t.h, 'A')
     t.fs.rollout(sessionsOf(t.h, a), 37, 'pro')
     const runs = t.h.runs.length
-    const r = await t.h.service.readAccountUsage({ accountId: a })
+    const r = await t.h.service.readAccountUsage({ accountId: a }, { read: true })
     expect(r).toMatchObject({ ok: true, usage: { accountId: a, providerId: 'codex', status: 'ok', source: 'last-seen', readingAt: Date.parse('2026-09-20T09:00:01Z'), planLabel: 'Pro' } })
     if (!r.ok) throw new Error(r.code)
     expect(r.usage.buckets.map((b) => [b.label, b.percent])).toEqual([['5h', 37]])
     for (const c of t.fs.calls) expect(c.toLowerCase()).toContain(sessionsOf(t.h, a).toLowerCase())
     const realmId = t.h.doc().accounts.find((x) => x.id === a)!.authRealmId
-    expect(t.h.runs.slice(runs).map((x) => [x.args, x.home])).toEqual([['app-server', managedHome(realmId)]])
+    expect(t.h.runs.slice(runs).map((x) => [x.args, x.home])).toEqual([['app-server --disable remote_plugin', managedHome(realmId)]])
   })
 
   it('an account with no reading yet says so', async () => {

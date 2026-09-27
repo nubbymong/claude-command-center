@@ -45,9 +45,12 @@ owner decision and a new ADR.
    legacy `getAuthStatus`, or any other method; it never opts into
    `experimentalApi` or any other capability, parameter or flag that turns on
    an experimental or experiment-exposure feature (0.155.1's optional
-   `supportsLunaReserve` included). Argv is the constant `app-server` on the
-   default stdio transport: never `daemon`, `proxy`, `--listen` to a socket, or
-   `--enable`. A request from the server to the client (an approval, a sign-in
+   `supportsLunaReserve` included). Argv is the constant
+   `app-server --disable remote_plugin` on the default stdio transport: never
+   `daemon`, `proxy`, `--listen` to a socket, or `--enable`. The one flag
+   turns a default-on feature (remote plugins) off for that process only (it
+   is `-c features.remote_plugin=false`; nothing is written); it turns nothing
+   on. A request from the server to the client (an approval, a sign-in
    refresh) is never answered and fails the read.
 
 2. **Only for an enabled, signed-in Codex account with no open session.** The
@@ -101,8 +104,11 @@ owner decision and a new ADR.
    The run itself is then the probe: a schema-valid `initialize` answer
    within 12 s naming the realm and, first in its `userAgent`, the proven
    version, then a schema-valid `rateLimits`. Only an answer about the CLI's
-   version or protocol (method-not-found, an invalid request, a schema
-   mismatch) marks that executable unsupported until it changes; a wrong
+   version or protocol (method-not-found, an invalid request to `initialize`,
+   a schema mismatch) marks that executable unsupported until it changes. Any
+   other error answer to `account/rateLimits/read` is about the realm and
+   transient: the real CLI answers a signed-out realm with -32600 "codex
+   account authentication required to read rate limits". A wrong
    `codexHome`, another version in the `userAgent`, a malformed or
    oversized line, a timeout, early exit, spawn error, sign-in or backend
    error, a request from the server, or a cancel is transient. Widening the supported range is the version work's own
@@ -114,9 +120,14 @@ owner decision and a new ADR.
 
 7. **Only when asked, never in the background.** Reads start only from the
    Account usage page (open, Refresh, a card's Retry): never from the footer,
-   the strip, Settings or Tokenomics. 300 ms between accounts, single-flight
-   per account, a result reused for 60 s, and after three transient failures
-   in one pass the rest fall to the last-seen reading without trying. Codex
+   the strip, Settings or Tokenomics, and not from the page's own quiet
+   reloads (the window regaining focus, an account the registry changed),
+   which show the live, kept or last-seen reading. 300 ms between accounts,
+   single-flight per account (a stopped read is not joined), a result reused
+   for 60 s (10 s for a Retry), and after three transient failures in one
+   pass the rest fall to the last-seen reading without trying (a stopped
+   read is not a failure). Closing the page stops its reads, a Retry's
+   included. Codex
    over SSH stays refused; the read is local only.
 
 8. **Output treated as untrusted.** One bounded line reader (64 KiB per
@@ -141,8 +152,25 @@ optional fields only (0.155.1: optional `account/rateLimits/read` parameters,
 therefore accept unknown extra fields and must not require the new ones.
 0.157.1 was checked for drift only: it is `too-new` and is not read (bound 5).
 
-A real read on 0.153.4 and 0.155.1 with a signed-in account, with the hosts
-contacted during it recorded, is owed before the live read ships (MP8).
+A real read on 0.153.4 and 0.155.1 with a signed-in account was made on the
+test VM (MP8, 2026-09-27; the VM journal in the session record). The hosts
+contacted during a read, recorded by process from the DNS client log and TCP
+connections: `chatgpt.com` only on 0.153.4 (about eight TLS connections in a
+read of about a second: the usage endpoint
+`https://chatgpt.com/backend-api/wham/usage` and more), and on 0.155.1 also
+`sdmntprsouthcentralus.oaiusercontent.com` (OpenAI's content storage). No
+other host, and no sign-in refresh was due. So a read is not only the usage
+request: the CLI refetched its model catalogue into the realm on every read
+and checked its remote plugin cache. The helper now runs with remote plugins
+off (bound 1), the only one of those two the supported CLIs let a caller
+turn off: `codex app-server --help` shows `--disable <FEATURE>` and
+`codex features list` lists `remote_plugin` (stable, on by default) on
+0.153.4 and 0.155.1 alike, while no flag or feature for the model catalogue
+refresh exists on either (`remote_models` is listed as removed). The model
+catalogue is therefore still refetched; the VM re-verifies which hosts
+remain with remote plugins off. A CLI in the supported range that refused
+the flag would end the helper early: a transient failure, the last-seen
+reading shown.
 
 ## Consequences
 
@@ -150,9 +178,11 @@ contacted during it recorded, is owed before the live read ships (MP8).
   one-shot CLI runs. Its spawn, argv, stdin and kill chain are
   security-sensitive (ADR-009): the runner's open-stdin mode, the protocol
   client and the orchestration each get an adversarial pass.
-- The only new network traffic is the request Codex itself makes to OpenAI
-  with that account's own sign-in (and, when due, its sign-in refresh; bound
-  2), the same kind of call a Codex session makes.
+- The new network traffic is what the Codex CLI itself does at start with
+  that account's own sign-in, to OpenAI only: the usage request, and the
+  model catalogue refresh a Codex session also makes (and, when due, its
+  sign-in refresh; bound 2); the remote plugin checks are turned off (see
+  Evidence).
 - The exception is narrow by construction: every bound above is a test in the
   phases that build it, and a change to any of them is a new owner decision.
 - If a future CLI removes or changes the method, the page keeps working on the

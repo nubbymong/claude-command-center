@@ -142,12 +142,13 @@ describe('output decoding', () => {
 })
 
 describe('the app-server command line (ADR-022 bound 1)', () => {
-  it('is the constant `app-server`, natively and through the npm shim', () => {
-    expect(codexCommandLine('/usr/local/bin/codex', 'app-server', 'linux', {})).toEqual({ file: '/usr/local/bin/codex', args: ['app-server'], verbatim: false, cwd: '/usr/local/bin' })
+  // MP8 round 2: with the remote plugin feature off for this process only.
+  it('is the constant `app-server --disable remote_plugin`, natively and through the npm shim', () => {
+    expect(codexCommandLine('/usr/local/bin/codex', 'app-server', 'linux', {})).toEqual({ file: '/usr/local/bin/codex', args: ['app-server', '--disable', 'remote_plugin'], verbatim: false, cwd: '/usr/local/bin' })
     const shim = codexCommandLine('C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd', 'app-server', 'win32', { SystemRoot: 'C:\\Windows' })
     expect(shim).toEqual({
       file: 'C:\\Windows\\System32\\cmd.exe',
-      args: ['/d', '/v:off', '/s', '/c', '""C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd" app-server"'],
+      args: ['/d', '/v:off', '/s', '/c', '""C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd" app-server --disable remote_plugin"'],
       verbatim: true,
       cwd: 'C:\\Users\\u\\AppData\\Roaming\\npm',
     })

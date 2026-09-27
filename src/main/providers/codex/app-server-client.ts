@@ -27,9 +27,11 @@
  *
  * The verdict, once, fails closed: `unsupported` (sticky for that CLI until it
  * changes; only an answer about the CLI's version or protocol: method not
- * found, an invalid request, a schema mismatch, a version the client cannot
- * name) or `transient` (a wrong home, which is about the realm and not the
- * CLI; a malformed or oversized line; a helper reporting another version; a
+ * found, an invalid request to `initialize`, a schema mismatch, a version
+ * the client cannot name) or `transient` (any other error answer to the
+ * read, -32600 included: the real CLI uses it for a missing sign-in; a
+ * wrong home, which is about the realm and not the CLI; a malformed or
+ * oversized line; a helper reporting another version; a
  * timeout, an early exit, a spawn failure, a cancel, an error answer from the
  * backend, a request from the server, or no reading at all). On any verdict the client
  * closes the helper's stdin (`finish`), and the caller ends the process chain.
@@ -181,6 +183,12 @@ export function createAppServerUsageClient(deps: AppServerClientDeps): AppServer
     if (id !== expected) { fail('schema'); return }
     if (error !== undefined) {
       const code = isPlain(error) ? own(error, 'code') : undefined
+      // MP8 round 2 (VM): the real CLI answers the read in a signed-out realm
+      // with -32600 "codex account authentication required to read rate
+      // limits", so after a successful initialize only method-not-found says
+      // anything about the CLI; every other error answer to the read is about
+      // this realm (a sign-in, the backend) and transient.
+      if (state === 'reading') { fail(code === METHOD_NOT_FOUND ? 'method-not-found' : 'error-response'); return }
       fail(code === METHOD_NOT_FOUND ? 'method-not-found' : code === INVALID_REQUEST || code === INVALID_PARAMS ? 'invalid-request' : 'error-response')
       return
     }

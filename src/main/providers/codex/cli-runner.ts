@@ -50,8 +50,12 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   // Usage track MP7 (ADR-022; the owner's scoped WP1.41 exception): the
   // protocol helper for one usage read, on its default stdio transport only:
   // never `daemon`, `proxy`, `--listen` or `--enable`. Its messages arrive
-  // on stdin (the runner's open-stdin mode), never here.
-  'app-server': ['app-server'],
+  // on stdin (the runner's open-stdin mode), never here. MP8 round 2 (VM
+  // hosts): `--disable remote_plugin` turns the default-on remote plugin
+  // feature off for this process only (it is `-c features.remote_plugin=
+  // false`, nothing written); `codex app-server --help` and `codex features
+  // list` show both on 0.153.4 and 0.155.1. It turns nothing on.
+  'app-server': ['app-server', '--disable', 'remote_plugin'],
 }
 
 export interface CodexCommand {

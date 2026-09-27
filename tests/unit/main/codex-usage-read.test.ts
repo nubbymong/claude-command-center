@@ -279,7 +279,7 @@ function rolloutFs() {
   }
 }
 
-async function setup(o: { gapMs?: number; settleMaxMs?: number; now?: () => number } = {}) {
+async function setup(o: { gapMs?: number; settleMaxMs?: number; now?: () => number; retryFloorMs?: number } = {}) {
   let helper = appServer()
   let pref: ProviderPreference = 'on'
   const fs = rolloutFs()
@@ -288,8 +288,9 @@ async function setup(o: { gapMs?: number; settleMaxMs?: number; now?: () => numb
     usageFs: fs.port,
     liveUsage: live,
     preference: { codex: () => pref },
-    script: { 'app-server': (r) => helper.fn(r) },
-    usageReads: { gapMs: o.gapMs ?? 0, ...(o.settleMaxMs !== undefined ? { settleMaxMs: o.settleMaxMs } : {}), ...(o.now ? { now: o.now } : {}) },
+    script: { [HELPER_ARGS]: (r) => helper.fn(r) },
+    // The Retry floor (MP8 round 2) is off unless a case asks for it.
+    usageReads: { gapMs: o.gapMs ?? 0, retryFloorMs: o.retryFloorMs ?? 0, ...(o.settleMaxMs !== undefined ? { settleMaxMs: o.settleMaxMs } : {}), ...(o.now ? { now: o.now } : {}) },
   })
   return {
     h, fs, live,
@@ -302,7 +303,11 @@ type T = Awaited<ReturnType<typeof setup>>
 
 const realmOf = (h: Harness, accountId: string) => h.doc().accounts.find((a) => a.id === accountId)!.authRealmId
 const sessionsOf = (h: Harness, accountId: string) => `${managedHome(realmOf(h, accountId))}\\sessions`
-const helperRuns = (h: Harness) => h.runs.filter((r) => r.args === 'app-server')
+/** The helper's constant argv (MP8 round 2: the remote plugin feature off). */
+const HELPER_ARGS = 'app-server --disable remote_plugin'
+const helperRuns = (h: Harness) => h.runs.filter((r) => r.args === HELPER_ARGS)
+/** A card's Retry (MP8 round 2): the page's own ask, so a fresh read may start. */
+const READ = { read: true }
 /** Whether a read ever took its operation lease on the account from now on. */
 function readLeases(h: Harness, accountId: string): () => boolean {
   let seen = false
@@ -312,7 +317,8 @@ function readLeases(h: Harness, accountId: string): () => boolean {
 
 async function stream(t: T, opts: { signal?: AbortSignal } = {}) {
   const got: ProviderAccountUsageView[] = []
-  const r = await t.h.service.streamAccountUsage({ providerId: 'codex' }, (v) => got.push(v), opts)
+  // The page's own asks read afresh (MP8 round 2: opening it, Refresh).
+  const r = await t.h.service.streamAccountUsage({ providerId: 'codex' }, (v) => got.push(v), { read: true, ...opts })
   return { r, got }
 }
 
@@ -321,7 +327,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
     const before = Date.now()
-    const r = await t.h.service.readAccountUsage({ accountId: a })
+    const r = await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(r).toMatchObject({ ok: true, usage: { accountId: a, status: 'ok', source: 'read', planLabel: 'Pro' } })
     if (!r.ok) throw new Error(r.code)
     expect(r.usage.buckets.map((b) => b.percent)).toEqual([21])
@@ -338,7 +344,7 @@ describe('who is read (ADR-022, bound 2)', () => {
       t.setCodex(pref)
       const discoveries = t.h.discoveries()
       await stream(t)
-      await t.h.service.readAccountUsage({ accountId: a })
+      await t.h.service.readAccountUsage({ accountId: a }, READ)
       expect(helperRuns(t.h), pref).toEqual([])
       expect(t.h.discoveries(), pref).toBe(discoveries)
     }
@@ -355,7 +361,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     const leasedKey = readLeases(t.h, k)
     const s = await stream(t)
     expect(s.got.map((v) => [v.accountId, v.status, v.source])).toEqual(expect.arrayContaining([[k, 'per-token', undefined], [adopted.accountId, 'ok', 'last-seen']]))
-    expect(await t.h.service.readAccountUsage({ accountId: adopted.accountId })).toMatchObject({ ok: true, usage: { source: 'last-seen' } })
+    expect(await t.h.service.readAccountUsage({ accountId: adopted.accountId }, READ)).toMatchObject({ ok: true, usage: { source: 'last-seen' } })
     expect(helperRuns(t.h)).toEqual([])
     // Not even tried: no lease was taken for a read of either.
     expect(leasedExt()).toBe(false)
@@ -364,7 +370,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     // the user's own, whatever the method on record.
     const r = await t.h.store.mutate((d) => ({ ok: true, doc: { ...d, accounts: d.accounts.map((x) => (x.id === adopted.accountId ? { ...x, authMethod: 'browser' as const, lastKnownAuthState: 'signed-in' as const } : x)) } }))
     expect(r.ok).toBe(true)
-    await t.h.service.readAccountUsage({ accountId: adopted.accountId })
+    await t.h.service.readAccountUsage({ accountId: adopted.accountId }, READ)
     expect(leasedExt()).toBe(false)
   })
 
@@ -374,7 +380,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     for (const kind of ['session', 'review', 'sign-in'] as const) {
       const lease = t.h.leases.add(a, 'codex', { kind, ownerId: `${kind}-1` })
       if (!lease.ok) throw new Error('lease')
-      await t.h.service.readAccountUsage({ accountId: a })
+      await t.h.service.readAccountUsage({ accountId: a }, READ)
       await stream(t)
       lease.lease.release()
     }
@@ -389,7 +395,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     expect((await t.h.service.refreshStatus({ accountId: a })).ok).toBe(true)
     expect((await t.h.service.setLifecycle({ accountId: b, lifecycle: 'inactive' })).ok).toBe(true)
     await stream(t)
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(helperRuns(t.h)).toEqual([])
   })
 
@@ -399,7 +405,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     t.h.port.failWrites = [t.h.port.writes + 1]
     expect((await t.h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).ok).toBe(false)
     expect(t.h.doc().accounts.find((x) => x.id === a)!.lastKnownAuthState).toBe('signed-in')
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     await stream(t)
     expect(helperRuns(t.h)).toEqual([])
   })
@@ -410,7 +416,7 @@ describe('who is read (ADR-022, bound 2)', () => {
       const a = await addCodexAccount(t.h, 'A')
       const r = await t.h.store.mutate((d) => ({ ok: true, doc: { ...d, accounts: d.accounts.map((x) => (x.id === a ? { ...x, ...over } : x)) } }))
       expect(r.ok).toBe(true)
-      await t.h.service.readAccountUsage({ accountId: a })
+      await t.h.service.readAccountUsage({ accountId: a }, READ)
       expect(helperRuns(t.h), JSON.stringify(over)).toEqual([])
     }
   })
@@ -420,7 +426,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     const a = await addCodexAccount(t.h, 'A')
     delete (t.h.codex.usage as { read?: unknown }).read
     const leased = readLeases(t.h, a)
-    expect(await t.h.service.readAccountUsage({ accountId: a })).toMatchObject({ ok: true, usage: { status: 'no-session-yet' } })
+    expect(await t.h.service.readAccountUsage({ accountId: a }, READ)).toMatchObject({ ok: true, usage: { status: 'no-session-yet' } })
     expect(helperRuns(t.h)).toEqual([])
     expect(leased()).toBe(false)
   })
@@ -430,7 +436,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     const a = await addCodexAccount(t.h, 'A')
     const blocked = await t.h.store.mutate((d) => ({ ok: true, doc: { ...d, accounts: d.accounts.map((x) => (x.id === a ? { ...x, operationalState: 'blocked' as const } : x)) } }))
     expect(blocked.ok).toBe(true)
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(helperRuns(t.h)).toEqual([])
   })
 
@@ -441,7 +447,7 @@ describe('who is read (ADR-022, bound 2)', () => {
       t.fs.rollout(sessionsOf(t.h, a), 33)
       t.h.state.cliVersion = version
       await t.h.service.discover('codex')
-      const r = await t.h.service.readAccountUsage({ accountId: a })
+      const r = await t.h.service.readAccountUsage({ accountId: a }, READ)
       expect(r, version).toMatchObject({ ok: true, usage: { status: 'ok', source: 'last-seen', readingAt: Date.parse('2026-09-20T09:00:01Z') } })
       expect(helperRuns(t.h), version).toEqual([])
     }
@@ -452,7 +458,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     const a = await addCodexAccount(t.h, 'A')
     const has = t.h.state.envFile.has.bind(t.h.state.envFile)
     t.h.state.envFile.has = (home: string) => { t.setCodex('off'); return has(home) }
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(helperRuns(t.h)).toEqual([])
   })
 
@@ -470,7 +476,7 @@ describe('who is read (ADR-022, bound 2)', () => {
         t.h.store.current = () => ({ ...doc, accounts: doc.accounts.map((x) => (x.id === a ? { ...x, ...over } : x)) })
         return has(home)
       }
-      await t.h.service.readAccountUsage({ accountId: a })
+      await t.h.service.readAccountUsage({ accountId: a }, READ)
       expect(helperRuns(t.h), JSON.stringify(over)).toEqual([])
     }
   })
@@ -486,7 +492,7 @@ describe('who is read (ADR-022, bound 2)', () => {
       if (!taken) { taken = true; t.h.leases.add(a, 'codex', { kind: 'session', ownerId: 'late' }) }
       return has(home)
     }
-    const r = await t.h.service.readAccountUsage({ accountId: a })
+    const r = await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(taken).toBe(true)
     expect(r).toMatchObject({ ok: true, usage: { status: 'no-session-yet' } })
     expect(helperRuns(t.h)).toEqual([])
@@ -502,16 +508,16 @@ describe('how often (ADR-022, bound 7)', () => {
     const again = await stream(t)
     expect(again.got.map((v) => v.source)).toEqual(['read'])
     expect(helperRuns(t.h)).toHaveLength(1)
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(helperRuns(t.h)).toHaveLength(2)
   })
 
   it('a reading older than a minute is read again', async () => {
     let now = 1_000_000
     const helper = appServer()
-    const h = await harness({ script: { 'app-server': (r) => helper.fn(r) }, usageReads: { gapMs: 0, now: () => now } })
+    const h = await harness({ script: { [HELPER_ARGS]: (r) => helper.fn(r) }, usageReads: { gapMs: 0, now: () => now } })
     const a = await addCodexAccount(h, 'A')
-    const run = () => h.service.streamAccountUsage({ providerId: 'codex' }, () => {})
+    const run = () => h.service.streamAccountUsage({ providerId: 'codex' }, () => {}, { read: true })
     await run()
     await until(() => h.leases.count(a) === 0, 'the read to end')
     now += 59_999
@@ -526,7 +532,7 @@ describe('how often (ADR-022, bound 7)', () => {
     let now = 5_000_000
     const t = await setup({ gapMs: 40, now: () => now })
     const a = await addCodexAccount(t.h, 'A')
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => t.h.leases.count(a) === 0, 'the read to end')
     now -= 1_000_000
     const started = Date.now()
@@ -549,7 +555,7 @@ describe('how often (ADR-022, bound 7)', () => {
   it('two asks for one account share one read', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
-    const [x, y] = await Promise.all([t.h.service.readAccountUsage({ accountId: a }), t.h.service.readAccountUsage({ accountId: a })])
+    const [x, y] = await Promise.all([t.h.service.readAccountUsage({ accountId: a }, READ), t.h.service.readAccountUsage({ accountId: a }, READ)])
     expect(x).toMatchObject({ ok: true, usage: { source: 'read' } })
     expect(y).toMatchObject({ ok: true, usage: { source: 'read' } })
     expect(helperRuns(t.h)).toHaveLength(1)
@@ -573,12 +579,12 @@ describe('how often (ADR-022, bound 7)', () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
     t.use(appServer({ error: { code: -32000, message: 'chatgpt authentication required to read rate limits' } }))
-    await t.h.service.readAccountUsage({ accountId: a })
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(helperRuns(t.h)).toHaveLength(2)
     t.use(appServer({ error: { code: -32601, message: 'method not found' } }))
-    await t.h.service.readAccountUsage({ accountId: a })
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     await stream(t)
     expect(helperRuns(t.h)).toHaveLength(3)
   })
@@ -643,7 +649,7 @@ describe('what stops a read, and what waits for one (#49)', () => {
     // Made active again, it is read again: nothing is left settling it.
     expect(await f.t.h.service.setLifecycle({ accountId: f.a, lifecycle: 'active' })).toEqual({ ok: true })
     f.t.use(appServer())
-    expect(await f.t.h.service.readAccountUsage({ accountId: f.a })).toMatchObject({ ok: true, usage: { source: 'read' } })
+    expect(await f.t.h.service.readAccountUsage({ accountId: f.a }, READ)).toMatchObject({ ok: true, usage: { source: 'read' } })
   })
 
   it('signing in again stops the read and waits for it', async () => {
@@ -658,7 +664,7 @@ describe('what stops a read, and what waits for one (#49)', () => {
   it('no read starts on an account while a sign-out settles it, and a kept reading is dropped', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => t.h.leases.count(a) === 0, 'the read to end')
     expect(await t.h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
     // Signed in again: the reading kept from before is not shown again.
@@ -681,12 +687,12 @@ describe('a read that waits its turn', () => {
     let bLeased = false
     t.h.leases.subscribe((id) => { if (id === b && t.h.leases.countKind(b, 'operation') > 0) bLeased = true })
     const waiting = () => (t.h.service as unknown as { usageReads: Map<string, unknown> }).usageReads.has(b)
-    const readA = t.h.service.readAccountUsage({ accountId: a })
+    const readA = t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => t.helper().seen.length === 1, 'A to start')
     t.use(appServer())
     const readB = o.bSignal
-      ? t.h.service.streamAccountUsage({ providerId: 'codex' }, () => {}, { signal: o.bSignal })
-      : t.h.service.readAccountUsage({ accountId: b })
+      ? t.h.service.readAccountUsage({ accountId: b }, { read: true, signal: o.bSignal })
+      : t.h.service.readAccountUsage({ accountId: b }, READ)
     await until(waiting, 'B to wait its turn')
     return { t, a, b, readA, readB, openA, bLeased: () => bLeased, resetB: () => { bLeased = false } }
   }
@@ -751,7 +757,7 @@ describe('settling an account (#49): what is kept, what is bounded', () => {
       if (!first) return exclusive(fn)
       first = false
       // The sign-out's hold: a read is asked for first, with the lock free.
-      const asked = t.h.service.readAccountUsage({ accountId: a })
+      const asked = t.h.service.readAccountUsage({ accountId: a }, READ)
       return asked.then(() => exclusive(fn))
     }) as typeof t.h.store.exclusive
     expect(await t.h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
@@ -763,7 +769,7 @@ describe('settling an account (#49): what is kept, what is bounded', () => {
     const a = await addCodexAccount(t.h, 'A')
     let letExit: () => void = () => {}
     t.use(appServer({ exitGate: new Promise<void>((r) => { letExit = r }) }))
-    const retry = t.h.service.readAccountUsage({ accountId: a })
+    const retry = t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => t.helper().seen[0]?.stdinClosed === true, 'the read to be answered')
     const out = t.h.service.logout({ accountId: a })
     expect(await retry).toMatchObject({ ok: true, usage: { source: 'read' } })
@@ -781,7 +787,7 @@ describe('settling an account (#49): what is kept, what is bounded', () => {
     const a = await addCodexAccount(t.h, 'A')
     let asked = false
     ;(t.h.codex.usage as { read?: unknown }).read = () => { asked = true; return new Promise(() => {}) }
-    void t.h.service.readAccountUsage({ accountId: a })
+    void t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => asked, 'the read to be asked')
     const launched = await t.h.service.prepareLaunch({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 'sess-1' })
     expect(launched.ok).toBe(true)
@@ -791,7 +797,7 @@ describe('settling an account (#49): what is kept, what is bounded', () => {
     const t = await setup({ settleMaxMs: 60 })
     const a = await addCodexAccount(t.h, 'A')
     t.use(appServer({ hold: true, kill: new Promise<void>(() => {}) }))
-    const reading = t.h.service.readAccountUsage({ accountId: a })
+    const reading = t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => t.helper().seen.length === 1, 'the helper to start')
     const launched = await t.h.service.prepareLaunch({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 'sess-1' })
     expect(launched.ok).toBe(true)
@@ -800,19 +806,152 @@ describe('settling an account (#49): what is kept, what is bounded', () => {
   })
 })
 
+// MP8 round 2 (spec S1, ADR-022 bound 7; C-M1; Q1; C-N1; Q3).
+describe('MP8 round 2: only the page\'s own asks read; what a stopped read leaves', () => {
+  it('a stream or a one-account view that is not the page\'s own ask starts no read: a kept reading, else the last-seen one', async () => {
+    let now = 1_000_000
+    const t = await setup({ now: () => now })
+    const a = await addCodexAccount(t.h, 'A')
+    t.fs.rollout(sessionsOf(t.h, a), 12)
+    // Never read: the last-seen reading, no helper.
+    expect(await t.h.service.readAccountUsage({ accountId: a })).toMatchObject({ ok: true, usage: { source: 'last-seen' } })
+    const quiet = await t.h.service.streamAccountUsage({ providerId: 'codex' }, () => {}, {})
+    expect(quiet).toMatchObject({ ok: true, accounts: 1 })
+    expect(helperRuns(t.h)).toEqual([])
+    // Read once by the page: kept, and shown by a quiet reload within the minute.
+    expect(await t.h.service.readAccountUsage({ accountId: a }, READ)).toMatchObject({ ok: true, usage: { source: 'read' } })
+    await until(() => t.h.leases.count(a) === 0, 'the read to end')
+    const got: ProviderAccountUsageView[] = []
+    await t.h.service.streamAccountUsage({ providerId: 'codex' }, (v) => got.push(v), { read: false })
+    expect(got.map((v) => v.source)).toEqual(['read'])
+    // Past the minute: the last-seen reading again, still no read.
+    now += 60_001
+    expect(await t.h.service.readAccountUsage({ accountId: a }, { read: false })).toMatchObject({ ok: true, usage: { source: 'last-seen' } })
+    expect(helperRuns(t.h)).toHaveLength(1)
+  })
+
+  it('a Retry shows a reading under ten seconds old again, and reads afresh after', async () => {
+    let now = 5_000_000
+    const t = await setup({ now: () => now, retryFloorMs: 10_000 })
+    const a = await addCodexAccount(t.h, 'A')
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
+    await until(() => t.h.leases.count(a) === 0, 'the read to end')
+    now += 9_999
+    expect(await t.h.service.readAccountUsage({ accountId: a }, READ)).toMatchObject({ ok: true, usage: { source: 'read' } })
+    expect(helperRuns(t.h)).toHaveLength(1)
+    now += 2
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
+    expect(helperRuns(t.h)).toHaveLength(2)
+  })
+
+  it('a newer ask does not join a stopped read: it queues a new one after it', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    let endKill: () => void = () => {}
+    t.use(appServer({ hold: true, kill: new Promise<void>((r) => { endKill = r }) }))
+    const stop = new AbortController()
+    const first = t.h.service.readAccountUsage({ accountId: a }, { read: true, signal: stop.signal })
+    await until(() => t.helper().seen.length === 1, 'the first helper')
+    stop.abort()
+    t.use(appServer())
+    const second = t.h.service.readAccountUsage({ accountId: a }, READ)
+    await first
+    for (let i = 0; i < 10; i++) await tick()
+    // The first helper's chain has not ended: the new read waits for it.
+    expect(t.helper().seen).toHaveLength(0)
+    endKill()
+    expect(await second).toMatchObject({ ok: true, usage: { source: 'read' } })
+    expect(helperRuns(t.h)).toHaveLength(2)
+  })
+
+  it('the read queued behind a stopped one is the one a sign-out stops and waits for', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    let endFirstKill: () => void = () => {}
+    t.use(appServer({ hold: true, kill: new Promise<void>((r) => { endFirstKill = r }) }))
+    const stop = new AbortController()
+    const first = t.h.service.readAccountUsage({ accountId: a }, { read: true, signal: stop.signal })
+    await until(() => t.helper().seen.length === 1, 'the first helper')
+    stop.abort()
+    // The second read holds its helper until stopped.
+    t.use(appServer({ hold: true }))
+    const second = t.h.service.readAccountUsage({ accountId: a }, READ)
+    await first
+    endFirstKill()
+    await until(() => t.helper().seen.length === 1, 'the second helper')
+    // The first run's end must not have forgotten the second: the sign-out
+    // stops it and is not refused as in use.
+    expect(await t.h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    expect(t.helper().seen[0].stopped).toBe(true)
+    await second
+  })
+
+  it('stopped reads never count toward a stream\'s three-failure stop', async () => {
+    const t = await setup()
+    const ids: string[] = []
+    for (const n of ['A', 'B', 'C', 'D']) ids.push(await addCodexAccount(t.h, n))
+    // The first three reads are stopped by a launch on their account.
+    t.use(appServer({ hold: true }))
+    const launched: Array<Promise<unknown>> = []
+    const watcher = setInterval(() => {
+      const seen = t.helper().seen
+      const last = seen.at(-1)
+      if (last && !last.stopped && launched.length < 3 && launched.length < seen.length) {
+        const accountId = ids[launched.length]
+        launched.push(t.h.service.prepareLaunch({ kind: 'session', providerId: 'codex', providerAccountId: accountId, ownerId: `sess-${accountId}` }))
+        if (launched.length === 3) t.use(appServer())
+      }
+    }, 2)
+    try {
+      const s = await stream(t)
+      expect(s.got.map((v) => v.source)).toEqual([undefined, undefined, undefined, 'read'])
+    } finally {
+      clearInterval(watcher)
+    }
+    await Promise.all(launched)
+  })
+
+  it('the record is asked right before the spawn: an account made inactive, or its realm retired, starts nothing', async () => {
+    for (const change of ['account', 'realm'] as const) {
+      const t = await setup()
+      const a = await addCodexAccount(t.h, 'A')
+      const has = t.h.state.envFile.has.bind(t.h.state.envFile)
+      const current = t.h.store.current.bind(t.h.store)
+      t.h.state.envFile.has = (home: string) => {
+        const doc = current()!
+        const realmId = realmOf(t.h, a)
+        t.h.store.current = () => change === 'account'
+          ? { ...doc, accounts: doc.accounts.map((x) => (x.id === a ? { ...x, lifecycle: 'inactive' as const } : x)) }
+          : { ...doc, realms: doc.realms.map((x) => (x.id === realmId ? { ...x, lifecycle: 'retired' as const } : x)) }
+        return has(home)
+      }
+      await t.h.service.readAccountUsage({ accountId: a }, READ)
+      expect(helperRuns(t.h), change).toEqual([])
+    }
+  })
+
+  it('a lifecycle change naming no account settles nothing', async () => {
+    const t = await setup()
+    const svc = t.h.service as unknown as { usageEpoch: Map<string, number>; usageBarred: Map<string, number> }
+    expect(await t.h.service.setLifecycle({ accountId: 'acct-' + 'f'.repeat(32), lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'not-found' })
+    expect(svc.usageEpoch.size).toBe(0)
+    expect(svc.usageBarred.size).toBe(0)
+  })
+})
+
 describe('the app quitting (MP7 round 1)', () => {
   it('stops every read under way at once, and none starts again', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
     t.use(appServer({ hold: true }))
-    const reading = t.h.service.readAccountUsage({ accountId: a })
+    const reading = t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => t.helper().seen.length === 1, 'the helper to start')
     t.h.service.stopUsageReads()
     expect(t.helper().seen[0].stopped).toBe(true)
     await reading
     await until(() => t.h.leases.count(a) === 0, 'the read lease to go')
     t.use(appServer())
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     await stream(t)
     expect(helperRuns(t.h)).toHaveLength(1)
   })
@@ -824,7 +963,7 @@ describe('the plan a reading names', () => {
     const a = await addCodexAccount(t.h, 'A')
     t.h.leases.add(a, 'codex', { kind: 'session', ownerId: 'sess-1' })
     t.live.record(sessionsOf(t.h, a), { limits: [{ limitId: 'codex', limitName: null, readingAt: 1234, primary: { windowMinutes: 300, usedPercent: 52, resetsAt: null }, secondary: null }], planType: 'team', readingAt: 1234 })
-    expect(await t.h.service.readAccountUsage({ accountId: a })).toMatchObject({ ok: true, usage: { source: 'live', planLabel: 'Team' } })
+    expect(await t.h.service.readAccountUsage({ accountId: a }, READ)).toMatchObject({ ok: true, usage: { source: 'live', planLabel: 'Team' } })
     expect(t.h.doc().accounts.find((x) => x.id === a)!.planLabel).toBe('Team')
     expect(helperRuns(t.h)).toEqual([])
   })
@@ -832,30 +971,30 @@ describe('the plan a reading names', () => {
   it('the same plan, or none, does not take the registry lock to write', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => t.h.leases.count(a) === 0, 'the read to end')
     const mutate = t.h.store.mutate.bind(t.h.store)
     let writes = 0
     t.h.store.mutate = ((fn) => { writes++; return mutate(fn) }) as typeof t.h.store.mutate
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     await until(() => t.h.leases.count(a) === 0, 'the read to end')
     t.use(appServer({ plan: 'not-a-known-plan' }))
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(writes).toBe(0)
   })
 
   it('is recorded when it changes, and not written again when it does not', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(t.h.doc().accounts.find((x) => x.id === a)!.planLabel).toBe('Pro')
     const writes = t.h.port.writes
     await until(() => t.h.leases.count(a) === 0, 'the read to end')
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(t.h.port.writes).toBe(writes)
     t.use(appServer({ plan: 'plus' }))
     await until(() => t.h.leases.count(a) === 0, 'the read to end')
-    await t.h.service.readAccountUsage({ accountId: a })
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(t.h.doc().accounts.find((x) => x.id === a)!.planLabel).toBe('Plus')
   })
 
@@ -864,7 +1003,7 @@ describe('the plan a reading names', () => {
     const a = await addCodexAccount(t.h, 'A')
     t.fs.rollout(sessionsOf(t.h, a), 40)
     t.use(appServer({ error: { code: -32000, message: 'offline' } }))
-    const r = await t.h.service.readAccountUsage({ accountId: a })
+    const r = await t.h.service.readAccountUsage({ accountId: a }, READ)
     expect(r).toMatchObject({ ok: true, usage: { source: 'last-seen', planLabel: 'Plus' } })
     expect(t.h.doc().accounts.find((x) => x.id === a)!.planLabel).toBeUndefined()
   })

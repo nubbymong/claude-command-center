@@ -178,7 +178,8 @@ export interface CodexUsageReadOptions {
   signal?: AbortSignal
   /** Usage track MP8: asked right before the helper would start, after every
    *  check that awaits, with nothing awaited between it and the spawn:
-   *  anything but `true` starts none (refused `may-not-start`). */
+   *  anything but `true` starts none (refused `may-not-start`). Required:
+   *  absent, no helper starts (MP8 round 2). */
   mayStart?: () => boolean
   /** Usage track MP8: handed, once the realm is held for a helper, the
    *  promise that settles when the helper's process chain has ended and the
@@ -504,7 +505,8 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
           try { same = sameProven(pinned, deps.proven()) } catch { same = false }
           if (!same) { release(); free(); return refused('version') }
           let allowed = false
-          try { allowed = !opts.mayStart || opts.mayStart() === true } catch { allowed = false }
+          // Required (MP8 round 2): no caller's last word, no helper.
+          try { allowed = typeof opts.mayStart === 'function' && opts.mayStart() === true } catch { allowed = false }
           if (!allowed) { release(); free(); return refused('may-not-start') }
           let ended: () => void = () => {}
           const settled = new Promise<void>((resolve) => { ended = resolve })
