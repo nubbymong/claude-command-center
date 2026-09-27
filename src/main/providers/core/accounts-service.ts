@@ -291,8 +291,17 @@ export class AccountsService {
    *  switch-off, or an answer lost, stops them (stopChecks). */
   private readonly checkRuns = new Map<AbortController, ProviderId>()
   private opSeq = 0
-  /** Usage track MP8: fresh reads in flight, by account. */
+  /** Usage track MP8: fresh reads in flight, by account (the one a new ask
+   *  may join). */
   private readonly usageReads = new Map<string, UsageReadRun>()
+  /** Every fresh read of an account whose process chain has not ended yet:
+   *  the current one and any stopped one still ending (MP8 round 3, C-F1).
+   *  A settle and the quit stop and wait for all of them. */
+  private readonly usageRunsLive = new Map<string, Set<UsageReadRun>>()
+  /** When each account's last fresh read failed (MP8 round 3): a Retry
+   *  within the floor after it shows what is there instead of reading
+   *  again. */
+  private readonly usageFailedAt = new Map<string, number>()
   /** Accounts a sign-out, archive or inactivate is settling: no fresh read
    *  starts on them (counted: two may overlap). */
   private readonly usageBarred = new Map<string, number>()
@@ -2105,6 +2114,8 @@ export class AccountsService {
    *  none starts again. */
   stopUsageReads(): void {
     this.usageStopped = true
+    // A run is replaced only once it was stopped, so the current runs are
+    // every live run not already stopped.
     for (const run of this.usageReads.values()) {
       try { run.stop.abort() } catch { /* best effort at quit */ }
     }
@@ -2167,8 +2178,15 @@ export class AccountsService {
     // Not one of the page's own asks: a kept reading, else none (S1).
     if (!mode.read) return kept && within(reuseMs) ? kept.reading : null
     // A stream reuses a reading under a minute old; a Retry one under the
-    // floor (C-M1).
-    if (kept && within(mode.reuse ? reuseMs : this.usageSetting('retryFloorMs', USAGE_READ_RETRY_FLOOR_MS))) return kept.reading
+    // floor (C-M1), and a Retry under the floor after a failed read reads
+    // nothing new (MP8 round 3).
+    const floorMs = this.usageSetting('retryFloorMs', USAGE_READ_RETRY_FLOOR_MS)
+    if (kept && within(mode.reuse ? reuseMs : floorMs)) return kept.reading
+    const failedAt = this.usageFailedAt.get(a.id)
+    if (!mode.reuse && failedAt !== undefined) {
+      const since = this.usageNow() - failedAt
+      if (since >= 0 && since < floorMs) return null
+    }
     if (mode.pass && mode.pass.transient >= USAGE_READ_TRANSIENT_LIMIT) return null
     if (this.usageStopped) return null
     // A read already stopped is not joined (Q1): a new one queues after it.
@@ -2184,6 +2202,9 @@ export class AccountsService {
       return outcome.reading
     }
     if (outcome.failure === 'transient' && mode.pass) mode.pass.transient++
+    // A read that ran and failed (not one refused or stopped: a settle stops
+    // a read, so no failure outlives one) is remembered for the Retry floor.
+    if (outcome.failure !== 'refused') this.usageFailedAt.set(a.id, this.usageNow())
     return null
   }
 
@@ -2217,6 +2238,9 @@ export class AccountsService {
     this.usageReadQueue = prev.then(() => mine)
     const run: UsageReadRun = { stop, outcome: Promise.resolve(refused), done, epoch: this.usageEpoch.get(accountId) ?? 0 }
     this.usageReads.set(accountId, run)
+    const live = this.usageRunsLive.get(accountId) ?? new Set<UsageReadRun>()
+    live.add(run)
+    this.usageRunsLive.set(accountId, live)
     run.outcome = (async (): Promise<UsageReadOutcome> => {
       let lease: AccountLease | null = null
       let ended: Promise<void> = Promise.resolve()
@@ -2255,6 +2279,11 @@ export class AccountsService {
           if (signal) signal.removeEventListener('abort', onAbort)
           // A newer run may have replaced this stopped one (Q1).
           if (this.usageReads.get(accountId) === run) this.usageReads.delete(accountId)
+          const runs = this.usageRunsLive.get(accountId)
+          if (runs) {
+            runs.delete(run)
+            if (runs.size === 0) this.usageRunsLive.delete(accountId)
+          }
           free()
           finish()
         })
@@ -2320,6 +2349,7 @@ export class AccountsService {
     this.usageBarred.set(accountId, (this.usageBarred.get(accountId) ?? 0) + 1)
     this.usageEpoch.set(accountId, (this.usageEpoch.get(accountId) ?? 0) + 1)
     this.usageFresh.delete(accountId)
+    this.usageFailedAt.delete(accountId)
     let open = true
     const unbar = () => {
       if (!open) return
@@ -2328,10 +2358,14 @@ export class AccountsService {
       if (n > 0) this.usageBarred.set(accountId, n)
       else this.usageBarred.delete(accountId)
     }
-    const run = this.usageReads.get(accountId)
-    if (run) {
-      try { run.stop.abort() } catch { /* stopping never fails the caller */ }
-      await boundedWait(run.done, this.usageSetting('settleMaxMs', USAGE_READ_SETTLE_MAX_MS))
+    // Every read of the account whose chain has not ended: a stopped one
+    // still being killed as well as the one that replaced it (C-F1).
+    const runs = [...(this.usageRunsLive.get(accountId) ?? [])]
+    if (runs.length > 0) {
+      for (const run of runs) {
+        try { run.stop.abort() } catch { /* stopping never fails the caller */ }
+      }
+      await boundedWait(Promise.all(runs.map((run) => run.done)).then(() => {}), this.usageSetting('settleMaxMs', USAGE_READ_SETTLE_MAX_MS))
     }
     return unbar
   }

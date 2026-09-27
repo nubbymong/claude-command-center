@@ -50,8 +50,8 @@ export class TokenomicsSupervisor {
   private lastIndexAt: number | null = null
   /** MP9: the one-off account attribution, as the worker last reported it. */
   private lastAccountReread: TkAccountReread | null = null
-  /** MP10: the Claude session attributions sent so far, first wins, sent
-   *  again to a restarted worker (one that died before storing them). */
+  /** MP10: each Claude session's latest attribution, sent again to a
+   *  restarted worker (one that died before storing it). */
   private sessionAccounts = new Map<string, TkAccountKey>()
   /** MP9 round 1 (Q-4): the Codex account folders have been named (given at
    *  construction, or set since); a restarted worker is told so. */
@@ -190,12 +190,13 @@ export class TokenomicsSupervisor {
     this.sendOrBuffer({ type: 'set-codex-realm-dirs', dirs: copy.map((d) => ({ ...d })) })
   }
   reindex(): void { this.sendOrBuffer({ type: 'reindex' }) }
-  /** Usage track MP10: a Claude session id and the account its session
-   *  launched under. The first attribution of a session id wins; anything
-   *  not well formed is dropped. */
+  /** Usage track MP10: a Claude session id and the account it runs under
+   *  now. The same again sends nothing; another account applies from then
+   *  on (MP10 round 1); anything not well formed is dropped. */
   setSessionAccount(sessionId: string, accountKey: TkAccountKey): void {
     if (this.shuttingDown || !tkSessionUuidOk(sessionId) || !tkClaudeAccountKeyOk(accountKey)) return
-    if (this.sessionAccounts.has(sessionId)) return
+    if (this.sessionAccounts.get(sessionId) === accountKey) return
+    this.sessionAccounts.delete(sessionId)
     this.sessionAccounts.set(sessionId, accountKey)
     if (this.sessionAccounts.size > SESSION_ACCOUNTS_KEPT) {
       const oldest = this.sessionAccounts.keys().next()

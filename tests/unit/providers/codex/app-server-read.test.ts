@@ -127,7 +127,7 @@ describe('readUsage: who may be read (ADR-022 bounds 2, 5)', () => {
     const r = await t.ops.readUsage({ authRealmId: MANAGED })
     expect(r.ok).toBe(true)
     expect(t.runs).toHaveLength(1)
-    expect(t.runs[0].cmd.args).toEqual(['app-server', '--disable', 'remote_plugin'])
+    expect(t.runs[0].cmd.args).toEqual(['app-server'])
     expect(t.runs[0].opts.env.CODEX_HOME).toBe(homeOf(MANAGED).home)
     expect(t.runs[0].opts.env.OPENAI_API_KEY).toBeUndefined()
     expect(t.runs[0].opts.timeoutMs).toBe(APP_SERVER_READ_DEADLINE_MS)

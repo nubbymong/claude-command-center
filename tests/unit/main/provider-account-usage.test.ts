@@ -214,7 +214,7 @@ describe('what each account shows (plan section 3)', () => {
     expect(r.usage.buckets.map((b) => [b.label, b.percent])).toEqual([['5h', 37]])
     for (const c of t.fs.calls) expect(c.toLowerCase()).toContain(sessionsOf(t.h, a).toLowerCase())
     const realmId = t.h.doc().accounts.find((x) => x.id === a)!.authRealmId
-    expect(t.h.runs.slice(runs).map((x) => [x.args, x.home])).toEqual([['app-server --disable remote_plugin', managedHome(realmId)]])
+    expect(t.h.runs.slice(runs).map((x) => [x.args, x.home])).toEqual([['app-server', managedHome(realmId)]])
   })
 
   it('an account with no reading yet says so', async () => {

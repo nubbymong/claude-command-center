@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T09:04:16.888Z",
-  "head": "2881dc723d816e8fa0f003caa9387964261f8d97",
-  "tree": "e7acd8318900a6ba3ca289dd782b7d833e9e270e",
+  "generatedAt": "2026-09-27T09:42:18.619Z",
+  "head": "d54e16669640b50fc552a9846f1e44229eea54f1",
+  "tree": "886871d68c6b2977ef4fea7c6c89c399a567d65f",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 407,
-  "pathDigest": "007adc30c880a8743e0666da9662f7a54f88f7638e8dffa37ef9415663104aa8",
+  "matchedPathCount": 408,
+  "pathDigest": "7d02fb058f79bc1534971851d55b720325095dd38f0d64d33d195c842cbddc74",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -203,7 +203,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 146
+      "lineCount": 148
     },
     {
       "path": "package.json",
@@ -600,7 +600,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 108
+      "lineCount": 107
     },
     {
       "path": "src/main/providers/codex/discovery.ts",
@@ -828,6 +828,13 @@
         "P14"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "src/main/tokenomics/tk-attribution.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
     },
     {
       "path": "src/main/tokenomics/tk-db.ts",
@@ -2055,7 +2062,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 109
+      "lineCount": 116
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -2401,7 +2408,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 17
+      "lineCount": 18
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",

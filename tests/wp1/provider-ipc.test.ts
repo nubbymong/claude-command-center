@@ -37,6 +37,8 @@ function fakeContents(id: number) {
     send: (channel: string, data: unknown) => { sent.push([channel, data]) },
     once: (ev: string, fn: () => void) => { (events[ev] ??= []).push(fn) },
     on: (ev: string, fn: () => void) => { (events[ev] ??= []).push(fn) },
+    removeListener: (ev: string, fn: () => void) => { const at = (events[ev] ?? []).indexOf(fn); if (at >= 0) events[ev].splice(at, 1) },
+    count: (ev: string) => (events[ev] ?? []).length,
     destroy: () => { destroyed = true; for (const fn of events.destroyed ?? []) fn() },
     emit: (ev: string) => { for (const fn of events[ev] ?? []) fn() },
     emitWith: (ev: string, ...args: unknown[]) => { for (const fn of events[ev] ?? []) (fn as (...a: unknown[]) => void)(...args) },
@@ -611,6 +613,33 @@ describe('the usage stream over IPC (usage track MP3)', () => {
 
   // MP8 round 2 (S2, Q2): a card's Retry read stops with the page, and every
   // read stops when the renderer crashes or its main frame goes elsewhere.
+  // MP8 round 3: one set of leave listeners per renderer, however many reads.
+  it('many Retry reads and a stream share one set of leave listeners, which come off when the last ends', async () => {
+    const s = signalService()
+    const w = wire(s.svc)
+    // Whatever else watches the renderer, counted first.
+    const warm = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC, read: true })
+    await new Promise((r) => setTimeout(r, 0))
+    s.releaseAll()
+    await warm
+    const base = { gone: w.wc.count('render-process-gone'), nav: w.wc.count('did-start-navigation'), destroyed: w.wc.count('destroyed') }
+    const calls = [w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH, read: true })]
+    for (let i = 0; i < 30; i++) calls.push(w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC, read: true }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(w.wc.count('render-process-gone') - base.gone).toBe(1)
+    expect(w.wc.count('did-start-navigation') - base.nav).toBe(1)
+    expect(w.wc.count('destroyed') - base.destroyed).toBe(1)
+    // One crash stops every one of them.
+    w.wc.emit('render-process-gone')
+    expect(s.ones.slice(1).every((o) => o.signal?.aborted)).toBe(true)
+    expect(s.signals.at(-1)?.signal?.aborted).toBe(true)
+    s.releaseAll()
+    await Promise.all(calls)
+    expect(w.wc.count('render-process-gone')).toBe(base.gone)
+    expect(w.wc.count('did-start-navigation')).toBe(base.nav)
+    expect(w.wc.count('destroyed')).toBe(base.destroyed)
+  })
+
   it('the page closing stops its cards\' Retry reads too', async () => {
     const s = signalService()
     const w = wire(s.svc)

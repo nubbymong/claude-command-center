@@ -76,7 +76,7 @@ if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m 
   })
   return
 }
-if (a === 'app-server --disable remote_plugin') {
+if (a === 'app-server') {
   // Usage track MP7 (ADR-022): the protocol helper. Logs every message it is
   // sent, answers initialize naming its CODEX_HOME (or another folder) and the
   // usage read, and exits when its stdin closes -- unless the realm's

@@ -771,9 +771,10 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     }
   }
 
-  /** Usage track MP10: record a Claude session's account (the first wins)
-   *  and re-attribute what the index already holds of it. Anything not well
-   *  formed is ignored; a failure is logged, never thrown. */
+  /** Usage track MP10: record the account a Claude session runs under now
+   *  (from then on) and attribute what the index holds of it with none yet.
+   *  Anything not well formed is ignored; a failure is logged, never
+   *  thrown. */
   function setSessionAccount(msg: { sessionId?: unknown; accountKey?: unknown }): void {
     const { sessionId, accountKey } = msg
     if (!tkSessionUuidOk(sessionId) || !tkClaudeAccountKeyOk(accountKey)) { logw('warn', 'a session attribution that was not well formed was ignored'); return }

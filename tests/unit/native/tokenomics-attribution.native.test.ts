@@ -1,9 +1,10 @@
 /**
  * Usage track MP10 (owner decision Q1.4): Claude usage attributed to the
- * account its session launched under, from now on. The index records a
- * session id's account once (the first wins) and re-attributes what it already
- * holds of that session in one transaction; rows ingested after it are stored
- * with it. Both orders are covered, in the database and end to end in the
+ * account whose profile it runs under, from now on. The index records a
+ * session id's account and attributes what it holds of that session with none
+ * yet in one transaction; rows ingested after it are stored with it. A later
+ * account for the same session (resumed under another profile, MP10 round 1)
+ * applies from then on; rows already attributed keep theirs. Both orders are covered, in the database and end to end in the
  * worker, and the moved rollups are shown to equal a rebuild from the events.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -53,11 +54,31 @@ describe('recording a Claude session\'s account in the index (MP10)', () => {
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tkattr-')); opened = [] })
   afterEach(() => { for (const db of opened) { try { db.close() } catch { /* closed */ } } fs.rmSync(tmp, { recursive: true, force: true }) })
 
-  it('is recorded once: the first attribution of a session id wins', () => {
+  it('is recorded once while it stays; another account for the session is the latest', () => {
     const db = open(':memory:')
     expect(db.setSessionAccount(U1, K, 5)).toEqual({ recorded: true, stamped: 0 })
-    expect(db.setSessionAccount(U1, K2, 6)).toEqual({ recorded: false, stamped: 0 })
+    expect(db.setSessionAccount(U1, K, 6)).toEqual({ recorded: false, stamped: 0 })
     expect(db.raw.prepare('SELECT sessionId, accountKey, setAt FROM tk_session_accounts').all()).toEqual([{ sessionId: U1, accountKey: K, setAt: 5 }])
+    expect(db.setSessionAccount(U1, K2, 7)).toEqual({ recorded: true, stamped: 0 })
+    expect(db.raw.prepare('SELECT sessionId, accountKey, setAt FROM tk_session_accounts').all()).toEqual([{ sessionId: U1, accountKey: K2, setAt: 7 }])
+  })
+
+  // MP10 round 1: the path decides, so a session resumed under another
+  // profile moves on to that account from then on.
+  it('a session resumed under another account: later turns take the new account, earlier ones keep theirs, and the rollups follow', () => {
+    const db = open(':memory:')
+    db.setSessionAccount(U1, K, 1)
+    db.insertEvents([0, 1, 2].map((i) => cev(i, U1)))
+    db.setSessionAccount(U1, K2, 2)
+    db.insertEvents([3, 4].map((i) => cev(i, U1)))
+    const byKey = db.raw.prepare('SELECT accountKey, COUNT(*) AS n FROM tk_events WHERE sessionId = ? GROUP BY accountKey ORDER BY accountKey').all(U1)
+    expect(byKey).toEqual([{ accountKey: K, n: 3 }, { accountKey: K2, n: 2 }])
+    expect(db.queryAccounts()).toEqual([{ provider: 'claude', accountKey: K }, { provider: 'claude', accountKey: K2 }])
+    // The session row keeps the account it began under.
+    expect(db.querySessions(PRICING, {}).rows.map((r) => [r.sessionId, r.accountKey])).toEqual([[U1, K]])
+    const live = rollups(db)
+    rebuild(db)
+    expect(rollups(db)).toEqual(live)
   })
 
   it('refuses what is not a Claude account key or names no session', () => {
@@ -83,8 +104,8 @@ describe('recording a Claude session\'s account in the index (MP10)', () => {
     // Totals never move; the split does.
     expect(totals(db)).toEqual(before)
     expect(cost(db)).toBeCloseTo(all, 9)
-    expect(cost(db, { accountKey: K })).toBeCloseTo(u1Cost, 9)
-    expect(cost(db, { provider: 'claude', accountKey: '' })).toBeCloseTo(u2Cost, 9)
+    expect(cost(db, { accountKey: K })).toBeCloseTo(u1Cost as number, 9)
+    expect(cost(db, { provider: 'claude', accountKey: '' })).toBeCloseTo(u2Cost as number, 9)
     expect(db.queryAccounts()).toEqual([{ provider: 'claude', accountKey: '' }, { provider: 'claude', accountKey: K }, { provider: 'codex', accountKey: 'codex:acct-c' }])
     expect(db.rollupsDirty()).toBe(false)
     // Exactly what a rebuild from the events makes.
@@ -203,7 +224,10 @@ describe('recording a Claude session\'s account in the index (MP10)', () => {
     const again = open(p)
     again.insertEvents([cev(1, U1)])
     expect(accountsOf(again, U1)).toEqual([K])
-    expect(again.setSessionAccount(U1, K2, 2).recorded).toBe(false)
+    expect(again.setSessionAccount(U1, K, 2).recorded).toBe(false)
+    expect(again.setSessionAccount(U1, K2, 3).recorded).toBe(true)
+    again.insertEvents([cev(2, U1)])
+    expect(again.raw.prepare('SELECT accountKey FROM tk_events WHERE dedupKey = ?').get(cev(2, U1).dedupKey)).toEqual({ accountKey: K2 })
   })
 })
 
@@ -290,7 +314,7 @@ describe('the worker attributes a Claude session in either order (MP10)', () => 
     expect(await t.ask('accounts')).toEqual([{ provider: 'claude', accountKey: K }])
   })
 
-  it('ignores an attribution that is not well formed, and keeps the first one', async () => {
+  it('ignores an attribution that is not well formed; a later one applies to what is stored after it', async () => {
     const t = start()
     writeClaude(path.join(t.claude, 'F--proj'), U1, 1)
     await t.until('ingested', (r) => !!row(r, U1))
@@ -305,8 +329,11 @@ describe('the worker attributes a Claude session in either order (MP10)', () => 
     expect(warned).toHaveLength(5)
     expect(row((await t.ask('sessions', {})).rows, U1)?.accountKey).toBe('')
     t.send({ type: 'set-session-account', sessionId: U1, accountKey: K })
+    await t.until('the attribution', (r) => row(r, U1)?.accountKey === K)
     t.send({ type: 'set-session-account', sessionId: U1, accountKey: K2 })
-    await t.until('the first attribution', (r) => row(r, U1)?.accountKey === K)
+    writeClaude(path.join(t.claude, 'F--proj'), U1, 1, 1)
+    await t.until('the later line', (r) => (row(r, U1) as { msgCount?: number } | undefined)?.msgCount === 2)
+    expect(await t.ask('accounts')).toEqual([{ provider: 'claude', accountKey: K }, { provider: 'claude', accountKey: K2 }])
     expect(t.msgs.some((m) => m.type === 'error')).toBe(false)
   })
 })

@@ -304,7 +304,7 @@ type T = Awaited<ReturnType<typeof setup>>
 const realmOf = (h: Harness, accountId: string) => h.doc().accounts.find((a) => a.id === accountId)!.authRealmId
 const sessionsOf = (h: Harness, accountId: string) => `${managedHome(realmOf(h, accountId))}\\sessions`
 /** The helper's constant argv (MP8 round 2: the remote plugin feature off). */
-const HELPER_ARGS = 'app-server --disable remote_plugin'
+const HELPER_ARGS = 'app-server'
 const helperRuns = (h: Harness) => h.runs.filter((r) => r.args === HELPER_ARGS)
 /** A card's Retry (MP8 round 2): the page's own ask, so a fresh read may start. */
 const READ = { read: true }
@@ -936,6 +936,117 @@ describe('MP8 round 2: only the page\'s own asks read; what a stopped read leave
     expect(await t.h.service.setLifecycle({ accountId: 'acct-' + 'f'.repeat(32), lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'not-found' })
     expect(svc.usageEpoch.size).toBe(0)
     expect(svc.usageBarred.size).toBe(0)
+  })
+})
+
+// MP8 round 3 (lens C, C-F1; the Retry floor after a failure).
+describe('MP8 round 3: every chain is waited for; a failed read and the Retry floor', () => {
+  it('a launch waits for a stopped read still being killed, not only for the read that replaced it', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    let endKill: () => void = () => {}
+    t.use(appServer({ hold: true, kill: new Promise<void>((r) => { endKill = r }) }))
+    const stop = new AbortController()
+    const first = t.h.service.readAccountUsage({ accountId: a }, { read: true, signal: stop.signal })
+    await until(() => t.helper().seen.length === 1, 'the first helper')
+    // The page closes mid-read: the helper's chain is still being killed.
+    stop.abort()
+    await first
+    // The page opens again: a new read queues behind that chain.
+    t.use(appServer())
+    const second = t.h.service.readAccountUsage({ accountId: a }, READ)
+    for (let i = 0; i < 5; i++) await tick()
+    let launched = false
+    const launch = t.h.service.prepareLaunch({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 'sess-A' }).then((r) => { launched = true; return r })
+    for (let i = 0; i < 20; i++) await tick()
+    // Bound 2: nothing runs beside the first chain.
+    expect(launched).toBe(false)
+    endKill()
+    expect(await launch).toMatchObject({ ok: true })
+    await second
+    expect(helperRuns(t.h)).toHaveLength(1)
+    // Every run ended: none is still tracked.
+    await until(() => !(t.h.service as unknown as { usageRunsLive: Map<string, unknown> }).usageRunsLive.has(a), 'the runs to be forgotten')
+  })
+
+  it('the quit stops a stopped read still ending as well as the one that replaced it', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    t.use(appServer({ hold: true, kill: new Promise<void>(() => {}) }))
+    const stop = new AbortController()
+    const first = t.h.service.readAccountUsage({ accountId: a }, { read: true, signal: stop.signal })
+    await until(() => t.helper().seen.length === 1, 'the first helper')
+    stop.abort()
+    await first
+    const svc = t.h.service as unknown as { usageRunsLive: Map<string, Set<{ stop: AbortController }>> }
+    t.use(appServer())
+    const second = t.h.service.readAccountUsage({ accountId: a }, READ)
+    for (let i = 0; i < 5; i++) await tick()
+    const live = [...(svc.usageRunsLive.get(a) ?? [])]
+    expect(live).toHaveLength(2)
+    t.h.service.stopUsageReads()
+    expect(live.every((r) => r.stop.signal.aborted)).toBe(true)
+    await second
+  })
+
+  it('a Retry under the floor after a failed read reads nothing new; past the floor it reads again; opening the page is no Retry', async () => {
+    let now = 7_000_000
+    const t = await setup({ now: () => now, retryFloorMs: 10_000 })
+    const a = await addCodexAccount(t.h, 'A')
+    t.use(appServer({ error: { code: -32600, message: 'codex account authentication required to read rate limits' } }))
+    const failed = await t.h.service.readAccountUsage({ accountId: a }, READ)
+    expect(failed).toMatchObject({ ok: true })
+    expect(failed.ok && failed.usage.source).not.toBe('read')
+    await until(() => t.h.leases.count(a) === 0, 'the read to end')
+    expect(helperRuns(t.h)).toHaveLength(1)
+    t.use(appServer())
+    now += 9_999
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
+    expect(helperRuns(t.h)).toHaveLength(1)
+    // The page opening is not a Retry: it reads.
+    await stream(t)
+    expect(helperRuns(t.h)).toHaveLength(2)
+    await until(() => t.h.leases.count(a) === 0, 'the stream read to end')
+    // A failure again, then past the floor: a Retry reads.
+    t.use(appServer({ error: { code: -32603, message: 'internal error' } }))
+    now += 60_001
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
+    await until(() => t.h.leases.count(a) === 0, 'the read to end')
+    expect(helperRuns(t.h)).toHaveLength(3)
+    t.use(appServer())
+    now += 10_001
+    expect(await t.h.service.readAccountUsage({ accountId: a }, READ)).toMatchObject({ ok: true, usage: { source: 'read' } })
+    expect(helperRuns(t.h)).toHaveLength(4)
+  })
+
+  it('a stopped read is no failure: a Retry right after it reads', async () => {
+    const now = 8_000_000
+    const t = await setup({ now: () => now, retryFloorMs: 10_000 })
+    const a = await addCodexAccount(t.h, 'A')
+    t.use(appServer({ hold: true }))
+    const stop = new AbortController()
+    const first = t.h.service.readAccountUsage({ accountId: a }, { read: true, signal: stop.signal })
+    await until(() => t.helper().seen.length === 1, 'the first helper')
+    stop.abort()
+    await first
+    await until(() => t.h.leases.count(a) === 0, 'the stopped read to end')
+    t.use(appServer())
+    expect(await t.h.service.readAccountUsage({ accountId: a }, READ)).toMatchObject({ ok: true, usage: { source: 'read' } })
+    expect(helperRuns(t.h)).toHaveLength(2)
+  })
+
+  it('a settle forgets a failed read: a Retry after it reads', async () => {
+    const now = 9_000_000
+    const t = await setup({ now: () => now, retryFloorMs: 10_000 })
+    const a = await addCodexAccount(t.h, 'A')
+    t.use(appServer({ error: { code: -32603, message: 'internal error' } }))
+    await t.h.service.readAccountUsage({ accountId: a }, READ)
+    await until(() => t.h.leases.count(a) === 0, 'the read to end')
+    expect((await t.h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).ok).toBe(true)
+    expect((await t.h.service.setLifecycle({ accountId: a, lifecycle: 'active' })).ok).toBe(true)
+    t.use(appServer())
+    expect(await t.h.service.readAccountUsage({ accountId: a }, READ)).toMatchObject({ ok: true, usage: { source: 'read' } })
+    expect(helperRuns(t.h)).toHaveLength(2)
   })
 })
 

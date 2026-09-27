@@ -961,10 +961,16 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   registry changed, no longer start a fresh read (ADR-022 bound 7): they
   show the live, kept or last-seen figure. Only opening the page, Refresh
   and a card's Retry read afresh.
-- **Residual, accepted (MP8 round 2, the model catalogue):** a read still
-  refetches the CLI's model catalogue into the realm (no supported CLI lets
-  a caller turn that off); the remote plugin checks are off (ADR-022,
-  Evidence).
+- **Residual, accepted (MP8 round 3, what a read contacts):** besides the
+  usage request, a read refetches the CLI's model catalogue into the realm
+  and checks its remote plugin cache, at `chatgpt.com` (and OpenAI's content
+  storage on 0.155.1). No flag is used: turning remote plugins off made the
+  helper contact GitHub and leave clone folders in the realm on every read
+  (ADR-022, Evidence).
+- **Owed to MP13 (decided 2026-09-27, MP8 round 3):** the PRIVACY row lists
+  what a Codex usage read contacts in full: the usage request, the model
+  catalogue refresh and the remote plugin cache check, to OpenAI only
+  (ADR-022, Evidence), not the usage request alone.
 - **Residual, accepted (MP8, switch-off):** switching Codex off while a
   fresh read runs is refused as in use (the read's operation lease counts,
   as a status check's does) for at most that read's own bound (20 s, then
@@ -1048,15 +1054,18 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
     recorded its provider): the page shows it under the same notice and
     does not present a per-provider heatmap as final until the attribution
     has finished.
-- **Residual, accepted (MP10, whole sessions):** Claude usage is attributed
-  per session id, from the transcript path the session reports (a hook or
-  the statusline) and the launch profile recorded at its spawn. A transcript
-  resumed in the app keeps its session id, so it is attributed whole,
-  turns from before the resume included, and the first attribution of a
-  session id wins: resuming it later under another profile does not move
-  it. Sessions from before this build, sessions run outside the app, SSH
-  sessions (their transcripts are on the remote host) and sessions on the
-  default home (no launch profile) stay not recorded. There is no manual
+- **Residual, accepted (MP10, the path decides):** Claude usage is attributed
+  from the transcript path a local session reports (a hook or the
+  statusline): the profile whose config folder holds it names the account
+  (as a Codex realm's folder does). A session resumed under another profile
+  keeps its session id and moves on to that account from then on (MP10
+  round 1); its turns already attributed keep theirs, its session row keeps
+  the account it began under, and turns stored between the resume and the
+  first report under the new profile stay with the old one. A transcript
+  with no account yet when first attributed is attributed whole, turns from
+  before the resume included. Sessions from before this build, sessions run
+  outside the app, SSH sessions (their transcripts are on the remote host)
+  and sessions on the default home stay not recorded. There is no manual
   attribution.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)

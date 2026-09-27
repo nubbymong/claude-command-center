@@ -206,23 +206,45 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
   // MP8 round 2 (S2): a card's Retry reads under a stop of its own, which the
   // page closing (or the renderer going away) triggers, as a stream's.
   const usageOnes = new Map<number, Set<AbortController>>()
-  /** Stop `stop` when the renderer goes away, crashes, or its main frame
-   *  navigates to another document (Q2). Returns the unsubscribe. */
+  /** One watch per renderer (MP8 round 3): every stream and Retry read of
+   *  that renderer registers its stop here, and one set of listeners stops
+   *  them all when the renderer goes away, crashes, or its main frame
+   *  navigates to another document (Q2). The listeners come off once no stop
+   *  is left, so many Retries never pile listeners up on a renderer. */
+  const leaveWatches = new Map<number, { stops: Set<AbortController>; detach: () => void }>()
   const stopOnLeave = (sender: WebContents, stop: AbortController): (() => void) => {
-    const gone = () => stop.abort()
-    const navigated = (details: unknown, _url?: unknown, isInPlace?: unknown, isMainFrame?: unknown) => {
-      const d = details && typeof details === 'object' ? details as { isMainFrame?: unknown; isSameDocument?: unknown } : {}
-      const main = typeof isMainFrame === 'boolean' ? isMainFrame : d.isMainFrame === true
-      const sameDocument = typeof isInPlace === 'boolean' ? isInPlace : d.isSameDocument === true
-      if (main && !sameDocument) stop.abort()
+    const id = sender.id
+    let watch = leaveWatches.get(id)
+    if (!watch) {
+      const stops = new Set<AbortController>()
+      const gone = () => { for (const s of [...stops]) s.abort() }
+      const navigated = (details: unknown, _url?: unknown, isInPlace?: unknown, isMainFrame?: unknown) => {
+        const d = details && typeof details === 'object' ? details as { isMainFrame?: unknown; isSameDocument?: unknown } : {}
+        const main = typeof isMainFrame === 'boolean' ? isMainFrame : d.isMainFrame === true
+        const sameDocument = typeof isInPlace === 'boolean' ? isInPlace : d.isSameDocument === true
+        if (main && !sameDocument) gone()
+      }
+      try { sender.once('destroyed', gone) } catch { /* a renderer gone already */ }
+      try { sender.on('render-process-gone', gone) } catch { /* a renderer gone already */ }
+      try { sender.on('did-start-navigation', navigated as never) } catch { /* a renderer gone already */ }
+      watch = {
+        stops,
+        detach: () => {
+          try { sender.removeListener('destroyed', gone) } catch { /* gone */ }
+          try { sender.removeListener('render-process-gone', gone) } catch { /* gone */ }
+          try { sender.removeListener('did-start-navigation', navigated as never) } catch { /* gone */ }
+        },
+      }
+      leaveWatches.set(id, watch)
     }
-    try { sender.once('destroyed', gone) } catch { /* a renderer gone already */ }
-    try { sender.on('render-process-gone', gone) } catch { /* a renderer gone already */ }
-    try { sender.on('did-start-navigation', navigated as never) } catch { /* a renderer gone already */ }
+    const mine = watch
+    mine.stops.add(stop)
     return () => {
-      try { sender.removeListener('destroyed', gone) } catch { /* gone */ }
-      try { sender.removeListener('render-process-gone', gone) } catch { /* gone */ }
-      try { sender.removeListener('did-start-navigation', navigated as never) } catch { /* gone */ }
+      mine.stops.delete(stop)
+      if (mine.stops.size === 0 && leaveWatches.get(id) === mine) {
+        leaveWatches.delete(id)
+        mine.detach()
+      }
     }
   }
   handle(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, S.usageOne, async (i, svc, e) => {

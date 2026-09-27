@@ -52,7 +52,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, isValidProfileId } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -789,11 +789,14 @@ if (!gotTheLock) {
     const emitWithMerge = (channel: string, payload: unknown) =>
       channel === IPC.SERVICE_HEALTH_UPDATE ? pushDiagnostics() : emitToWindow(channel, payload)
     // Usage track MP10: the same live transcript paths attribute each local
-    // Claude session's usage to the account it launched under (its launch
-    // profile's registry link), for Tokenomics. Independent of the binder, so
-    // it works with logging off; the usage index is resolved lazily too.
+    // Claude session's usage to an account, for Tokenomics: the profile whose
+    // config folder holds the transcript (the path decides) names it through
+    // its registry link. Independent of the binder, so it works with logging
+    // off; the profiles root and the usage index are resolved lazily too.
     const attributeTranscript = createTranscriptAttribution({
-      profileOf: (sessionId) => getClaudeProfileId(sessionId),
+      isLocal: (sessionId) => getClaudeProfileId(sessionId) !== undefined,
+      profilesRoot: () => { try { return getProfilesRoot() } catch { return null } },
+      isProfileId: (name) => isValidProfileId(name),
       accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId) ?? null,
       record: (sessionId, accountKey) => {
         const tokenomics = getTokenomicsSupervisor()

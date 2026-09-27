@@ -49,13 +49,12 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   'review': ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-'],
   // Usage track MP7 (ADR-022; the owner's scoped WP1.41 exception): the
   // protocol helper for one usage read, on its default stdio transport only:
-  // never `daemon`, `proxy`, `--listen` or `--enable`. Its messages arrive
-  // on stdin (the runner's open-stdin mode), never here. MP8 round 2 (VM
-  // hosts): `--disable remote_plugin` turns the default-on remote plugin
-  // feature off for this process only (it is `-c features.remote_plugin=
-  // false`, nothing written); `codex app-server --help` and `codex features
-  // list` show both on 0.153.4 and 0.155.1. It turns nothing on.
-  'app-server': ['app-server', '--disable', 'remote_plugin'],
+  // never `daemon`, `proxy` or `--listen`, and no `--enable`, `--disable`
+  // or `-c` override. MP8 round 3 (VM): turning remote plugins off made the
+  // helper run `git ls-remote` against GitHub and leave clone folders in the
+  // realm on every read, so no flag is used. Its messages arrive on stdin
+  // (the runner's open-stdin mode), never here.
+  'app-server': ['app-server'],
 }
 
 export interface CodexCommand {

@@ -45,13 +45,12 @@ owner decision and a new ADR.
    legacy `getAuthStatus`, or any other method; it never opts into
    `experimentalApi` or any other capability, parameter or flag that turns on
    an experimental or experiment-exposure feature (0.155.1's optional
-   `supportsLunaReserve` included). Argv is the constant
-   `app-server --disable remote_plugin` on the default stdio transport: never
-   `daemon`, `proxy`, `--listen` to a socket, or `--enable`. The one flag
-   turns a default-on feature (remote plugins) off for that process only (it
-   is `-c features.remote_plugin=false`; nothing is written); it turns nothing
-   on. A request from the server to the client (an approval, a sign-in
-   refresh) is never answered and fails the read.
+   `supportsLunaReserve` included). Argv is the constant `app-server` on the
+   default stdio transport: never `daemon`, `proxy` or `--listen` to a
+   socket, and no `--enable`, `--disable` or `-c` feature override (see
+   Evidence: turning a feature off made the CLI do more, not less). A
+   request from the server to the client (an approval, a sign-in refresh) is
+   never answered and fails the read.
 
 2. **Only for an enabled, signed-in Codex account with no open session.** The
    read runs only when Codex is answered on, the account is active and signed
@@ -153,24 +152,37 @@ therefore accept unknown extra fields and must not require the new ones.
 0.157.1 was checked for drift only: it is `too-new` and is not read (bound 5).
 
 A real read on 0.153.4 and 0.155.1 with a signed-in account was made on the
-test VM (MP8, 2026-09-27; the VM journal in the session record). The hosts
-contacted during a read, recorded by process from the DNS client log and TCP
-connections: `chatgpt.com` only on 0.153.4 (about eight TLS connections in a
-read of about a second: the usage endpoint
-`https://chatgpt.com/backend-api/wham/usage` and more), and on 0.155.1 also
-`sdmntprsouthcentralus.oaiusercontent.com` (OpenAI's content storage). No
-other host, and no sign-in refresh was due. So a read is not only the usage
-request: the CLI refetched its model catalogue into the realm on every read
-and checked its remote plugin cache. The helper now runs with remote plugins
-off (bound 1), the only one of those two the supported CLIs let a caller
-turn off: `codex app-server --help` shows `--disable <FEATURE>` and
-`codex features list` lists `remote_plugin` (stable, on by default) on
-0.153.4 and 0.155.1 alike, while no flag or feature for the model catalogue
-refresh exists on either (`remote_models` is listed as removed). The model
-catalogue is therefore still refetched; the VM re-verifies which hosts
-remain with remote plugins off. A CLI in the supported range that refused
-the flag would end the helper early: a transient failure, the last-seen
-reading shown.
+test VM (MP8, 2026-09-27, at 81ed64a8 and again at fa2907e7; the VM journal
+in the session record), the hosts recorded by process from the DNS client
+log and TCP connections. With the constant argv, each read contacts:
+
+- `chatgpt.com`, about eight TLS connections in a read of about a second:
+  the usage request (`https://chatgpt.com/backend-api/wham/usage`), a
+  refetch of the CLI's model catalogue into the realm, and a check of its
+  remote plugin cache;
+- on 0.155.1 also `sdmntprsouthcentralus.oaiusercontent.com` (OpenAI's
+  content storage).
+
+OpenAI hosts only, and no other process: the app's own lookups in the same
+windows were its updater, its status check and localhost. No sign-in refresh
+was due and none was observed. Which path each connection other than the
+usage request took is not visible without intercepting TLS, which was not
+done.
+
+Why no flag is used. Both supported CLIs accept `--disable <FEATURE>` on
+`app-server` (`codex app-server --help`) and list `remote_plugin` as a
+stable feature on by default (`codex features list`), and no feature or
+flag controls the model catalogue refresh (`remote_models` is listed as
+removed). A build that ran the helper with `--disable remote_plugin` (MP8
+round 2) was re-verified on the VM at fa2907e7 and did more, not less: on
+both versions the helper then ran `git ls-remote
+https://github.com/openai/plugins.git` (a GitHub host the constant argv
+never contacts), on some reads cloned it, and left a `git-*` and a
+`plugins-clone-*` folder in the realm's `.tmp` on every read; the
+`oaiusercontent.com` host remained on 0.155.1, and `chatgpt.com` fell only
+from about eight connections to six. The flag was removed (MP8 round 3):
+the argv is the constant `app-server`, and a test pins that it carries no
+`--disable`, `-c` or `--enable`.
 
 ## Consequences
 
@@ -179,10 +191,11 @@ reading shown.
   security-sensitive (ADR-009): the runner's open-stdin mode, the protocol
   client and the orchestration each get an adversarial pass.
 - The new network traffic is what the Codex CLI itself does at start with
-  that account's own sign-in, to OpenAI only: the usage request, and the
-  model catalogue refresh a Codex session also makes (and, when due, its
-  sign-in refresh; bound 2); the remote plugin checks are turned off (see
-  Evidence).
+  that account's own sign-in, to OpenAI only (`chatgpt.com`, and on 0.155.1
+  OpenAI's content storage): the usage request, and the model catalogue
+  refresh and remote plugin cache check a Codex session also makes (and,
+  when due, its sign-in refresh; bound 2). The privacy wording lists all of
+  them, not only the usage request (MP13).
 - The exception is narrow by construction: every bound above is a test in the
   phases that build it, and a change to any of them is a new owner decision.
 - If a future CLI removes or changes the method, the page keeps working on the

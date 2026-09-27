@@ -11,8 +11,8 @@ export type ToTkWorker =
   /** The Codex accounts' transcript folders changed (an account added, removed or signed out). */
   | { type: 'set-codex-realm-dirs'; dirs: TkSessionsRoot[] }
   | { type: 'set-configs'; configs: TkConfigDim[] }
-  /** Usage track MP10: a Claude session id and the account its session
-   *  launched under; the first attribution of a session id wins. */
+  /** Usage track MP10: a Claude session id and the account it runs under
+   *  now; another account than before applies from then on. */
   | { type: 'set-session-account'; sessionId: string; accountKey: TkAccountKey }
   | { type: 'reindex' }
   | { type: 'query'; id: number; kind: string; args: Record<string, unknown> }

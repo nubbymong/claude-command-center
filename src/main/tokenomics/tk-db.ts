@@ -179,10 +179,11 @@ CREATE TABLE IF NOT EXISTS tk_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_lastts ON tk_sessions(lastTs DESC, sessionId DESC);
 
--- Usage track MP10: the account each Claude session launched under, recorded
--- from now on (the first attribution of a session id wins). A table of its
--- own, not a column: a session is attributed before or after its rows are
--- ingested, and an earlier build opening the file ignores it.
+-- Usage track MP10: the account each Claude session runs under, from now on:
+-- the latest attribution applies to what is stored after it (a session
+-- resumed under another account moves on to it). A table of its own, not a
+-- column: a session is attributed before or after its rows are ingested,
+-- and an earlier build opening the file ignores it.
 CREATE TABLE IF NOT EXISTS tk_session_accounts (
   sessionId  TEXT PRIMARY KEY,
   accountKey TEXT NOT NULL,
@@ -274,13 +275,14 @@ export interface TkDb {
   querySessionDetail(pricing: Record<string, TkPricing>, sessionId: string): TkSessionDetail | null
   /** Usage track MP9: every provider and account the stored usage has. */
   queryAccounts(): TkAccountPresent[]
-  /** Usage track MP10: record the account a Claude session launched under
-   *  (the first attribution of a session id wins) and, in the same
-   *  transaction, re-attribute the rows already stored for it: its events
-   *  and session row, and the daily and hourly rollups moved from "not
-   *  recorded" to the account. While the rollups are dirty or being rebuilt
-   *  they are left dirty for another rebuild instead. `stamped` counts the
-   *  events re-attributed. */
+  /** Usage track MP10: record the account a Claude session runs under now:
+   *  rows stored after it take it (another account than before applies from
+   *  then on; rows already attributed keep theirs; the same again records
+   *  nothing). In the same transaction the session's rows stored with no
+   *  account yet are attributed: its events and session row, and the daily
+   *  and hourly rollups moved from "not recorded" to the account. While the
+   *  rollups are dirty or being rebuilt they are left dirty for another
+   *  rebuild instead. `stamped` counts the events attributed. */
   setSessionAccount(sessionId: string, accountKey: string, now: number): { recorded: boolean; stamped: number }
   /** Usage track MP9: the one-off Codex re-read that stamps stored history
    *  with its accounts is still due (set when a schema v1 database is
@@ -730,7 +732,11 @@ export function openTkDb(dbPath: string): TkDb {
   // alone and the rollups dirty, so totals never move and a rebuild settles
   // the split. While the rollups are dirty or a rebuild runs, only the events
   // and session row are stamped and the rollups are left for a rebuild.
-  const insSessionAccount = sqlite.prepare('INSERT OR IGNORE INTO tk_session_accounts(sessionId, accountKey, setAt) VALUES (?, ?, ?)')
+  // MP10 round 1: the latest account applies from then on; the same again
+  // changes nothing (no row changed).
+  const insSessionAccount = sqlite.prepare(`INSERT INTO tk_session_accounts(sessionId, accountKey, setAt) VALUES (?, ?, ?)
+    ON CONFLICT(sessionId) DO UPDATE SET accountKey = excluded.accountKey, setAt = excluded.setAt
+    WHERE tk_session_accounts.accountKey <> excluded.accountKey`)
   const sessionRowsStmt = sqlite.prepare(`SELECT day, ts, model, priceModel, provider, COALESCE(configId, '') AS configId, inTok, outTok, cacheReadTok, cacheCreateTok
     FROM tk_events WHERE sessionId = ? AND provider = 'claude' AND accountKey = ''`)
   const stampSessionEvents = sqlite.prepare("UPDATE tk_events SET accountKey = @accountKey WHERE sessionId = @sessionId AND provider = 'claude' AND accountKey = ''")

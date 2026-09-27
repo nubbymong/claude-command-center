@@ -142,15 +142,26 @@ describe('output decoding', () => {
 })
 
 describe('the app-server command line (ADR-022 bound 1)', () => {
-  // MP8 round 2: with the remote plugin feature off for this process only.
-  it('is the constant `app-server --disable remote_plugin`, natively and through the npm shim', () => {
-    expect(codexCommandLine('/usr/local/bin/codex', 'app-server', 'linux', {})).toEqual({ file: '/usr/local/bin/codex', args: ['app-server', '--disable', 'remote_plugin'], verbatim: false, cwd: '/usr/local/bin' })
+  // MP8 round 3: the constant `app-server`, with no feature flag (turning
+  // remote plugins off made the helper contact GitHub; ADR-022, Evidence).
+  it('is the constant `app-server`, natively and through the npm shim', () => {
+    expect(codexCommandLine('/usr/local/bin/codex', 'app-server', 'linux', {})).toEqual({ file: '/usr/local/bin/codex', args: ['app-server'], verbatim: false, cwd: '/usr/local/bin' })
     const shim = codexCommandLine('C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd', 'app-server', 'win32', { SystemRoot: 'C:\\Windows' })
     expect(shim).toEqual({
       file: 'C:\\Windows\\System32\\cmd.exe',
-      args: ['/d', '/v:off', '/s', '/c', '""C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd" app-server --disable remote_plugin"'],
+      args: ['/d', '/v:off', '/s', '/c', '""C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd" app-server"'],
       verbatim: true,
       cwd: 'C:\\Users\\u\\AppData\\Roaming\\npm',
     })
+  })
+
+  it('never carries a feature flag or config override (--enable, --disable, -c, --config)', () => {
+    for (const platform of ['linux', 'darwin', 'win32'] as const) {
+      const line = codexCommandLine(platform === 'win32' ? 'C:\\tools\\codex.exe' : '/usr/local/bin/codex', 'app-server', platform, { SystemRoot: 'C:\\Windows' })
+      if ('refused' in line) throw new Error(line.refused)
+      const words: string[] = line.args.join(' ').split(/\s+/)
+      for (const bad of ['--enable', '--disable', '-c', '--config']) expect(words, `${platform} ${bad}`).not.toContain(bad)
+      expect(words.some((w) => /^--(enable|disable|config)=/.test(w)), platform).toBe(false)
+    }
   })
 })
