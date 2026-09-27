@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T05:55:51.646Z",
-  "head": "81ed64a82a41cf822a8da0fddcd82be96f7e33ff",
-  "tree": "7490448d30cfb985ea07ad2ee96ff25aa1a2c788",
+  "generatedAt": "2026-09-27T06:17:00.176Z",
+  "head": "0c9f04a8545c46695ca49f6d65c5586f2c1797b6",
+  "tree": "1876250191aaebf628072730deca13842e55f297",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2342,
+  "trackedFileCount": 2343,
   "excludedFileCount": 381,
-  "scannedFileCount": 1961,
+  "scannedFileCount": 1962,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 396,
-  "pathDigest": "11311dc42f86b2371bdf39abde7f351c5b060f4a81cf53730733b46a7a46009f",
+  "matchedPathCount": 400,
+  "pathDigest": "bc9208a9a95bc552f9dd2c6b659960b8d16601597a8532739f29070aba9d2a53",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -203,7 +203,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 136
+      "lineCount": 140
     },
     {
       "path": "package.json",
@@ -459,6 +459,13 @@
         "P14"
       ],
       "lineCount": 58
+    },
+    {
+      "path": "src/main/ipc/tokenomics2-handlers.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
     },
     {
       "path": "src/main/logging/should-register-run.ts",
@@ -827,7 +834,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 40
+      "lineCount": 46
     },
     {
       "path": "src/main/tokenomics/tk-parse.ts",
@@ -848,21 +855,22 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 7
+      "lineCount": 9
     },
     {
       "path": "src/main/tokenomics/tk-types.ts",
       "predicates": [
+        "P04",
         "P14"
       ],
-      "lineCount": 3
+      "lineCount": 9
     },
     {
       "path": "src/main/tokenomics/tk-worker-transport.ts",
       "predicates": [
         "P14"
       ],
-      "lineCount": 5
+      "lineCount": 6
     },
     {
       "path": "src/main/tokenomics/tokenomics-service.ts",
@@ -870,7 +878,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 10
+      "lineCount": 15
     },
     {
       "path": "src/main/tokenomics/tokenomics-worker.ts",
@@ -878,7 +886,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 58
+      "lineCount": 65
     },
     {
       "path": "src/main/watchdog/watchdog-manager.ts",
@@ -1729,7 +1737,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 23
+      "lineCount": 26
     },
     {
       "path": "tests/e2e/codex-reconfirm-upgrade.spec.ts",
@@ -2254,11 +2262,25 @@
       "lineCount": 5
     },
     {
+      "path": "tests/unit/native/tk-db-schema.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 36
+    },
+    {
       "path": "tests/unit/native/tokenomics-reindex-307.native.test.ts",
       "predicates": [
         "P13"
       ],
       "lineCount": 25
+    },
+    {
+      "path": "tests/unit/native/tokenomics-reindex-accounts.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 20
     },
     {
       "path": "tests/unit/native/tokenomics-worker-hardening.native.test.ts",
@@ -2273,7 +2295,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 27
+      "lineCount": 38
     },
     {
       "path": "tests/unit/pr600-r1-lifetime.test.ts",
@@ -3231,7 +3253,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 7
+      "lineCount": 15
     },
     {
       "path": "tests/unit/tokenomics/tk-worker-transport.test.ts",
@@ -3239,6 +3261,13 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/tokenomics/tokenomics2-handlers.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 7
     }
   ]
 }

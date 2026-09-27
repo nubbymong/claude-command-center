@@ -979,6 +979,27 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   version the helper's userAgent names (the read requires the proven one),
   and the 0.155.1 rollout fixture, as the MP8 section of the usage plan
   lists them.
+- **Deviation (MP9, the Codex re-read):** the one-off re-read that stamps
+  stored Codex history with its accounts rewinds the Codex cursors as #307
+  did but deletes no row: a re-read turn has the same dedup key, so it
+  stamps the stored row instead of being inserted again. The totals never
+  dip while it runs, and a rollout pruned since keeps its history, not
+  recorded (#307 lost such history). Claude history is not re-read.
+- **Residual, accepted (MP9, the split while it runs):** until the re-read
+  and the rollup rebuild after it finish, the split by provider and account
+  is incomplete (rows from before the upgrade read as not recorded, and the
+  hourly rollup did not record its provider). The totals are whole; the
+  index status carries `accountReread` (stage, done, total) for the page's
+  notice (MP12).
+- **Residual, accepted (MP9, the rebuild):** the rollup rebuild replays every
+  stored event, 5000 rows a step, worker-side, answering queries between
+  steps and ingesting nothing new until it finishes. Its time on the large
+  (221 MB) database is to be measured on the VM.
+- **Residual, accepted (MP9):** the user's own ~/.codex history is
+  `codex:external` even when that folder is adopted as an account (plan
+  MP9), and the Tokenomics channels, the new accounts query included, do
+  not check their sender (as before MP9); it takes no arguments and answers
+  provider names and account keys only.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

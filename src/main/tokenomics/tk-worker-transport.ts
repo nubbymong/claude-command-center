@@ -1,13 +1,14 @@
-import type { TkConfigDim, TkPricing } from './tk-types'
+import type { TkConfigDim, TkPricing, TkSessionsRoot, TkAccountReread } from './tk-types'
 
 export type ToTkWorker =
-  /** `codexSessionsDir` is the user's own Codex home's; `codexRealmSessionsDirs`
-   *  (WP2, plan A13) are those of the app's Codex accounts, each in its own
-   *  realm. Indexed together. */
-  | { type: 'open'; dbPath: string; pricing: Record<string, TkPricing>; configs: TkConfigDim[]; claudeProjectsDir: string; codexSessionsDir: string; codexRealmSessionsDirs?: string[] }
+  /** `codexSessionsDir` is the user's own Codex home's (this computer's
+   *  sign-in, `codex:external`); `codexRealmSessionsDirs` (WP2, plan A13)
+   *  are those of the app's Codex accounts, each in its own realm, with the
+   *  account's key (usage track MP9). Indexed together. */
+  | { type: 'open'; dbPath: string; pricing: Record<string, TkPricing>; configs: TkConfigDim[]; claudeProjectsDir: string; codexSessionsDir: string; codexRealmSessionsDirs?: TkSessionsRoot[] }
   | { type: 'set-pricing'; pricing: Record<string, TkPricing> }
   /** The Codex accounts' transcript folders changed (an account added, removed or signed out). */
-  | { type: 'set-codex-realm-dirs'; dirs: string[] }
+  | { type: 'set-codex-realm-dirs'; dirs: TkSessionsRoot[] }
   | { type: 'set-configs'; configs: TkConfigDim[] }
   | { type: 'reindex' }
   | { type: 'query'; id: number; kind: string; args: Record<string, unknown> }
@@ -19,7 +20,8 @@ export type FromTkWorker =
    *  "Indexing" until a whole sweep finished - or forever, if it did not. */
   | { type: 'ready'; firstIndexComplete: boolean; eventsTotal: number }
   | { type: 'health'; eventsTotal: number; filesTracked: number; dbBytes: number }
-  | { type: 'index-progress'; filesDone: number; filesTotal: number; eventsIngested: number; phase: 'initial' | 'incremental' }
+  /** `accountReread` (MP9): the one-off account attribution, while it runs. */
+  | { type: 'index-progress'; filesDone: number; filesTotal: number; eventsIngested: number; phase: 'initial' | 'incremental'; accountReread?: TkAccountReread | null }
   /** `drained` = every file this sweep visited that COULD be read was read to
    *  its end; `filesFailed` counts the ones that could not be opened or read at
    *  all. Those are separate on purpose — a file that is unreadable now may be

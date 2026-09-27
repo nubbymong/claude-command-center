@@ -1,9 +1,10 @@
 import * as nodeFs from 'fs'
 import * as path from 'path'
-import { openTkDb, type TkDb, type TkFileCursor } from './tk-db'
+import { openTkDb, TK_REBUILD_PAGE, type TkDb, type TkFileCursor } from './tk-db'
 import { parseClaudeUsageLine, extractCwdFromLine, codexEventsFromRollout, type CodexRolloutSeed } from './tk-parse'
 import { findConfigForCwd, isJunkCwd } from './tk-config-match'
-import type { TkConfigDim, TkEvent, TkPricing } from './tk-types'
+import type { TkConfigDim, TkEvent, TkPricing, TkSessionsRoot, TkAccountReread } from './tk-types'
+import { tkAccountKeyOk, TK_CODEX_EXTERNAL } from './tk-types'
 import type { ToTkWorker, FromTkWorker, TkWorkerHostTransport } from './tk-worker-transport'
 
 export interface TkWorkerDeps { fs?: typeof nodeFs; watchDebounceMs?: number; configs?: TkConfigDim[]; maxTickBytes?: number }
@@ -145,9 +146,15 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   let configs: TkConfigDim[] = deps.configs ?? []
   let claudeDir = ''
   /** The user's own Codex home's sessions folder, then (WP2, plan A13) those
-   *  of the app's Codex accounts: every realm a Codex session can write to. */
-  let codexDirs: string[] = []
+   *  of the app's Codex accounts: every realm a Codex session can write to.
+   *  Each with whose sessions it holds (usage track MP9): the user's own is
+   *  `codex:external`, an account's is its key. */
+  let codexDirs: TkSessionsRoot[] = []
   let sweeping = false
+  /** MP9: the one-off account attribution, while it runs (index status). */
+  let rereadProgress: TkAccountReread | null = null
+  let rebuildProgress: TkAccountReread | null = null
+  const accountReread = (): TkAccountReread | null => rebuildProgress ?? (db?.accountRereadPending() ? (rereadProgress ?? { stage: 'reread', done: 0, total: 0 }) : null)
   /**
    * Did anything in THIS sweep leave work behind — a file not read to its end,
    * or one that could not be read at all?
@@ -211,8 +218,12 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     return out
   }
 
-  function enumerateCodex(): string[] {
-    const out: string[] = []
+  /** Every rollout with whose sessions it holds: the first folder that lists
+   *  a path wins (the user's own home first). */
+  function enumerateCodex(): Array<{ file: string; accountKey: string }> {
+    const out: Array<{ file: string; accountKey: string }> = []
+    const seen = new Set<string>()
+    let accountKey = ''
     // Same guards as enumerateClaude, which this had been missing: `statSync`
     // follows links, so a reparse point or symlink inside the tree could yield
     // the SAME rollout under two paths. Two paths to one rollout means two
@@ -229,14 +240,15 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         if (!e.isFile() || !e.name.startsWith('rollout-') || !e.name.endsWith('.jsonl')) continue
         let st: nodeFs.Stats
         try { st = fs.statSync(full) } catch { continue }
-        if (st.size > 0) out.push(full)
+        // One rollout, one cursor: never the same path twice.
+        if (st.size > 0 && !seen.has(full)) { seen.add(full); out.push({ file: full, accountKey }) }
       }
     }
-    for (const codexDir of codexDirs) {
-      try { if (fs.existsSync(codexDir)) walk(codexDir, 0) } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
+    for (const root of codexDirs) {
+      accountKey = root.accountKey
+      try { if (fs.existsSync(root.dir)) walk(root.dir, 0) } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
     }
-    // One rollout, one cursor: never the same path twice.
-    return [...new Set(out)]
+    return out
   }
 
   function resolveConfigId(cwd: string): string | null {
@@ -341,7 +353,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
    * losing every turn in that range - and to price whatever it did produce as
    * 'unknown', which matches no pricing row and therefore costs nothing.
    */
-  function ingestCodexFile(file: string): number {
+  function ingestCodexFile(file: string, accountKey: string): number {
     let st: nodeFs.Stats
     try { st = fs.statSync(file) } catch { return 0 }
     const cursor = db!.getFileCursor(file)
@@ -358,7 +370,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     }
     if (unchangedAndFullyScanned(cursor, st, offset)) return 0
     if (st.size <= offset) {
-      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: offset, lastIngestedAt: Date.now(), scannedTo: st.size, codexSessionId: seed.sessionId ?? '', codexModel: seed.model ?? '', codexCwd: seed.cwd ?? '', codexTurns: turnBase })
+      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: offset, lastIngestedAt: Date.now(), scannedTo: st.size, codexSessionId: seed.sessionId ?? '', codexModel: seed.model ?? '', codexCwd: seed.cwd ?? '', codexTurns: turnBase, accountKey })
       return 0
     }
 
@@ -446,7 +458,8 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
           const keyed = (offset === 0
             ? probe.map((ev, i) => ({ ...ev, dedupKey: `x:${sessionId}:${i}` }))
             : probe.map((ev, i) => ({ ...ev, dedupKey: `x:${sessionId}:${turnBase + i}` })))
-            .map((ev) => ({ ...ev, configId: resolveConfigId(ev.cwd) }))
+            // MP9: whose turns: the account of the folder the rollout is in.
+            .map((ev) => ({ ...ev, configId: resolveConfigId(ev.cwd), accountKey }))
           // A turn with no usable timestamp cannot be stored: the column is NOT
           // NULL, and `INSERT OR IGNORE` reports the rejection as changes === 0
           // — identical to a dedup hit. That is the mechanism that makes a LOST
@@ -457,7 +470,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
             logw('warn', `codex rollout ${file}: dropped ${keyed.length - fresh.length} turn(s) with an unusable timestamp`)
           }
           turnBase = offset === 0 ? Math.max(turnBase, probe.length) : turnBase + probe.length
-          inserted = db!.insertEventsWithCursor(fresh, { path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos, codexSessionId: nextSeed.sessionId ?? '', codexModel: nextSeed.model ?? '', codexCwd: nextSeed.cwd ?? '', codexTurns: turnBase })
+          inserted = db!.insertEventsWithCursor(fresh, { path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos, codexSessionId: nextSeed.sessionId ?? '', codexModel: nextSeed.model ?? '', codexCwd: nextSeed.cwd ?? '', codexTurns: turnBase, accountKey })
           return inserted
         }
         if (offset > 0 && !nextSeed.sessionId) {
@@ -467,7 +480,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
           logw('warn', `codex rollout ${file}: no session identity for ${kept.length} line(s) at offset ${offset}`)
         }
       }
-      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos, codexSessionId: nextSeed.sessionId ?? '', codexModel: nextSeed.model ?? '', codexCwd: nextSeed.cwd ?? '', codexTurns: turnBase })
+      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos, codexSessionId: nextSeed.sessionId ?? '', codexModel: nextSeed.model ?? '', codexCwd: nextSeed.cwd ?? '', codexTurns: turnBase, accountKey })
     } finally { try { fs.closeSync(fd) } catch { /* ignore */ } }
     return inserted
   }
@@ -561,15 +574,28 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       // index-status) are answered DURING a large first index instead of stalling
       // behind a synchronous multi-thousand-file sweep.
       const tick = (): void => {
-        if (done % 50 === 0) { lastProgress = { filesDone: done, filesTotal: total, eventsIngested: events }; post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase }) }
+        if (done % 50 === 0) { lastProgress = { filesDone: done, filesTotal: total, eventsIngested: events }; post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase, accountReread: accountReread() }) }
+      }
+      // MP9: while the Codex history is re-read for its accounts, how many of
+      // the rollouts still here have been (their cursors say, 1 then 2).
+      const rereadFlag = (file: string): number => db!.getFileCursor(file)?.accountReread ?? 0
+      const reread = db.accountRereadPending() ? { done: 0, total: 0 } : null
+      if (reread) {
+        for (const f of codex) { const flag = rereadFlag(f.file); if (flag >= 1) { reread.total++; if (flag === 2) reread.done++ } }
+        rereadProgress = { stage: 'reread', ...reread }
       }
       // After each yield, bail if stop() closed the db while we were suspended
       // (the resumed continuation would otherwise deref a now-undefined db).
       for (const f of claude) { events += ingestClaudeFile(f); done++; tick(); if (done % YIELD_EVERY === 0) { await new Promise<void>((r) => setImmediate(r)); if (!db) return } }
-      for (const f of codex) { events += ingestCodexFile(f); done++; tick(); if (done % YIELD_EVERY === 0) { await new Promise<void>((r) => setImmediate(r)); if (!db) return } }
+      for (const f of codex) {
+        const before = reread ? rereadFlag(f.file) : 0
+        events += ingestCodexFile(f.file, f.accountKey)
+        if (reread && before === 1 && rereadFlag(f.file) === 2) { reread.done++; rereadProgress = { stage: 'reread', ...reread } }
+        done++; tick(); if (done % YIELD_EVERY === 0) { await new Promise<void>((r) => setImmediate(r)); if (!db) return }
+      }
       if (!db) return
       lastProgress = { filesDone: done, filesTotal: total, eventsIngested: events }
-      post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase })
+      post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase, accountReread: accountReread() })
       db.setMeta('lastIndexAt', String(Date.now()))
       // "Complete" has to mean every tracked file has been read to its end, not
       // merely that one pass over the file LIST finished. A per-tick byte budget
@@ -588,6 +614,12 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       // rides alongside so the count that is missing can be shown rather than
       // hidden.
       const drained = !sweepPending
+      // MP9: a drained sweep has re-read every rollout it could reach, so the
+      // re-read is done; then the rollups are rebuilt if they need it. Inside
+      // the sweep, so nothing is ingested while they are rebuilt; queries are
+      // answered between its steps.
+      if (drained) await settleAccounts(phase)
+      if (!db) return
       if (drained && !firstSweepDone) {
         firstSweepDone = true
         db.setMeta('firstIndexComplete', '1')
@@ -597,6 +629,32 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       }
     } catch (err) { logw('error', `ingestAll failed: ${String(err)}`) }
     finally { sweeping = false }
+  }
+
+  /** Usage track MP9: finish the Codex re-read, then rebuild the rollups
+   *  when they are dirty, in steps with progress. Never throws: a failed
+   *  rebuild leaves them dirty for the next drained sweep. */
+  async function settleAccounts(phase: 'initial' | 'incremental'): Promise<void> {
+    if (!db) return
+    try {
+      if (db.accountRereadPending()) db.finishAccountReread()
+      rereadProgress = null
+      if (!db.rollupsDirty()) return
+      db.beginRollupRebuild()
+      for (;;) {
+        const step = db.stepRollupRebuild(TK_REBUILD_PAGE)
+        rebuildProgress = { stage: 'rebuild', done: step.done, total: step.total }
+        post({ type: 'index-progress', ...lastProgress, phase, accountReread: rebuildProgress })
+        if (step.finished) break
+        await new Promise<void>((r) => setImmediate(r))
+        if (!db) return
+      }
+    } catch (err) {
+      logw('error', `account attribution failed: ${String(err)}`)
+    } finally {
+      rebuildProgress = null
+    }
+    if (db) post({ type: 'index-progress', ...lastProgress, phase, accountReread: accountReread() })
   }
 
   function indexStatus(): unknown {
@@ -609,6 +667,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       eventsTotal: db!.eventCount(),
       filesFailed: sweepFailed,
       lastIndexAt: lastAt ? Number(lastAt) : null,
+      accountReread: accountReread(),
     }
   }
 
@@ -620,6 +679,8 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         case 'sessions': rows = [db!.querySessions(pricing, args as any)]; break
         case 'session-detail': rows = [db!.querySessionDetail(pricing, String((args as any).sessionId))]; break
         case 'index-status': rows = [indexStatus()]; break
+        // MP9: the providers and accounts the stored usage has.
+        case 'accounts': rows = [db!.queryAccounts()]; break
         default: post({ type: 'error', id, message: `unknown query kind: ${kind}` }); return
       }
       post({ type: 'query-result', id, rows })
@@ -650,16 +711,27 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   /** The Codex accounts' folders now (plan A13): watch the new ones, stop
    *  watching the gone ones. A folder that does not exist yet (an account
    *  that has run no session) is picked up by the periodic sweep. */
-  function setCodexRealmDirs(dirs: readonly string[]): void {
+  function setCodexRealmDirs(dirs: readonly unknown[]): void {
     const base = codexDirs[0]
-    const next = [...new Set(dirs.filter((d) => typeof d === 'string' && d.length > 0 && d !== base))]
+    // MP9: each a folder and whose sessions it holds; anything else is
+    // dropped, and a folder listed twice (or the user's own again) keeps its
+    // first entry.
+    const next: TkSessionsRoot[] = []
+    for (const d of dirs) {
+      if (!d || typeof d !== 'object') continue
+      const { dir, accountKey } = d as { dir?: unknown; accountKey?: unknown }
+      if (typeof dir !== 'string' || dir.length === 0 || !tkAccountKeyOk(accountKey)) continue
+      if (dir === base?.dir || next.some((n) => n.dir === dir)) continue
+      next.push({ dir, accountKey })
+    }
     codexDirs = base === undefined ? next : [base, ...next]
+    const nextDirs = next.map((n) => n.dir)
     for (const [dir, wch] of realmWatchers) {
-      if (next.includes(dir)) continue
+      if (nextDirs.includes(dir)) continue
       try { wch.close() } catch { /* ignore */ }
       realmWatchers.delete(dir)
     }
-    for (const dir of next) {
+    for (const dir of nextDirs) {
       if (realmWatchers.has(dir)) continue
       const wch = watchDir(dir)
       if (wch) realmWatchers.set(dir, wch)
@@ -667,7 +739,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   }
 
   function startWatching(): void {
-    for (const dir of [claudeDir, codexDirs[0]]) {
+    for (const dir of [claudeDir, codexDirs[0]?.dir]) {
       const wch = dir ? watchDir(dir) : null
       if (wch) watchers.push(wch)
     }
@@ -683,7 +755,8 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     configs = msg.configs
     if (configs.length) db.upsertConfigs(configs)
     claudeDir = msg.claudeProjectsDir
-    codexDirs = [msg.codexSessionsDir]
+    // The user's own Codex home: this computer's sign-in (MP9).
+    codexDirs = [{ dir: msg.codexSessionsDir, accountKey: TK_CODEX_EXTERNAL }]
     firstSweepDone = db.getMeta('firstIndexComplete') === '1'
     // Ready BEFORE the sweep so queries work during indexing - and it carries
     // what the DB already knows, so an index completed on a previous run reads

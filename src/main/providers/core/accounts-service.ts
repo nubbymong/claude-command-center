@@ -2319,6 +2319,26 @@ export class AccountsService {
   /** The transcript folders of a provider's live realms (plan A13): what the
    *  usage index reads beside the provider's own default folder. Paths only;
    *  a realm that cannot be located now is left out. */
+  /** The same folders with whose sessions each holds (usage track MP9: the
+   *  Tokenomics account attribution): the realm's account (null only for a
+   *  record naming none), and whether it is this computer's own home
+   *  (`external`), which the user's own tools share. Paths and opaque ids
+   *  only. */
+  async sessionsRoots(providerId: ProviderId): Promise<Array<{ dir: string; accountId: string | null; external: boolean }>> {
+    const p = this.pkg(providerId)
+    const ready = this.ready()
+    if (!p?.launch || !launchKindsOf(p).includes('session') || 'ok' in ready) return []
+    const out: Array<{ dir: string; accountId: string | null; external: boolean }> = []
+    for (const realm of ready.doc.realms) {
+      if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
+      let dir: string | null = null
+      try { dir = await p.launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
+      if (typeof dir !== 'string' || !dir || out.some((o) => o.dir === dir)) continue
+      out.push({ dir, accountId: findAccount(ready.doc, realm.ownerProviderAccountId)?.id ?? null, external: realm.ownership === 'external-default' })
+    }
+    return out
+  }
+
   async sessionsDirs(providerId: ProviderId): Promise<string[]> {
     const p = this.pkg(providerId)
     const ready = this.ready()

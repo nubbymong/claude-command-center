@@ -47,13 +47,47 @@ describe('the Codex transcript folders of the live accounts (AccountsService.ses
   })
 })
 
+// Usage track MP9: the same folders with whose sessions each holds.
+describe('the Codex transcript folders with their accounts (AccountsService.sessionsRoots)', () => {
+  it('names each folder\'s account, marks this computer\'s own sign-in, and leaves a retired account\'s out', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    const ext = await h.service.adoptExternalDefault({ providerId: 'codex' })
+    if (!ext.ok) throw new Error(ext.code)
+    const byDir = (roots: Awaited<ReturnType<typeof h.service.sessionsRoots>>) => [...roots].sort((x, y) => x.dir.localeCompare(y.dir))
+    expect(byDir(await h.service.sessionsRoots('codex'))).toEqual(byDir([
+      { dir: `${managedHome(realmOf(h, a))}\\sessions`, accountId: a, external: false },
+      { dir: `${managedHome(realmOf(h, b))}\\sessions`, accountId: b, external: false },
+      { dir: `${EXT_HOME}\\sessions`, accountId: ext.accountId, external: true },
+    ]))
+    expect(await h.service.sessionsRoots('claude')).toEqual([])
+    expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'inactive' })).ok).toBe(true)
+    expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'archived' })).ok).toBe(true)
+    expect((await h.service.sessionsRoots('codex')).map((r) => r.accountId)).not.toContain(b)
+  })
+
+  it('lists nothing while the registry is unavailable, and not a setup still under way', async () => {
+    const h = await harness()
+    const begun = await h.service.beginSetup({ providerId: 'codex', method: 'browser' })
+    if (!begun.ok) throw new Error(begun.code)
+    expect(await h.service.sessionsRoots('codex')).toEqual([])
+    await addCodexAccount(h, 'A')
+    h.useStore(null)
+    expect(await h.service.sessionsRoots('codex')).toEqual([])
+  })
+})
+
 // The service side: tokenomics-service follows the accounts service and hands
-// the supervisor each changed set, once per change.
+// the supervisor each changed set, once per change, each folder with its
+// account's key (MP9).
+type Root = { dir: string; accountId: string | null; external: boolean }
 const tk = vi.hoisted(() => ({
-  dirs: [] as string[][],
+  dirs: [] as Array<Array<{ dir: string; accountKey: string }>>,
   listeners: [] as Array<() => void>,
-  current: [] as string[],
-  sessionsDirs: vi.fn(async (_id: string) => [] as string[]),
+  current: [] as Array<{ dir: string; accountId: string | null; external: boolean }>,
+  sessionsRoots: vi.fn(async (_id: string) => [] as Array<{ dir: string; accountId: string | null; external: boolean }>),
 }))
 vi.mock('../../src/main/tokenomics/tk-supervisor', () => ({
   TokenomicsSupervisor: class {
@@ -61,7 +95,7 @@ vi.mock('../../src/main/tokenomics/tk-supervisor', () => ({
     shutdown() {}
     setPricing() {}
     setConfigs() {}
-    setCodexRealmSessionsDirs(d: string[]) { tk.dirs.push([...d]) }
+    setCodexRealmSessionsDirs(d: Array<{ dir: string; accountKey: string }>) { tk.dirs.push(d.map((x) => ({ ...x }))) }
   },
 }))
 vi.mock('../../src/main/tokenomics/fork-tokenomics-worker', () => ({ forkTokenomicsWorker: () => null }))
@@ -71,7 +105,7 @@ vi.mock('../../src/main/data-paths', () => ({ getDataDirectory: () => 'C:\\data'
 vi.mock('../../src/main/config-manager', () => ({ readConfig: () => [] }))
 vi.mock('../../src/main/provider-accounts', () => ({
   getAccountsService: () => ({
-    sessionsDirs: tk.sessionsDirs,
+    sessionsRoots: tk.sessionsRoots,
     subscribe: (l: () => void) => { tk.listeners.push(l); return () => { tk.listeners.splice(tk.listeners.indexOf(l), 1) } },
   }),
 }))
@@ -81,23 +115,35 @@ describe('tokenomics follows the accounts (tokenomics-service)', () => {
     tk.dirs = []
     tk.listeners = []
     tk.current = []
-    tk.sessionsDirs.mockReset()
-    tk.sessionsDirs.mockImplementation(async () => [...tk.current])
+    tk.sessionsRoots.mockReset()
+    tk.sessionsRoots.mockImplementation(async () => tk.current.map((r) => ({ ...r })))
   })
+
+  const R1: Root = { dir: 'C:\\res\\codex-realms\\r1\\sessions', accountId: 'acct-1', external: false }
+  const R2: Root = { dir: 'C:\\res\\codex-realms\\r2\\sessions', accountId: 'acct-2', external: false }
 
   it('hands the supervisor the folders at start and each CHANGED set after, and stops following on shutdown', async () => {
     const { initTokenomics, shutdownTokenomics } = await import('../../src/main/tokenomics/tokenomics-service')
-    tk.current = ['C:\\res\\codex-realms\\r1\\sessions']
+    tk.current = [R1]
     initTokenomics({ emit: () => {} })
-    await vi.waitFor(() => expect(tk.dirs).toEqual([['C:\\res\\codex-realms\\r1\\sessions']]))
+    await vi.waitFor(() => expect(tk.dirs).toEqual([[{ dir: R1.dir, accountKey: 'codex:acct-1' }]]))
     // A change the index does not care about (a lease) sends nothing new.
     tk.listeners.forEach((l) => l())
     await new Promise((r) => setTimeout(r, 0))
     expect(tk.dirs).toHaveLength(1)
-    tk.current = ['C:\\res\\codex-realms\\r1\\sessions', 'C:\\res\\codex-realms\\r2\\sessions']
+    tk.current = [R1, R2]
     tk.listeners.forEach((l) => l())
-    await vi.waitFor(() => expect(tk.dirs.at(-1)).toEqual(['C:\\res\\codex-realms\\r1\\sessions', 'C:\\res\\codex-realms\\r2\\sessions']))
+    await vi.waitFor(() => expect(tk.dirs.at(-1)).toEqual([{ dir: R1.dir, accountKey: 'codex:acct-1' }, { dir: R2.dir, accountKey: 'codex:acct-2' }]))
     shutdownTokenomics()
     expect(tk.listeners).toHaveLength(0)
+  })
+
+  it('names each folder\'s account: this computer\'s own sign-in as codex:external, a folder no account owns as not recorded', async () => {
+    const { codexSessionsRoot } = await import('../../src/main/tokenomics/tokenomics-service')
+    expect(codexSessionsRoot(R1)).toEqual({ dir: R1.dir, accountKey: 'codex:acct-1' })
+    expect(codexSessionsRoot({ dir: 'C:\\Users\\u\\.codex\\sessions', accountId: 'acct-9', external: true })).toEqual({ dir: 'C:\\Users\\u\\.codex\\sessions', accountKey: 'codex:external' })
+    expect(codexSessionsRoot({ dir: 'C:\\x', accountId: null, external: false })).toEqual({ dir: 'C:\\x', accountKey: '' })
+    // An id that could not be a key is not recorded rather than passed on.
+    expect(codexSessionsRoot({ dir: 'C:\\x', accountId: 'bad id;', external: false })).toEqual({ dir: 'C:\\x', accountKey: '' })
   })
 })

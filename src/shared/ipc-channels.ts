@@ -244,6 +244,9 @@ export const IPC = {
   TOKENOMICS2_INDEX_STATUS: 'tokenomics2:indexStatus',
   TOKENOMICS2_INDEX_PROGRESS: 'tokenomics2:indexProgress',
   TOKENOMICS2_INDEX_COMPLETE: 'tokenomics2:indexComplete',
+  // Usage track MP9: the providers and accounts the stored usage has (the
+  // Account filter's choices). No arguments; keys and provider names only.
+  TOKENOMICS2_ACCOUNTS: 'tokenomics2:accounts',
 
   // Provider accounts (WP2 commit 3): the one provider-neutral Accounts
   // surface. Requests name opaque ids only; replies are views, never paths,

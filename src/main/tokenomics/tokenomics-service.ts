@@ -6,7 +6,8 @@ import { getAllPricing, fetchModelPricing } from './tk-pricing'
 import { readConfig } from '../config-manager'
 import { onRegistryReload } from '../model-registry-service'
 import { getDataDirectory, getResourcesDirectory } from '../data-paths'
-import type { TkConfigDim } from './tk-types'
+import type { TkConfigDim, TkSessionsRoot } from './tk-types'
+import { TK_CODEX_EXTERNAL, tkAccountKey } from './tk-types'
 import { getAccountsService } from '../provider-accounts'
 import { logError } from '../debug-logger'
 
@@ -25,9 +26,17 @@ let _sup: TokenomicsSupervisor | null = null
 let _unsubReload: (() => void) | null = null
 let _unsubAccounts: (() => void) | null = null
 
+/** Whose sessions a Codex folder holds (usage track MP9): this computer's own
+ *  home is `codex:external`, an account's realm `codex:<accountId>`, and a
+ *  realm no account owns yet is not recorded. */
+export function codexSessionsRoot(r: { dir: string; accountId: string | null; external: boolean }): TkSessionsRoot {
+  return { dir: r.dir, accountKey: r.external ? TK_CODEX_EXTERNAL : tkAccountKey('codex', r.accountId) }
+}
+
 /** WP2 (plan A13): each Codex account runs in its own realm and writes its
  *  transcripts there, so the index follows those folders as accounts are
- *  added, removed or signed out, beside the user's own ~/.codex. */
+ *  added, removed or signed out, beside the user's own ~/.codex. Each folder
+ *  goes with its account's key (MP9). */
 function followCodexRealmDirs(): void {
   const svc = getAccountsService()
   if (!svc) return
@@ -40,7 +49,7 @@ function followCodexRealmDirs(): void {
     try {
       do {
         again = false
-        const dirs = await svc.sessionsDirs('codex')
+        const dirs = (await svc.sessionsRoots('codex')).map(codexSessionsRoot)
         const key = JSON.stringify(dirs)
         if (key !== lastKey) { lastKey = key; _sup?.setCodexRealmSessionsDirs(dirs) }
       } while (again)

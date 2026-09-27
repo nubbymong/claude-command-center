@@ -704,6 +704,9 @@ export interface TkSessionRow {
   cacheCreateTok: number
   msgCount: number
   lastTs: number
+  /** Whose session (usage track MP9): '' not recorded, `codex:external` this
+   *  computer's own Codex sign-in, `<provider>:<accountId>` a managed account. */
+  accountKey: string
 }
 
 export interface TkSessionsPage {
@@ -731,11 +734,21 @@ export interface TkIndexStatus {
   /** Non-null when the worker reported a fatal/uncorrelated error (e.g. a failed
    *  DB open). The renderer surfaces this instead of an endless 'indexing' state. */
   error?: string | null
+  /** Usage track MP9: the one-off attribution of stored history to accounts,
+   *  while it runs (re-reading the Codex history, then rebuilding the rollups).
+   *  Totals are whole throughout; the split by provider and account is not. */
+  accountReread?: TkAccountReread | null
 }
 
-export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
+export interface TkAccountReread { stage: 'reread' | 'rebuild'; done: number; total: number }
+/** An account present in the stored usage (usage track MP9). */
+export interface TkAccountPresent { provider: TkProvider; accountKey: string }
+
+/** `provider` and `accountKey` (usage track MP9): only that provider's, or that
+ *  account's, usage; `accountKey: ''` is the usage not recorded to any account. */
+export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string; provider?: TkProvider; accountKey?: string }
 export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }
-export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
+export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string; accountReread?: TkAccountReread | null }
 /** `drained`: every file that sweep visited was read to its end and none
  *  failed. A sweep finishing is NOT that — a multi-GB rollout takes tens of
  *  sweeps — so gate any "indexing finished" UI on `drained`. */

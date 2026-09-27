@@ -1,7 +1,7 @@
 import { logError, logWarn, logInfo } from '../debug-logger'
 import type { ForkedTkWorker } from './fork-tokenomics-worker'
 import type { ToTkWorker, FromTkWorker } from './tk-worker-transport'
-import type { TkConfigDim, TkPricing, TkIndexStatus } from './tk-types'
+import type { TkConfigDim, TkPricing, TkIndexStatus, TkSessionsRoot, TkAccountReread } from './tk-types'
 
 export interface TokenomicsSupervisorOptions {
   forkChild: () => ForkedTkWorker
@@ -10,15 +10,16 @@ export interface TokenomicsSupervisorOptions {
   configs: TkConfigDim[]
   claudeProjectsDir: string
   codexSessionsDir: string
-  /** WP2 (plan A13): the transcript folders of the app's Codex accounts. */
-  codexRealmSessionsDirs?: string[]
+  /** WP2 (plan A13): the transcript folders of the app's Codex accounts,
+   *  each with the account's key (usage track MP9). */
+  codexRealmSessionsDirs?: TkSessionsRoot[]
   emit: (channel: string, payload: unknown) => void
   now?: () => number
   maxRestarts?: number
   queryTimeoutMs?: number
 }
 
-export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
+export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string; accountReread?: TkAccountReread | null }
 export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }
 
 const BACKOFFS = [250, 1000, 4000, 4000, 4000]
@@ -44,6 +45,8 @@ export class TokenomicsSupervisor {
   /** Files the last sweep could not read at all. Reported, never blocking. */
   private lastFilesFailed = 0
   private lastIndexAt: number | null = null
+  /** MP9: the one-off account attribution, as the worker last reported it. */
+  private lastAccountReread: TkAccountReread | null = null
   // Set when the worker reports an UNCORRELATED error (e.g. a failed DB open,
   // which leaves the worker alive but never `ready` — no exit, no restart). The
   // renderer consumes this so the tokenomics page can stop showing 'indexing'
@@ -90,7 +93,8 @@ export class TokenomicsSupervisor {
         return
       }
       case 'index-progress': {
-        this.lastProgress = { filesDone: m.filesDone, filesTotal: m.filesTotal, eventsIngested: m.eventsIngested, phase: m.phase }
+        this.lastAccountReread = m.accountReread ?? null
+        this.lastProgress = { filesDone: m.filesDone, filesTotal: m.filesTotal, eventsIngested: m.eventsIngested, phase: m.phase, accountReread: this.lastAccountReread }
         for (const cb of this.progressSubs) { try { cb(this.lastProgress) } catch { /* ignore */ } }
         return
       }
@@ -160,7 +164,11 @@ export class TokenomicsSupervisor {
   setPricing(pricing: Record<string, TkPricing>): void { this.opts.pricing = pricing; this.sendOrBuffer({ type: 'set-pricing', pricing }) }
   setConfigs(configs: TkConfigDim[]): void { this.opts.configs = configs; this.sendOrBuffer({ type: 'set-configs', configs }) }
   /** Kept for a restarted worker's `open`, and sent to the running one. */
-  setCodexRealmSessionsDirs(dirs: string[]): void { this.opts.codexRealmSessionsDirs = [...dirs]; this.sendOrBuffer({ type: 'set-codex-realm-dirs', dirs: [...dirs] }) }
+  setCodexRealmSessionsDirs(dirs: TkSessionsRoot[]): void {
+    const copy = dirs.map((d) => ({ dir: d.dir, accountKey: d.accountKey }))
+    this.opts.codexRealmSessionsDirs = copy
+    this.sendOrBuffer({ type: 'set-codex-realm-dirs', dirs: copy.map((d) => ({ ...d })) })
+  }
   reindex(): void { this.sendOrBuffer({ type: 'reindex' }) }
 
   onIndexProgress(cb: (p: TkIndexProgress) => void): () => void { this.progressSubs.add(cb); return () => { this.progressSubs.delete(cb) } }
@@ -182,6 +190,7 @@ export class TokenomicsSupervisor {
       filesFailed: this.lastFilesFailed,
       lastIndexAt: this.lastIndexAt,
       error,
+      accountReread: this.lastAccountReread,
     }
   }
 

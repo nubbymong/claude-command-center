@@ -1,5 +1,29 @@
 export type TkProvider = 'claude' | 'codex'
 
+/**
+ * Whose usage a row is (usage track MP9): `''` not recorded; `codex:external`
+ * this computer's own Codex sign-in (~/.codex, or an inherited CODEX_HOME);
+ * `<provider>:<accountId>` an account the app manages. `''` rather than NULL
+ * inside every key: SQLite upserts never match NULLs.
+ */
+export type TkAccountKey = string
+export const TK_ACCOUNT_NOT_RECORDED = ''
+export const TK_CODEX_EXTERNAL = 'codex:external'
+const TK_ACCOUNT_KEY_RE = /^(claude|codex):[A-Za-z0-9_-]{1,128}$/
+/** A well-formed account key: not recorded, or a provider and an id. */
+export function tkAccountKeyOk(key: unknown): key is TkAccountKey {
+  return key === TK_ACCOUNT_NOT_RECORDED || (typeof key === 'string' && TK_ACCOUNT_KEY_RE.test(key))
+}
+/** An account's key: its provider and its opaque id; not recorded when
+ *  either is not well formed. */
+export function tkAccountKey(provider: TkProvider, accountId: string | null | undefined): TkAccountKey {
+  // No id joins as `<provider>:`, which is not well formed.
+  const key = [provider, accountId ?? ''].join(':')
+  return tkAccountKeyOk(key) ? key : TK_ACCOUNT_NOT_RECORDED
+}
+/** A transcript folder and whose sessions it holds. */
+export interface TkSessionsRoot { dir: string; accountKey: TkAccountKey }
+
 /** One billable unit, normalized across providers. */
 export interface TkEvent {
   dedupKey: string        // claude: `c:${messageId}:${requestId}`  codex: `x:${sessionId}:${ordinal}`
@@ -13,6 +37,9 @@ export interface TkEvent {
   outTok: number
   cacheReadTok: number
   cacheCreateTok: number
+  /** Whose usage (MP9); absent = not recorded. Stamped at ingest from the
+   *  folder the transcript came from. */
+  accountKey?: TkAccountKey
 }
 
 /** Per-1M-token USD pricing (cacheWrite is 0 for codex). */
@@ -49,6 +76,8 @@ export interface TkSessionRow {
   cacheCreateTok: number
   msgCount: number
   lastTs: number
+  /** Whose session (MP9): '' not recorded. */
+  accountKey: TkAccountKey
 }
 
 export interface TkSessionsPage {
@@ -76,7 +105,19 @@ export interface TkIndexStatus {
   /** Non-null when the worker reported a fatal/uncorrelated error (e.g. a failed
    *  DB open). The renderer surfaces this instead of an endless 'indexing' state. */
   error?: string | null
+  /** Usage track MP9: the one-off attribution of stored history to accounts,
+   *  while it runs: re-reading the Codex history (files done of total), then
+   *  rebuilding the daily and hourly rollups (rows done of total). Totals are
+   *  whole throughout; only the split by provider and account is incomplete. */
+  accountReread?: TkAccountReread | null
 }
 
-export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
+export interface TkAccountReread { stage: 'reread' | 'rebuild'; done: number; total: number }
+
+/** An account present in the stored usage (MP9). */
+export interface TkAccountPresent { provider: TkProvider; accountKey: TkAccountKey }
+
+/** `provider` and `accountKey` (MP9): only that provider's, or that account's,
+ *  usage; `accountKey: ''` is the usage not recorded to any account. */
+export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string; provider?: TkProvider; accountKey?: TkAccountKey }
 export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }

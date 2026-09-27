@@ -740,6 +740,8 @@ export interface ElectronAPI {
     sessions: (query?: import('../shared/types').TkSessionsQuery) => Promise<import('../shared/types').TkSessionsPage>
     sessionDetail: (sessionId: string) => Promise<import('../shared/types').TkSessionDetail | null>
     indexStatus: () => Promise<import('../shared/types').TkIndexStatus>
+    /** Usage track MP9: the providers and accounts the stored usage has. */
+    accounts: () => Promise<import('../shared/types').TkAccountPresent[]>
     onIndexStatus: (cb: (s: import('../shared/types').TkIndexStatus) => void) => () => void
     onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => () => void
     onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => () => void
@@ -1270,6 +1272,7 @@ const electronAPI: ElectronAPI = {
     sessions: (query?: import('../shared/types').TkSessionsQuery) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSIONS, query ?? {}),
     sessionDetail: (sessionId: string) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSION_DETAIL, { sessionId }),
     indexStatus: () => ipcRenderer.invoke(IPC.TOKENOMICS2_INDEX_STATUS),
+    accounts: () => ipcRenderer.invoke(IPC.TOKENOMICS2_ACCOUNTS, {}),
     onIndexStatus: (cb: (s: import('../shared/types').TkIndexStatus) => void) =>
       onChannel(IPC.TOKENOMICS2_INDEX_STATUS, cb),
     onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) =>

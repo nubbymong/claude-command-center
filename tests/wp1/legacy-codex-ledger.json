@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "11311dc42f86b2371bdf39abde7f351c5b060f4a81cf53730733b46a7a46009f",
-  "manifestHead": "81ed64a82a41cf822a8da0fddcd82be96f7e33ff",
+  "manifestPathDigest": "bc9208a9a95bc552f9dd2c6b659960b8d16601597a8532739f29070aba9d2a53",
+  "manifestHead": "0c9f04a8545c46695ca49f6d65c5586f2c1797b6",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -211,7 +211,7 @@
       ],
       "category": "DOCS",
       "disposition": "added",
-      "evidence": "WP2 plan document: maps each planned Codex adapter test (tests/wp1/cli-discovery.test.ts and siblings) to its requirement; no Codex code path (WP1.70); WP2 P3 usage track MP8 (ADR-022): residuals (window focus, switch-off, status check) and the VM step owed (WP1.70); WP2 P3 usage track MP7 round-1 review fixes (ADR-022): the status-check residual restated for the sign-in lock, and the helper version owed to the VM step (WP1.70)",
+      "evidence": "WP2 plan document: maps each planned Codex adapter test (tests/wp1/cli-discovery.test.ts and siblings) to its requirement; no Codex code path (WP1.70); WP2 P3 usage track MP8 (ADR-022): residuals (window focus, switch-off, status check) and the VM step owed (WP1.70); WP2 P3 usage track MP7 round-1 review fixes (ADR-022): the status-check residual restated for the sign-in lock, and the helper version owed to the VM step (WP1.70); WP2 P3 usage track MP9: the Codex re-read deviation and residuals (WP1.70)",
       "note": "plan text, not a user-facing claim"
     },
     {
@@ -616,6 +616,16 @@
       "disposition": "replace",
       "evidence": "tests/wp1/launch-handoff.test.ts asserts the binding fields at the IPC boundary (WP1.38, WP1.42); existing codexOptions superRefine cases retained; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): pty:spawn and the SSH Launch Claude refuse a provider that is off, the legacy CLI installs for a Claude launch only, and the install tab gets no command-button secrets; tests/unit/main/pty-spawn-provider-off.test.ts",
       "note": "WP2 commit 4: pty:spawn takes the Codex account as providerAccountId (+ a per-launch acknowledgeRealmOnly), Codex only; the Codex model is bounded; codexLaunch is main-internal; a Codex SSH spawn is refused first; the launch is prepared by the accounts service and handed to pty-manager with its lease, the wait registered with pty-manager (beginSpawnPreparation). authRealmId/identityId are resolved by the service, never sent"
+    },
+    {
+      "path": "src/main/ipc/tokenomics2-handlers.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TOKENOMICS",
+      "disposition": "replace",
+      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the strict filter gains provider and account key (an account key is '' or provider:id), and a new accounts query that takes nothing; still reached only through the supervisor (WP1.2); tests/unit/tokenomics/tokenomics2-handlers.test.ts",
+      "note": ""
     },
     {
       "path": "src/main/logging/should-register-run.ts",
@@ -1045,7 +1055,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 accounts service, created by WP2 (absent from the baseline); it names Codex only in comments: the unanswered answer that never counts as on, the yes recorded before a sign-in, the read-only check the Set up Codex page asks before it offers Use this sign-in (owner decision 2026-09-26, U2: reserve, ask the status, always drop, keep nothing), and the adoption marker that page reads (WP1.43); tests/wp1/account-lifecycle.test.ts; an unanswered provider never counts as the last one on (U3, WP1.5); tests/unit/main/codex-unanswered-service.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): readAccountUsage and streamAccountUsage, the plan section 3 matrix without the fresh read; nothing read for a provider that is off, not set up or unreadable, asked again before each account (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage stream gives the event loop a turn before each account, and a realm the package refuses is an error with nothing read (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: each account of a usage stream is found again in the registry when its turn comes; archived or removed meanwhile is skipped, made inactive meanwhile reads nothing (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the closed-account fresh read (eligibility, lease, last word before the spawn, pacing, reuse, single-flight, transient cutoff), launch, sign-in again, sign-out and lifecycle changes settle a read first (#49), the plan label recorded (WP1.41, WP1.60 enable/disable); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP7 round-1 review fixes (the scoped WP1.41 exception; ADR-022): one rule for what runs beside a read, the record asked again right before the spawn, and every read stopped at quit (WP1.41, WP1.60 enable/disable); tests/unit/main/codex-usage-read.test.ts",
+      "evidence": "WP2 accounts service, created by WP2 (absent from the baseline); it names Codex only in comments: the unanswered answer that never counts as on, the yes recorded before a sign-in, the read-only check the Set up Codex page asks before it offers Use this sign-in (owner decision 2026-09-26, U2: reserve, ask the status, always drop, keep nothing), and the adoption marker that page reads (WP1.43); tests/wp1/account-lifecycle.test.ts; an unanswered provider never counts as the last one on (U3, WP1.5); tests/unit/main/codex-unanswered-service.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): readAccountUsage and streamAccountUsage, the plan section 3 matrix without the fresh read; nothing read for a provider that is off, not set up or unreadable, asked again before each account (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage stream gives the event loop a turn before each account, and a realm the package refuses is an error with nothing read (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: each account of a usage stream is found again in the registry when its turn comes; archived or removed meanwhile is skipped, made inactive meanwhile reads nothing (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the closed-account fresh read (eligibility, lease, last word before the spawn, pacing, reuse, single-flight, transient cutoff), launch, sign-in again, sign-out and lifecycle changes settle a read first (#49), the plan label recorded (WP1.41, WP1.60 enable/disable); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP7 round-1 review fixes (the scoped WP1.41 exception; ADR-022): one rule for what runs beside a read, the record asked again right before the spawn, and every read stopped at quit (WP1.41, WP1.60 enable/disable); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): sessionsRoots names each Codex realm folder's account and whether it is this computer's own home (WP1.2); tests/wp1/tokenomics-realm-discovery.test.ts",
       "note": "provider-neutral code; the P14 hits are comments"
     },
     {
@@ -1145,8 +1155,8 @@
         "P14"
       ],
       "category": "TOKENOMICS",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): schema v2 (accountKey on events, sessions and files; the daily rollup keyed by account and the hourly one by provider and account; '' for not recorded), the v1 migration, stamping at ingest and by the Codex re-read, the stepped rollup rebuild, and the provider and account filters; tests/unit/native/tk-db-schema.native.test.ts, tests/unit/native/tokenomics-reindex-accounts.native.test.ts (WP1.2)",
       "note": ""
     },
     {
@@ -1176,17 +1186,18 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "WP2 commit 4 (plan A13): carries the Codex accounts' realm folders to the worker (open + set-codex-realm-dirs); tests/unit/tokenomics/tk-supervisor.test.ts, tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2)",
+      "evidence": "WP2 commit 4 (plan A13): carries the Codex accounts' realm folders to the worker (open + set-codex-realm-dirs); tests/unit/tokenomics/tk-supervisor.test.ts, tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2); WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the folders carry their account keys (copied), and the index status carries the attribution progress (WP1.2); tests/unit/tokenomics/tk-supervisor.test.ts",
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
       "path": "src/main/tokenomics/tk-types.ts",
       "predicates": [
+        "P04",
         "P14"
       ],
       "category": "TOKENOMICS",
-      "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the account key and its well-formedness rule, the sessions root, the attribution progress and the account filter; tests/wp1/tokenomics-realm-discovery.test.ts, tests/unit/native/tk-db-schema.native.test.ts (WP1.2)",
       "note": ""
     },
     {
@@ -1196,7 +1207,7 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "WP2 commit 4 (plan A13): the open message gains codexRealmSessionsDirs and a set-codex-realm-dirs message; tests/unit/tokenomics/tk-supervisor.test.ts, tests/unit/native/tokenomics-worker-ingest.native.test.ts (WP1.2)",
+      "evidence": "WP2 commit 4 (plan A13): the open message gains codexRealmSessionsDirs and a set-codex-realm-dirs message; tests/unit/tokenomics/tk-supervisor.test.ts, tests/unit/native/tokenomics-worker-ingest.native.test.ts (WP1.2); WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the folder messages carry account keys and the progress message the attribution progress (WP1.2); tests/unit/native/tokenomics-worker-ingest.native.test.ts",
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
@@ -1207,7 +1218,7 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): tests/wp1/tokenomics-realm-discovery.test.ts proves sessions are discovered from every active managed Codex realm and the external-default realm (WP1.2, WP1.5)",
+      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): tests/wp1/tokenomics-realm-discovery.test.ts proves sessions are discovered from every active managed Codex realm and the external-default realm (WP1.2, WP1.5); WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): each Codex folder goes with its account's key, ~/.codex as codex:external (WP1.2); tests/wp1/tokenomics-realm-discovery.test.ts",
       "note": "narrow change: the indexer receives the sessions directories of the active managed Codex realms plus the external-default realm instead of one hard-coded ~/.codex/sessions; no other Tokenomics redesign"
     },
     {
@@ -1218,7 +1229,7 @@
       ],
       "category": "TOKENOMICS",
       "disposition": "replace",
-      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): the worker walks and watches ~/.codex/sessions plus every folder it is handed, reading each rollout once -- tests/unit/native/tokenomics-worker-ingest.native.test.ts (CI native suite); the folder list itself by tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2, WP1.5)",
+      "evidence": "owner decision D10 option B (docs/wp1/owner-decisions-2026-09-20.md): the worker walks and watches ~/.codex/sessions plus every folder it is handed, reading each rollout once -- tests/unit/native/tokenomics-worker-ingest.native.test.ts (CI native suite); the folder list itself by tests/wp1/tokenomics-realm-discovery.test.ts (WP1.2, WP1.5); WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): stamps each rollout's turns and cursor with its folder's account, runs the one-off re-read and the stepped rollup rebuild with progress, and answers the accounts query (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts, tests/unit/native/tokenomics-worker-ingest.native.test.ts",
       "note": "walks the list of sessions directories it is handed; parsing unchanged"
     },
     {
@@ -1242,7 +1253,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/main/pty-spawn-provider-off.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): providerAccounts.usageStream (a private per-call reply channel) and usageOne, and accountUsage.knownLabels (WP1.22); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): providerAccounts.usageStreamStop (the page closing stops its stream) (WP1.22); tests/wp1/provider-ipc.test.ts",
+      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/main/pty-spawn-provider-off.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): providerAccounts.usageStream (a private per-call reply channel) and usageOne, and accountUsage.knownLabels (WP1.22); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): providerAccounts.usageStreamStop (the page closing stops its stream) (WP1.22); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): tokenomics.accounts (WP1.22); tests/unit/tokenomics/tokenomics2-handlers.test.ts",
       "note": "codex block replaced by the provider-neutral providers/accounts API; codexReview block retained"
     },
     {
@@ -2317,7 +2328,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57); WP2 commit 6g: the codex API typing removed (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the renderer API type carries the provider-neutral usage stream calls the preload has (usage track MP4) and the cached-labels call (MP6) (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/settings-footer-bars.test.tsx; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): usageStreamStop (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx",
+      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57); WP2 commit 6g: the codex API typing removed (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the renderer API type carries the provider-neutral usage stream calls the preload has (usage track MP4) and the cached-labels call (MP6) (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/settings-footer-bars.test.tsx; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): usageStreamStop (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): tokenomics.accounts (WP1.39); tests/unit/tokenomics/tokenomics2-handlers.test.ts",
       "note": "codex API typing replaced by the provider-neutral API typing"
     },
     {
@@ -2402,7 +2413,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/legacy-codex-retired.test.ts (WP1.57): no identifier or key is CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION and no string (folded where constant) is one of the four codex:* channels anywhere in the app source (removed in WP2 commit 6g); the tree gate is tests/wp1/legacy-codex-gate.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): provider-neutral PROVIDER_ACCOUNTS_USAGE_STREAM and PROVIDER_ACCOUNTS_USAGE_ONE, and ACCOUNT_USAGE_KNOWN_LABELS (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, provider-neutral (WP1.57); tests/wp1/provider-ipc.test.ts",
+      "evidence": "tests/wp1/legacy-codex-retired.test.ts (WP1.57): no identifier or key is CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION and no string (folded where constant) is one of the four codex:* channels anywhere in the app source (removed in WP2 commit 6g); the tree gate is tests/wp1/legacy-codex-gate.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): provider-neutral PROVIDER_ACCOUNTS_USAGE_STREAM and PROVIDER_ACCOUNTS_USAGE_ONE, and ACCOUNT_USAGE_KNOWN_LABELS (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, provider-neutral (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): TOKENOMICS2_ACCOUNTS (WP1.57); tests/unit/tokenomics/tokenomics2-handlers.test.ts",
       "note": "Codex auth channels retired; provider-neutral channels added; codex-review channels retained"
     },
     {
@@ -2485,7 +2496,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts; WP2 P3 usage track MP2: StatuslineData gains rateLimitsAt and usageUnavailable, set by the rollout telemetry (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
+      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts; WP2 P3 usage track MP2: StatuslineData gains rateLimitsAt and usageUnavailable, set by the rollout telemetry (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the session row's account key, the provider and account filter, and the attribution progress (WP1.2); tests/unit/tokenomics/tokenomics2-handlers.test.ts",
       "note": "binding/identity types added; CodexOptions retained"
     },
     {
@@ -3258,6 +3269,16 @@
       "note": ""
     },
     {
+      "path": "tests/unit/native/tk-db-schema.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the schema version case now expects v2; new cases for a fresh v2 database, the v1 migration (nothing lost, rollups copied, Codex rollouts queued for the re-read, Claude history not), stamping at ingest and by re-read, the stepped rollup rebuild into shadow tables, and the re-read flags (WP1.2); tests/unit/native/tk-db-schema.native.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/native/tokenomics-reindex-307.native.test.ts",
       "predicates": [
         "P13"
@@ -3265,6 +3286,16 @@
       "category": "TEST",
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/native/tokenomics-reindex-accounts.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the upgrade end to end in the worker: the Codex history re-read into its accounts, the rollups rebuilt with progress, totals unchanged, a pruned rollout's history kept not recorded, Claude history not re-read, a rollout reachable twice read once (WP1.2); tests/unit/native/tokenomics-reindex-accounts.native.test.ts",
       "note": ""
     },
     {
@@ -3285,7 +3316,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP2 commit 4: existing cases retained, the realm-folder case added (indexed beside ~/.codex, followed on change, each rollout read once); tests/unit/native/tokenomics-worker-ingest.native.test.ts (WP1.2; CI native suite)",
+      "evidence": "WP2 commit 4: existing cases retained, the realm-folder case added (indexed beside ~/.codex, followed on change, each rollout read once); tests/unit/native/tokenomics-worker-ingest.native.test.ts (WP1.2; CI native suite); WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the realm-folder case now hands folders with their account keys and asserts the turns carry them; a case for folder entries that are not a folder and a key (WP1.2); tests/unit/native/tokenomics-worker-ingest.native.test.ts",
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
@@ -4664,7 +4695,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP2 commit 4: existing cases retained, the realm-folder hand-over case added; tests/unit/tokenomics/tk-supervisor.test.ts (WP1.2)",
+      "evidence": "WP2 commit 4: existing cases retained, the realm-folder hand-over case added; tests/unit/tokenomics/tk-supervisor.test.ts (WP1.2); WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the hand-over case now carries account keys; cases for the attribution progress and a restarted worker's folders (WP1.2); tests/unit/tokenomics/tk-supervisor.test.ts",
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
@@ -4675,6 +4706,16 @@
       "category": "TEST",
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/tokenomics/tokenomics2-handlers.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "replace",
+      "evidence": "WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): existing cases kept; new cases for the provider and account filters, their refusals before the worker is asked, and the accounts query (WP1.2); tests/unit/tokenomics/tokenomics2-handlers.test.ts",
       "note": ""
     }
   ]
