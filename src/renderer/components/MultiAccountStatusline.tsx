@@ -9,9 +9,18 @@ import {
   canonicaliseEmail,
 } from '../../shared/account-chip-color'
 import { resolveIdentityColor, type IdentityColorKey } from '../../shared/identity-colors'
-import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
+import RateLimitBar, { RateLimitBarPending, RateLimitBarNoReading } from './terminal/RateLimitBar'
 import type { AccountProfile } from '../../shared/account-types'
 import type { UsageBucket } from '../../shared/usage-types'
+import type { AccountsSnapshot, AccountView, IdentityView, ProviderId } from '../../shared/providers'
+import { bucketPastReset } from '../../shared/usage-labels'
+import { formatResetTime } from '../utils/terminalFormatting'
+import {
+  useProviderAccountsStore, accountForLegacyId, accountDisplayName, providerView, signInMethodLabel, ACCOUNT_NAME_FALLBACK,
+} from '../stores/providerAccountsStore'
+import { usesCodex } from '../onboarding/provider-choice'
+import { useRenderAtNextReset } from '../hooks/useRenderAtNextReset'
+import { ProviderMark } from './sidebar/Badges'
 
 // Stable empty ref so the Zustand selector for an absent denylist doesn't spin a
 // fresh array each render (re-render cascade guard).
@@ -47,20 +56,225 @@ function sessionUsageBuckets(s: Session): UsageBucket[] {
   return out
 }
 
+/** The dash the footer's tooltips and labels join their parts with. */
+const DASH = String.fromCharCode(0x2014)
+/** The dot the tooltips list readings with. */
+const MIDDOT = String.fromCharCode(0xb7)
+
 /**
- * Aggregate the live (running) sessions into one entry per distinct account.
- * "Running" = any session still open (excludes `disconnected`/exited). Sessions
- * without a resolved account (shell-only, Codex, not-yet-captured) are skipped.
- * An SSH session has no LOCAL account identity, but the remote signed-in email
- * (`sshRemoteAccount`, parsed off the nonce'd setup sentinel, display-only)
- * attributes it to the matching account row — #571: without this, an SSH
- * session showed neither its account name nor the account's per-model buckets
- * (Fable), because those buckets come from the app-side usage API that only a
- * local session can feed. Local identity wins when both fields exist. This is
- * presentation grouping only; nothing here grants account authority.
- * Per account, per bucket label, we take the WORST-CASE (max) utilisation so the
- * number is never falsely low when one of an account's sessions has a stale tick.
- * Ordered primary-first, then by name. Pure + unit-tested; the component gates on >=2.
+ * How each provider's sessions sit in the footer (usage track MP5; Q1.2 of
+ * the approved usage UX). Keyed by provider id, so the footer decides by this
+ * data and never by a provider's name.
+ *   - `byEmail`: its sessions are attributed by the account email their status
+ *     line reports (and an SSH session by the remote one, #571), then to that
+ *     account's identity; otherwise by the registry account the session runs
+ *     under, else the provider default.
+ *   - `plainAlone`: a pill of this provider alone reads as it always has: the
+ *     email with meters, the name with dots, its name and colour from the
+ *     email (aliases and colour overrides), and no provider mark.
+ *   - `bareHidden`: the footer's hidden entries written as a bare label are
+ *     its own (they predate other providers' groups).
+ *   - `words`: when nothing will ever report, its group says so in one word
+ *     (D3) instead of a placeholder.
+ */
+interface FooterProviderRules { byEmail: boolean; plainAlone: boolean; bareHidden: boolean; words: boolean }
+/** Claude Code: attributed by the email its status line reports. */
+const EMAIL_ATTRIBUTED: FooterProviderRules = { byEmail: true, plainAlone: true, bareHidden: true, words: false }
+/** Codex: attributed by the registry account its session runs under. */
+const ACCOUNT_ATTRIBUTED: FooterProviderRules = { byEmail: false, plainAlone: false, bareHidden: false, words: true }
+const FOOTER_PROVIDER: Readonly<Record<ProviderId, FooterProviderRules>> = { claude: EMAIL_ATTRIBUTED, codex: ACCOUNT_ATTRIBUTED }
+const PROVIDER_ORDER = Object.keys(FOOTER_PROVIDER) as ProviderId[]
+const DEFAULT_PROVIDER: ProviderId = PROVIDER_ORDER[0]
+const PROVIDER_NAME: Readonly<Record<ProviderId, string>> = { claude: 'Claude Code', codex: 'Codex' }
+
+/** D3: why a provider's group will never show a meter. */
+export type UsageGroupWord = 'per token' | 'no reading'
+
+/** What a D3 word means, for its tooltip. */
+export const USAGE_WORD_TIP: Readonly<Record<UsageGroupWord, string>> = {
+  'per token': 'Billed per token, so there is no plan allowance.',
+  'no reading': 'No reading from this session.',
+}
+
+/** One provider's meters in an identity's pill. */
+export interface LiveUsageGroup {
+  providerId: ProviderId
+  /** Worst-case (max %) bucket per label across the identity's live sessions
+   *  of this provider, in first-seen order. Never mixed with another
+   *  provider's: percentages are not comparable across providers. */
+  buckets: UsageBucket[]
+  /** D3: nothing will ever report for it. */
+  word?: UsageGroupWord
+  /** The account email its sessions report (the providers attributed by it). */
+  email?: string
+  /** How its account signs in ("ChatGPT sign-in", "API key"), for the tooltip. */
+  method?: string
+}
+
+/** One pill: an identity (a person), with a group per provider it has live
+ *  sessions of. */
+export interface LiveIdentity {
+  /** The registry identity's id, or the canonical email when the registry
+   *  cannot name one (it is unavailable, or the email has no profile). */
+  key: string
+  name: string
+  /** The email a plain pill shows with meters. */
+  email?: string
+  colourKey: IdentityColorKey
+  /** Live sessions, every provider. */
+  count: number
+  isPrimary: boolean
+  groups: LiveUsageGroup[]
+  /** One group of a provider whose pill alone reads as it always has. */
+  plain: boolean
+}
+
+function identityOf(snapshot: AccountsSnapshot | null, account: AccountView | undefined): IdentityView | undefined {
+  if (!account) return undefined
+  return snapshot?.identities.find((i) => i.id === account.identityId)
+}
+
+/**
+ * Aggregate the live (running) sessions into one entry per IDENTITY, each with
+ * a group per provider (usage track MP5, Q1.2): a person with a Claude Code
+ * and a Codex account linked to one identity is one pill, the two meter groups
+ * side by side, never merged.
+ *
+ * "Running" = any session still open (excludes `disconnected`). A session of a
+ * provider attributed by email (Claude Code) is grouped by the email its
+ * status line reports: its local account first, else the remote signed-in
+ * email of an SSH session (`sshRemoteAccount`, display-only; #571: without it
+ * an SSH session showed neither its account's name nor its per-model buckets),
+ * then through that email's profile to the registry identity. Without one (no
+ * registry, or no profile for the email) it is keyed by the email, exactly as
+ * before. A session with no email is skipped, as before. A session of any
+ * other provider (Codex) is grouped by the registry account it runs under,
+ * else that provider's default account; with neither, it is skipped.
+ *
+ * Per provider, per bucket label, the WORST-CASE (max) utilisation, so the
+ * number is never falsely low when one session has a stale tick. A pill that
+ * holds only Claude Code sessions reads as it always has (name and colour
+ * from the email, aliases and overrides included); a linked or Codex pill
+ * takes the identity's name and colour. Ordered primary-first, then by name.
+ * Pure + unit-tested; the component gates on >=2. Presentation grouping only:
+ * nothing here grants account authority.
+ */
+export function liveIdentityUsage(
+  sessions: Session[],
+  profiles: AccountProfile[],
+  aliases: Record<string, string> | undefined,
+  colourOverrides: Record<string, IdentityColorKey> | undefined,
+  snapshot: AccountsSnapshot | null,
+): LiveIdentity[] {
+  const primaryEmail = profiles.find((p) => p.isPrimary)?.accountEmail
+  const primaryCanon = primaryEmail ? canonicaliseEmail(primaryEmail) : undefined
+  interface GroupAcc { group: LiveUsageGroup; labels: Map<string, UsageBucket>; sessions: number; unavailable: number; perToken: boolean }
+  interface Acc {
+    key: string
+    identity?: IdentityView
+    /** The first account seen that is not attributed by email (its name is
+     *  the fallback for a pill with no identity name and no email). */
+    account?: AccountView
+    email?: string
+    accountColour?: IdentityColorKey
+    count: number
+    isPrimary: boolean
+    groups: Map<ProviderId, GroupAcc>
+  }
+  const byKey = new Map<string, Acc>()
+
+  for (const s of sessions) {
+    if (s.status === 'disconnected') continue
+    const providerId: ProviderId = s.provider ?? DEFAULT_PROVIDER
+    const how = FOOTER_PROVIDER[providerId]
+    if (!how) continue
+    let key: string
+    let account: AccountView | undefined
+    let identity: IdentityView | undefined
+    let email: string | undefined
+    if (how.byEmail) {
+      email = s.accountEmail || s.sshRemoteAccount
+      if (!email) continue
+      const canon = canonicaliseEmail(email)
+      const profile =
+        profiles.find((p) => !!p.accountEmail && canonicaliseEmail(p.accountEmail) === canon) ??
+        (s.profileId ? profiles.find((p) => p.id === s.profileId) : undefined)
+      account = profile ? accountForLegacyId(snapshot, providerId, profile.id) : undefined
+      identity = identityOf(snapshot, account)
+      key = identity ? `identity:${identity.id}` : `email:${canon}`
+    } else {
+      account = s.providerAccountId
+        ? snapshot?.accounts.find((a) => a.id === s.providerAccountId && a.providerId === providerId)
+        : snapshot?.accounts.find((a) => a.providerId === providerId && a.isProviderDefault && a.lifecycle !== 'archived')
+      identity = identityOf(snapshot, account)
+      if (!account || !identity) continue
+      key = `identity:${identity.id}`
+    }
+    let acc = byKey.get(key)
+    if (!acc) {
+      acc = { key, identity, count: 0, isPrimary: false, groups: new Map() }
+      byKey.set(key, acc)
+    }
+    acc.count++
+    if (email && acc.email === undefined) {
+      acc.email = email
+      acc.accountColour = s.accountColour
+    }
+    if (email && primaryCanon === canonicaliseEmail(email)) acc.isPrimary = true
+    if (!how.byEmail && !acc.account) acc.account = account
+    let g = acc.groups.get(providerId)
+    if (!g) {
+      const provider = providerView(snapshot, providerId) ?? { providerId, displayName: PROVIDER_NAME[providerId] }
+      const method = !how.byEmail && account && !account.external ? signInMethodLabel(account, provider) : null
+      g = {
+        group: { providerId, buckets: [], ...(email ? { email } : {}), ...(method ? { method } : {}) },
+        labels: new Map(),
+        sessions: 0,
+        unavailable: 0,
+        perToken: account?.authMethod === 'apiKey',
+      }
+      acc.groups.set(providerId, g)
+    }
+    g.sessions++
+    if (s.usageUnavailable === 'no-reading') g.unavailable++
+    for (const b of sessionUsageBuckets(s)) {
+      const prev = g.labels.get(b.label)
+      if (!prev || b.percent > prev.percent) g.labels.set(b.label, b)
+    }
+  }
+
+  const out: LiveIdentity[] = []
+  for (const acc of byKey.values()) {
+    const groups: LiveUsageGroup[] = []
+    for (const providerId of PROVIDER_ORDER) {
+      const g = acc.groups.get(providerId)
+      if (!g) continue
+      const group: LiveUsageGroup = { ...g.group, buckets: Array.from(g.labels.values()) }
+      if (FOOTER_PROVIDER[providerId].words && group.buckets.length === 0) {
+        if (g.perToken) group.word = 'per token'
+        else if (g.unavailable === g.sessions) group.word = 'no reading'
+      }
+      groups.push(group)
+    }
+    const plain = groups.length === 1 && FOOTER_PROVIDER[groups[0].providerId].plainAlone && !!acc.email
+    const name = plain
+      ? resolveAccountNameByEmail(acc.email as string, profiles, aliases)
+      : acc.identity?.friendlyName?.trim() || acc.email || (acc.account ? accountDisplayName(snapshot, acc.account) : ACCOUNT_NAME_FALLBACK)
+    const colourKey = !plain && acc.identity
+      ? (acc.identity.colourKey as IdentityColorKey)
+      : resolveAccountColourKey(acc.email, colourOverrides, acc.accountColour)
+    out.push({ key: acc.key, name, ...(acc.email ? { email: acc.email } : {}), colourKey, count: acc.count, isPrimary: acc.isPrimary, groups, plain })
+  }
+  return out.sort((a, b) => {
+    if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
+}
+
+/**
+ * The accounts of the email-attributed provider (Claude Code) as the footer
+ * had them before identities: one entry per distinct email. What
+ * liveIdentityUsage gives with no registry, in the older shape.
  */
 export function liveAccountUsage(
   sessions: Session[],
@@ -68,47 +282,14 @@ export function liveAccountUsage(
   aliases: Record<string, string> | undefined,
   colourOverrides: Record<string, IdentityColorKey> | undefined,
 ): LiveAccount[] {
-  const primaryEmail = profiles.find((p) => p.isPrimary)?.accountEmail
-  const primaryCanon = primaryEmail ? canonicaliseEmail(primaryEmail) : undefined
-  const byEmail = new Map<string, LiveAccount>()
-  // email -> (bucket label -> worst-case bucket). Map preserves first-seen order
-  // so the rendered bars keep the API's order (5h, Weekly, then per-model).
-  const bucketsByEmail = new Map<string, Map<string, UsageBucket>>()
-
-  for (const s of sessions) {
-    if (s.status === 'disconnected') continue
-    const email = s.accountEmail || s.sshRemoteAccount
-    if (!email) continue
-    const key = canonicaliseEmail(email)
-    let acc = byEmail.get(key)
-    if (!acc) {
-      acc = {
-        email,
-        name: resolveAccountNameByEmail(email, profiles, aliases),
-        colourKey: resolveAccountColourKey(email, colourOverrides, s.accountColour),
-        buckets: [],
-        count: 0,
-        isPrimary: primaryCanon === key,
-      }
-      byEmail.set(key, acc)
-      bucketsByEmail.set(key, new Map())
-    }
-    acc.count++
-    const lblMap = bucketsByEmail.get(key)!
-    for (const b of sessionUsageBuckets(s)) {
-      const prev = lblMap.get(b.label)
-      if (!prev || b.percent > prev.percent) lblMap.set(b.label, b)
-    }
-  }
-
-  for (const [key, acc] of byEmail) {
-    acc.buckets = Array.from(bucketsByEmail.get(key)!.values())
-  }
-
-  return Array.from(byEmail.values()).sort((a, b) => {
-    if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1
-    return a.name.localeCompare(b.name)
-  })
+  return liveIdentityUsage(sessions, profiles, aliases, colourOverrides, null).map((i) => ({
+    email: i.email ?? i.name,
+    name: i.name,
+    colourKey: i.colourKey,
+    buckets: i.groups[0]?.buckets ?? [],
+    count: i.count,
+    isPrimary: i.isPrimary,
+  }))
 }
 
 /** The footer grows to at most two rows; past that the tail goes behind the
@@ -267,17 +448,17 @@ export function reconcileFooterMetrics(
  * was last painted.
  */
 function useMeasuredFooterRows(
-  accounts: LiveAccount[],
+  accounts: LiveIdentity[],
   contentSignature: string,
 ): {
-  layout: FooterRowLayout<LiveAccount>
+  layout: FooterRowLayout<LiveIdentity>
   rootRef: React.RefObject<HTMLDivElement | null>
   pillRef: (key: string) => (el: HTMLElement | null) => void
 } {
   const rootRef = React.useRef<HTMLDivElement | null>(null)
   const pillEls = React.useRef(new Map<string, HTMLElement>())
   const [metrics, setMetrics] = React.useState<FooterMetrics>(EMPTY_METRICS)
-  const liveKeys = React.useMemo(() => new Set(accounts.map((a) => a.email)), [accounts])
+  const liveKeys = React.useMemo(() => new Set(accounts.map((a) => a.key)), [accounts])
   const liveKeysRef = React.useRef(liveKeys)
   liveKeysRef.current = liveKeys
 
@@ -307,7 +488,7 @@ function useMeasuredFooterRows(
   }, [])
 
   const layout = React.useMemo(
-    () => layoutFooterRows(accounts, accounts.map((a) => metrics.widths[a.email]), { available: metrics.available }),
+    () => layoutFooterRows(accounts, accounts.map((a) => metrics.widths[a.key]), { available: metrics.available }),
     [accounts, metrics],
   )
 
@@ -316,7 +497,7 @@ function useMeasuredFooterRows(
   // row is a new node under a new parent) that the observer must (un)watch.
   // Bounded: a re-measure that changes nothing returns the same metrics object,
   // so no re-render follows and the cycle ends.
-  const keysSignature = accounts.map((a) => a.email).join(' ')
+  const keysSignature = accounts.map((a) => a.key).join(' ')
   const rowsSignature = layout.rows.map((r) => r.length).join('/') + ':' + layout.overflow.length
   React.useLayoutEffect(() => {
     measure()
@@ -330,24 +511,61 @@ function useMeasuredFooterRows(
   return { layout, rootRef, pillRef }
 }
 
-function tooltip(a: LiveAccount, opts?: { withPercent?: boolean }): string {
-  const lines = [`${a.name} — ${a.count} live session${a.count === 1 ? '' : 's'}`]
-  // The email can be ellipsised in the two-row layout, so keep it in the
-  // tooltip -- the account is otherwise unidentifiable when it is clipped.
-  if (a.name !== a.email) lines.push(a.email)
-  for (const b of a.buckets) {
-    // In minimal mode the dots carry a BAND, not a figure, so the exact number
-    // has nowhere else to live and the tooltip is the whole readout rather than
-    // a supplement to a visible bar.
-    const parts = [b.label]
-    if (opts?.withPercent) parts.push(`${Math.round(b.percent)}%`)
-    if (b.resetsAt) parts.push(`resets ${b.resetsAt}`)
-    if (parts.length > 1) lines.push(parts.join(' — '))
+function providerNameOf(providerId: ProviderId, snapshot: AccountsSnapshot | null): string {
+  return providerView(snapshot, providerId)?.displayName ?? PROVIDER_NAME[providerId]
+}
+
+/** A reset time as the tooltips say it ("reset 3:10 pm, no reading since"). */
+function pastLine(b: UsageBucket): string {
+  return `${b.label} ${DASH} reset ${formatResetTime(b.resetsAt)}, no reading since`
+}
+
+function tooltip(
+  a: LiveIdentity,
+  snapshot: AccountsSnapshot | null,
+  now: number,
+  opts?: { withPercent?: boolean; showPending?: boolean },
+): string {
+  const lines = [`${a.name} ${DASH} ${a.count} live session${a.count === 1 ? '' : 's'}`]
+  for (const g of a.groups) {
+    if (a.plain) {
+      // The email can be ellipsised in the two-row layout, so keep it in the
+      // tooltip -- the account is otherwise unidentifiable when it is clipped.
+      if (a.email && a.name !== a.email) lines.push(a.email)
+    } else {
+      const sub = g.email ?? g.method
+      lines.push(`${providerNameOf(g.providerId, snapshot)}${sub ? ` ${MIDDOT} ${sub}` : ''}`)
+      if (g.word) { lines.push(USAGE_WORD_TIP[g.word]); continue }
+      if (g.buckets.length === 0 && opts?.showPending) { lines.push('Waiting for the status line'); continue }
+    }
+    for (const b of g.buckets) {
+      if (bucketPastReset(b, now)) { lines.push(pastLine(b)); continue }
+      // In minimal mode the dots carry a BAND, not a figure, so the exact number
+      // has nowhere else to live and the tooltip is the whole readout rather than
+      // a supplement to a visible bar.
+      const parts = [b.label]
+      if (opts?.withPercent) parts.push(`${Math.round(b.percent)}%`)
+      if (b.resetsAt) parts.push(`resets ${b.resetsAt}`)
+      if (parts.length > 1) lines.push(parts.join(` ${DASH} `))
+    }
   }
   return lines.join('\n')
 }
 
-function shownBuckets(a: LiveAccount, hidden: string[]): UsageBucket[] {
+/** The labels hidden from a provider's group: its own `<provider>:<label>`
+ *  entries, and the bare-label entries of the provider they belong to. */
+function hiddenFor(providerId: ProviderId, hidden: string[]): string[] {
+  const out: string[] = []
+  for (const h of hidden) {
+    const i = h.indexOf(':')
+    const scope = i > 0 ? h.slice(0, i) : ''
+    if (scope && Object.hasOwn(FOOTER_PROVIDER, scope)) { if (scope === providerId) out.push(h.slice(i + 1)) }
+    else if (FOOTER_PROVIDER[providerId].bareHidden) out.push(h)
+  }
+  return out
+}
+
+function shownBuckets(a: { buckets: UsageBucket[] }, hidden: string[]): UsageBucket[] {
   return a.buckets.filter((b) => !hidden.includes(b.label))
 }
 
@@ -426,7 +644,7 @@ function PendingDot() {
  * Honours the same footer denylist as the meters, so hiding Fable drops its dot
  * and hiding Weekly leaves the usage dot tracking 5h alone. Pure + tested.
  */
-export function summariseAccountDots(a: LiveAccount, hidden: string[]): AccountDotSummary {
+export function summariseAccountDots(a: { buckets: UsageBucket[] }, hidden: string[]): AccountDotSummary {
   const shown = shownBuckets(a, hidden)
   const models = shown.filter(isModelBucket)
   const windows = shown.filter((b) => !isModelBucket(b))
@@ -494,21 +712,139 @@ function UsageDot({ rag, title, label }: { rag: RagState; title: string; label: 
 export const PENDING_FOOTER_LABELS = ['5h', 'Weekly']
 
 /**
- * One account: identity dot + full email + its meters. `compact` is the two-row
- * layout -- the pill may shrink and the email ellipsises (tooltip keeps it), so
- * three pills survive a narrow window. Single-row keeps `shrink-0` + the full
- * email, i.e. exactly the pre-two-row rendering.
+ * D2 in minimal mode: a window with no reading since its reset. The pending
+ * dot's hollow dashed ring without its shimmer: nothing is known to be on
+ * its way, and none of the three traffic-light hues, since any would be a
+ * claim about usage nobody has measured.
  */
-function AccountPill({
-  account,
+function NoReadingDot({ title }: { title: string }) {
+  return (
+    <span
+      role="img"
+      aria-label="no reading since its reset"
+      title={title}
+      data-testid="account-usage-dot-no-reading"
+      style={{
+        width: 9,
+        height: 9,
+        borderRadius: 999,
+        border: '1.5px dashed var(--text-muted)',
+        background: 'transparent',
+        flex: 'none',
+        display: 'inline-block',
+      }}
+    />
+  )
+}
+
+/**
+ * What one provider's group shows, or null for nothing: its meters (bars, or
+ * dots in minimal mode unless `full`), a static no-reading meter for a window
+ * past its reset (D2), its one word when nothing will ever report (D3), or a
+ * placeholder while a first reading is still expected.
+ */
+function groupContent(
+  g: LiveUsageGroup,
+  opts: { hidden: string[]; minimal: boolean; showPending: boolean; now: number; full: boolean },
+): React.ReactNode {
+  const hidden = hiddenFor(g.providerId, opts.hidden)
+  const compact = !opts.full
+  const dots = opts.minimal && !opts.full
+  if (g.buckets.length === 0) {
+    if (g.word) {
+      return (
+        <span className="whitespace-nowrap" style={{ color: 'var(--text-muted)' }} title={USAGE_WORD_TIP[g.word]} data-testid="multi-account-word">
+          {g.word}
+        </span>
+      )
+    }
+    // The account is live but its status line has not reported yet. An
+    // account with no meters at all reads as an account with no usage, which
+    // is the opposite of the truth on a fresh session.
+    //
+    // Only when a payload is actually coming: the status line must be on.
+    // With the switch off nothing will ever replace the shimmer -- and one
+    // that never resolves is worse than blank.
+    if (!opts.showPending) return null
+    // One neutral placeholder, NOT a green dot. Green is a claim that the
+    // account has room; nothing has been reported, so the honest signal is
+    // "waiting" -- same reasoning as the pending meter, which shows no colour
+    // and no number until there is one.
+    if (dots) return <PendingDot />
+    const labels = PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l))
+    return labels.length ? labels.map((l) => <RateLimitBarPending key={l} label={l} compact={compact} />) : null
+  }
+  // Nothing to show because the user hid every bucket for the footer: their
+  // choice, so nothing, never a placeholder.
+  const shown = shownBuckets(g, hidden)
+  if (shown.length === 0) return null
+  const past = (b: UsageBucket) => bucketPastReset(b, opts.now)
+  if (dots) {
+    // Usage first, then a dot per model, matching the order the meters were in.
+    // B1: bare dots, no keys -- the labelled variant was measured wider than
+    // the meters saved and cost minimal mode its single row.
+    const summary = summariseAccountDots({ buckets: shown.filter((b) => !past(b)) }, [])
+    const pastWindows = shown.filter((b) => past(b) && !isModelBucket(b))
+    return (
+      <>
+        {summary.usage ? (
+          <UsageDot
+            rag={ragFor(summary.usage.worst.percent)}
+            title={summary.usage.windows.map((b) => `${b.label} ${Math.round(b.percent)}%`).join(` ${MIDDOT} `)}
+            label={`Usage ${RAG_WORD[ragFor(summary.usage.worst.percent)]} ${DASH} worst is ${summary.usage.worst.label} at ${Math.round(summary.usage.worst.percent)}%`}
+          />
+        ) : pastWindows.length > 0 ? (
+          <NoReadingDot title={pastWindows.map(pastLine).join(` ${MIDDOT} `)} />
+        ) : null}
+        {shown.filter(isModelBucket).map((b) =>
+          past(b) ? (
+            <NoReadingDot key={b.key} title={pastLine(b)} />
+          ) : (
+            <UsageDot
+              key={b.key}
+              rag={ragFor(b.percent)}
+              title={`${b.label} ${Math.round(b.percent)}%`}
+              label={`${b.label} ${RAG_WORD[ragFor(b.percent)]} at ${Math.round(b.percent)}%`}
+            />
+          ),
+        )}
+      </>
+    )
+  }
+  return shown.map((b) =>
+    past(b)
+      ? <RateLimitBarNoReading key={b.key} label={b.label} resetsAt={b.resetsAt} compact={compact} />
+      : <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact={compact} />,
+  )
+}
+
+/** Whether a group is led by its provider's mark: in a linked identity's pill
+ *  (so the two groups are told apart), or when its provider's pill never
+ *  reads plain (a Codex group, even alone). */
+function groupMarked(a: LiveIdentity, g: LiveUsageGroup): boolean {
+  return a.groups.length > 1 || !FOOTER_PROVIDER[g.providerId].plainAlone
+}
+
+/**
+ * One identity: its label + a group of meters per provider. `compact` is the
+ * two-row layout -- the pill may shrink and the label ellipsises (tooltip keeps
+ * it), so three pills survive a narrow window. Single-row keeps `shrink-0` +
+ * the full label, i.e. exactly the pre-two-row rendering. A plain pill (one
+ * Claude Code account) renders as it always has: its email with meters, its
+ * name with dots, and no mark.
+ */
+function IdentityPill({
+  identity,
   hidden,
   theme,
   compact,
   showPending,
   minimal,
+  now,
+  snapshot,
   pillRef,
 }: {
-  account: LiveAccount
+  identity: LiveIdentity
   hidden: string[]
   theme: 'dark' | 'light'
   compact: boolean
@@ -517,50 +853,37 @@ function AccountPill({
   pillRef?: (el: HTMLElement | null) => void
   /** Whether a payload is still expected -- see the gate in the parent. */
   showPending: boolean
-  /** Minimal mode: the meters collapse to traffic-light dots and the label
-   *  becomes the account's NAME, which is the friendly name when one is set and
-   *  the full email when it is not. */
+  /** Minimal mode: the meters collapse to traffic-light dots and a plain pill's
+   *  label becomes the account's NAME, which is the friendly name when one is
+   *  set and the full email when it is not. */
   minimal: boolean
+  now: number
+  snapshot: AccountsSnapshot | null
 }) {
-  // The pill is tinted with the account's OWN identity colour, so the rim ties
-  // the row to the account instead of drawing a neutral box around it.
-  //
-  // There is no dot any more (user call 2026-08-21: "we dont need the account
-  // colour dot as well as the pill colour"). The rim, the fill and the dot were
-  // three statements of one fact, and the dot was the one costing horizontal
-  // room in the tightest bar in the app. The overflow list KEEPS its dot —
-  // those rows carry no pill tint, so there the dot is the only identity signal
-  // rather than the third.
-  //
-  // It previously asked for `var(--surface1)`, which does not exist: the token
-  // is `--color-surface1`. An undefined custom property makes `border-color`
-  // invalid, so it fell back to `currentColor` and the rim was drawn in the
-  // TEXT colour — a near-white outline on the chrome — and the `color-mix()`
-  // background silently dropped, leaving no fill at all.
-  const accent = resolveIdentityColor(account.colourKey, theme)
-  const shown = shownBuckets(account, hidden)
-  const dots = summariseAccountDots(account, hidden)
-  // "Nothing to show" has two causes and they need opposite treatments:
-  // nothing has been REPORTED yet (waiting -- shimmer), or the user has hidden
-  // every bucket for the footer (their choice -- show nothing). Keying the
-  // placeholder off `shown` conflated them and overrode the setting with a
-  // shimmer that never resolves. Key it off the raw buckets instead.
-  const reportedNothing = account.buckets.length === 0
+  // The pill is tinted with the identity's OWN colour, so the rim ties the
+  // row to the person instead of drawing a neutral box around it. No dot
+  // (user call 2026-08-21): the rim, the fill and a dot were three statements
+  // of one fact. The overflow list KEEPS its dot -- those rows carry no pill
+  // tint, so there the dot is the only identity signal rather than the third.
+  const accent = resolveIdentityColor(identity.colourKey, theme)
+  const groups = identity.groups
+    .map((g) => ({ g, node: groupContent(g, { hidden, minimal, showPending, now, full: false }) }))
+    .filter((x) => x.node !== null)
+  const gap = minimal ? 'gap-1.5' : 'gap-2'
+  const label = identity.plain && !minimal ? (identity.email ?? identity.name) : identity.name
   return (
     <span
       ref={pillRef}
-      // Each account sits in its own subtle rounded pill so the boundary between
-      // accounts reads at a glance, rather than relying on whitespace alone.
+      // Each identity sits in its own subtle rounded pill so the boundary
+      // between people reads at a glance, rather than relying on whitespace.
       className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${compact ? 'min-w-0' : 'shrink-0'}`}
       style={{
-        // Softer than it was (38/9): with the dot gone the rim is no longer
-        // competing with a saturated disc beside it, so it can do the job at
-        // lower intensity. The bar carries one of these per account and they
-        // were shouting over the meters they exist to frame.
+        // Soft (26/6): the bar carries one of these per identity and they must
+        // not shout over the meters they exist to frame.
         borderColor: `color-mix(in srgb, ${accent} 26%, transparent)`,
         background: `color-mix(in srgb, ${accent} 6%, transparent)`,
       }}
-      title={tooltip(account, { withPercent: minimal })}
+      title={tooltip(identity, snapshot, now, { withPercent: minimal, showPending })}
       data-testid="multi-account-pill"
       data-minimal={minimal ? 'true' : undefined}
     >
@@ -569,59 +892,28 @@ function AccountPill({
         style={{ color: 'var(--text-on-chrome)' }}
         data-testid="multi-account-pill-label"
       >
-        {minimal ? account.name : account.email}
+        {label}
       </span>
-      {/* Meters never shrink -- the email is what gives way when space is tight.
-          COMPACT here: short codes and no trailing percentage. With four accounts
-          on the strip the words and numbers repeated twelve times and crowded out
-          the bars, which are the part you actually read. The exact figure is in
-          each bar's tooltip, and the "+N" popover below stays fully labelled --
-          glanceable strip, detailed popover. */}
-      <span className={`flex items-center shrink-0 ${minimal ? 'gap-1.5' : 'gap-2'}`}>
-        {minimal && shown.length > 0
-          ? // Usage first, then a dot per model, matching the order the meters
-            // were in. B1: bare dots, no keys -- the labelled variant was measured
-            // wider than the meters saved and cost minimal mode its single row.
-            <>
-              {dots.usage && (
-                <UsageDot
-                  rag={ragFor(dots.usage.worst.percent)}
-                  title={dots.usage.windows.map((b) => `${b.label} ${Math.round(b.percent)}%`).join(' · ')}
-                  label={`Usage ${RAG_WORD[ragFor(dots.usage.worst.percent)]} — worst is ${dots.usage.worst.label} at ${Math.round(dots.usage.worst.percent)}%`}
-                />
-              )}
-              {dots.models.map((b) => (
-                <UsageDot
-                  key={b.key}
-                  rag={ragFor(b.percent)}
-                  title={`${b.label} ${Math.round(b.percent)}%`}
-                  label={`${b.label} ${RAG_WORD[ragFor(b.percent)]} at ${Math.round(b.percent)}%`}
-                />
-              ))}
-            </>
-          : shown.length > 0
-          ? shown.map((b) => (
-              <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact />
-            ))
-          : // The account is live but its statusline has not reported yet. An
-            // account with no meters at all reads as an account with no usage,
-            // which is the opposite of the truth on a fresh session.
-            //
-            // Only when a payload is actually coming: something must still be
-            // unreported, and the status line must be on. With the switch off,
-            // or with every bucket hidden by choice, nothing will ever replace
-            // the shimmer -- and one that never resolves is worse than blank.
-            reportedNothing &&
-            showPending &&
-            (minimal
-              ? // One neutral placeholder, NOT a green dot. Green is a claim that
-                // the account has room; nothing has been reported, so the honest
-                // signal is "waiting" -- same reasoning as the pending meter,
-                // which shows no colour and no number until there is one.
-                <PendingDot />
-              : PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l)).map((l) => (
-                  <RateLimitBarPending key={l} label={l} compact />
-                )))}
+      {/* Meters never shrink -- the label is what gives way when space is tight.
+          COMPACT here: short codes and no trailing percentage. The exact figure
+          is in each bar's tooltip, and the "+N" popover below stays fully
+          labelled -- glanceable strip, detailed popover. Groups are never
+          merged: each provider's meters stay in their own group, led by its
+          mark, with a thin rule between them. */}
+      <span className={`flex items-center shrink-0 ${gap}`}>
+        {groups.length === 1 && !groupMarked(identity, groups[0].g)
+          ? groups[0].node
+          : groups.map(({ g, node }, i) => (
+              <React.Fragment key={g.providerId}>
+                {i > 0 && (
+                  <span aria-hidden="true" className="shrink-0" style={{ width: 1, height: 10, background: 'var(--border-strong)' }} data-testid="multi-account-group-rule" />
+                )}
+                <span className={`flex items-center ${gap}`} data-testid={`multi-account-group-${g.providerId}`}>
+                  {groupMarked(identity, g) && <ProviderMark providerId={g.providerId} size={13} title={providerNameOf(g.providerId, snapshot)} />}
+                  {node}
+                </span>
+              </React.Fragment>
+            ))}
       </span>
     </span>
   )
@@ -630,8 +922,9 @@ function AccountPill({
 const OVERFLOW_POPOVER_W = 320
 
 /**
- * "+N" control for the accounts past the two rows. Opens a small popover with
- * the same dot/email/meters, one per line.
+ * "+N" control for the pills past the two rows. Opens a small popover with the
+ * same dot/label/meters, one per line, and a sub-row per provider group. It
+ * counts "accounts" while only Claude Code is in use, "identities" otherwise.
  *
  * Positioning: `position: fixed` off the button's rect (the ScreenshotButton
  * pattern) because BottomBar and its centre zone are `overflow-hidden` -- an
@@ -643,14 +936,23 @@ const OVERFLOW_POPOVER_W = 320
  * spuriously because Ctrl+C fires click events. Escape closes and hands focus
  * back to the button.
  */
-function AccountOverflow({
+function IdentityOverflow({
   accounts,
   hidden,
   theme,
+  showPending,
+  now,
+  identities,
+  snapshot,
 }: {
-  accounts: LiveAccount[]
+  accounts: LiveIdentity[]
   hidden: string[]
   theme: 'dark' | 'light'
+  showPending: boolean
+  now: number
+  /** Count them as identities (another provider than Claude Code is on). */
+  identities: boolean
+  snapshot: AccountsSnapshot | null
 }) {
   const [open, setOpen] = React.useState(false)
   const [pos, setPos] = React.useState<{ left: number; bottom: number } | null>(null)
@@ -699,7 +1001,8 @@ function AccountOverflow({
     setOpen(true)
   }
 
-  const label = `${accounts.length} more account${accounts.length === 1 ? '' : 's'}`
+  const noun = identities ? (accounts.length === 1 ? 'identity' : 'identities') : (accounts.length === 1 ? 'account' : 'accounts')
+  const label = `${accounts.length} more ${noun}`
 
   return (
     <span className="flex items-center shrink-0">
@@ -746,7 +1049,7 @@ function AccountOverflow({
           </div>
           {accounts.map((a) => (
             <div
-              key={a.email}
+              key={a.key}
               className="flex flex-col gap-1 min-w-0"
               data-testid="multi-account-overflow-row"
             >
@@ -756,7 +1059,7 @@ function AccountOverflow({
                   style={{ background: resolveIdentityColor(a.colourKey, theme) }}
                 />
                 <span className="font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                  {a.email}
+                  {a.plain ? (a.email ?? a.name) : a.name}
                 </span>
                 <span
                   className="ml-auto shrink-0 tabular-nums text-[10px]"
@@ -765,11 +1068,16 @@ function AccountOverflow({
                   {a.count} live
                 </span>
               </span>
-              <span className="flex flex-wrap items-center gap-2 pl-4">
-                {shownBuckets(a, hidden).map((b) => (
-                  <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} />
-                ))}
-              </span>
+              {a.groups.map((g) => {
+                const node = groupContent(g, { hidden, minimal: false, showPending, now, full: true })
+                if (node === null) return null
+                return (
+                  <span key={g.providerId} className="flex flex-wrap items-center gap-2 pl-4" data-testid={`multi-account-overflow-group-${g.providerId}`}>
+                    {groupMarked(a, g) && <ProviderMark providerId={g.providerId} size={13} title={providerNameOf(g.providerId, snapshot)} />}
+                    {node}
+                  </span>
+                )
+              })}
             </div>
           ))}
         </div>
@@ -779,10 +1087,12 @@ function AccountOverflow({
 }
 
 /**
- * Slim multi-account usage readout for the BottomBar. Only renders when >=2
- * distinct accounts are live, so single-account users see nothing. Reads data
- * already in the session store (statusline-driven) -- no new polling/IPC. Which
- * bars appear is curated INDEPENDENTLY of the per-session strip via
+ * Slim multi-account usage readout for the BottomBar: one pill per IDENTITY
+ * (usage track MP5, Q1.2), each with a meter group per provider it has live
+ * sessions of. Only renders when >=2 identities are live, so single-account
+ * users see nothing. Reads data already in the session store (statusline- and
+ * telemetry-driven) and the registry the renderer holds -- no new polling/IPC.
+ * Which bars appear is curated INDEPENDENTLY of the per-session strip via
  * footerHiddenUsageBuckets (a footer-scoped denylist by bucket label).
  *
  * Layout (owner request, #378): one row whenever every pill fits in the free
@@ -807,23 +1117,37 @@ export default function MultiAccountStatusline() {
   const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
   // Absent means the meters, so nobody's footer changes shape on upgrade.
   const minimal = useSettingsStore((s) => s.settings.footerAccountDisplay === 'dots')
+  // With Codex in use the pills are people ("identities"); without it the
+  // footer reads as it always has ("accounts").
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const theme = useResolvedTheme()
 
-  const accounts = React.useMemo(
-    () => liveAccountUsage(sessions, profiles, aliases, overrides),
-    [sessions, profiles, aliases, overrides],
+  const identities = React.useMemo(
+    () => liveIdentityUsage(sessions, profiles, aliases, overrides, snapshot),
+    [sessions, profiles, aliases, overrides, snapshot],
   )
 
-  // What a pill SHOWS decides its width: the denylist, minimal mode and the
-  // pending placeholder all change it without changing the set of accounts.
-  // The hook re-measures when this signature changes.
-  const contentSignature = `${hidden.join(',')}|${minimal ? 'dots' : 'meters'}|${statusLineEnabled ? 'p' : '-'}`
-  const { layout, rootRef, pillRef } = useMeasuredFooterRows(accounts, contentSignature)
+  // D2: a window whose reset passes while nothing else changes still turns to
+  // "no reading since" on time.
+  const resets = React.useMemo(
+    () => identities.flatMap((i) => i.groups.flatMap((g) => g.buckets.map((b) => b.resetsAt).filter(Boolean))),
+    [identities],
+  )
+  useRenderAtNextReset(resets)
+  const now = Date.now()
+
+  // What a pill SHOWS decides its width: the denylist, minimal mode, the
+  // pending placeholder and a window past its reset all change it without
+  // changing the set of identities. The hook re-measures when this changes.
+  const pastSignature = identities.map((i) => i.groups.map((g) => g.buckets.filter((b) => bucketPastReset(b, now)).length).join('.')).join(',')
+  const contentSignature = `${hidden.join(',')}|${minimal ? 'dots' : 'meters'}|${statusLineEnabled ? 'p' : '-'}|${pastSignature}`
+  const { layout, rootRef, pillRef } = useMeasuredFooterRows(identities, contentSignature)
   const { rows, overflow } = layout
 
-  if (accounts.length < 2) return null
+  if (identities.length < 2) return null
 
-  // Bug 3: per account show the FULL email + the real statusline progress bars
+  // Bug 3: a plain pill shows the FULL email + the real statusline progress bars
   // (RateLimitBar, same as SessionStatusStrip). BottomBar centres this cluster
   // along the footer. The footer-scoped denylist filters which bars show here,
   // so the user can e.g. keep only Fable in the footer to narrow the cluster.
@@ -856,19 +1180,29 @@ export default function MultiAccountStatusline() {
           data-testid="multi-account-row"
         >
           {row.map((a) => (
-            <AccountPill
-              key={a.email}
-              account={a}
+            <IdentityPill
+              key={a.key}
+              identity={a}
               hidden={hidden}
               theme={theme}
               compact={multiRow}
               showPending={statusLineEnabled}
               minimal={minimal}
-              pillRef={pillRef(a.email)}
+              now={now}
+              snapshot={snapshot}
+              pillRef={pillRef(a.key)}
             />
           ))}
           {i === rows.length - 1 && overflow.length > 0 && (
-            <AccountOverflow accounts={overflow} hidden={hidden} theme={theme} />
+            <IdentityOverflow
+              accounts={overflow}
+              hidden={hidden}
+              theme={theme}
+              showPending={statusLineEnabled}
+              now={now}
+              identities={codexOn}
+              snapshot={snapshot}
+            />
           )}
         </div>
       ))}

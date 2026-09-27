@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "9ed257ed032d999d42be34c2276a635cea443151f38c93a4a4e9861f9c5a24ba",
-  "manifestHead": "81f9674de5f4271a7d032b08ea2fb34d884dcc74",
+  "manifestPathDigest": "9c26e1a2c01dbca097b9d9ec329cda4584bdbedc365343e88c4a66d5dfa3217a",
+  "manifestHead": "895ee237fbcd31f7db1b435eb7a87d4bb5a48f1f",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1263,7 +1263,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "replace",
-      "evidence": "WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): the Account usage page lists each provider that is on in its own section; Codex's accounts come from the registry the renderer already holds and their allowance views from the provider-neutral usage stream (never a provider-specific channel); nothing of Codex is asked for until it is answered on and nothing of Claude Code while it is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx",
+      "evidence": "WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): the Account usage page lists each provider that is on in its own section; Codex's accounts come from the registry the renderer already holds and their allowance views from the provider-neutral usage stream (never a provider-specific channel); nothing of Codex is asked for until it is answered on and nothing of Claude Code while it is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3): the next-reset re-render moved to a shared hook the footer uses too; tests/unit/renderer/account-usage-panel-streaming.test.tsx",
       "note": ""
     },
     {
@@ -1398,8 +1398,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3): the multi-account footer shows one pill per identity with a meter group per provider, never merged; a Codex session is attributed by the registry account it runs under (else the provider default) and a Claude Code session by its email through its profile, both provider-neutral lookups in the renderer's registry copy; a pill of Claude Code sessions alone reads exactly as before (names from aliases, colours from overrides, order, \"+N\"); D2 static no-reading meters and D3 words (WP1.39, WP1.60 enable/disable); tests/unit/renderer/footer-identity-pills.test.tsx; the baseline footer tests are unchanged and green (WP1.33): tests/unit/renderer/multi-account-statusline.test.ts, tests/unit/renderer/multi-account-statusline-render.test.tsx, tests/unit/renderer/footer-minimal-dots.test.tsx",
       "note": ""
     },
     {
@@ -2240,7 +2240,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6c: a session carries its Codex account (providerAccountId), copied from its config, never a launch acknowledgement (WP1.38, WP1.42); tests/unit/renderer/launch-account.test.ts, tests/unit/renderer/session-persistence-restore.test.ts; WP2 commit 6e: a transient tab (a confirmed install command) is never saved and runs its command once (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
+      "evidence": "WP2 commit 6c: a session carries its Codex account (providerAccountId), copied from its config, never a launch acknowledgement (WP1.38, WP1.42); tests/unit/renderer/launch-account.test.ts, tests/unit/renderer/session-persistence-restore.test.ts; WP2 commit 6e: a transient tab (a confirmed install command) is never saved and runs its command once (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3): a session carries when its allowance was reported and that nothing will report it (D3), for the footer (WP1.68); tests/unit/renderer/footer-identity-pills.test.tsx",
       "note": "its other Codex mentions are the codexOptions field, the reasoning-effort label and the retired enableCodexReview flag"
     },
     {
@@ -3751,6 +3751,16 @@
       "category": "TEST",
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/footer-identity-pills.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3) test (tests/unit/renderer/footer-identity-pills.test.tsx): identity grouping per provider, the Claude-only regression (names, colours, order, \"+N\"), marks and rules, D2 and D3, the overflow's identities and sub-rows, per-provider hidden labels, and the statusline fields it reads (WP1.68)",
       "note": ""
     },
     {

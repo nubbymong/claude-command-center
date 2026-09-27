@@ -98,6 +98,12 @@ export interface Session {
   }
   /** Dynamic usage buckets from the statusline bridge (limits[] discovery). */
   usageBuckets?: import('../../shared/usage-types').UsageBucket[]
+  /** When the allowance in `usageBuckets` was reported, epoch ms (usage
+   *  track MP2): an idle session's figure can be told from a fresh one. */
+  rateLimitsAt?: number
+  /** Nothing will report this session's allowance (D3; Codex: no rollout was
+   *  claimed): the footer says so instead of a placeholder. */
+  usageUnavailable?: 'no-reading'
   /** Active-account email from the statusline bridge. Drives the coloured email chip.
    *  v1.5.9: no longer read by the renderer (the chip was removed). Field is kept so
    *  older saved state still hydrates without errors. */

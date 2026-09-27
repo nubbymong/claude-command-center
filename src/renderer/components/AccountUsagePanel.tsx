@@ -12,6 +12,7 @@ import { bucketPastReset, relAgo } from '../../shared/usage-labels'
 import type { AccountProfile } from '../../shared/account-types'
 import type { AccountsSnapshot, AccountView, ProviderAccountUsageView, ProviderId } from '../../shared/providers'
 import { useClaudeOff } from '../lib/claudeOff'
+import { useRenderAtNextReset } from '../hooks/useRenderAtNextReset'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usesCodex } from '../onboarding/provider-choice'
 import {
@@ -35,9 +36,6 @@ const COUNTDOWN_LINE = 'The countdown is the point at which an interactive sign-
 const CLAUDE: ProviderId = 'claude'
 const CODEX: ProviderId = 'codex'
 const PROVIDER_NAME: Readonly<Record<ProviderId, string>> = { claude: 'Claude Code', codex: 'Codex' }
-
-/** The longest a browser timer may wait. */
-const MAX_TIMER_MS = 2_147_483_647
 
 const TONE_TEXT: Record<AuthWindowTone, string> = {
   expired: 'text-red',
@@ -67,24 +65,6 @@ function identityOf(snapshot: AccountsSnapshot | null, account: AccountView | un
   if (!identity) return undefined
   const name = identity.friendlyName?.trim()
   return name ? { name, colourKey: identity.colourKey } : { colourKey: identity.colourKey }
-}
-
-/** Re-renders once the soonest reset among `resets` has passed, so a window
- *  that resets while the page is open turns to "no reading since" (D2). */
-function useRenderAtNextReset(resets: readonly string[]): void {
-  const [tick, setTick] = useState(0)
-  const key = resets.join('\n')
-  useEffect(() => {
-    const now = Date.now()
-    let next = Infinity
-    for (const r of key ? key.split('\n') : []) {
-      const t = Date.parse(r)
-      if (Number.isFinite(t) && t > now && t < next) next = t
-    }
-    if (!Number.isFinite(next)) return
-    const timer = setTimeout(() => setTick((n) => n + 1), Math.min(next - now + 50, MAX_TIMER_MS))
-    return () => clearTimeout(timer)
-  }, [key, tick])
 }
 
 // All-accounts usage overview. A full PageFrame view (reached from the nav-rail

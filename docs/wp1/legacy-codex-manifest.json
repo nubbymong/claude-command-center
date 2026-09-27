@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T03:36:45.349Z",
-  "head": "81f9674de5f4271a7d032b08ea2fb34d884dcc74",
-  "tree": "7e1e6bc2f0424f46fab3b9f57ec27f0f22fb0790",
+  "generatedAt": "2026-09-27T03:56:49.170Z",
+  "head": "895ee237fbcd31f7db1b435eb7a87d4bb5a48f1f",
+  "tree": "11020c8781f121ac5fcb4ff26860a2924e86e268",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2331,
+  "trackedFileCount": 2333,
   "excludedFileCount": 381,
-  "scannedFileCount": 1950,
+  "scannedFileCount": 1952,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 387,
-  "pathDigest": "9ed257ed032d999d42be34c2276a635cea443151f38c93a4a4e9861f9c5a24ba",
+  "matchedPathCount": 388,
+  "pathDigest": "9c26e1a2c01dbca097b9d9ec329cda4584bdbedc365343e88c4a66d5dfa3217a",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -203,7 +203,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 131
+      "lineCount": 133
     },
     {
       "path": "package.json",
@@ -1008,7 +1008,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 1
+      "lineCount": 11
     },
     {
       "path": "src/renderer/components/MultiSpawnStartupPage.tsx",
@@ -1553,7 +1553,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 12
+      "lineCount": 13
     },
     {
       "path": "src/renderer/stores/settingsStore.ts",
@@ -2407,7 +2407,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 29
+      "lineCount": 37
     },
     {
       "path": "tests/unit/renderer/account-usage-panel.test.tsx",
@@ -2593,6 +2593,13 @@
         "P13"
       ],
       "lineCount": 3
+    },
+    {
+      "path": "tests/unit/renderer/footer-identity-pills.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 61
     },
     {
       "path": "tests/unit/renderer/hello-codex.acceptance.test.ts",

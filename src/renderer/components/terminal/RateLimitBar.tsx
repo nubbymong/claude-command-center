@@ -48,6 +48,37 @@ export function RateLimitBarPending({ label, compact }: { label: string; compact
   )
 }
 
+/** The dash the meters' tooltips join their parts with. */
+const DASH = String.fromCharCode(0x2014)
+
+/**
+ * D2 of the usage UX: a window whose reset time has passed has no current
+ * figure. The pending meter's geometry (so nothing reflows when the next
+ * report fills it) without its shimmer, since nothing is known to be on its
+ * way, and with no colour and no number.
+ */
+export function RateLimitBarNoReading({ label, resetsAt, compact }: { label: string; resetsAt: string; compact?: boolean }) {
+  return (
+    <span
+      className="flex items-center gap-1.5"
+      title={`${label} window ${DASH} reset ${formatResetTime(resetsAt)}, no reading since`}
+      data-testid="rate-limit-no-reading"
+    >
+      <span className="text-subtext0 opacity-60">{compact ? shortBucketLabel(label) : `${label}:`}</span>
+      <span
+        className="inline-block bg-surface1 rounded-sm"
+        style={{ width: compact ? '46px' : '64px', height: '6px' }}
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuetext="no reading since its reset"
+        aria-label={`${label} rate limit utilisation, no reading since its reset`}
+      />
+      {!compact && <span className="text-subtext0 tabular-nums opacity-60">--%</span>}
+    </span>
+  )
+}
+
 export default function RateLimitBar({ label, pct, resets, showReset, compact }: { label: string; pct: number; resets?: string; showReset?: boolean; compact?: boolean }) {
   const clamped = Math.min(100, Math.max(0, pct))
   // Drive from theme tokens so the bar adapts to light/dark — hard-
