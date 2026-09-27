@@ -278,6 +278,18 @@ describe('normaliseCodexRateLimits rejects hostile or broken input', () => {
     expect(beyond.readingAt).toBeNull()
   })
 
+  // MP3 review M6: a reading time from the far future is held to now plus a
+  // small skew, so it can neither look fresh for ever nor pin the live figure
+  // against every later reading.
+  it('holds a reading time from the future to now plus five minutes', () => {
+    const now = Date.parse('2026-09-27T12:00:00Z')
+    const r = normaliseCodexRateLimits(base({}), 'rollout', now + 10 * 86_400_000, now)!
+    expect(r.readingAt).toBe(now + 5 * 60_000)
+    expect(r.limits[0].readingAt).toBe(now + 5 * 60_000)
+    const near = normaliseCodexRateLimits(base({}), 'rollout', now + 60_000, now)!
+    expect(near.readingAt).toBe(now + 60_000)
+  })
+
   it('reads plain objects only: an array carrying snapshot fields is refused', () => {
     const arr = Object.assign([], { limit_id: DEFAULT_ID, primary: { used_percent: 10, window_minutes: 300 } })
     expect(normaliseCodexRateLimits(arr, 'rollout', AT)).toBeNull()

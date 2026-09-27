@@ -118,9 +118,9 @@ export interface HarnessOpts {
 /** A usage filesystem with nothing in it. */
 export const EMPTY_USAGE_FS: CodexUsageFsPort = {
   platform: 'win32',
-  lstat: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
-  readdir: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
-  readTail: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
+  lstat: async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
+  readdir: async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
+  readTail: async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
 }
 
 export const claudeSnapshot = (legacyId: string, over: Partial<LegacyAccountSnapshot> = {}): LegacyAccountSnapshot => ({

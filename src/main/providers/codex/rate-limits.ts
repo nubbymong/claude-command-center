@@ -35,6 +35,11 @@ const LIMIT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/
 const RESERVED_IDS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
 /** The largest epoch ms a Date can hold: past it toISOString throws. */
 const MAX_DATE_MS = 8.64e15
+/** How far past now a reading's time may claim to be (clock skew between the
+ *  CLI's clock and this app's): later is held to now plus this, so a reading
+ *  stamped in the far future can neither look fresh for ever nor outrank every
+ *  later reading. */
+const FUTURE_SKEW_MS = 5 * 60 * 1000
 const LIMIT_NAME_MAX = 40
 // Control, format (bidi overrides and the like) and line/paragraph separators.
 const UNPRINTABLE_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u
@@ -146,7 +151,7 @@ function orderLimits(limits: AllowanceLimit[]): AllowanceLimit[] {
  *
  * `at` is when the reading was taken (the event time, or the read time),
  * epoch ms, and becomes each limit's `readingAt` (null outside the Date
- * range); reset times must fall within 60 days of it (of `now` when it is
+ * range, and never later than `now` plus five minutes); reset times must fall within 60 days of it (of `now` when it is
  * unknown), so an old transcript keeps its own resets. An entry of the
  * per-limit map with no id of its own takes its key; one whose own id is not
  * its key, or whose key is not a plain identifier, is dropped: no entry can
@@ -160,7 +165,9 @@ export function normaliseCodexRateLimits(
   now: number = Date.now(),
 ): AllowanceReading | null {
   const n = NAMES[source]
-  const readingAt = dateMs(at)
+  const reported = dateMs(at)
+  const latest = Number.isFinite(now) ? now + FUTURE_SKEW_MS : null
+  const readingAt = reported !== null && latest !== null && reported > latest ? latest : reported
   const reference = readingAt ?? now
   const snapshots: Snapshot[] = []
   if (source === 'rollout') {

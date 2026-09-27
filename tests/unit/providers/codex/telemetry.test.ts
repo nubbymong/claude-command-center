@@ -774,7 +774,7 @@ describe('allowance from the rollout (usage track MP2)', () => {
   })
 
   it('parseCodexRollout reads the allowance of a rollout whose only token_count has info null', () => {
-    const ts = '2026-09-27T10:00:00.000Z'
+    const ts = '2026-09-20T10:00:00.000Z'
     const { tokenCounts, allowance } = parseCodexRollout([
       meta(ts, '/x'),
       tokenCount(ts, null, { limit_id: DEFAULT_ID, primary: { used_percent: 9, window_minutes: 300 }, plan_type: 'plus' }),
@@ -939,10 +939,12 @@ describe('allowance from the rollout (usage track MP2)', () => {
     const updates: unknown[] = []
     const src = new CodexProvider(live).ingestSessionTelemetry('sess-mp3', { cwd: '/mp3/cwd', spawnTimestamp: spawn, sessionsDir: sessions }, (d) => updates.push(d))
     await vi.advanceTimersByTimeAsync(800)
-    src.stop()
     expect(updates.length).toBeGreaterThan(0)
     expect(live.get(sessions)).toMatchObject({ planType: 'pro', readingAt: Date.parse(ts), limits: [{ limitId: 'codex', primary: { usedPercent: 26 } }] })
     expect(live.get(join(sessions, '..', 'other', 'sessions'))).toBeNull()
+    // Review M8: the realm's last session stopping forgets its live figure.
+    src.stop()
+    expect(live.get(sessions)).toBeNull()
   })
 
   it('a recorder that throws never stops the status line updates', async () => {

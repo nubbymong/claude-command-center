@@ -169,6 +169,7 @@ function normaliseApiKey(raw: string): string | null {
 export type CodexAuthOperations = ProviderAuthOperations & {
   prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal>
   sessionsDir(realm: RealmRef): Promise<string | null>
+  usageSessionsDir(realm: RealmRef): Promise<string | null>
 }
 
 export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperations {
@@ -327,6 +328,25 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         }
       } catch {
         return refuse('not-started')
+      }
+    },
+
+    /** The realm's transcript folder for the Account usage page (usage track
+     *  MP3): located as a launch locates it AND held to the launch's own
+     *  canonical-home check (the realm's home, resolved, must be a folder at
+     *  exactly its path: no junction or link), so usage reads nothing a
+     *  launch would refuse. No CLI, no executable or environment check. Null
+     *  when refused. */
+    async usageSessionsDir(realm: RealmRef): Promise<string | null> {
+      try {
+        const where = await locate(realm)
+        if (isRefusal(where)) return null
+        let fsid: CodexRealmIdentity
+        try { fsid = deps.realmIdentity(where.home) } catch { return null }
+        if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
+        return pathApi.join(where.home, 'sessions')
+      } catch {
+        return null
       }
     },
 

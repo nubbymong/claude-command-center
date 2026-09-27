@@ -16,7 +16,7 @@ import { IPC } from '../../src/shared/ipc-channels'
 import type { AccountsService } from '../../src/main/providers/core'
 import { createGroup } from '../../src/shared/providers'
 import type { AccountsSnapshot } from '../../src/shared/providers'
-import { harness, claudeSnapshot, memoryFs, KEY, RES, EXE, EXT_HOME } from './accounts-harness'
+import { harness, addCodexAccount, claudeSnapshot, memoryFs, KEY, RES, EXE, EXT_HOME } from './accounts-harness'
 
 type Handler = (e: unknown, payload?: unknown) => unknown
 const ACC = 'acct-' + 'a'.repeat(32)
@@ -416,8 +416,9 @@ describe('ADR-009 round 1 regressions: the boundary', () => {
 // stops its streams.
 describe('the usage stream over IPC (usage track MP3)', () => {
   type View = { accountId: string }
-  /** A service whose stream emits `ids`, yielding before each and asking
-   *  shouldContinue before each, as the real one does. */
+  /** A stand-in with the real stream's shape: it gives the event loop a
+   *  turn before each account and asks shouldContinue before each (the real
+   *  service's yielding is proven against the real service below). */
   function streamingService(ids: string[]) {
     const produced: string[] = []
     const svc = new Proxy({}, {
@@ -462,10 +463,68 @@ describe('the usage stream over IPC (usage track MP3)', () => {
     const second = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: CH2 })
     await Promise.all([first, second, other])
     const on = (ch: string) => usageSent(w).filter(([c]) => c === ch).map(([, v]) => (v as View).accountId)
-    expect(on(USAGE_CH).length).toBeLessThan(3)
+    // The first stream sent its first account before the newer one began,
+    // and nothing after.
+    expect(on(USAGE_CH)).toEqual(['a'])
     expect(on(CH2)).toEqual(['a', 'b', 'c'])
     expect(on(CH3)).toEqual(['a', 'b', 'c'])
-    expect(produced.filter((p) => p.startsWith('codex:')).length).toBeLessThan(6)
+    expect(produced.filter((p) => p.startsWith('codex:'))).toEqual(['codex:a', 'codex:a', 'codex:b', 'codex:c'])
+  })
+
+  // Review M2: stream generations never repeat. A stream held up while a
+  // newer one starts and finishes, and a third begins, must stay stopped, and
+  // its end must not end the third.
+  it('an old stream never resumes, and never ends a newer one, once a later stream has come and gone', async () => {
+    let releaseFirst: () => void = () => {}
+    const firstHeld = new Promise<void>((r) => { releaseFirst = r })
+    let calls = 0
+    const svc = new Proxy({}, {
+      get: (_t, prop) => {
+        if (prop === 'subscribe') return () => () => {}
+        if (prop === 'then') return undefined
+        if (prop === 'streamAccountUsage') {
+          return async (_i: unknown, onResult: (v: View) => void, opts: { shouldContinue?: () => boolean }) => {
+            const me = ++calls
+            let n = 0
+            for (const id of ['a', 'b', 'c']) {
+              if (me === 1 && id === 'b') await firstHeld
+              else await new Promise((r) => setTimeout(r, 0))
+              if (opts?.shouldContinue && !opts.shouldContinue()) break
+              onResult({ accountId: `${me}:${id}` })
+              n++
+            }
+            return { ok: true, provider: 'on', accounts: n }
+          }
+        }
+        return () => ({ ok: true })
+      },
+    }) as unknown as AccountsService
+    const w = wire(svc)
+    const CH2 = 'providerAccounts:usageResult:' + 'b'.repeat(24)
+    const CH3 = 'providerAccounts:usageResult:' + 'c'.repeat(24)
+    const first = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })
+    await new Promise((r) => setTimeout(r, 0))
+    await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: CH2 })
+    const third = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: CH3 })
+    releaseFirst()
+    await Promise.all([first, third])
+    const on = (ch: string) => usageSent(w).filter(([c]) => c === ch).map(([, v]) => (v as View).accountId)
+    expect(on(USAGE_CH)).toEqual(['1:a'])
+    expect(on(CH2)).toEqual(['2:a', '2:b', '2:c'])
+    expect(on(CH3)).toEqual(['3:a', '3:b', '3:c'])
+  })
+
+  it('the real service yields before each account, so a newer stream stops the older one before it reads anything', async () => {
+    const h = await harness()
+    await addCodexAccount(h, 'A')
+    await addCodexAccount(h, 'B')
+    const w = wire(h.service)
+    const CH2 = 'providerAccounts:usageResult:' + 'b'.repeat(24)
+    const first = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })
+    const second = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: CH2 })
+    expect(await first).toEqual({ ok: true, provider: 'on', accounts: 0 })
+    expect(await second).toEqual({ ok: true, provider: 'on', accounts: 2 })
+    expect(usageSent(w).map(([c]) => c)).toEqual([CH2, CH2])
   })
 
   it('a renderer that goes away stops its stream at the next account and is sent nothing more', async () => {

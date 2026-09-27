@@ -84,4 +84,15 @@ describe('AccountCard — active/inactive awareness', () => {
     expect(buttonTexts(r.container)).toContain('Sign in')
     r.unmount()
   })
+
+  // Usage track MP3 review (D5): an account of a provider that is off offers
+  // nothing to act on and no sign-in countdown: nothing of it was read.
+  it('an account of a provider that is off shows no "Refresh sign-in", no countdown and no warnings', () => {
+    const auth = { profileId: 'profile-x-1', hasRefreshToken: true, refreshTokenExpiresAt: Date.now() + 3 * 86_400_000, duplicateOfProfileIds: ['profile-y-1'], identityMismatch: true, accountEmail: 'x@example.com', oauthEmail: 'y@example.com' }
+    const r = render(<AccountCard row={row({ status: 'off', active: true })} auth={auth} theme="dark" onSignIn={vi.fn()} />)
+    expect(buttonTexts(r.container)).toEqual([])
+    expect(r.container.textContent).toContain('Claude Code is off')
+    expect(r.container.textContent).not.toMatch(/days?|signed into the SAME account|Labelled/)
+    r.unmount()
+  })
 })

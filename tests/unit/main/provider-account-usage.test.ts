@@ -21,22 +21,25 @@ function usageFs() {
   const files = new Map<string, string>()
   const calls: string[] = []
   const parent = (p: string) => norm(p).split('\\').slice(0, -1).join('\\')
+  const ino = (p: string) => String([...norm(p)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7))
   const port: CodexUsageFsPort = {
     platform: 'win32',
-    lstat: (p) => {
+    lstat: async (p) => {
       calls.push(`lstat ${p}`)
       const n = norm(p)
-      if (dirs.has(n)) return { kind: 'dir' }
-      if (files.has(n)) return { kind: 'file' }
+      if (dirs.has(n)) return { kind: 'dir', dev: '9', ino: ino(p), nlink: 1, size: 0, mtimeMs: 1 }
+      const t = files.get(n)
+      if (t !== undefined) return { kind: 'file', dev: '9', ino: ino(p), nlink: 1, size: t.length, mtimeMs: 1 }
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
     },
-    readdir: (dir) => {
+    readdir: async (dir, limit) => {
       calls.push(`readdir ${dir}`)
       const n = norm(dir)
       if (!dirs.has(n)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
-      return [...new Set([...dirs, ...files.keys()].filter((x) => parent(x) === n).map((x) => x.slice(n.length + 1)))]
+      const names = [...new Set([...dirs, ...files.keys()].filter((x) => parent(x) === n).map((x) => x.slice(n.length + 1)))]
+      return { names: names.slice(0, limit), more: names.length > limit }
     },
-    readTail: (file) => {
+    readTail: async (file) => {
       calls.push(`readTail ${file}`)
       const t = files.get(norm(file))
       if (t === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
@@ -46,11 +49,12 @@ function usageFs() {
   return {
     port, calls,
     rollout: (sessions: string, pct: number, plan = 'plus') => {
-      const d = `${sessions}\\2026\\09\\27`
+      // A past day: a reading time later than now would be held to now.
+      const d = `${sessions}\\2026\\09\\20`
       const parts = norm(d).split('\\')
       for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('\\'))
-      files.set(norm(`${d}\\rollout-2026-09-27T09-00-00-a.jsonl`), JSON.stringify({
-        timestamp: '2026-09-27T09:00:01Z', type: 'event_msg',
+      files.set(norm(`${d}\\rollout-2026-09-20T09-00-00-a.jsonl`), JSON.stringify({
+        timestamp: '2026-09-20T09:00:01Z', type: 'event_msg',
         payload: { type: 'token_count', info: null, rate_limits: { limit_id: CODEX_DEFAULT_LIMIT_ID, primary: { used_percent: pct, window_minutes: 300 }, plan_type: plan } },
       }) + '\n')
     },
@@ -135,6 +139,21 @@ describe('a provider that is off makes no call (D5; owner decision 2026-09-26)',
     expect(r).toEqual({ ok: true, provider: 'on', accounts: 0 })
     expect(t.fs.calls).toEqual([])
   })
+
+  // Review M1: the stream gives the event loop a turn before each account, so
+  // a page that closed, a newer stream or a switch-off (all delivered as
+  // events) stops it before the next account is read.
+  it('yields to the event loop before each account', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    const b = await addCodexAccount(t.h, 'B')
+    t.fs.rollout(sessionsOf(t.h, a), 10)
+    t.fs.rollout(sessionsOf(t.h, b), 20)
+    let wanted = true
+    const got: ProviderAccountUsageView[] = []
+    await t.h.service.streamAccountUsage({ providerId: 'codex' }, (v) => { got.push(v); setImmediate(() => { wanted = false }) }, { shouldContinue: () => wanted })
+    expect(got).toHaveLength(1)
+  })
 })
 
 describe('what each account shows (plan section 3)', () => {
@@ -144,7 +163,7 @@ describe('what each account shows (plan section 3)', () => {
     t.fs.rollout(sessionsOf(t.h, a), 37, 'pro')
     const runs = t.h.runs.length
     const r = await t.h.service.readAccountUsage({ accountId: a })
-    expect(r).toMatchObject({ ok: true, usage: { accountId: a, providerId: 'codex', status: 'ok', source: 'last-seen', readingAt: Date.parse('2026-09-27T09:00:01Z'), planLabel: 'Pro' } })
+    expect(r).toMatchObject({ ok: true, usage: { accountId: a, providerId: 'codex', status: 'ok', source: 'last-seen', readingAt: Date.parse('2026-09-20T09:00:01Z'), planLabel: 'Pro' } })
     if (!r.ok) throw new Error(r.code)
     expect(r.usage.buckets.map((b) => [b.label, b.percent])).toEqual([['5h', 37]])
     for (const c of t.fs.calls) expect(c.toLowerCase()).toContain(sessionsOf(t.h, a).toLowerCase())
@@ -259,6 +278,27 @@ describe('what each account shows (plan section 3)', () => {
     expect(t.fs.calls.length).toBeGreaterThan(0)
     for (const c of t.fs.calls) expect(c.slice(c.indexOf(' ') + 1).toLowerCase().startsWith(`${EXT_HOME.toLowerCase()}\\sessions`), c).toBe(true)
     expect(t.h.runs.length).toBe(runs)
+  })
+
+  // Review M4: usage holds a realm to the launch's own canonical-home check. A
+  // managed home that resolves to another real folder (a junction or link) is
+  // refused by a launch, so it is never read here either: the card is an
+  // error and no usage file is touched. (This computer's ~/.codex is resolved
+  // to its canonical folder when the realm is located, for a launch and for
+  // usage alike, so both use the same folder.)
+  it('a managed realm whose home resolves elsewhere (a junction or link) is refused before any read, as a launch refuses it', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    t.fs.rollout(sessionsOf(t.h, a), 30)
+    const home = managedHome(t.h.doc().accounts.find((x) => x.id === a)!.authRealmId)
+    const realpath = t.h.folders.fs.realpath
+    // The home resolves to another folder that exists: only the path check can tell.
+    t.h.folders.fs.realpath = (p: string) => (p.replace(/[\\/]+$/, '').toLowerCase() === home.toLowerCase() ? 'C:\\tools' : realpath(p))
+    t.fs.calls.length = 0
+    expect(await t.h.service.readAccountUsage({ accountId: a })).toEqual({ ok: true, usage: { accountId: a, providerId: 'codex', status: 'error', buckets: [] } })
+    expect(t.fs.calls).toEqual([])
+    // The same home is refused by a launch.
+    expect(await t.h.service.prepareLaunch({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's-junction' })).toMatchObject({ ok: false })
   })
 
   it('Claude has no usage port here: the service refuses, whatever the name, and reads nothing', async () => {

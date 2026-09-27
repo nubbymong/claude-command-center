@@ -4,7 +4,7 @@ export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
   ProviderManagedLaunchOperations, ProviderRealmFolderOperations, ProviderLaunchOperations, LaunchPreparation, ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewUsage, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
   DiscoveryResult, InstallRecipe, InstalledCli, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind,
-  ProviderUsageOperations, UsageReading,
+  ProviderUsageOperations, UsageReading, UsageLookup,
 } from './package'
 export {
   registerProvider, getProvider, tryGetProvider,

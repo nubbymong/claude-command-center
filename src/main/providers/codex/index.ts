@@ -62,9 +62,9 @@ export type { CodexRealmFsPort, CodexFsEntry, CodexRealmLocks, CodexFolderLookup
 export { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 export {
   readLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
-  CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES,
+  CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES, CODEX_USAGE_MAX_DAYS, CODEX_USAGE_WALK_BUDGET,
 } from './usage'
-export type { CodexUsageFsPort, CodexLiveUsage, CodexUsageDeps } from './usage'
+export type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi, CodexLiveUsage, CodexUsageDeps, LastSeenCache } from './usage'
 
 /** Why the two session-contract methods a Codex launch never uses refuse: a
  *  Codex session runs only the executable its managed launch proved (the
@@ -102,7 +102,11 @@ export class CodexProvider implements SessionProvider {
     if (!opts.sessionsDir) return { stop() {} }
     const sessionsDir = opts.sessionsDir
     const live = this.liveUsage
-    return watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, live ? (reading) => live.record(sessionsDir, reading) : undefined)
+    const watch = watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, live ? (reading) => live.record(sessionsDir, reading) : undefined)
+    if (!live) return watch
+    // The realm's live figure lasts while one of its sessions still reports.
+    const release = live.open(sessionsDir)
+    return { stop() { try { watch.stop() } finally { release() } } }
   }
 
   async listHistorySessions(): Promise<HistorySession[]> {
@@ -331,7 +335,7 @@ function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsa
   return {
     auth: ops,
     launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.sessionsDir(realm) },
-    usage: createCodexUsageOperations({ sessionsDir: (realm) => ops.sessionsDir(realm), fs: usageFs, live: liveUsage }),
+    usage: createCodexUsageOperations({ sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage }),
   }
 }
 

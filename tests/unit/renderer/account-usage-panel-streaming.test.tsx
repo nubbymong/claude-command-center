@@ -21,7 +21,7 @@ vi.mock('../../../src/renderer/components/PageFrame', () => ({
     <div data-testid="page-frame"><div data-testid="pf-actions">{actions}</div>{children}</div>,
 }))
 
-const list = vi.fn<[], Promise<AccountProfile[]>>()
+const list = vi.fn<() => Promise<AccountProfile[]>>()
 const authInfo = vi.fn(async () => [] as unknown[])
 /** Every stream call's controller, in order — emit a result, finish, or reject.
  *  Collected (not just the latest) so a superseded stream can be driven too. */
@@ -39,6 +39,7 @@ Object.defineProperty(window, 'electronAPI', {
 })
 
 const { default: AccountUsagePanel } = await import('../../../src/renderer/components/AccountUsagePanel')
+const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
 
 const profile = (id: string): AccountProfile => ({ id, name: id, accountEmail: `${id}@x.com`, createdAt: 0 })
 const usage = (profileId: string, percent: number): AccountUsage => ({
@@ -179,5 +180,44 @@ describe('AccountUsagePanel — streaming skeletons (plan P3)', () => {
     await flush()
     expect(fetchOne).toHaveBeenCalledWith('b')
     expect(container.textContent).toContain('44%')
+  })
+})
+
+// Usage track MP3 review (D5): with Claude Code switched off the page reads
+// nothing of it: not the credential state (authInfo reads every account's
+// credential file), not the usage stream. It shows the one D5 line; turning
+// Claude Code back on loads the page as before.
+describe('AccountUsagePanel with Claude Code off (D5)', () => {
+  afterEach(() => { useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, isLoaded: true }) })
+
+  it('calls neither authInfo nor the usage stream, and shows only the D5 line', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false }, isLoaded: true })
+    list.mockResolvedValue([profile('a')])
+    await mount()
+    expect(authInfo).not.toHaveBeenCalled()
+    expect(fetchAllStream).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Claude Code is off. Turn it on in Settings, Accounts to see its accounts.')
+    expect(skeletons().length).toBe(0)
+    expect(container.textContent).not.toContain('a@x.com')
+    expect(container.textContent).not.toMatch(/countdown/i)
+    // Refresh while off reads nothing either.
+    const refresh = container.querySelector('[data-testid="pf-actions"] button') as HTMLElement
+    await act(async () => { refresh.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    await flush()
+    expect(authInfo).not.toHaveBeenCalled()
+    expect(fetchAllStream).not.toHaveBeenCalled()
+  })
+
+  it('loads as before once Claude Code is turned back on', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false }, isLoaded: true })
+    list.mockResolvedValue([profile('a')])
+    await mount()
+    await act(async () => { useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: true }, isLoaded: true }) })
+    await flush()
+    expect(authInfo).toHaveBeenCalled()
+    expect(fetchAllStream).toHaveBeenCalled()
+    latest().emit(usage('a', 12))
+    await flush()
+    expect(container.textContent).toContain('12%')
   })
 })

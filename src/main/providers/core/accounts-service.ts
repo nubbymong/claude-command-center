@@ -106,6 +106,10 @@ export type PreparedLaunchResult =
   }
   | AccountsFailure
 
+/** One turn of the event loop: a stream lets the events that could stop it
+ *  (a closed page, a newer stream, a switch-off) arrive between accounts. */
+const yieldTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
 /** The kind of credential a status reported, as the registry compares it. */
 function observedCredential(credential: AuthCredentialKind | undefined): CredentialClass | undefined {
   return credential === 'account' || credential === 'api-key' ? credential : undefined
@@ -1858,8 +1862,9 @@ export class AccountsService {
    *  error, and nothing of it is read). Nothing is read or sent for a
    *  provider that is off, not set up, or whose setting cannot be read (D5);
    *  the rule is asked again before each account, and `shouldContinue` too (a
-   *  page that closed, or a newer stream), so a switch-off or a closed page
-   *  stops the stream before the next account. */
+   *  page that closed, or a newer stream), after the event loop has had a turn
+   *  (so the event that closed the page has been delivered), so a switch-off
+   *  or a closed page stops the stream before the next account is read. */
   async streamAccountUsage(
     input: { providerId: ProviderId },
     onResult: (view: ProviderAccountUsageView) => void,
@@ -1876,6 +1881,7 @@ export class AccountsService {
     const listed = ready.doc.accounts.filter((a) => a.providerId === p.id && a.lifecycle !== 'archived')
     let sent = 0
     for (const a of listed) {
+      await yieldTurn()
       if (!wanted() || this.launchRefusal(p.id)) break
       const view = await this.usageView(p, ready.doc, a)
       if (!wanted() || this.launchRefusal(p.id)) break
@@ -1899,7 +1905,7 @@ export class AccountsService {
     if (!realm || realm.lifecycle !== 'active') return base
     const ref: RealmRef = { authRealmId: realm.id }
     const inUse = this.signIns.has(a.id) || this.deps.leases.count(a.id) > 0
-    const shown = (r: UsageReading | null, source: ProviderAccountUsageView['source'], status: ProviderAccountUsageView['status'] = 'ok'): ProviderAccountUsageView => {
+    const shown = (r: UsageReading | null, source: ProviderAccountUsageView['source'] | undefined, status: ProviderAccountUsageView['status'] = 'ok'): ProviderAccountUsageView => {
       const view: ProviderAccountUsageView = { ...base, status }
       if (r) {
         view.source = source
@@ -1912,13 +1918,17 @@ export class AccountsService {
     }
     try {
       // In use: the open session's figure, else its history (never a read).
+      // A realm the package refuses (it fails the launch's own checks) is an
+      // error, with nothing read.
       if (inUse) {
         const live = await p.usage.live(ref)
-        if (live) return shown(live, 'live')
+        if (!live || live.ok !== true) return base
+        if (live.reading) return shown(live.reading, 'live')
       }
       const seen = await p.usage.lastSeen(ref)
-      if (!inUse && (a.lastKnownAuthState === 'signed-out' || a.lastKnownAuthState === 'expired')) return shown(seen, 'last-seen', 'not-signed-in')
-      return seen ? shown(seen, 'last-seen') : shown(null, undefined, 'no-session-yet')
+      if (!seen || seen.ok !== true) return base
+      if (!inUse && (a.lastKnownAuthState === 'signed-out' || a.lastKnownAuthState === 'expired')) return shown(seen.reading, 'last-seen', 'not-signed-in')
+      return seen.reading ? shown(seen.reading, 'last-seen') : shown(null, undefined, 'no-session-yet')
     } catch {
       return base
     }

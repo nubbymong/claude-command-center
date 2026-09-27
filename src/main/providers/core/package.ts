@@ -291,18 +291,24 @@ export interface UsageReading {
   planLabel: string | null
 }
 
+/** A usage port's answer: `ok: false` when the realm is refused before
+ *  anything is read (it cannot be located, or it fails the launch's own
+ *  canonical-home check), else the reading, or null when there is none. */
+export type UsageLookup = { ok: true; reading: UsageReading | null } | { ok: false }
+
 /** A package's per-account usage (usage track MP3; plan section 3). Reads
  *  only: neither starts a process. The accounts service decides WHEN they may
  *  run (never for a provider that is off or not set up, never for an inactive
- *  or API-key account); these decide only where the figure comes from. Never
- *  throw: anything unexpected is null. */
+ *  or API-key account); these decide only where the figure comes from. Both
+ *  hold the realm to the same check a launch makes before reading anything.
+ *  Never reject: anything unexpected is no reading. */
 export interface ProviderUsageOperations {
   /** The newest allowance an open session in this realm reported, from
    *  memory only: no file and no process. */
-  live(realm: RealmRef): Promise<UsageReading | null>
+  live(realm: RealmRef): Promise<UsageLookup>
   /** The last allowance in the realm's own session history: a bounded read of
    *  its transcripts only, nothing else in the realm. */
-  lastSeen(realm: RealmRef): Promise<UsageReading | null>
+  lastSeen(realm: RealmRef): Promise<UsageLookup>
 }
 
 export interface ProviderRealmOperations {

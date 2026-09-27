@@ -208,10 +208,10 @@ describe('Codex declares what it implements (WP1.17, WP1.18)', () => {
     for (const pkg of [bare, wired, claude]) expect(packageRegistrationProblem(pkg)).toBeNull()
   })
 
-  it('the usage port reads nothing for a realm it cannot locate', async () => {
+  it('the usage port refuses a realm it cannot locate, reading nothing', async () => {
     const wired = createCodexPackage({ realms: { lookup: async () => ({ ok: false }), mkdirSecure: () => {} } })
     const realm = { authRealmId: 'realm-' + '1'.repeat(32) }
-    expect(await wired.usage!.live(realm)).toBeNull()
-    expect(await wired.usage!.lastSeen(realm)).toBeNull()
+    expect(await wired.usage!.live(realm)).toEqual({ ok: false })
+    expect(await wired.usage!.lastSeen(realm)).toEqual({ ok: false })
   })
 })

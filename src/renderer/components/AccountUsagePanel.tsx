@@ -8,6 +8,11 @@ import PageFrame from './PageFrame'
 import { describeAuthWindow, type AuthWindowTone, type ProfileAuthInfo } from '../../shared/account-auth'
 import type { AccountUsage, UsageBucket } from '../../shared/usage-types'
 import type { AccountProfile } from '../../shared/account-types'
+import { useClaudeOff } from '../lib/claudeOff'
+
+/** D5 (usage UX, approved as drawn): the one line the page shows for Claude
+ *  Code while it is switched off. */
+export const CLAUDE_OFF_USAGE_LINE = 'Claude Code is off. Turn it on in Settings, Accounts to see its accounts.'
 
 const TONE_TEXT: Record<AuthWindowTone, string> = {
   expired: 'text-red',
@@ -37,6 +42,10 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
 }) {
   const theme = useResolvedTheme()
   const reauth = useReauthAccount()
+  // D5: with Claude Code switched off the page reads nothing of it -- not the
+  // credential state (authInfo reads every account's credential file), not
+  // the usage stream -- and shows one line. Turning it back on loads again.
+  const claudeOff = useClaudeOff()
   // The account list drives the SKELETON rows (a local read, so it resolves at
   // once); usage streams in per account and fills each row as it lands. null =
   // the list has not resolved yet (a placeholder skeleton or two show meanwhile).
@@ -55,6 +64,13 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
 
   const load = useCallback(async () => {
     const gen = ++genRef.current
+    if (claudeOff) {
+      setUsageByProfile({})
+      setProfiles([])
+      setLoadError(false)
+      setStreaming(false)
+      return
+    }
     // Clear usage so every row returns to a skeleton, then re-stream. The account
     // list and the credential state are both local file reads, so they resolve at
     // once and independently of the network usage fetch — one slow account must
@@ -85,7 +101,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
     } finally {
       if (genRef.current === gen) setStreaming(false)
     }
-  }, [])
+  }, [claudeOff])
 
   useEffect(() => { void load() }, [load])
 
@@ -115,6 +131,9 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   return (
     <PageFrame title="Account usage" icon={peopleIcon} iconAccent="mauve" onClose={onClose} actions={refreshAction}>
       <div className="max-w-3xl mx-auto p-4 space-y-3">
+        {claudeOff ? (
+          <p className="text-[0.8125rem] text-overlay0" data-testid="account-usage-claude-off">{CLAUDE_OFF_USAGE_LINE}</p>
+        ) : (<>
         {profiles === null
           // The list is a local read; the placeholders below cover only the frame
           // or two before it resolves, so the page never flashes empty.
@@ -136,6 +155,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
           The countdown is the point at which an interactive sign-in becomes unavoidable — the shorter-lived
           token behind each session renews itself and is not shown.
         </p>
+        </>)}
       </div>
     </PageFrame>
   )
@@ -236,10 +256,14 @@ export function AccountCard({
   // offers no sign-in (opening a login shell for an account the user parked
   // bypasses the switcher's own active-guard).
   const isInactive = row.status === 'inactive' || row.active === false
+  // The provider is off: nothing of this account was read, so there is
+  // nothing to act on and no countdown to show.
+  const isOff = row.status === 'off'
+  const quiet = isInactive || isOff
   // Computed at render against the wall clock; the calculation itself is pure and
   // lives in shared/ so main and renderer cannot disagree about what a credential
   // state means.
-  const window_ = auth ? describeAuthWindow(auth, Date.now()) : null
+  const window_ = auth && !isOff ? describeAuthWindow(auth, Date.now()) : null
   const duplicates = auth?.duplicateOfProfileIds ?? []
   return (
     <div className={`rounded-xl border border-surface0/70 px-4 py-3.5 ${isInactive ? 'bg-surface0/10 opacity-60' : 'bg-surface0/20'}`}>
@@ -252,7 +276,7 @@ export function AccountCard({
         {/* A working sign-in gets a refresh too, not just a broken one: the whole
             point is to act BEFORE the forced login, and previously the only way to
             learn it was coming was for it to arrive. Never for a parked account. */}
-        {!isInactive && row.status !== 'needs-login' && (
+        {!quiet && row.status !== 'needs-login' && (
           <button
             onClick={onSignIn}
             title="Sign in again now to reset this account's countdown"
@@ -269,7 +293,11 @@ export function AccountCard({
         </p>
       )}
 
-      {!isInactive && duplicates.length > 0 && (
+      {isOff && (
+        <p className="text-[0.8125rem] text-overlay0">Claude Code is off: nothing is read for this account.</p>
+      )}
+
+      {!quiet && duplicates.length > 0 && (
         <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-red/10 border border-red/25 text-[0.75rem] text-red">
           This profile and {duplicates.length === 1 ? 'another profile' : `${duplicates.length} other profiles`} are
           signed into the SAME account. Each time one refreshes, the others&apos; sign-ins are invalidated — which is
@@ -277,7 +305,7 @@ export function AccountCard({
         </div>
       )}
 
-      {!isInactive && auth?.identityMismatch && duplicates.length === 0 && (
+      {!quiet && auth?.identityMismatch && duplicates.length === 0 && (
         <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-yellow/10 border border-yellow/25 text-[0.75rem] text-yellow">
           Labelled {auth.accountEmail} but signed in as {auth.oauthEmail}.
         </div>
@@ -319,7 +347,7 @@ export function AccountCard({
         </p>
       )}
 
-      {!isInactive && (
+      {!quiet && (
         <div className="flex items-center justify-between gap-2 mt-2">
           {row.status === 'ok' ? (
             <p className="text-[0.6875rem] text-overlay0">

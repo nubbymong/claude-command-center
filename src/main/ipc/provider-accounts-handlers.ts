@@ -190,12 +190,16 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
   // CALLER's own renderer on its private reply channel, and only while it is
   // the newest stream that renderer opened for that provider (a reopened
   // page stops the older one at its next account) and the renderer is alive.
+  // Generations come from one counter that only grows, so a finished stream's
+  // number is never handed out again: an old stream can never read as current
+  // again, and its end can never clear a newer stream's entry.
   const usageStreamGen = new Map<string, number>()
+  let usageStreamSeq = 0
   handle(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, S.account, (i, svc) => svc.readAccountUsage(i))
   handle(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, S.usageStream, async (i, svc, e) => {
     const sender = e.sender
     const key = `${sender.id}|${i.providerId}`
-    const gen = (usageStreamGen.get(key) ?? 0) + 1
+    const gen = ++usageStreamSeq
     usageStreamGen.set(key, gen)
     const live = () => !sender.isDestroyed() && usageStreamGen.get(key) === gen
     try {
