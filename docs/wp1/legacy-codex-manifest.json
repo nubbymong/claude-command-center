@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T04:50:38.669Z",
-  "head": "8b41cb4f4d5178274ba941ca74c507e9c9d28aa1",
-  "tree": "10faca61b6f48e435ca2dd25d01f4ce4cebfbcdf",
+  "generatedAt": "2026-09-27T04:57:29.318Z",
+  "head": "1d6b4bd8db62da116850d0a604de632ee0696426",
+  "tree": "f98cd1cc29303898e874c858a9f2c8e408daa323",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2342,
+  "trackedFileCount": 2341,
   "excludedFileCount": 381,
-  "scannedFileCount": 1961,
+  "scannedFileCount": 1960,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -2641,7 +2641,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 75
+      "lineCount": 87
     },
     {
       "path": "tests/unit/renderer/hello-codex.acceptance.test.ts",

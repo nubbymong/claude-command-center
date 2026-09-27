@@ -30,7 +30,6 @@ const {
 } = await import('../../../src/renderer/components/MultiAccountStatusline')
 const { formatResetTime } = await import('../../../src/renderer/utils/terminalFormatting')
 const { SCENARIO } = await import('../../fixtures/footer/claude-only-scenario')
-const { default: PRE_MP5 } = (await import('../../fixtures/footer/pre-mp5-claude-only.json')) as { default: { meters: string; dots: string } }
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
 const { useAccountProfilesStore } = await import('../../../src/renderer/stores/accountProfilesStore')
 const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
@@ -73,6 +72,8 @@ const snapshot: AccountsSnapshot = {
     account('cx-3', 'codex', 'i-d'),
     account('cx-4', 'codex', 'i-e', { authMethod: 'device' }),
     account('cx-5', 'codex', 'i-a', { authMethod: 'apiKey', providerLabel: 'Team key' }),
+    account('cx-6', 'codex', 'i-a', { authMethod: 'device' }),
+    account('cx-7', 'codex', 'i-a', { authMethod: 'apiKey' }),
     account('cl-9', 'claude', 'i-b', { legacyId: 'p9', legacyLinked: true }),
   ],
   pendingSetups: [], externalDefaults: [], conflicts: [], reviewerNotices: [],
@@ -147,21 +148,50 @@ describe('liveIdentityUsage (usage track MP5)', () => {
     expect(nine[0].key).toBe('identity:i-b')
   })
 
-  // MP5 review Q3.
-  it('two Codex accounts on one identity are two groups, each named, their allowances apart', () => {
+  // MP5 spec review (Q1.2, as approved): one group per provider. Two Codex
+  // accounts on one identity feed one Codex group: the worst case of each
+  // window across both, the sign-in method from the account behind the worst
+  // bucket, the same whichever session was seen first.
+  it('two Codex accounts on one identity: one Codex group, the worst case per window, the method of the account behind the worst bucket', () => {
+    const a = codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(20, 30) })
+    const b = codex({ providerAccountId: 'cx-6', usageBuckets: cxBuckets(70, 10) })
+    for (const order of [[a, b], [b, a]]) {
+      const out = liveIdentityUsage([...order, claude('b@x.com', { rateLimitCurrent: 1 })], profiles, aliases, overrides, snapshot)
+      const ann = out.find((i) => i.name === 'Ann')!
+      expect(ann.groups.map((g) => g.key)).toEqual(['codex'])
+      expect(ann.groups[0].buckets.map((x) => [x.label, x.percent])).toEqual([['5h', 70], ['Weekly', 30]])
+      expect(ann.groups[0].method).toBe('Device code')
+      expect(ann.count).toBe(2)
+    }
+  })
+
+  it('two Codex accounts with nothing reported: "per token" only when both are; "no reading" when neither will report; none while one still may', () => {
+    const word = (sessions: Session[]) => liveIdentityUsage(sessions, profiles, aliases, overrides, snapshot).find((i) => i.name === 'Ann')!.groups[0].word
+    expect(word([codex({ providerAccountId: 'cx-5' }), codex({ providerAccountId: 'cx-7' })])).toBe('per token')
+    expect(word([codex({ providerAccountId: 'cx-5' }), codex({ providerAccountId: 'cx-1', usageUnavailable: 'no-reading' } as Partial<Session>)])).toBe('no reading')
+    expect(word([codex({ providerAccountId: 'cx-1', usageUnavailable: 'no-reading' } as Partial<Session>), codex({ providerAccountId: 'cx-5' })])).toBe('no reading')
+    expect(word([codex({ providerAccountId: 'cx-5' }), codex({ providerAccountId: 'cx-1' })])).toBeUndefined()
+    // With no bucket to go by, the method is the lowest account id's, whatever came first.
+    const m = (sessions: Session[]) => liveIdentityUsage(sessions, profiles, aliases, overrides, snapshot).find((i) => i.name === 'Ann')!.groups[0].method
+    expect(m([codex({ providerAccountId: 'cx-6' }), codex({ providerAccountId: 'cx-1' })])).toBe('ChatGPT sign-in')
+    expect(m([codex({ providerAccountId: 'cx-1' }), codex({ providerAccountId: 'cx-6' })])).toBe('ChatGPT sign-in')
+  })
+
+  it('a tie for the worst bucket goes to the lower account id, within a label and across labels', () => {
+    const out = liveIdentityUsage([codex({ providerAccountId: 'cx-6', usageBuckets: cxBuckets(40, 5) }), codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(40, 5) })], profiles, aliases, overrides, snapshot)
+    expect(out[0].groups[0].method).toBe('ChatGPT sign-in')
+    const across = liveIdentityUsage([codex({ providerAccountId: 'cx-6', usageBuckets: cxBuckets(40, 5) }), codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(10, 40) })], profiles, aliases, overrides, snapshot)
+    expect(across[0].groups[0].buckets.map((x) => x.percent)).toEqual([40, 40])
+    expect(across[0].groups[0].method).toBe('ChatGPT sign-in')
+  })
+
+  it('the account behind a current window speaks before one behind a window past its reset', () => {
+    const past = new Date(Date.now() - 60_000).toISOString()
     const out = liveIdentityUsage([
-      codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(20, 30) }),
-      codex({ providerAccountId: 'cx-5' }),
-      claude('b@x.com', { rateLimitCurrent: 1 }),
+      codex({ providerAccountId: 'cx-1', usageBuckets: [bucket('5h', 95, { key: 'codex/300:', resetsAt: past })] }),
+      codex({ providerAccountId: 'cx-6', usageBuckets: [bucket('Weekly', 30, { key: 'codex/10080:' })] }),
     ], profiles, aliases, overrides, snapshot)
-    const ann = out.find((i) => i.name === 'Ann')!
-    expect(ann.groups.map((g) => [g.key, g.accountName, g.word, g.buckets.length])).toEqual([
-      ['codex:cx-1', 'ChatGPT sign-in', undefined, 2],
-      ['codex:cx-5', 'Team key', 'per token', 0],
-    ])
-    // One Codex account: one group, not named.
-    const one = liveIdentityUsage([codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(20, 30) })], profiles, aliases, overrides, snapshot)
-    expect(one[0].groups.map((g) => [g.key, g.accountName])).toEqual([['codex:cx-1', undefined]])
+    expect(out[0].groups[0].method).toBe('Device code')
   })
 
   it('one identity, both providers live: one pill with a group per provider, named and coloured from the identity', () => {
@@ -257,15 +287,45 @@ function measure(available: number, pill: number) {
 
 describe('MultiAccountStatusline, one pill per identity (usage track MP5)', () => {
   // MP5 review Q5: the footer before MP5 (895ee237) rendered this scenario to
-  // the recorded HTML; the footer now renders it byte for byte the same, with a
-  // registry whose identities have other names and colours.
-  it('Claude Code only: the same HTML as the footer before MP5, in both display modes', () => {
+  // HTML recorded once in 02c1280b (tests/fixtures/footer), which proved the
+  // footer since renders it byte for byte the same. The standing check is what
+  // a user sees: each pill's text, tooltip, order and colours, and its meters,
+  // as the footer before MP5 drew them, beside a registry whose identities
+  // have other names and colours.
+  it('Claude Code only: each pill\'s text, tooltip, order, colours and meters as before MP5, in both display modes', () => {
+    const D = String.fromCharCode(0x2014)
+    const tint = (rgb: string) => `border-color: color-mix(in srgb, ${rgb} 26%, transparent); background: color-mix(in srgb, ${rgb} 6%, transparent);`
+    const MAUVE = 'rgb(154, 140, 240)'
+    const ROSE = 'rgb(239, 95, 126)'
+    const expected = {
+      meters: {
+        labels: ['a@x.com', 'b@x.com', 'C@X.com'],
+        titles: [`Alpha ${D} 2 live sessions\na@x.com`, `Bravo ${D} 1 live session\nb@x.com`, `Charlie ${D} 1 live session\nC@X.com`],
+        bars: ['55', '40', '92', '10', '20', '75'],
+        dots: [] as string[],
+      },
+      dots: {
+        labels: ['Alpha', 'Bravo', 'Charlie'],
+        titles: [
+          `Alpha ${D} 2 live sessions\na@x.com\n5h ${D} 55%\nWeekly ${D} 40%\nFable ${D} 92%`,
+          `Bravo ${D} 1 live session\nb@x.com\n5h ${D} 10%\nWeekly ${D} 20%`,
+          `Charlie ${D} 1 live session\nC@X.com\n5h ${D} 75%`,
+        ],
+        bars: [] as string[],
+        dots: ['green', 'red', 'green', 'amber'],
+      },
+    }
     useAccountProfilesStore.setState({ profiles: SCENARIO.profiles as AccountProfile[] })
     for (const mode of ['meters', 'dots'] as const) {
       useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...SCENARIO.settings, footerAccountDisplay: mode } as typeof DEFAULT_SETTINGS, isLoaded: true })
       useSessionStore.setState({ sessions: SCENARIO.sessions as unknown as Session[] })
       act(() => { root.render(<MultiAccountStatusline />) })
-      expect(container.innerHTML, mode).toBe(PRE_MP5[mode])
+      expect(labels(), mode).toEqual(expected[mode].labels)
+      expect(pills().map((p) => p.title), mode).toEqual(expected[mode].titles)
+      expect(pills().map((p) => p.getAttribute('style')), mode).toEqual([tint(MAUVE), tint(ROSE), tint(MAUVE)])
+      expect(Array.from(container.querySelectorAll('[role="progressbar"]')).map((b) => b.getAttribute('aria-valuenow')), mode).toEqual(expected[mode].bars)
+      expect(Array.from(container.querySelectorAll('[data-testid="account-usage-dot"]')).map((d) => d.getAttribute('data-rag')), mode).toEqual(expected[mode].dots)
+      expect(marks(container), mode).toEqual([])
     }
   })
 
@@ -454,12 +514,12 @@ describe('MultiAccountStatusline, one pill per identity (usage track MP5)', () =
     expect((pillOf('Dee').querySelector('[data-testid="account-usage-dot-no-reading"]') as HTMLElement).title).toBe(`5h reset ${formatResetTime(past)}, no reading since`)
   })
 
-  it('two Codex accounts on one identity: a group each, each named', () => {
-    show([codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(20, 30) }), codex({ providerAccountId: 'cx-5' }), claude('b@x.com', { rateLimitCurrent: 1 })])
+  it('two Codex accounts on one identity: one Codex group in the pill, its meters the worst case, its tooltip the method behind it', () => {
+    show([codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(20, 30) }), codex({ providerAccountId: 'cx-6', usageBuckets: cxBuckets(70, 10) }), claude('b@x.com', { rateLimitCurrent: 1 })])
     const ann = pillOf('Ann')
-    expect(Array.from(ann.querySelectorAll('[data-testid="multi-account-group-account"]')).map((n) => n.textContent)).toEqual(['ChatGPT sign-in', 'Team key'])
-    expect(ann.querySelector('[data-testid="multi-account-word"]')?.textContent).toBe('per token')
-    expect(ann.title).toContain(`Codex ${String.fromCharCode(0xb7)} Team key ${String.fromCharCode(0xb7)} API key`)
+    expect(Array.from(ann.querySelectorAll('[data-testid^="multi-account-group-"]')).map((g) => g.getAttribute('data-testid'))).toEqual(['multi-account-group-codex'])
+    expect(Array.from(ann.querySelectorAll('[role="progressbar"]')).map((b) => b.getAttribute('aria-valuenow'))).toEqual(['70', '30'])
+    expect(ann.title).toContain(`Codex ${String.fromCharCode(0xb7)} Device code`)
   })
 
   it('shows nothing with fewer than two identities live, however many sessions', () => {

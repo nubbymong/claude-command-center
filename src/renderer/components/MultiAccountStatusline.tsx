@@ -94,26 +94,24 @@ export const USAGE_WORD_TIP: Readonly<Record<UsageGroupWord, string>> = {
   'no reading': 'No reading from this session.',
 }
 
-/** One provider account's meters in an identity's pill: one group per
- *  provider, or one per account when an identity has two accounts of one
- *  provider live (their allowances are separate, so never merged). */
+/** One provider's meters in an identity's pill (Q1.2, as approved: one
+ *  group per provider). */
 export interface LiveUsageGroup {
-  /** Unique within the pill: the provider, or the provider and account. */
+  /** Unique within the pill: the provider. */
   key: string
   providerId: ProviderId
-  /** The account's name, shown in the group when its provider has another
-   *  group in the same pill. */
-  accountName?: string
-  /** One bucket per label across the group's live sessions, in first-seen
-   *  order (preferBucket: the current window, then its worst case). Never
-   *  mixed with another provider's or account's: percentages are not
-   *  comparable across them. */
+  /** One bucket per label across the identity's live sessions of this
+   *  provider, whichever of its accounts they run under, in first-seen order
+   *  (preferBucket: the current window, then its worst case). Never mixed
+   *  with another provider's: percentages are not comparable across them. */
   buckets: UsageBucket[]
   /** D3: nothing will ever report for it. */
   word?: UsageGroupWord
   /** The account email its sessions report (the providers attributed by it). */
   email?: string
-  /** How its account signs in ("ChatGPT sign-in", "API key"), for the tooltip. */
+  /** How its account signs in ("ChatGPT sign-in", "API key"), for the
+   *  tooltip: with two accounts of the provider, the one behind the group's
+   *  worst bucket (groupSource). */
   method?: string
 }
 
@@ -157,6 +155,42 @@ export function preferBucket(prev: UsageBucket, next: UsageBucket, now: number):
   return next.percent > prev.percent
 }
 
+/** One provider account's sessions in an identity's group. */
+interface GroupAccount { id: string; method?: string; perToken: boolean; sessions: number; unavailable: number }
+/** A group's bucket for one label, and the account whose session reported it. */
+interface Picked { bucket: UsageBucket; from: string }
+
+/**
+ * The account a group speaks for, deterministically (it names the group's
+ * sign-in method): the one behind its worst bucket, a current window before
+ * one past its reset, then the higher percentage, then the lower account id;
+ * with no bucket, the lowest account id.
+ */
+function groupSource(picked: readonly Picked[], accounts: readonly GroupAccount[], now: number): string | undefined {
+  let best: Picked | undefined
+  for (const p of picked) {
+    if (!best) { best = p; continue }
+    const pPast = bucketPastReset(p.bucket, now)
+    const bPast = bucketPastReset(best.bucket, now)
+    if (pPast !== bPast) { if (bPast) best = p; continue }
+    if (p.bucket.percent > best.bucket.percent || (p.bucket.percent === best.bucket.percent && p.from < best.from)) best = p
+  }
+  return best ? best.from : accounts[0]?.id
+}
+
+/**
+ * A group's D3 word when nothing has reported, from all its accounts, never
+ * the first seen: "per token" when every account is billed per token; "no
+ * reading" when none will report (each billed per token or with every session
+ * given up); otherwise none, since a reading is still expected.
+ */
+function groupWord(accounts: readonly GroupAccount[]): UsageGroupWord | undefined {
+  if (accounts.length === 0) return undefined
+  if (accounts.every((a) => a.perToken)) return 'per token'
+  if (accounts.every((a) => a.perToken || a.unavailable === a.sessions)) return 'no reading'
+  return undefined
+}
+
 function identityOf(snapshot: AccountsSnapshot | null, account: AccountView | undefined): IdentityView | undefined {
   if (!account) return undefined
   return snapshot?.identities.find((i) => i.id === account.identityId)
@@ -179,11 +213,14 @@ function identityOf(snapshot: AccountsSnapshot | null, account: AccountView | un
  * other provider (Codex) is grouped by the registry account it runs under,
  * else that provider's default account; with neither, it is skipped.
  *
- * Per provider account, per bucket label, the current window's WORST-CASE
- * (max) utilisation (preferBucket), so the number is never falsely low when
- * one session has a stale tick, and an idle session's passed window never
- * hides the current one. Two accounts of one provider in one identity are two
- * groups, each named. A pill that
+ * Per provider, per bucket label, the current window's WORST-CASE (max)
+ * utilisation (preferBucket) across the identity's live sessions, whichever
+ * of its accounts they run under (Q1.2, as approved: one group per provider),
+ * so the number is never falsely low when one session has a stale tick, and
+ * an idle session's passed window never hides the current one. With two
+ * accounts of one provider, the group's sign-in method comes from the account
+ * behind its worst bucket and its D3 word from all of them (groupSource,
+ * groupWord): never from whichever was seen first. A pill that
  * holds only Claude Code sessions reads as it always has (name and colour
  * from the email, aliases and overrides included); a linked or Codex pill
  * takes the identity's name and colour. Ordered primary-first, then by name.
@@ -200,7 +237,7 @@ export function liveIdentityUsage(
 ): LiveIdentity[] {
   const primaryEmail = profiles.find((p) => p.isPrimary)?.accountEmail
   const primaryCanon = primaryEmail ? canonicaliseEmail(primaryEmail) : undefined
-  interface GroupAcc { group: LiveUsageGroup; name: string; labels: Map<string, UsageBucket>; sessions: number; unavailable: number; perToken: boolean }
+  interface GroupAcc { providerId: ProviderId; email?: string; labels: Map<string, Picked>; accounts: Map<string, GroupAccount> }
   interface Acc {
     key: string
     identity?: IdentityView
@@ -257,26 +294,28 @@ export function liveIdentityUsage(
     }
     if (email && primaryCanon === canonicaliseEmail(email)) acc.isPrimary = true
     if (!how.byEmail && !acc.account) acc.account = account
-    const groupKey = how.byEmail || !account ? providerId : `${providerId}:${account.id}`
-    let g = acc.groups.get(groupKey)
+    let g = acc.groups.get(providerId)
     if (!g) {
+      g = { providerId, ...(email ? { email } : {}), labels: new Map(), accounts: new Map() }
+      acc.groups.set(providerId, g)
+    }
+    // The account a session runs under ('' for the email-attributed provider,
+    // whose group needs no account).
+    const accountKey = !how.byEmail && account ? account.id : ''
+    let ga = g.accounts.get(accountKey)
+    if (!ga) {
       const provider = providerView(snapshot, providerId) ?? { providerId, displayName: PROVIDER_NAME[providerId] }
       const method = !how.byEmail && account && !account.external ? signInMethodLabel(account, provider) : null
-      g = {
-        group: { key: groupKey, providerId, buckets: [], ...(email ? { email } : {}), ...(method ? { method } : {}) },
-        name: account?.providerLabel?.trim() || method || ACCOUNT_NAME_FALLBACK,
-        labels: new Map(),
-        sessions: 0,
-        unavailable: 0,
-        perToken: account?.authMethod === 'apiKey',
-      }
-      acc.groups.set(groupKey, g)
+      ga = { id: accountKey, ...(method ? { method } : {}), perToken: account?.authMethod === 'apiKey', sessions: 0, unavailable: 0 }
+      g.accounts.set(accountKey, ga)
     }
-    g.sessions++
-    if (s.usageUnavailable === 'no-reading') g.unavailable++
+    ga.sessions++
+    if (s.usageUnavailable === 'no-reading') ga.unavailable++
     for (const b of sessionUsageBuckets(s)) {
       const prev = g.labels.get(b.label)
-      if (!prev || preferBucket(prev, b, now)) g.labels.set(b.label, b)
+      // Order-free: of two equal readings, the lower account id's.
+      const better = !prev || preferBucket(prev.bucket, b, now) || (!preferBucket(b, prev.bucket, now) && accountKey < prev.from)
+      if (better) g.labels.set(b.label, { bucket: b, from: accountKey })
     }
   }
 
@@ -284,16 +323,18 @@ export function liveIdentityUsage(
   for (const acc of byKey.values()) {
     const groups: LiveUsageGroup[] = []
     for (const providerId of PROVIDER_ORDER) {
-      const mine = Array.from(acc.groups.values()).filter((g) => g.group.providerId === providerId)
-      for (const g of mine) {
-        const group: LiveUsageGroup = { ...g.group, buckets: Array.from(g.labels.values()) }
-        if (mine.length > 1) group.accountName = g.name
-        if (FOOTER_PROVIDER[providerId].words && group.buckets.length === 0) {
-          if (g.perToken) group.word = 'per token'
-          else if (g.unavailable === g.sessions) group.word = 'no reading'
-        }
-        groups.push(group)
+      const g = acc.groups.get(providerId)
+      if (!g) continue
+      const picked = Array.from(g.labels.values())
+      const accounts = Array.from(g.accounts.values()).sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
+      const group: LiveUsageGroup = { key: providerId, providerId, buckets: picked.map((p) => p.bucket), ...(g.email ? { email: g.email } : {}) }
+      const method = accounts.find((a) => a.id === groupSource(picked, accounts, now))?.method
+      if (method) group.method = method
+      if (FOOTER_PROVIDER[providerId].words && group.buckets.length === 0) {
+        const word = groupWord(accounts)
+        if (word) group.word = word
       }
+      groups.push(group)
     }
     const plain = groups.length === 1 && FOOTER_PROVIDER[groups[0].providerId].plainAlone && !!acc.email
     const name = plain
@@ -578,8 +619,7 @@ function tooltip(
       if (a.email && a.name !== a.email) lines.push(a.email)
     } else {
       const sub = g.email ?? g.method
-      const parts = [providerNameOf(g.providerId, snapshot), g.accountName, sub && sub !== g.accountName ? sub : undefined].filter(Boolean)
-      lines.push(parts.join(` ${MIDDOT} `))
+      lines.push(`${providerNameOf(g.providerId, snapshot)}${sub ? ` ${MIDDOT} ${sub}` : ''}`)
       if (g.word) { lines.push(USAGE_WORD_TIP[g.word]); continue }
     }
     // Usage track MP6 (as drawn): a pill still waiting for its first reading
@@ -859,15 +899,6 @@ function groupContent(
   )
 }
 
-/** Which of an identity's two accounts of one provider a group is. */
-function GroupAccountName({ name }: { name: string }) {
-  return (
-    <span className="whitespace-nowrap" style={{ color: 'var(--text-secondary)' }} data-testid="multi-account-group-account">
-      {name}
-    </span>
-  )
-}
-
 /** Whether a group is led by its provider's mark: in a linked identity's pill
  *  (so the two groups are told apart), or when its provider's pill never
  *  reads plain (a Codex group, even alone). */
@@ -960,7 +991,6 @@ function IdentityPill({
                 )}
                 <span className={`flex items-center ${gap}`} data-testid={`multi-account-group-${g.providerId}`}>
                   {groupMarked(identity, g) && <ProviderMark providerId={g.providerId} size={13} title={providerNameOf(g.providerId, snapshot)} />}
-                  {g.accountName && <GroupAccountName name={g.accountName} />}
                   {node}
                 </span>
               </React.Fragment>
@@ -1125,7 +1155,6 @@ function IdentityOverflow({
                 return (
                   <span key={g.key} className="flex flex-wrap items-center gap-2 pl-4" data-testid={`multi-account-overflow-group-${g.providerId}`}>
                     {groupMarked(a, g) && <ProviderMark providerId={g.providerId} size={13} title={providerNameOf(g.providerId, snapshot)} />}
-                    {g.accountName && <GroupAccountName name={g.accountName} />}
                     {node}
                   </span>
                 )
