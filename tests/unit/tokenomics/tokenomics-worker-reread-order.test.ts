@@ -131,32 +131,49 @@ describe('the one-off re-read waits for the account folders (defect 4)', () => {
         },
       })
       let seen = false
+      let counting = false
       const unreadWhenCleared: string[][] = []
       const totals: number[] = []
+      // The moment the notice first clears, waited for as an event (no
+      // polling), with a generous bound for a loaded CI runner.
+      let cleared: () => void = () => {}
+      const clearedOnce = new Promise<void>((resolve) => { cleared = resolve })
       fake.onMessage((m: FromTkWorker) => {
         if (m.type !== 'index-progress') return
-        const r = (m as { accountReread?: { stage: string; total: number } | null }).accountReread
-        if (r) { seen = true; if (r.stage === 'reread' && r.total > 0) totals.push(r.total) } else if (seen) unreadWhenCleared.push(files.filter((f) => !db.read.has(f)))
+        const r = (m as { accountReread?: { stage: string; total: number; counting?: boolean } | null }).accountReread
+        if (r) {
+          seen = true
+          if (r.stage === 'reread' && r.counting === true) counting = true
+          if (r.stage === 'reread' && r.total > 0) totals.push(r.total)
+        } else if (seen) {
+          unreadWhenCleared.push(files.filter((f) => !db.read.has(f)))
+          cleared()
+        }
       })
       const w = createTokenomicsWorker(fake.asWorkerSide(), { fs: late as unknown as typeof fs, watchDebounceMs: 0 })
       stop = () => w.stop()
       fake.post({ type: 'open', dbPath: path.join(tmp, 'tk.db'), pricing: {}, configs: [], claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: home, codexRealmSessionsDirs: [], codexRealmDirsKnown: knownAtOpen })
-      for (let i = 0; i < 200 && (db.meta.get('accountReread') !== 'done' || db.read.size < files.length || db.meta.has('rollupsDirty') || unreadWhenCleared.length === 0); i++) {
-        await new Promise((r) => setTimeout(r, 10))
-      }
+      let bound: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        clearedOnce,
+        new Promise<void>((_, fail) => { bound = setTimeout(() => fail(new Error('the notice never cleared')), 20_000) }),
+      ]).finally(() => clearTimeout(bound))
       expect(named).toBe(true)
       expect(seen).toBe(true)
+      // When the notice cleared, every rollout had been read, the re-read was
+      // done and the rollups rebuilt.
+      expect(unreadWhenCleared[0]).toEqual([])
       expect(db.read.size).toBe(files.length)
       expect(db.meta.get('accountReread')).toBe('done')
-      // Whenever the notice cleared, every rollout had been read.
-      expect(unreadWhenCleared.length).toBeGreaterThan(0)
-      expect(unreadWhenCleared).toEqual(unreadWhenCleared.map(() => []))
+      expect(db.meta.has('rollupsDirty')).toBe(false)
+      // Until its files are counted, stage 1 says it is counting them.
+      if (!knownAtOpen) expect(counting).toBe(true)
       // Stage 1 counts every rollout it will read, this computer's and the
       // account's: from the start when the folders were not named yet, and
       // once they are when they were named as none.
       expect(totals.length).toBeGreaterThan(0)
       if (!knownAtOpen) expect(new Set(totals)).toEqual(new Set([files.length]))
       expect(totals.at(-1)).toBe(files.length)
-    })
+    }, 30_000)
   }
 })

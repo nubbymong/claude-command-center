@@ -154,7 +154,8 @@ export function tkUnpricedNotice(unpriced: TkSummary['unpriced'] | undefined): s
 export function tkRereadNotice(r: TkAccountReread | null | undefined): string | null {
   if (!r) return null
   const count = (unit: string) => (r.total > 0 ? `: ${r.done} of ${r.total} ${unit}` : '')
+  // While stage 1 is still counting its files, it says so.
   return r.stage === 'reread'
-    ? `Sorting Codex history by account${count('files')}. Totals are complete; the split by account fills in.`
+    ? `Sorting Codex history by account${r.counting === true ? ': counting files' : count('files')}. Totals are complete; the split by account fills in.`
     : `Sorting usage by account and provider${count('entries')}. Totals are complete; the split fills in.`
 }

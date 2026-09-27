@@ -138,7 +138,14 @@ export interface TkIndexStatus {
   accountReread?: TkAccountReread | null
 }
 
-export interface TkAccountReread { stage: 'reread' | 'rebuild'; done: number; total: number }
+export interface TkAccountReread {
+  stage: 'reread' | 'rebuild'
+  done: number
+  total: number
+  /** Stage 1 before its files are counted: the list is being made, or the
+   *  account folders are not named yet. */
+  counting?: boolean
+}
 
 /** An account present in the stored usage (MP9). */
 export interface TkAccountPresent { provider: TkProvider; accountKey: TkAccountKey }

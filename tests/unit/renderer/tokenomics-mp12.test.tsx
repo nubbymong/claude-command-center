@@ -126,6 +126,8 @@ describe('the labels (MP12)', () => {
     expect(tkRereadNotice({ stage: 'reread', done: 3, total: 12 })).toBe('Sorting Codex history by account: 3 of 12 files. Totals are complete; the split by account fills in.')
     expect(tkRereadNotice({ stage: 'rebuild', done: 5000, total: 21000 })).toBe('Sorting usage by account and provider: 5000 of 21000 entries. Totals are complete; the split fills in.')
     expect(tkRereadNotice({ stage: 'reread', done: 0, total: 0 })).toBe('Sorting Codex history by account. Totals are complete; the split by account fills in.')
+    // Before its files are counted (VM: ~9 s on a 5,397-rollout upgrade).
+    expect(tkRereadNotice({ stage: 'reread', done: 0, total: 0, counting: true })).toBe('Sorting Codex history by account: counting files. Totals are complete; the split by account fills in.')
     expect(tkRereadNotice(null)).toBeNull()
   })
 

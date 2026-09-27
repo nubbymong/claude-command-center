@@ -165,7 +165,8 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   /** MP9: the one-off account attribution, while it runs (index status). */
   let rereadProgress: TkAccountReread | null = null
   let rebuildProgress: TkAccountReread | null = null
-  const accountReread = (): TkAccountReread | null => rebuildProgress ?? (db?.accountRereadPending() ? (rereadProgress ?? { stage: 'reread', done: 0, total: 0 }) : null)
+  // Stage 1 not counted yet says so (counting), so the page can say it.
+  const accountReread = (): TkAccountReread | null => rebuildProgress ?? (db?.accountRereadPending() ? (rereadProgress ?? { stage: 'reread', done: 0, total: 0, counting: true }) : null)
   /**
    * Did anything in THIS sweep leave work behind — a file not read to its end,
    * or one that could not be read at all?

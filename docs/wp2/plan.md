@@ -1064,7 +1064,8 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
     canvas does not draw it, so it goes to the owner in the screenshot
     review with the other undrawn lines):
     re-read: "Sorting Codex history by account: N of M files. Totals are
-    complete; the split by account fills in."
+    complete; the split by account fills in." (": counting files" in place
+    of the count until its files are counted)
     rebuild: "Sorting usage by account and provider: N of M entries. Totals
     are complete; the split fills in."
   - The hourly heatmap's provider and account split is part of what is
