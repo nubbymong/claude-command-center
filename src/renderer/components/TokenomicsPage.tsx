@@ -14,7 +14,7 @@ import { SessionsTable as NewSessionsTable } from './tokenomics/SessionsTable'
 import { SessionDetailDrawer } from './tokenomics/SessionDetailDrawer'
 import { ActivityHeatmap } from './tokenomics/ActivityHeatmap'
 import { GitHubCopilotCard } from './tokenomics/GitHubCopilotCard'
-import { tkKpiSplit, tkRereadNotice, tkUnpricedNotice } from './tokenomics/tk-labels'
+import { tkKpiSplit, tkRereadNotice, tkSeriesInRange, tkUnpricedNotice } from './tokenomics/tk-labels'
 
 // ── Shimmer / loading state ──
 
@@ -44,6 +44,52 @@ function SummaryShimmer() {
   )
 }
 
+/** The first index's progress. It subscribes to the index status itself,
+ *  so progress ticks re-render this, not the page (MP12 round 1). */
+function IndexingProgress() {
+  const status = useTokenomicsStore((s) => s.indexStatus)
+  return <IndexingState status={status} />
+}
+
+/** The notices above the filters: files the index could not read, models
+ *  with no price, and the one-off sorting by account (MP12). Subscribed on
+ *  their own, for the same reason. */
+function IndexNotices({ unpricedNotice }: { unpricedNotice: string | null }) {
+  const filesFailed = useTokenomicsStore((s) => s.indexStatus?.filesFailed ?? 0)
+  const rereadNotice = useTokenomicsStore((s) => tkRereadNotice(s.indexStatus?.accountReread))
+  return (
+    <>
+      {/* Files the index could not read. These deliberately do not hold
+          the dashboard back (gating on one unreadable transcript left the
+          index unfinished for the life of the install, showing a spinner
+          and nothing else), so the figures are shown and what is missing
+          is said plainly. */}
+      {filesFailed > 0 && (
+        <div
+          className="rounded-xl px-3 py-2 mb-4 text-[11px]"
+          style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+          role="status"
+        >
+          {filesFailed === 1
+            ? 'One transcript could not be read, so its usage is missing from these figures.'
+            : `${filesFailed} transcripts could not be read, so their usage is missing from these figures.`}
+        </div>
+      )}
+      {[unpricedNotice, rereadNotice].filter((n): n is string => !!n).map((notice) => (
+        <div
+          key={notice}
+          className="rounded-xl px-3 py-2 mb-4 text-[11px]"
+          style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+          role="status"
+          data-testid="tk-notice"
+        >
+          {notice}
+        </div>
+      ))}
+    </>
+  )
+}
+
 // ── Main Page (new design — Task 17+18) ──
 
 const dollarIcon = (
@@ -54,7 +100,11 @@ const dollarIcon = (
 )
 
 export default function TokenomicsPage() {
-  const indexStatus = useTokenomicsStore((s) => s.indexStatus)
+  // MP12 round 1: only the index status fields the page itself reads, so
+  // its progress ticks do not re-render the whole dashboard.
+  const firstIndexComplete = useTokenomicsStore((s) => s.indexStatus?.firstIndexComplete === true)
+  const indexError = useTokenomicsStore((s) => s.indexStatus?.error ?? null)
+  const rereading = useTokenomicsStore((s) => !!s.indexStatus?.accountReread)
   const summary = useTokenomicsStore((s) => s.summary)
   const loadingSummary = useTokenomicsStore((s) => s.loadingSummary)
   const error = useTokenomicsStore((s) => s.error)
@@ -64,8 +114,7 @@ export default function TokenomicsPage() {
   // filesFailed slot, and what fills in while usage is sorted by account.
   const split = summary ? tkKpiSplit(summary, accounts, filter.provider ?? filter.account?.provider) : undefined
   const unpricedNotice = tkUnpricedNotice(summary?.unpriced)
-  const rereadNotice = tkRereadNotice(indexStatus?.accountReread)
-  const splitFilling = !!indexStatus?.accountReread && !!(filter.provider || filter.account)
+  const splitFilling = rereading && !!(filter.provider || filter.account)
 
   // GitHub Copilot billing card (ACTUAL billing credits, distinct from the
   // estimates above). Shown only when the meter is on and there is something to
@@ -106,14 +155,14 @@ export default function TokenomicsPage() {
         {/* Indexing / first-load gate. A fatal worker error (failed DB open)
             must surface here too — otherwise the gate spins on 'indexing'
             forever with zero diagnostics. */}
-        {(indexStatus === null || !indexStatus.firstIndexComplete) ? (
-          indexStatus?.error ? (
+        {!firstIndexComplete ? (
+          indexError ? (
             <div
               className="rounded-xl p-4 text-sm flex items-center justify-between gap-3"
               style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
               role="alert"
             >
-              <span>Tokenomics indexing failed: {indexStatus.error}</span>
+              <span>Tokenomics indexing failed: {indexError}</span>
               <button
                 type="button"
                 className="px-2 py-1 rounded-md text-xs"
@@ -124,7 +173,7 @@ export default function TokenomicsPage() {
               </button>
             </div>
           ) : (
-            <IndexingState status={indexStatus} />
+            <IndexingProgress />
           )
         ) : (
           <>
@@ -136,34 +185,8 @@ export default function TokenomicsPage() {
               </span>
             </div>
 
-            {/* Files the index could not read. These deliberately do not hold
-                the dashboard back — gating on one unreadable transcript left the
-                index unfinished for the life of the install, showing a spinner
-                and nothing else — so the figures are shown and what is missing
-                is said plainly. */}
-            {(indexStatus.filesFailed ?? 0) > 0 && (
-              <div
-                className="rounded-xl px-3 py-2 mb-4 text-[11px]"
-                style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                role="status"
-              >
-                {indexStatus.filesFailed === 1
-                  ? 'One transcript could not be read, so its usage is missing from these figures.'
-                  : `${indexStatus.filesFailed} transcripts could not be read, so their usage is missing from these figures.`}
-              </div>
-            )}
-            {/* Models with no price, and the one-off sorting by account (MP12). */}
-            {[unpricedNotice, rereadNotice].filter((n): n is string => !!n).map((notice) => (
-              <div
-                key={notice}
-                className="rounded-xl px-3 py-2 mb-4 text-[11px]"
-                style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                role="status"
-                data-testid="tk-notice"
-              >
-                {notice}
-              </div>
-            ))}
+            {/* Unreadable files, models with no price, sorting by account. */}
+            <IndexNotices unpricedNotice={unpricedNotice} />
 
             {/* Filter bar */}
             <NewFilterBar />
@@ -194,7 +217,7 @@ export default function TokenomicsPage() {
 
                 {/* Charts row */}
                 <div className="grid grid-cols-2 gap-3 mb-5">
-                  <CostOverTimeChart data={summary.dailySeries} series={split?.providers} />
+                  <CostOverTimeChart data={summary.dailySeries} series={tkSeriesInRange(split?.providers, summary.dailySeries)} />
                   <ModelCacheDonut
                     modelSplit={summary.modelSplit}
                     cacheSplit={summary.cacheSplit}

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { existsSync, mkdirSync, readdirSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync } from 'fs'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY_MS, splashShownAt } from './splash-window'
 import { registerUsageHandlers } from './ipc/usage-handlers'
@@ -52,7 +52,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, isValidProfileId } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -797,7 +797,10 @@ if (!gotTheLock) {
       isLocal: (sessionId) => getClaudeProfileId(sessionId) !== undefined,
       profilesRoot: () => { try { return getProfilesRoot() } catch { return null } },
       isProfileId: (name) => isValidProfileId(name),
-      accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId) ?? null,
+      // The layout comes from where profile homes are built: <home>/.claude/projects.
+      projectsDirOf: (profileId) => join(getProfileConfigDir(profileId), '.claude', 'projects'),
+      realRoot: (root) => { try { return realpathSync.native(root) } catch { return null } },
+      accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId, { ignoreCase: process.platform === 'win32' }) ?? null,
       record: (sessionId, accountKey) => {
         const tokenomics = getTokenomicsSupervisor()
         if (!tokenomics) return false

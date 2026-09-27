@@ -3,6 +3,7 @@
 // about providers and accounts. Pure: the page, the filter bar and the tables
 // read their labels, groups, notices and tooltips from here.
 import type { AccountsSnapshot, AccountView } from '../../../shared/providers'
+import type { IdentityColorKey } from '../../../shared/identity-colors'
 import type { TkAccountPresent, TkAccountReread, TkProvider, TkSummary } from '../../../shared/types'
 import { accountDisplayName } from '../../stores/providerAccountsStore'
 
@@ -17,6 +18,10 @@ export const TK_NOT_RECORDED = 'Not recorded'
 export const TK_THIS_COMPUTER = "This computer's sign-in"
 /** An account no longer in the registry. */
 export const TK_REMOVED_ACCOUNT = 'Removed account'
+/** The Codex KPI legend's tooltip (Q1.5, as the approved canvas words it). */
+export const TK_CODEX_COST_NOTE = 'ChatGPT sign-in: API-equivalent estimate. API key: Estimate at API list prices.'
+/** A cost with no price, said as briefly as the page's notice says it. */
+export const TK_NO_PRICE_NOTE = 'No price yet, so not in the totals.'
 
 /** The registry account an account key names, if the snapshot has it. */
 export function tkAccountView(snapshot: AccountsSnapshot | null, accountKey: string): AccountView | undefined {
@@ -25,6 +30,14 @@ export function tkAccountView(snapshot: AccountsSnapshot | null, accountKey: str
   const provider = accountKey.slice(0, at)
   const id = accountKey.slice(at + 1)
   return snapshot?.accounts.find((a) => a.providerId === provider && a.id === id)
+}
+
+/** The identity colour of an account key's account, if it has one (the
+ *  chip beside its name in the sessions table). */
+export function tkAccountColourKey(snapshot: AccountsSnapshot | null, accountKey: string): IdentityColorKey | null {
+  const account = tkAccountView(snapshot, accountKey)
+  const key = account ? snapshot?.identities.find((i) => i.id === account.identityId)?.colourKey : undefined
+  return typeof key === 'string' && key ? key as IdentityColorKey : null
 }
 
 /** An account key's label: its account's name ("(archived)" once archived),
@@ -49,6 +62,14 @@ export function tkKpiSplit(summary: TkSummary, present: readonly TkAccountPresen
   if (providers.length < 2) return undefined
   const noPrice = providers.filter((p) => summary.kpisByProvider[p].lifeToDateCostUsd === 0 && summary.unpriced.some((u) => u.provider === p))
   return { byProvider: summary.kpisByProvider, providers, noPrice }
+}
+
+/** The cost chart's series (MP12 round 1): of the split's providers, those
+ *  with cost in the range shown (the chart plots cost), or none when fewer
+ *  than two are left. */
+export function tkSeriesInRange(providers: readonly TkProvider[] | undefined, daily: TkSummary['dailySeries']): TkProvider[] | undefined {
+  const shown = (providers ?? []).filter((p) => daily.some((d) => (d.byProvider?.[p] ?? 0) > 0))
+  return shown.length > 1 ? shown : undefined
 }
 
 /** The providers the stored usage has, in page order. */
@@ -94,12 +115,12 @@ export function tkAccountGroups(present: readonly TkAccountPresent[], snapshot: 
   return groups
 }
 
-/** A session's cost tooltip (Q1.5): Claude's "not billed on Max plan"; a
- *  Codex account signed in with an API key is estimated at list prices, any
- *  other Codex usage is an API-equivalent estimate; no price, said so. */
+/** A session's cost tooltip (Q1.5, as the approved canvas draws it): an
+ *  API-equivalent estimate, except a Codex account signed in with an API key,
+ *  estimated at list prices; no price, said so. */
 export function tkCostTooltip(provider: TkProvider, accountKey: string, snapshot: AccountsSnapshot | null, costUsd: number | null): string {
-  if (costUsd === null) return 'This model has no price yet, so its cost is not in the totals.'
-  if (provider === 'claude') return 'API equivalent cost (not billed on Max plan)'
+  if (costUsd === null) return TK_NO_PRICE_NOTE
+  if (provider === 'claude') return 'API-equivalent estimate'
   const account = tkAccountView(snapshot, accountKey)
   return account?.authMethod === 'apiKey' ? 'Estimate at API list prices' : 'API-equivalent estimate'
 }
@@ -134,6 +155,6 @@ export function tkRereadNotice(r: TkAccountReread | null | undefined): string | 
   if (!r) return null
   const count = (unit: string) => (r.total > 0 ? `: ${r.done} of ${r.total} ${unit}` : '')
   return r.stage === 'reread'
-    ? `Sorting Codex history by account${count('files')}. Totals are complete; the per-account split fills in as it goes.`
-    : `Sorting usage by account and provider${count('entries')}. Totals are complete; the split fills in as it goes.`
+    ? `Sorting Codex history by account${count('files')}. Totals are complete; the split by account fills in.`
+    : `Sorting usage by account and provider${count('entries')}. Totals are complete; the split fills in.`
 }

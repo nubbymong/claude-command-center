@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useId } from 'react'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkRange } from '../../stores/tokenomicsStore'
 import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
 import { tkAccountGroups, tkAccountValue, tkParseAccountValue, tkProvidersWithData, TK_PROVIDER_LABEL } from './tk-labels'
+import { ProviderMark } from '../sidebar/Badges'
 
 const RANGE_OPTIONS: Array<{ label: string; value: TkRange }> = [
   { label: '7d', value: '7d' },
@@ -26,6 +27,8 @@ export function FilterBar() {
   const accountValue = filter.account ? tkAccountValue(filter.account.provider, filter.account.key) : '__all__'
   const setRange = useTokenomicsStore((s) => s.setRange)
   const setSearch = useTokenomicsStore((s) => s.setSearch)
+  const providerLabelId = useId()
+  const accountSelectId = useId()
 
   const costByConfig = summary?.costByConfig ?? []
 
@@ -76,21 +79,30 @@ export function FilterBar() {
       {/* Provider segmented control (MP12) */}
       {providers.length > 1 && (
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-overlay0 uppercase tracking-wider">Provider</span>
-          <div className="flex rounded overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }} data-testid="tk-provider-filter">
+          <span id={providerLabelId} className="text-[11px] text-overlay0 uppercase tracking-wider">Provider</span>
+          <div
+            role="group"
+            aria-labelledby={providerLabelId}
+            className="flex rounded overflow-hidden"
+            style={{ border: '1px solid var(--border-subtle)' }}
+            data-testid="tk-provider-filter"
+          >
             {[undefined, ...providers].map((p) => {
               const active = filter.provider === p
               return (
                 <button
                   key={p ?? 'all'}
+                  type="button"
+                  aria-pressed={active}
                   onClick={() => setProvider(p)}
-                  className="px-2.5 py-0.5 text-xs transition-colors"
+                  className="px-2.5 py-0.5 text-xs transition-colors inline-flex items-center gap-1.5"
                   style={{
                     background: active ? 'var(--accent)' : 'var(--surface-stage)',
                     color: active ? 'var(--surface-base)' : 'var(--text-secondary)',
                     fontWeight: active ? 600 : 400,
                   }}
                 >
+                  {p && <ProviderMark providerId={p} size={14} />}
                   {p ? TK_PROVIDER_LABEL[p] : 'All'}
                 </button>
               )
@@ -102,8 +114,9 @@ export function FilterBar() {
       {/* Account dropdown, grouped by provider (MP12) */}
       {groups.length > 0 && (
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-overlay0 uppercase tracking-wider">Account</span>
+          <label htmlFor={accountSelectId} className="text-[11px] text-overlay0 uppercase tracking-wider">Account</label>
           <select
+            id={accountSelectId}
             value={accountValue}
             onChange={(e) => setAccount(e.target.value === '__all__' ? undefined : tkParseAccountValue(e.target.value) ?? undefined)}
             className="text-xs rounded px-2 py-0.5 outline-none max-w-[200px]"

@@ -164,7 +164,7 @@ export function CostOverTimeChart({ data, series }: Props) {
                   />
                 )}
                 <title>{split
-                  ? `${p.day}: ${formatCostShort(p.costUsd)} (${split.map((s) => `${TK_PROVIDER_LABEL[s]} ${formatCostShort(p.byProvider?.[s] ?? 0)}`).join(', ')})`
+                  ? `${p.day}: ${split.map((s) => `${TK_PROVIDER_LABEL[s]} ${formatCostShort(p.byProvider?.[s] ?? 0)}`).join(', ')}`
                   : `${p.day}: ${formatCostShort(p.costUsd)}`}</title>
                 {showLabel && (
                   <text

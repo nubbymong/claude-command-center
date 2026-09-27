@@ -1,6 +1,6 @@
 import React from 'react'
 import type { TkSummary, TkKpis, TkProvider } from '../../../shared/types'
-import { TK_PROVIDER_LABEL, TK_PROVIDER_COLOR } from './tk-labels'
+import { TK_PROVIDER_LABEL, TK_PROVIDER_COLOR, TK_CODEX_COST_NOTE } from './tk-labels'
 
 function formatCostKpi(usd: number): string {
   if (usd >= 1000) return `$${(usd / 1000).toFixed(1)}k`
@@ -18,28 +18,47 @@ export interface TkKpiSplit {
   noPrice: TkProvider[]
 }
 
-/** A cost KPI's two-segment bar and legend. */
-function CostSplit({ split, pick }: { split: TkKpiSplit; pick: (k: TkKpis) => number }) {
-  const parts = split.providers.map((p) => ({ p, value: pick(split.byProvider[p]) || 0, noPrice: split.noPrice.includes(p) }))
+/** A KPI's two-segment bar (each provider's share of `weight`) and its
+ *  legend (`show` for each provider's figure). The Codex item carries the
+ *  cost wording per sign-in (Q1.5) when `costNote` is set. */
+function Split({ split, weight, show, costNote }: {
+  split: TkKpiSplit
+  weight: (k: TkKpis) => number
+  show: (p: TkProvider) => React.ReactNode
+  costNote?: boolean
+}) {
+  const parts = split.providers.map((p) => ({ p, value: weight(split.byProvider[p]) || 0 }))
   const total = parts.reduce((s, x) => s + x.value, 0)
   return (
     <div className="mt-2" data-testid="tk-kpi-split">
-      <div className="flex h-1.5 rounded overflow-hidden" style={{ background: 'var(--surface-stage)' }}>
+      <div className="flex h-1 rounded overflow-hidden" style={{ background: 'var(--surface-stage)' }} data-testid="tk-kpi-split-bar">
         {total > 0 && parts.map((x) => x.value > 0 && (
           <div key={x.p} style={{ width: `${(x.value / total) * 100}%`, background: TK_PROVIDER_COLOR[x.p] }} />
         ))}
       </div>
-      <div className="mt-1 space-y-0.5">
+      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
         {parts.map((x) => (
-          <div key={x.p} className="flex items-center gap-1.5 text-[10px]">
-            <span className="rounded-sm shrink-0" style={{ width: 6, height: 6, background: TK_PROVIDER_COLOR[x.p] }} />
-            <span style={{ color: 'var(--text-muted)' }}>{TK_PROVIDER_LABEL[x.p]}</span>
-            <span className="ml-auto font-mono" style={{ color: 'var(--text-secondary)' }}>{x.noPrice ? 'no price' : formatCostKpi(x.value)}</span>
-          </div>
+          <span
+            key={x.p}
+            className="inline-flex items-center gap-1"
+            title={costNote && x.p === 'codex' ? TK_CODEX_COST_NOTE : undefined}
+            data-testid={`tk-kpi-legend-${x.p}`}
+          >
+            <span className="rounded-sm shrink-0" style={{ width: 8, height: 8, background: TK_PROVIDER_COLOR[x.p] }} />
+            {TK_PROVIDER_LABEL[x.p]} {show(x.p)}
+          </span>
         ))}
       </div>
     </div>
   )
+}
+
+/** A cost figure in the legend: "no price", muted and italic, for a
+ *  provider whose usage here has no price at all. */
+function CostFigure({ split, p, value }: { split: TkKpiSplit; p: TkProvider; value: number }) {
+  return split.noPrice.includes(p)
+    ? <span className="italic" style={{ color: 'var(--text-muted)' }}>no price</span>
+    : <span className="font-mono">{formatCostKpi(value)}</span>
 }
 
 interface Props {
@@ -77,7 +96,7 @@ export function KpiRow({ kpis, split }: Props) {
         <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
           API-equivalent estimate
         </div>
-        {showSplit && <CostSplit split={split!} pick={(k) => k.lifeToDateCostUsd} />}
+        {showSplit && <Split split={split!} weight={(k) => k.lifeToDateCostUsd} costNote show={(p) => <CostFigure split={split!} p={p} value={split!.byProvider[p].lifeToDateCostUsd} />} />}
       </div>
 
       {/* Last 7 days */}
@@ -111,7 +130,7 @@ export function KpiRow({ kpis, split }: Props) {
         <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
           vs prior 7 days
         </div>
-        {showSplit && <CostSplit split={split!} pick={(k) => k.last7dCostUsd} />}
+        {showSplit && <Split split={split!} weight={(k) => k.last7dCostUsd} costNote show={(p) => <CostFigure split={split!} p={p} value={split!.byProvider[p].last7dCostUsd} />} />}
       </div>
 
       {/* Cache efficiency */}
@@ -129,15 +148,8 @@ export function KpiRow({ kpis, split }: Props) {
           {formatCostKpi(cacheSavingsUsd)} saved
         </div>
         {showSplit && (
-          <div className="mt-2 space-y-0.5" data-testid="tk-kpi-split">
-            {split!.providers.map((p) => (
-              <div key={p} className="flex items-center gap-1.5 text-[10px]">
-                <span className="rounded-sm shrink-0" style={{ width: 6, height: 6, background: TK_PROVIDER_COLOR[p] }} />
-                <span style={{ color: 'var(--text-muted)' }}>{TK_PROVIDER_LABEL[p]}</span>
-                <span className="ml-auto font-mono" style={{ color: 'var(--text-secondary)' }}>{split!.byProvider[p].cacheEfficiencyPct.toFixed(0)}%</span>
-              </div>
-            ))}
-          </div>
+          // Each provider's share of the cache savings, and its own rate.
+          <Split split={split!} weight={(k) => k.cacheSavingsUsd} show={(p) => <span className="font-mono">{split!.byProvider[p].cacheEfficiencyPct.toFixed(0)}%</span>} />
         )}
       </div>
     </div>

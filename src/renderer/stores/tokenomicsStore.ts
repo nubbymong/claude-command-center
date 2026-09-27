@@ -164,14 +164,20 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
         (tk.accounts ? tk.accounts() : Promise.resolve([] as TkAccountPresent[])).catch(() => get().accounts),
       ])
 
+      const present = Array.isArray(accounts) ? accounts : []
       set({
         summary,
-        accounts: Array.isArray(accounts) ? accounts : [],
+        accounts: present,
         sessions: page.rows,
         nextCursor: page.nextCursor,
         loadingSummary: false,
         loadingSessions: false,
       })
+      // The Provider control shows only while both providers have usage; a
+      // choice made there does not outlive it (MP12 round 1).
+      if (get().filter.provider !== undefined && new Set(present.map((a) => a.provider)).size < 2) {
+        get().setProvider(undefined)
+      }
     } catch (err) {
       // Worker crash / restart-backoff / 15s timeout: clear the loading flags so
       // the page leaves its spinner and surfaces a retryable error instead of

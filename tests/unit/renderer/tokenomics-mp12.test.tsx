@@ -16,7 +16,7 @@ import type { AccountsSnapshot } from '../../../src/shared/providers'
 import type { TkAccountPresent, TkSummary, TkSessionRow, TkSessionDetail } from '../../../src/shared/types'
 import {
   tkAccountLabel, tkAccountGroups, tkCostTooltip, tkUnpricedNotice, tkRereadNotice, tkKpiSplit, tkProvidersWithData,
-  tkParseAccountValue, tkAccountValue, TK_NOT_RECORDED, TK_THIS_COMPUTER,
+  tkParseAccountValue, tkAccountValue, tkSeriesInRange, TK_NOT_RECORDED, TK_THIS_COMPUTER, TK_CODEX_COST_NOTE, TK_NO_PRICE_NOTE,
 } from '../../../src/renderer/components/tokenomics/tk-labels'
 import { useTokenomicsStore } from '../../../src/renderer/stores/tokenomicsStore'
 import { useProviderAccountsStore } from '../../../src/renderer/stores/providerAccountsStore'
@@ -39,8 +39,8 @@ const SNAPSHOT = {
   revision: 1,
   providers: [],
   identities: [
-    { id: 'id-work', friendlyName: 'Work' },
-    { id: 'id-review', friendlyName: 'Reviewer' },
+    { id: 'id-work', friendlyName: 'Work', colourKey: 'slate-blue' },
+    { id: 'id-review', friendlyName: 'Reviewer', colourKey: 'pink' },
     { id: 'id-old', friendlyName: 'Side project' },
   ],
   accounts: [
@@ -104,11 +104,14 @@ describe('the labels (MP12)', () => {
   })
 
   it('words each session\'s cost per provider (Q1.5), and says when there is no price', () => {
-    expect(tkCostTooltip('claude', `claude:${A_WORK}`, SNAPSHOT, 3)).toBe('API equivalent cost (not billed on Max plan)')
+    // As the approved canvas words them (MP12 round 1).
+    expect(tkCostTooltip('claude', `claude:${A_WORK}`, SNAPSHOT, 3)).toBe('API-equivalent estimate')
     expect(tkCostTooltip('codex', `codex:${A_REVIEW}`, SNAPSHOT, 3)).toBe('Estimate at API list prices')
     expect(tkCostTooltip('codex', 'codex:external', SNAPSHOT, 3)).toBe('API-equivalent estimate')
     expect(tkCostTooltip('codex', '', SNAPSHOT, 3)).toBe('API-equivalent estimate')
-    expect(tkCostTooltip('codex', `codex:${A_REVIEW}`, SNAPSHOT, null)).toMatch(/no price yet/)
+    expect(tkCostTooltip('codex', `codex:${A_REVIEW}`, SNAPSHOT, null)).toBe(TK_NO_PRICE_NOTE)
+    expect(TK_NO_PRICE_NOTE).toBe('No price yet, so not in the totals.')
+    expect(TK_CODEX_COST_NOTE).toBe('ChatGPT sign-in: API-equivalent estimate. API key: Estimate at API list prices.')
   })
 
   it('the unpriced notice names the models and their tokens', () => {
@@ -120,9 +123,9 @@ describe('the labels (MP12)', () => {
   })
 
   it('the notice while usage is sorted by account, in both stages, says the totals are complete', () => {
-    expect(tkRereadNotice({ stage: 'reread', done: 3, total: 12 })).toBe('Sorting Codex history by account: 3 of 12 files. Totals are complete; the per-account split fills in as it goes.')
-    expect(tkRereadNotice({ stage: 'rebuild', done: 5000, total: 21000 })).toBe('Sorting usage by account and provider: 5000 of 21000 entries. Totals are complete; the split fills in as it goes.')
-    expect(tkRereadNotice({ stage: 'reread', done: 0, total: 0 })).toBe('Sorting Codex history by account. Totals are complete; the per-account split fills in as it goes.')
+    expect(tkRereadNotice({ stage: 'reread', done: 3, total: 12 })).toBe('Sorting Codex history by account: 3 of 12 files. Totals are complete; the split by account fills in.')
+    expect(tkRereadNotice({ stage: 'rebuild', done: 5000, total: 21000 })).toBe('Sorting usage by account and provider: 5000 of 21000 entries. Totals are complete; the split fills in.')
+    expect(tkRereadNotice({ stage: 'reread', done: 0, total: 0 })).toBe('Sorting Codex history by account. Totals are complete; the split by account fills in.')
     expect(tkRereadNotice(null)).toBeNull()
   })
 
@@ -136,6 +139,16 @@ describe('the labels (MP12)', () => {
     // A provider with no cost but nothing unpriced is $0, not "no price".
     expect(tkKpiSplit(summary({ kpisByProvider: { claude: K(10), codex: K(0) }, unpriced: [] }), PRESENT)?.noPrice).toEqual([])
     expect(tkProvidersWithData(PRESENT)).toEqual(['claude', 'codex'])
+  })
+
+  // MP12 round 1: a series only for a provider with cost in the range shown.
+  it('the cost chart\'s series: the providers with cost in the range shown, or none when fewer than two', () => {
+    const both = summary().dailySeries
+    expect(tkSeriesInRange(['claude', 'codex'], both)).toEqual(['claude', 'codex'])
+    const claudeOnly = [{ day: '2026-09-26', costUsd: 8, byProvider: { claude: 8, codex: 0 } }]
+    expect(tkSeriesInRange(['claude', 'codex'], claudeOnly)).toBeUndefined()
+    expect(tkSeriesInRange(['claude', 'codex'], [])).toBeUndefined()
+    expect(tkSeriesInRange(undefined, both)).toBeUndefined()
   })
 })
 
@@ -165,6 +178,20 @@ describe('the components (MP12)', () => {
   it('the filter bar: Provider only when both have usage; Account grouped, "Not recorded" under both', async () => {
     render(createElement(FilterBar))
     expect(container.querySelector('[data-testid="tk-provider-filter"]')?.textContent).toBe('AllClaude CodeCodex')
+    // MP12 round 1: a labelled group, each provider with its mark, and which is pressed.
+    const group = container.querySelector('[data-testid="tk-provider-filter"]') as HTMLElement
+    expect(group.getAttribute('role')).toBe('group')
+    expect(document.getElementById(group.getAttribute('aria-labelledby') ?? '')?.textContent).toBe('Provider')
+    const buttons = () => [...group.querySelectorAll('button')]
+    expect(buttons().map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false'])
+    expect(buttons().map((b) => b.querySelector('[data-testid^="provider-mark-"]')?.getAttribute('data-testid') ?? null))
+      .toEqual([null, 'provider-mark-claude', 'provider-mark-codex'])
+    await act(async () => { buttons()[2].click() })
+    expect(buttons().map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'true'])
+    await act(async () => { buttons()[0].click() })
+    // The Account select has a real label.
+    const labelled = container.querySelector('[data-testid="tk-account-filter"]') as HTMLSelectElement
+    expect([...(labelled.labels ?? [])].map((l) => l.textContent)).toEqual(['Account'])
     const groups = [...container.querySelectorAll('[data-testid="tk-account-filter"] optgroup')].map((g) => [g.getAttribute('label'), [...g.querySelectorAll('option')].map((o) => o.textContent)])
     expect(groups).toEqual([
       ['Claude Code', ['Work', TK_NOT_RECORDED]],
@@ -189,8 +216,20 @@ describe('the components (MP12)', () => {
     render(createElement(KpiRow, { kpis: s.kpis, split: tkKpiSplit(s, PRESENT) }))
     const splits = [...container.querySelectorAll('[data-testid="tk-kpi-split"]')]
     expect(splits).toHaveLength(3)
-    expect(splits[0].textContent).toBe('Claude Code$1.1kCodexno price')
-    expect(splits[2].textContent).toBe('Claude Code50%Codex50%')
+    expect(splits[0].textContent).toBe('Claude Code $1.1kCodex no price')
+    expect(splits[2].textContent).toBe('Claude Code 50%Codex 50%')
+    // As drawn (MP12 round 1): every split has its bar, the cache one too,
+    // sized by each provider's share of the savings.
+    for (const s of splits) expect(s.querySelector('[data-testid="tk-kpi-split-bar"]')).not.toBeNull()
+    expect([...splits[2].querySelectorAll('[data-testid="tk-kpi-split-bar"] > div')].map((d) => (d as HTMLElement).style.width)).toEqual(['50%', '50%'])
+    // The Codex cost legend carries the wording per sign-in; the others do not.
+    expect(splits[0].querySelector('[data-testid="tk-kpi-legend-codex"]')?.getAttribute('title')).toBe(TK_CODEX_COST_NOTE)
+    expect(splits[1].querySelector('[data-testid="tk-kpi-legend-codex"]')?.getAttribute('title')).toBe(TK_CODEX_COST_NOTE)
+    expect(splits[2].querySelector('[data-testid="tk-kpi-legend-codex"]')?.hasAttribute('title')).toBe(false)
+    expect(splits[0].querySelector('[data-testid="tk-kpi-legend-claude"]')?.hasAttribute('title')).toBe(false)
+    // "no price" in muted italics.
+    const np = [...splits[0].querySelectorAll('span')].find((e) => e.textContent === 'no price') as HTMLElement
+    expect(np.className).toContain('italic')
     // No split given: none shown.
     render(createElement(KpiRow, { kpis: s.kpis }))
     expect(container.querySelectorAll('[data-testid="tk-kpi-split"]')).toHaveLength(0)
@@ -212,12 +251,18 @@ describe('the components (MP12)', () => {
     const rows = [...container.querySelectorAll('[data-testid="tk-no-price-model"]')]
     expect(rows).toHaveLength(1)
     expect(rows[0].textContent).toMatch(/no price$/)
+    // As drawn (MP12 round 1): the model's own colour, not a dashed outline;
+    // the words muted and italic.
+    const swatch = rows[0].firstElementChild as HTMLElement
+    expect(swatch.style.border).toBe('')
+    expect(swatch.style.backgroundColor).not.toBe('')
+    expect((rows[0].lastElementChild as HTMLElement).className).toContain('italic')
     expect(container.textContent).not.toContain('$0.00')
   })
 
   it('the heatmap says its hours are filling in while usage is sorted by account', () => {
     render(createElement(ActivityHeatmap, { data: [], filling: true }))
-    expect(container.querySelector('[data-testid="tk-heatmap-filling"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="tk-heatmap-filling"]')?.textContent).toBe('Filling in as usage is sorted by account.')
     render(createElement(ActivityHeatmap, { data: [] }))
     expect(container.querySelector('[data-testid="tk-heatmap-filling"]')).toBeNull()
   })
@@ -232,14 +277,23 @@ describe('the components (MP12)', () => {
       row({ sessionId: 'a', provider: 'claude', model: 'claude-opus-4-8', accountKey: `claude:${A_WORK}`, costUsd: 8.4 }),
       row({ sessionId: 'b', accountKey: `codex:${A_REVIEW}` }),
       row({ sessionId: 'c', accountKey: 'codex:external', costUsd: null, unpricedTokens: 5 }),
+      row({ sessionId: 'd', accountKey: '' }),
     ] })
     render(createElement(SessionsTable))
     expect([...container.querySelectorAll('th')].map((h) => h.textContent)).toContain('Account')
-    expect([...container.querySelectorAll('[data-testid="tk-session-account"]')].map((c) => c.textContent)).toEqual(['Work', 'Reviewer', TK_THIS_COMPUTER])
+    const accounts = [...container.querySelectorAll('[data-testid="tk-session-account"]')]
+    expect(accounts.map((c) => c.textContent)).toEqual(['Work', 'Reviewer', TK_THIS_COMPUTER, TK_NOT_RECORDED])
     expect(container.querySelectorAll('[data-testid="provider-mark-claude"]')).toHaveLength(1)
-    expect(container.querySelectorAll('[data-testid="provider-mark-codex"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-testid="provider-mark-codex"]')).toHaveLength(3)
+    // As drawn (MP12 round 1): an account's identity chip beside its name,
+    // in its own colour; none where there is no account; "Not recorded" muted.
+    const cells = accounts.map((c) => c.closest('td') as HTMLElement)
+    const chips = cells.map((td) => (td.querySelector('span[aria-hidden="true"]') as HTMLElement | null)?.style.backgroundColor ?? null)
+    expect(chips.map((c) => c !== null && c !== '')).toEqual([true, true, false, false])
+    expect(chips[0]).not.toBe(chips[1])
+    expect(cells.map((td) => td.style.color)).toEqual(['var(--text-secondary)', 'var(--text-secondary)', 'var(--text-secondary)', 'var(--text-muted)'])
     const titles = [...container.querySelectorAll('tbody tr')].map((tr) => (tr.querySelectorAll('td')[3] as HTMLElement).title)
-    expect(titles).toEqual(['API equivalent cost (not billed on Max plan)', 'Estimate at API list prices', 'This model has no price yet, so its cost is not in the totals.'])
+    expect(titles).toEqual(['API-equivalent estimate', 'Estimate at API list prices', TK_NO_PRICE_NOTE, 'API-equivalent estimate'])
   })
 
   // MP11 round 1 (Q-1): costs of $100 and more keep their dollar sign.
@@ -272,6 +326,19 @@ describe('the components (MP12)', () => {
     expect(text).not.toContain('$0.00')
   })
 
+  // MP12 round 1: a provider choice does not outlive the Provider control.
+  it('a provider chosen in the filter is cleared once only one provider has usage', async () => {
+    useTokenomicsStore.setState({ filter: { range: 'all', provider: 'codex' } })
+    api.accounts.mockResolvedValueOnce([{ provider: 'claude', accountKey: '' }])
+    await act(async () => { await useTokenomicsStore.getState().refresh() })
+    expect(useTokenomicsStore.getState().filter.provider).toBeUndefined()
+    expect(api.summary).toHaveBeenLastCalledWith(expect.not.objectContaining({ provider: 'codex' }))
+    // While both have usage the choice stays.
+    useTokenomicsStore.setState({ filter: { range: 'all', provider: 'codex' } })
+    await act(async () => { await useTokenomicsStore.getState().refresh() })
+    expect(useTokenomicsStore.getState().filter.provider).toBe('codex')
+  })
+
   it('the drawer names the session\'s account', () => {
     const detail: TkSessionDetail = { ...row({ accountKey: `codex:${A_OLD}` }), firstTs: 1, projectDir: '', byModel: [] }
     useTokenomicsStore.setState({ selected: detail })
@@ -288,12 +355,15 @@ describe('the page wires the split and the notices (MP12)', () => {
   it('passes the split to the KPIs and the chart, the filling state to the heatmap, and shows both notices in the filesFailed slot', () => {
     expect(page).toMatch(/const split = summary \? tkKpiSplit\(summary, accounts, filter\.provider \?\? filter\.account\?\.provider\) : undefined/)
     expect(page).toMatch(/<KpiRow kpis=\{summary\.kpis\} split=\{split\} \/>/)
-    expect(page).toMatch(/<CostOverTimeChart data=\{summary\.dailySeries\} series=\{split\?\.providers\} \/>/)
-    expect(page).toMatch(/const splitFilling = !!indexStatus\?\.accountReread && !!\(filter\.provider \|\| filter\.account\)/)
+    // MP12 round 1: a series only for a provider with cost in the range shown.
+    expect(page).toMatch(/<CostOverTimeChart data=\{summary\.dailySeries\} series=\{tkSeriesInRange\(split\?\.providers, summary\.dailySeries\)\} \/>/)
+    expect(page).toMatch(/const rereading = useTokenomicsStore\(\(s\) => !!s\.indexStatus\?\.accountReread\)/)
+    expect(page).toMatch(/const splitFilling = rereading && !!\(filter\.provider \|\| filter\.account\)/)
     expect(page).toMatch(/<ActivityHeatmap data=\{summary\.heatmap\} filling=\{splitFilling\} \/>/)
     expect(page).toMatch(/\[unpricedNotice, rereadNotice\]\.filter/)
-    // Both after the unread-files notice, before the filter bar.
+    // Both after the unread-files notice, and the strip before the filter bar.
     expect(page.indexOf('[unpricedNotice, rereadNotice]')).toBeGreaterThan(page.indexOf('transcripts could not be read'))
-    expect(page.indexOf('[unpricedNotice, rereadNotice]')).toBeLessThan(page.indexOf('<NewFilterBar />'))
+    expect(page.indexOf('<IndexNotices unpricedNotice={unpricedNotice} />')).toBeGreaterThan(-1)
+    expect(page.indexOf('<IndexNotices unpricedNotice={unpricedNotice} />')).toBeLessThan(page.indexOf('<NewFilterBar />'))
   })
 })

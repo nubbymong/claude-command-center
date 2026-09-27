@@ -2199,6 +2199,9 @@ export class AccountsService {
       // Kept only when nothing settled the account since the read began: a
       // sign-in or sign-out may have changed whose reading this is.
       if ((this.usageEpoch.get(a.id) ?? 0) === run.epoch) this.usageFresh.set(a.id, { at: this.usageNow(), reading: outcome.reading })
+      // A reading supersedes an earlier failure (the kept reading answers a
+      // Retry under the floor first anyway).
+      this.usageFailedAt.delete(a.id)
       return outcome.reading
     }
     if (outcome.failure === 'transient' && mode.pass) mode.pass.transient++
@@ -2419,10 +2422,13 @@ export class AccountsService {
    *  a Claude session's launch profile names its account for the usage
    *  index), or null when the registry is not ready or no link names one.
    *  Opaque ids only. */
-  accountIdForLegacy(providerId: ProviderId, legacyId: string): string | null {
+  accountIdForLegacy(providerId: ProviderId, legacyId: string, opts: { ignoreCase?: boolean } = {}): string | null {
     const ready = this.ready()
     if ('ok' in ready) return null
-    const link = ready.doc.legacyLinks.find((l) => l.providerId === providerId && l.legacyId === legacyId)
+    // Without case where the file system ignores it (Windows): a profile id
+    // read back from a path may differ in case from the one on record.
+    const same = (a: string) => a === legacyId || (opts.ignoreCase === true && typeof legacyId === 'string' && a.toLowerCase() === legacyId.toLowerCase())
+    const link = ready.doc.legacyLinks.find((l) => l.providerId === providerId && same(l.legacyId))
     return link && findAccount(ready.doc, link.accountId) ? link.accountId : null
   }
 

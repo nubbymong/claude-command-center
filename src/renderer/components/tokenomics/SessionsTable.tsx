@@ -1,11 +1,14 @@
-import React from 'react'
+import React, { memo } from 'react'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkSessionRow } from '../../../shared/types'
 import type { AccountsSnapshot } from '../../../shared/providers'
 import { getModelColor, getModelShort } from './modelColors'
 import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
 import { ProviderMark } from '../sidebar/Badges'
-import { tkAccountLabel, tkCostTooltip, TK_PROVIDER_LABEL } from './tk-labels'
+import { tkAccountLabel, tkAccountColourKey, tkCostTooltip, TK_PROVIDER_LABEL, TK_NOT_RECORDED } from './tk-labels'
+import { IdentityChip } from '../ui/IdentityChip'
+import { resolveIdentityColor } from '../../../shared/identity-colors'
+import { useResolvedTheme } from '../../hooks/useThemeController'
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
@@ -36,16 +39,22 @@ function formatTs(ts: number): string {
 
 // ── Row renderer ───────────────────────────────────────────────────────────────
 
-function SessionRow({
+// Memoised (MP12 round 1): a row re-renders only when its own data does.
+const SessionRow = memo(function SessionRow({
   row,
   onSelect,
   snapshot,
+  theme,
 }: {
   row: TkSessionRow
   onSelect: (id: string) => void
   snapshot: AccountsSnapshot | null
+  theme: 'dark' | 'light'
 }) {
   const account = tkAccountLabel(snapshot, row.accountKey ?? '')
+  // The account's identity chip, as the approved canvas draws it.
+  const colourKey = tkAccountColourKey(snapshot, row.accountKey ?? '')
+  const notRecorded = account === TK_NOT_RECORDED
   const color = getModelColor(row.model)
   return (
     <tr
@@ -76,19 +85,21 @@ function SessionRow({
           </span>
         </span>
       </td>
-      {/* Account (MP12) */}
+      {/* Account (MP12): its identity chip and name; "Not recorded" muted */}
       <td
-        className="px-3 py-2 text-xs truncate max-w-[140px]"
-        style={{ color: 'var(--text-secondary)' }}
+        className="px-3 py-2 text-xs max-w-[160px]"
+        style={{ color: notRecorded ? 'var(--text-muted)' : 'var(--text-secondary)' }}
         title={account}
-        data-testid="tk-session-account"
       >
-        {account}
+        <span className="inline-flex items-center gap-1.5 min-w-0">
+          {colourKey && <IdentityChip color={resolveIdentityColor(colourKey, theme)} />}
+          <span className="truncate" data-testid="tk-session-account">{account}</span>
+        </span>
       </td>
       {/* Cost, with its wording per provider (Q1.5) */}
       <td
         className="px-3 py-2 font-mono text-xs"
-        style={{ color: row.costUsd === null ? 'var(--text-muted)' : 'var(--color-peach)' }}
+        style={{ color: row.costUsd === null ? 'var(--text-muted)' : 'var(--color-peach)', fontStyle: row.costUsd === null ? 'italic' : undefined }}
         title={tkCostTooltip(row.provider, row.accountKey ?? '', snapshot, row.costUsd)}
       >
         {formatCost(row.costUsd)}
@@ -130,7 +141,7 @@ function SessionRow({
       </td>
     </tr>
   )
-}
+})
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
@@ -146,7 +157,10 @@ const HEADER_CELLS: { label: string; className?: string }[] = [
   { label: 'Date' },
 ]
 
-export function SessionsTable() {
+// Memoised (MP12 round 1): it reads the store itself, so a page re-render
+// passes it nothing new.
+export const SessionsTable = memo(function SessionsTable() {
+  const theme = useResolvedTheme()
   const sessions = useTokenomicsStore((s) => s.sessions)
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const nextCursor = useTokenomicsStore((s) => s.nextCursor)
@@ -196,7 +210,7 @@ export function SessionsTable() {
               </tr>
             ) : (
               sessions.map((row) => (
-                <SessionRow key={row.sessionId} row={row} onSelect={selectSession} snapshot={snapshot} />
+                <SessionRow key={row.sessionId} row={row} onSelect={selectSession} snapshot={snapshot} theme={theme} />
               ))
             )}
           </tbody>
@@ -222,4 +236,4 @@ export function SessionsTable() {
       )}
     </div>
   )
-}
+})

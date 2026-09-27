@@ -3,7 +3,9 @@
 // reports its live transcript path (the hook POSTs and the statusline, the
 // same paths the transcript binder hears, whether logging is on or off). The
 // path decides, as a Codex realm's folder does (MP10 round 1): a transcript
-// under `<profiles root>/<profile id>/projects/` belongs to that profile, and
+// under a profile's own projects folder belongs to that profile (its layout,
+// `<profiles root>/<profile id>/.claude/projects/`, comes from the one place
+// profile homes are built, never restated here), and
 // the profile names the account through its registry link; the file name is
 // the session id. When the same session id later shows under another
 // profile (a session resumed under another account), the new account applies
@@ -32,11 +34,19 @@ export interface TkAttributionDeps {
   /** Whether the reporting app session is local (it has a launch profile
    *  recorded at spawn); an SSH session is not. */
   isLocal(appSessionId: string): boolean
-  /** The folder the app's Claude profile homes live in: each profile's
-   *  config folder is `<root>/<profile id>`. Null when not known. */
+  /** The folder the app's Claude profile homes live in (`<root>/<profile
+   *  id>`). Null when not known. */
   profilesRoot(): string | null
   /** Whether a folder name is a profile id the app could have made. */
   isProfileId(name: string): boolean
+  /** The projects folder a profile's Claude writes its transcripts to, as
+   *  the profile home is built (the single source of the layout). */
+  projectsDirOf(profileId: string): string
+  /** The profiles root with every link resolved, or null: a transcript
+   *  reported through the root's real path still matches. Only the root is
+   *  resolved (a profile's projects folder is itself a link to the shared
+   *  one, so resolving the whole path would leave the root). */
+  realRoot?(root: string): string | null
   /** The account that profile is linked to in the registry, or null. */
   accountOf(profileId: string): string | null
   /** Hand the attribution to the usage index; false when it is not running
@@ -58,24 +68,44 @@ export function transcriptSessionId(transcriptPath: unknown): string | null {
   return m ? m[1] : null
 }
 
-/** The profile whose config folder holds a transcript, or undefined: the
- *  path must be `<profiles root>/<profile id>/projects/<...>/<file>`, with a
- *  folder name that is a profile id. Compared as the platform compares paths
- *  (without case on Windows). */
+/** `child` inside `parent`: the path from one to the other, else null. */
+function inside(p: typeof path.win32, parent: string, child: string): string | null {
+  const rel = p.relative(parent, child)
+  if (!rel || rel === '..' || rel.startsWith('..' + p.sep) || p.isAbsolute(rel)) return null
+  return rel
+}
+
+/** The profile whose projects folder holds a transcript, or undefined: the
+ *  path must be inside `projectsDirOf(<id>)` (a project folder, then the
+ *  file), for a folder name under the profiles root that is a profile id.
+ *  The layout below the root is taken from `projectsDirOf`, and matched
+ *  from the root as configured and, when given, its real path. Compared as
+ *  the platform compares paths (without case on Windows). */
 export function transcriptProfile(
   transcriptPath: string,
   profilesRoot: string,
   isProfileId: (name: string) => boolean,
+  projectsDirOf: (profileId: string) => string,
   platform: NodeJS.Platform = process.platform,
+  realRoot?: string | null,
 ): string | undefined {
   const p = platform === 'win32' ? path.win32 : path.posix
   if (!p.isAbsolute(transcriptPath) || !p.isAbsolute(profilesRoot)) return undefined
-  const rel = p.relative(p.resolve(profilesRoot), p.resolve(transcriptPath))
-  if (!rel || rel === '..' || rel.startsWith('..' + p.sep) || p.isAbsolute(rel)) return undefined
-  const parts = rel.split(p.sep)
-  const projects = platform === 'win32' ? parts[1]?.toLowerCase() : parts[1]
-  if (parts.length < 4 || projects !== 'projects') return undefined
-  return isProfileId(parts[0]) ? parts[0] : undefined
+  const file = p.resolve(transcriptPath)
+  const root = p.resolve(profilesRoot)
+  const roots = realRoot && p.isAbsolute(realRoot) && p.resolve(realRoot) !== root ? [root, p.resolve(realRoot)] : [root]
+  for (const base of roots) {
+    const rel = inside(p, base, file)
+    if (!rel) continue
+    const id = rel.split(p.sep)[0]
+    if (!isProfileId(id)) continue
+    // Where this profile's transcripts go, relative to the root.
+    const layout = inside(p, root, p.resolve(projectsDirOf(id)))
+    if (!layout) continue
+    const within = inside(p, p.join(base, layout), file)
+    if (within && within.split(p.sep).length >= 2) return id
+  }
+  return undefined
 }
 
 /** The sink composed beside the transcript binder's: called with an app
@@ -91,7 +121,7 @@ export function createTranscriptAttribution(deps: TkAttributionDeps): (appSessio
       if (typeof appSessionId !== 'string' || appSessionId.length === 0 || deps.isLocal(appSessionId) !== true) return
       const root = deps.profilesRoot()
       if (typeof root !== 'string' || root.length === 0) return
-      const profileId = transcriptProfile(transcriptPath, root, (n) => deps.isProfileId(n) === true, deps.platform ?? process.platform)
+      const profileId = transcriptProfile(transcriptPath, root, (n) => deps.isProfileId(n) === true, (id) => deps.projectsDirOf(id), deps.platform ?? process.platform, deps.realRoot?.(root) ?? null)
       if (!profileId) return
       const accountKey = tkAccountKey('claude', deps.accountOf(profileId))
       if (accountKey === TK_ACCOUNT_NOT_RECORDED || sent.get(sessionId) === accountKey) return

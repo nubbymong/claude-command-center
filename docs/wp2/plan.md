@@ -1060,11 +1060,13 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
     known, or from pruned rollouts, is not recorded), with a test.
   - While the one-off attribution runs (`accountReread` in the index
     status), the totals are complete and only the split is filling in, so
-    the notice says so, one line per stage:
+    the notice says so, one line per stage (shortened in MP12 round 1; the
+    canvas does not draw it, so it goes to the owner in the screenshot
+    review with the other undrawn lines):
     re-read: "Sorting Codex history by account: N of M files. Totals are
-    complete; the per-account split fills in as it goes."
+    complete; the split by account fills in."
     rebuild: "Sorting usage by account and provider: N of M entries. Totals
-    are complete; the split fills in as it goes."
+    are complete; the split fills in."
   - The hourly heatmap's provider and account split is part of what is
     still filling in during either stage (the v1 hourly rollup never
     recorded its provider): the page shows it under the same notice and
@@ -1076,7 +1078,8 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
 - **Residual, accepted (MP10, the path decides):** Claude usage is attributed
   from the transcript path a local session reports (a hook or the
   statusline): the profile whose config folder holds it names the account
-  (as a Codex realm's folder does). A session resumed under another profile
+  (as a Codex realm's folder does). The folder is the profile home's
+  `.claude/projects`, the layout the homes are built with (MP10 round 1). A session resumed under another profile
   keeps its session id and moves on to that account from then on (MP10
   round 1); its turns already attributed keep theirs, its session row keeps
   the account it began under, and turns stored between the resume and the

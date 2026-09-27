@@ -67,7 +67,7 @@ export function ActivityHeatmap({ data, filling }: Props) {
       </div>
       {filling && (
         <div className="text-[10px] -mt-2 mb-2" style={{ color: 'var(--text-muted)' }} data-testid="tk-heatmap-filling">
-          These hours fill in as usage is sorted by account and provider.
+          Filling in as usage is sorted by account.
         </div>
       )}
 

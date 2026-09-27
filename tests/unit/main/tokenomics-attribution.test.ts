@@ -7,6 +7,7 @@
 // no database opens (the database side is the native
 // tests/unit/native/tokenomics-attribution.native.test.ts).
 import { describe, it, expect } from 'vitest'
+import * as path from 'node:path'
 import { transcriptSessionId, transcriptProfile, createTranscriptAttribution } from '../../../src/main/tokenomics/tk-attribution'
 import type { TkAttributionDeps } from '../../../src/main/tokenomics/tk-attribution'
 import { TokenomicsSupervisor } from '../../../src/main/tokenomics/tk-supervisor'
@@ -46,38 +47,57 @@ describe('the transcript path names its session (MP10, strict)', () => {
   })
 })
 
-describe('the profile a transcript path names (MP10 round 1: the path decides)', () => {
+describe('the profile a transcript path names (MP10: the path decides, in the real profile layout)', () => {
   const ROOT_W = 'C:\\res\\account-profiles'
   const ok = (n: string) => /^profile-[a-z0-9]+$/.test(n)
-  it('a transcript under <profiles root>/<profile id>/projects/ is that profile\'s', () => {
-    expect(transcriptProfile(`${ROOT_W}\\profile-a1\\projects\\F--app\\${U1}.jsonl`, ROOT_W, ok, 'win32')).toBe('profile-a1')
+  // As index.ts composes it: the profile home (getProfileConfigDir) holds
+  // Claude's own folder, .claude, and its projects folder.
+  const winProjects = (id: string) => path.win32.join(ROOT_W, id, '.claude', 'projects')
+  const posixProjects = (root: string) => (id: string) => path.posix.join(root, id, '.claude', 'projects')
+  it('a transcript under <profiles root>/<profile id>/.claude/projects/ is that profile\'s', () => {
+    expect(transcriptProfile(`${ROOT_W}\\profile-a1\\.claude\\projects\\F--app\\${U1}.jsonl`, ROOT_W, ok, winProjects, 'win32')).toBe('profile-a1')
     // Windows compares without case, and either separator.
-    expect(transcriptProfile(`c:/RES/Account-Profiles/profile-a1/Projects/F--app/${U1}.jsonl`, ROOT_W, ok, 'win32')).toBe('profile-a1')
-    expect(transcriptProfile(`/home/u/res/account-profiles/profile-b2/projects/-app/sub/${U1}.jsonl`, '/home/u/res/account-profiles', ok, 'linux')).toBe('profile-b2')
+    expect(transcriptProfile(`c:/RES/Account-Profiles/profile-a1/.Claude/Projects/F--app/${U1}.jsonl`, ROOT_W, ok, winProjects, 'win32')).toBe('profile-a1')
+    // A subagent's transcript deeper in the project folder still counts.
+    expect(transcriptProfile(`/home/u/res/account-profiles/profile-b2/.claude/projects/-app/sub/${U1}.jsonl`, '/home/u/res/account-profiles', ok, posixProjects('/home/u/res/account-profiles'), 'linux')).toBe('profile-b2')
+  })
+  it('the old layout, with no .claude folder, is not a profile\'s', () => {
+    expect(transcriptProfile(`${ROOT_W}\\profile-a1\\projects\\F--app\\${U1}.jsonl`, ROOT_W, ok, winProjects, 'win32')).toBeUndefined()
+    expect(transcriptProfile(`/r/account-profiles/profile-a1/projects/-app/${U1}.jsonl`, '/r/account-profiles', ok, posixProjects('/r/account-profiles'), 'linux')).toBeUndefined()
   })
   it('anything else names no profile', () => {
     for (const bad of [
       `C:\\Users\\u\\.claude\\projects\\F--app\\${U1}.jsonl`, // the default home
-      `${ROOT_W}\\profile-a1\\${U1}.jsonl`, // not under projects
-      `${ROOT_W}\\profile-a1\\other\\F--app\\${U1}.jsonl`,
-      `${ROOT_W}\\not a profile\\projects\\F--app\\${U1}.jsonl`,
-      `${ROOT_W}\\..\\profile-a1\\projects\\F--app\\${U1}.jsonl`, // out of the root
-      `${ROOT_W}-other\\profile-a1\\projects\\F--app\\${U1}.jsonl`, // a sibling folder
-      `profile-a1\\projects\\F--app\\${U1}.jsonl`, // relative
-      `/home/u/.claude-profiles/profile-a1/projects/-app/${U1}.jsonl`, // a remote host's
-    ]) expect(transcriptProfile(bad, ROOT_W, ok, 'win32'), bad).toBeUndefined()
+      `${ROOT_W}\\profile-a1\\.claude\\projects\\${U1}.jsonl`, // no project folder
+      `${ROOT_W}\\profile-a1\\.claude\\other\\F--app\\${U1}.jsonl`,
+      `${ROOT_W}\\not a profile\\.claude\\projects\\F--app\\${U1}.jsonl`,
+      `${ROOT_W}\\..\\profile-a1\\.claude\\projects\\F--app\\${U1}.jsonl`, // out of the root
+      `${ROOT_W}-other\\profile-a1\\.claude\\projects\\F--app\\${U1}.jsonl`, // a sibling folder
+      `profile-a1\\.claude\\projects\\F--app\\${U1}.jsonl`, // relative
+      `/home/u/.claude-profiles/profile-a1/.claude/projects/-app/${U1}.jsonl`, // a remote host's
+    ]) expect(transcriptProfile(bad, ROOT_W, ok, winProjects, 'win32'), bad).toBeUndefined()
     // Out of the root, whatever the id check would take.
-    for (const out of [`${ROOT_W}\\..\\projects\\F--app\\${U1}.jsonl`, `${ROOT_W}\\..\\x\\projects\\F--app\\${U1}.jsonl`, `${ROOT_W}-other\\x\\projects\\F--app\\${U1}.jsonl`]) {
-      expect(transcriptProfile(out, ROOT_W, () => true, 'win32'), out).toBeUndefined()
+    for (const out of [`${ROOT_W}\\..\\.claude\\projects\\F--app\\${U1}.jsonl`, `${ROOT_W}-other\\x\\.claude\\projects\\F--app\\${U1}.jsonl`]) {
+      expect(transcriptProfile(out, ROOT_W, () => true, winProjects, 'win32'), out).toBeUndefined()
     }
+    // A profile whose projects folder lies outside the root is none.
+    expect(transcriptProfile(`${ROOT_W}\\profile-a1\\.claude\\projects\\F--app\\${U1}.jsonl`, ROOT_W, ok, () => 'D:\\elsewhere\\projects', 'win32')).toBeUndefined()
     // Case counts on POSIX.
-    expect(transcriptProfile(`/res/account-profiles/profile-a1/Projects/-app/${U1}.jsonl`, '/res/account-profiles', ok, 'linux')).toBeUndefined()
+    expect(transcriptProfile(`/res/account-profiles/profile-a1/.claude/Projects/-app/${U1}.jsonl`, '/res/account-profiles', ok, posixProjects('/res/account-profiles'), 'linux')).toBeUndefined()
+  })
+  it('a transcript reported through the root\'s real path matches when the root is reached through a link', () => {
+    const real = 'D:\\data\\account-profiles'
+    const file = `${real}\\profile-a1\\.claude\\projects\\F--app\\${U1}.jsonl`
+    expect(transcriptProfile(file, ROOT_W, ok, winProjects, 'win32')).toBeUndefined()
+    expect(transcriptProfile(file, ROOT_W, ok, winProjects, 'win32', real)).toBe('profile-a1')
+    // The configured root still matches too.
+    expect(transcriptProfile(`${ROOT_W}\\profile-a1\\.claude\\projects\\F--app\\${U1}.jsonl`, ROOT_W, ok, winProjects, 'win32', real)).toBe('profile-a1')
   })
 })
 
 describe('attributing a transcript to its profile\'s account (MP10)', () => {
   const ROOT = 'C:\\res\\account-profiles'
-  const AT = (profile: string, u: string) => `${ROOT}\\${profile}\\projects\\F--work-app\\${u}.jsonl`
+  const AT = (profile: string, u: string) => `${ROOT}\\${profile}\\.claude\\projects\\F--work-app\\${u}.jsonl`
   const ACCT_B = 'acct-' + 'b'.repeat(32)
   function sink(over: Partial<TkAttributionDeps> = {}) {
     const recorded: Array<[string, string]> = []
@@ -88,6 +108,7 @@ describe('attributing a transcript to its profile\'s account (MP10)', () => {
       isLocal: (id) => { asked.local++; return local[id] === true },
       profilesRoot: () => ROOT,
       isProfileId: (n) => /^profile-[a-z0-9]+$/.test(n),
+      projectsDirOf: (id) => path.win32.join(ROOT, id, '.claude', 'projects'),
       accountOf: (p) => { asked.account++; return links[p] ?? null },
       record: (s, k) => { recorded.push([s, k]); return true },
       platform: 'win32',
@@ -143,7 +164,7 @@ describe('attributing a transcript to its profile\'s account (MP10)', () => {
 
   it('a path that names no session, or no app session, looks nothing up', () => {
     const t = sink()
-    t.attribute('app-1', `${ROOT}\\profile-a1\\projects\\F--app\\agent-1.jsonl`)
+    t.attribute('app-1', `${ROOT}\\profile-a1\\.claude\\projects\\F--app\\agent-1.jsonl`)
     t.attribute('', AT('profile-a1', U1))
     t.attribute(undefined as unknown as string, AT('profile-a1', U1))
     expect(t.recorded).toEqual([])
@@ -167,6 +188,8 @@ describe('attributing a transcript to its profile\'s account (MP10)', () => {
       { isLocal: () => { throw new Error('x') } },
       { profilesRoot: () => { throw new Error('x') } },
       { isProfileId: () => { throw new Error('x') } },
+      { projectsDirOf: () => { throw new Error('x') } },
+      { realRoot: () => { throw new Error('x') } },
       { accountOf: () => { throw new Error('x') } },
       { record: () => { throw new Error('x') } },
     ] as Array<Partial<TkAttributionDeps>>) {
@@ -304,6 +327,11 @@ describe('the account a Claude launch profile is linked to (MP10)', () => {
     expect(h.service.accountIdForLegacy('claude', 'profile-zz')).toBeNull()
     expect(h.service.accountIdForLegacy('claude', '')).toBeNull()
     expect(h.service.accountIdForLegacy('codex', 'profile-a1')).toBeNull()
+    // Without case only when asked (Windows paths): a profile id read back
+    // from a path may differ in case from the one on record.
+    expect(h.service.accountIdForLegacy('claude', 'PROFILE-A1')).toBeNull()
+    expect(h.service.accountIdForLegacy('claude', 'PROFILE-A1', { ignoreCase: true })).toBe(idOf('profile-a1'))
+    expect(h.service.accountIdForLegacy('claude', 'profile-zz', { ignoreCase: true })).toBeNull()
     // A link whose account is gone from the record names nothing.
     const doc = h.doc()
     const gone = idOf('profile-b2')
@@ -324,7 +352,7 @@ describe('main composes the attribution beside the transcript binder (MP10)', ()
   it('both transcript-path sources reach the attribution, whether logging is on or off', () => {
     expect(code).toMatch(/import \{ createTranscriptAttribution \} from '\.\/tokenomics\/tk-attribution'/)
     expect(code).toMatch(/import \{ getClaudeProfileId \} from '\.\/claude-account-identity'/)
-    expect(code).toMatch(/getProfilesRoot, isValidProfileId \} from '\.\/account-profiles'/)
+    expect(code).toMatch(/getProfilesRoot, getProfileConfigDir, isValidProfileId \} from '\.\/account-profiles'/)
     // The route calls the attribution first, then the binder (which is null
     // with logging off, so it cannot gate the attribution).
     const route = /const routeTranscriptPath = \(sessionId: string, path: string\) => \{\s*attributeTranscript\(sessionId, path\)\s*getTranscriptBinder\(\)\?\.notifyTranscriptPath\(sessionId, path\)\s*\}/
@@ -340,7 +368,10 @@ describe('main composes the attribution beside the transcript binder (MP10)', ()
     expect(code).toMatch(/isLocal: \(sessionId\) => getClaudeProfileId\(sessionId\) !== undefined/)
     expect(code).toMatch(/profilesRoot: \(\) => \{ try \{ return getProfilesRoot\(\) \} catch \{ return null \} \}/)
     expect(code).toMatch(/isProfileId: \(name\) => isValidProfileId\(name\)/)
-    expect(code).toMatch(/accountOf: \(profileId\) => getAccountsService\(\)\?\.accountIdForLegacy\('claude', profileId\) \?\? null/)
+    // The layout from where profile homes are built (MP10 round 2).
+    expect(code).toMatch(/projectsDirOf: \(profileId\) => join\(getProfileConfigDir\(profileId\), '\.claude', 'projects'\)/)
+    expect(code).toMatch(/realRoot: \(root\) => \{ try \{ return realpathSync\.native\(root\) \} catch \{ return null \} \}/)
+    expect(code).toMatch(/accountOf: \(profileId\) => getAccountsService\(\)\?\.accountIdForLegacy\('claude', profileId, \{ ignoreCase: process\.platform === 'win32' \}\) \?\? null/)
     expect(code).toMatch(/const tokenomics = getTokenomicsSupervisor\(\)\s*if \(!tokenomics\) return false\s*tokenomics\.setSessionAccount\(sessionId, accountKey\)\s*return true/)
     // No manual attribution: nothing else in main records one.
     expect(code.split('setSessionAccount(').length).toBe(2)
