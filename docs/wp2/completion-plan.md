@@ -446,11 +446,10 @@ ADR-009: yes (launch argv; keystrokes written into the terminal).
 **P3.9 Sentinel for Codex.** Codex version drift against the supported range
 raises a finding; flags and the rollout format are checked; the analysis
 (today `claude -p`, `src/main/sentinel/sentinel-analysis.ts:158`) runs on
-whichever provider is on. With both on it follows question 1 (the provider
-that runs Ask Conductor); until the owner answers, Claude Code, as today.
+whichever provider is on. With both on it runs on the provider the "Ask
+Conductor runs on" setting names (question 1, decided: OD27 M4).
 Likely files: `src/main/sentinel/*`, the Sentinel page and dot,
-`providers/codex/discovery.ts`. ADR-009: yes (a new CLI run). With both providers on, the analysis runs on the provider the
-"Ask Conductor runs on" setting names (OD27 M4); with one on, on that one.
+`providers/codex/discovery.ts`. ADR-009: yes (a new CLI run).
 
 **P3.10 Activity, attention, Watchdog and hooks.** Codex `notify` and hook
 events feed the attention dot, waiting-for-input, the busy sweep and the sleep
@@ -516,7 +515,7 @@ when PR 3 is complete.
 |---|---|---|---|---|
 | P4.1 Agent Canvas from Codex: the tools on Codex's bound `/mcp` session, roots, instruction delivery, the live loop | 51 | Y | Y if `pty-manager.ts` changes (the canvas roots and `--plugin-dir` are wired there, `pty-manager.ts:4699-4727` and `:4853`) | APPROVED |
 | P4.2 Browser and vision tools for Codex | 52 | Y | N | APPROVED (a one-line notice to the owner, section 10) |
-| P4.3 Ask Conductor on Codex: a help workspace Codex reads (`AGENTS.md`), the opening question on a Codex launch | 53 (and the Ask part of 14) | Y | Y if `pty-manager.ts` changes | Codex only: APPROVED. Both on: BLOCKED on question 1 |
+| P4.3 Ask Conductor on Codex: a help workspace Codex reads (`AGENTS.md`), the opening question on a Codex launch; with both on, the Settings, General row "Ask Conductor runs on" (Claude Code by default), the dock row's provider type badge, and the provider read again when a closed Ask tab is revived | 53 (and the Ask part of 14) | Y | Y if `pty-manager.ts` changes | APPROVED (both on: OD27 M4) |
 | P4.4 Memory and Codex logs | 55, 56 | Y | N | APPROVED |
 | P4.5 Cloud Agents with `codex exec` | 57 | Y | N | APPROVED |
 | P4.6 Codex web session; the artifacts record | 58 | Y | N | Web session: APPROVED. Artifacts: the owner signs a section 19 record |
@@ -533,7 +532,12 @@ Two notes that bind the build:
 - **P4.3.** Ask's opening question rides the Claude launch today
   (`askConductor.ts`); a Codex launch needs its own path, which is launch
   argv, so the ADR-009 pass and, if `pty-manager.ts` changes, the SSH matrix
-  apply.
+  apply. With both on (OD27 M4): the Settings, General row "Ask Conductor runs
+  on: Claude Code / Codex", shown only while both are on, Claude Code by
+  default, never rewritten when a provider is turned off; the dock row wears
+  the provider's type badge while both are on; and a closed Ask tab that is
+  revived reads the provider again rather than keeping the one it was opened
+  with (`askConductor.ts:178-208` keeps it today).
 - **P4.6.** WP1 design principle 4 says the app does not copy credentials.
   Claude's SSO path copies claude.ai cookies from a browser the app launches,
   so P4.6 builds the in-app sign-in window only; the cookie path goes to the
