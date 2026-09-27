@@ -48,7 +48,7 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
   const sessions = useSessionStore((s) => s.sessions)
   const [error, setError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [blocker, setBlocker] = useState<{ id: string; title: string }[] | null>(null)
+  const [blocker, setBlocker] = useState<{ verb: string; sessions: { id: string; title: string }[] } | null>(null)
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
@@ -73,10 +73,21 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
     setBusy(true)
     setError(null)
     setBlocker(null)
-    const failed = await op()
-    setBusy(false)
-    if (failed) setError(failed)
+    try {
+      const failed = await op()
+      if (failed) setError(failed)
+    } catch {
+      setError('That did not work; try again.')
+    } finally {
+      setBusy(false)
+    }
   }
+
+  /** A refusal for "in use" names this window's sessions on the profile,
+   *  each with Go to; with none of them open here (an SSH or another
+   *  window's session), main's own words. */
+  const blockedBy = (): { id: string; title: string }[] =>
+    claudeSessionsOnProfile(useSessionStore.getState().sessions, profile.id, primaryId).map((s) => ({ id: s.id, title: sessionTitle(s) }))
 
   const makeReviewer = () => act(async () => {
     if (!registryAccount) return null
@@ -89,7 +100,11 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
   const setActive = (next: boolean) => act(async () => {
     const res = await window.electronAPI.accountProfiles.setActive(profile.id, next)
     // Nothing changed on a refusal: the row stays as it is, with the reason.
-    if (res && res.ok === false) return res.error || 'That did not work.'
+    if (res && res.ok === false) {
+      const holding = res.code === 'in-use' ? blockedBy() : []
+      if (holding.length) { setBlocker({ verb: 'made inactive', sessions: holding }); return null }
+      return res.error || 'That did not work.'
+    }
     await useAccountProfilesStore.getState().hydrate()
     return null
   })
@@ -108,8 +123,8 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
     try {
       const res = await window.electronAPI.accountProfiles.delete(profile.id)
       if (!res?.ok) {
-        const holding = claudeSessionsOnProfile(useSessionStore.getState().sessions, profile.id, primaryId)
-        if (holding.length) setBlocker(holding.map((s) => ({ id: s.id, title: sessionTitle(s) })))
+        const holding = res?.code === 'in-use' ? blockedBy() : []
+        if (holding.length) setBlocker({ verb: 'removed', sessions: holding })
         else setDeleteError(res?.error || 'Could not remove this account. Please try again.')
         return
       }
@@ -230,7 +245,7 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
           (adversarial review, MAJOR 5). Renders nothing when there is nothing
           to say, so a healthy install pays no space for it. */}
       {claudeOn && <AccountIsolationNotice profileId={profile.id} />}
-      {blocker && <BlockerLine name={name} verb="removed" sessions={blocker} testId={`profile-blocker-${profile.id}`} />}
+      {blocker && <BlockerLine name={name} verb={blocker.verb} sessions={blocker.sessions} testId={`profile-blocker-${profile.id}`} />}
       {deleteError && (
         <p
           className="text-[11px] text-red mt-1.5"
@@ -240,7 +255,7 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
           {deleteError}
         </p>
       )}
-      {editing && (
+      {editing && claudeOn && (
         <IdentityEditor
           anchor={chipRef}
           account={registryAccount ?? null}

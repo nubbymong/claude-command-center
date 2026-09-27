@@ -649,7 +649,7 @@ export function setAccountLifecycle(
     if (a.id !== accountId) return a
     const moved = { ...a, lifecycle: next, isProviderDefault: next === 'active' ? becomesDefault : false, updatedAt: now }
     // An archived account is never chosen for anything again.
-    return next === 'archived' ? withoutReviewerDefault(moved) : moved
+    return next === 'archived' ? withoutReviewerDefault({ ...moved, archivedAt: now }) : moved
   })
   const realms = next === 'archived'
     ? doc.realms.map((r) => (r.id === account.authRealmId ? { ...r, lifecycle: 'retired' as const } : r))
@@ -682,7 +682,7 @@ export function restoreArchivedAccount(doc: ProviderRegistryDoc, accountId: stri
   const realms = doc.realms.map((r) => (r.id === realm.id ? { ...r, lifecycle: 'active' as const } : r))
   const accounts = doc.accounts.map((a) => (a.id === accountId
     ? compact({
-      ...a, lifecycle: 'inactive' as const, isProviderDefault: false, updatedAt: now,
+      ...a, lifecycle: 'inactive' as const, isProviderDefault: false, updatedAt: now, archivedAt: undefined,
       providerSubject: undefined, providerAuthorityId: undefined, lastKnownAuthState: 'unknown' as const,
       operationalState: a.operationalState === 'blocked' ? 'blocked' as const : 'attention' as const,
       identityAssurance: a.identityAssurance === 'verified-subject' ? 'user-asserted' as const : a.identityAssurance,
@@ -1115,7 +1115,8 @@ function parseAccount(o: unknown): Parsed<ProviderAccount> {
   const plan = optLabel(o.planLabel, PLAN_MAX)
   const lastAuth = optTime(o.lastAuthenticatedAt, 'lastAuthenticatedAt')
   const lastVal = optTime(o.lastValidatedAt, 'lastValidatedAt')
-  for (const r of [authority, subject, label, plan, lastAuth, lastVal]) if (!r.ok) return X(`${where}: ${r.problem}`)
+  const archivedAt = optTime(o.archivedAt, 'archivedAt')
+  for (const r of [authority, subject, label, plan, lastAuth, lastVal, archivedAt]) if (!r.ok) return X(`${where}: ${r.problem}`)
   if (!oneOf(AUTH_METHODS, o.authMethod)) return X(`${where}: unknown sign-in method`)
   if (!oneOf(LIFECYCLES, o.lifecycle)) return X(`${where}: unknown lifecycle`)
   if (typeof o.isProviderDefault !== 'boolean') return X(`${where}: isProviderDefault is not a boolean`)
@@ -1143,6 +1144,7 @@ function parseAccount(o: unknown): Parsed<ProviderAccount> {
     updatedAt: o.updatedAt,
     lastAuthenticatedAt: lastAuth.ok ? lastAuth.value : undefined,
     lastValidatedAt: lastVal.ok ? lastVal.value : undefined,
+    archivedAt: archivedAt.ok ? archivedAt.value : undefined,
     lastKnownAuthState: o.lastKnownAuthState,
     operationalState: o.operationalState,
     identityAssurance: o.identityAssurance,
@@ -1460,7 +1462,7 @@ export function reconcileLegacyAccounts(
       realms = realms.map((r) => (r.id === realm.id ? { ...r, lifecycle: 'active' as const } : r))
       accounts = accounts.map((a) => (a.id === existing!.id
         ? compact({
-          ...a, lifecycle: s.lifecycle, isProviderDefault: false, updatedAt: now,
+          ...a, lifecycle: s.lifecycle, isProviderDefault: false, updatedAt: now, archivedAt: undefined,
           providerSubject: undefined, providerAuthorityId: undefined, lastKnownAuthState: 'unknown' as const,
           operationalState: a.operationalState === 'blocked' ? 'blocked' as const : 'attention' as const,
           identityAssurance: a.identityAssurance === 'verified-subject' ? 'user-asserted' as const : a.identityAssurance,
@@ -1532,7 +1534,7 @@ export function reconcileLegacyAccounts(
       warnings.push(`legacy record ${l.legacyId} was removed while in use; deferred`)
       continue
     }
-    accounts = accounts.map((x) => (x.id === a.id ? withoutReviewerDefault({ ...x, lifecycle: 'archived' as const, isProviderDefault: false, updatedAt: now }) : x))
+    accounts = accounts.map((x) => (x.id === a.id ? withoutReviewerDefault({ ...x, lifecycle: 'archived' as const, isProviderDefault: false, updatedAt: now, archivedAt: now }) : x))
     realms = realms.map((r) => (r.id === a.authRealmId ? { ...r, lifecycle: 'retired' as const } : r))
     archived++
   }

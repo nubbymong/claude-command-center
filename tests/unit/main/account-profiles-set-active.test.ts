@@ -93,3 +93,35 @@ describe('accountProfiles:setActive handler', () => {
     expect(store).toHaveLength(1)
   })
 })
+
+// P3.2 (design 5.3, WP1.16): an account in use is not made inactive, as for
+// every provider's accounts, and the refusal carries a code the Accounts row
+// acts on (it names the sessions with Go to); so does a refused removal.
+describe('accountProfiles: in use by a live session', () => {
+  beforeEach(() => {
+    handlers.clear()
+    store = []
+    registerAccountProfilesHandlers()
+  })
+
+  it('refuses Make inactive with code in-use and writes nothing; Make active is never refused for it', async () => {
+    const { isProfileInUseByLiveSession } = await import('../../../src/main/claude-account-identity')
+    vi.mocked(isProfileInUseByLiveSession).mockImplementation((id: string) => id === 'work')
+    store = [prof({ id: 'primary', isPrimary: true }), prof({ id: 'work' }), prof({ id: 'idle', active: false })]
+    expect(invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id: 'work', active: false })).toEqual({
+      ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.',
+    })
+    expect(activeOf('work')).toBeUndefined()
+    vi.mocked(isProfileInUseByLiveSession).mockImplementation((id: string) => id === 'idle')
+    expect(invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id: 'idle', active: true })).toEqual({ ok: true })
+    vi.mocked(isProfileInUseByLiveSession).mockImplementation(() => false)
+  })
+
+  it('a removal refused for a live session carries code in-use', async () => {
+    const { isProfileInUseByLiveSession } = await import('../../../src/main/claude-account-identity')
+    vi.mocked(isProfileInUseByLiveSession).mockImplementation((id: string) => id === 'work')
+    store = [prof({ id: 'primary', isPrimary: true }), prof({ id: 'work' })]
+    expect(await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })).toMatchObject({ ok: false, code: 'in-use' })
+    vi.mocked(isProfileInUseByLiveSession).mockImplementation(() => false)
+  })
+})

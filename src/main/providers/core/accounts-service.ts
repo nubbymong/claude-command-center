@@ -494,6 +494,7 @@ export class AccountsService {
       if (a.planLabel !== undefined) view.planLabel = a.planLabel
       if (a.lastAuthenticatedAt !== undefined) view.lastAuthenticatedAt = a.lastAuthenticatedAt
       if (a.lastValidatedAt !== undefined) view.lastValidatedAt = a.lastValidatedAt
+      if (a.lifecycle === 'archived' && a.archivedAt !== undefined) view.archivedAt = a.archivedAt
       const legacyId = doc?.legacyLinks.find((l) => l.accountId === a.id)?.legacyId
       if (legacyId !== undefined) view.legacyId = legacyId
       const refusal = doc ? this.reviewRefusalOf(doc, a, memo) : undefined

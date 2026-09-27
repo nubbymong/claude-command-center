@@ -119,32 +119,45 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
   }, [pos])
 
   const close = useCallback(() => { onClose(); (anchor.current as HTMLElement | null)?.focus() }, [onClose, anchor])
+  // A name typed and not yet committed is kept however the editor closes:
+  // Escape moves focus to the chip (the field's blur commits it); a click or
+  // a scroll elsewhere closes it first (the unmount fires no blur).
+  const commitRef = useRef<() => void>(() => {})
   useEffect(() => {
+    const leave = () => { commitRef.current(); onClose() }
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
       if (panelRef.current?.contains(t) || anchor.current?.contains(t)) return
-      onClose()
+      leave()
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
     }
-    const onResize = () => onClose()
+    // Placed from the chip: once the page moves, it would float off it (as RowMenu closes).
+    const onScroll = (e: Event) => { if (!panelRef.current?.contains(e.target as Node)) leave() }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey, true)
-    window.addEventListener('resize', onResize)
+    window.addEventListener('resize', leave)
+    window.addEventListener('scroll', onScroll, true)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('resize', onResize)
+      window.removeEventListener('resize', leave)
+      window.removeEventListener('scroll', onScroll, true)
     }
   }, [onClose, close, anchor])
 
   const run = async (op: () => Promise<string | null>) => {
     setBusy(true)
     setError(null)
-    const failed = await op()
-    setBusy(false)
-    if (failed) setError(failed)
+    try {
+      const failed = await op()
+      if (failed) setError(failed)
+    } catch {
+      setError('That did not work; try again.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const commitName = () => {
@@ -159,6 +172,8 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
       return null
     })
   }
+
+  commitRef.current = commitName
 
   const pickColour = (key: IdentityColorKey) => {
     if (key === colourKey) return
@@ -230,10 +245,10 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
       ref={panelRef}
       role="dialog"
       aria-label={`Edit ${title}`}
-      className="fixed z-[80] w-[300px] rounded-xl border p-3.5 flex flex-col gap-3 text-[12.5px]"
+      className="fixed z-[80] w-[300px] rounded-xl border p-3.5 flex flex-col gap-3 text-[12.5px] shadow-xl"
       style={{
         top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? 'visible' : 'hidden',
-        background: 'var(--surface-overlay)', borderColor: 'var(--border-strong)', boxShadow: '0 14px 36px rgba(0,0,0,.45)',
+        background: 'var(--surface-overlay)', borderColor: 'var(--border-strong)',
       }}
       data-testid={testId}
     >
@@ -261,7 +276,7 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
       {(registry || legacy?.canColour) && (
         <div className="grid grid-cols-[58px_1fr] items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
           <span>Colour</span>
-          <div className="flex flex-wrap gap-3" role="radiogroup" aria-label="Colour">
+          <div className="flex flex-wrap gap-3" role="group" aria-label="Colour">
             {IDENTITY_COLOR_KEYS.map((k) => {
               const hex = resolveIdentityColor(k, theme)
               const isSelected = k === colourKey
@@ -269,9 +284,8 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
                 <button
                   key={k}
                   type="button"
-                  role="radio"
-                  aria-checked={isSelected}
-                  aria-label={`Colour ${k}`}
+                  aria-pressed={isSelected}
+                  aria-label={`Set colour to ${k}${isSelected ? ' (current)' : ''}`}
                   title={k}
                   disabled={busy}
                   onClick={() => pickColour(k)}

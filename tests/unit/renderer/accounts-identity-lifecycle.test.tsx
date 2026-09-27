@@ -104,7 +104,7 @@ function account(over: Partial<AccountView> & Pick<AccountView, 'id' | 'provider
 const codexWork = account({ id: 'acc-work', providerId: 'codex', identityId: 'id-work', isProviderDefault: true, runningSessions: 2 })
 const codexSpare = account({ id: 'acc-spare', providerId: 'codex', identityId: 'id-spare', lifecycle: 'inactive' })
 const codexHome = account({ id: 'acc-local', providerId: 'codex', identityId: 'id-ext', external: true, unverified: true, authMethod: 'external', identityAssurance: 'realm-only' })
-const codexOld = account({ id: 'acc-old', providerId: 'codex', identityId: 'id-old', lifecycle: 'archived', authMethod: 'apiKey' })
+const codexOld = account({ id: 'acc-old', providerId: 'codex', identityId: 'id-old', lifecycle: 'archived', authMethod: 'apiKey', archivedAt: new Date(2026, 8, 12, 15, 0).getTime() })
 const claudeMain = account({ id: 'acc-claude-main', providerId: 'claude', identityId: 'id-me', legacyId: 'profile-primary', legacyLinked: true, isProviderDefault: true, providerLabel: 'me@example.com' })
 const claudeWork = account({ id: 'acc-claude-work', providerId: 'claude', identityId: 'id-work', legacyId: 'profile-work', legacyLinked: true, providerLabel: 'work@example.com' })
 
@@ -294,6 +294,63 @@ describe('the identity editor (row 7)', () => {
     expect(useSettingsStore.getState().settings.accountColourOverrides?.['me@example.com']).toBe('pink')
   })
 
+  it('a typed name is kept however the editor closes: a click elsewhere, or Escape (review Q2)', async () => {
+    render(snapshot())
+    await click('account-chip-acc-work')
+    typeInto(q('identity-editor-acc-work-name') as HTMLInputElement, 'Typed then left')
+    await act(async () => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+    await flush()
+    expect(q('identity-editor-acc-work')).toBeNull()
+    expect(pa.updateIdentity).toHaveBeenCalledWith({ identityId: 'id-work', friendlyName: 'Typed then left' })
+    pa.updateIdentity.mockClear()
+    await click('account-chip-acc-work')
+    const name = q('identity-editor-acc-work-name') as HTMLInputElement
+    name.focus()
+    typeInto(name, 'Then Escape')
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    await flush()
+    expect(q('identity-editor-acc-work')).toBeNull()
+    expect(pa.updateIdentity).toHaveBeenCalledTimes(1)
+    expect(pa.updateIdentity).toHaveBeenCalledWith({ identityId: 'id-work', friendlyName: 'Then Escape' })
+  })
+
+  it('a scroll outside it closes the editor, as the row menu does (review Q5)', async () => {
+    render(snapshot())
+    await click('account-chip-acc-work')
+    await act(async () => { container.dispatchEvent(new Event('scroll')) ; window.dispatchEvent(new Event('scroll')) })
+    await flush()
+    expect(q('identity-editor-acc-work')).toBeNull()
+  })
+
+  it('the swatches are toggle buttons that say which is current (review Q6)', async () => {
+    render(snapshot())
+    await click('account-chip-acc-work')
+    const current = q('identity-editor-acc-work-colour-periwinkle')!
+    expect(current.getAttribute('aria-pressed')).toBe('true')
+    expect(current.getAttribute('aria-label')).toBe('Set colour to periwinkle (current)')
+    expect(q('identity-editor-acc-work-colour-indigo')!.getAttribute('aria-pressed')).toBe('false')
+    expect(document.querySelector('[data-testid="identity-editor-acc-work"] [role="radio"], [data-testid="identity-editor-acc-work"] [role="radiogroup"]')).toBeNull()
+  })
+
+  it('the editor closes when its provider is switched off while it is open (review Q8)', async () => {
+    render(snapshot())
+    await click('account-chip-acc-work')
+    expect(q('identity-editor-acc-work')).not.toBeNull()
+    const off = snapshot()
+    off.providers[1] = { ...off.providers[1], enabled: false }
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: off, loaded: true }) })
+    expect(q('identity-editor-acc-work')).toBeNull()
+  })
+
+  it('an operation that throws says so and frees the editor (review Q1)', async () => {
+    pa.updateIdentity.mockRejectedValue(new Error('ipc gone'))
+    render(snapshot())
+    await click('account-chip-acc-work')
+    await click('identity-editor-acc-work-colour-indigo')
+    expect(q('identity-editor-acc-work-error')?.textContent).toBe('That did not work; try again.')
+    expect((q('identity-editor-acc-work-colour-indigo') as HTMLButtonElement).disabled).toBe(false)
+  })
+
   it('this computer\'s own sign-in edits no name and links nothing', async () => {
     render(snapshot())
     await click('account-chip-acc-local')
@@ -324,6 +381,8 @@ describe('lifecycle blockers name the sessions (row 10, design 5.3)', () => {
     const blocker = q('account-blocker-acc-spare')!
     expect(blocker.textContent).toContain("Spare can't be made inactive while these use it:")
     expect([...blocker.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Go to Docs site', 'Go to Blog drafts'])
+    // Three consumers, two named here: the third is counted (review Q4).
+    expect(q('account-blocker-acc-spare-more')?.textContent).toBe('and 1 more')
     expect(q('account-error-acc-spare')).toBeNull()
     await click('account-blocker-acc-spare-go-s-docs')
     expect(heard).toEqual(['s-docs'])
@@ -337,6 +396,7 @@ describe('lifecycle blockers name the sessions (row 10, design 5.3)', () => {
     await click('account-menu-btn-acc-spare')
     await click('account-menu-archive-acc-spare')
     expect(q('account-blocker-acc-spare')!.textContent).toContain("Spare can't be archived while these use it:")
+    expect(q('account-blocker-acc-spare-more')).toBeNull()
     pa.setLifecycle.mockResolvedValueOnce({ ok: false, code: 'consumers', message: 'x', consumers: 2, sessions: ['s-elsewhere'] } as never)
     await click('account-menu-btn-acc-spare')
     await click('account-menu-archive-acc-spare')
@@ -350,9 +410,16 @@ describe('Archived (N) with Restore (row 10, design 5.3)', () => {
     render(snapshot())
     expect(q('archived-accounts-codex')!.textContent).toContain('Archived (1)')
     expect(q('archived-account-acc-old')!.textContent).toContain('Old test')
+    expect(q('archived-when-acc-old')?.textContent).toBe('archived 12 Sep')
     expect(q('provider-account-row-acc-old')).toBeNull()
     await click('archived-restore-acc-old')
     expect(pa.setLifecycle).toHaveBeenCalledWith({ accountId: 'acc-old', lifecycle: 'inactive' })
+  })
+
+  it('an archived account with no time on record says nothing about when (review S3)', () => {
+    render(snapshot({ accounts: [codexWork, { ...codexOld, archivedAt: undefined }, claudeMain] }))
+    expect(q('archived-account-acc-old')).not.toBeNull()
+    expect(q('archived-when-acc-old')).toBeNull()
   })
 
   it('shows why a restore was refused', async () => {

@@ -108,6 +108,8 @@ export interface AccountView {
    *  the profile id), so a surface that lists the provider's own accounts
    *  can show each one's registry state. */
   legacyId?: string
+  /** When it was archived; present only on an archived account. */
+  archivedAt?: number
   /** Sessions running on this account now. */
   runningSessions: number
   /** Reviewer invocations running on this account now. */

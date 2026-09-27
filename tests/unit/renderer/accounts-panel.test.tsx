@@ -326,7 +326,7 @@ describe('AccountsPanel', () => {
         { ...base, id: 's-shell', label: 'Shell', profileId: profileWithEmail.id, shellOnly: true },
       ] as never,
     })
-    deleteMock.mockResolvedValue({ ok: false, error: 'This account is in use by an open session. Close its sessions and try again.' })
+    deleteMock.mockResolvedValue({ ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' } as never)
     const heard: string[] = []
     const onGo = (e: Event) => { heard.push(((e as CustomEvent).detail as { sessionId: string }).sessionId) }
     window.addEventListener('app:goToSession', onGo)
@@ -352,6 +352,50 @@ describe('AccountsPanel', () => {
     expect(heard).toEqual(['s-blog'])
     window.removeEventListener('app:goToSession', onGo)
     useSessionStore.setState({ sessions: [] })
+  })
+
+  it('a removal refused for anything else keeps main\'s words, even with sessions running on it (review Q3)', async () => {
+    useAccountProfilesStore.setState({ profiles: [primaryProfile, profileWithEmail] })
+    useSessionStore.setState({ sessions: [{ id: 's-docs', label: 'Docs site', sessionType: 'local', provider: 'claude', profileId: profileWithEmail.id }] as never })
+    deleteMock.mockResolvedValue({ ok: false, error: "The account's claude.ai session could not be cleared, so the account was not removed: locked" })
+    const { container, unmount: u } = renderComponent(React.createElement(AccountsPanel, { onAdd: vi.fn() }))
+    unmount = u
+    await openMenu(profileWithEmail.id)
+    await act(async () => { menuItem('remove', profileWithEmail.id)!.click() })
+    expect(container.querySelector(`[data-testid="profile-blocker-${profileWithEmail.id}"]`)).toBeNull()
+    expect(container.querySelector(`[data-testid="delete-error-${profileWithEmail.id}"]`)!.textContent).toContain('could not be cleared')
+    useSessionStore.setState({ sessions: [] })
+  })
+
+  it('Make inactive refused while sessions run on the profile names them with Go to (design 5.3, review S1); none open here: main\'s words', async () => {
+    useAccountProfilesStore.setState({ profiles: [primaryProfile, profileWithEmail] })
+    useSessionStore.setState({ sessions: [{ id: 's-docs', label: 'Docs site', sessionType: 'local', provider: 'claude', profileId: profileWithEmail.id }] as never })
+    setActiveMock.mockResolvedValue({ ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' } as never)
+    const { container, unmount: u } = renderComponent(React.createElement(AccountsPanel, { onAdd: vi.fn() }))
+    unmount = u
+    await openMenu(profileWithEmail.id)
+    await act(async () => { menuItem('make-inactive', profileWithEmail.id)!.click() })
+    const blocker = container.querySelector(`[data-testid="profile-blocker-${profileWithEmail.id}"]`)!
+    expect(blocker.textContent).toContain("Work can't be made inactive while these use it:")
+    expect([...blocker.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Go to Docs site'])
+    expect(container.querySelector(`[data-testid="profile-error-${profileWithEmail.id}"]`)).toBeNull()
+    // An SSH session (not listed here) holds it: main's words.
+    useSessionStore.setState({ sessions: [] })
+    await openMenu(profileWithEmail.id)
+    await act(async () => { menuItem('make-inactive', profileWithEmail.id)!.click() })
+    expect(container.querySelector(`[data-testid="profile-blocker-${profileWithEmail.id}"]`)).toBeNull()
+    expect(container.querySelector(`[data-testid="profile-error-${profileWithEmail.id}"]`)!.textContent).toBe('This account is in use by an open session. Close its sessions and try again.')
+  })
+
+  it('a change that throws says so and frees the row (review Q1)', async () => {
+    useAccountProfilesStore.setState({ profiles: [profileWithEmail] })
+    setActiveMock.mockRejectedValue(new Error('ipc gone'))
+    const { container, unmount: u } = renderComponent(React.createElement(AccountsPanel, { onAdd: vi.fn() }))
+    unmount = u
+    await openMenu(profileWithEmail.id)
+    await act(async () => { menuItem('make-inactive', profileWithEmail.id)!.click() })
+    expect(container.querySelector(`[data-testid="profile-error-${profileWithEmail.id}"]`)!.textContent).toBe('That did not work; try again.')
+    expect((document.querySelector(`[data-testid="profile-menu-btn-${profileWithEmail.id}"]`) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('the identity editor sets the colour by canonical email while the account list is not available (the legacy store)', async () => {
@@ -399,6 +443,21 @@ describe('AccountsPanel', () => {
     })
     await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
     expect(renameMock).toHaveBeenCalledWith(profileWithEmail.id, 'Day job')
+  })
+
+  it('a rename that throws says so in the editor and frees it (review Q1)', async () => {
+    useAccountProfilesStore.setState({ profiles: [profileWithEmail] })
+    renameMock.mockRejectedValue(new Error('ipc gone'))
+    const { unmount: u } = renderComponent(React.createElement(AccountsPanel, { onAdd: vi.fn() }))
+    unmount = u
+    const editor = await openEditor(profileWithEmail.id)
+    const input = editor!.querySelector(`[data-testid="identity-editor-${profileWithEmail.id}-name"]`) as HTMLInputElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => { setter.call(input, 'Day job'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(document.querySelector(`[data-testid="identity-editor-${profileWithEmail.id}-error"]`)!.textContent).toBe('That did not work; try again.')
+    expect(input.disabled).toBe(false)
+    renameMock.mockResolvedValue({ ok: true })
   })
 
   it('offers Make inactive on non-primary profiles but not the primary', async () => {
@@ -468,7 +527,7 @@ describe('AccountsPanel', () => {
     unmount = u
 
     const editor = await openEditor(profileWithoutEmail.id)
-    expect(editor!.querySelector('[role="radiogroup"]')).toBeNull()
+    expect(editor!.querySelector(`[data-testid="identity-editor-${profileWithoutEmail.id}-colour-indigo"]`)).toBeNull()
     expect(editor!.querySelector(`[data-testid="identity-editor-${profileWithoutEmail.id}-name"]`)).toBeTruthy()
   })
 

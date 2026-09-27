@@ -1029,8 +1029,12 @@ describe('Archived (N) with Restore, and a refusal that names its sessions (P3.2
     await h.service.setDefault({ accountId: b })
     await archive(h, a)
     const realmId = h.doc().accounts.find((x) => x.id === a)!.authRealmId
+    // The snapshot says when it was archived, only while it is.
+    expect(typeof h.service.snapshot().accounts.find((x) => x.id === a)!.archivedAt).toBe('number')
+    expect(h.service.snapshot().accounts.find((x) => x.id === b)!.archivedAt).toBeUndefined()
     const before = h.runs.length
     expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).toEqual({ ok: true })
+    expect(h.service.snapshot().accounts.find((x) => x.id === a)!.archivedAt).toBeUndefined()
     expect(h.runs.length).toBe(before)
     expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'inactive', lastKnownAuthState: 'unknown', operationalState: 'attention', isProviderDefault: false })
     expect(findRealm(h.doc(), realmId)).toMatchObject({ lifecycle: 'active' })

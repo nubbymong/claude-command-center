@@ -288,7 +288,8 @@ describe('accountProfiles:credentialStamp handler', () => {
 // clear is awaited, and a session can spawn on the profile meanwhile).
 describe('accountProfiles:delete — the in-use guard', () => {
   const del = (id: unknown) => handlers.get(IPC.ACCOUNT_PROFILES_DELETE)!({}, { id })
-  const REFUSED = { ok: false, error: 'This account is in use by an open session. Close its sessions and try again.' }
+  // P3.2: the refusal carries code 'in-use', the one the Accounts row names sessions for.
+  const REFUSED = { ok: false, code: 'in-use', error: 'This account is in use by an open session. Close its sessions and try again.' }
 
   it('REGRESSION: a held profile is refused, and nothing is cleared or torn down', async () => {
     h.inUse.mockImplementation((id) => id === 'profile-held')
