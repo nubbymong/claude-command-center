@@ -9,7 +9,7 @@ import {
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, detectedNewAccountEmail } from '../claude-account-identity'
-import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage, knownUsageLabels, claudeUsageAllowed } from '../usage/account-usage'
+import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage, knownUsageLabels, claudeAccountDataAllowed } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError, logWarn } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
@@ -45,10 +45,10 @@ export function registerAccountProfilesHandlers(): void {
   // cross-check. Pure file reads, so it is safe to call on every panel open.
   // Usage track MP3 (D5): while Claude Code is switched off no credential
   // file is read; the answer is no accounts (Insights then shows no sign-in
-  // warning). The rule is main's own, set at start (setClaudeUsageAllowed).
+  // warning). The rule is main's own, set at start (setClaudeAccountDataAllowed).
   ipcMain.handle(IPC.ACCOUNT_PROFILES_AUTH_INFO, () => {
     try {
-      if (!claudeUsageAllowed()) return []
+      if (!claudeAccountDataAllowed()) return []
       return readAllProfileAuthInfo()
     } catch (err) {
       logError('[account-profiles] authInfo failed:', err)

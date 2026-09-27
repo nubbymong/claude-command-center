@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T03:56:49.170Z",
-  "head": "895ee237fbcd31f7db1b435eb7a87d4bb5a48f1f",
-  "tree": "11020c8781f121ac5fcb4ff26860a2924e86e268",
+  "generatedAt": "2026-09-27T04:08:08.604Z",
+  "head": "804bb7672cbe78baad35447f7d8b2cc3ac9d7699",
+  "tree": "5ffa6b260d97d5101cb19eac22d6fd01ea10cffd",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -911,7 +911,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 47
+      "lineCount": 64
     },
     {
       "path": "src/renderer/components/AccountsPanel.tsx",
@@ -2407,7 +2407,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 37
+      "lineCount": 52
     },
     {
       "path": "tests/unit/renderer/account-usage-panel.test.tsx",

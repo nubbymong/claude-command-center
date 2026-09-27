@@ -460,13 +460,13 @@ export function resolveUsageOutcome(
  *  read as it always was. An answer that throws is a no (fail closed). */
 let usageAllowed: () => boolean = () => true
 
-export function setClaudeUsageAllowed(allowed: () => boolean): void {
+export function setClaudeAccountDataAllowed(allowed: () => boolean): void {
   usageAllowed = allowed
 }
 
 /** Whether anything of Claude Code may be read for the usage surfaces now
  *  (the Account usage page and the credential state it and Insights show). */
-export function claudeUsageAllowed(): boolean {
+export function claudeAccountDataAllowed(): boolean {
   try { return usageAllowed() === true } catch { return false }
 }
 
@@ -527,7 +527,7 @@ export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: 
   const profile = profiles.find((p) => p.id === profileId)
   // D5: Claude Code switched off (or its setting unreadable) reads nothing:
   // before the credential file is located, before any refresh, before any GET.
-  if (!claudeUsageAllowed()) return offUsage(profile, profileId)
+  if (!claudeAccountDataAllowed()) return offUsage(profile, profileId)
   hydrateSnapshots()
   const isPrimary = !!profile?.isPrimary
   const active = profile ? isAccountActive(profile) : true
@@ -662,7 +662,7 @@ export async function fetchAllAccountsUsageStreaming(
     // D5: with Claude Code switched off an account makes none either (it
     // comes back `off` from fetchAccountUsage, which asks the rule itself, so
     // a switch-off during the stream holds for the rest of it).
-    const willNetwork = claudeUsageAllowed() && accountUsageWillNetwork(p)
+    const willNetwork = claudeAccountDataAllowed() && accountUsageWillNetwork(p)
     if (willNetwork && networkedCount > 0) await sleep(STAGGER_MS)
     if (!wanted()) return
     onResult(await fetchAccountUsage(p.id))

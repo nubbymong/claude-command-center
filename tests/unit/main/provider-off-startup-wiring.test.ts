@@ -30,13 +30,13 @@ describe('provider-off start-up wiring', () => {
   // while it is off. The rule is handed to the usage module before the usage
   // handlers are registered, so no request can be served on the default.
   it('the Claude usage gate is handed the launch rule, before the usage handlers register', () => {
-    expect(code).toMatch(/import \{ recordLiveUsageForSession, setClaudeUsageAllowed \} from '\.\/usage\/account-usage'/)
-    const wired = code.indexOf("setClaudeUsageAllowed(() => providerProbeRefusal('claude') === null)")
+    expect(code).toMatch(/import \{ recordLiveUsageForSession, setClaudeAccountDataAllowed \} from '\.\/usage\/account-usage'/)
+    const wired = code.indexOf("setClaudeAccountDataAllowed(() => providerProbeRefusal('claude') === null)")
     const registered = code.indexOf('registerAccountProfilesHandlers()')
     expect(wired).toBeGreaterThan(-1)
     expect(registered).toBeGreaterThan(-1)
     expect(wired).toBeLessThan(registered)
-    expect(code.split('setClaudeUsageAllowed(').length).toBe(2)
+    expect(code.split('setClaudeAccountDataAllowed(').length).toBe(2)
   })
 
   it('the version probe is handed the launch rule, before the probe at start', () => {

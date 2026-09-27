@@ -46,7 +46,7 @@ Object.defineProperty(window, 'electronAPI', {
   value: { accountProfiles: { list, authInfo }, accountUsage: { fetchAllStream, fetchOne }, providerAccounts: { usageStream, usageOne } },
 })
 
-const { default: AccountUsagePanel } = await import('../../../src/renderer/components/AccountUsagePanel')
+const { default: AccountUsagePanel, FOCUS_REFRESH_MS } = await import('../../../src/renderer/components/AccountUsagePanel')
 const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
 const { useProviderAccountsStore } = await import('../../../src/renderer/stores/providerAccountsStore')
 const { choiceSettings } = await import('../../../src/renderer/onboarding/provider-choice')
@@ -382,6 +382,139 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     expect(skeletons().length).toBe(0)
     expect(container.textContent).toMatch(/Parked/)
     latestCx().done()
+  })
+
+  // MP4 review F1: each provider loads on its own.
+  it('switching Codex on or off re-streams Codex alone; Claude Code is not asked again, nor Codex by Claude Code\'s switch', async () => {
+    modes({ claude: true, withCodex: false }, [cxAccount('w')])
+    list.mockResolvedValue([profile('a')])
+    await mount()
+    expect(usageStream).not.toHaveBeenCalled()
+    await act(async () => { modes({ claude: true, withCodex: true }, [cxAccount('w')]) })
+    await flush()
+    expect(usageStream).toHaveBeenCalledTimes(1)
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(authInfo).toHaveBeenCalledTimes(1)
+    expect(fetchAllStream).toHaveBeenCalledTimes(1)
+    await act(async () => { modes({ claude: false, withCodex: true }, [cxAccount('w')]) })
+    await flush()
+    expect(usageStream).toHaveBeenCalledTimes(1)
+    latest().done(); latestCx().done()
+  })
+
+  it('Refresh reloads both providers', async () => {
+    modes({ claude: true, withCodex: true }, [cxAccount('w')])
+    list.mockResolvedValue([profile('a')])
+    await mount()
+    const refresh = container.querySelector('[data-testid="pf-actions"] button') as HTMLElement
+    await act(async () => { refresh.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    await flush()
+    expect(fetchAllStream).toHaveBeenCalledTimes(2)
+    expect(usageStream).toHaveBeenCalledTimes(2)
+    latest().done(); latestCx().done()
+  })
+
+  // MP4 review F2: a registry change reads the account it touched.
+  it('an account added to the registry after the stream reads that account alone', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w')])
+    await mount()
+    latestCx().emit(cxView('w', 18)); latestCx().done()
+    await flush()
+    usageOne.mockResolvedValueOnce({ ok: true, usage: cxView('n', 33) })
+    // A parked account added too reads nothing.
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshotOf([cxAccount('w'), cxAccount('n'), cxAccount('q', { lifecycle: 'inactive' })]), loaded: true }) })
+    await flush()
+    expect(usageOne.mock.calls.map((c) => c[0])).toEqual(['n'])
+    expect(container.textContent).toContain('33%')
+    expect(usageStream).toHaveBeenCalledTimes(1)
+  })
+
+  it('a registry change while the stream runs waits for it to end (no second read beside it)', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w')])
+    await mount()
+    usageOne.mockResolvedValueOnce({ ok: true, usage: cxView('n', 33) })
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshotOf([cxAccount('w'), cxAccount('n')]), loaded: true }) })
+    await flush()
+    expect(usageOne).not.toHaveBeenCalled()
+    latestCx().emit(cxView('w', 18)); latestCx().done()
+    await flush()
+    expect(usageOne.mock.calls.map((c) => c[0])).toEqual(['n'])
+    expect(container.textContent).toContain('33%')
+  })
+
+  it('an account signed back in reads again', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w', { lastKnownAuthState: 'signed-out' })])
+    await mount()
+    latestCx().emit({ ...cxView('w', 10), status: 'not-signed-in', source: 'last-seen' }); latestCx().done()
+    await flush()
+    expect(container.textContent).toContain('Sign in again')
+    usageOne.mockResolvedValueOnce({ ok: true, usage: cxView('w', 44) })
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshotOf([cxAccount('w', { lastKnownAuthState: 'signed-in' })]), loaded: true }) })
+    await flush()
+    expect(usageOne).toHaveBeenCalledWith('w')
+    expect(container.textContent).toContain('44%')
+    expect(container.textContent).not.toContain('Sign in again')
+  })
+
+  it('coming back to the window reloads quietly, at most once a minute', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    modes({ claude: true, withCodex: true }, [cxAccount('w')])
+    list.mockResolvedValue([profile('a')])
+    await mount()
+    latest().emit(usage('a', 20)); latest().done()
+    latestCx().emit(cxView('w', 18)); latestCx().done()
+    await flush()
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    expect(fetchAllStream).toHaveBeenCalledTimes(1)
+    vi.setSystemTime(Date.now() + FOCUS_REFRESH_MS + 1)
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    await flush()
+    expect(fetchAllStream).toHaveBeenCalledTimes(2)
+    expect(usageStream).toHaveBeenCalledTimes(2)
+    // Quiet: the figures stay while the new streams run.
+    expect(container.textContent).toContain('20%')
+    expect(container.textContent).toContain('18%')
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    expect(fetchAllStream).toHaveBeenCalledTimes(2)
+    latest().done(); latestCx().done()
+  })
+
+  // MP4 review F3.
+  it('a Retry row names its account, and its Retry says whose', async () => {
+    modes({ claude: true, withCodex: true }, [cxAccount('w')])
+    list.mockResolvedValue([profile('a')])
+    await mount()
+    latest().reject(new Error('stream died'))
+    latestCx().reject(new Error('stream died'))
+    await flush()
+    const rows = Array.from(container.querySelectorAll('[data-testid="account-usage-unavailable"]'))
+    expect(rows.map((r) => r.querySelector('[data-testid="account-usage-unavailable-name"]')?.textContent)).toEqual(['a@x.com', 'Name w'])
+    expect(rows.map((r) => r.querySelector('button')?.getAttribute('aria-label'))).toEqual(['Retry a@x.com', 'Retry Name w'])
+  })
+
+  // MP4 review F4.
+  it('a failed Claude Code list: its heading with no count, the error in its place, Codex still drawn', async () => {
+    modes({ claude: true, withCodex: true }, [cxAccount('w')])
+    list.mockRejectedValue(new Error('profiles read failed'))
+    await mount()
+    expect(heading('claude')?.textContent).toBe('Claude Code')
+    expect(container.textContent).toMatch(/Couldn.t load account usage/)
+    expect(heading('codex')?.textContent).toBe('Codex1 account')
+    latestCx().done()
+  })
+
+  // MP4 review F6.
+  it('section headings are headings, and the foot\'s Tokenomics link opens Tokenomics', async () => {
+    modes({ claude: true, withCodex: true }, [cxAccount('w')])
+    list.mockResolvedValue([profile('a')])
+    const onOpenTokenomics = vi.fn()
+    await act(async () => { root.render(<AccountUsagePanel onClose={() => {}} onReauthNavigate={() => {}} onOpenTokenomics={onOpenTokenomics} />) })
+    await flush()
+    expect(Array.from(container.querySelectorAll('h2')).map((h) => h.getAttribute('data-testid'))).toEqual(['account-usage-section-claude', 'account-usage-section-codex'])
+    const link = Array.from(container.querySelectorAll('[data-testid="account-usage-foot"] button')).find((b) => b.textContent === 'Tokenomics') as HTMLElement
+    await act(async () => { link.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(onOpenTokenomics).toHaveBeenCalledTimes(1)
+    latest().done(); latestCx().done()
   })
 
   it('a Codex account whose realm cannot be used shows the Retry row', async () => {

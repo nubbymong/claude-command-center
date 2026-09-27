@@ -51,7 +51,7 @@ const knownUsageLabels = vi.fn(() => ['5h', 'Weekly', 'Fable'])
 vi.mock('../../../src/main/usage/account-usage', () => ({
   fetchAllAccountsUsage: vi.fn(), fetchAccountUsage: vi.fn(),
   knownUsageLabels: () => knownUsageLabels(),
-  claudeUsageAllowed: () => h.claudeOn(),
+  claudeAccountDataAllowed: () => h.claudeOn(),
   fetchAllAccountsUsageStreaming: (cb: (u: AccountUsage) => void, opts?: { shouldContinue?: () => boolean }) => fetchAllAccountsUsageStreaming(cb, opts),
 }))
 vi.mock('../../../src/main/account-profiles', () => ({

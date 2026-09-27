@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "9c26e1a2c01dbca097b9d9ec329cda4584bdbedc365343e88c4a66d5dfa3217a",
-  "manifestHead": "895ee237fbcd31f7db1b435eb7a87d4bb5a48f1f",
+  "manifestHead": "804bb7672cbe78baad35447f7d8b2cc3ac9d7699",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -35,7 +35,7 @@
     {
       "path": "tests/unit/main/account-usage-stream-handler.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.60 enable/disable: WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md) added the accountUsage:knownLabels handler cases (cached labels, input ignored, a failure is no labels) and mocks knownUsageLabels; the existing cases are kept; tests/unit/main/account-usage-stream-handler.test.ts; WP2 P3 usage track MP3 round-2 review fixes added the cases that the credential state is not read while Claude Code is off (a rule that throws is a no) and that an older stream never reads as current again after a newer one finished, and holds the scripted source per call"
+      "evidence": "WP1.60 enable/disable: WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md) added the accountUsage:knownLabels handler cases (cached labels, input ignored, a failure is no labels) and mocks knownUsageLabels; the existing cases are kept; tests/unit/main/account-usage-stream-handler.test.ts; WP2 P3 usage track MP3 round-2 review fixes added the cases that the credential state is not read while Claude Code is off (a rule that throws is a no) and that an older stream never reads as current again after a newer one finished, and holds the scripted source per call; WP2 P3 usage track MP4 review fixes renamed the gate it mocks to claudeAccountDataAllowed; the existing cases are kept"
     },
     {
       "path": "tests/unit/main/debug-logger-epipe-loop.test.ts",
@@ -65,12 +65,12 @@
     {
       "path": "tests/unit/renderer/account-usage-panel-streaming.test.tsx",
       "disposition": "replace",
-      "evidence": "WP1.60 enable/disable: WP2 P3 usage track MP3 round-1 review fixes added the cases that with Claude Code off the page calls neither authInfo nor the usage stream and shows only the D5 line, and loads again once it is on; the existing cases are kept; tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5) added the Codex and provider-mode cases, with the provider-neutral usage stream mocked; the existing cases are kept"
+      "evidence": "WP1.60 enable/disable: WP2 P3 usage track MP3 round-1 review fixes added the cases that with Claude Code off the page calls neither authInfo nor the usage stream and shows only the D5 line, and loads again once it is on; the existing cases are kept; tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5) added the Codex and provider-mode cases, with the provider-neutral usage stream mocked; the existing cases are kept; WP2 P3 usage track MP4 review fixes added the per-provider load, registry-change, focus, Retry-name, failed-list and heading cases; the existing cases are kept"
     },
     {
       "path": "tests/unit/renderer/account-usage-panel.test.tsx",
       "disposition": "replace",
-      "evidence": "WP1.60 enable/disable: WP2 P3 usage track MP3 round-1 review fixes added the case that an account of a provider that is off shows no Refresh sign-in, no countdown and no warnings (D5); the existing cases are kept; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5) added the Claude card identity, D2 and age cases and the Codex card cases; the existing cases are kept"
+      "evidence": "WP1.60 enable/disable: WP2 P3 usage track MP3 round-1 review fixes added the case that an account of a provider that is off shows no Refresh sign-in, no countdown and no warnings (D5); the existing cases are kept; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5) added the Claude card identity, D2 and age cases and the Codex card cases; the existing cases are kept; WP2 P3 usage track MP4 review fixes added the Errors-state and bar-name cases; the existing cases are kept"
     },
     {
       "path": "tests/unit/renderer/accounts-panel.test.tsx",
@@ -557,7 +557,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the switch-off rule counts provider-in-use.ts and the version probe is handed the launch rule; tests/unit/main/provider-in-use.test.ts; WP2 final fixes: a settings save tells the accounts service in its own try (a failing watchdog update never skips it), and that call looks for the CLI of a provider the save turned on (WP1.17, WP1.60); tests/unit/main/settings-saved-accounts-wiring.test.ts, tests/wp1/cli-discovery.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the Claude usage gate (D5) is wired to the launch rule before the usage handlers register (WP1.60 enable/disable); tests/unit/account-usage-provider-off.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage gate wiring and its order before registerAccountProfilesHandlers are pinned (WP1.60 enable/disable); tests/unit/main/provider-off-startup-wiring.test.ts",
+      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the switch-off rule counts provider-in-use.ts and the version probe is handed the launch rule; tests/unit/main/provider-in-use.test.ts; WP2 final fixes: a settings save tells the accounts service in its own try (a failing watchdog update never skips it), and that call looks for the CLI of a provider the save turned on (WP1.17, WP1.60); tests/unit/main/settings-saved-accounts-wiring.test.ts, tests/wp1/cli-discovery.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the Claude usage gate (D5) is wired to the launch rule before the usage handlers register (WP1.60 enable/disable); tests/unit/account-usage-provider-off.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage gate wiring and its order before registerAccountProfilesHandlers are pinned (WP1.60 enable/disable); tests/unit/main/provider-off-startup-wiring.test.ts; WP2 P3 usage track MP4 review fixes: the Claude usage gate is renamed setClaudeAccountDataAllowed, since it gates the credential state as well (WP1.60 enable/disable); tests/unit/main/provider-off-startup-wiring.test.ts",
       "note": "concrete provider registration and handler registration move to the single main composition root; index.ts calls it"
     },
     {
@@ -1263,7 +1263,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "replace",
-      "evidence": "WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): the Account usage page lists each provider that is on in its own section; Codex's accounts come from the registry the renderer already holds and their allowance views from the provider-neutral usage stream (never a provider-specific channel); nothing of Codex is asked for until it is answered on and nothing of Claude Code while it is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3): the next-reset re-render moved to a shared hook the footer uses too; tests/unit/renderer/account-usage-panel-streaming.test.tsx",
+      "evidence": "WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): the Account usage page lists each provider that is on in its own section; Codex's accounts come from the registry the renderer already holds and their allowance views from the provider-neutral usage stream (never a provider-specific channel); nothing of Codex is asked for until it is answered on and nothing of Claude Code while it is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3): the next-reset re-render moved to a shared hook the footer uses too; tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP4 review fixes: each provider loads on its own (a switch re-streams only that provider, Refresh both); an account the registry adds, or one whose sign-in changes, reads again alone; a window focus reloads quietly at most once a minute; Retry rows name their account; a failed Claude Code list keeps its heading without a count; section headings are headings and each bar names its bucket (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx",
       "note": ""
     },
     {
@@ -3496,7 +3496,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.33 mapping: adapted in place for WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): the preload mock gains the provider-neutral usage stream; new cases for the three provider modes, the D5 line, per-provider skeletons, Retry rows and the D2 timer; the existing cases are kept (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx",
+      "evidence": "WP1.33 mapping: adapted in place for WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): the preload mock gains the provider-neutral usage stream; new cases for the three provider modes, the D5 line, per-provider skeletons, Retry rows and the D2 timer; the existing cases are kept (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP4 review fixes: cases for per-provider loads, registry changes, the focus reload, named Retry rows, the failed Claude Code list beside Codex, and real headings with the Tokenomics link (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx",
       "note": ""
     },
     {
@@ -3506,7 +3506,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.33 mapping: adapted in place for WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): new cases for the Claude card's identity name and chip, D2 and ages, and the Codex card; the existing cases are kept (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel.test.tsx",
+      "evidence": "WP1.33 mapping: adapted in place for WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): new cases for the Claude card's identity name and chip, D2 and ages, and the Codex card; the existing cases are kept (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP4 review fixes: cases for the Errors-state Claude Code cards and the bars' names (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel.test.tsx",
       "note": ""
     },
     {

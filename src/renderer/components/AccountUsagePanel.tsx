@@ -37,6 +37,9 @@ const CLAUDE: ProviderId = 'claude'
 const CODEX: ProviderId = 'codex'
 const PROVIDER_NAME: Readonly<Record<ProviderId, string>> = { claude: 'Claude Code', codex: 'Codex' }
 
+/** A window focus reloads the page at most this often. */
+export const FOCUS_REFRESH_MS = 60_000
+
 const TONE_TEXT: Record<AuthWindowTone, string> = {
   expired: 'text-red',
   critical: 'text-red',
@@ -110,75 +113,104 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
   const [codexStreaming, setCodexStreaming] = useState(codexOn)
   // Main answered that Codex is off (switched off in between): no section.
   const [codexStreamOff, setCodexStreamOff] = useState(false)
-  // Generation guard: a Refresh supersedes any in-flight load, so a late result
-  // from the previous stream (or its settle) is ignored rather than repopulating
-  // a row the new load has just reset.
-  const genRef = useRef(0)
+  // Generation guards, one per provider: a Refresh (or that provider's switch
+  // flipping) supersedes its in-flight load, so a late result from the previous
+  // stream (or its settle) is ignored rather than repopulating a row the new
+  // load has just reset. Each provider loads on its own: switching Codex on or
+  // off never re-asks Claude Code, and the other way round.
+  const claudeGen = useRef(0)
+  const codexGen = useRef(0)
+  // The Codex accounts (and each one's sign-in state) as of the last stream
+  // or the last registry change handled, so a change after it reads that
+  // account again.
+  const codexSeen = useRef<Map<string, string>>(new Map())
+  const codexAccountsRef = useRef(codexAccounts)
+  codexAccountsRef.current = codexAccounts
 
-  const load = useCallback(async () => {
-    const gen = ++genRef.current
-    const claude = async () => {
-      if (claudeOff) {
-        setUsageByProfile({})
-        setProfiles([])
-        setLoadError(false)
-        setStreaming(false)
-        return
-      }
-      // Clear usage so every row returns to a skeleton, then re-stream. The account
-      // list and the credential state are both local file reads, so they resolve at
-      // once and independently of the network usage fetch -- one slow account must
-      // not hold back the others' rows or the forced-login countdown.
+  const loadClaude = useCallback(async (opts: { quiet?: boolean } = {}) => {
+    const gen = ++claudeGen.current
+    if (claudeOff) {
       setUsageByProfile({})
+      setProfiles([])
       setLoadError(false)
-      setStreaming(true)
-      try {
-        const [profs, auth] = await Promise.all([
-          window.electronAPI.accountProfiles.list(),
-          window.electronAPI.accountProfiles.authInfo().catch(() => [] as ProfileAuthInfo[]),
-        ])
-        if (genRef.current !== gen) return // a newer Refresh took over
-        setProfiles(profs)
-        setAuthInfo(Object.fromEntries(auth.map((a) => [a.profileId, a])))
-        // Stream each account's usage in as it resolves (plan P3): an OPEN account
-        // snaps in instantly from its live figure (no call), a CLOSED one fills in
-        // as its staggered call lands. No all-or-nothing "Loading..." gate.
-        await window.electronAPI.accountUsage.fetchAllStream((usage) => {
-          if (genRef.current !== gen) return // ignore a superseded stream's result
-          setUsageByProfile((prev) => ({ ...prev, [usage.profileId]: usage }))
-        })
-      } catch {
-        // A rejected list()/stream (a corrupt profiles read, say) must not leave the
-        // page shimmering: record the error so unresolved rows show a terminal state
-        // and an empty list reads as an error rather than "No accounts found".
-        if (genRef.current === gen) { setLoadError(true); setProfiles((prev) => prev ?? []) }
-      } finally {
-        if (genRef.current === gen) setStreaming(false)
-      }
+      setStreaming(false)
+      return
     }
-    const codex = async () => {
-      setCodexViews({})
-      setCodexStreamOff(false)
-      if (!codexOn) { setCodexStreaming(false); return }
-      setCodexStreaming(true)
-      try {
-        const api = window.electronAPI?.providerAccounts
-        if (!api?.usageStream) return // no stream: the rows turn to Retry
-        const r = await api.usageStream(CODEX, (view) => {
-          if (genRef.current !== gen || !view || typeof view.accountId !== 'string') return
-          setCodexViews((prev) => ({ ...prev, [view.accountId]: view }))
-        })
-        if (genRef.current === gen && r && r.ok === true && r.provider === 'off') setCodexStreamOff(true)
-      } catch {
-        // A failed stream leaves the unresolved rows to Retry, one account each.
-      } finally {
-        if (genRef.current === gen) setCodexStreaming(false)
-      }
+    // Clear usage so every row returns to a skeleton, then re-stream (a quiet
+    // reload keeps the figures shown until each new one lands). The account
+    // list and the credential state are both local file reads, so they resolve
+    // at once and independently of the network usage fetch -- one slow account
+    // must not hold back the others' rows or the forced-login countdown.
+    if (!opts.quiet) setUsageByProfile({})
+    setLoadError(false)
+    setStreaming(true)
+    try {
+      const [profs, auth] = await Promise.all([
+        window.electronAPI.accountProfiles.list(),
+        window.electronAPI.accountProfiles.authInfo().catch(() => [] as ProfileAuthInfo[]),
+      ])
+      if (claudeGen.current !== gen) return // a newer load took over
+      setProfiles(profs)
+      setAuthInfo(Object.fromEntries(auth.map((a) => [a.profileId, a])))
+      // Stream each account's usage in as it resolves (plan P3): an OPEN account
+      // snaps in instantly from its live figure (no call), a CLOSED one fills in
+      // as its staggered call lands. No all-or-nothing "Loading..." gate.
+      await window.electronAPI.accountUsage.fetchAllStream((usage) => {
+        if (claudeGen.current !== gen) return // ignore a superseded stream's result
+        setUsageByProfile((prev) => ({ ...prev, [usage.profileId]: usage }))
+      })
+    } catch {
+      // A rejected list()/stream (a corrupt profiles read, say) must not leave the
+      // page shimmering: record the error so unresolved rows show a terminal state
+      // and an empty list reads as an error rather than "No accounts found".
+      if (claudeGen.current === gen) { setLoadError(true); setProfiles((prev) => prev ?? []) }
+    } finally {
+      if (claudeGen.current === gen) setStreaming(false)
     }
-    await Promise.all([claude(), codex()])
-  }, [claudeOff, codexOn])
+  }, [claudeOff])
 
-  useEffect(() => { void load() }, [load])
+  const loadCodex = useCallback(async (opts: { quiet?: boolean } = {}) => {
+    const gen = ++codexGen.current
+    if (!opts.quiet) setCodexViews({})
+    setCodexStreamOff(false)
+    codexSeen.current = new Map(codexAccountsRef.current.map((a) => [a.id, a.lastKnownAuthState]))
+    if (!codexOn) { setCodexStreaming(false); return }
+    setCodexStreaming(true)
+    try {
+      const api = window.electronAPI?.providerAccounts
+      if (!api?.usageStream) return // no stream: the rows turn to Retry
+      const r = await api.usageStream(CODEX, (view) => {
+        if (codexGen.current !== gen || !view || typeof view.accountId !== 'string') return
+        setCodexViews((prev) => ({ ...prev, [view.accountId]: view }))
+      })
+      if (codexGen.current === gen && r && r.ok === true && r.provider === 'off') setCodexStreamOff(true)
+    } catch {
+      // A failed stream leaves the unresolved rows to Retry, one account each.
+    } finally {
+      if (codexGen.current === gen) setCodexStreaming(false)
+    }
+  }, [codexOn])
+
+  useEffect(() => { void loadClaude() }, [loadClaude])
+  useEffect(() => { void loadCodex() }, [loadCodex])
+  // Refresh (and a window focus) reloads both.
+  const load = useCallback(async (opts: { quiet?: boolean } = {}) => {
+    await Promise.all([loadClaude(opts), loadCodex(opts)])
+  }, [loadClaude, loadCodex])
+
+  // Coming back to the window reloads, quietly (the figures stay until each
+  // new one lands), at most once per FOCUS_REFRESH_MS.
+  const lastFocusLoad = useRef(Date.now())
+  useEffect(() => {
+    const onFocus = () => {
+      const t = Date.now()
+      if (t - lastFocusLoad.current < FOCUS_REFRESH_MS) return
+      lastFocusLoad.current = t
+      void load({ quiet: true })
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [load])
 
   const refreshOne = useCallback(async (profileId: string) => {
     try {
@@ -193,6 +225,20 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
       if (r && r.ok === true && r.usage) setCodexViews((prev) => ({ ...prev, [accountId]: r.usage }))
     } catch { /* it stays a Retry row */ }
   }, [])
+
+  // The registry changed after the stream: an account added since, or one
+  // whose sign-in state changed (signed back in, say), reads again, that
+  // account alone. A parked account reads nothing.
+  useEffect(() => {
+    if (!codexOn || codexStreaming) return
+    const seen = codexSeen.current
+    for (const a of codexAccounts) {
+      if (a.lifecycle === 'inactive') continue
+      const before = seen.get(a.id)
+      if (before === undefined || before !== a.lastKnownAuthState) void refreshCodexOne(a.id)
+    }
+    codexSeen.current = new Map(codexAccounts.map((a) => [a.id, a.lastKnownAuthState]))
+  }, [codexAccounts, codexOn, codexStreaming, refreshCodexOne])
 
   const onSignIn = (row: AccountUsage) => {
     reauth({ id: row.profileId, name: row.name }, () => void refreshOne(row.profileId))
@@ -239,7 +285,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
           <p className="text-[0.8125rem] text-overlay0" data-testid="account-usage-claude-off">{CLAUDE_OFF_USAGE_LINE}</p>
         )}
         {claudeSection && (<>
-        {bothSections && <SectionHeading providerId={CLAUDE} name={providerView(snapshot, CLAUDE)?.displayName ?? PROVIDER_NAME[CLAUDE]} count={profiles?.length ?? null} />}
+        {bothSections && <SectionHeading providerId={CLAUDE} name={providerView(snapshot, CLAUDE)?.displayName ?? PROVIDER_NAME[CLAUDE]} count={loadError ? null : profiles?.length ?? null} />}
         {profiles === null
           // The list is a local read; the placeholders below cover only the frame
           // or two before it resolves, so the page never flashes empty.
@@ -257,7 +303,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
                 // row with a per-account retry rather than an endless shimmer.
                 return streaming
                   ? <UsageSkeletonCard key={p.id} />
-                  : <UsageUnavailableRow key={p.id} onRetry={() => void refreshOne(p.id)} />
+                  : <UsageUnavailableRow key={p.id} name={p.accountEmail || p.name} onRetry={() => void refreshOne(p.id)} />
               })}
         </>)}
         {codexSection && (<>
@@ -268,10 +314,10 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
           if (!view && !parked) {
             return codexStreaming
               ? <UsageSkeletonCard key={a.id} />
-              : <UsageUnavailableRow key={a.id} onRetry={() => void refreshCodexOne(a.id)} />
+              : <UsageUnavailableRow key={a.id} name={accountDisplayName(snapshot, a)} onRetry={() => void refreshCodexOne(a.id)} />
           }
           if (view && (view.status === 'error' || view.status === 'off')) {
-            return <UsageUnavailableRow key={a.id} onRetry={() => void refreshCodexOne(a.id)} />
+            return <UsageUnavailableRow key={a.id} name={accountDisplayName(snapshot, a)} onRetry={() => void refreshCodexOne(a.id)} />
           }
           const identity = identityOf(snapshot, a)
           const provider = providerView(snapshot, a.providerId) ?? { providerId: a.providerId, displayName: PROVIDER_NAME[a.providerId] }
@@ -305,7 +351,7 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
 // its name and how many of its accounts are listed.
 function SectionHeading({ providerId, name, count }: { providerId: ProviderId; name: string; count: number | null }) {
   return (
-    <div
+    <h2
       className="flex items-center gap-2 mt-1 -mb-0.5 text-[0.75rem] font-semibold text-subtext0 uppercase tracking-[0.05em]"
       data-testid={`account-usage-section-${providerId}`}
     >
@@ -316,7 +362,7 @@ function SectionHeading({ providerId, name, count }: { providerId: ProviderId; n
           {count} account{count === 1 ? '' : 's'}
         </span>
       )}
-    </div>
+    </h2>
   )
 }
 
@@ -355,12 +401,16 @@ function UsageSkeletonCard() {
 // Terminal state for a row whose usage never arrived because the stream itself
 // failed (rare — a per-account fetch resolves to an error-status row, not a
 // missing one). Shown instead of an endless skeleton, with a per-account retry.
-function UsageUnavailableRow({ onRetry }: { onRetry: () => void }) {
+function UsageUnavailableRow({ name, onRetry }: { name: string; onRetry: () => void }) {
   return (
     <div className="rounded-xl border border-surface0/70 px-4 py-3.5 bg-surface0/20 flex items-center justify-between gap-2" data-testid="account-usage-unavailable">
-      <span className="text-[0.8125rem] text-overlay0">Couldn’t load this account’s usage.</span>
+      <span className="text-[0.8125rem] text-overlay0 min-w-0">
+        <span className="text-text font-medium break-all" data-testid="account-usage-unavailable-name">{name}</span>{' '}
+        {'Couldn\u2019t load this account\u2019s usage.'}
+      </span>
       <button
         onClick={onRetry}
+        aria-label={`Retry ${name}`}
         className="text-[0.75rem] px-2 py-0.5 rounded border border-surface1 text-overlay1 hover:text-text hover:border-blue/40 transition-colors shrink-0"
       >
         Retry
@@ -387,7 +437,7 @@ function UsageBar({ bucket, now }: { bucket: UsageBucket; now: number }) {
   return (
     <div className="flex items-center gap-2.5">
       <span className="text-[0.8125rem] text-subtext0 shrink-0" style={{ minWidth: '3.625rem' }}>{bucket.label}</span>
-      <span className="flex-1 h-2 rounded-full bg-surface1 overflow-hidden" role="progressbar" aria-valuenow={clamped} aria-valuemin={0} aria-valuemax={100}>
+      <span className="flex-1 h-2 rounded-full bg-surface1 overflow-hidden" role="progressbar" aria-label={`${bucket.label} usage`} aria-valuenow={clamped} aria-valuemin={0} aria-valuemax={100}>
         <span className="block h-full rounded-full transition-[width] duration-300" style={{ width: `${clamped}%`, backgroundColor: color }} />
       </span>
       <span className="text-[0.8125rem] text-text tabular-nums shrink-0" style={{ minWidth: '2.5rem', textAlign: 'right' }}>{Math.round(clamped)}%</span>

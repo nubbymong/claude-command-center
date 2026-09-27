@@ -111,6 +111,24 @@ const q = (c: HTMLElement, id: string) => c.querySelector(`[data-testid="${id}"]
 describe('AccountCard: identity, D2 and ages (usage track MP4)', () => {
   afterEach(() => { vi.useRealTimers() })
 
+  // MP4 review F5: the canvas Errors state, exactly as the component words it.
+  it('an account signed in with no usable token, and one whose read failed, say so exactly', () => {
+    const dash = String.fromCharCode(0x2014)
+    const signedIn = render(<AccountCard row={row({ status: 'error', detail: 'signed in' })} theme="dark" onSignIn={vi.fn()} now={NOW} />)
+    expect(signedIn.container.querySelector('p')?.textContent).toBe(`Signed in ${dash} open a session to refresh usage.`)
+    signedIn.unmount()
+    const limited = render(<AccountCard row={row({ status: 'error', detail: 'HTTP 429' })} theme="dark" onSignIn={vi.fn()} now={NOW} />)
+    expect(limited.container.querySelector('p')?.textContent).toBe("Couldn't load usage (HTTP 429).")
+    limited.unmount()
+  })
+
+  // MP4 review F6: each bar names its bucket.
+  it('each bar names the window it measures', () => {
+    const r = render(<AccountCard row={row({ buckets: [bucket('5h', 34, at(15, 10)), bucket('Weekly', 58, at(9, 0, 30))] })} theme="dark" onSignIn={vi.fn()} now={NOW} />)
+    expect(Array.from(r.container.querySelectorAll('[role="progressbar"]')).map((b) => b.getAttribute('aria-label'))).toEqual(['5h usage', 'Weekly usage'])
+    r.unmount()
+  })
+
   it('leads with the identity name and colour, the email beside it', () => {
     const r = render(<AccountCard row={row({ email: 'work@example.com' })} identity={{ name: 'Work', colourKey: 'slate-blue' }} theme="dark" onSignIn={vi.fn()} now={NOW} />)
     expect(q(r.container, 'account-usage-name')?.textContent).toBe('Work')

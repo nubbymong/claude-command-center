@@ -61,7 +61,7 @@ vi.mock('https', () => {
 })
 
 const {
-  fetchAccountUsage, fetchAllAccountsUsageStreaming, setClaudeUsageAllowed, claudeUsageAllowed, knownUsageLabels,
+  fetchAccountUsage, fetchAllAccountsUsageStreaming, setClaudeAccountDataAllowed, claudeAccountDataAllowed, knownUsageLabels,
   recordLiveUsageForSession, _resetLiveUsageForTest, _resetSnapshotsForTest,
 } = await import('../../src/main/usage/account-usage')
 
@@ -84,7 +84,7 @@ beforeEach(() => {
   profileBySession.clear()
   _resetLiveUsageForTest()
   _resetSnapshotsForTest()
-  setClaudeUsageAllowed(() => true)
+  setClaudeAccountDataAllowed(() => true)
   // A lapsed token: the closed-account path would refresh it if it ran.
   writeCreds(Date.now() - 60_000)
 })
@@ -92,7 +92,7 @@ afterEach(() => { try { fs.rmSync(tmpHome, { recursive: true, force: true }) } c
 
 describe('Claude Code off: the usage page makes no Claude call (D5)', () => {
   it('one account comes back off before its credentials are located, refreshed or used', async () => {
-    setClaudeUsageAllowed(() => false)
+    setClaudeAccountDataAllowed(() => false)
     const r = await fetchAccountUsage('profile-a-1')
     expect(r).toMatchObject({ profileId: 'profile-a-1', status: 'off', buckets: [], email: 'profile-a-1@example.com', name: 'Acct profile-a-1' })
     expect(configDirAsked).toEqual([])
@@ -101,7 +101,7 @@ describe('Claude Code off: the usage page makes no Claude call (D5)', () => {
   })
 
   it('a rule that cannot answer counts as off (fail closed)', async () => {
-    setClaudeUsageAllowed(() => { throw new Error('settings unreadable') })
+    setClaudeAccountDataAllowed(() => { throw new Error('settings unreadable') })
     expect((await fetchAccountUsage('profile-a-1')).status).toBe('off')
     expect(configDirAsked).toEqual([])
     expect(requestedHosts).toEqual([])
@@ -109,16 +109,16 @@ describe('Claude Code off: the usage page makes no Claude call (D5)', () => {
 
   // Review L-A (MP3 round 2): the credential-state handler asks the same rule.
   it('the rule the credential-state handler asks is this one, and a rule that throws is a no', () => {
-    setClaudeUsageAllowed(() => true)
-    expect(claudeUsageAllowed()).toBe(true)
-    setClaudeUsageAllowed(() => false)
-    expect(claudeUsageAllowed()).toBe(false)
-    setClaudeUsageAllowed(() => { throw new Error('settings unreadable') })
-    expect(claudeUsageAllowed()).toBe(false)
+    setClaudeAccountDataAllowed(() => true)
+    expect(claudeAccountDataAllowed()).toBe(true)
+    setClaudeAccountDataAllowed(() => false)
+    expect(claudeAccountDataAllowed()).toBe(false)
+    setClaudeAccountDataAllowed(() => { throw new Error('settings unreadable') })
+    expect(claudeAccountDataAllowed()).toBe(false)
   })
 
   it('the stream delivers every account off, with no call and no pacing', async () => {
-    setClaudeUsageAllowed(() => false)
+    setClaudeAccountDataAllowed(() => false)
     const got: string[] = []
     const started = Date.now()
     await fetchAllAccountsUsageStreaming((u) => got.push(`${u.profileId}:${u.status}`))
@@ -130,7 +130,7 @@ describe('Claude Code off: the usage page makes no Claude call (D5)', () => {
 
   it('switched off during a stream, the accounts not yet read come back off', async () => {
     let on = true
-    setClaudeUsageAllowed(() => on)
+    setClaudeAccountDataAllowed(() => on)
     profiles = [profile('profile-a-1'), profile('profile-b-1')]
     const got: string[] = []
     await fetchAllAccountsUsageStreaming((u) => { got.push(u.status); on = false })
@@ -151,7 +151,7 @@ describe('knownUsageLabels (Settings, no network)', () => {
     seededSnapshots = { 'profile-a-1': { buckets: [bucket('5h'), bucket('Weekly')], fetchedAt: 1 }, 'profile-b-1': { buckets: [bucket('Weekly'), bucket('Fable')], fetchedAt: 1 } }
     profileBySession.set('sess-1', 'profile-c-1')
     recordLiveUsageForSession('sess-1', [bucket('Opus')], false)
-    setClaudeUsageAllowed(() => false)
+    setClaudeAccountDataAllowed(() => false)
     expect(knownUsageLabels()).toEqual(['5h', 'Weekly', 'Fable', 'Opus'])
     expect(configDirAsked).toEqual([])
     expect(emailRead).toEqual([])
