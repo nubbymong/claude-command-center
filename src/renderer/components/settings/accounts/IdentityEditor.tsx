@@ -134,7 +134,12 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
     }
     // Placed from the chip: once the page moves, it would float off it (as RowMenu closes).
-    const onScroll = (e: Event) => { if (!panelRef.current?.contains(e.target as Node)) leave() }
+    // (A scroll of the window itself has no node target: it closes it too.)
+    const onScroll = (e: Event) => {
+      const t = e.target
+      if (t instanceof Node && panelRef.current?.contains(t)) return
+      leave()
+    }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey, true)
     window.addEventListener('resize', leave)

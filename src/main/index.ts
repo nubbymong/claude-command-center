@@ -22,7 +22,7 @@ import {
 } from './canvas/ccc-ux-protocol'
 
 import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
-import { recordLiveUsageForSession, setClaudeAccountDataAllowed } from './usage/account-usage'
+import { recordLiveUsageForSession, setClaudeAccountDataAllowed, setLiveUsageTranscriptProfile } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
 import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
@@ -59,7 +59,7 @@ import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { initTokenomics, shutdownTokenomics, getTokenomicsSupervisor } from './tokenomics/tokenomics-service'
-import { createTranscriptAttribution } from './tokenomics/tk-attribution'
+import { createTranscriptAttribution, profileOfTranscript, type TkProfileFolders } from './tokenomics/tk-attribution'
 import { getClaudeProfileId, sessionsOnProfile } from './claude-account-identity'
 import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
@@ -799,13 +799,20 @@ if (!gotTheLock) {
     // config folder holds the transcript (the path decides) names it through
     // its registry link. Independent of the binder, so it works with logging
     // off; the profiles root and the usage index are resolved lazily too.
-    const attributeTranscript = createTranscriptAttribution({
-      isLocal: (sessionId) => getClaudeProfileId(sessionId) !== undefined,
+    // Where the profiles keep their transcripts: shared with the live usage
+    // recorder, which files a session's figure under a profile only when its
+    // transcript lies in that profile's folder (P3.2).
+    const profileFolders: TkProfileFolders = {
       profilesRoot: () => { try { return getProfilesRoot() } catch { return null } },
       isProfileId: (name) => isValidProfileId(name),
       // The layout comes from where profile homes are built: <home>/.claude/projects.
       projectsDirOf: (profileId) => join(getProfileConfigDir(profileId), '.claude', 'projects'),
       realRoot: (root) => { try { return realpathSync.native(root) } catch { return null } },
+    }
+    setLiveUsageTranscriptProfile((path) => profileOfTranscript(profileFolders, path))
+    const attributeTranscript = createTranscriptAttribution({
+      isLocal: (sessionId) => getClaudeProfileId(sessionId) !== undefined,
+      ...profileFolders,
       accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId, { ignoreCase: process.platform === 'win32' }) ?? null,
       record: (sessionId, accountKey) => {
         const tokenomics = getTokenomicsSupervisor()

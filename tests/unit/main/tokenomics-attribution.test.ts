@@ -359,7 +359,8 @@ const code = indexSource
 
 describe('main composes the attribution beside the transcript binder (MP10)', () => {
   it('both transcript-path sources reach the attribution, whether logging is on or off', () => {
-    expect(code).toMatch(/import \{ createTranscriptAttribution \} from '\.\/tokenomics\/tk-attribution'/)
+    // P3.2: with the folder rule the live usage recorder shares.
+    expect(code).toMatch(/import \{ createTranscriptAttribution, profileOfTranscript, type TkProfileFolders \} from '\.\/tokenomics\/tk-attribution'/)
     // P3.2: index also imports the sessions-only in-use check from there.
     expect(code).toMatch(/import \{[^}]*\bgetClaudeProfileId\b[^}]*\} from '\.\/claude-account-identity'/)
     expect(code).toMatch(/getProfilesRoot, getProfileConfigDir, isValidProfileId \} from '\.\/account-profiles'/)
@@ -383,6 +384,9 @@ describe('main composes the attribution beside the transcript binder (MP10)', ()
     expect(code).toMatch(/realRoot: \(root\) => \{ try \{ return realpathSync\.native\(root\) \} catch \{ return null \} \}/)
     expect(code).toMatch(/accountOf: \(profileId\) => getAccountsService\(\)\?\.accountIdForLegacy\('claude', profileId, \{ ignoreCase: process\.platform === 'win32' \}\) \?\? null/)
     expect(code).toMatch(/const tokenomics = getTokenomicsSupervisor\(\)\s*if \(!tokenomics\) return false\s*tokenomics\.setSessionAccount\(sessionId, accountKey\)\s*return true/)
+    // P3.2: the live usage recorder gets the same folder rule on the same folders.
+    expect(code).toMatch(/setLiveUsageTranscriptProfile\(\(path\) => profileOfTranscript\(profileFolders, path\)\)/)
+    expect(code).toMatch(/isLocal: \(sessionId\) => getClaudeProfileId\(sessionId\) !== undefined,\s*\.\.\.profileFolders,/)
     // No manual attribution: nothing else in main records one.
     expect(code.split('setSessionAccount(').length).toBe(2)
     expect(code.split('createTranscriptAttribution(').length).toBe(2)

@@ -46,9 +46,10 @@ export function captureClaudeAccount(sessionId: string, profileId: string | unde
     profileBySession.delete(sessionId)
   }
   // Record the profileId first (before the email guard) so it is captured even on a
-  // retry tick where the email read failed the first time. First-write-wins.
+  // retry tick where the email read failed the first time. The first reading wins
+  // within one profile.
   if (profileId && !profileBySession.has(sessionId)) profileBySession.set(sessionId, profileId)
-  if (bySession.has(sessionId)) return // drift-immune: first capture wins
+  if (bySession.has(sessionId)) return // drift-immune: the first reading wins within one profile
   const email = profileId
     ? readProfileAccountEmail(profileId)
     : getDefaultAccountEmail()

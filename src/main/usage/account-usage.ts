@@ -370,9 +370,24 @@ function isLiveBucket(v: unknown): v is UsageBucket {
  * or default-home session has no local profile id so it stores nothing -- both
  * leave the account on the GET path, which is correct.
  */
-export function recordLiveUsageForSession(sessionId: string, buckets: unknown, hasCredits: boolean, now: number = Date.now()): void {
+/** Which profile's folder a transcript lies in (the Tokenomics folder rule,
+ *  profileOfTranscript), set by main; unset, nothing is recorded. */
+let transcriptProfileOf: ((transcriptPath: string) => string | undefined) | null = null
+export function setLiveUsageTranscriptProfile(resolve: ((transcriptPath: string) => string | undefined) | null): void {
+  transcriptProfileOf = resolve
+}
+
+export function recordLiveUsageForSession(sessionId: string, buckets: unknown, hasCredits: boolean, transcriptPath?: unknown, now: number = Date.now()): void {
   const profileId = getClaudeProfileId(sessionId)
   if (!profileId) return
+  // The figure is this profile's only when the session that wrote it keeps its
+  // transcript in this profile's folder: a write from the session's previous
+  // run under another profile (Switch account keeps the session id) is not
+  // filed here. With no transcript path nothing is recorded, as for a
+  // default-home session.
+  let owner: string | undefined
+  try { owner = typeof transcriptPath === 'string' && transcriptProfileOf ? transcriptProfileOf(transcriptPath) : undefined } catch { owner = undefined }
+  if (owner !== profileId) return
   if (!Array.isArray(buckets)) return
   const clean = buckets.filter(isLiveBucket)
   if (clean.length === 0) return

@@ -112,6 +112,23 @@ export function transcriptProfile(
   return undefined
 }
 
+/** Where main keeps the Claude profiles' transcripts: the part of the
+ *  attribution's dependencies that locates them. */
+export type TkProfileFolders = Pick<TkAttributionDeps, 'profilesRoot' | 'isProfileId' | 'projectsDirOf' | 'realRoot' | 'platform'>
+
+/** The profile whose folder holds a transcript, or undefined: the rule of
+ *  transcriptProfile, on main's folders. Never throws. Shared by the
+ *  Tokenomics attribution and the live usage recorder (account-usage.ts). */
+export function profileOfTranscript(folders: TkProfileFolders, transcriptPath: string): string | undefined {
+  try {
+    const root = folders.profilesRoot()
+    if (typeof root !== 'string' || root.length === 0) return undefined
+    return transcriptProfile(transcriptPath, root, (n) => folders.isProfileId(n) === true, (id) => folders.projectsDirOf(id), folders.platform ?? process.platform, folders.realRoot?.(root) ?? null)
+  } catch {
+    return undefined
+  }
+}
+
 /** The sink composed beside the transcript binder's: called with an app
  *  session id and the transcript path it reported. Never throws. */
 export function createTranscriptAttribution(deps: TkAttributionDeps): (appSessionId: string, transcriptPath: string) => void {
@@ -123,9 +140,7 @@ export function createTranscriptAttribution(deps: TkAttributionDeps): (appSessio
       const sessionId = transcriptSessionId(transcriptPath)
       if (!sessionId) return
       if (typeof appSessionId !== 'string' || appSessionId.length === 0 || deps.isLocal(appSessionId) !== true) return
-      const root = deps.profilesRoot()
-      if (typeof root !== 'string' || root.length === 0) return
-      const profileId = transcriptProfile(transcriptPath, root, (n) => deps.isProfileId(n) === true, (id) => deps.projectsDirOf(id), deps.platform ?? process.platform, deps.realRoot?.(root) ?? null)
+      const profileId = profileOfTranscript(deps, transcriptPath)
       if (!profileId) return
       const accountKey = tkAccountKey('claude', deps.accountOf(profileId))
       if (accountKey === TK_ACCOUNT_NOT_RECORDED || sent.get(sessionId) === accountKey) return
