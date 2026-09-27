@@ -1,6 +1,25 @@
 // tests/unit/renderer/session-launch.test.ts
 import { describe, it, expect } from 'vitest'
-import { shouldGateAccountChoice, canSwitchAccountForSession, sshMappedProfileId, formatSpawnError, resolveResumeAccountMode, shouldPredetermineRestoredAccount } from '../../../src/renderer/utils/sessionLaunch'
+import { shouldGateAccountChoice, canSwitchAccountForSession, sshMappedProfileId, formatSpawnError, resolveResumeAccountMode, shouldPredetermineRestoredAccount, sessionAgentName } from '../../../src/renderer/utils/sessionLaunch'
+import fs from 'node:fs'
+import path from 'node:path'
+
+describe('the partner strip names the tab\'s own assistant (walk fix N4)', () => {
+  it('Codex for a Codex tab; Claude for a Claude tab or one with no provider, as before', () => {
+    expect(sessionAgentName('codex')).toBe('Codex')
+    expect(sessionAgentName('claude')).toBe('Claude')
+    expect(sessionAgentName(undefined)).toBe('Claude')
+  })
+  it('App\'s partner strip says it for the tab it sits in, in its note, its button and its title', () => {
+    const app = fs.readFileSync(path.resolve(process.cwd(), 'src/renderer/App.tsx'), 'utf8').replace(/\r\n/g, '\n')
+    expect(app).toContain('const agentName = sessionAgentName(session.provider)')
+    expect(app).toContain('Partner terminal &mdash; a plain shell, not {agentName}</span>')
+    expect(app).toContain('title={`Back to the ${agentName} terminal`}')
+    expect(app).toMatch(/\n\s*Back to \{agentName\}\n\s*<\/button>/)
+    expect(app).not.toContain('not Claude</span>')
+    expect(app).not.toMatch(/\n\s*Back to Claude\n/)
+  })
+})
 
 describe('shouldGateAccountChoice', () => {
   it('gates a Claude session with >= 2 account profiles', () => {

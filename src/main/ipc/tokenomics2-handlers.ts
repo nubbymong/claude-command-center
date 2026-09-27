@@ -8,7 +8,7 @@
  * (15 s timeout, can't hang).
  *
  * The kinds map onto the worker's handleQuery() switch (tokenomics-worker.ts):
- *   summary, sessions, session-detail, index-status.
+ *   summary, sessions, session-detail, index-status, accounts (usage track MP9).
  *
  * TOKENOMICS2_INDEX_PROGRESS / TOKENOMICS2_INDEX_COMPLETE are PUSHes: at
  * registration we subscribe to the supervisor's progress/complete fan-outs and
@@ -21,6 +21,7 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { getTokenomicsSupervisor } from '../tokenomics/tokenomics-service'
+import { tkAccountKeyOk } from '../tokenomics/tk-types'
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -31,6 +32,10 @@ const filterSchema = z.object({
   from: z.number().int().optional(),
   to: z.number().int().optional(),
   model: z.string().min(1).max(200).optional(),
+  // Usage track MP9: one provider's, or one account's, usage. An account key
+  // is '' (not recorded) or `<provider>:<id>`, nothing else.
+  provider: z.enum(['claude', 'codex']).optional(),
+  accountKey: z.string().max(140).refine((k) => tkAccountKeyOk(k)).optional(),
 }).strict()
 
 const sessionsSchema = filterSchema.extend({
@@ -40,6 +45,9 @@ const sessionsSchema = filterSchema.extend({
 }).strict()
 
 const detailSchema = z.object({ sessionId: z.string().min(1).max(200) }).strict()
+
+/** MP9: the accounts query takes nothing. */
+const accountsSchema = z.object({}).strict()
 
 // ---------------------------------------------------------------------------
 // Fallback when supervisor is not yet running
@@ -81,6 +89,11 @@ export function registerTokenomics2Handlers(getWindow: () => BrowserWindow | nul
 
   ipcMain.handle(IPC.TOKENOMICS2_SESSION_DETAIL, async (_e, a: unknown) => {
     return (await q('session-detail', detailSchema.parse(a)))[0] ?? null
+  })
+
+  // Usage track MP9: every provider and account the stored usage has.
+  ipcMain.handle(IPC.TOKENOMICS2_ACCOUNTS, async (_e, a: unknown) => {
+    return (await q('accounts', accountsSchema.parse(a ?? {})))[0] ?? []
   })
 
   ipcMain.handle(IPC.TOKENOMICS2_INDEX_STATUS, async () => {

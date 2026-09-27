@@ -16,6 +16,8 @@
  *     strict schema would accept.
  *   - codex `permissionsPreset`: a missing/invalid preset is floored to the
  *     least-privilege 'read-only' so the codex session still launches.
+ *   - codex `model`: an invalid one is DROPPED; the session launches on the
+ *     CLI's default model.
  *
  * Every other field is left untouched and still strict-parses downstream. Pure and
  * dependency-injected for logging so it unit-tests without the Electron ABI (and
@@ -33,6 +35,13 @@ export const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted'] a
 // schema's fields — see pty-handlers for why each rule exists.
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions', 'manual'] as const
+
+/** A Codex model id (`gpt-5.5`, `gpt-oss:20b`, `provider/model`), bounded and
+ *  charset-limited like the Claude model: it becomes a launch argument. The
+ *  first character is alphanumeric, so the value can never read as a flag.
+ *  '' means "no override", as for Claude. */
+export const CODEX_MODEL_MAX = 64
+export const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/
 
 export const EXTRA_ARGS_MAX = 512
 export const EXTRA_ARGS_CHARSET_RE = /^[A-Za-z0-9 _\-=.\/\\:@,+]*$/
@@ -72,6 +81,24 @@ export function sanitizeRestoredSpawnOptions<T>(
     } else if (!(CODEX_PRESETS as readonly string[]).includes(out.codexOptions.permissionsPreset)) {
       log('[pty] #397: restored codex session had an invalid permissionsPreset; defaulting to read-only')
       out.codexOptions = { ...out.codexOptions, permissionsPreset: 'read-only' }
+    }
+  }
+  // A non-Codex session never reads codexOptions, but the strict parse still
+  // checks it: a malformed leftover (not an object, or no valid preset) is
+  // dropped rather than left to wedge the session.
+  if (out.provider !== 'codex' && out.codexOptions !== undefined
+      && (!out.codexOptions || typeof out.codexOptions !== 'object' || !(CODEX_PRESETS as readonly string[]).includes(out.codexOptions.permissionsPreset))) {
+    log('[pty] #397: dropping unusable Codex options left on a non-Codex session')
+    out.codexOptions = undefined
+  }
+  // Whatever the provider: the strict parse bounds codexOptions.model for
+  // every session, so a stale value left on a restored Claude session would
+  // otherwise wedge it too.
+  if (out.codexOptions && typeof out.codexOptions === 'object') {
+    const model = out.codexOptions.model
+    if (model !== undefined && model !== '' && !(typeof model === 'string' && model.length <= CODEX_MODEL_MAX && CODEX_MODEL_RE.test(model))) {
+      log('[pty] #397: dropping an invalid persisted Codex model; the session launches with the default model')
+      out.codexOptions = { ...out.codexOptions, model: undefined }
     }
   }
 

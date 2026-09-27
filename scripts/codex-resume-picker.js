@@ -7,7 +7,7 @@
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
-const { spawnSync, execSync } = require('child_process')
+const { spawnSync } = require('child_process')
 const readline = require('readline')
 
 const lib = require('./lib/codex-resume-picker-lib.js')
@@ -47,6 +47,15 @@ const C = {
   surface: '\x1b[38;2;69;71;90m',
 }
 
+// Text read from transcripts is shown as text: every control character
+// (C0, DEL, C1) becomes a space before it reaches the terminal.
+function printable(str) {
+  return [...String(str)].map((c) => {
+    const n = c.charCodeAt(0)
+    return n < 32 || (n >= 127 && n < 160) ? ' ' : c
+  }).join('')
+}
+
 function truncate(str, maxLen) {
   if (str.length <= maxLen) return str
   return str.slice(0, maxLen - 1) + '…'
@@ -58,24 +67,13 @@ function getForwardedArgs() {
   return process.argv.slice(2)
 }
 
-// -- Codex binary discovery -----------------------------------------
+// -- Codex executable -----------------------------------------------
+// WP2: the executable the app's setup proved for this session, passed in
+// CCC_CODEX_EXECUTABLE. Never re-resolved here: a second lookup could find
+// a different codex. Null when the app gave none (the picker then stops).
 function resolveCodexCmd() {
-  if (os.platform() !== 'win32') return 'codex'
-  for (const bin of ['codex.exe', 'codex.cmd']) {
-    try {
-      // stdio pipe on stderr suppresses the "INFO: Could not find files
-      // for the given pattern(s)." that Windows `where` writes to stderr
-      // on a miss. Default execSync inherits stderr -- the message would
-      // surface inside the PTY where the picker is hosted, confusing
-      // the user after they pick a session.
-      return execSync(`where ${bin}`, {
-        encoding: 'utf-8',
-        timeout: 5000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim().split('\n')[0].trim()
-    } catch { /* try next */ }
-  }
-  return 'codex'
+  const proven = process.env.CCC_CODEX_EXECUTABLE
+  return proven && path.isAbsolute(proven) ? proven : null
 }
 
 // -- Main -----------------------------------------------------------
@@ -92,7 +90,7 @@ async function main() {
   // -- Display ------------------------------------------------------
   const maxWidth = Math.min(process.stdout.columns || 80, 78)
   const innerWidth = maxWidth - 6
-  const dirDisplay = truncate(cwd, innerWidth)
+  const dirDisplay = truncate(printable(cwd), innerWidth)
 
   console.log('')
   console.log(`  ${C.surface}╭─${C.peach} Resume Codex Conversation ${C.surface}─ ${C.subtext}${dirDisplay} ${C.surface}${'─'.repeat(Math.max(0, maxWidth - 32 - dirDisplay.length))}╮${C.reset}`)
@@ -101,10 +99,10 @@ async function main() {
   for (let i = 0; i < conversations.length; i++) {
     const conv = conversations[i]
     const num = String(i + 1).padStart(2)
-    const title = truncate(conv.label.replace(/[\r\n]+/g, ' '), innerWidth - 6)
+    const title = truncate(printable(conv.label.replace(/[\r\n]+/g, ' ')), innerWidth - 6)
     const metaParts = [
-      conv.model || null,
-      conv.effort || null,
+      conv.model ? printable(conv.model) : null,
+      conv.effort ? printable(conv.effort) : null,
       timeAgo(conv.mtime),
     ].filter(Boolean)
     const meta = metaParts.join(' · ')
@@ -133,7 +131,8 @@ async function main() {
     }
     const idx = parseInt(choice, 10)
     if (idx >= 1 && idx <= conversations.length) {
-      launchCodex(conversations[idx - 1].id)
+      const id = conversations[idx - 1].id
+      launchCodex(lib.isResumeId(id) ? id : null)
       return
     }
     launchCodex(null)
@@ -143,13 +142,20 @@ async function main() {
 // -- launchCodex ----------------------------------------------------
 function launchCodex(resumeUuid) {
   const forwarded = getForwardedArgs()
-  const args = lib.buildResumeArgs(resumeUuid, forwarded)
   const cmd = resolveCodexCmd()
-  const result = spawnSync(cmd, args, {
-    stdio: 'inherit',
-    shell: lib.shouldUseShell(cmd, os.platform()),
-    windowsHide: false,
-  })
+  if (!cmd) {
+    console.error('\n  Failed to launch codex: the app did not pass the Codex executable for this session.\n')
+    process.exit(1)
+  }
+  const run = (args) => {
+    const target = lib.launchTarget(cmd, args, os.platform(), process.env)
+    if (!target) {
+      console.error('\n  Failed to launch codex: its path or arguments cannot be passed to cmd.exe safely.\n')
+      process.exit(1)
+    }
+    return spawnSync(target.file, target.args, { stdio: 'inherit', windowsHide: false, windowsVerbatimArguments: target.verbatim })
+  }
+  const result = run(lib.buildResumeArgs(resumeUuid, forwarded))
 
   // spawnSync failed to launch (ENOENT, EACCES, etc.). status is null when
   // this happens; result.error carries the cause. Surface and exit non-zero
@@ -162,11 +168,7 @@ function launchCodex(resumeUuid) {
   // If resume exited non-zero with a real status, fall back to fresh codex.
   if (lib.shouldFallback(resumeUuid, result.status)) {
     console.log('\n  Conversation no longer available -- starting fresh session...\n')
-    const fresh = spawnSync(cmd, forwarded, {
-      stdio: 'inherit',
-      shell: lib.shouldUseShell(cmd, os.platform()),
-      windowsHide: false,
-    })
+    const fresh = run(forwarded)
     if (fresh.error) {
       console.error(`\n  Failed to launch codex: ${fresh.error.message}\n`)
       process.exit(1)

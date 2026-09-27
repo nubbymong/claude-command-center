@@ -1,6 +1,10 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, probeTmuxLive, SSHOptions, SshEndTarget } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget } from '../pty-manager'
+import type { CodexLaunch } from '../pty-manager'
+import { getAccountsService } from '../provider-accounts'
+import { providerLaunchRefusal } from '../provider-launch-gate'
+import type { AccountLease } from '../providers/core'
 import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
@@ -14,7 +18,7 @@ import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
-import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote } from '../../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote, SshEndRemoteResult } from '../../shared/types'
 import { detachedDestinationAgrees, type SshDestinationSource } from '../../shared/detached-destination'
 import { readDetachedRemotesRegistry } from '../session-state'
 import { pingHost } from '../host-ping'
@@ -25,6 +29,8 @@ import {
   EXTRA_ARGS_MAX,
   EXTRA_ARGS_CHARSET_RE,
   extraArgsRefineOk,
+  CODEX_MODEL_MAX,
+  CODEX_MODEL_RE,
 } from '../sanitize-restored-spawn-options'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
@@ -110,8 +116,32 @@ const sshSchema = z.object({
  *  (`projectGate`). The Zod schema does not declare them and its parse result
  *  is discarded, so they are removed from the renderer's object BY NAME before
  *  it reaches spawnPty; this list is exported so the test that proves the
- *  strip cannot drift from the strip itself. */
-export const MAIN_INTERNAL_SPAWN_FIELDS = ['refreshAwaited', 'projectGate', 'projectGateDirs'] as const
+ *  strip cannot drift from the strip itself. `codexLaunch` (WP2) is a Codex
+ *  session's prepared launch -- its account lease, executable and realm
+ *  environment -- built below from the accounts service, never sent. */
+export const MAIN_INTERNAL_SPAWN_FIELDS = ['refreshAwaited', 'projectGate', 'projectGateDirs', 'codexLaunch'] as const
+
+/** Owner ids of Codex launch leases: one per spawn, so a respawn's new lease
+ *  never shares an owner with the one it replaces. */
+let codexLaunchSeq = 0
+
+/** WP2: shell-only SSH sessions, by id (spawned as such by pty:spawn), and
+ *  those among them whose "Launch Claude" main accepted. pty-manager
+ *  registers a shell-only session with no provider, and types `claude` into
+ *  it later (after setup and staging, up to minutes), so without this a
+ *  switch-off in that window would be accepted with Claude about to start.
+ *  An accepted launch counts as Claude in use until the session's PTY is
+ *  gone (pruned when counted), it is killed, or the id is spawned again. */
+const sshShellSessions = new Set<string>()
+const sshClaudeLaunches = new Set<string>()
+
+/** Shell-only SSH sessions whose "Launch Claude" was accepted and whose PTY
+ *  is still running: Claude in use there, for the switch-off rule
+ *  (provider-in-use.ts). */
+export function countSshClaudeLaunches(): number {
+  for (const id of sshClaudeLaunches) if (!isSessionWritable(id)) sshClaudeLaunches.delete(id)
+  return sshClaudeLaunches.size
+}
 
 export const spawnOptionsSchema = z.object({
   cwd: z.string().optional(),
@@ -130,6 +160,13 @@ export const spawnOptionsSchema = z.object({
     args: z.string().max(4096).optional(),
     hasSecretArg: z.boolean().optional(),
     elevated: z.boolean().optional(),
+    // The transient install/update tab (commandTerminal.ts) asks for NONE of
+    // the command-button secrets: they are left out of the environment its
+    // install script inherits. That keeps them out of the script's way; it is
+    // not a boundary against a script running as the same user. A renderer
+    // can only ask for fewer secrets with it, never more, so honouring what it
+    // sends is safe.
+    noCommandSecrets: z.boolean().optional(),
   }).optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
@@ -274,16 +311,33 @@ export const spawnOptionsSchema = z.object({
   profileId: z.string().optional(),
   provider: z.enum(['claude', 'codex']).optional(),
   codexOptions: z.object({
-    model: z.string().optional(),
+    // Bounded and charset-limited like the Claude model above: it becomes a
+    // launch argument. The value list lives in sanitize-restored-spawn-options.ts
+    // so the fail-open sanitizer drops exactly what this parse would reject.
+    model: z.string().max(CODEX_MODEL_MAX).regex(CODEX_MODEL_RE).optional().or(z.literal('')),
     reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
     permissionsPreset: z.enum(['read-only', 'standard', 'auto', 'unrestricted']),
   }).optional(),
+  // WP2 (plan A10): the Codex account the session runs under -- an opaque
+  // registry id, validated by the accounts service. Absent = the provider
+  // default. Codex only.
+  providerAccountId: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  // This launch's acknowledgement that it may use an unverified sign-in
+  // (design 5.5). Per launch; Codex only.
+  acknowledgeRealmOnly: z.boolean().optional(),
 }).superRefine((opts, ctx) => {
   if (opts?.provider === 'codex' && !opts.codexOptions) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'codexOptions required when provider is "codex"',
       path: ['codexOptions'],
+    })
+  }
+  if (opts && opts.provider !== 'codex' && (opts.providerAccountId !== undefined || opts.acknowledgeRealmOnly !== undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'providerAccountId and acknowledgeRealmOnly are for Codex sessions only',
+      path: ['providerAccountId'],
     })
   }
 }).optional()
@@ -491,7 +545,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     rows?: number
     ssh?: RendererSSHOptions
     shellOnly?: boolean
-    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean; noCommandSecrets?: boolean }
     /** Main-process only — resolved from the OS keychain below and explicitly
      *  cleared from whatever the renderer sent. Never accepted from outside. */
     terminalSecret?: string
@@ -522,6 +576,11 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
     }
+    providerAccountId?: string
+    acknowledgeRealmOnly?: boolean
+    /** Main-process only (see MAIN_INTERNAL_SPAWN_FIELDS): deleted from what
+     *  the renderer sent and built below from the accounts service. */
+    codexLaunch?: CodexLaunch
   }) => {
     // #397 Group 5: repair persisted fields fail-open BEFORE the strict parse, so a
     // corrupt session-state.json cannot abort the whole spawn (the session never
@@ -537,139 +596,241 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     const win = getWindow()
     if (!win) throw new Error('No window available')
 
-    // Auto-install legacy version before spawn if needed
-    if (options?.legacyVersion?.enabled && options.legacyVersion.version) {
-      if (!isVersionInstalled(options.legacyVersion.version)) {
+    // WP2: main refuses every launch of a provider that is switched off
+    // (provider-launch-gate.ts), before anything is installed, prepared,
+    // leased or spawned. This is the one path a new launch, a restored
+    // session, a Restart, Ask Conductor and a multi-spawn all take
+    // (TerminalView's spawn), and the one an SSH session that runs Claude on
+    // the remote takes -- a reattach included: its ladder starts a fresh
+    // `claude --continue` when the remote session is gone, which main cannot
+    // know beforehand, so it is refused too (the remote session is left
+    // running, to reattach once the provider is on). A shell-only SSH
+    // session's "Launch Claude" is refused at SSH_FLOW_LAUNCH_CLAUDE below.
+    // Answered, never thrown: the renderer says why in the tab and keeps the
+    // session.
+    //
+    // The boundary: a terminal-only session runs no provider and is never
+    // refused. It runs whatever the user types, `claude` included; that is the
+    // user's own command in their own shell, not a launch the app starts.
+    const launchProvider = options?.shellOnly ? null : (options?.provider ?? 'claude')
+    if (launchProvider) {
+      const refused = providerLaunchRefusal(launchProvider)
+      if (refused) return { started: false as const, refused }
+    }
+    // A new spawn of this id replaces whatever ran under it before: an
+    // accepted SSH "Launch Claude" of the old PTY no longer counts.
+    sshClaudeLaunches.delete(sessionId)
+    if (options?.shellOnly && options.ssh) sshShellSessions.add(sessionId)
+    else sshShellSessions.delete(sessionId)
+
+    // WP2: a Codex spawn that is to run on another machine is refused HERE,
+    // before anything is installed, loaded or leased for it -- by the
+    // provider's `session.ssh` capability, not its name (Codex runs on this
+    // computer only in this release). Shell-only too: pty-manager refuses
+    // every Codex SSH spawn, so nothing is prepared for one.
+    const codexSession = options?.provider === 'codex' && !options.shellOnly
+    if (options?.provider === 'codex' && options?.ssh) {
+      const service = getAccountsService()
+      const refused = service ? service.remoteLaunchRefusal('codex') : { message: 'Accounts are not ready yet.' }
+      if (refused) throw new Error(`Codex session refused: ${refused.message}`)
+    }
+
+    // A spawn that awaits work in main first -- a Codex account launch, a
+    // legacy CLI install -- is registered with pty-manager for the wait, so a
+    // close, a sweep or a newer spawn of this session supersedes it (see
+    // beginSpawnPreparation). A spawn that awaits nothing goes straight on.
+    // The legacy pin is a Claude Code CLI: installed only for a Claude launch
+    // the gate above let through, never for a shell or a Codex session.
+    const legacyInstall = launchProvider === 'claude' && !!(options?.legacyVersion?.enabled && options.legacyVersion.version && !isVersionInstalled(options.legacyVersion.version))
+    const preparation = codexSession || legacyInstall ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
+    let codexLease: AccountLease | undefined
+    try {
+      // Auto-install legacy version before spawn if needed
+      if (legacyInstall && options?.legacyVersion) {
         logInfo(`[pty] Auto-installing legacy Claude CLI v${options.legacyVersion.version} before spawn`)
         const result = await installVersion(options.legacyVersion.version)
         if (!result.ok) {
           logInfo(`[pty] Legacy install failed, falling back to system claude: ${result.error}`)
         }
       }
-    }
 
-    // Resolve SSH credentials in the main process (never transit through renderer).
-    // terminalSecret is stripped up front: this object is forwarded to spawnPty
-    // verbatim (the zod parse result is intentionally discarded), so a field the
-    // schema doesn't declare would otherwise flow straight through from the
-    // renderer. Only the keychain lookup below may set it.
-    // rc.15 review R3: refreshAwaited is main-internal (the deferred re-entry
-    // after a profile refresh wait) -- a renderer that set it would skip the wait.
-    // The same for projectGate, the project-settings verdict the deferred
-    // re-entry carries: a renderer that sent `projectGate: { status: 'clean' }`
-    // reached spawnPty with the gate already "answered" and the launch went
-    // ahead in a directory nobody had scanned (adversarial review, BLOCKER).
-    // Every main-internal re-entry field is deleted here, by name, because the
-    // parse result is discarded and the raw object is what spawnPty receives.
-    let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
-    if (resolvedOptions) {
-      for (const mainInternal of MAIN_INTERNAL_SPAWN_FIELDS) delete (resolvedOptions as Record<string, unknown>)[mainInternal]
-    }
-    // An SSH block is bound to the config it names, ON DISK: the request must be
-    // that config's own (host/port/username/remotePath/postCommand) or the spawn
-    // is refused. Main trusting the renderer to pair a config's stored password
-    // with the host the renderer chose let a compromised renderer point a
-    // config's password at an attacker host (private advisory, 2026-08-22). The
-    // resolved block is built FROM the saved config, so nothing the renderer
-    // added rides along; credentials are injected only for a bound spawn.
-    if (options?.ssh && options.configId) {
-      const bound = bindSshToSavedConfig(options.ssh, options.configId, readConfig('configs'))
-      if (!bound.ok) {
-        logWarn(`[pty] SSH spawn refused: ${bound.reason}`)
-        throw new Error(`SSH spawn refused: does not match a saved config (${bound.reason})`)
+      // Resolve SSH credentials in the main process (never transit through renderer).
+      // terminalSecret is stripped up front: this object is forwarded to spawnPty
+      // verbatim (the zod parse result is intentionally discarded), so a field the
+      // schema doesn't declare would otherwise flow straight through from the
+      // renderer. Only the keychain lookup below may set it.
+      // rc.15 review R3: refreshAwaited is main-internal (the deferred re-entry
+      // after a profile refresh wait) -- a renderer that set it would skip the wait.
+      // The same for projectGate, the project-settings verdict the deferred
+      // re-entry carries: a renderer that sent `projectGate: { status: 'clean' }`
+      // reached spawnPty with the gate already "answered" and the launch went
+      // ahead in a directory nobody had scanned (adversarial review, BLOCKER).
+      // Every main-internal re-entry field is deleted here, by name, because the
+      // parse result is discarded and the raw object is what spawnPty receives.
+      let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
+      if (resolvedOptions) {
+        for (const mainInternal of MAIN_INTERNAL_SPAWN_FIELDS) delete (resolvedOptions as Record<string, unknown>)[mainInternal]
       }
-      // bindSshToSavedConfig pins the spawn to the SAVED config's host/user/port;
-      // the credential invalidation in config-handlers (config:save) is what keeps
-      // that saved identity honest, dropping `<id>` / `<id>_sudo` the moment a
-      // renderer rewrites the host/username/port. So a redirected credential is
-      // already gone before it could be loaded here — no extra guard at this read.
-      const password = loadCredential(options.configId) ?? undefined
-      const sudoPassword = loadCredential(options.configId + '_sudo') ?? undefined
-      const sshWithCreds: SSHOptions = { ...bound.ssh, password, sudoPassword }
-      resolvedOptions = { ...resolvedOptions, ssh: sshWithCreds }
-    } else if (options?.ssh) {
-      // No configId: nothing is loaded from the keychain, so there is no stored
-      // secret to misdirect. Runs unbound with no credentials, as before.
-      const sshNoCreds: SSHOptions = { ...options.ssh, password: undefined, sudoPassword: undefined }
-      resolvedOptions = { ...resolvedOptions, ssh: sshNoCreds }
-    }
+      // An SSH block is bound to the config it names, ON DISK: the request must be
+      // that config's own (host/port/username/remotePath/postCommand) or the spawn
+      // is refused. Main trusting the renderer to pair a config's stored password
+      // with the host the renderer chose let a compromised renderer point a
+      // config's password at an attacker host (private advisory, 2026-08-22). The
+      // resolved block is built FROM the saved config, so nothing the renderer
+      // added rides along; credentials are injected only for a bound spawn.
+      if (options?.ssh && options.configId) {
+        const bound = bindSshToSavedConfig(options.ssh, options.configId, readConfig('configs'))
+        if (!bound.ok) {
+          logWarn(`[pty] SSH spawn refused: ${bound.reason}`)
+          throw new Error(`SSH spawn refused: does not match a saved config (${bound.reason})`)
+        }
+        // bindSshToSavedConfig pins the spawn to the SAVED config's host/user/port;
+        // the credential invalidation in config-handlers (config:save) is what keeps
+        // that saved identity honest, dropping `<id>` / `<id>_sudo` the moment a
+        // renderer rewrites the host/username/port. So a redirected credential is
+        // already gone before it could be loaded here — no extra guard at this read.
+        const password = loadCredential(options.configId) ?? undefined
+        const sudoPassword = loadCredential(options.configId + '_sudo') ?? undefined
+        const sshWithCreds: SSHOptions = { ...bound.ssh, password, sudoPassword }
+        resolvedOptions = { ...resolvedOptions, ssh: sshWithCreds }
+      } else if (options?.ssh) {
+        // No configId: nothing is loaded from the keychain, so there is no stored
+        // secret to misdirect. Runs unbound with no credentials, as before.
+        const sshNoCreds: SSHOptions = { ...options.ssh, password: undefined, sudoPassword: undefined }
+        resolvedOptions = { ...resolvedOptions, ssh: sshNoCreds }
+      }
 
-    // Terminal-only secret argument: resolved HERE, in main, straight from the OS
-    // keychain — the value never transits the renderer and is never persisted to
-    // the config file (same posture as the SSH credentials above). Injected only
-    // when the SAVED config is terminal-only with a secret on record AND the
-    // requested command line is the saved one, so a compromised renderer cannot
-    // borrow a config's secret for a command line of its own (private advisory,
-    // 2026-08-22).
-    if (options?.shellOnly && options.configId && options.terminalOptions?.hasSecretArg
-        && argSecretAllowed(options.terminalOptions, options.configId, readConfig('configs'))) {
-      const argSecret = loadCredential(options.configId + '_argsecret') ?? undefined
-      if (argSecret) resolvedOptions = { ...resolvedOptions, terminalSecret: argSecret }
-    }
+      // Terminal-only secret argument: resolved HERE, in main, straight from the OS
+      // keychain — the value never transits the renderer and is never persisted to
+      // the config file (same posture as the SSH credentials above). Injected only
+      // when the SAVED config is terminal-only with a secret on record AND the
+      // requested command line is the saved one, so a compromised renderer cannot
+      // borrow a config's secret for a command line of its own (private advisory,
+      // 2026-08-22).
+      if (options?.shellOnly && options.configId && options.terminalOptions?.hasSecretArg
+          && argSecretAllowed(options.terminalOptions, options.configId, readConfig('configs'))) {
+        const argSecret = loadCredential(options.configId + '_argsecret') ?? undefined
+        if (argSecret) resolvedOptions = { ...resolvedOptions, terminalSecret: argSecret }
+      }
 
-    // Command-button secrets: every LOCAL shell spawn (the partner pane, or the
-    // main pane of a terminal-only config) gets the secrets of the commands
-    // visible to it -- the Global ones, plus its config's when it has one -- as
-    // env vars, so a button can type a reference instead of the value. Resolved
-    // HERE from the commands file on disk and the keychain; the renderer's copy
-    // of the commands list is never consulted, because it could name any id it
-    // liked. No secrets for a Claude spawn (a reference typed into the TUI is
-    // just text to Claude) and none for an SSH spawn (the env never leaves this
-    // PC, and decrypting for it would be for nothing). A shell with no config
-    // (Ask Conductor's partner) still gets the Global ones: a Global button runs
-    // in every session it can run in (ADR-018 D5), and without this it would
-    // type a reference to nothing. (ADR-009 pass on #386.)
-    if (options?.shellOnly && !options.ssh) {
-      const secrets = collectCommandSecrets(readConfig('commands'), options.configId, loadCredential)
-      if (Object.keys(secrets).length > 0) resolvedOptions = { ...resolvedOptions, commandSecrets: secrets }
-    }
+      // Command-button secrets: every LOCAL shell spawn (the partner pane, or the
+      // main pane of a terminal-only config) gets the secrets of the commands
+      // visible to it -- the Global ones, plus its config's when it has one -- as
+      // env vars, so a button can type a reference instead of the value. Resolved
+      // HERE from the commands file on disk and the keychain; the renderer's copy
+      // of the commands list is never consulted, because it could name any id it
+      // liked. No secrets for a Claude spawn (a reference typed into the TUI is
+      // just text to Claude) and none for an SSH spawn (the env never leaves this
+      // PC, and decrypting for it would be for nothing). A shell with no config
+      // (Ask Conductor's partner) still gets the Global ones: a Global button runs
+      // in every session it can run in (ADR-018 D5), and without this it would
+      // type a reference to nothing. (ADR-009 pass on #386.) Except the
+      // transient install/update tab, which asks for none
+      // (terminalOptions.noCommandSecrets): the install script it runs is a
+      // third party's, so the secrets are left out of the environment it
+      // inherits. That keeps them out of its way; it is not a boundary against
+      // a script running as the same user. Asking can only take secrets away,
+      // so it is honoured as sent.
+      if (options?.shellOnly && !options.ssh && options.terminalOptions?.noCommandSecrets !== true) {
+        const secrets = collectCommandSecrets(readConfig('commands'), options.configId, loadCredential)
+        if (Object.keys(secrets).length > 0) resolvedOptions = { ...resolvedOptions, commandSecrets: secrets }
+      }
 
-    // Agent Canvas UAT roots are NOT registered here any more (adversarial
-    // review, 2026-08-15 — BLOCKER 1). This site registered the RAW
-    // `options.cwd` and `options.resume.cwd` strings, neither of which had been
-    // through `resolveCwd` or `isHomeOrAncestor`, so a config whose
-    // workingDirectory was '.', empty or stale allowlisted the home directory
-    // and `~/.ssh`, `~/.claude`, `~/.aws` became servable. Worse,
-    // `resume.cwd` is read verbatim out of a transcript JSONL
-    // (transcript-discovery.getCwdFromTranscript), a file the agent can WRITE —
-    // so the model named its own allowlist entry.
-    //
-    // Registration now happens in pty-manager, after the spawn, against
-    // `resolveCwd(options.cwd)` — the session's CONFIGURED project directory —
-    // with the same home-directory refusal codex_review has carried since #188.
-    // Explicitly NOT the post-resume-override launch cwd: that value is
-    // `target.cwd`, i.e. transcript content, so registering it would have
-    // laundered the same model-chosen path through a different file (second
-    // pass, 2026-08-15). Only the configured directory may become a served root.
-    if (!options?.ssh) {
-      // Canvas continuity: stamp this session's work identity so it can find
-      // (and resume) work stranded by a previous session of the same
-      // conversation / project (the VM "repush" bug, 2026-08-14). LOCAL
-      // sessions only — an SSH session's cwd names a path on the REMOTE
-      // machine. These stamps LABEL a canvas (ordering, the resume list, the
-      // audit line); they never authorize a read.
-      noteSessionSpawnForCanvas(sessionId, {
-        cwd: options?.resume?.cwd ?? options?.cwd,
-        resumeUuid: options?.resume?.uuid,
-        // The config's display name, for the Testing pack's generated title
-        // (M3). A label like the two above it: it names a run for the user and
-        // authorizes nothing.
-        configLabel: options?.configLabel,
-        // The config's STABLE id (M4). It is what lets the Library resolve the
-        // config's CURRENT name at read time, so renaming a config renames
-        // every row rather than leaving frozen labels behind. A lookup key into
-        // the user's own configs.json — never a serving or authorization key,
-        // and the canvas layer re-checks its shape before recording it.
-        configId: options?.configId,
-        // The ACCOUNT this session runs, for the audit line. Only the profile's
-        // DISPLAY NAME is ever resolved from it (never the email), and only for
-        // a profile session — see accountDisplayNameFor. Display metadata: the
-        // account decides nothing about a canvas (ADR-017).
-        profileId: options?.profileId,
-      })
-    }
+      // WP2 (plan A10): a Codex session runs in its account's realm -- the
+      // account the request names, else the provider default -- validated,
+      // leased and prepared by the accounts service, which refuses visibly
+      // rather than fall back to another account or the ambient home. The
+      // lease passes to pty-manager with the spawn; until pty-manager takes it,
+      // a failure here releases it.
+      if (codexSession) {
+        const service = getAccountsService()
+        if (!service) throw new Error('Codex session refused: accounts are not ready yet.')
+        const prepared = await service.prepareLaunch({
+          kind: 'session',
+          providerId: 'codex',
+          ownerId: `${sessionId}:${++codexLaunchSeq}`,
+          ...(options?.providerAccountId !== undefined ? { providerAccountId: options.providerAccountId } : {}),
+          ...(options?.acknowledgeRealmOnly === true ? { acknowledgeRealmOnly: true } : {}),
+          remote: !!options?.ssh,
+        })
+        if (!prepared.ok) throw new Error(`Codex session refused: ${prepared.message}`)
+        codexLease = prepared.lease
+        resolvedOptions = {
+          ...resolvedOptions,
+          codexLaunch: { lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir },
+        }
+      }
 
-    spawnPty(win, sessionId, resolvedOptions)
+      // Closed, swept or superseded while it was prepared: start nothing, and
+      // SAY so. The renderer holds any pty:exit that arrives while its own
+      // spawn is in flight (the replaced run's late or synthetic exit), and
+      // applies it only when this request started nothing -- which, without
+      // this answer, it cannot tell from a spawn that went ahead.
+      if (preparation && !preparation.current) {
+        logInfo(`[pty] Session ${sessionId}: closed or superseded while its spawn was prepared -- not spawning`)
+        codexLease?.release()
+        preparation.abandon()
+        return { started: false as const }
+      }
+
+      // Agent Canvas UAT roots are NOT registered here any more (adversarial
+      // review, 2026-08-15 — BLOCKER 1). This site registered the RAW
+      // `options.cwd` and `options.resume.cwd` strings, neither of which had been
+      // through `resolveCwd` or `isHomeOrAncestor`, so a config whose
+      // workingDirectory was '.', empty or stale allowlisted the home directory
+      // and `~/.ssh`, `~/.claude`, `~/.aws` became servable. Worse,
+      // `resume.cwd` is read verbatim out of a transcript JSONL
+      // (transcript-discovery.getCwdFromTranscript), a file the agent can WRITE —
+      // so the model named its own allowlist entry.
+      //
+      // Registration now happens in pty-manager, after the spawn, against
+      // `resolveCwd(options.cwd)` — the session's CONFIGURED project directory —
+      // with the same home-directory refusal codex_review has carried since #188.
+      // Explicitly NOT the post-resume-override launch cwd: that value is
+      // `target.cwd`, i.e. transcript content, so registering it would have
+      // laundered the same model-chosen path through a different file (second
+      // pass, 2026-08-15). Only the configured directory may become a served root.
+      if (!options?.ssh) {
+        // Canvas continuity: stamp this session's work identity so it can find
+        // (and resume) work stranded by a previous session of the same
+        // conversation / project (the VM "repush" bug, 2026-08-14). LOCAL
+        // sessions only — an SSH session's cwd names a path on the REMOTE
+        // machine. These stamps LABEL a canvas (ordering, the resume list, the
+        // audit line); they never authorize a read.
+        noteSessionSpawnForCanvas(sessionId, {
+          cwd: options?.resume?.cwd ?? options?.cwd,
+          resumeUuid: options?.resume?.uuid,
+          // The config's display name, for the Testing pack's generated title
+          // (M3). A label like the two above it: it names a run for the user and
+          // authorizes nothing.
+          configLabel: options?.configLabel,
+          // The config's STABLE id (M4). It is what lets the Library resolve the
+          // config's CURRENT name at read time, so renaming a config renames
+          // every row rather than leaving frozen labels behind. A lookup key into
+          // the user's own configs.json — never a serving or authorization key,
+          // and the canvas layer re-checks its shape before recording it.
+          configId: options?.configId,
+          // The ACCOUNT this session runs, for the audit line. Only the profile's
+          // DISPLAY NAME is ever resolved from it (never the email), and only for
+          // a profile session — see accountDisplayNameFor. Display metadata: the
+          // account decides nothing about a canvas (ADR-017).
+          profileId: options?.profileId,
+        })
+      }
+
+      if (preparation) preparation.spawn(resolvedOptions)
+      else spawnPty(win, sessionId, resolvedOptions)
+    } catch (err) {
+      if (codexLease) {
+        // Registered, but the spawn failed after that: a Codex PTY is running
+        // that the renderer was told failed. End it; its lease goes with it.
+        if (holdsCodexLaunchLease(sessionId, codexLease)) killPty(sessionId)
+        // Never taken over by pty-manager: this lease is ours to release.
+        else if (!codexLaunchLeaseTaken(codexLease)) codexLease.release()
+      }
+      preparation?.abandon()
+      throw err
+    }
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
@@ -685,6 +846,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.on('pty:kill', (_event, sessionId: string) => {
     killPty(sessionId)
+    sshClaudeLaunches.delete(sessionId)
+    sshShellSessions.delete(sessionId)
     // #580: nothing left to deliver a queued canvas marker to. Logged loudly if
     // any were still held, because that is a verdict the agent never heard.
     forgetCanvasMarkers(sessionId)
@@ -700,8 +863,18 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     getSshFlow(sessionId)?.runPostCommand()
   })
 
+  // "Launch Claude" on the remote starts Claude: a shell-only SSH session's
+  // one way to it (pty:spawn never refuses a shell), and a manual-flow Claude
+  // session's retry. Refused while Claude Code is off, before the flow writes
+  // anything; answered, so the overlay says why. Once accepted for a
+  // shell-only session, it counts as Claude in use (countSshClaudeLaunches)
+  // in the same step as the check, so a switch-off cannot slip in before the
+  // flow types `claude`. A Claude session is counted by pty-manager already.
   ipcMain.handle(IPC.SSH_FLOW_LAUNCH_CLAUDE, async (_event, sessionId: string) => {
     sessionIdSchema.parse(sessionId)
+    const refused = providerLaunchRefusal('claude')
+    if (refused) return { refused }
+    if (sshShellSessions.has(sessionId)) sshClaudeLaunches.add(sessionId)
     getSshFlow(sessionId)?.launchClaude()
   })
 
@@ -731,11 +904,22 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
   // Best-effort throughout: an unknown config, a non-SSH config, an unreachable
   // host and an already-dead session all end the same way — nothing thrown at
   // the renderer, which drops the registry entry regardless.
-  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, payload: unknown) => {
+  //
+  // The invoke resolves with what End did (SshEndRemoteResult) once the exec
+  // finishes; the input is still validated by endRemoteSchema before anything
+  // else runs. End reads its target the moment it is called, here, so the
+  // renderer callers do not wait for this result before tearing the local
+  // session down; they only show the one outcome that needs the user
+  // ('container-needs-sudo', readSshEndRemoteResult + the End notice). That
+  // makes the call below ORDER-SENSITIVE: nothing may yield (no await) before
+  // it, or the renderer's pty kill, sent right after the End call, is handled
+  // first, drops the live target, and End finds nothing to end
+  // (end-remote-detached-fallback.test.ts pins this).
+  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, payload: unknown): Promise<SshEndRemoteResult> => {
     const parsed = endRemoteSchema.parse(payload)
     const sessionId = typeof parsed === 'string' ? parsed : parsed.sessionId
     const configId = typeof parsed === 'string' ? undefined : parsed.configId
-    endSshRemote(sessionId, configId ? endTargetFromSavedConfig(configId, sessionId) : undefined)
+    return endSshRemoteDetailed(sessionId, configId ? endTargetFromSavedConfig(configId, sessionId) : undefined)
   })
 
   // SSH Persistent (resume liveness): is a set of DETACHED `ccc-<sessionId>` tmux

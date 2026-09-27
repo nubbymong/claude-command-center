@@ -1,5 +1,19 @@
 import React, { useEffect, useState } from 'react'
 import { DialogButton } from './ui/Dialog'
+import { launchBlockedTabText, launchBlockedTag, useLaunchGateSettings, type LaunchGateConfig } from '../hooks/useLaunchConfig'
+
+/** Who keeps the conversations of these sessions resumable, by provider (a
+ *  session with none is Claude; a terminal-only one has no conversation). */
+function resumeKeepsNote(sessions: ReadonlyArray<{ provider?: string; shellOnly?: boolean }>): string {
+  const withAgent = sessions.filter((s) => !s.shellOnly)
+  const claude = withAgent.some((s) => (s.provider ?? 'claude') === 'claude')
+  const codex = withAgent.some((s) => s.provider === 'codex')
+  const keeps = claude && codex
+    ? 'your Claude and Codex conversations stay resumable from inside Claude and Codex'
+    : codex ? 'your Codex conversations stay resumable from inside Codex'
+      : claude ? 'your Claude conversations stay resumable from inside Claude' : null
+  return `Saved from your last run. "Don't open" discards these cards${keeps ? `; ${keeps}` : ''}.`
+}
 
 /**
  * Startup gate for restoring saved sessions: previously every boot force-resumed
@@ -7,7 +21,11 @@ import { DialogButton } from './ui/Dialog'
  *
  * Props-driven — App owns the pending saved state and decides what each choice
  * does (Resume applies the restore; Don't open discards the saved cards; the
- * underlying Claude conversations remain resumable from inside Claude itself).
+ * underlying conversations remain resumable from inside their own CLI, which
+ * the note names by provider: resumeKeepsNote). Every saved session is
+ * restored; one whose provider cannot launch now (the launch rule) wears the
+ * launch surfaces' own tag (launchBlockedTag), titled with what its tab will
+ * read, since it reopens as Not started.
  * Mouse-driven; it does not autofocus or trap keys (so it never interrupts
  * typing in a terminal).
  *
@@ -23,7 +41,7 @@ export default function ResumeSessionsPrompt({
 }: {
   /** The saved sessions that would reopen. Rendered by work name so the user
    *  can see which named windows are coming back before choosing. */
-  sessions: Array<{ id: string; label: string; customName?: string }>
+  sessions: Array<{ id: string; label: string; customName?: string; provider?: string; shellOnly?: boolean }>
   onResume: () => void
   onDontOpen: () => void
   /** Re-pull the saved set (App re-calls session.load and updates the list). */
@@ -32,6 +50,7 @@ export default function ResumeSessionsPrompt({
   const [entering, setEntering] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const count = sessions.length
+  const launchGate = useLaunchGateSettings()
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setEntering(true))
@@ -99,9 +118,8 @@ export default function ResumeSessionsPrompt({
         )}
       </div>
 
-      <p className="mb-2 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-        Saved from your last run. &quot;Don&apos;t open&quot; discards these cards; your Claude
-        conversations stay resumable from inside Claude.
+      <p className="mb-2 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }} data-testid="resume-sessions-note">
+        {resumeKeepsNote(sessions)}
       </p>
 
       {/* Named list so the user recognizes which windows will reopen. */}
@@ -112,14 +130,27 @@ export default function ResumeSessionsPrompt({
         {sessions.map((s) => {
           const name = s.customName?.trim() || s.label
           const sub = s.customName?.trim() ? s.label : ''
+          const gate: LaunchGateConfig = { provider: (s.provider ?? 'claude') as LaunchGateConfig['provider'], shellOnly: s.shellOnly }
+          const notStarted = launchBlockedTabText(gate, launchGate)
           return (
             <li
               key={s.id}
               className="px-2.5 py-1.5 transition-colors hover:bg-[var(--surface-raised)]"
               title={sub ? `${name} (${sub})` : name}
             >
-              <div className="truncate text-xs" style={{ color: 'var(--text-primary)' }}>
-                {name}
+              <div className="flex items-center gap-1.5">
+                <div className="min-w-0 flex-1 truncate text-xs" style={{ color: 'var(--text-primary)' }}>
+                  {name}
+                </div>
+                {notStarted !== undefined && (
+                  <span
+                    className="text-[9px] text-[var(--text-muted)] border border-[var(--border-strong)] rounded-full px-1.5 py-px shrink-0"
+                    title={notStarted}
+                    data-testid="resume-session-launch-blocked"
+                  >
+                    {launchBlockedTag(gate, launchGate)}
+                  </span>
+                )}
               </div>
               {sub && (
                 <div className="truncate text-[11px] leading-tight" style={{ color: 'var(--text-secondary)' }}>

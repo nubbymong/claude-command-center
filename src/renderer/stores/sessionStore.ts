@@ -37,6 +37,12 @@ export interface Session {
    *  cleared the moment the spawn is issued, and is NEVER persisted -- see the
    *  allowlist in session-persistence.ts. */
   askPrompt?: string
+  /** A tab the app opened for one job (commandTerminal: an install command
+   *  the user confirmed). Never saved or restored with the session set, and
+   *  its terminal-only command runs ONCE: consumed at the first spawn, so a
+   *  Restart opens a plain shell instead of running it again unasked. Set once
+   *  at creation; never changes. */
+  transient?: boolean
   label: string
   /** User-assigned "work name" for this session, editable while it's open and
    *  persisted by id across restarts (until the session is closed in CCC).
@@ -92,6 +98,9 @@ export interface Session {
   }
   /** Dynamic usage buckets from the statusline bridge (limits[] discovery). */
   usageBuckets?: import('../../shared/usage-types').UsageBucket[]
+  /** Nothing will report this session's allowance (D3; Codex: no rollout was
+   *  claimed): the footer says so instead of a placeholder. */
+  usageUnavailable?: 'no-reading'
   /** Active-account email from the statusline bridge. Drives the coloured email chip.
    *  v1.5.9: no longer read by the renderer (the chip was removed). Field is kept so
    *  older saved state still hydrates without errors. */
@@ -155,6 +164,15 @@ export interface Session {
    *  allowlist, so a restored session starts unset (it has no PTY yet either
    *  way, and the restore path spawns one). */
   ptyExited?: boolean
+  /** Its last launch started nothing: main refused it (the provider off or
+   *  not set up, no account to run on) or it ended before a process started.
+   *  Such a tab is not a running session: it never counts as its config
+   *  running (runningConfigCounts), so it blocks neither a launch nor a
+   *  delete. Also set by the restore for a session whose provider cannot
+   *  launch then (session-persistence), before its tab is first viewed.
+   *  Cleared as soon as a PTY starts, and by a Restart. Ephemeral, like
+   *  ptyExited: not persisted. */
+  neverStarted?: boolean
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */
   needsLogin?: boolean
@@ -191,6 +209,11 @@ export interface Session {
    *  here. Renderer-only, not persisted. */
   sshRemoteAccount?: string
   codexOptions?: CodexOptions
+  /** WP2: the provider account this Codex session runs under, copied from
+   *  its config (an opaque registry id). Absent = the provider default. The
+   *  per-launch acknowledgement an unverified sign-in needs is never kept
+   *  here: each launch asks (see stores/launchAckStore.ts). */
+  providerAccountId?: string
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead
   // of the global `enabledByDefault`. Shape lives in shared/github-types.ts.

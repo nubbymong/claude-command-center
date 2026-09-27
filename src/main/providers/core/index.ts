@@ -2,8 +2,9 @@
 // dependency-boundary test fails this package on any concrete-provider import.
 export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
-  ProviderManagedLaunchOperations,
-  DiscoveryResult, InstallRecipe, RealmRef, AuthOperationResult,
+  ProviderManagedLaunchOperations, ProviderRealmFolderOperations, ProviderLaunchOperations, LaunchPreparation, ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewUsage, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
+  DiscoveryResult, InstallRecipe, InstalledCli, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind,
+  ProviderUsageOperations, UsageReading, UsageLookup, UsageReadOutcome, UsageReadResult, UsageReadOptions,
 } from './package'
 export {
   registerProvider, getProvider, tryGetProvider,
@@ -12,3 +13,22 @@ export {
   ambientAuthVariablesForProvider,
   sanitizeManagedSettingsFor, authoritySettingsKeysFor, managedLaunchPreflightFor, minimumManagedCliVersionFor,
 } from './registry'
+
+// WP2: the account registry store (persistence behind an injected port).
+export { AccountRegistryStore, deterministicOpaqueId, REGISTRY_BACKUPS_KEPT } from './account-registry-store'
+export type {
+  RegistryFsPort, LegacyAccountsPort, RegistryStatus, StoreResult, StoreFailureCode, LegacyReconcileOutcome, AccountRegistryStoreOptions,
+} from './account-registry-store'
+
+// The user's on/off for a provider, as the accounts service reads it.
+export type { ProviderPreference } from '../../../shared/providers'
+
+// WP2 commit 3: consumer leases, the one-shot secret channel and the
+// accounts service (design 9.2, 9.3, 11; plan A6, A11).
+export { ConsumerLeaseRegistry, LAUNCH_LEASE_KINDS } from './consumer-leases'
+export type { LeaseKind, LaunchLeaseKind, LeaseOwner, AccountLease, LeaseAddResult } from './consumer-leases'
+export { SecretHandleStore, SECRET_HANDLE_TTL_MS, SECRET_HANDLES_PER_RENDERER } from './secret-handles'
+export { AccountsService, USAGE_READ_GAP_MS, USAGE_READ_REUSE_MS, USAGE_READ_TRANSIENT_LIMIT, USAGE_READ_SETTLE_MAX_MS } from './accounts-service'
+export type { AccountsServiceDeps, LaunchLeaseResult, PreparedLaunchResult } from './accounts-service'
+// WP2 commit 6e: the shell line a terminal tab types for a recipe main allows to run.
+export { recipeRunLine } from './recipe-run-line'

@@ -9,6 +9,7 @@ import { sendImageToSession } from '../utils/imageTransfer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
+import { useHelloCodexStore } from '../onboarding/hello-codex-open'
 import type { ViewType } from '../types/views'
 
 /**
@@ -47,6 +48,9 @@ export function useKeyboardShortcuts(
       // sessions, paste into a hidden prompt), so suppress them until the
       // flow settles. Same gate expression as App.tsx's bootGate input.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      // The same for the Codex introduction's takeover and its replay (WP2
+      // commit 6f): they cover the whole shell too.
+      if (useHelloCodexStore.getState().open !== null) return
       // MERGE over the defaults, never substitute: a persisted map predating a
       // release lacks that release's new actions, and `|| DEFAULT_SHORTCUTS`
       // only helps when the whole object is absent — every existing user would
@@ -136,6 +140,7 @@ export function useKeyboardShortcuts(
       // Same onboarding-overlay suppression as handleKeyDown: a diagnostic
       // capture under the covered shell would screenshot the overlay.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      if (useHelloCodexStore.getState().open !== null) return
       // The Settings shortcut recorder / Test box must WIN over this capture
       // listener, or the chord can never be re-recorded or tested (pressing it
       // in the Test box would fire a real capture — disk write + Explorer

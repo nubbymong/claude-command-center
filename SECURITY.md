@@ -119,6 +119,8 @@ The following are in scope:
   reports are welcome, but that specific gap is already known.)
 - **Credential storage and handling** — OS credential store usage, and any place a token
   or secret is written to disk or handed to a child process
+- **Account isolation** — a session or review signing in as a different Claude or Codex
+  account than the one chosen, or one Codex account's sign-in folder reaching another's
 - **IPC message handling** between main, preload, and renderer
 - **PTY input and command injection** — argument construction for spawned shells
 - **Prompt injection leading to command execution** — the app runs an agent that acts on
@@ -137,6 +139,7 @@ The following are in scope:
 ## Out of scope
 
 - Issues in Claude Code CLI itself — report to [Anthropic](https://github.com/anthropics/claude-code)
+- Issues in the Codex CLI itself — report to [OpenAI](https://github.com/openai/codex)
 - Issues in Electron, Node, or Chromium — report upstream
 - Social engineering
 - Attacks requiring physical access to an unlocked machine. Credentials are machine-bound

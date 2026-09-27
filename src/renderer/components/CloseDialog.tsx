@@ -1,5 +1,7 @@
-import React from 'react'
-import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, useDialogEscape } from './ui/Dialog'
+import React, { useRef } from 'react'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, useDialogEscape, WINDOW_CLOSE_Z } from './ui/Dialog'
+import { useContainFocus } from '../onboarding/contain-focus'
+import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 
 interface CloseDialogProps {
   mode: 'close' | 'update'
@@ -9,11 +11,26 @@ interface CloseDialogProps {
   onCancel: () => void
 }
 
+/**
+ * Closing (or updating) with sessions open: save them, close them, or cancel.
+ * It paints on the top layer (WINDOW_CLOSE_Z), above the onboarding pages and
+ * the introduction's takeover and replay, and keeps Tab inside itself while
+ * it is open: it was once painted under those surfaces, invisible, with focus
+ * on "Save sessions", and Tab walked out of it into the page behind.
+ */
 export default function CloseDialog({ mode, sessionCount, onSaveAndClose, onCloseWithoutSaving, onCancel }: CloseDialogProps) {
   useDialogEscape(onCancel)
+  const panelRef = useRef<HTMLDivElement>(null)
+  // "Save sessions" keeps the focus it opens with (autoFocus below); the trap
+  // only keeps Tab and Shift+Tab inside.
+  useContainFocus(panelRef, true, { topmost: true })
+  // The native panes (the in-app browser, the claude.ai account view) paint
+  // above all HTML, so they hide while this shows. The overlay is `absolute`,
+  // and DialogOverlay holds that flag only for a `fixed` one.
+  useOccludesNativePanes()
   return (
-    <DialogOverlay position="absolute" testId="close-dialog">
-      <DialogPanel width="w-[400px]" labelledBy="close-dialog-title">
+    <DialogOverlay position="absolute" z={WINDOW_CLOSE_Z} testId="close-dialog">
+      <DialogPanel width="w-[400px]" labelledBy="close-dialog-title" panelRef={panelRef}>
         <DialogHeader
           titleId="close-dialog-title"
           title={mode === 'update' ? 'Update and restart' : 'Close the app'}

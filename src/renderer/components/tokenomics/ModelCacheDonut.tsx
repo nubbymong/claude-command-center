@@ -72,7 +72,10 @@ export function buildCostSlices(
 ): DonutSlice[] {
   if (!modelSplit || modelSplit.length === 0) return []
 
-  const sorted = modelSplit.filter((m) => m.costUsd > 0).sort((a, b) => b.costUsd - a.costUsd)
+  // A model with no price (MP11) has no slice.
+  const sorted = modelSplit
+    .filter((m): m is typeof m & { costUsd: number } => m.costUsd !== null && m.costUsd > 0)
+    .sort((a, b) => b.costUsd - a.costUsd)
   const total = sorted.reduce((s, x) => s + x.costUsd, 0)
 
   // Collapse tail into "Other"
@@ -103,6 +106,12 @@ interface Props {
   cacheSplit: TkSummary['cacheSplit']
 }
 
+/** The models with no price (usage track MP12, Q1.4): listed under the
+ *  legend as "no price", never as a $0 slice. */
+export function noPriceModels(modelSplit: TkSummary['modelSplit'], registry?: ModelRegistry): Array<{ label: string; color: string }> {
+  return (modelSplit ?? []).filter((m) => m.costUsd === null).map((m) => ({ label: getModelShort(m.model, registry), color: getModelColor(m.model, registry) }))
+}
+
 export function ModelCacheDonut({ modelSplit, cacheSplit }: Props) {
   const { slices, paths, totalModelCost } = useMemo(() => {
     const raw = buildCostSlices(modelSplit)
@@ -116,7 +125,8 @@ export function ModelCacheDonut({ modelSplit, cacheSplit }: Props) {
     ? cacheSplit.inputUsd + cacheSplit.outputUsd + cacheSplit.cacheReadUsd + cacheSplit.cacheCreateUsd
     : 0
 
-  const noData = slices.length === 0 && cacheTotal === 0
+  const unpricedLabels = noPriceModels(modelSplit)
+  const noData = slices.length === 0 && cacheTotal === 0 && unpricedLabels.length === 0
 
   if (noData) {
     return (
@@ -167,6 +177,13 @@ export function ModelCacheDonut({ modelSplit, cacheSplit }: Props) {
               />
               <span className="text-[11px] text-text truncate">{s.label}</span>
               <span className="text-[11px] text-overlay0 ml-auto shrink-0">{s.pct.toFixed(0)}%</span>
+            </div>
+          ))}
+          {unpricedLabels.map(({ label, color }) => (
+            <div key={`np-${label}`} className="flex items-center gap-1.5 min-w-0" data-testid="tk-no-price-model">
+              <div className="rounded-sm shrink-0" style={{ width: 8, height: 8, backgroundColor: color }} />
+              <span className="text-[11px] text-text truncate">{label}</span>
+              <span className="text-[11px] italic ml-auto shrink-0" style={{ color: 'var(--text-muted)' }}>no price</span>
             </div>
           ))}
         </div>

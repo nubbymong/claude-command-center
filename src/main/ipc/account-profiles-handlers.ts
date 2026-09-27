@@ -1,6 +1,7 @@
 // src/main/ipc/account-profiles-handlers.ts
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
+import { ipcStreamEnd } from '../../shared/ipc-stream'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
@@ -9,7 +10,7 @@ import {
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, detectedNewAccountEmail } from '../claude-account-identity'
-import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage } from '../usage/account-usage'
+import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage, knownUsageLabels, claudeAccountDataAllowed } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError, logWarn } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
@@ -43,8 +44,12 @@ export function registerAccountProfilesHandlers(): void {
 
   // Credential state per profile: days until a forced login, plus the identity
   // cross-check. Pure file reads, so it is safe to call on every panel open.
+  // Usage track MP3 (D5): while Claude Code is switched off no credential
+  // file is read; the answer is no accounts (Insights then shows no sign-in
+  // warning). The rule is main's own, set at start (setClaudeAccountDataAllowed).
   ipcMain.handle(IPC.ACCOUNT_PROFILES_AUTH_INFO, () => {
     try {
+      if (!claudeAccountDataAllowed()) return []
       return readAllProfileAuthInfo()
     } catch (err) {
       logError('[account-profiles] authInfo failed:', err)
@@ -69,12 +74,16 @@ export function registerAccountProfilesHandlers(): void {
   // old loop stops at its next account instead of finishing a fan-out nobody
   // will read -- N reopenings were N parallel fan-outs against an endpoint that
   // rate-limits by IP. A destroyed sender stops its loop the same way.
+  // Generations come from one counter that only grows: a sender's number
+  // restarting at 1 once its entry is cleared would make an older stream,
+  // still pacing, read as current again.
   const streamGenBySender = new Map<number, number>()
+  let streamSeq = 0
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, async (event, p: { channel?: unknown }) => {
     const channel = p?.channel
     if (typeof channel !== 'string' || !channel.startsWith('accountUsage:result:') || channel.length > 128) return
     const senderId = event.sender.id
-    const gen = (streamGenBySender.get(senderId) ?? 0) + 1
+    const gen = ++streamSeq
     streamGenBySender.set(senderId, gen)
     const live = () => !event.sender.isDestroyed() && streamGenBySender.get(senderId) === gen
     try {
@@ -83,6 +92,22 @@ export function registerAccountProfilesHandlers(): void {
       }, { shouldContinue: live })
     } finally {
       if (streamGenBySender.get(senderId) === gen) streamGenBySender.delete(senderId)
+      // Usage track MP8 round 2 (VM): the end marker, last on the same
+      // channel: the preload stops listening only once every result sent has
+      // arrived (the reply travels another route, unordered against sends).
+      try { if (!event.sender.isDestroyed()) event.sender.send(channel, ipcStreamEnd()) } catch { /* a renderer gone already */ }
+    }
+    // The stream ran: the preload waits for the end marker.
+    return { ok: true }
+  })
+  // Usage track MP3: the labels Settings lists, from cached figures only (no
+  // network, no credential read). Takes no input; a failure is no labels.
+  ipcMain.handle(IPC.ACCOUNT_USAGE_KNOWN_LABELS, () => {
+    try {
+      return knownUsageLabels()
+    } catch (err) {
+      logError('[account-usage] knownLabels failed:', err instanceof Error ? err.message : String(err))
+      return []
     }
   })
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>

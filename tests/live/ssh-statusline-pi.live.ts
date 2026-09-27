@@ -4,7 +4,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
   hosts, makeLivePort, runSession, report, killRemoteTmux,
-  updates, misParsedStageFail, endSshRemote, killPty, settingsState,
+  claudeRan, misParsedStageFail, endSshRemote, killPty, settingsState,
   startConductorMcpServer, stopConductorMcpServer,
 } from './statusline-harness'
 
@@ -30,7 +30,7 @@ describe('SSH statusline matrix — Pi lane (LIVE, on-demand)', () => {
     killPty(sid)
     expect(ended).toBe('completed')
     expect(misParsedStageFail(w.events, sid)).toEqual([])
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 
   itIf(hosts.linuxPassword)('password + NO tmux: statusline updates', async () => {
@@ -40,7 +40,7 @@ describe('SSH statusline matrix — Pi lane (LIVE, on-demand)', () => {
     report('T5 password no-tmux', w, sid)
     await endSshRemote(sid) // no tmux to kill, but this removes the remote sidecars
     killPty(sid)
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 
   // CSV coverage slots (2026-08-31): the matrix has keyless rows against the
@@ -53,7 +53,7 @@ describe('SSH statusline matrix — Pi lane (LIVE, on-demand)', () => {
     await endSshRemote(sid)
     killPty(sid)
     killRemoteTmux(e, sid)
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 
   itIf(hosts.linuxPiKey)('pi key + NO tmux: statusline updates', async () => {
@@ -63,7 +63,7 @@ describe('SSH statusline matrix — Pi lane (LIVE, on-demand)', () => {
     report('T15 pi key no-tmux', w, sid)
     await endSshRemote(sid)
     killPty(sid)
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 })
 

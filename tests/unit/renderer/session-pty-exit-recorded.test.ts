@@ -18,10 +18,10 @@ import * as path from 'path'
 
 const SRC = path.resolve(__dirname, '../../../src/renderer/components/TerminalView.tsx')
 
-/** The body of the `pty.onExit(sessionId, …)` callback, brace-matched. */
-function onExitBody(src: string): string {
-  const start = src.indexOf('window.electronAPI.pty.onExit(sessionId')
-  expect(start).toBeGreaterThan(-1)
+/** The body of the arrow function that follows `marker`, brace-matched. */
+function arrowBody(src: string, marker: string): string {
+  const start = src.indexOf(marker)
+  expect(start, marker).toBeGreaterThan(-1)
   const open = src.indexOf('{', src.indexOf('=>', start))
   expect(open).toBeGreaterThan(-1)
   let depth = 0
@@ -32,7 +32,17 @@ function onExitBody(src: string): string {
       if (depth === 0) return src.slice(open, i + 1)
     }
   }
-  throw new Error('unbalanced braces in the onExit callback')
+  throw new Error(`unbalanced braces after ${marker}`)
+}
+
+/** What the `pty.onExit(sessionId, ...)` callback does on an exit it acts on:
+ *  its own body, plus the body of `markExited` when it hands the work to it
+ *  (WP2 commit 6 routed every "this session's PTY is gone" through that one
+ *  helper; an exit held during the view's own spawn is the exception, see
+ *  utils/spawnExitHold.ts). */
+function onExitBody(src: string): string {
+  const body = arrowBody(src, 'window.electronAPI.pty.onExit(sessionId')
+  return body.includes('markExited(') ? body + arrowBody(src, 'const markExited = (') : body
 }
 
 describe('a PTY that exits is recorded on its session', () => {

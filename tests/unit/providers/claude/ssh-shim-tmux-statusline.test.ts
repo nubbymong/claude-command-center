@@ -17,6 +17,7 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   // carries HMAC(secret, sessionId) rather than the raw secret, so the shim
   // now imports this too. Deterministic stub, matching ssh-shim.test.ts.
   mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
+  issueMcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
 
 import { generateRemoteSetupScript } from '../../../../src/main/providers/claude/ssh-shim'

@@ -31,6 +31,8 @@ import {
   viewFor,
 } from '../account-web/session-store'
 import { readClaudeCliAuth, claudeAuthCommand } from '../account-web/claude-cli-auth'
+import type { ClaudeCliAuthStatus } from '../account-web/claude-cli-auth'
+import { providerProbeRefusal } from '../provider-launch-gate'
 import { closeArtifacts, openArtifacts } from '../account-web/artifacts'
 import { listProfiles } from '../account-profiles'
 import {
@@ -91,7 +93,11 @@ export function registerAccountWebHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_WEB_STATUS, async (_e, profileId: unknown) => {
     try {
       const id = profileIdSchema.parse(profileId)
-      const cli = await readClaudeCliAuth(id)
+      // WP2: `claude auth status` runs the Claude CLI (and can rotate the
+      // account's refresh token), so it does not run while Claude Code is
+      // switched off: the answer says why instead, and the panel shows it.
+      const off = providerProbeRefusal('claude')
+      const cli: ClaudeCliAuthStatus = off ? { authenticated: false, notChecked: off.message } : await readClaudeCliAuth(id)
       const authMethod = getAuthMethod(id)
       return {
         ok: true,

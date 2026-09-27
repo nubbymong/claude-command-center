@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { InsightsCatalogue, InsightsRun } from '../types/electron'
+import { CLAUDE_OFF, isClaudeOff } from '../lib/claudeOff'
+import { launchRefusalOf } from '../../shared/providers'
 
 type InsightsStatus = 'idle' | 'running' | 'extracting_kpis' | 'complete' | 'failed'
 
@@ -47,16 +49,29 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
   batchRunId: null,
 
   startInsights: async (profileId?: string) => {
+    // The backstop behind every Run button: an insights run is a headless
+    // Claude Code run, and none starts while Claude Code is switched off. The
+    // status is left as it was (no red "failed" dot for a run never started).
+    if (isClaudeOff()) { set({ error: CLAUDE_OFF }); return }
+    const before = get().status
     try {
       set({ status: 'running', error: null })
       const runId = await window.electronAPI.insights.run(profileId ? { profileId } : undefined)
-      set({ currentRunId: runId })
+      // Main refuses on its own while Claude Code is off (a switch flipped
+      // since this page last read the setting): the status goes back to what
+      // it was, and the page says why.
+      const refusal = launchRefusalOf(runId)
+      if (refusal) { set({ status: before, error: refusal.message }); return }
+      if (typeof runId === 'string') set({ currentRunId: runId })
     } catch (err: any) {
       set({ status: 'failed', error: err.message || 'Failed to start insights' })
     }
   },
 
   startCrossAccount: async (profileIds?: string[]) => {
+    // The same backstop: every account's run, and the synthesis, run Claude.
+    if (isClaudeOff()) { set({ error: CLAUDE_OFF }); return }
+    const before = { status: get().status, statusMessage: get().statusMessage }
     try {
       set({
         status: 'running',
@@ -70,7 +85,9 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
       const runId = await window.electronAPI.insights.runAll(
         profileIds && profileIds.length > 0 ? { profileIds } : undefined
       )
-      set({ currentRunId: runId })
+      const refusal = launchRefusalOf(runId)
+      if (refusal) { set({ ...before, error: refusal.message, batchActive: false, batchRunId: null }); return }
+      if (typeof runId === 'string') set({ currentRunId: runId })
     } catch (err: any) {
       // Rejects only on refusal (too few accounts, or a roll-up already running)
       // — a failed member run doesn't reject.

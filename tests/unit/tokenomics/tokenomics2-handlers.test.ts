@@ -79,3 +79,51 @@ describe('tokenomics2 handlers', () => {
     expect(r.indexing).toBe(false)
   })
 })
+
+// Usage track MP9: the provider and account filters, and the accounts query.
+describe('tokenomics2 handlers: provider and account (usage track MP9)', () => {
+  beforeEach(() => {
+    handlers.clear()
+    stubSup = {
+      query: vi.fn(async (kind: string) => {
+        if (kind === 'summary') return [{ kpis: {} }]
+        if (kind === 'sessions') return [{ rows: [], nextCursor: null }]
+        if (kind === 'accounts') return [[{ provider: 'codex', accountKey: 'codex:external' }]]
+        return []
+      }),
+      onIndexProgress: () => () => {}, onIndexComplete: () => () => {}, onIndexError: () => () => {},
+    }
+    registerTokenomics2Handlers(() => win as any)
+  })
+
+  it('summary and sessions take a provider and an account key, not recorded included', async () => {
+    for (const f of [{ provider: 'codex', accountKey: 'codex:acct-0123abcd' }, { provider: 'claude' }, { accountKey: '' }, { accountKey: 'codex:external' }]) {
+      await handlers.get(IPC.TOKENOMICS2_SUMMARY)!({}, f)
+      expect(stubSup.query).toHaveBeenLastCalledWith('summary', f)
+      await handlers.get(IPC.TOKENOMICS2_SESSIONS)!({}, { ...f, limit: 10 })
+      expect(stubSup.query).toHaveBeenLastCalledWith('sessions', { ...f, limit: 10 })
+    }
+  })
+
+  it('refuses an unknown provider and any account key that is not "" or provider:id, before the worker is asked', async () => {
+    const bad: unknown[] = [
+      { provider: 'gemini' }, { provider: '' }, { provider: 1 },
+      { accountKey: 'codex' }, { accountKey: 'codex:' }, { accountKey: 'gemini:x' }, { accountKey: 'codex:a b' },
+      { accountKey: "codex:x' OR 1=1" }, { accountKey: 'codex:' + 'a'.repeat(129) }, { accountKey: null }, { accountKey: 7 },
+    ]
+    for (const f of bad) {
+      await expect(handlers.get(IPC.TOKENOMICS2_SUMMARY)!({}, f), JSON.stringify(f)).rejects.toBeTruthy()
+      await expect(handlers.get(IPC.TOKENOMICS2_SESSIONS)!({}, f), JSON.stringify(f)).rejects.toBeTruthy()
+    }
+    expect(stubSup.query).not.toHaveBeenCalled()
+  })
+
+  it('the accounts query takes nothing and answers the list', async () => {
+    expect(await handlers.get(IPC.TOKENOMICS2_ACCOUNTS)!({}, {})).toEqual([{ provider: 'codex', accountKey: 'codex:external' }])
+    expect(stubSup.query).toHaveBeenLastCalledWith('accounts', {})
+    expect(await handlers.get(IPC.TOKENOMICS2_ACCOUNTS)!({}, undefined)).toEqual([{ provider: 'codex', accountKey: 'codex:external' }])
+    await expect(handlers.get(IPC.TOKENOMICS2_ACCOUNTS)!({}, { provider: 'codex' })).rejects.toBeTruthy()
+    stubSup.query.mockResolvedValueOnce([])
+    expect(await handlers.get(IPC.TOKENOMICS2_ACCOUNTS)!({}, {})).toEqual([])
+  })
+})

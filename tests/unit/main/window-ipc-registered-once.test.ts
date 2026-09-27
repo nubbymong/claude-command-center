@@ -124,6 +124,16 @@ describe('window IPC is registered once per process', () => {
 // but which the adversarial pass on #598 found unpinned: each is a one-line call
 // a refactor could drop with no test going red.
 describe('index.ts wiring pinned by shape', () => {
+  // Usage track MP8 (MP7 round 1): a fresh usage read under way is stopped
+  // at quit, before the pending-kill flush, so the flush kills its helper.
+  it('the quit teardown stops fresh usage reads before it flushes the pending CLI kills', () => {
+    const body = src.slice(src.indexOf('quitTeardown = () => {'))
+    const stop = body.indexOf('getAccountsService()?.stopUsageReads()')
+    const flush = body.indexOf('flushPendingProviderCliKills()')
+    expect(stop).toBeGreaterThan(0)
+    expect(flush).toBeGreaterThan(stop)
+  })
+
   it('a (re)created window resets the close decision (rc.14 review F3)', () => {
     expect(bodyOf('function createWindow(): void {')).toContain('closeCoordinator.onWindowCreated()')
   })

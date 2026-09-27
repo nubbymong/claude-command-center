@@ -87,3 +87,91 @@ describe('preload accountUsage.fetchAllStream', () => {
     expect(cb).not.toHaveBeenCalled()
   })
 })
+
+// Usage track MP8 round 2 (VM, V1): main sends a stream's items with
+// webContents.send and its result as the invoke reply, and Electron does not
+// order the two routes against each other. On the VM 3 of 20 Codex usage
+// streams (8 of 10 offline) replied `accounts: 1` and delivered no view: the
+// listener had been removed when the reply arrived, before the view did. The
+// preload now keeps listening until main's end marker, which main sends last
+// on the same channel, arrives.
+describe('a stream is over only when its end marker arrives (MP8 round 2)', () => {
+  const END = { __ipcStreamEnd: true }
+  type Api = {
+    accountUsage: { fetchAllStream: (cb: (u: { profileId: string }) => void) => Promise<void> }
+    providerAccounts: { usageStream: (p: string, cb: (v: { accountId: string }) => void, o?: { read?: boolean }) => Promise<unknown>; usageOne: (id: string, o?: { read?: boolean }) => Promise<unknown> }
+  }
+  const full = el.exposed.electronAPI as Api
+  const streams: Array<[string, (cb: (x: any) => void) => Promise<unknown>, (arg: any) => unknown, object]> = [
+    ['Claude Code', (cb) => full.accountUsage.fetchAllStream(cb), () => ({ ok: true }), { profileId: 'p1' }],
+    ['Codex', (cb) => full.providerAccounts.usageStream('codex', cb), () => ({ ok: true, provider: 'on', accounts: 1 }), { accountId: 'a1' }],
+  ]
+
+  for (const [name, start, reply, item] of streams) {
+    it(`${name}: REGRESSION (VM): an item that arrives after the reply is still delivered, and the promise waits for it`, async () => {
+      let named = ''
+      // Main's reply first, its sends a moment later (the order the VM saw).
+      el.setInvoke(async (_ch, arg) => {
+        named = arg.channel
+        setTimeout(() => { deliver(named, item); deliver(named, END) }, 5)
+        return reply(arg)
+      })
+      const got: unknown[] = []
+      let settled = false
+      const p = start((x) => got.push(x)).then((r) => { settled = true; return r })
+      await new Promise((r) => setTimeout(r, 1))
+      expect(settled).toBe(false)
+      await p
+      expect(got).toEqual([item])
+      expect(el.listeners.get(named)).toEqual([])
+    })
+
+    it(`${name}: an end marker before the reply ends it at the reply; nothing after the marker reaches the callback`, async () => {
+      let named = ''
+      el.setInvoke(async (_ch, arg) => { named = arg.channel; deliver(named, item); deliver(named, END); deliver(named, item); return reply(arg) })
+      const got: unknown[] = []
+      await start((x) => got.push(x))
+      expect(got).toEqual([item])
+      expect(el.listeners.get(named)).toEqual([])
+    })
+
+    it(`${name}: a reply that says the stream did not run ends it at once`, async () => {
+      let named = ''
+      el.setInvoke(async (_ch, arg) => { named = arg.channel; return name === 'Codex' ? { ok: false, code: 'unsupported' } : undefined })
+      let settled = false
+      void start(() => {}).then(() => { settled = true })
+      // At once: no wait for a marker that will not come.
+      await new Promise((r) => setTimeout(r, 50))
+      expect(settled).toBe(true)
+      expect(el.listeners.get(named)).toEqual([])
+    })
+
+    it(`${name}: a lost end marker stops listening after the wait, not never`, async () => {
+      vi.useFakeTimers()
+      try {
+        let named = ''
+        el.setInvoke(async (_ch, arg) => { named = arg.channel; return reply(arg) })
+        let settled = false
+        const p = start(() => {}).then(() => { settled = true })
+        await vi.advanceTimersByTimeAsync(4_999)
+        expect(settled).toBe(false)
+        await vi.advanceTimersByTimeAsync(2)
+        await p
+        expect(el.listeners.get(named)).toEqual([])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  }
+
+  it('the Codex stream and a card\'s Retry ask to read only when told to', async () => {
+    const args: any[] = []
+    el.setInvoke(async (ch, arg) => { args.push([ch, arg]); if (arg?.channel) deliver(arg.channel, END); return { ok: true, provider: 'on', accounts: 0 } })
+    await full.providerAccounts.usageStream('codex', () => {}, { read: true })
+    await full.providerAccounts.usageStream('codex', () => {})
+    await full.providerAccounts.usageOne('acct-1', { read: true })
+    await full.providerAccounts.usageOne('acct-1')
+    expect(args.map(([, a]) => a.read)).toEqual([true, undefined, true, undefined])
+    expect(args[3][1]).toEqual({ accountId: 'acct-1' })
+  })
+})

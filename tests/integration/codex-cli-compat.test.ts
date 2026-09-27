@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { codexCommandLine } from '../../src/main/providers/codex'
 
 /**
  * P7.7.9 -- CI flag-drift integration test.
@@ -7,8 +8,9 @@ import { execFileSync, spawnSync } from 'node:child_process'
  * Background: P7.7.6 was triggered by Codex CLI 0.128.0 removing
  * `--ask-for-approval` from `codex exec`. We had no automated signal --
  * the only catch was manual smoke. This file spawns the real codex
- * binary and asserts every flag we depend on in `buildArgv`
- * (src/main/codex-review-mcp-tool.ts) is still listed in `codex exec --help`.
+ * binary and asserts every flag the Codex reviewer passes (WP2 commit 5a:
+ * the `review` operation of src/main/providers/codex/cli-runner.ts, run by
+ * src/main/providers/codex/review.ts) is still listed in `codex exec --help`.
  *
  * Behaviour when codex is not on PATH: SKIP (do not fail). CI runners
  * without Codex installed pass this suite trivially -- the regression
@@ -28,9 +30,9 @@ function codexOnPath(): string | null {
 
 function codexExecHelp(): { ok: true; text: string } | { ok: false; reason: string } {
   // `codex exec --help` -- some platforms ship the binary as a .cmd shim
-  // (Windows npm-installed). spawnSync with shell:true mirrors how
-  // runCodexStreaming spawns the binary in production code (Windows .cmd
-  // paths require cmd.exe wrapping).
+  // (Windows npm-installed). This test-only probe resolves it with a shell
+  // and a constant argv; the product runs a shim through an absolute cmd.exe
+  // (cli-runner.ts codexCommandLine).
   const useShell = process.platform === 'win32'
   const result = spawnSync('codex', ['exec', '--help'], {
     encoding: 'utf-8',
@@ -60,41 +62,29 @@ describe('integration: codex CLI flag compatibility', () => {
     expect(helpText, helpReason).not.toBe('')
   })
 
-  maybeIt('accepts a trailing positional [PROMPT] argument', () => {
-    // buildArgv pushes the constructed prompt as the final positional arg
-    // (codex-review-mcp-tool.ts: argv.push(prompt)). If a future codex release
-    // moves to a --prompt flag or stdin-only mode every named-flag assertion
-    // below could still match while production calls silently break.
+  // The reviewer's argv, taken from the product rather than restated here.
+  const reviewArgv = (() => {
+    const cmd = codexCommandLine('/opt/codex/codex', 'review', 'linux', {})
+    if ('refused' in cmd) throw new Error(cmd.refused)
+    return cmd.args
+  })()
+
+  maybeIt('reads the request from stdin when the prompt is "-" (the reviewer never puts it in argv)', () => {
+    expect(reviewArgv[reviewArgv.length - 1]).toBe('-')
     expect(helpText).toMatch(/\[PROMPT\]|<PROMPT>/)
+    expect(helpText).toMatch(/read from stdin/)
   })
 
-  maybeIt('exposes --json (JSONL events flag we parse for token_count)', () => {
-    expect(helpText).toMatch(/--json\b/)
-  })
-
-  maybeIt('exposes -o/--output-last-message <FILE> (tmpfile capture)', () => {
-    expect(helpText).toMatch(/--output-last-message <FILE>/)
-  })
-
-  maybeIt('exposes --ephemeral (no rollout persistence)', () => {
-    expect(helpText).toMatch(/--ephemeral\b/)
-  })
-
-  maybeIt('exposes --skip-git-repo-check (P7.7.9 guard surfaces this earlier)', () => {
-    expect(helpText).toMatch(/--skip-git-repo-check\b/)
+  maybeIt('lists every flag the reviewer passes', () => {
+    for (const flag of reviewArgv.filter((x) => /^--?[a-z]/.test(x))) {
+      expect(helpText, flag).toMatch(new RegExp('(^|[\\s,])' + flag + '\\b', 'm'))
+    }
   })
 
   maybeIt('exposes -s/--sandbox <SANDBOX_MODE> with read-only', () => {
+    expect(reviewArgv.join(' ')).toContain('--sandbox read-only')
     expect(helpText).toMatch(/--sandbox <SANDBOX_MODE>/)
     expect(helpText).toMatch(/read-only/)
-  })
-
-  maybeIt('exposes -C/--cd <DIR>', () => {
-    expect(helpText).toMatch(/-C,\s*--cd <DIR>/)
-  })
-
-  maybeIt('exposes -m/--model <MODEL>', () => {
-    expect(helpText).toMatch(/-m,\s*--model <MODEL>/)
   })
 
   maybeIt('does NOT expose --ask-for-approval (removed in CLI 0.128.0)', () => {

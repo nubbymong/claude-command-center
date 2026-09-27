@@ -27,10 +27,12 @@ vi.mock('electron', () => ({
   ipcMain: { handle: (ch: string, fn: (...a: unknown[]) => unknown) => { handlers.set(ch, fn) }, on: vi.fn() },
   BrowserWindow: class {},
 }))
-const endSshRemote = vi.fn()
+// The handler runs End through endSshRemoteDetailed (it resolves with the End
+// result).
+const endSshRemoteDetailed = vi.fn()
 vi.mock('../../../src/main/pty-manager', () => ({
   spawnPty: vi.fn(), writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: vi.fn(),
-  endSshRemote, probeTmuxLive: vi.fn(),
+  endSshRemoteDetailed, probeTmuxLive: vi.fn(),
 }))
 vi.mock('../../../src/main/debug-capture', () => ({ logUserInput: vi.fn(), isDebugModeEnabled: () => false }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
@@ -57,11 +59,11 @@ const SID = 'a1b2c3d4e5f6a1b2c3d4e5f6'
 const SSH = { host: 'pi.local', port: 2222, username: 'mong', remotePath: '~/work' }
 const sshCfg = (id: string, extra: Record<string, unknown> = {}) => ({ id, sessionType: 'ssh', sshConfig: { ...SSH, ...extra } })
 
-/** The (sessionId, target) endSshRemote was actually asked to run. */
-const called = () => endSshRemote.mock.calls[0] as [string, unknown]
+/** The (sessionId, target) endSshRemoteDetailed was actually asked to run. */
+const called = () => endSshRemoteDetailed.mock.calls[0] as [string, unknown]
 
 beforeEach(() => {
-  endSshRemote.mockClear()
+  endSshRemoteDetailed.mockClear()
   configsOnDisk = null
   registryOnDisk = []
   for (const k of Object.keys(vault)) delete vault[k]
@@ -75,7 +77,7 @@ describe('ssh:endRemote — rebuilding a DETACHED remote\'s target from the save
 
     await endRemote({}, { sessionId: SID, configId: 'cfgA' })
 
-    expect(endSshRemote).toHaveBeenCalledTimes(1)
+    expect(endSshRemoteDetailed).toHaveBeenCalledTimes(1)
     expect(called()).toEqual([SID, {
       username: 'mong', host: 'pi.local', port: 2222,
       password: 'pw-A', sudoPassword: 'sudo-A', runtime: undefined,
@@ -157,14 +159,14 @@ describe('ssh:endRemote — fails CLOSED when there is no config to rebuild from
     vault['cfgB'] = 'pw'
     await endRemote({}, { sessionId: SID, configId: 'cfgL' })
     expect(called()).toEqual([SID, undefined])
-    endSshRemote.mockClear()
+    endSshRemoteDetailed.mockClear()
     await endRemote({}, { sessionId: SID, configId: 'cfgB' })
     expect(called()).toEqual([SID, undefined])
   })
 
   it('a missing or malformed configs file yields no target', async () => {
     for (const disk of [null, undefined, {}, 'not-an-array', [null, 42]]) {
-      endSshRemote.mockClear()
+      endSshRemoteDetailed.mockClear()
       configsOnDisk = disk
       await endRemote({}, { sessionId: SID, configId: 'cfgA' })
       expect(called()).toEqual([SID, undefined])
@@ -195,7 +197,7 @@ describe('ssh:endRemote — the id schemas reject before anything is read or spa
     }
     // Mutation to prove this can fail: drop `sessionId: sessionIdSchema` from
     // endRemoteSchema (pty-handlers.ts) and these all sail through.
-    expect(endSshRemote).not.toHaveBeenCalled()
+    expect(endSshRemoteDetailed).not.toHaveBeenCalled()
   })
 
   it('refuses a configId outside the credential-key charset', async () => {
@@ -203,14 +205,14 @@ describe('ssh:endRemote — the id schemas reject before anything is read or spa
     for (const bad of ['cfg-A', 'cfg_A', '../cfgA', 'cfg A', '', 'x'.repeat(65)]) {
       await expect(endRemote({}, { sessionId: SID, configId: bad })).rejects.toThrow()
     }
-    expect(endSshRemote).not.toHaveBeenCalled()
+    expect(endSshRemoteDetailed).not.toHaveBeenCalled()
   })
 
   it('refuses a payload that is neither an id string nor the object shape', async () => {
     for (const bad of [null, undefined, 42, [SID], { configId: 'cfgA' }, { sessionId: 42 }]) {
       await expect(endRemote({}, bad)).rejects.toThrow()
     }
-    expect(endSshRemote).not.toHaveBeenCalled()
+    expect(endSshRemoteDetailed).not.toHaveBeenCalled()
   })
 })
 
@@ -224,7 +226,7 @@ describe('ssh:endRemote — the LIVE-session caller is unchanged', () => {
 
   it('a bare id outside the charset is still refused', async () => {
     await expect(endRemote({}, 'a; rm -rf /')).rejects.toThrow()
-    expect(endSshRemote).not.toHaveBeenCalled()
+    expect(endSshRemoteDetailed).not.toHaveBeenCalled()
   })
 })
 
@@ -248,7 +250,7 @@ describe('ssh:endRemote — refuses a config that no longer points where the ses
 
   it('yields NO target on a port, user, path or runtime edit', async () => {
     for (const edit of [{ port: 22 }, { username: 'root' }, { remotePath: '/srv' }, { runtime: { type: 'container', container: 'dev' } }]) {
-      endSshRemote.mockClear()
+      endSshRemoteDetailed.mockClear()
       configsOnDisk = [sshCfg('cfgA', edit)]
       registryOnDisk = [recordedAt()]
       await endRemote({}, { sessionId: SID, configId: 'cfgA' })
@@ -276,7 +278,7 @@ describe('ssh:endRemote — refuses a config that no longer points where the ses
     configsOnDisk = [sshCfg('cfgA', { port: 22, runtime: { type: 'container', container: 'x' } })]
     await endRemote({}, { sessionId: SID, configId: 'cfgA' })
     expect((called()[1] as { host: string }).host).toBe('pi.local') // port/runtime unknown -> not an edit we can see
-    endSshRemote.mockClear()
+    endSshRemoteDetailed.mockClear()
     configsOnDisk = [sshCfg('cfgA', { host: 'other.box' })]
     await endRemote({}, { sessionId: SID, configId: 'cfgA' })
     expect(called()).toEqual([SID, undefined]) // a host edit still is
@@ -291,5 +293,45 @@ describe('ssh:endRemote — refuses a config that no longer points where the ses
     await endRemote({}, { sessionId: SID, configId: 'cfgA' })
     expect(called()).toEqual([SID, undefined])
     expect(loadCredential).not.toHaveBeenCalled()
+  })
+})
+
+// Live T24 (2026-09-25): End now RESOLVES with what it did, so the renderer can
+// say when Claude may still be running in a rootful container. The handler must
+// hand that result back unchanged, and still validate the payload first.
+describe('ssh:endRemote -- resolves with the End result', () => {
+  it('passes the container-needs-sudo result through unchanged', async () => {
+    const result = { outcome: 'container-needs-sudo', container: { engine: 'podman', name: 'ccc-test', host: 'rocky.lan' } }
+    endSshRemoteDetailed.mockResolvedValueOnce(result)
+    await expect(endRemote({}, SID)).resolves.toEqual(result)
+    expect(called()).toEqual([SID, undefined])
+  })
+
+  it('passes an ordinary outcome through too', async () => {
+    endSshRemoteDetailed.mockResolvedValueOnce({ outcome: 'completed' })
+    await expect(endRemote({}, { sessionId: SID })).resolves.toEqual({ outcome: 'completed' })
+  })
+
+  it('still refuses an invalid payload before End runs', async () => {
+    await expect(Promise.resolve().then(() => endRemote({}, { sessionId: 'bad id; rm' }))).rejects.toThrow()
+    expect(endSshRemoteDetailed).not.toHaveBeenCalled()
+  })
+
+  // The renderer sends End and then the pty kill without waiting in between;
+  // main handles them in order, so End must read its target before the
+  // handler yields at all (a yield lets the kill run first and drop the live
+  // target). Mutation to prove this can fail: add `await Promise.resolve()`
+  // before the endSshRemoteDetailed call in the ssh:endRemote handler.
+  it('calls endSshRemoteDetailed synchronously, before the handler yields', () => {
+    endSshRemoteDetailed.mockResolvedValueOnce({ outcome: 'completed' }).mockResolvedValueOnce({ outcome: 'completed' })
+    const pending = endRemote({}, SID) as Promise<unknown>
+    // Nothing awaited yet: the call must already have happened.
+    expect(endSshRemoteDetailed).toHaveBeenCalledTimes(1)
+    expect(called()).toEqual([SID, undefined])
+    configsOnDisk = [sshCfg('cfgA')]
+    endSshRemoteDetailed.mockClear()
+    const detached = endRemote({}, { sessionId: SID, configId: 'cfgA' }) as Promise<unknown>
+    expect(endSshRemoteDetailed).toHaveBeenCalledTimes(1)
+    return Promise.all([pending, detached])
   })
 })
