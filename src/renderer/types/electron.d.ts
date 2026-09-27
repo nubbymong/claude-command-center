@@ -43,6 +43,7 @@ import type {
   AccountsSnapshot as ProviderAccountsSnapshot, AccountsResult as ProviderAccountsResult, ProviderInstallationView, InstallRecipeView,
   SignInOutputEvent, BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
   SecretDeposit, KnownAuthState, ProviderId as ProviderAccountsProviderId, ResolveConflictRequest, SetReviewerDefaultRequest,
+  ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../../shared/providers'
 import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
 export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
@@ -922,6 +923,10 @@ export interface ElectronAPI {
     reconcileSignIn: (accountId: string) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
     resolveConflict: (req: ResolveConflictRequest) => Promise<ProviderAccountsResult>
     setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<ProviderAccountsResult>
+    /** Usage track MP3: each listed account's allowance view as it is ready,
+     *  on a private per-call channel; nothing for a provider that is off. */
+    usageStream: (providerId: ProviderAccountsProviderId, onResult: (view: ProviderAccountUsageView) => void) => Promise<ProviderUsageStreamResult>
+    usageOne: (accountId: string) => Promise<ProviderAccountsResult<{ usage: ProviderAccountUsageView }>>
   }
 }
 

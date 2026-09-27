@@ -929,7 +929,7 @@ export default function App() {
       onOpenSessionLogs={(sessionId) => { setPendingLogsSessionId(sessionId); setView('logs') }}
       onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
     />
-    if (v === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
+    if (v === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} onOpenTokenomics={() => setView('tokenomics')} />
     if (v === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} />
     return null
   }

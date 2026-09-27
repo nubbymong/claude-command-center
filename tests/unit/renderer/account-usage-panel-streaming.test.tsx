@@ -11,6 +11,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import type { AccountUsage } from '../../../src/shared/usage-types'
 import type { AccountProfile } from '../../../src/shared/account-types'
+import type { AccountsSnapshot, AccountView, ProviderAccountUsageView, ProviderUsageStreamResult } from '../../../src/shared/providers'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -32,14 +33,23 @@ const fetchAllStream = vi.fn((onResult: (u: AccountUsage) => void) => new Promis
   streams.push({ emit: (u) => act(() => onResult(u)), done: () => resolve(), reject: (e) => reject(e) })
 }))
 const fetchOne = vi.fn(async () => null)
+/** The provider-neutral usage stream (MP3), driven the same way. */
+interface ProviderStreamCtl { emit: (v: ProviderAccountUsageView) => void; done: (r?: ProviderUsageStreamResult) => void; reject: (e: unknown) => void }
+const providerStreams: ProviderStreamCtl[] = []
+const usageStream = vi.fn((_providerId: string, onResult: (v: ProviderAccountUsageView) => void) => new Promise<ProviderUsageStreamResult>((resolve, reject) => {
+  providerStreams.push({ emit: (v) => act(() => onResult(v)), done: (r) => resolve(r ?? { ok: true, provider: 'on', accounts: 0 }), reject: (e) => reject(e) })
+}))
+const usageOne = vi.fn(async (_accountId: string): Promise<unknown> => ({ ok: false, code: 'not-found' }))
 
 Object.defineProperty(window, 'electronAPI', {
   writable: true, configurable: true,
-  value: { accountProfiles: { list, authInfo }, accountUsage: { fetchAllStream, fetchOne } },
+  value: { accountProfiles: { list, authInfo }, accountUsage: { fetchAllStream, fetchOne }, providerAccounts: { usageStream, usageOne } },
 })
 
 const { default: AccountUsagePanel } = await import('../../../src/renderer/components/AccountUsagePanel')
 const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
+const { useProviderAccountsStore } = await import('../../../src/renderer/stores/providerAccountsStore')
+const { choiceSettings } = await import('../../../src/renderer/onboarding/provider-choice')
 
 const profile = (id: string): AccountProfile => ({ id, name: id, accountEmail: `${id}@x.com`, createdAt: 0 })
 const usage = (profileId: string, percent: number): AccountUsage => ({
@@ -54,6 +64,7 @@ const flush = async () => { await act(async () => { await Promise.resolve(); awa
 
 beforeEach(() => {
   list.mockReset(); authInfo.mockReset(); fetchAllStream.mockClear(); fetchOne.mockReset(); streams.length = 0
+  usageStream.mockClear(); usageOne.mockClear(); providerStreams.length = 0
   authInfo.mockResolvedValue([]); fetchOne.mockResolvedValue(null)
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container)
 })
@@ -208,6 +219,16 @@ describe('AccountUsagePanel with Claude Code off (D5)', () => {
     expect(fetchAllStream).not.toHaveBeenCalled()
   })
 
+  // Usage track MP4: with Codex not on, the page is exactly the Claude page:
+  // no section headings and no Codex call (row 14).
+  it('with Codex not on, nothing of Codex is asked for and there are no section headings', async () => {
+    list.mockResolvedValue([profile('a'), profile('b')])
+    await mount()
+    expect(usageStream).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid^="account-usage-section-"]')).toBeNull()
+    latest().done()
+  })
+
   it('loads as before once Claude Code is turned back on', async () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false }, isLoaded: true })
     list.mockResolvedValue([profile('a')])
@@ -219,5 +240,170 @@ describe('AccountUsagePanel with Claude Code off (D5)', () => {
     latest().emit(usage('a', 12))
     await flush()
     expect(container.textContent).toContain('12%')
+  })
+})
+
+// Usage track MP4 (the approved canvas, Account usage option A): sections by
+// provider. Claude-only is the page as it was; Codex-only has the D5 line, then
+// the Codex section; with both, each section has its heading and count.
+const cxAccount = (id: string, over: Partial<AccountView> = {}): AccountView => ({
+  id, providerId: 'codex', identityId: `identity-${id}`, lifecycle: 'active', isProviderDefault: false, isReviewerDefault: false,
+  authMethod: 'browser', lastKnownAuthState: 'signed-in', operationalState: 'ready', identityAssurance: 'user-asserted',
+  realmLifecycle: 'active', external: false, unverified: false, legacyLinked: false, runningSessions: 0, runningReviews: 0, consumers: 0,
+  ...over,
+})
+const snapshotOf = (accounts: AccountView[]): AccountsSnapshot => ({
+  revision: 1, registry: { mode: 'ready' } as AccountsSnapshot['registry'],
+  providers: [{ providerId: 'claude', displayName: 'Claude Code' }, { providerId: 'codex', displayName: 'Codex' }] as AccountsSnapshot['providers'],
+  identities: accounts.map((a) => ({ id: a.identityId, friendlyName: `Name ${a.id}`, colourKey: 'plum' })),
+  groups: [], accounts, pendingSetups: [], externalDefaults: [], conflicts: [], reviewerNotices: [],
+})
+const cxView = (accountId: string, percent: number): ProviderAccountUsageView => ({
+  accountId, providerId: 'codex', status: 'ok', source: 'live', readingAt: Date.now(),
+  buckets: [{ key: 'codex/300:', label: '5h', group: 'session', percent, resetsAt: '', severity: 'normal' }],
+})
+const heading = (p: string) => container.querySelector(`[data-testid="account-usage-section-${p}"]`) as HTMLElement | null
+const foot = () => container.querySelector('[data-testid="account-usage-foot"]')?.textContent ?? ''
+const latestCx = (): ProviderStreamCtl => providerStreams[providerStreams.length - 1]
+
+describe('AccountUsagePanel by provider (usage track MP4)', () => {
+  afterEach(() => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, isLoaded: true })
+    useProviderAccountsStore.setState({ snapshot: null, loaded: false })
+    vi.useRealTimers()
+  })
+  const modes = (o: { claude: boolean; withCodex: boolean }, accounts: AccountView[]) => {
+    // The switches as Settings saves them (an answer, either way).
+    const saved = { ...choiceSettings(o.withCodex ? 'both' : 'claude'), claudeEnabled: o.claude }
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...saved, codexAnswered: true }, isLoaded: true })
+    useProviderAccountsStore.setState({ snapshot: snapshotOf(accounts), loaded: true })
+  }
+
+  it('Claude-only: no headings, the foot says allowances only and keeps the countdown sentence', async () => {
+    modes({ claude: true, withCodex: false }, [cxAccount('x')])
+    list.mockResolvedValue([profile('a')])
+    await mount()
+    expect(heading('claude')).toBeNull()
+    expect(heading('codex')).toBeNull()
+    expect(usageStream).not.toHaveBeenCalled()
+    expect(foot()).toContain('Allowances only. Token use and estimated cost are in Tokenomics.')
+    expect(foot()).toMatch(/The countdown is the point at which an interactive sign-in becomes unavoidable/)
+    latest().done()
+  })
+
+  it('Codex-only: the D5 line, then the Codex section with its count; nothing of Claude Code is read', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w'), cxAccount('r')])
+    await mount()
+    expect(list).not.toHaveBeenCalled()
+    expect(authInfo).not.toHaveBeenCalled()
+    expect(fetchAllStream).not.toHaveBeenCalled()
+    expect(usageStream).toHaveBeenCalledWith('codex', expect.any(Function))
+    expect(container.textContent).toContain('Claude Code is off. Turn it on in Settings, Accounts to see its accounts.')
+    expect(heading('claude')).toBeNull()
+    expect(heading('codex')?.textContent).toBe('Codex2 accounts')
+    // Skeletons until each view streams in.
+    expect(skeletons().length).toBe(2)
+    latestCx().emit(cxView('w', 18))
+    await flush()
+    expect(skeletons().length).toBe(1)
+    expect(container.textContent).toContain('Name w')
+    expect(container.textContent).toContain('18%')
+    latestCx().emit(cxView('r', 6))
+    latestCx().done({ ok: true, provider: 'on', accounts: 2 })
+    await flush()
+    expect(skeletons().length).toBe(0)
+    expect(foot()).toContain('Allowances only.')
+    expect(foot()).not.toMatch(/countdown/)
+    // The D5 line comes first.
+    const text = container.textContent ?? ''
+    expect(text.indexOf('Claude Code is off')).toBeLessThan(text.indexOf('Codex2 accounts'))
+  })
+
+  it('both: a heading with the count for each provider, Claude Code first', async () => {
+    modes({ claude: true, withCodex: true }, [cxAccount('w')])
+    list.mockResolvedValue([profile('a'), profile('b')])
+    await mount()
+    expect(heading('claude')?.textContent).toBe('Claude Code2 accounts')
+    expect(heading('codex')?.textContent).toBe('Codex1 account')
+    const order = Array.from(container.querySelectorAll('[data-testid^="account-usage-section-"]')).map((h) => h.getAttribute('data-testid'))
+    expect(order).toEqual(['account-usage-section-claude', 'account-usage-section-codex'])
+    latest().emit(usage('a', 30)); latest().emit(usage('b', 40)); latest().done()
+    latestCx().emit(cxView('w', 18)); latestCx().done()
+    await flush()
+    expect(container.textContent).toContain('a@x.com')
+    expect(container.textContent).toContain('18%')
+  })
+
+  it('a Codex stream that fails leaves Retry rows, and Retry reads that one account', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w')])
+    await mount()
+    latestCx().reject(new Error('stream died'))
+    await flush()
+    expect(skeletons().length).toBe(0)
+    const unavailable = container.querySelectorAll('[data-testid="account-usage-unavailable"]')
+    expect(unavailable.length).toBe(1)
+    usageOne.mockResolvedValueOnce({ ok: true, usage: cxView('w', 44) })
+    await act(async () => { (unavailable[0].querySelector('button') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    await flush()
+    expect(usageOne).toHaveBeenCalledWith('w')
+    expect(container.textContent).toContain('44%')
+  })
+
+  it('ignores a late Codex view from a stream a Refresh superseded', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w')])
+    await mount()
+    const old = latestCx()
+    const refresh = container.querySelector('[data-testid="pf-actions"] button') as HTMLElement
+    await act(async () => { refresh.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    await flush()
+    expect(providerStreams.length).toBe(2)
+    old.emit(cxView('w', 99))
+    await flush()
+    expect(container.textContent).not.toContain('99%')
+    expect(skeletons().length).toBe(1)
+    latestCx().emit(cxView('w', 7)); latestCx().done()
+    await flush()
+    expect(container.textContent).toContain('7%')
+  })
+
+  it('a Codex that main answers is off has no section', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w')])
+    await mount()
+    expect(heading('codex')).not.toBeNull()
+    latestCx().done({ ok: true, provider: 'off', accounts: 0 })
+    await flush()
+    expect(heading('codex')).toBeNull()
+    expect(skeletons().length).toBe(0)
+  })
+
+  it('a parked Codex account shows as parked at once, never as loading', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('p', { lifecycle: 'inactive' })])
+    await mount()
+    expect(skeletons().length).toBe(0)
+    expect(container.textContent).toMatch(/Parked/)
+    latestCx().done()
+  })
+
+  it('a Codex account whose realm cannot be used shows the Retry row', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w')])
+    await mount()
+    latestCx().emit({ accountId: 'w', providerId: 'codex', status: 'error', buckets: [] })
+    latestCx().done()
+    await flush()
+    expect(container.querySelectorAll('[data-testid="account-usage-unavailable"]').length).toBe(1)
+  })
+
+  it('a window that resets while the page is open turns to "no reading since" (D2)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    modes({ claude: false, withCodex: true }, [cxAccount('w')])
+    await mount()
+    const soon = new Date(Date.now() + 60_000).toISOString()
+    latestCx().emit({ ...cxView('w', 18), buckets: [{ key: 'codex/300:', label: '5h', group: 'session', percent: 18, resetsAt: soon, severity: 'normal' }] })
+    latestCx().done()
+    await flush()
+    expect(container.textContent).toContain('18%')
+    await act(async () => { vi.advanceTimersByTime(61_000) })
+    expect(container.textContent).not.toContain('18%')
+    expect(container.textContent).toMatch(/no reading since/)
   })
 })

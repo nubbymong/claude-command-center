@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T03:24:21.847Z",
-  "head": "60890addb42297f7c6ff3614e196d982ab033f8b",
-  "tree": "5c33a114edb6f3468439be81df38f24878879926",
+  "generatedAt": "2026-09-27T03:36:45.349Z",
+  "head": "81f9674de5f4271a7d032b08ea2fb34d884dcc74",
+  "tree": "7e1e6bc2f0424f46fab3b9f57ec27f0f22fb0790",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2330,
+  "trackedFileCount": 2331,
   "excludedFileCount": 381,
-  "scannedFileCount": 1949,
+  "scannedFileCount": 1950,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 382,
-  "pathDigest": "b2deb11033ea4a5fee5970dd978d927ff3d6e44eeaeade7b14df80910f8eb215",
+  "matchedPathCount": 387,
+  "pathDigest": "9ed257ed032d999d42be34c2276a635cea443151f38c93a4a4e9861f9c5a24ba",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -907,6 +907,13 @@
       "lineCount": 7
     },
     {
+      "path": "src/renderer/components/AccountUsagePanel.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 47
+    },
+    {
       "path": "src/renderer/components/AccountsPanel.tsx",
       "predicates": [
         "P11"
@@ -1233,6 +1240,13 @@
         "P11"
       ],
       "lineCount": 4
+    },
+    {
+      "path": "src/renderer/components/sidebar/SidebarNav.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 6
     },
     {
       "path": "src/renderer/components/tokenomics/modelColors.ts",
@@ -2389,6 +2403,20 @@
       "lineCount": 4
     },
     {
+      "path": "tests/unit/renderer/account-usage-panel-streaming.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 29
+    },
+    {
+      "path": "tests/unit/renderer/account-usage-panel.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
       "path": "tests/unit/renderer/accounts-panel-claude-card.test.tsx",
       "predicates": [
         "P05",
@@ -2991,6 +3019,13 @@
         "P13"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "tests/unit/renderer/sidebar-nav-usage-rule.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 20
     },
     {
       "path": "tests/unit/renderer/sidebar-ungrouped-configs-header.test.ts",

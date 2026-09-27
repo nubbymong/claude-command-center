@@ -1,18 +1,43 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useReauthAccount } from '../hooks/useReauthAccount'
 import { resolveAccountColourKey } from '../../shared/account-chip-color'
-import { resolveIdentityColor } from '../../shared/identity-colors'
+import { resolveIdentityColor, type IdentityColorKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { formatResetTime } from '../utils/terminalFormatting'
 import PageFrame from './PageFrame'
+import { ProviderMark } from './sidebar/Badges'
 import { describeAuthWindow, type AuthWindowTone, type ProfileAuthInfo } from '../../shared/account-auth'
 import type { AccountUsage, UsageBucket } from '../../shared/usage-types'
+import { bucketPastReset, relAgo } from '../../shared/usage-labels'
 import type { AccountProfile } from '../../shared/account-types'
+import type { AccountsSnapshot, AccountView, ProviderAccountUsageView, ProviderId } from '../../shared/providers'
 import { useClaudeOff } from '../lib/claudeOff'
+import { useSettingsStore } from '../stores/settingsStore'
+import { usesCodex } from '../onboarding/provider-choice'
+import {
+  useProviderAccountsStore, selectProviderAccounts, accountForLegacyId, accountDisplayName, providerView, signInMethodLabel,
+} from '../stores/providerAccountsStore'
 
 /** D5 (usage UX, approved as drawn): the one line the page shows for Claude
  *  Code while it is switched off. */
 export const CLAUDE_OFF_USAGE_LINE = 'Claude Code is off. Turn it on in Settings, Accounts to see its accounts.'
+
+/** Usage track MP4 (approved canvas, Account usage option A): the notes a
+ *  Codex account shows in place of bars. */
+export const NO_SESSION_YET_LINE = 'No session on this account yet. Its allowance shows after the first one.'
+export const PER_TOKEN_LINE = 'Billed per token, so there is no plan allowance.'
+
+const PARKED_LINE = 'Parked \u2014 not polled. Reactivate this account in Settings \u203a Accounts to use it again.'
+const COUNTDOWN_LINE = 'The countdown is the point at which an interactive sign-in becomes unavoidable \u2014 the shorter-lived token behind each session renews itself and is not shown.'
+
+// The providers this page has a section for, in the order they show. The page
+// asks for a provider's accounts and usage by its id; it never branches on it.
+const CLAUDE: ProviderId = 'claude'
+const CODEX: ProviderId = 'codex'
+const PROVIDER_NAME: Readonly<Record<ProviderId, string>> = { claude: 'Claude Code', codex: 'Codex' }
+
+/** The longest a browser timer may wait. */
+const MAX_TIMER_MS = 2_147_483_647
 
 const TONE_TEXT: Record<AuthWindowTone, string> = {
   expired: 'text-red',
@@ -29,16 +54,53 @@ const peopleIcon = (
   </svg>
 )
 
+/** An account's identity as a card shows it: its name, when it has one, and
+ *  its colour. */
+export interface CardIdentity {
+  name?: string
+  colourKey?: string
+}
+
+function identityOf(snapshot: AccountsSnapshot | null, account: AccountView | undefined): CardIdentity | undefined {
+  if (!account) return undefined
+  const identity = snapshot?.identities.find((i) => i.id === account.identityId)
+  if (!identity) return undefined
+  const name = identity.friendlyName?.trim()
+  return name ? { name, colourKey: identity.colourKey } : { colourKey: identity.colourKey }
+}
+
+/** Re-renders once the soonest reset among `resets` has passed, so a window
+ *  that resets while the page is open turns to "no reading since" (D2). */
+function useRenderAtNextReset(resets: readonly string[]): void {
+  const [tick, setTick] = useState(0)
+  const key = resets.join('\n')
+  useEffect(() => {
+    const now = Date.now()
+    let next = Infinity
+    for (const r of key ? key.split('\n') : []) {
+      const t = Date.parse(r)
+      if (Number.isFinite(t) && t > now && t < next) next = t
+    }
+    if (!Number.isFinite(next)) return
+    const timer = setTimeout(() => setTick((n) => n + 1), Math.min(next - now + 50, MAX_TIMER_MS))
+    return () => clearTimeout(timer)
+  }, [key, tick])
+}
+
 // All-accounts usage overview. A full PageFrame view (reached from the nav-rail
-// person icon, shown only with 2+ accounts) rather than a slide-in right-bar, so
-// it matches Tokenomics/Memory and lives in the `panels` typography region --
-// which (with rem sizing below) lets Font & Size scale it. Fetches each account's
-// usage directly -- no session needed -- and offers a per-card "Sign in" for
-// accounts whose token has expired.
-export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
+// person icon, shown with 2+ accounts across the providers that are on) rather
+// than a slide-in right-bar, so it matches Tokenomics/Memory and lives in the
+// `panels` typography region -- which (with rem sizing below) lets Font & Size
+// scale it. Grouped by provider (usage track MP4): Claude Code's accounts are
+// read directly, no session needed, with a per-card "Sign in" for an expired
+// token; Codex's show an open session's figure, else the last one in the
+// account's own history.
+export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTokenomics }: {
   onClose: () => void
   /** Switch the app to the sessions view so the user sees the login shell. */
   onReauthNavigate: () => void
+  /** Opens Tokenomics (the foot's link). */
+  onOpenTokenomics?: () => void
 }) {
   const theme = useResolvedTheme()
   const reauth = useReauthAccount()
@@ -46,6 +108,11 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   // credential state (authInfo reads every account's credential file), not
   // the usage stream -- and shows one line. Turning it back on loads again.
   const claudeOff = useClaudeOff()
+  // Codex has a section only once it is answered on: a user who does not use
+  // Codex sees the page as it always was, and nothing of Codex is asked for.
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
+  const codexAccounts = useMemo(() => selectProviderAccounts(snapshot, CODEX), [snapshot])
   // The account list drives the SKELETON rows (a local read, so it resolves at
   // once); usage streams in per account and fills each row as it lands. null =
   // the list has not resolved yet (a placeholder skeleton or two show meanwhile).
@@ -57,6 +124,12 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   // stream has settled — so a failed load never shimmers forever.
   const [streaming, setStreaming] = useState(true)
   const [loadError, setLoadError] = useState(false)
+  // Codex's accounts come from the registry the app already holds; their
+  // views stream in the same way, one per account.
+  const [codexViews, setCodexViews] = useState<Record<string, ProviderAccountUsageView>>({})
+  const [codexStreaming, setCodexStreaming] = useState(codexOn)
+  // Main answered that Codex is off (switched off in between): no section.
+  const [codexStreamOff, setCodexStreamOff] = useState(false)
   // Generation guard: a Refresh supersedes any in-flight load, so a late result
   // from the previous stream (or its settle) is ignored rather than repopulating
   // a row the new load has just reset.
@@ -64,44 +137,66 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
 
   const load = useCallback(async () => {
     const gen = ++genRef.current
-    if (claudeOff) {
+    const claude = async () => {
+      if (claudeOff) {
+        setUsageByProfile({})
+        setProfiles([])
+        setLoadError(false)
+        setStreaming(false)
+        return
+      }
+      // Clear usage so every row returns to a skeleton, then re-stream. The account
+      // list and the credential state are both local file reads, so they resolve at
+      // once and independently of the network usage fetch -- one slow account must
+      // not hold back the others' rows or the forced-login countdown.
       setUsageByProfile({})
-      setProfiles([])
       setLoadError(false)
-      setStreaming(false)
-      return
+      setStreaming(true)
+      try {
+        const [profs, auth] = await Promise.all([
+          window.electronAPI.accountProfiles.list(),
+          window.electronAPI.accountProfiles.authInfo().catch(() => [] as ProfileAuthInfo[]),
+        ])
+        if (genRef.current !== gen) return // a newer Refresh took over
+        setProfiles(profs)
+        setAuthInfo(Object.fromEntries(auth.map((a) => [a.profileId, a])))
+        // Stream each account's usage in as it resolves (plan P3): an OPEN account
+        // snaps in instantly from its live figure (no call), a CLOSED one fills in
+        // as its staggered call lands. No all-or-nothing "Loading..." gate.
+        await window.electronAPI.accountUsage.fetchAllStream((usage) => {
+          if (genRef.current !== gen) return // ignore a superseded stream's result
+          setUsageByProfile((prev) => ({ ...prev, [usage.profileId]: usage }))
+        })
+      } catch {
+        // A rejected list()/stream (a corrupt profiles read, say) must not leave the
+        // page shimmering: record the error so unresolved rows show a terminal state
+        // and an empty list reads as an error rather than "No accounts found".
+        if (genRef.current === gen) { setLoadError(true); setProfiles((prev) => prev ?? []) }
+      } finally {
+        if (genRef.current === gen) setStreaming(false)
+      }
     }
-    // Clear usage so every row returns to a skeleton, then re-stream. The account
-    // list and the credential state are both local file reads, so they resolve at
-    // once and independently of the network usage fetch — one slow account must
-    // not hold back the others' rows or the forced-login countdown.
-    setUsageByProfile({})
-    setLoadError(false)
-    setStreaming(true)
-    try {
-      const [profs, auth] = await Promise.all([
-        window.electronAPI.accountProfiles.list(),
-        window.electronAPI.accountProfiles.authInfo().catch(() => [] as ProfileAuthInfo[]),
-      ])
-      if (genRef.current !== gen) return // a newer Refresh took over
-      setProfiles(profs)
-      setAuthInfo(Object.fromEntries(auth.map((a) => [a.profileId, a])))
-      // Stream each account's usage in as it resolves (plan P3): an OPEN account
-      // snaps in instantly from its live figure (no call), a CLOSED one fills in
-      // as its staggered call lands. No all-or-nothing "Loading…" gate.
-      await window.electronAPI.accountUsage.fetchAllStream((usage) => {
-        if (genRef.current !== gen) return // ignore a superseded stream's result
-        setUsageByProfile((prev) => ({ ...prev, [usage.profileId]: usage }))
-      })
-    } catch {
-      // A rejected list()/stream (a corrupt profiles read, say) must not leave the
-      // page shimmering: record the error so unresolved rows show a terminal state
-      // and an empty list reads as an error rather than "No accounts found".
-      if (genRef.current === gen) { setLoadError(true); setProfiles((prev) => prev ?? []) }
-    } finally {
-      if (genRef.current === gen) setStreaming(false)
+    const codex = async () => {
+      setCodexViews({})
+      setCodexStreamOff(false)
+      if (!codexOn) { setCodexStreaming(false); return }
+      setCodexStreaming(true)
+      try {
+        const api = window.electronAPI?.providerAccounts
+        if (!api?.usageStream) return // no stream: the rows turn to Retry
+        const r = await api.usageStream(CODEX, (view) => {
+          if (genRef.current !== gen || !view || typeof view.accountId !== 'string') return
+          setCodexViews((prev) => ({ ...prev, [view.accountId]: view }))
+        })
+        if (genRef.current === gen && r && r.ok === true && r.provider === 'off') setCodexStreamOff(true)
+      } catch {
+        // A failed stream leaves the unresolved rows to Retry, one account each.
+      } finally {
+        if (genRef.current === gen) setCodexStreaming(false)
+      }
     }
-  }, [claudeOff])
+    await Promise.all([claude(), codex()])
+  }, [claudeOff, codexOn])
 
   useEffect(() => { void load() }, [load])
 
@@ -112,11 +207,40 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
     } catch { /* leave the stale row */ }
   }, [])
 
+  const refreshCodexOne = useCallback(async (accountId: string) => {
+    try {
+      const r = await window.electronAPI.providerAccounts.usageOne(accountId)
+      if (r && r.ok === true && r.usage) setCodexViews((prev) => ({ ...prev, [accountId]: r.usage }))
+    } catch { /* it stays a Retry row */ }
+  }, [])
+
   const onSignIn = (row: AccountUsage) => {
     reauth({ id: row.profileId, name: row.name }, () => void refreshOne(row.profileId))
     onReauthNavigate()
     onClose()
   }
+
+  // A signed-out Codex account signs in again from Settings, Accounts.
+  const openAccountsSettings = () => {
+    window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'accounts' } }))
+  }
+
+  const resets = useMemo(() => {
+    const out: string[] = []
+    for (const u of Object.values(usageByProfile)) for (const b of u.buckets ?? []) if (b.resetsAt) out.push(b.resetsAt)
+    for (const v of Object.values(codexViews)) for (const b of v.buckets ?? []) if (b.resetsAt) out.push(b.resetsAt)
+    return out
+  }, [usageByProfile, codexViews])
+  useRenderAtNextReset(resets)
+  const now = Date.now()
+
+  // Sections (the approved drawing): Codex has one once it has an account to
+  // show; Claude Code's shows while it is on, unless its list came back empty
+  // and Codex has one. Headings only show beside Codex: Claude Code's page on
+  // its own is the page as it was.
+  const codexSection = codexOn && !codexStreamOff && codexAccounts.length > 0
+  const claudeSection = !claudeOff && (profiles === null || profiles.length > 0 || loadError || !codexSection)
+  const bothSections = claudeSection && codexSection
 
   const refreshAction = (
     <button
@@ -130,10 +254,12 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
 
   return (
     <PageFrame title="Account usage" icon={peopleIcon} iconAccent="mauve" onClose={onClose} actions={refreshAction}>
-      <div className="max-w-3xl mx-auto p-4 space-y-3">
-        {claudeOff ? (
+      <div className="max-w-3xl mx-auto p-4 flex flex-col gap-3">
+        {claudeOff && (
           <p className="text-[0.8125rem] text-overlay0" data-testid="account-usage-claude-off">{CLAUDE_OFF_USAGE_LINE}</p>
-        ) : (<>
+        )}
+        {claudeSection && (<>
+        {bothSections && <SectionHeading providerId={CLAUDE} name={providerView(snapshot, CLAUDE)?.displayName ?? PROVIDER_NAME[CLAUDE]} count={profiles?.length ?? null} />}
         {profiles === null
           // The list is a local read; the placeholders below cover only the frame
           // or two before it resolves, so the page never flashes empty.
@@ -142,7 +268,10 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
             ? <p className="text-[0.8125rem] text-overlay0">{loadError ? 'Couldn’t load account usage. Use Refresh to try again.' : 'No accounts found.'}</p>
             : profiles.map((p) => {
                 const usage = usageByProfile[p.id]
-                if (usage) return <AccountCard key={p.id} row={usage} auth={authInfo[p.id]} theme={theme} onSignIn={() => onSignIn(usage)} />
+                if (usage) {
+                  const identity = identityOf(snapshot, accountForLegacyId(snapshot, CLAUDE, p.id))
+                  return <AccountCard key={p.id} row={usage} auth={authInfo[p.id]} identity={identity} theme={theme} now={now} onSignIn={() => onSignIn(usage)} />
+                }
                 // No result yet: a skeleton while the stream runs; once it has
                 // settled without one (a rare stream-level failure), a terminal
                 // row with a per-account retry rather than an endless shimmer.
@@ -150,14 +279,64 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
                   ? <UsageSkeletonCard key={p.id} />
                   : <UsageUnavailableRow key={p.id} onRetry={() => void refreshOne(p.id)} />
               })}
-        <p className="text-[0.6875rem] text-overlay0 leading-relaxed pt-1">
-          Usage is read live from each account, no session required. Signing in refreshes only that account.
-          The countdown is the point at which an interactive sign-in becomes unavoidable — the shorter-lived
-          token behind each session renews itself and is not shown.
-        </p>
         </>)}
+        {codexSection && (<>
+        <SectionHeading providerId={CODEX} name={providerView(snapshot, CODEX)?.displayName ?? PROVIDER_NAME[CODEX]} count={codexAccounts.length} />
+        {codexAccounts.map((a) => {
+          const view = codexViews[a.id]
+          const parked = a.lifecycle === 'inactive'
+          if (!view && !parked) {
+            return codexStreaming
+              ? <UsageSkeletonCard key={a.id} />
+              : <UsageUnavailableRow key={a.id} onRetry={() => void refreshCodexOne(a.id)} />
+          }
+          if (view && (view.status === 'error' || view.status === 'off')) {
+            return <UsageUnavailableRow key={a.id} onRetry={() => void refreshCodexOne(a.id)} />
+          }
+          const identity = identityOf(snapshot, a)
+          const provider = providerView(snapshot, a.providerId) ?? { providerId: a.providerId, displayName: PROVIDER_NAME[a.providerId] }
+          return (
+            <CodexAccountCard
+              key={a.id}
+              account={a}
+              view={view ?? { accountId: a.id, providerId: a.providerId, status: 'inactive', buckets: [] }}
+              name={accountDisplayName(snapshot, a)}
+              method={a.external ? null : signInMethodLabel(a, provider)}
+              colour={identity?.colourKey ? resolveIdentityColor(identity.colourKey as IdentityColorKey, theme) : null}
+              now={now}
+              onSignInAgain={openAccountsSettings}
+            />
+          )
+        })}
+        </>)}
+        <p className="text-[0.6875rem] text-overlay0 leading-relaxed pt-1" data-testid="account-usage-foot">
+          Allowances only. Token use and estimated cost are in{' '}
+          {onOpenTokenomics
+            ? <button type="button" onClick={onOpenTokenomics} className="text-blue hover:underline">Tokenomics</button>
+            : 'Tokenomics'}.
+          {claudeSection && (<><br />{COUNTDOWN_LINE}</>)}
+        </p>
       </div>
     </PageFrame>
+  )
+}
+
+// A provider's section heading (shown beside another provider's): its mark,
+// its name and how many of its accounts are listed.
+function SectionHeading({ providerId, name, count }: { providerId: ProviderId; name: string; count: number | null }) {
+  return (
+    <div
+      className="flex items-center gap-2 mt-1 -mb-0.5 text-[0.75rem] font-semibold text-subtext0 uppercase tracking-[0.05em]"
+      data-testid={`account-usage-section-${providerId}`}
+    >
+      <ProviderMark providerId={providerId} size={16} />
+      <span>{name}</span>
+      {count !== null && (
+        <span className="ml-auto font-normal text-[0.6875rem] normal-case tracking-normal" style={{ color: 'var(--text-muted)' }}>
+          {count} account{count === 1 ? '' : 's'}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -211,8 +390,18 @@ function UsageUnavailableRow({ onRetry }: { onRetry: () => void }) {
 }
 
 // Bigger, panel-specific usage bar (the statusline RateLimitBar is deliberately
-// tiny). Full labels, readable percentages, monotonic warm ramp.
-function UsageBar({ bucket }: { bucket: UsageBucket }) {
+// tiny). Full labels, readable percentages, monotonic warm ramp. D2: a window
+// whose reset has passed has no current figure, so it says when it reset and
+// shows no bar.
+function UsageBar({ bucket, now }: { bucket: UsageBucket; now: number }) {
+  if (bucketPastReset(bucket, now)) {
+    return (
+      <div className="flex items-center gap-2.5" data-testid="account-usage-past-reset">
+        <span className="text-[0.8125rem] text-subtext0 shrink-0" style={{ minWidth: '3.625rem' }}>{bucket.label}</span>
+        <span className="flex-1 text-[0.75rem]" style={{ color: 'var(--text-muted)' }}>Reset {formatResetTime(bucket.resetsAt)}, no reading since</span>
+      </div>
+    )
+  }
   const clamped = Math.min(100, Math.max(0, bucket.percent))
   const color = clamped >= 90 ? 'var(--color-red)' : clamped >= 70 ? 'var(--color-peach)' : clamped >= 50 ? 'var(--color-yellow)' : 'var(--color-green)'
   return (
@@ -229,6 +418,20 @@ function UsageBar({ bucket }: { bucket: UsageBucket }) {
   )
 }
 
+// A small rounded label on a card's heading: Default, Inactive, the plan.
+// `end` pushes it (and what follows) to the right.
+function CardPill({ children, end, plan }: { children: React.ReactNode; end?: boolean; plan?: boolean }) {
+  return (
+    <span
+      className={`${end ? 'ml-auto ' : ''}text-[0.625rem] ${plan ? '' : 'text-overlay0 '}border border-surface1 rounded-full px-1.5 py-px shrink-0`}
+      style={plan ? { color: 'var(--text-secondary)' } : undefined}
+      data-testid="account-usage-pill"
+    >
+      {children}
+    </span>
+  )
+}
+
 function creditsText(c: NonNullable<AccountUsage['credits']>): string {
   if (!c.enabled) {
     const why = c.disabledReason === 'out_of_credits' ? 'Out of credits' : 'Off'
@@ -241,15 +444,27 @@ function creditsText(c: NonNullable<AccountUsage['credits']>): string {
 export function AccountCard({
   row,
   auth,
+  identity,
   theme,
+  now = Date.now(),
   onSignIn,
 }: {
   row: AccountUsage
   auth?: ProfileAuthInfo
+  /** The account's identity in the registry: its name leads the card and its
+   *  colour is the chip's. Absent: the email alone, coloured from it. */
+  identity?: CardIdentity
   theme: 'dark' | 'light'
+  /** The time the card is drawn at (ages and passed resets). */
+  now?: number
   onSignIn: () => void
 }) {
-  const dot = resolveIdentityColor(resolveAccountColourKey(row.email ?? undefined, undefined, undefined), theme)
+  const dot = resolveIdentityColor(
+    identity?.colourKey ? (identity.colourKey as IdentityColorKey) : resolveAccountColourKey(row.email ?? undefined, undefined, undefined),
+    theme,
+  )
+  const name = identity?.name?.trim()
+  const hasName = !!name && name !== row.email
   // Parked account: undefined active is treated as active (a main process that
   // predates the field never greys a card). Inactive accounts are never network
   // fetched, so they carry no live buckets — the card just states that and
@@ -267,10 +482,17 @@ export function AccountCard({
   const duplicates = auth?.duplicateOfProfileIds ?? []
   return (
     <div className={`rounded-xl border border-surface0/70 px-4 py-3.5 ${isInactive ? 'bg-surface0/10 opacity-60' : 'bg-surface0/20'}`}>
-      <div className="flex items-center gap-2 mb-2.5">
-        <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ backgroundColor: dot }} />
-        {/* Full email, never truncated (accounts are distinct even when emails look similar). */}
-        <span className="text-[0.9375rem] text-text font-medium break-all">{row.email || row.name}</span>
+      <div className="flex items-center gap-2 mb-2.5 min-w-0">
+        <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ backgroundColor: dot }} data-testid="account-usage-chip" />
+        {/* The identity's name, then the full email beside it; with no name, the
+            full email alone, never truncated (accounts are distinct even when
+            emails look similar). */}
+        <span className={`text-[0.9375rem] text-text font-medium ${hasName ? 'shrink-0' : 'break-all'}`} data-testid="account-usage-name">
+          {hasName ? name : (row.email || row.name)}
+        </span>
+        {hasName && row.email && (
+          <span className="text-[0.75rem] break-all min-w-0" style={{ color: 'var(--text-muted)' }} data-testid="account-usage-sub">{row.email}</span>
+        )}
         {row.isPrimary && <span className="text-[0.625rem] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Primary</span>}
         {isInactive && <span className="ml-auto text-[0.625rem] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Inactive</span>}
         {/* A working sign-in gets a refresh too, not just a broken one: the whole
@@ -288,9 +510,7 @@ export function AccountCard({
       </div>
 
       {isInactive && (
-        <p className="text-[0.8125rem] text-overlay0">
-          Parked — not polled. Reactivate this account in Settings › Accounts to use it again.
-        </p>
+        <p className="text-[0.8125rem] text-overlay0">{PARKED_LINE}</p>
       )}
 
       {isOff && (
@@ -313,7 +533,7 @@ export function AccountCard({
 
       {row.status === 'ok' && row.buckets.length > 0 && (
         <div className="flex flex-col gap-2">
-          {row.buckets.map((b) => <UsageBar key={b.key} bucket={b} />)}
+          {row.buckets.map((b) => <UsageBar key={b.key} bucket={b} now={now} />)}
           {row.credits && (
             <div className="flex items-center justify-between text-[0.8125rem] mt-1 pt-2 border-t border-surface0/60">
               <span className="text-overlay1">Credits</span>
@@ -351,7 +571,7 @@ export function AccountCard({
         <div className="flex items-center justify-between gap-2 mt-2">
           {row.status === 'ok' ? (
             <p className="text-[0.6875rem] text-overlay0">
-              {row.stale ? `Last updated ${relAgo(row.fetchedAt)} · couldn't refresh` : `Updated ${relAgo(row.fetchedAt)}`}
+              {row.stale ? `Last updated ${relAgo(row.fetchedAt, now)} \u00b7 couldn't refresh` : `Updated ${relAgo(row.fetchedAt, now)}`}
             </p>
           ) : (
             <span />
@@ -365,17 +585,112 @@ export function AccountCard({
   )
 }
 
+/** When a Codex card's figure is from: "Updated <age>" for an open
+ *  session's figure (or a fresh read), "As of <age>, from its latest session"
+ *  for the last one in its history. */
+function readingLine(view: ProviderAccountUsageView, now: number): string | null {
+  const age = typeof view.readingAt === 'number' ? relAgo(view.readingAt, now) : ''
+  if (view.source === 'last-seen') return age ? `As of ${age}, from its latest session` : 'From its latest session'
+  return age ? `Updated ${age}` : null
+}
+
+/**
+ * A Codex account's card (usage track MP4, the approved canvas): the
+ * identity's chip (or "~" for this computer's own sign-in), the account's
+ * name and how it signs in, Default and the plan; its bars; when the figure
+ * is from. Never a sign-in countdown: its only source would be the
+ * credential file, which the app never reads. A signed-out account offers
+ * "Sign in again" (in Settings, Accounts).
+ */
+export function CodexAccountCard({
+  account,
+  view,
+  name,
+  method,
+  colour,
+  now,
+  onSignInAgain,
+}: {
+  account: AccountView
+  view: ProviderAccountUsageView
+  name: string
+  /** How it signs in ("ChatGPT sign-in", "API key"); null for none. */
+  method: string | null
+  /** The identity's chip colour; null for none. */
+  colour: string | null
+  now: number
+  onSignInAgain: () => void
+}) {
+  const parked = account.lifecycle === 'inactive' || view.status === 'inactive'
+  const plan = view.planLabel || account.planLabel
+  const shown = (view.status === 'ok' || view.status === 'not-signed-in') && view.buckets.length > 0
+  const line = shown ? readingLine(view, now) : null
+  return (
+    <div
+      className={`rounded-xl border border-surface0/70 px-4 py-3.5 ${parked ? 'bg-surface0/10 opacity-60' : 'bg-surface0/20'}`}
+      data-testid="account-usage-codex-card"
+    >
+      <div className="flex items-center gap-2 mb-2.5 min-w-0">
+        {account.external
+          ? (
+            <span
+              aria-hidden="true"
+              className="w-2.5 shrink-0 text-center font-bold text-[0.875rem] leading-[0.625rem]"
+              style={{ color: 'var(--text-muted)' }}
+              data-testid="account-usage-external"
+            >
+              ~
+            </span>
+          )
+          : <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ backgroundColor: colour ?? 'var(--text-muted)' }} data-testid="account-usage-chip" />}
+        <span className="text-[0.9375rem] text-text font-medium shrink-0" data-testid="account-usage-name">{name}</span>
+        {method && (
+          <span className="text-[0.75rem] break-all min-w-0" style={{ color: 'var(--text-muted)' }} data-testid="account-usage-sub">{method}</span>
+        )}
+        {account.isProviderDefault && <CardPill>Default</CardPill>}
+        {parked ? <CardPill end>Inactive</CardPill> : plan ? <CardPill end plan>{plan}</CardPill> : null}
+      </div>
+
+      {parked ? (
+        <p className="text-[0.8125rem] text-overlay0">{PARKED_LINE}</p>
+      ) : view.status === 'no-session-yet' ? (
+        <p className="text-[0.8125rem] text-overlay0">{NO_SESSION_YET_LINE}</p>
+      ) : view.status === 'per-token' ? (
+        <p className="text-[0.8125rem] text-overlay0">{PER_TOKEN_LINE}</p>
+      ) : (
+        <>
+          {shown && (
+            <div className="flex flex-col gap-2">
+              {view.buckets.map((b) => <UsageBar key={b.key} bucket={b} now={now} />)}
+            </div>
+          )}
+          {view.status === 'not-signed-in' && (
+            <div className={`flex items-center justify-between gap-2 ${shown ? 'mt-2' : ''}`}>
+              <span className="text-[0.8125rem] text-overlay0">Signed out</span>
+              <button
+                onClick={onSignInAgain}
+                className="text-[0.8125rem] px-3 py-1.5 rounded-lg bg-blue text-crust font-medium hover:bg-blue/90 transition-colors shrink-0"
+              >
+                Sign in again
+              </button>
+            </div>
+          )}
+          {line && (
+            <div className="flex items-center justify-between gap-2 mt-2">
+              <p className="text-[0.6875rem] text-overlay0">{line}</p>
+              <span />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function fmtMoney(amount: number, currency: string): string {
   try {
     return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount)
   } catch {
     return `${amount.toFixed(2)} ${currency}`
   }
-}
-
-function relAgo(ts: number): string {
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000))
-  if (s < 60) return 'just now'
-  const m = Math.round(s / 60)
-  return m === 1 ? '1 min ago' : `${m} min ago`
 }
