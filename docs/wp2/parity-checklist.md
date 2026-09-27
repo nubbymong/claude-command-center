@@ -82,6 +82,19 @@ owner attests (#309). Neither the VM e2e nor the upgrade walk has re-run at
 `808a23ee` or `89a743d6`: `808a23ee` changes main-process sign-in code,
 `89a743d6` only a unit test.
 
+After `14ad7475` (2026-09-27). Windows CI at `14ad7475` failed the fake-CLI
+deadline test once in 40 Windows runs since `60ea77be`: the sleeping fake
+outlived the kill. The early process-table read outlasted the kill's 10 s wait,
+so only the root (cmd.exe) was killed and the Codex process below it kept
+running. The fix commit after `14ad7475` waits for that read up to its own
+30 s timeout with the root left running, and a kill made before the early read
+whose own read fails reads once more with that budget; the run still settles at
+its 15 s bound, and the chain is still never killed with `/T`. On the host the
+touched unit file passes 92/92 (4 red before the fix, 5 mutants red),
+`npm run typecheck` is clean and the WP1 gate passes 16/16. The fake-CLI file
+is CI and VM only. CI is pending; spec, code-quality and ADR-009 reviews are
+pending.
+
 | Group | Open item | Tracked in |
 |---|---|---|
 | A | A managed Codex account added through the supported sign-in flow on WINDOWS_1, and Hello Codex seen on it: DONE 2026-09-26 (the owner's ChatGPT sign-in at `95385267`, AUTHENTICATED managed). By design Hello Codex is not shown after adopting this computer's sign-in (`src/renderer/onboarding/hello-codex.ts`, `docs/wp2/hello-codex-spec.md`) | Rows 4, 9, 13, 23 |
