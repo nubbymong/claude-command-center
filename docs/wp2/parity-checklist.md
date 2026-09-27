@@ -6,7 +6,10 @@ zero unsupported shared Conductor features for Codex (WP1 design section 19).
 means parity is complete. The decisions behind this list are in
 `docs/wp1/owner-decisions-2026-09-20.md`,
 `docs/wp1/owner-decisions-2026-09-26.md` and
-`docs/wp1/owner-decisions-2026-09-27.md`.
+`docs/wp1/owner-decisions-2026-09-27.md`. The plan that finishes it (each
+row's settling record, its gap, the PR it lands in, the package and release
+completion criteria and the phases of PR 3 and PR 4) is
+`docs/wp2/completion-plan.md`.
 
 Update this file in the same commit as the work that moves a row.
 
@@ -168,7 +171,7 @@ gitignored), 124 mocked and 1 real (redacted).
 
 | # | Feature | Status | Mocked | Real CLI | Packaged | Pkg | Still owed |
 |---|---|---|---|---|---|---|---|
-| 17 | All-accounts usage page | VERIFIED | yes | partial (Win) | no | P3 | Usage track MP3, MP4, MP8: a Codex section with the live, fresh-read and last-seen figures, per-token and no-session notes (`tests/unit/renderer/account-usage-panel-streaming.test.tsx`, `tests/unit/main/codex-usage-read.test.ts`). Real CLI: the MP8 VM walk (Windows, unsigned candidates at 81ed64a8 and fa2907e7, AUTHENTICATED managed) read a ChatGPT account on 0.153.4 and 0.155.1 and never read 0.157.1. Screens approved by the owner 2026-09-27. Owed: macOS and Linux, packaged |
+| 17 | All-accounts usage page | PARTIAL | yes | partial (Win) | no | P3 | Usage track MP3, MP4, MP8: a Codex section with the live, fresh-read and last-seen figures, per-token and no-session notes (`tests/unit/renderer/account-usage-panel-streaming.test.tsx`, `tests/unit/main/codex-usage-read.test.ts`). Real CLI: the MP8 VM walk (Windows, unsigned candidates at 81ed64a8 and fa2907e7, AUTHENTICATED managed) read a ChatGPT account on 0.153.4 and 0.155.1 and never read 0.157.1. Screens approved by the owner 2026-09-27. Owed: the Codex credits row that Claude's cards have (a known issue in app-knowledge until a real read shows the unit; completion plan P3.1, P3.14); macOS and Linux, packaged |
 | 18 | Session-strip meters | VERIFIED | yes | no | no | P3 | Usage track MP2, MP6: Codex meters labelled from `window_minutes` (5h, Weekly, one per separate limit), the no-reading meter after a reset, and the pending state (`tests/unit/renderer/session-status-strip.test.ts`, `tests/unit/renderer/strip-usage-consistency.test.ts`). Screens approved by the owner 2026-09-27. Owed: a 0.155.1 rollout fixture from a real session, and a real-CLI run |
 | 19 | Strip cost wording | VERIFIED | yes | no | no | P3 | Usage track MP6: API-equivalent estimate, or Estimate at API list prices for an API-key account (`tests/unit/renderer/strip-usage-consistency.test.ts`); Tokenomics words each session's cost the same way (MP12, `tests/unit/renderer/tokenomics-mp12.test.tsx`). Screens approved by the owner 2026-09-27. |
 | 20 | Account chip (strip and sidebar) | PARTIAL | yes | no | no | P3 | The usage page and the footer carry the account's identity chip (usage track MP4, MP5; `tests/unit/renderer/multi-account-statusline-render.test.tsx`). Screens approved by the owner 2026-09-27. Owed: the chip on the session strip and in the sidebar |
@@ -179,7 +182,7 @@ gitignored), 124 mocked and 1 real (redacted).
 | 25 | Tokenomics reads managed realms and `~/.codex` | VERIFIED | yes | no | no | P4 | Real rollouts. MP9 round 1: a realm's folder is read only through the canonical-home check, and a folder or rollout reached twice (a junction, a hard link) is read once (`tests/unit/native/tokenomics-reindex-accounts.native.test.ts`). Screens approved by the owner 2026-09-27. |
 | 26 | Tokenomics per-account attribution and filters | VERIFIED | yes | no | no | P3 | Usage track MP9, MP10, MP12: Codex by the realm folder (`tests/unit/native/tokenomics-reindex-accounts.native.test.ts`); Claude by the account profile a local session runs under, its transcript in that profile home's `.claude/projects` (from now on; the old layout without `.claude` is refused, MP10 round 1: `tests/unit/main/tokenomics-attribution.test.ts`), recorded in the index as `tests/unit/native/tokenomics-attribution.native.test.ts` shows; Provider and Account filters with Not recorded under both providers and This computer's sign-in (`tests/unit/renderer/tokenomics-mp12.test.tsx`). Screens approved by the owner 2026-09-27. |
 | 27 | Subagent collision fix | VERIFIED | yes | no | no | P4 | Screens approved by the owner 2026-09-27. Owed: a real 0.155.1 subagent rollout |
-| 28 | Codex pricing | VERIFIED | yes | no | no | P3 | Usage track MP11: a model with no price reads "no price" and is in no total; one cached-input rule for the strip and Tokenomics (`tests/unit/tokenomics/tk-pricing.test.ts`, `tests/unit/native/tk-db-summary.native.test.ts`). Screens approved by the owner 2026-09-27. |
+| 28 | Codex pricing | PARTIAL | yes | no | no | P3 | Usage track MP11: a model with no price reads "no price" and is in no total; one cached-input rule for the strip and Tokenomics (`tests/unit/tokenomics/tk-pricing.test.ts`, `tests/unit/native/tk-db-summary.native.test.ts`). Screens approved by the owner 2026-09-27. Owed: live OpenAI prices from the LiteLLM fetch Claude's prices come from (parity, resolved 2026-09-26); today a static table of three models (`resources/codex-pricing.json`), so four of the six models on offer read "no price" (completion plan P3.8) |
 | 29 | Plan type | VERIFIED | yes | partial (Win) | no | P3 | Usage track MP2, MP8: the plan from each reading, recorded on the account (`tests/unit/main/codex-usage-read.test.ts`); the MP8 VM walk showed Pro on 0.153.4 and 0.155.1. Screens approved by the owner 2026-09-27. Owed: macOS and Linux, packaged |
 | 30 | Tokenomics totals split by provider | VERIFIED | yes | no | no | P3 | Usage track MP11, MP12: every KPI and the daily series per provider, shown as a two-segment split and two chart lines (`tests/unit/native/tk-db-summary.native.test.ts`, `tests/unit/renderer/tokenomics-mp12.test.tsx`). Screens approved by the owner 2026-09-27. |
 
@@ -213,7 +216,7 @@ gitignored), 124 mocked and 1 real (redacted).
 | 49 | `codex_review` | VERIFIED | yes | no | no | P4 | A real credential run |
 | 50 | `claude_review` | VERIFIED | yes | no | no | P4 | A live wait past 300 s |
 | 51 | Agent Canvas from Codex | MISSING | no | no | no | P4 | Tools, roots, instruction delivery, the live loop |
-| 52 | Browser and vision tools | OWNER | no | no | no | P4 | The July "Claude only for now" call is superseded by the parity rule |
+| 52 | Browser and vision tools | MISSING | no | no | no | P4 | Settled by parity (completion plan, section 10): the July "Claude only for now" call is superseded by the parity rule; Codex sessions get the vision tools and `open_in_app_browser` (completion plan P4.2) |
 | 53 | Ask Conductor on Codex | MISSING | no | no | no | P4 | Which provider hosts Ask when both are on (owner) |
 | 54 | App knowledge, tour, tips | PARTIAL | yes | n/a | no | P2, P4 | P4: the final sweep. Done in P2 (mocked): the false tour, Memory, Status Line and device-code lines fixed. After the upgrade walk: the Codex update wording (app knowledge, User Guide), the Partner Terminal, Command Targeting and Codex accounts tips, and the Feature Guide's Combined Mode card |
 | 55 | Memory | MISSING | no | no | no | P4 | Codex memories per realm |
@@ -234,8 +237,8 @@ gitignored), 124 mocked and 1 real (redacted).
 | 65 | GitHub session context | PARTIAL | no | no | no | P3 | Read Codex rollouts |
 | 66 | Packaged smoke | PARTIAL | n/a | n/a | partial (Win) | P4 | Per OS, on a clean machine, signed. Windows so far: the P2 upgrade walk (an unsigned candidate over the signed beta on a used test VM) |
 | 67 | E2E mode matrix | PARTIAL | yes, +e2e | no | no | P2, P4 | P2: VM (WINDOWS_1) run at `21fff8bc`: 77/80; two failures in specs this branch changed (`codex-settings-section` Accounts locator, `session-dialog-permutations` Codex x SSH seed after U1), fixed test-side; re-run after the fix: 80/81, both specs and a new not-set-up guard pass, the upgrade case (`codex-reconfirm-upgrade.spec.ts`) 3/3. After the upgrade-walk fixes: 80/81 at `c6dc4b60` and again at `95385267`. One pre-existing e2e failure, reproduced on beta, is routed privately (not suppressed, not waived). P4: restart, enable/disable, a real launch |
-| 68 | Insights | OWNER | no | no | no | P4 | A Conductor-native Codex report, or section 19 |
-| 69 | Plan mode | OWNER | no | no | no | P3 | Evidence from the supported CLI versions |
+| 68 | Insights | MISSING | no | no | no | P4 | Settled by parity (resolved 2026-09-26; completion plan, section 10): a Conductor-native Codex report, run with `codex exec`; a mockup before the build (completion plan P4.7) |
+| 69 | Plan mode | MISSING | no | no | no | P3 | Settled by parity (completion plan, section 10): Plan mode as a launch option, as Claude's; evidence from the supported CLI versions first, a section 19 record if Codex has none (completion plan P3.1, P3.8) |
 | 70 | Image paste | UNVERIFIED | no | no | no | P3 | Codex sees the image |
 | 71 | Copy, paste, scrollback, mouse | UNVERIFIED | no | no | no | P3 | Re-captured at 0.155.1 |
 | 72 | Multi Spawn and Quick Start with Codex | PARTIAL | no | partial (Win) | partial (Win) | P2, P3 | P3: N copies, one lease each; Quick Start; a Codex-path test (the rule's tests use Claude configs). Done in P2, seen on the upgrade walk (AUTHENTICATED): a Codex config that is not Multi Spawn runs one at a time (a Not started tab's Restart is refused while a live copy runs; one Codex process), and a restored Not started copy plus a fresh launch no longer turns it into Multi Spawn |
