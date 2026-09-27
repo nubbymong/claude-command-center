@@ -217,7 +217,7 @@ gitignored), 124 mocked and 1 real (redacted).
 | 50 | `claude_review` | VERIFIED | yes | no | no | P4 | A live wait past 300 s |
 | 51 | Agent Canvas from Codex | MISSING | no | no | no | P4 | Tools, roots, instruction delivery, the live loop |
 | 52 | Browser and vision tools | MISSING | no | no | no | P4 | Settled by parity (completion plan, section 10): the July "Claude only for now" call is superseded by the parity rule; Codex sessions get the vision tools and `open_in_app_browser` (completion plan P4.2) |
-| 53 | Ask Conductor on Codex | MISSING | no | no | no | P4 | Which provider hosts Ask when both are on (owner) |
+| 53 | Ask Conductor on Codex | MISSING | no | no | no | P4 | Decision recorded 2026-09-27 (owner-decisions-2026-09-27.md M4, option B): with both on, a Settings, General row "Ask Conductor runs on: Claude Code / Codex", Claude Code by default; Codex-only uses Codex. Not built yet (PR 4) |
 | 54 | App knowledge, tour, tips | PARTIAL | yes | n/a | no | P2, P4 | P4: the final sweep. Done in P2 (mocked): the false tour, Memory, Status Line and device-code lines fixed. After the upgrade walk: the Codex update wording (app knowledge, User Guide), the Partner Terminal, Command Targeting and Codex accounts tips, and the Feature Guide's Combined Mode card |
 | 55 | Memory | MISSING | no | no | no | P4 | Codex memories per realm |
 | 56 | Codex logs | MISSING | no | no | no | P4 | Surface `$CODEX_HOME/log` |
