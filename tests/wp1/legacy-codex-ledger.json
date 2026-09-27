@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "2bb1d601d804bde3c197deba8dd988e30af1e189789e167cc7239787a7e5db5b",
-  "manifestHead": "4c2e5a945dc059b1f91c7c4af81ef25f6aa6e75e",
+  "manifestPathDigest": "b2deb11033ea4a5fee5970dd978d927ff3d6e44eeaeade7b14df80910f8eb215",
+  "manifestHead": "93d81811e0f6db6a94203436f1632e020ac92a96",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -31,6 +31,11 @@
       "path": "tests/unit/legacy-version-security.test.ts",
       "disposition": "replace",
       "evidence": "WP1.38: WP1 (#619) added legacyCliPin, the enabled and valid legacy CLI pin with whether it is installed, which the PTY and cloud-agent launch paths read; the existing cases are kept; tests/unit/legacy-version-security.test.ts"
+    },
+    {
+      "path": "tests/unit/main/account-usage-stream-handler.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.60 enable/disable: WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md) added the accountUsage:knownLabels handler cases (cached labels, input ignored, a failure is no labels) and mocks knownUsageLabels; the existing cases are kept; tests/unit/main/account-usage-stream-handler.test.ts"
     },
     {
       "path": "tests/unit/main/debug-logger-epipe-loop.test.ts",
@@ -542,7 +547,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the switch-off rule counts provider-in-use.ts and the version probe is handed the launch rule; tests/unit/main/provider-in-use.test.ts; WP2 final fixes: a settings save tells the accounts service in its own try (a failing watchdog update never skips it), and that call looks for the CLI of a provider the save turned on (WP1.17, WP1.60); tests/unit/main/settings-saved-accounts-wiring.test.ts, tests/wp1/cli-discovery.test.ts",
+      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the switch-off rule counts provider-in-use.ts and the version probe is handed the launch rule; tests/unit/main/provider-in-use.test.ts; WP2 final fixes: a settings save tells the accounts service in its own try (a failing watchdog update never skips it), and that call looks for the CLI of a provider the save turned on (WP1.17, WP1.60); tests/unit/main/settings-saved-accounts-wiring.test.ts, tests/wp1/cli-discovery.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the Claude usage gate (D5) is wired to the launch rule before the usage handlers register (WP1.60 enable/disable); tests/unit/account-usage-provider-off.test.ts",
       "note": "concrete provider registration and handler registration move to the single main composition root; index.ts calls it"
     },
     {
@@ -827,7 +832,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "move",
-      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts",
+      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the wired package exposes the usage port (account.usage supported, unknown unwired) and CodexProvider records each session's allowance by its sessions folder (WP1.41); tests/wp1/provider-conformance.test.ts; tests/unit/providers/codex/telemetry.test.ts",
       "note": "becomes the Codex package public entry point; CodexProvider (session parity surface) retained for the runtime work package, its two PATH lookups refused; auth/setup/realm operations exported alongside"
     },
     {
@@ -973,7 +978,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "replace",
-      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
+      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): watchAndClaimRollout hands the validated allowance to an optional recorder, whose throw never stops the watch (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
       "note": "watchAndClaimRollout takes the sessions directory of the launch binding realm instead of getCodexHome(); parsing and claim logic unchanged; MP2 rebuilt the rate-limit contract (replace): parsing of token usage, the claim and the realm rule unchanged",
       "adaptsTests": [
         "tests/unit/providers/codex/telemetry.test.ts"
@@ -992,6 +997,17 @@
       "note": ""
     },
     {
+      "path": "src/main/providers/codex/usage.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "TELEMETRY",
+      "disposition": "added",
+      "evidence": "WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the Codex usage port; live figure from memory keyed by the realm sessions folder a launch names, last-seen reader that opens only rollout-*.jsonl under sessions/YYYY/MM/DD, newest first, a 256 KiB then 2 MiB tail, at most 8 files, no link followed, never the sign-in file; no process (WP1.68); tests/unit/providers/codex/usage-last-seen.test.ts",
+      "note": "new module; reads only, the accounts service decides when"
+    },
+    {
       "path": "src/main/providers/compose.ts",
       "predicates": [
         "P14"
@@ -1008,7 +1024,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 accounts service, created by WP2 (absent from the baseline); it names Codex only in comments: the unanswered answer that never counts as on, the yes recorded before a sign-in, the read-only check the Set up Codex page asks before it offers Use this sign-in (owner decision 2026-09-26, U2: reserve, ask the status, always drop, keep nothing), and the adoption marker that page reads (WP1.43); tests/wp1/account-lifecycle.test.ts; an unanswered provider never counts as the last one on (U3, WP1.5); tests/unit/main/codex-unanswered-service.test.ts",
+      "evidence": "WP2 accounts service, created by WP2 (absent from the baseline); it names Codex only in comments: the unanswered answer that never counts as on, the yes recorded before a sign-in, the read-only check the Set up Codex page asks before it offers Use this sign-in (owner decision 2026-09-26, U2: reserve, ask the status, always drop, keep nothing), and the adoption marker that page reads (WP1.43); tests/wp1/account-lifecycle.test.ts; an unanswered provider never counts as the last one on (U3, WP1.5); tests/unit/main/codex-unanswered-service.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): readAccountUsage and streamAccountUsage, the plan section 3 matrix without the fresh read; nothing read for a provider that is off, not set up or unreadable, asked again before each account (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts",
       "note": "provider-neutral code; the P14 hits are comments"
     },
     {
@@ -1019,7 +1035,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "added",
-      "evidence": "provider package contract; tests/wp1/provider-core.test.ts, tests/wp1/dependency-boundaries.test.ts R1 (WP1.55); WP2 reconfirm (owner decision 2026-09-26): ProviderEnablementSpec.answeredKey, data, validated at registration (WP1.60 enable/disable); tests/unit/main/codex-unanswered-service.test.ts",
+      "evidence": "provider package contract; tests/wp1/provider-core.test.ts, tests/wp1/dependency-boundaries.test.ts R1 (WP1.55); WP2 reconfirm (owner decision 2026-09-26): ProviderEnablementSpec.answeredKey, data, validated at registration (WP1.60 enable/disable); tests/unit/main/codex-unanswered-service.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the optional usage port (live, lastSeen), reads only (WP1.55); tests/wp1/provider-core.test.ts",
       "note": "names both providers in a comment only"
     },
     {
@@ -1205,7 +1221,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/main/pty-spawn-provider-off.test.ts",
+      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/main/pty-spawn-provider-off.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): providerAccounts.usageStream (a private per-call reply channel) and usageOne, and accountUsage.knownLabels (WP1.22); tests/wp1/provider-ipc.test.ts",
       "note": "codex block replaced by the provider-neutral providers/accounts API; codexReview block retained"
     },
     {
@@ -2345,7 +2361,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/legacy-codex-retired.test.ts (WP1.57): no identifier or key is CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION and no string (folded where constant) is one of the four codex:* channels anywhere in the app source (removed in WP2 commit 6g); the tree gate is tests/wp1/legacy-codex-gate.test.ts",
+      "evidence": "tests/wp1/legacy-codex-retired.test.ts (WP1.57): no identifier or key is CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION and no string (folded where constant) is one of the four codex:* channels anywhere in the app source (removed in WP2 commit 6g); the tree gate is tests/wp1/legacy-codex-gate.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): provider-neutral PROVIDER_ACCOUNTS_USAGE_STREAM and PROVIDER_ACCOUNTS_USAGE_ONE, and ACCOUNT_USAGE_KNOWN_LABELS (WP1.57); tests/wp1/provider-ipc.test.ts",
       "note": "Codex auth channels retired; provider-neutral channels added; codex-review channels retained"
     },
     {
@@ -2366,7 +2382,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 shared accounts view, created by WP2 (absent from the baseline); it names Codex's ~/.codex only in the comment on ExternalDefaultView: a provider's own default sign-in is taken in only by the user's explicit choice (owner decision 2026-09-26, U1), and the start-up run's outcome type and lastRun left with the retired migration (WP1.43); tests/unit/main/provider-startup-no-adoption.test.ts, tests/wp1/account-lifecycle.test.ts",
+      "evidence": "WP2 shared accounts view, created by WP2 (absent from the baseline); it names Codex's ~/.codex only in the comment on ExternalDefaultView: a provider's own default sign-in is taken in only by the user's explicit choice (owner decision 2026-09-26, U1), and the start-up run's outcome type and lastRun left with the retired migration (WP1.43); tests/unit/main/provider-startup-no-adoption.test.ts, tests/wp1/account-lifecycle.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): ProviderAccountUsageView (statuses, sources, buckets, reading time, plan name; no path) and the usage stream reply channel shape (WP1.29); tests/wp1/provider-ipc.test.ts",
       "note": "the P04 hit is a comment, not a home resolver"
     },
     {
@@ -2376,7 +2392,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "added",
-      "evidence": "capability contract; tests/wp1/provider-core.test.ts (WP1.41)",
+      "evidence": "capability contract; tests/wp1/provider-core.test.ts (WP1.41); WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): account.usage is backed by the usage port (WP1.41); tests/wp1/provider-core.test.ts",
       "note": ""
     },
     {
@@ -2965,6 +2981,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/provider-account-usage.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md) test (tests/unit/main/provider-account-usage.test.ts): an off, unanswered or unreadable Codex reads no file and starts no process; API-key, inactive and archived accounts read nothing; in use shows the live figure, else last-seen; this computer's own sign-in only from its history; views carry no path (WP1.60 enable/disable, WP1.41)",
+      "note": "host-safe: the WP1 harness, in-memory filesystems, fake CLI"
+    },
+    {
       "path": "tests/unit/main/provider-in-use.test.ts",
       "predicates": [
         "P05",
@@ -3355,7 +3382,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.68: every watch is handed its realm sessions folder (the auth-module mock is gone with the module, WP2 commit 6g); a watch with no folder reads nothing even with CODEX_HOME pointing at a matching transcript; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: new cases for the allowance from the fixture and from an info-null-only rollout, the pre-response update, the allowance kept when the newest event has none, several limits, validated legacy fields, an out-of-range reset time, no usage fields without rate limits, and no-reading once at the 30 s give-up only (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
+      "evidence": "WP1.58/WP1.68: every watch is handed its realm sessions folder (the auth-module mock is gone with the module, WP2 commit 6g); a watch with no folder reads nothing even with CODEX_HOME pointing at a matching transcript; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: new cases for the allowance from the fixture and from an info-null-only rollout, the pre-response update, the allowance kept when the newest event has none, several limits, validated legacy fields, an out-of-range reset time, no usage fields without rate limits, and no-reading once at the 30 s give-up only (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the session records its allowance by its sessions folder only, and a throwing recorder never stops the updates (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
       "note": ""
     },
     {
@@ -3369,6 +3396,18 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/usage-last-seen.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md) test (tests/unit/providers/codex/usage-last-seen.test.ts): ordering, tail bounds, the file cap, links at every level, only rollout files under sessions/YYYY/MM/DD opened (never auth.json), the live figure per realm (WP1.68)",
+      "note": "host-safe: in-memory filesystem port"
     },
     {
       "path": "tests/unit/providers/host-color-scheme.test.ts",

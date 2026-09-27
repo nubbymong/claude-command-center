@@ -277,6 +277,12 @@ export const IPC = {
   PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN: 'providerAccounts:reconcileSignIn',
   PROVIDER_ACCOUNTS_RESOLVE_CONFLICT: 'providerAccounts:resolveConflict',
   PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT: 'providerAccounts:setReviewerDefault',
+  // Usage track MP3: allowance views, provider-neutral. The stream sends each
+  // account's view on the caller's private reply channel
+  // (PROVIDER_USAGE_RESULT_PREFIX + 24 hex) as it is ready; nothing for a
+  // provider that is off. Reads only: no process starts.
+  PROVIDER_ACCOUNTS_USAGE_STREAM: 'providerAccounts:usageStream',
+  PROVIDER_ACCOUNTS_USAGE_ONE: 'providerAccounts:usageOne',
 
   // Memory
   MEMORY_SCAN: 'memory:scan',
@@ -433,6 +439,9 @@ export const IPC = {
   // per-account skeleton rows in load order instead of waiting for the whole set.
   ACCOUNT_USAGE_FETCH_ALL_STREAM: 'accountUsage:fetchAllStream',
   ACCOUNT_USAGE_FETCH_ONE: 'accountUsage:fetchOne',
+  // Usage track MP3: the bucket labels of the saved and live figures, for the
+  // Settings toggles. Cached data only: no network and no credential read.
+  ACCOUNT_USAGE_KNOWN_LABELS: 'accountUsage:knownLabels',
 
   // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)
   ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',

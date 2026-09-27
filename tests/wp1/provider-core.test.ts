@@ -88,7 +88,14 @@ describe('provider registry (main core)', () => {
     expect(packageRegistrationProblem(pkg('codex', { ...fullCaps(), 'session.ssh': { state: 'supported' } }))).toMatch(/session\.ssh is supported but the session provider has no configureRemoteSettings/)
     // A key nothing on the package can back may not be declared supported at
     // all -- it is not "declaration only", it is a claim with nothing to call.
-    expect(packageRegistrationProblem(pkg('codex', { ...fullCaps(), 'account.usage': { state: 'supported' } }))).toMatch(/account\.usage is supported but nothing on the package backs it/)
+    // Account usage is backed by the usage port (usage track MP3): claimed
+    // without one it is refused, and a port that is not two functions is
+    // refused whatever the key says.
+    expect(packageRegistrationProblem(pkg('codex', { ...fullCaps(), 'account.usage': { state: 'supported' } }))).toMatch(/account\.usage is supported but the package exposes no usage operations/)
+    const usage = { live: async () => null, lastSeen: async () => null } as unknown as ProviderPackage['usage']
+    expect(packageRegistrationProblem(pkg('codex', { ...fullCaps(), 'account.usage': { state: 'supported' } }, { usage }))).toBeNull()
+    expect(packageRegistrationProblem(pkg('codex', fullCaps(), { usage: { live: async () => null } as unknown as ProviderPackage['usage'] }))).toMatch(/usage\.lastSeen\(\) must be a function/)
+    expect(packageRegistrationProblem(pkg('codex', fullCaps(), { usage: 'yes' as unknown as ProviderPackage['usage'] }))).toMatch(/usage must be an object/)
     expect(packageRegistrationProblem(pkg('codex', { ...fullCaps(), 'session.cloud': { state: 'experimental', note: 'x' } }))).toMatch(/session\.cloud is experimental but nothing on the package backs it/)
     // A PLATFORM OVERRIDE is a declaration too: unknown everywhere but
     // supported on win32 resolves ENABLED on win32, so it needs the backing.

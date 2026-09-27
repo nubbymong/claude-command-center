@@ -347,6 +347,11 @@ const claimed = new Set<string>()
  * `sessionsDir` (WP2): the transcript folder of the realm the session runs in.
  * Required (WP2 commit 6g): there is no fallback to the ambient home, which
  * would claim another account's transcript. Without one nothing is watched.
+ *
+ * `onAllowance` (usage track MP3): handed the session's validated allowance
+ * each time the rollout changes and carries one, for the Account usage page's
+ * live figure (the package records it by `sessionsDir`). A throw in it never
+ * stops the watch.
  */
 export function watchAndClaimRollout(
   sessionId: string,
@@ -354,6 +359,7 @@ export function watchAndClaimRollout(
   spawnTimestamp: number,
   onUpdate: (sl: StatuslineData) => void,
   sessionsDir: string,
+  onAllowance?: (reading: AllowanceReading) => void,
 ): TelemetrySource {
   if (typeof sessionsDir !== 'string' || !sessionsDir) return { stop() {} }
   // NOTE: dateDir is bound to today's UTC date at call time; it will not follow
@@ -457,6 +463,9 @@ export function watchAndClaimRollout(
         // session_meta.payload has no model field; turn_context carries the resolved model name.
         meta = parsedMeta
         if (cw != null && contextWindow == null) contextWindow = cw
+        if (allowance && onAllowance) {
+          try { onAllowance(allowance) } catch { /* the live figure never stops the watch */ }
+        }
         if (tokenCounts.length > 0 && meta) {
           const latest = tokenCounts[tokenCounts.length - 1]
           onUpdate(withAllowance(mapTokenCountToStatusline(latest, meta, sessionId, contextWindow), allowance))

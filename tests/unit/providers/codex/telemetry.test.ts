@@ -7,6 +7,8 @@ import { mkdirSync } from 'fs'
 import { parseCodexRollout, mapTokenCountToStatusline, contextTokensInWindow, watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
 import type { TokenCountEvent } from '../../../../src/main/providers/codex/telemetry'
 import { CODEX_DEFAULT_LIMIT_ID as DEFAULT_ID } from '../../../../src/main/providers/codex/rate-limits'
+import { createCodexLiveUsage } from '../../../../src/main/providers/codex/usage'
+import { CodexProvider } from '../../../../src/main/providers/codex'
 
 const FIXTURE = readFileSync(join(__dirname, '../../../fixtures/codex/rollout-sample.jsonl'), 'utf-8')
 
@@ -889,5 +891,47 @@ describe('allowance from the rollout (usage track MP2)', () => {
     const ts = new Date(spawn2 + 100).toISOString()
     const updates = await watchRollout(spawn2, [meta(ts, '/mp2/cwd')], 40_000)
     expect(updates.filter((u) => u.usageUnavailable)).toEqual([])
+  })
+
+  // Usage track MP3: the live figure. The session's own package records each
+  // validated allowance under the sessions folder the launch handed it, and
+  // under nothing else; a recorder that throws never stops the watch.
+  it('the Codex session records its allowance for the usage page by its sessions folder only', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const sessions = join(mkdtempSync(join(tmpdir(), 'ccc-test-codex-mp3-')), 'sessions')
+    mkdirSync(join(sessions, ...ymdOf(new Date())), { recursive: true })
+    writeFileSync(join(sessions, ...ymdOf(new Date()), 'rollout-mp3.jsonl'), [
+      meta(ts, '/mp3/cwd'),
+      tokenCount(ts, null, { limit_id: DEFAULT_ID, primary: { used_percent: 26, window_minutes: 300 }, plan_type: 'pro' }),
+    ].join('\n') + '\n', 'utf-8')
+    const live = createCodexLiveUsage(process.platform)
+    const updates: unknown[] = []
+    const src = new CodexProvider(live).ingestSessionTelemetry('sess-mp3', { cwd: '/mp3/cwd', spawnTimestamp: spawn, sessionsDir: sessions }, (d) => updates.push(d))
+    await vi.advanceTimersByTimeAsync(800)
+    src.stop()
+    expect(updates.length).toBeGreaterThan(0)
+    expect(live.get(sessions)).toMatchObject({ planType: 'pro', readingAt: Date.parse(ts), limits: [{ limitId: 'codex', primary: { usedPercent: 26 } }] })
+    expect(live.get(join(sessions, '..', 'other', 'sessions'))).toBeNull()
+  })
+
+  it('a recorder that throws never stops the status line updates', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const updates = await (async () => {
+      const sessions = join(mkdtempSync(join(tmpdir(), 'ccc-test-codex-mp3-throw-')), 'sessions')
+      mkdirSync(join(sessions, ...ymdOf(new Date())), { recursive: true })
+      writeFileSync(join(sessions, ...ymdOf(new Date()), 'rollout-mp3.jsonl'), [
+        meta(ts, '/mp2/cwd'),
+        tokenCount(ts, usage(9), { limit_id: DEFAULT_ID, primary: { used_percent: 1, window_minutes: 300 } }),
+      ].join('\n') + '\n', 'utf-8')
+      const got: import('../../../../src/shared/types').StatuslineData[] = []
+      const src = watchAndClaimRollout('sess-mp2', '/mp2/cwd', spawn, (d) => got.push(d), sessions, () => { throw new Error('recorder') })
+      await vi.advanceTimersByTimeAsync(800)
+      src.stop()
+      return got
+    })()
+    expect(updates.length).toBeGreaterThan(0)
+    expect(updates[updates.length - 1].inputTokens).toBe(9)
   })
 })

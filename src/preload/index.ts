@@ -34,7 +34,7 @@ import type {
 import type {
   AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest,
   CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
-  ResolveConflictRequest, SetReviewerDefaultRequest,
+  ResolveConflictRequest, SetReviewerDefaultRequest, ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../shared/providers'
 
 function onChannel<T>(channel: string, cb: (data: T) => void): () => void {
@@ -103,6 +103,9 @@ export interface ElectronAPI {
     fetchAll: () => Promise<import('../shared/usage-types').AccountUsage[]>
     fetchAllStream: (onResult: (usage: import('../shared/usage-types').AccountUsage) => void) => Promise<void>
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => Promise<import('../shared/usage-types').AccountUsage | null>
+    /** The bucket labels of the saved and live figures (Settings). Cached
+     *  data only: no network, no credential read. */
+    knownLabels: () => Promise<string[]>
   }
   window: {
     minimize: () => void
@@ -617,6 +620,10 @@ export interface ElectronAPI {
     reconcileSignIn: (accountId: string) => Promise<AccountsResult<{ state: KnownAuthState }>>
     resolveConflict: (req: ResolveConflictRequest) => Promise<AccountsResult>
     setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<AccountsResult>
+    /** Usage track MP3: each listed account's allowance view as it is ready,
+     *  on a private per-call channel; nothing for a provider that is off. */
+    usageStream: (providerId: ProviderId, onResult: (view: ProviderAccountUsageView) => void) => Promise<ProviderUsageStreamResult>
+    usageOne: (accountId: string) => Promise<AccountsResult<{ usage: ProviderAccountUsageView }>>
   }
   github: GitHubBridge
   hooks: HooksBridge
@@ -871,6 +878,7 @@ const electronAPI: ElectronAPI = {
         .finally(() => ipcRenderer.removeListener(channel, handler))
     },
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id, noRefresh: opts?.noRefresh }),
+    knownLabels: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_KNOWN_LABELS),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
@@ -1317,6 +1325,17 @@ const electronAPI: ElectronAPI = {
       identityId: req.identityId, field: req.field, providerId: req.providerId, legacyId: req.legacyId, keep: req.keep,
     }),
     setReviewerDefault: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: req.providerId, accountId: req.accountId }),
+    // A private per-call reply channel (main checks its exact shape,
+    // PROVIDER_USAGE_RESULT_RE), subscribed before the invoke and removed when
+    // the stream ends, so overlapping streams never cross.
+    usageStream: (providerId, onResult) => {
+      const channel = `providerAccounts:usageResult:${randomId()}`
+      const handler = (_e: unknown, view: ProviderAccountUsageView) => onResult(view)
+      ipcRenderer.on(channel, handler)
+      return ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId, channel })
+        .finally(() => ipcRenderer.removeListener(channel, handler))
+    },
+    usageOne: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId }),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

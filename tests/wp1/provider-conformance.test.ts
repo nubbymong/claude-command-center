@@ -193,4 +193,25 @@ describe('Codex declares what it implements (WP1.17, WP1.18)', () => {
     expect(wired.realmFolders).toBeDefined()
     expect(wired.launch?.kinds).toEqual(['session', 'review'])
   })
+
+  it('account usage is supported exactly when the usage port exists (usage track MP3); Claude keeps its own and declares unknown', () => {
+    const bare = createCodexPackage()
+    const wired = createCodexPackage({ realms: { lookup: async () => ({ ok: false }), mkdirSecure: () => {} } })
+    expect(bare.usage).toBeUndefined()
+    expect(bare.capabilities['account.usage'].state).toBe('unknown')
+    expect(typeof wired.usage?.live).toBe('function')
+    expect(typeof wired.usage?.lastSeen).toBe('function')
+    expect(wired.capabilities['account.usage'].state).toBe('supported')
+    const claude = createClaudePackage()
+    expect(claude.usage).toBeUndefined()
+    expect(claude.capabilities['account.usage'].state).toBe('unknown')
+    for (const pkg of [bare, wired, claude]) expect(packageRegistrationProblem(pkg)).toBeNull()
+  })
+
+  it('the usage port reads nothing for a realm it cannot locate', async () => {
+    const wired = createCodexPackage({ realms: { lookup: async () => ({ ok: false }), mkdirSecure: () => {} } })
+    const realm = { authRealmId: 'realm-' + '1'.repeat(32) }
+    expect(await wired.usage!.live(realm)).toBeNull()
+    expect(await wired.usage!.lastSeen(realm)).toBeNull()
+  })
 })

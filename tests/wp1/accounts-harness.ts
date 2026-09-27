@@ -5,7 +5,7 @@
 // through the legacy reconcile, exactly as at start. No file is written and
 // no process is started.
 import { createCodexPackage } from '../../src/main/providers/codex'
-import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry } from '../../src/main/providers/codex'
+import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry, CodexUsageFsPort, CodexLiveUsage } from '../../src/main/providers/codex'
 import { createClaudePackage } from '../../src/main/providers/claude'
 import type { ClaudeReviewPorts } from '../../src/main/providers/claude'
 import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore, registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
@@ -108,6 +108,19 @@ export interface HarnessOpts {
   /** The environment the app inherited, as the Codex package reads it
    *  (CODEX_HOME). Absent: none set. */
   hostEnv?: Record<string, string>
+  /** The usage track's filesystem (MP3). Absent: an empty one, so no test
+   *  reads the host's disk for a realm's session history. */
+  usageFs?: CodexUsageFsPort
+  /** The live usage figures, shared with the test (MP3). */
+  liveUsage?: CodexLiveUsage
+}
+
+/** A usage filesystem with nothing in it. */
+export const EMPTY_USAGE_FS: CodexUsageFsPort = {
+  platform: 'win32',
+  lstat: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
+  readdir: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
+  readTail: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
 }
 
 export const claudeSnapshot = (legacyId: string, over: Partial<LegacyAccountSnapshot> = {}): LegacyAccountSnapshot => ({
@@ -178,6 +191,8 @@ export async function harness(o: HarnessOpts = {}) {
     },
     auth: { takeSecret: (h) => secrets.take(h) },
     realmFs: folders.fs,
+    usageFs: o.usageFs ?? EMPTY_USAGE_FS,
+    ...(o.liveUsage ? { liveUsage: o.liveUsage } : {}),
     hostHome: { env: o.hostEnv ?? {}, homeDir: USER },
     discoveryDeps: async (): Promise<CodexDiscoveryDeps> => {
       discoveries++

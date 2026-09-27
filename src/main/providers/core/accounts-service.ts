@@ -43,8 +43,9 @@ import type {
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
   SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
+  ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../../../shared/providers'
-import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef } from './package'
+import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
 import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './consumer-leases'
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
@@ -1820,6 +1821,107 @@ export class AccountsService {
     // prepareLaunch refuses both (acquireLaunchLease).
     if (this.signIns.has(a.id) || this.deps.leases.countKind(a.id, 'sign-in') > 0 || this.unrecordedSignIns.has(a.id)) return false
     return resolveLaunchBinding(ready.doc, { providerId: p.id, providerAccountId: a.id }).ok
+  }
+
+  // -------------------------------------------------------------------------
+  // Usage (usage track MP3; plan section 3)
+  // -------------------------------------------------------------------------
+
+  /** The package that reports this provider's usage, or null: it must
+   *  expose the usage port AND have `account.usage` enabled. Decided by the
+   *  capability and the port, never by the provider's name. */
+  private usagePackage(providerId: ProviderId): (ProviderPackage & { usage: NonNullable<ProviderPackage['usage']> }) | null {
+    const p = this.pkg(providerId)
+    if (!p || !p.usage || !this.capability(p, 'account.usage').enabled) return null
+    return p as ProviderPackage & { usage: NonNullable<ProviderPackage['usage']> }
+  }
+
+  /** One account's allowance view (plan section 3, without the fresh read
+   *  MP8 adds). Reads only: no process starts. A provider that is off, not
+   *  set up, or whose setting cannot be read reads nothing at all (D5). An
+   *  archived account is not served. */
+  async readAccountUsage(input: { accountId: string }): Promise<AccountsResult<{ usage: ProviderAccountUsageView }>> {
+    const id = input && typeof input === 'object' ? (input as { accountId?: unknown }).accountId : undefined
+    if (typeof id !== 'string' || !id) return failure('not-found')
+    const ready = this.ready()
+    if ('ok' in ready) return ready
+    const a = findAccount(ready.doc, id)
+    if (!a || a.lifecycle === 'archived') return failure('not-found')
+    const p = this.usagePackage(a.providerId)
+    if (!p) return failure('unsupported')
+    if (this.launchRefusal(p.id)) return { ok: true, usage: { accountId: a.id, providerId: a.providerId, status: 'off', buckets: [] } }
+    return { ok: true, usage: await this.usageView(p, ready.doc, a) }
+  }
+
+  /** Every listed account of a provider, one view each, sent as it is ready.
+   *  Listed: not archived (an account whose realm is not active shows as an
+   *  error, and nothing of it is read). Nothing is read or sent for a
+   *  provider that is off, not set up, or whose setting cannot be read (D5);
+   *  the rule is asked again before each account, and `shouldContinue` too (a
+   *  page that closed, or a newer stream), so a switch-off or a closed page
+   *  stops the stream before the next account. */
+  async streamAccountUsage(
+    input: { providerId: ProviderId },
+    onResult: (view: ProviderAccountUsageView) => void,
+    opts: { shouldContinue?: () => boolean } = {},
+  ): Promise<ProviderUsageStreamResult> {
+    const p = this.usagePackage(input?.providerId)
+    if (!p) return failure('unsupported')
+    if (this.launchRefusal(p.id)) return { ok: true, provider: 'off', accounts: 0 }
+    const ready = this.ready()
+    if ('ok' in ready) return ready
+    const wanted = () => {
+      try { return !opts.shouldContinue || opts.shouldContinue() === true } catch { return false }
+    }
+    const listed = ready.doc.accounts.filter((a) => a.providerId === p.id && a.lifecycle !== 'archived')
+    let sent = 0
+    for (const a of listed) {
+      if (!wanted() || this.launchRefusal(p.id)) break
+      const view = await this.usageView(p, ready.doc, a)
+      if (!wanted() || this.launchRefusal(p.id)) break
+      onResult(view)
+      sent++
+    }
+    return { ok: true, provider: 'on', accounts: sent }
+  }
+
+  /** The matrix of plan section 3 for one account of a provider that is on. */
+  private async usageView(
+    p: ProviderPackage & { usage: NonNullable<ProviderPackage['usage']> },
+    doc: ProviderRegistryDoc,
+    a: ProviderRegistryDoc['accounts'][number],
+  ): Promise<ProviderAccountUsageView> {
+    const base: ProviderAccountUsageView = { accountId: a.id, providerId: a.providerId, status: 'error', buckets: [] }
+    if (a.lifecycle === 'inactive') return { ...base, status: 'inactive' }
+    // Billed per token: no allowance to read.
+    if (a.authMethod === 'apiKey') return { ...base, status: 'per-token' }
+    const realm = findRealm(doc, a.authRealmId)
+    if (!realm || realm.lifecycle !== 'active') return base
+    const ref: RealmRef = { authRealmId: realm.id }
+    const inUse = this.signIns.has(a.id) || this.deps.leases.count(a.id) > 0
+    const shown = (r: UsageReading | null, source: ProviderAccountUsageView['source'], status: ProviderAccountUsageView['status'] = 'ok'): ProviderAccountUsageView => {
+      const view: ProviderAccountUsageView = { ...base, status }
+      if (r) {
+        view.source = source
+        view.buckets = r.buckets
+        if (typeof r.readingAt === 'number') view.readingAt = r.readingAt
+        if (r.planLabel) view.planLabel = r.planLabel
+      }
+      if (!view.planLabel && a.planLabel) view.planLabel = a.planLabel
+      return view
+    }
+    try {
+      // In use: the open session's figure, else its history (never a read).
+      if (inUse) {
+        const live = await p.usage.live(ref)
+        if (live) return shown(live, 'live')
+      }
+      const seen = await p.usage.lastSeen(ref)
+      if (!inUse && (a.lastKnownAuthState === 'signed-out' || a.lastKnownAuthState === 'expired')) return shown(seen, 'last-seen', 'not-signed-in')
+      return seen ? shown(seen, 'last-seen') : shown(null, undefined, 'no-session-yet')
+    } catch {
+      return base
+    }
   }
 
   /** The transcript folders of a provider's live realms (plan A13): what the

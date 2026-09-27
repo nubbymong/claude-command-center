@@ -13,6 +13,7 @@
 // user's home shortened to ~ and spoofable text stripped). No other part of
 // that path, and no environment value, crosses with it.
 import type { ProviderId } from '../types'
+import type { UsageBucket } from '../usage-types'
 import type {
   AccountLifecycle, AuthMethod, KnownAuthState, OperationalState, IdentityAssurance, RealmLifecycle, DiscoveryState, Compatibility,
 } from './model'
@@ -260,6 +261,46 @@ export interface InstallRecipeView {
    *  `displayCommand`, verbatim. */
   runLine?: string
 }
+
+/** An account's allowance as the Account usage page shows it (usage track
+ *  MP3; plan section 3). Views only: percentages, reset times, window labels,
+ *  the time of the reading and the plan's name. Never a path, a file name, a
+ *  process detail or a credential.
+ *  - `ok`: a reading is shown; `source` says where it came from.
+ *  - `no-session-yet`: nothing has reported an allowance for this account.
+ *  - `per-token`: an API-key account, billed per token: nothing is read.
+ *  - `inactive`: parked: nothing is read.
+ *  - `not-signed-in`: the registry says it is signed out; the last-seen
+ *    reading, if any, comes with it.
+ *  - `off`: the provider is off, not set up, or its setting could not be
+ *    read: nothing is read (D5).
+ *  - `error`: the account's realm cannot be used now. */
+export type ProviderAccountUsageStatus = 'ok' | 'no-session-yet' | 'per-token' | 'inactive' | 'not-signed-in' | 'off' | 'error'
+/** `live`: an open session's latest figure (memory only). `read`: a fresh
+ *  read of a closed account (ADR-022; not built yet). `last-seen`: the last
+ *  figure in the account's own session history, as of `readingAt`. */
+export type ProviderAccountUsageSource = 'live' | 'read' | 'last-seen'
+
+export interface ProviderAccountUsageView {
+  accountId: string
+  providerId: ProviderId
+  status: ProviderAccountUsageStatus
+  source?: ProviderAccountUsageSource
+  buckets: UsageBucket[]
+  /** When the shown figure was reported, epoch ms. */
+  readingAt?: number
+  /** The plan's display name ("Plus", "Pro"), when known. */
+  planLabel?: string
+}
+
+/** A usage stream's answer: `off` streams nothing (D5); `accounts` is how
+ *  many views were sent. */
+export type ProviderUsageStreamResult = AccountsResult<{ provider: 'on' | 'off'; accounts: number }>
+
+/** The private reply channel a usage stream sends its views on: this prefix
+ *  and 24 lowercase hex characters (the preload's randomId), exactly. */
+export const PROVIDER_USAGE_RESULT_PREFIX = 'providerAccounts:usageResult:'
+export const PROVIDER_USAGE_RESULT_RE = /^providerAccounts:usageResult:[0-9a-f]{24}$/
 
 /** Sign-in output, main -> the renderer that started it: the CLI's display
  *  text, redacted of secrets, display only. It carries the login URL or

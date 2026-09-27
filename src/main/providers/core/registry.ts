@@ -74,6 +74,13 @@ export function packageRegistrationProblem(pkg: ProviderPackage): string | null 
       if (typeof rf[fn] !== 'function') return `realmFolders.${fn}() must be a function`
     }
   }
+  const usage = pkg.usage
+  if (usage !== undefined) {
+    if (typeof usage !== 'object' || usage === null) return 'usage must be an object when present'
+    for (const fn of ['live', 'lastSeen'] as const) {
+      if (typeof usage[fn] !== 'function') return `usage.${fn}() must be a function`
+    }
+  }
   const ext = pkg.externalDefaultRealm
   if (ext !== undefined) {
     if (typeof ext !== 'object' || ext === null) return 'externalDefaultRealm must be an object when present'

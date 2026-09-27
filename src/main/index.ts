@@ -22,7 +22,7 @@ import {
 } from './canvas/ccc-ux-protocol'
 
 import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
-import { recordLiveUsageForSession } from './usage/account-usage'
+import { recordLiveUsageForSession, setClaudeUsageAllowed } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
 import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
@@ -547,6 +547,10 @@ if (!gotTheLock) {
     // importers (claude-cli-version.ts, setClaudeCliProbeAllowed).
     setClaudeCliProbeAllowed(() => providerProbeRefusal('claude') === null)
     void probeClaudeCliVersion()
+    // Usage track MP3, D5: the Account usage page reads nothing of Claude Code
+    // (no credential, refresh or request) while it is switched off, by the
+    // same rule. Set here, before the usage handlers are registered below.
+    setClaudeUsageAllowed(() => providerProbeRefusal('claude') === null)
 
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything
     // writes to it (deploy/config below, window/handlers later, IPC saves

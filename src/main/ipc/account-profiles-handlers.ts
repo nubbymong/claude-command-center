@@ -9,7 +9,7 @@ import {
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, detectedNewAccountEmail } from '../claude-account-identity'
-import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage } from '../usage/account-usage'
+import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage, knownUsageLabels } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError, logWarn } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
@@ -83,6 +83,16 @@ export function registerAccountProfilesHandlers(): void {
       }, { shouldContinue: live })
     } finally {
       if (streamGenBySender.get(senderId) === gen) streamGenBySender.delete(senderId)
+    }
+  })
+  // Usage track MP3: the labels Settings lists, from cached figures only (no
+  // network, no credential read). Takes no input; a failure is no labels.
+  ipcMain.handle(IPC.ACCOUNT_USAGE_KNOWN_LABELS, () => {
+    try {
+      return knownUsageLabels()
+    } catch (err) {
+      logError('[account-usage] knownLabels failed:', err instanceof Error ? err.message : String(err))
+      return []
     }
   })
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>

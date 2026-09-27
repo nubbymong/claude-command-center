@@ -40,8 +40,10 @@ const fetchAllAccountsUsageStreaming = vi.fn(async (onResult: (u: AccountUsage) 
     onResult(u)
   }
 })
+const knownUsageLabels = vi.fn(() => ['5h', 'Weekly', 'Fable'])
 vi.mock('../../../src/main/usage/account-usage', () => ({
   fetchAllAccountsUsage: vi.fn(), fetchAccountUsage: vi.fn(),
+  knownUsageLabels: () => knownUsageLabels(),
   fetchAllAccountsUsageStreaming: (cb: (u: AccountUsage) => void, opts?: { shouldContinue?: () => boolean }) => fetchAllAccountsUsageStreaming(cb, opts),
 }))
 vi.mock('../../../src/main/account-profiles', () => ({
@@ -240,5 +242,22 @@ describe('accountProfiles:delete — the in-use guard', () => {
     for (const id of ['..', '../x', '', 'P1', 42, undefined]) expect(await del(id), JSON.stringify(id)).toEqual({ ok: false, error: 'invalid profile id' })
     expect(h.clearWebSession).not.toHaveBeenCalled()
     expect(h.safeTeardownProfile).not.toHaveBeenCalled()
+  })
+})
+
+// Usage track MP3: the Settings label list comes from cached figures only (no
+// network, no credential read; see account-usage-provider-off.test.ts); the
+// handler takes no input and hands back that list.
+describe('accountUsage:knownLabels handler', () => {
+  it('returns the cached labels and ignores anything sent with the request', async () => {
+    const known = handlers.get(IPC.ACCOUNT_USAGE_KNOWN_LABELS)!
+    expect(await known(fakeEvent())).toEqual(['5h', 'Weekly', 'Fable'])
+    expect(await known(fakeEvent(), { profileId: '..\\..\\x', refresh: true })).toEqual(['5h', 'Weekly', 'Fable'])
+    expect(fetchAllAccountsUsageStreaming).not.toHaveBeenCalled()
+  })
+
+  it('a failure reads as no labels, never a throw', async () => {
+    knownUsageLabels.mockImplementationOnce(() => { throw new Error('disk') })
+    expect(await handlers.get(IPC.ACCOUNT_USAGE_KNOWN_LABELS)!(fakeEvent())).toEqual([])
   })
 })

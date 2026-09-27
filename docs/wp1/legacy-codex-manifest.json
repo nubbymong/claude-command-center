@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T01:57:19.927Z",
-  "head": "4c2e5a945dc059b1f91c7c4af81ef25f6aa6e75e",
-  "tree": "e7cc601f67db4196035be28147e27a1af2f45054",
+  "generatedAt": "2026-09-27T02:29:30.533Z",
+  "head": "93d81811e0f6db6a94203436f1632e020ac92a96",
+  "tree": "3f5676bfa88e4205faf01e898998eb355d127b04",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2326,
+  "trackedFileCount": 2330,
   "excludedFileCount": 381,
-  "scannedFileCount": 1945,
+  "scannedFileCount": 1949,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 379,
-  "pathDigest": "2bb1d601d804bde3c197deba8dd988e30af1e189789e167cc7239787a7e5db5b",
+  "matchedPathCount": 382,
+  "pathDigest": "b2deb11033ea4a5fee5970dd978d927ff3d6e44eeaeade7b14df80910f8eb215",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -614,7 +614,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 169
+      "lineCount": 181
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -733,6 +733,14 @@
       "lineCount": 6
     },
     {
+      "path": "src/main/providers/codex/usage.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 21
+    },
+    {
       "path": "src/main/providers/compose.ts",
       "predicates": [
         "P14"
@@ -752,7 +760,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 7
+      "lineCount": 8
     },
     {
       "path": "src/main/providers/host-color-scheme.ts",
@@ -2054,6 +2062,14 @@
       "lineCount": 1
     },
     {
+      "path": "tests/unit/main/provider-account-usage.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 55
+    },
+    {
       "path": "tests/unit/main/provider-in-use.test.ts",
       "predicates": [
         "P05",
@@ -2317,7 +2333,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 74
+      "lineCount": 85
     },
     {
       "path": "tests/unit/providers/codex/ui-detection.test.ts",
@@ -2327,6 +2343,15 @@
         "P13"
       ],
       "lineCount": 22
+    },
+    {
+      "path": "tests/unit/providers/codex/usage-last-seen.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 33
     },
     {
       "path": "tests/unit/providers/host-color-scheme.test.ts",

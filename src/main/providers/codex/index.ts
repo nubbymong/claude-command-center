@@ -21,6 +21,8 @@ import { createCodexReviewOperations } from './review'
 import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
 import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
 import { codexExternalDefaultHome, codexHomeDisplay } from './realm-paths'
+import { createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort } from './usage'
+import type { CodexLiveUsage, CodexUsageFsPort } from './usage'
 import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort } from './realm-folders'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -56,6 +58,13 @@ export {
   createCodexRealmFolders, createCodexRealmLocks, codexRealmLockKey, resolveCodexRealmRoots, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS,
 } from './realm-folders'
 export type { CodexRealmFsPort, CodexFsEntry, CodexRealmLocks, CodexFolderLookup, CodexRealmFolderDeps, CodexRootsResult } from './realm-folders'
+// Usage track MP2/MP3: the allowance reading and the usage port.
+export { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
+export {
+  readLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
+  CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES,
+} from './usage'
+export type { CodexUsageFsPort, CodexLiveUsage, CodexUsageDeps } from './usage'
 
 /** Why the two session-contract methods a Codex launch never uses refuse: a
  *  Codex session runs only the executable its managed launch proved (the
@@ -65,6 +74,10 @@ const CODEX_MANAGED_LAUNCH_ONLY = 'not used for Codex: launches go through the m
 export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const
   readonly displayName = 'Codex'
+
+  /** `liveUsage` (usage track MP3): where each session's allowance is
+   *  recorded, by its realm's sessions folder, for the Account usage page. */
+  constructor(private readonly liveUsage?: CodexLiveUsage) {}
 
   /** Required by the session contract; refuses (CODEX_MANAGED_LAUNCH_ONLY). */
   resolveBinary(_legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null {
@@ -87,7 +100,9 @@ export class CodexProvider implements SessionProvider {
     // Only the session's own realm (WP2): with none there is nothing to watch,
     // and the ambient home would claim another account's transcript.
     if (!opts.sessionsDir) return { stop() {} }
-    return watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, opts.sessionsDir)
+    const sessionsDir = opts.sessionsDir
+    const live = this.liveUsage
+    return watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, live ? (reading) => live.record(sessionsDir, reading) : undefined)
   }
 
   async listHistorySessions(): Promise<HistorySession[]> {
@@ -132,7 +147,7 @@ export const codexCapabilities: ProviderCapabilities = {
   'auth.logout': { state: 'unknown', note: 'codex logout in the selected realm; wired in the Codex adapter slice' },
   'realm.isolated': { state: 'unknown', note: 'isolation is implemented without this key: once the registry\'s realms are wired, each managed account has its own CODEX_HOME folder (realmFolders), set by the prepared launch (launch.prepare) and every CLI run in that realm; file and keyring credentials are scoped by it in the pinned source. The contract backs this key with realms.realmEnvPatch, which this package does not expose, so it stays unknown' },
   'account.labelFields': { state: 'unsupported', note: 'login status exposes no stable subject; external homes are realm-only' },
-  'account.usage': { state: 'unsupported', note: 'declared for later work' },
+  'account.usage': { state: 'unknown', note: 'the usage port needs the registry\'s realms: it locates each account\'s sessions folder as a launch does; wired with them' },
   'session.launch': { state: 'supported' },
   'session.history': { state: 'unknown', note: 'the resume picker works today; the provider-contract history listing returns nothing until the Codex adapter slice wires it' },
   'session.cloud': { state: 'unsupported', note: 'Codex has no cloud-agent surface' },
@@ -151,6 +166,7 @@ export const codexWiredCapabilities: ProviderCapabilities = {
   'auth.apiKey': { state: 'supported', note: 'codex login --with-api-key over a one-shot non-TTY stdin pipe, never an argument' },
   'auth.status': { state: 'supported', note: 'codex login status in the account\'s own CODEX_HOME' },
   'auth.logout': { state: 'supported', note: 'codex logout in the selected realm; an external home needs the user\'s acknowledgement' },
+  'account.usage': { state: 'supported', note: 'an open session\'s latest figure from memory, else the last one in the account\'s own session history (usage track MP3); no process' },
 }
 
 /** Ambient variables that could override a bound Codex realm (D3).
@@ -224,6 +240,10 @@ export interface CodexPackageDeps {
   realmFs?: CodexRealmFsPort
   /** Replaces the inherited CODEX_HOME and the home directory, for a test. */
   hostHome?: { env: Readonly<Record<string, string | undefined>>; homeDir: string }
+  /** Replaces the filesystem the usage port's last-seen reader uses, for a test. */
+  usageFs?: CodexUsageFsPort
+  /** Replaces the live usage figures the sessions record, for a test. */
+  liveUsage?: CodexLiveUsage
 }
 
 /** The CODEX_HOME the app inherited, in every spelling, captured once when
@@ -235,7 +255,9 @@ function inheritedCodexHome(env: NodeJS.ProcessEnv): Readonly<Record<string, str
 
 /** Created by the composition root; importing this entry point has no side effects. */
 export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage {
-  const session = new CodexProvider()
+  // Each session's allowance, by its realm's sessions folder (usage track MP3).
+  const liveUsage = deps.liveUsage ?? createCodexLiveUsage(deps.realmFs?.platform ?? process.platform)
+  const session = new CodexProvider(liveUsage)
   // The CLI setup last proved. Sign-in re-verifies it and runs exactly it. A
   // re-check clears it while it runs, and a failed check leaves it clear, so
   // nothing ever runs on stale proof; overlapping checks keep the newest.
@@ -284,7 +306,11 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     // through MCP), run from a launch the accounts service prepared.
     review: createCodexReviewOperations(),
     ...(source && realmFs ? {
-      ...withLaunch(createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven })),
+      ...withRealms(
+        createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven }),
+        deps.usageFs ?? realCodexUsageFsPort(realmFs.platform),
+        liveUsage,
+      ),
       realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
       // the user chooses to use it and it is signed in (owner decision
@@ -298,10 +324,15 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
   }
 }
 
-/** The auth operations, and the launch preparation that shares their realm
- *  and executable checks: one package, one proof. */
-function withLaunch(ops: CodexAuthOperations): Pick<ProviderPackage, 'auth' | 'launch'> {
-  return { auth: ops, launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.sessionsDir(realm) } }
+/** The auth operations, the launch preparation that shares their realm and
+ *  executable checks, and the usage port that locates a realm's sessions
+ *  folder exactly as a launch does: one package, one proof. */
+function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsage: CodexLiveUsage): Pick<ProviderPackage, 'auth' | 'launch' | 'usage'> {
+  return {
+    auth: ops,
+    launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.sessionsDir(realm) },
+    usage: createCodexUsageOperations({ sessionsDir: (realm) => ops.sessionsDir(realm), fs: usageFs, live: liveUsage }),
+  }
 }
 
 /** The real filesystem behind the managed folders. */

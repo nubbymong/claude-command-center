@@ -105,7 +105,10 @@ export function planLabelFor(planType: unknown): string | null {
 // 'inactive' = the account is parked (isAccountActive false): the usage page
 // still lists it, greyed, but it is never network-polled or token-refreshed and
 // offers no sign-in. See fetchAccountUsage's early return.
-export type AccountUsageStatus = 'ok' | 'needs-login' | 'error' | 'inactive'
+// 'off' = the provider is switched off, or its setting could not be read
+// (D5 of the usage UX): nothing was read for the account, no credential, no
+// refresh and no request.
+export type AccountUsageStatus = 'ok' | 'needs-login' | 'error' | 'inactive' | 'off'
 
 export interface AccountUsage {
   profileId: string

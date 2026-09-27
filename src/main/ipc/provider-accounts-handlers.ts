@@ -21,7 +21,7 @@ import { ipcMain } from 'electron'
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
-import { isOpaqueId, isProviderId, isLegacyId, SECRET_HANDLE_RE, FRIENDLY_NAME_MAX, GROUP_NAME_MAX } from '../../shared/providers'
+import { isOpaqueId, isProviderId, isLegacyId, SECRET_HANDLE_RE, FRIENDLY_NAME_MAX, GROUP_NAME_MAX, PROVIDER_USAGE_RESULT_RE } from '../../shared/providers'
 import type { AccountsFailure, OpaqueIdKind, ProviderId } from '../../shared/providers'
 import type { AccountsService } from '../providers/core'
 import { logError } from '../debug-logger'
@@ -66,6 +66,9 @@ export const PROVIDER_ACCOUNTS_SCHEMAS = {
     keep: z.enum(['registry', 'legacy']),
   }).strict(),
   setReviewerDefault: z.object({ providerId, accountId: accountId.nullable() }).strict(),
+  // Usage track MP3: the reply channel is the preload's exact private shape,
+  // so a stream can address no other listener in the caller's renderer.
+  usageStream: z.object({ providerId, channel: z.string().max(64).regex(PROVIDER_USAGE_RESULT_RE) }).strict(),
 } as const
 
 const refusal = (code: AccountsFailure['code'], message: string): AccountsFailure => ({ ok: false, code, message })
@@ -182,6 +185,28 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
   handle(IPC.PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN, S.account, (i, svc) => svc.reconcileSignIn(i))
   handle(IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, S.resolveConflict, (i, svc) => svc.resolveIdentityConflict(i))
   handle(IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, S.setReviewerDefault, (i, svc) => svc.setReviewerDefault(i))
+
+  // Usage track MP3: allowance views, reads only. A stream's views go to the
+  // CALLER's own renderer on its private reply channel, and only while it is
+  // the newest stream that renderer opened for that provider (a reopened
+  // page stops the older one at its next account) and the renderer is alive.
+  const usageStreamGen = new Map<string, number>()
+  handle(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, S.account, (i, svc) => svc.readAccountUsage(i))
+  handle(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, S.usageStream, async (i, svc, e) => {
+    const sender = e.sender
+    const key = `${sender.id}|${i.providerId}`
+    const gen = (usageStreamGen.get(key) ?? 0) + 1
+    usageStreamGen.set(key, gen)
+    const live = () => !sender.isDestroyed() && usageStreamGen.get(key) === gen
+    try {
+      return await svc.streamAccountUsage({ providerId: i.providerId }, (view) => {
+        if (!live()) return
+        try { sender.send(i.channel, view) } catch { /* a renderer going away never breaks the stream */ }
+      }, { shouldContinue: live })
+    } finally {
+      if (usageStreamGen.get(key) === gen) usageStreamGen.delete(key)
+    }
+  })
 
   // One-way: no reply, no log, nothing kept here. A malformed deposit is
   // simply not accepted; the sign-in then reports the key as not received.

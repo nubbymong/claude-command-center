@@ -22,6 +22,8 @@ type Handler = (e: unknown, payload?: unknown) => unknown
 const ACC = 'acct-' + 'a'.repeat(32)
 const IDN = 'idn-' + 'b'.repeat(32)
 const GRP = 'grp-' + 'c'.repeat(32)
+// A usage stream's private reply channel, as the preload names it.
+const USAGE_CH = 'providerAccounts:usageResult:' + 'a'.repeat(24)
 
 function fakeContents(id: number) {
   const events: Record<string, Array<() => void>> = {}
@@ -78,6 +80,8 @@ const CHANNELS: Array<[string, unknown]> = [
   [IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, { identityId: IDN, field: 'friendlyName', providerId: 'claude', legacyId: 'profile-a1', keep: 'registry' }],
   [IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: 'codex', accountId: ACC }],
   [IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: 'codex', accountId: null }],
+  [IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC }],
+  [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH }],
 ]
 
 /** A service whose every method records that it was reached. */
@@ -170,6 +174,19 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
       [IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: 'gemini', accountId: ACC }],
       [IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: 'codex', accountId: ACC, kind: 'review' }],
       [IPC.PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN, { accountId: ACC, acknowledge: true }],
+      // Usage (MP3): an account id of the right kind; a stream names a known
+      // provider and a private reply channel of exactly the preload's shape.
+      [IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: IDN }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC, refresh: true }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'gemini', channel: USAGE_CH }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex' }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: 'pty:data:' + 'a'.repeat(24) }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: IPC.PROVIDER_ACCOUNTS_CHANGED }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: 'providerAccounts:usageResult:' + 'A'.repeat(24) }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: 'providerAccounts:usageResult:' + 'a'.repeat(200) }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH + ':x' }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: 42 }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH, accountId: ACC }],
       // Oversized labels.
       [IPC.PROVIDER_ACCOUNTS_CREATE_GROUP, { name: 'x'.repeat(10_000) }],
       [IPC.PROVIDER_ACCOUNTS_UPDATE_IDENTITY, { identityId: IDN, friendlyName: 'y'.repeat(10_000) }],
@@ -388,5 +405,96 @@ describe('ADR-009 round 1 regressions: the boundary', () => {
     expect(sameDirectory(base, base + '\\..\\Res', 'win32')).toBe(true)
     expect(sameDirectory(base, 'C:\\zz-ccc-no-such-dir\\Other', 'win32')).toBe(false)
     expect(sameDirectory('/zz-ccc-no-such-dir/Res', '/zz-ccc-no-such-dir/res', 'linux')).toBe(false)
+  })
+})
+
+// Usage track MP3 (ADR-009): the allowance stream. The reply channel names
+// only a listener on the CALLER's own renderer, and must be the preload's
+// exact shape; views go to the caller only; a newer stream from the same
+// renderer for the same provider stops the older one at its next account (a
+// stream for the other provider is left alone); a renderer that goes away
+// stops its streams.
+describe('the usage stream over IPC (usage track MP3)', () => {
+  type View = { accountId: string }
+  /** A service whose stream emits `ids`, yielding before each and asking
+   *  shouldContinue before each, as the real one does. */
+  function streamingService(ids: string[]) {
+    const produced: string[] = []
+    const svc = new Proxy({}, {
+      get: (_t, prop) => {
+        if (prop === 'subscribe') return () => () => {}
+        if (prop === 'then') return undefined
+        if (prop === 'streamAccountUsage') {
+          return async (input: { providerId: string }, onResult: (v: View) => void, opts: { shouldContinue?: () => boolean }) => {
+            let n = 0
+            for (const id of ids) {
+              await new Promise((r) => setTimeout(r, 0))
+              if (opts?.shouldContinue && !opts.shouldContinue()) break
+              produced.push(`${input.providerId}:${id}`)
+              onResult({ accountId: id })
+              n++
+            }
+            return { ok: true, provider: 'on', accounts: n }
+          }
+        }
+        return () => ({ ok: true })
+      },
+    }) as unknown as AccountsService
+    return { svc, produced }
+  }
+  const usageSent = (w: ReturnType<typeof wire>) => w.wc.sent.filter(([c]) => c.startsWith('providerAccounts:usageResult:'))
+
+  it('sends each view on the caller\'s own reply channel, and the result says how many', async () => {
+    const { svc } = streamingService(['a', 'b'])
+    const w = wire(svc)
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })).toEqual({ ok: true, provider: 'on', accounts: 2 })
+    expect(usageSent(w)).toEqual([[USAGE_CH, { accountId: 'a' }], [USAGE_CH, { accountId: 'b' }]])
+  })
+
+  it('a newer stream for the same provider stops the older one; one for the other provider is left alone', async () => {
+    const { svc, produced } = streamingService(['a', 'b', 'c'])
+    const w = wire(svc)
+    const CH2 = 'providerAccounts:usageResult:' + 'b'.repeat(24)
+    const CH3 = 'providerAccounts:usageResult:' + 'c'.repeat(24)
+    const first = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })
+    const other = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'claude', channel: CH3 })
+    await new Promise((r) => setTimeout(r, 0))
+    const second = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: CH2 })
+    await Promise.all([first, second, other])
+    const on = (ch: string) => usageSent(w).filter(([c]) => c === ch).map(([, v]) => (v as View).accountId)
+    expect(on(USAGE_CH).length).toBeLessThan(3)
+    expect(on(CH2)).toEqual(['a', 'b', 'c'])
+    expect(on(CH3)).toEqual(['a', 'b', 'c'])
+    expect(produced.filter((p) => p.startsWith('codex:')).length).toBeLessThan(6)
+  })
+
+  it('a renderer that goes away stops its stream at the next account and is sent nothing more', async () => {
+    const { svc, produced } = streamingService(['a', 'b', 'c'])
+    const w = wire(svc)
+    const running = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })
+    w.wc.destroy()
+    await running
+    expect(usageSent(w)).toEqual([])
+    expect(produced).toEqual([])
+  })
+
+  it('the real service streams views with no path, and nothing for a provider that is off', async () => {
+    const h = await harness()
+    const w = wire(h.service)
+    const begun = await w.call(IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: 'codex', method: 'browser' }) as { accountId: string }
+    await w.call(IPC.PROVIDER_ACCOUNTS_SIGN_IN, { accountId: begun.accountId, method: 'browser' })
+    await w.call(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, { accountId: begun.accountId, identity: { mode: 'new', colourKey: 'pink' } })
+    w.wc.sent.length = 0
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })).toEqual({ ok: true, provider: 'on', accounts: 1 })
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: begun.accountId })).toMatchObject({ ok: true, usage: { accountId: begun.accountId, status: 'no-session-yet' } })
+    const text = JSON.stringify(w.wc.sent)
+    for (const needle of [RES, EXE, EXT_HOME, 'codex-realms', 'sessions', 'rollout-']) {
+      expect(text.includes(needle.replace(/\\/g, '\\\\')) || text.includes(needle), needle).toBe(false)
+    }
+    await w.call(IPC.PROVIDER_ACCOUNTS_SET_ENABLED, { providerId: 'codex', enabled: false })
+    w.wc.sent.length = 0
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })).toEqual({ ok: true, provider: 'off', accounts: 0 })
+    expect(usageSent(w)).toEqual([])
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'claude', channel: USAGE_CH })).toMatchObject({ ok: false, code: 'unsupported' })
   })
 })

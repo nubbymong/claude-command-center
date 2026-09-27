@@ -14,6 +14,7 @@ import type {
   ProviderCapabilities, CapabilityPlatform, RealmEnvPatch, AuthMethod, KnownAuthState, DiscoveryState, Compatibility,
   SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight, RealmKind, AuthRealm,
 } from '../../../shared/providers'
+import type { UsageBucket } from '../../../shared/usage-types'
 import type { SessionProvider } from '../types'
 import type { LegacyAccountsPort } from './account-registry-store'
 import type { LaunchLeaseKind } from './consumer-leases'
@@ -280,6 +281,30 @@ export interface ProviderReviewOperations {
   run(input: ReviewRunInput): Promise<ReviewRunResult>
 }
 
+/** An account's allowance as a package reports it: provider-neutral buckets
+ *  (the package keys and labels them), when they were reported, and the
+ *  plan's display name. No path or file name. */
+export interface UsageReading {
+  buckets: UsageBucket[]
+  /** Epoch ms of the report; null when unknown. */
+  readingAt: number | null
+  planLabel: string | null
+}
+
+/** A package's per-account usage (usage track MP3; plan section 3). Reads
+ *  only: neither starts a process. The accounts service decides WHEN they may
+ *  run (never for a provider that is off or not set up, never for an inactive
+ *  or API-key account); these decide only where the figure comes from. Never
+ *  throw: anything unexpected is null. */
+export interface ProviderUsageOperations {
+  /** The newest allowance an open session in this realm reported, from
+   *  memory only: no file and no process. */
+  live(realm: RealmRef): Promise<UsageReading | null>
+  /** The last allowance in the realm's own session history: a bounded read of
+   *  its transcripts only, nothing else in the realm. */
+  lastSeen(realm: RealmRef): Promise<UsageReading | null>
+}
+
 export interface ProviderRealmOperations {
   /** The exact environment patch for a bound realm (D1): Claude = the existing
    *  profile-home mechanism; Codex = CODEX_HOME. */
@@ -336,6 +361,10 @@ export interface ProviderPackage {
    *  session (plan: provider review through MCP). */
   readonly review?: ProviderReviewOperations
   readonly realms?: ProviderRealmOperations
+  /** Present when the package reports its accounts' allowances (the
+   *  `account.usage` capability's backing): Codex, once the registry's realms
+   *  are wired. Absent for a provider whose usage lives elsewhere (Claude). */
+  readonly usage?: ProviderUsageOperations
   /** Present when the provider's managed accounts each get an app-managed
    *  folder (Codex); absent for providers that keep their own (Claude). */
   readonly realmFolders?: ProviderRealmFolderOperations
